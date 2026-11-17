@@ -42,7 +42,7 @@ fakes. The checks here pin what only real collaborators can show:
   (`Headless.shippedOver`): the registry they start with binds `C-s-f` to
   `toggle-fullscreen`, `s-m` to `minimise-window` and `s-q` to `quit`, all
   compiled, and registers the buffer commands with the ex names `b`, `ls`
-  and `bd` bound to them;
+  and `bd` bound to them, and the completion sources that ship;
 - `scriptChecks`: the headless mode's script and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
   library, a scene published after a reload's install and a job's command
@@ -79,7 +79,10 @@ fakes. The checks here pin what only real collaborators can show:
   open, on the fake clock; the continuation is looked up when the answer
   arrives, across a reload; the answer's command runs before the next key;
   and it is looked up after the accepting command's write to a store was
-  written back. The accept key and the cancel key are the test scheme's
+  written back; a prompt lists the candidates of a source config registers
+  and asks for by name, and of one the executable's hosts ship
+  (`Headless.shippedOver`), which config's source of its name replaces
+  until a reload drops it. The accept key and the cancel key are the test scheme's
   for the roles the minibuffer's mode fills;
 - `exChecks`: the ex command line through the host, with the test scheme
   and the ex line's commands and the ex names that ship as compiled code
@@ -457,8 +460,8 @@ structure Stage (σ : Type) where
   log : IO.Ref (Array String)
 
 /-- What compiled code hands a host: its commands, its jobs, its key
-bindings, its modes, its ex bindings, its themes, its languages, how long a command may take before it
-is logged, and the major mode the scratch buffer starts in. -/
+bindings, its modes, its ex bindings, its themes, its languages, its completion sources, how long
+a command may take before it is logged, and the major mode the scratch buffer starts in. -/
 structure Compiled where
   /-- The compiled commands. -/
   commands : Array Config.Registration := #[]
@@ -474,6 +477,8 @@ structure Compiled where
   themes : Array NamedTheme := #[]
   /-- The compiled languages. -/
   languages : Array Language := #[]
+  /-- The compiled completion sources. -/
+  sources : Array Completion.Source := #[]
   /-- How long a command may take before it is logged, in milliseconds. -/
   slowAfter : Nat := Loop.slowAfter
   /-- The major mode the scratch buffer starts in, if any: the host's frame
@@ -513,7 +518,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           posts := requests + 4
           commands := compiled.commands, compiledJobs := compiled.jobs,
           bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
-          themes := compiled.themes, languages := compiled.languages,
+          themes := compiled.themes, languages := compiled.languages, sources := compiled.sources,
           log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter,
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
@@ -2961,6 +2966,16 @@ def sourceChunk (defines : Bool) : String :=
     "  command \"pick\" (discard <| prompt \"Pick: \" { command := \"picked\" }\n" ++
     "    (sources := [.named \"picks\"]))\n"
 
+/-- A chunk whose `setup` registers `pick-theme`, which asks `Theme: ` with
+the completion source registered under `themes`, by name, one the
+executable's hosts ship (`Themes.source`), and, when `overrides`, a source
+of config's own under that name, whose one candidate is `mine`. -/
+def shippedSourceChunk (overrides : Bool) : String :=
+  let source := "  defineSource (.ofTexts \"themes\" \"theme\" #[\"mine\"])\n"
+  "def setup : SetupM Unit := do\n" ++ (if overrides then source else "") ++
+    "  command \"pick-theme\" (discard <| prompt \"Theme: \" { command := \"picked\" }\n" ++
+    "    (sources := [.named \"themes\"]))\n"
+
 /-- The line of the minibuffer's view, view 1 in a frame of no size, showing
 `text` with its one cursor at `cursor`. -/
 def minibufferLine (text : String) (cursor : Nat) : String :=
@@ -3128,7 +3143,45 @@ def promptChecks (context : Context) : List Check :=
                       { text := "wq", face := Loop.candidateFace }]) &&
                 views == #[viewLine "" 0] &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
-          minibufferCompiled }]
+          minibufferCompiled },
+    { name :=
+        "config asks for a source the executable's hosts ship by name: on a host handed the shipped themes and sources (`Headless.shippedOver`), a prompt asking for `themes` lists the first shipped theme's name once it is committed; with config's own source of that name it lists config's candidate instead, and reloaded with a config that defines none, the shipped source's again"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let some theme := shipped.themes[0]? | return false
+        -- Each prompt opens a minibuffer view of its own, so a status line
+        -- is compared from its fields on, whichever view it is of.
+        let fields (line : String) : String := (line.dropWhile (· != ':')).toString
+        let lists (asking : Array String) (candidate : String) : Bool :=
+          let status :=
+            Headless.statusLine ⟨0⟩
+              #[{ text := "Theme: ", face := Loop.promptFace },
+                { text := candidate, face := Loop.candidateFace }]
+          asking.any fun line => line.startsWith "status " && fields line == fields status
+        withHost context [("10-source.lean", shippedSourceChunk false)]
+            (fun session => do
+              let asked (query : String) : IO (Array String) := do
+                session.ask [.reload]
+                session.ask [.run "pick-theme"]
+                unless ← Event.post (.commit query) do
+                  return #[]
+                let asking ← session.sceneLines
+                session.pressKeys cancelKeys
+                return asking
+              let shippedFirst ← asked theme.name
+              session.write "10-source.lean" (shippedSourceChunk true)
+              let overridden ← asked "mine"
+              session.write "10-source.lean" (shippedSourceChunk false)
+              let restored ← asked theme.name
+              return lists shippedFirst theme.name && lists overridden "mine" &&
+                  lists restored theme.name &&
+                  !(← session.output.get).any (·.startsWith "loop: refused"))
+            { minibufferCompiled with
+              themes := shipped.themes, sources := shipped.sources } }]
 
 /-- What compiled code hands every host of the ex checks: the ex line's
 commands and the ex names that ship (`Ex.commands`, `Ex.bindings`,
@@ -5040,6 +5093,20 @@ def shippedChecks (_ : Unit) : List Check :=
         let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
         return !TabCommands.commands.isEmpty && TabCommands.commands.all (compiled ·.name) &&
             Vim.Default.tabKeys.all (compiled ·.2) },
+    { name :=
+        "the executable's hosts start with the completion sources that ship registered for the owner compiled, so config can ask for each by name: the ex line's history and its names, the buffers, the tabs and the themes"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        let compiled (name : String) : Bool :=
+          registry.sources.any fun entry => entry.source.name == name && entry.owner == .compiled
+        return [Ex.historySource.name, Ex.namesSource.name, Buffers.source.name,
+                TabCommands.source.name, Themes.source.name].all
+            fun name => compiled name && (registry.source? name).isSome },
     { name :=
         "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation, compilation-output, next-error, previous-error and compile-goto-error, the job compile-run and the mode compilation registered for the owner compiled, and the ex names compile, which takes text, recompile, kill-compilation, next-error and previous-error bound to them"
       run := do
