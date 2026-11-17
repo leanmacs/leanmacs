@@ -37809,14 +37809,124 @@ def versionControlModelChecks : List Check :=
         "the real parser reads what the model prints as the model's status, for every repository of the contract"
       run := pure (VersionControlContract.properties.all fun property => printed property.repository) }]
 
+/-- The git implementation's status read in `/r` on `model`. -/
+def gitStatus (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error VersionControl.Status) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" .status :
+      JobM (Except VersionControl.Error VersionControl.Status)).runModel model
+
+/-- The git implementation's staging of `paths` in `/r` on `model`. -/
+def gitStage (paths : Array String) (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error Unit) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" (.stage paths) : JobM (Except VersionControl.Error Unit)).runModel
+    model
+
+/-- The git implementation's unstaging of `paths` in `/r` on `model`. -/
+def gitUnstage (paths : Array String) (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error Unit) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" (.unstage paths) :
+      JobM (Except VersionControl.Error Unit)).runModel
+    model
+
 /-- The names of the version-control contract's properties
 (`Editor/VersionControl/Contract.lean`) that do not hold of the model
-(`Model.handle`). -/
+(`Model.handle`), and of those whose repository's status the git
+implementation, run on the job model that prints it (`Repository.jobModel`),
+does not read as the model's. -/
 def versionControlContractFailures : IO (List String) :=
   pure <|
-    VersionControlContract.properties.filterMap fun property =>
-      if (property.holds.run VersionControl.Model.handle property.repository).1 then none
-      else some s!"the version-control model: {property.name}"
+    VersionControlContract.properties.flatMap fun property =>
+      let repository := property.repository
+      let (read, _) := gitStatus (repository.jobModel "git" "/r")
+      (if (property.holds.run VersionControl.Model.handle repository).1 then []
+        else [s!"the version-control model: {property.name}"]) ++
+        if read == .finished (.ok repository.status) then []
+        else [s!"the git implementation's status on the job model: {property.name}"]
+
+/-- The command the git implementation runs in `/r` with `arguments`: `git`,
+with the editor's environment less `GIT_DIR`, `GIT_WORK_TREE` and
+`GIT_INDEX_FILE`, and with optional locks off and pathspecs literal. -/
+def gitRun (arguments : Array String) : Process.Command :=
+  { program := "git", arguments, directory := "/r"
+    environment :=
+      { unset := #["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"]
+        set := #[("GIT_OPTIONAL_LOCKS", "0"), ("GIT_LITERAL_PATHSPECS", "1")] } }
+
+/-- The job model in which `git status` in `/r` answers `reply`, taking
+`takes` milliseconds. -/
+def statusAnswering (reply : Except ProcessError Process.Ran) (takes : Nat := 0) : JobModel :=
+  { processes :=
+      { scripts := #[{ command := gitRun VersionControl.Git.statusArguments, reply, takes }] } }
+
+/-- The checks of the git implementation (`Editor/VersionControl/Git.lean`)
+on the job model: the command lines it runs and how it reads what they
+answer. -/
+def versionControlGitChecks : List Check :=
+  let status := gitStatus
+  let statusArguments :=
+    #["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--find-renames"]
+  [{ name :=
+       "a status read runs git status --porcelain=v2 -z --branch --untracked-files=all --find-renames in the root, once, with GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE removed, GIT_OPTIONAL_LOCKS=0 and GIT_LITERAL_PATHSPECS=1"
+     run :=
+       pure <|
+         let (read, after) := status (mixedRepository.jobModel "git" "/r")
+         read == .finished (.ok mixedStatus) && after.processes.started == #[gitRun statusArguments] },
+    { name := "staging runs git add --all -- and the paths, in the root, a path with a space whole"
+      run :=
+        pure <|
+          let (reply, after) :=
+            gitStage #["with space.txt", "b.txt"]
+              (mixedRepository.jobModel "git" "/r" #[.stage #["with space.txt", "b.txt"]])
+          reply == .finished (.ok ()) &&
+            after.processes.started == #[gitRun #["add", "--all", "--", "with space.txt", "b.txt"]] },
+    { name := "unstaging runs git reset -q -- and the paths, in the root"
+      run :=
+        pure <|
+          let (reply, after) :=
+            gitUnstage #["new.txt", "old.txt"]
+              (mixedRepository.jobModel "git" "/r" #[.unstage #["new.txt", "old.txt"]])
+          reply == .finished (.ok ()) &&
+            after.processes.started == #[gitRun #["reset", "-q", "--", "new.txt", "old.txt"]] },
+    { name := "with no git to run, a status read could not run, as notFound"
+      run := pure (status {} matches (.finished (.error (.couldNotRun (.notFound _))), _)) },
+    { name := "a status read git refuses with status 128 failed, with what git said on its standard error"
+      run :=
+        pure <|
+          (status
+                (statusAnswering
+                  (.ok
+                    { exit := .code 128, stdout := .empty
+                      stderr := "fatal: not a git repository\n".toUTF8 }))).1 ==
+            .finished (.error (.failed (.code 128) "fatal: not a git repository")) },
+    { name := "a write git refuses with status 128 failed, and is not read as a success"
+      run :=
+        pure <|
+          let model : JobModel :=
+            { processes :=
+                { scripts :=
+                    #[{ command := gitRun #["add", "--all", "--", "nope.txt"]
+                        reply :=
+                          .ok
+                            { exit := .code 128, stdout := .empty
+                              stderr := "fatal: pathspec 'nope.txt' did not match any files\n".toUTF8 } }] } }
+          (gitStage #["nope.txt"] model).1 ==
+            .finished (.error (.failed (.code 128) "fatal: pathspec 'nope.txt' did not match any files")) },
+    { name := "a status read past the output limit could not run, and is never read cut short"
+      run :=
+        pure <|
+          (status (statusAnswering (.error (.outputTooLarge .out VersionControl.Git.statusOutput)))).1 ==
+            .finished (.error (.couldNotRun (.outputTooLarge .out VersionControl.Git.statusOutput))) },
+    { name := "a status read past its time limit could not run, as timedOut"
+      run :=
+        pure <|
+          (status (statusAnswering (VersionControl.Model.Repository.ran porcelainClean.toUTF8)
+                (VersionControl.Git.gitTime + 1))).1 ==
+            .finished (.error (.couldNotRun (.timedOut VersionControl.Git.gitTime))) },
+    { name := "a status read git answers with what cannot be read is unparsable"
+      run :=
+        pure <|
+          (status (statusAnswering (VersionControl.Model.Repository.ran "x what\x00".toUTF8))).1 matches
+            .finished (.error (.unparsable _)) }]
 
 /-- Every check, in the order they run.
 
@@ -37961,7 +38071,8 @@ def checks : List Check :=
     listingChecks ++
     projectModeChecks ++
     versionControlParserChecks ++
-    versionControlModelChecks
+    versionControlModelChecks ++
+    versionControlGitChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
@@ -38113,6 +38224,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model; {Editor.VersionControlContract.properties.length} properties of the version-control interface hold of its model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model; {Editor.VersionControlContract.properties.length} properties of the version-control interface hold of its model, and the git implementation's status read of each of their repositories on the job model"
   (← IO.getStdout).flush
   IO.Process.exit 0
