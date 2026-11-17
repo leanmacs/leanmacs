@@ -1,0 +1,21 @@
+#!/bin/sh
+# Prints `one`, then `two`, then `three` on standard error, and exits 2.
+# Before `two` it waits until a file `go-1` is in its working directory, and
+# before `three` until `go-2` is: the test makes them, so the pauses are the
+# test's to end. It polls every 10 ms and gives up, exiting 9, after 10 s.
+wait_for() {
+  tries=0
+  while [ ! -e "$1" ]; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 1000 ]; then
+      exit 9
+    fi
+    sleep 0.01
+  done
+}
+echo one
+wait_for go-1
+echo two
+wait_for go-2
+echo three >&2
+exit 2
