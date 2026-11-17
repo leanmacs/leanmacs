@@ -107,6 +107,7 @@
 //! | Function | Does |
 //! |---|---|
 //! | [`editor_ffi_processes_run`] | Starts a run. False, starting nothing, for words that spell no command, an id in use, or when the system refuses the run its thread |
+//! | [`editor_ffi_processes_run_input`] | Starts a run as [`editor_ffi_processes_run`] does, with a copy of the bytes it is lent as the child's standard input, then end of file |
 //! | [`editor_ffi_processes_take`] | Fills a [`RawProcessResult`] and returns true, or returns false when the service keeps no result for the id |
 //! | [`editor_ffi_processes_open`] | Starts a streaming child. False, starting nothing, for words that spell no open, an id in use, or when the system refuses its thread |
 //! | [`editor_ffi_processes_read`] | Asks for a child's next delivery |
@@ -422,6 +423,42 @@ pub unsafe extern "C" fn editor_ffi_processes_run(
         return false;
     };
     PROCESSES.start(id, command, limit)
+}
+
+/// Starts the command the words and the string spell as the run `id`, as
+/// [`editor_ffi_processes_run`] does, with its standard input fed the
+/// `input_len` bytes at `input`, copied, and then closed. A child that
+/// does not read them is no refusal: the run comes to what it did.
+///
+/// Returns false, starting nothing, as [`editor_ffi_processes_run`] does.
+///
+/// # Safety
+///
+/// `words` points to `words_len` readable bytes, `strings` to
+/// `strings_len` and `input` to `input_len`, all unchanged for the call (no
+/// bytes at all may be lent with any pointer).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_processes_run_input(
+    id: u64,
+    words: *const u8,
+    words_len: usize,
+    strings: *const u8,
+    strings_len: usize,
+    input: *const u8,
+    input_len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees each pointer and its length.
+    let (words, strings, input) = unsafe {
+        (
+            words::borrow(words, words_len),
+            words::borrow(strings, strings_len),
+            words::borrow(input, input_len),
+        )
+    };
+    let Some((command, limit)) = command_of(words, strings) else {
+        return false;
+    };
+    PROCESSES.start_with_input(id, command, Some(input.to_vec()), limit)
 }
 
 /// The result of a run as it crosses the boundary: one record, filled in

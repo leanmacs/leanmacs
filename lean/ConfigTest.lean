@@ -485,7 +485,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
       Job.Completions.new
   let clock ← Job.FakeClock.new completions
   let watches ← Job.FakeFileWatches.new completions { directories := #["/watched"] }
-  let requests ← context.ids.modifyGet fun next => (next, next + 4)
+  let requests ← context.ids.modifyGet fun next => (next, next + 5)
   return {
       collaborators :=
         { elaborator, source,
@@ -495,6 +495,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           services := { completions, timers := clock.timers, fileWatches := watches.fileWatches }
           published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
           wakeups := requests + 1, jobs := requests + 2, environment := requests + 3
+          posts := requests + 4
           commands := compiled.commands, compiledJobs := compiled.jobs,
           bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
           themes := compiled.themes, log := fun entry => log.modify (·.push entry),
@@ -1224,6 +1225,193 @@ def setup : SetupM Unit := do
 def jobsConfig : List (String × String) :=
   [("10-greet.lean", greetChunk "v1"), ("20-setup.lean", jobsChunk)]
 
+/-- Asks the host for the scene, and returns every line it printed for it:
+the scene's line, then each view's line followed by its status line. -/
+def Session.sceneLines (session : Session) : IO (Array String) := do
+  let before := (← session.output.get).size
+  session.ask [.scene]
+  return (← session.output.get).extract before
+
+/-- A chunk whose `setup` registers the mode `json`, whose text is parsed
+with the grammar `json` and drawn by the shipped default; the command
+`edit`, which puts `, 2` before the last byte of the scratch buffer's text;
+and the job `highlight`, which sleeps 10 ms and finishes with a command that
+puts `[1, true]` in the scratch buffer's text and makes `json` its major
+mode, through the scratch buffer's window. -/
+def highlightChunk : String :=
+  "def wait : Unit → JobM Nat := fun _ => do
+  sleep 10
+  return 1
+
+def edit : EditorM Unit := do
+  let text : TextId := ⟨0⟩
+  let length := (← text.read).utf8ByteSize
+  text.insert (length - 1) \", 2\"
+
+def setup : SetupM Unit := do
+  defineMode { name := \"json\", syntaxTree := some { grammar := \"json\" } }
+  command \"edit\" edit
+  job \"highlight\" wait fun _ => do
+    (⟨0⟩ : TextId).insert 0 \"[1, true]\"
+    discard <| (⟨0⟩ : ViewId).setMajorMode \"json\"
+"
+
+/-- A syntax tree request as `withRecordedSyntaxTree` records it: its
+constructor, with the grammar or language and the kind it names, and a
+highlight's faces by name, `-` for none. -/
+def recordedRequest : SyntaxTreeRequest → String
+  | .grammars => "grammars"
+  | .attach _ grammar => s!"attach {grammar}"
+  | .detach _ => "detach"
+  | .compile grammar _ => s!"compile {grammar}"
+  | .captureNames _ => "captureNames"
+  | .captures .. => "captures"
+  | .release _ => "release"
+  | .shippedQuery grammar kind => s!"shippedQuery {grammar} {kind.name}"
+  | .highlight _ _ faces =>
+    s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
+  | .inject .. => "inject"
+  | .injectLanguage _ name .. => s!"injectLanguage {name}"
+  | .keep _ kind _ => s!"keep {kind.name}"
+  | .capturesOf _ kind .. => s!"capturesOf {kind.name}"
+
+/-- Runs `check` against a host over a config of `highlightChunk`, whose
+syntax tree collaborator is the real binding over the library's syntax
+service with every request recorded (`recordedRequest`) in the array `check`
+is handed, and which after an attach waits, with a bound, for the attached
+text's tree to be delivered, and stops the host. `check` is handed too how many scenes the
+host's display has had published to it, read from the display the host's
+collaborator made, with no request of the driver's. `false` if the check
+did not hold or the host did not stop. The directory is removed. -/
+def withRecordedSyntaxTree (context : Context)
+    (check : Session → IO.Ref (Array String) → IO Nat → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeFiles directory [("10-setup.lean", highlightChunk)]
+    let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+    let asked ← IO.mkRef #[]
+    let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
+      let real ← RealSyntaxTree.new snapshots
+      return fun request => do
+        asked.modify (·.push (recordedRequest request))
+        let reply ← real.handle request
+        -- An attach waits for the attached text's tree, so the highlighter
+        -- set after it sees no delivery of that parse, and no `parsed`
+        -- event of it is left for a later check's host to take.
+        if let .attach snapshot _ := request then
+          if let some found← snapshots.find? snapshot then
+            discard (Ffi.syntaxSettle found 5000)
+        return reply
+    let made : IO.Ref (Option Headless.Host.Display) ← IO.mkRef none
+    let display (snapshots : SnapshotReader) : IO Headless.Host.Display := do
+      let shown ← Headless.Host.Display.recorder Headless.cells snapshots
+      made.set (some shown)
+      return shown
+    let published : IO Nat := do
+      match ← made.get with
+      | some shown =>
+        shown.count.get
+      | none =>
+        return 0
+    onStage
+        { stage with
+          collaborators :=
+            { stage.collaborators with
+              syntaxTree, display } }
+        fun host stage =>
+        check
+          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock
+            watches := stage.watches, log := stage.log } asked published
+
+/-- The faces the shipped default draws the captures of the library's
+shipped JSON highlights query in, by name, `-` for none, as
+`recordedRequest` writes a highlight: read from the library, so no check
+repeats its query. -/
+def jsonDefaultFaces : IO String := do
+  let .ok source ← Ffi.syntaxShippedQuery "json" 0 | return "none shipped"
+  let .ok query ← Ffi.SyntaxQuery.new "json" source | return "does not compile"
+  let faces := Highlight.faces [] (← query.captureNames)
+  return s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
+
+/-- The Rust text of `rustObjectsChunk`: a method in an `impl`, after a
+unit struct. -/
+def rustObjectsText : String :=
+  "struct S;\n\nimpl S {\n    fn one(&self) -> u8 {\n        let x = 1;\n        x\n    }\n}\n"
+
+/-- A chunk whose `setup` defines the mode `rust-test`, whose text is
+parsed with the grammar `rust` and drawn by the shipped default, and the
+command `rust-buffer`, which puts `rustObjectsText` in the scratch buffer's
+text, places the cursor inside the method's body, at `let`, and only then
+makes `rust-test` its major mode, so the text is attached at its last
+revision. -/
+def rustObjectsChunk : String :=
+  "def rustText : String := " ++ rustObjectsText.quote ++
+    "
+
+def rustBuffer : EditorM Unit := do
+  let text : TextId := ⟨0⟩
+  text.insert 0 rustText
+  let cursor := ((rustText.splitOn \"let x\").headD \"\").utf8ByteSize
+  discard <| (⟨0⟩ : ViewId).select { ranges := #[⟨cursor, cursor⟩], shape := .inclusive }
+  discard <| (⟨0⟩ : ViewId).setMajorMode \"rust-test\"
+
+def setup : SetupM Unit := do
+  defineMode { name := \"rust-test\", syntaxTree := some { grammar := \"rust\" } }
+  command \"rust-buffer\" rustBuffer
+"
+
+/-- Runs `check` against a host of the Vim scheme that ships, made over the
+collaborators the executable's hosts are made of (`Headless.shippedOver`),
+with the real elaborator, a config directory of `files` and the services of
+a stage of its own; its syntax tree is the real binding over the library's
+syntax service, which after an attach waits, with a bound, for the attached
+text's tree to be delivered. Stops the host; `false` if the check did not
+hold or the host did not stop. The directory is removed. -/
+def withVimHost (context : Context) (files : List (String × String)) (check : Session → IO Bool) :
+    IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeFiles directory files
+    let source := Config.Directory.source directory
+    let stage ← Stage.new context context.elaborator source
+    let staged := stage.collaborators
+    let shipped :=
+      Headless.shippedOver "" "" "" staged.emit staged.services staged.published staged.held
+    let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
+      let real ← RealSyntaxTree.new snapshots
+      return fun request => do
+        let reply ← real.handle request
+        if let .attach snapshot _ := request then
+          if let some found← snapshots.find? snapshot then
+            discard (Ffi.syntaxSettle found 5000)
+        return reply
+    let collaborators :=
+      { shipped with
+        elaborator := context.elaborator, source, requests := staged.requests
+        wakeups := staged.wakeups, jobs := staged.jobs, environment := staged.environment
+        log := staged.log, syntaxTree }
+    let host ← Headless.start collaborators
+    try
+      let held ←
+        check {
+              host, directory, output := stage.output, threads := stage.threads,
+              clock := stage.clock
+              watches := stage.watches, log := stage.log }
+      let stopped ← host.stop patience
+      return held && stopped
+    catch error =>
+      discard <| host.halt patience
+      throw error
+
+/-- The byte offset of the first occurrence of `needle` in `text`; none
+when it does not hold it. -/
+def offsetOf (text needle : String) : Option Nat :=
+  match text.splitOn needle with
+  | before :: _ :: _ => some before.utf8ByteSize
+  | _ => none
+
+/-- The view line of the last scene the host printed. -/
+def lastViewLine (lines : Array String) : String :=
+  (lines.filter (·.startsWith "view 0 ")).back?.getD ""
+
 /-- The thread that emitted the first line of the host's output that is
 `line`, if there is one. -/
 def Session.threadOf (session : Session) (line : String) : IO (Option UInt64) := do
@@ -1356,7 +1544,49 @@ def jobChecks (context : Context) : List Check :=
             (refusal "reload\nspawn\n").startsWith "line 2: " &&
             (working.splitOn "line 12").length == 2 &&
             working != Headless.Failure.describe 30000 (.reloading (some 12)) &&
-            working != Headless.Failure.describe 30000 (.unanswered (some 12))) }]
+            working != Headless.Failure.describe 30000 (.unanswered (some 12))) },
+    { name :=
+        "a job's command that sets a mode with a syntax tree reaches the host's syntax tree: the text is attached, the grammar's shipped query compiled and its text highlighted in the default faces, and the grammar's injections, text objects and indents asked for, none of which json ships"
+      run :=
+        -- Seen to bite once by hand: with `Running.ended` handing
+        -- `Job.finishWith` no syntax tree, the job's command reaches
+        -- `SyntaxTree.none`, the recorder sees nothing, and the echo area
+        -- says the attach was refused.
+        withRecordedSyntaxTree context fun session asked _ => do
+          session.ask [.reload]
+          session.ask [.spawn "highlight"]
+          unless ← eventually (return (← session.clock.waiting) == 1) do
+            return false
+          session.clock.advance 10
+          let joined ← session.host.join patience
+          let scene ← session.sceneLines
+          return joined == .settled && (← session.output.get).contains "job 1 highlight: ok" &&
+              (← asked.get) ==
+                #["attach json", "shippedQuery json highlights", "compile json", "captureNames",
+                  ← jsonDefaultFaces, "release", "shippedQuery json injections",
+                  "shippedQuery json textObjects", "shippedQuery json indents"] &&
+              scene.any fun line =>
+                line.startsWith "scene " && (line.splitOn "highlights:").length == 1 },
+    { name :=
+        "a parse of a highlighted text the library delivers makes the real host publish a scene, with no key pressed"
+      run :=
+        -- Seen to bite once by hand: a host whose `handle` returns at once
+        -- for an event from the library's source publishes nothing for the
+        -- parse, and the count stays at the edit's.
+        withRecordedSyntaxTree context fun session _ published => do
+          session.ask [.reload]
+          session.ask [.spawn "highlight"]
+          unless ← eventually (return (← session.clock.waiting) == 1) do
+            return false
+          session.clock.advance 10
+          unless (← session.host.join patience) == .settled do
+            return false
+          let before ← published
+          -- Sent with no marker after it, which would publish a scene of its
+          -- own: the edit's command publishes one, and a publish beyond it is
+          -- a delivered parse's.
+          session.host.send (.run "edit")
+          eventually (return (← published) > before + 1) }]
 
 /-- A config of one chunk with one command, `forget`, which releases the
 text of index 0: the text of the editor loop's scratch buffer, made with the
@@ -1824,7 +2054,8 @@ def scriptChecks (context : Context) : List Check :=
             display :=
               ← Headless.Host.Display.recorder Headless.cells collaborators.published.reader
             clipboard := (← Clipboard.InProcess.new).handle
-            jobs := { services := collaborators.services } }
+            syntaxTree := SyntaxTree.none
+            jobs := { services := collaborators.services }, mailbox := ← Job.Mailbox.new }
         let (refused, running) ←
           running.attempt collaborators do
               let made ← createText "made before the refusal"
@@ -2493,6 +2724,45 @@ def hostLoopChecks (context : Context) : List Check :=
           return running.frame.isNone &&
               (← stage.output.get) == #["loop: refused: no such text", "run stamp: no frame"] },
     { name :=
+        "a job's post runs on the editor thread as a command labelled with the job while the job still runs, and is printed; the post of a job removed before its event is taken is dropped, unprinted"
+      run :=
+        withRunning context
+          (fun collaborators =>
+            { collaborators with
+              commands :=
+                #[{ name := "mark"
+                    action :=
+                      .call fun call => do
+                        if let [.str text] := call.arguments then
+                          discard <| call.target.window.id.insertAtSelections text }]
+              compiledJobs :=
+                #[{ name := "poster"
+                    work := fun _ =>
+                      Work.of
+                        (fun _ => do
+                          post { command := "mark", arguments := [.str "p"] }
+                          sleep 10)
+                        fun _ => pure () }] })
+          fun collaborators running stage => do
+          let (first, running) ← running.startJob collaborators "poster"
+          let some first := first | return false
+          unless ← eventually (return (← running.mailbox.size) == 1) do
+            return false
+          let running := { running with jobs := ← running.jobs.cancel first }
+          let running ← running.posted collaborators first
+          let dropped := (← stage.output.get).isEmpty && (← running.mailbox.size) == 0
+          let (second, running) ← running.startJob collaborators "poster"
+          let some second := second | return false
+          unless ← eventually (return (← running.mailbox.size) == 1) do
+            return false
+          let running ← running.posted collaborators second
+          let live := running.jobs.has second
+          running.show collaborators
+          let output ← stage.output.get
+          running.jobs.cancelAll
+          return dropped && live && output[0]? == some s!"job {second} poster: ok" &&
+              output.contains "text 0: \"p\"" },
+    { name :=
         "a key's command starts a job with an argument: the host says it started, keys sent while the job sleeps are handled before its result, and once the clock lets it go its command runs after them, with the value the job computed in the text and in the scene's echo"
       run :=
         withHost context [("10-starting.lean", startingChunk)]
@@ -2653,13 +2923,6 @@ def setup : SetupM Unit := do
     pure (n + 1)
   command \"ask\" (discard <| prompt \"Name: \" { command := \"bump\" })
 "
-
-/-- Asks the host for the scene, and returns every line it printed for it:
-the scene's line, then each view's line followed by its status line. -/
-def Session.sceneLines (session : Session) : IO (Array String) := do
-  let before := (← session.output.get).size
-  session.ask [.scene]
-  return (← session.output.get).extract before
 
 /-- The line of the minibuffer's view, view 1 in a frame of no size, showing
 `text` with its one cursor at `cursor`. -/
@@ -3097,6 +3360,49 @@ def evilChecks (context : Context) : List Check :=
                 lines.contains "run erase-word: ok" &&
                 lines.contains "run again: ok")
           { commands := Evil.commands } }]
+
+/-- The checks of the syntax tree's text objects through a host of the Vim
+scheme that ships (`withVimHost`), with the real elaborator, the real text
+binding and the library's syntax service: what keys select and delete in a
+Rust buffer. Which node an object is, is `Editor/Evil/TreeObjects.lean`'s,
+pinned by `ModelTest.treeObjectRuleChecks` and `ModelTest.evilObjectChecks`
+and, over the library, by `ContractTest`. -/
+def treeObjectChecks (context : Context) : List Check :=
+  [{  name :=
+        "in a Rust buffer v a f selects the enclosing function, from its fn through its closing brace, through the host's loop and the library's syntax tree; and <Escape> d a f then deletes it, its lines whole"
+      run :=
+        -- Seen to bite once by hand: with `a-function` taken out of
+        -- `Evil.objects`, `v a f` leaves the cursor's one cell selected.
+        withVimHost context [("10-objects.lean", rustObjectsChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "rust-buffer"]
+          let before := lastViewLine (← session.sceneLines)
+          session.typed "v a f"
+          let selected := lastViewLine (← session.sceneLines)
+          session.typed "<Escape> d a f"
+          let deleted := lastViewLine (← session.sceneLines)
+          let some fnAt := offsetOf rustObjectsText "fn one" | return false
+          let some closing := offsetOf rustObjectsText "}\n}\n" | return false
+          let some letAt := offsetOf rustObjectsText "let x" | return false
+          -- `d` over a charwise span from a line's indent to the end of a
+          -- later line takes the lines whole, Vim's exception for `d`.
+          let without := "struct S;\n\nimpl S {\n}\n"
+          return (before.splitOn s!"selections {letAt}..{letAt},").length == 2 &&
+              (selected.splitOn s!"selections {fnAt}..{closing},").length == 2 &&
+              (deleted.splitOn s!"{without.quote}, scroll").length == 2 },
+    { name :=
+        "in a Rust buffer v i f from a method's fn line, in the function and outside its body, selects inside the body's braces, its lines whole, through the host's loop and the library's syntax tree"
+      run :=
+        withVimHost context [("10-objects.lean", rustObjectsChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "rust-buffer"]
+          session.typed "k v i f"
+          let selected := lastViewLine (← session.sceneLines)
+          let some letAt := offsetOf rustObjectsText "        let x" | return false
+          let some closing := offsetOf rustObjectsText "\n    }\n}" | return false
+          unless (selected.splitOn s!"selections {letAt}..{closing},").length == 2 do
+            throw (IO.userError selected)
+          return true }]
 
 /-- A chunk whose `setup` registers two jobs that each load a file and whose
 handler makes a text of what was loaded: `open`, of `note.txt` in
@@ -4164,6 +4470,26 @@ def shippedChecks (_ : Unit) : List Check :=
         return !WindowCommands.commands.isEmpty && WindowCommands.commands.all (compiled ·.name) &&
             Vim.Default.windowKeys.all (compiled ·.2) },
     { name :=
+        "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation and compilation-output, the job compile-run and the mode compilation registered for the owner compiled, and the ex names compile, which takes text, recompile and kill-compilation bound to them"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        return [Compile.compileName, Compile.recompileName, Compile.confirmName, Compile.killName,
+                  Compile.outputName].all
+              compiled &&
+            (registry.findJob? Compile.runJob).any (·.owner == .compiled) &&
+            (registry.mode? Compile.modeName).isSome &&
+            (registry.mode? Minibuffer.mode.name).isSome &&
+            registry.ex? "compile" ==
+              some { name := "compile", command := Compile.compileName, takes := .text } &&
+            (registry.ex? "recompile").map (·.command) == some Compile.recompileName &&
+            (registry.ex? "kill-compilation").map (·.command) == some Compile.killName },
+    { name :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered for the owner compiled"
       run := do
         let completions ← Job.Completions.new
@@ -4349,6 +4675,7 @@ def environmentHostChecks (context : Context) : List Check :=
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
     jobChecks context ++
+    treeObjectChecks context ++
     watchReloadChecks context ++
     agreementChecks () ++
     shippedChecks () ++
@@ -4451,8 +4778,8 @@ def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
     Headless.start (scheme := TestScheme.scheme)
         { elaborator, source := { chunks := chunks.get }, emit,
           services := { completions, timers := clock.timers }, published := ← Snapshots.new,
-          held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3,
-          environment := 4 }
+          held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3, environment := 4,
+          posts := 5 }
   return { host, chunks, reported, others }
 
 /-- Makes `config` the source's chunks, asks for a reload, and returns the
@@ -4726,14 +5053,14 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   -- cancels its jobs, and the row is over when every pool thread is free.
   let row (job : String) (count : Nat) (going : IO Unit) : IO (Array Nat × Nat × Nat) := do
     -- Hosts follow one another on one queue: each has source ids of its own.
-    let requests ← ids.modifyGet fun next => (next, next + 4)
+    let requests ← ids.modifyGet fun next => (next, next + 5)
     reloads.set #[]
     let host ←
       Headless.start (scheme := TestScheme.scheme)
           { elaborator, source := { chunks := pure jobsConfig }, emit,
             services := { completions, timers := counted }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
-            jobs := requests + 2, environment := requests + 3 }
+            jobs := requests + 2, environment := requests + 3, posts := requests + 4 }
     try
       host.send .reload
       unless ← host.settle patience do

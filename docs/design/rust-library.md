@@ -100,8 +100,9 @@ job reads as it comes and whose standard input it writes to (phase 2;
   both output streams piped and its standard input closed or, when the
   spawn asks (`Input::Pipe`), piped and taken as a `ChildInput`. The input
   is the spawn's, not the command's, and the service decides it once: a
-  run's child has its input closed, and a streaming child's is its
-  `Streaming`'s, as in Lean, where only `Process.Streaming` has one. The child's
+  run's child has its input closed unless the run is fed, and a streaming
+  child's is its `Streaming`'s, as in Lean, where `Process.Streaming` and
+  the fed run (`ProcessRequest.runInput`) have one. The child's
   streams are read with a pull (`Output::read`), it is waited for
   (`Child::wait`) and killed (`Child::kill`). A program is a bare name,
   looked up on the `PATH` the child gets, or an absolute path; the
@@ -156,7 +157,18 @@ job reads as it comes and whose standard input it writes to (phase 2;
   readers: the run is over once its child is reaped, and its readers,
   detached, end when their streams close. A stream past the
   run's limit of bytes kills the group and the run is `OutputTooLarge`,
-  never output cut short. An id in use is refused. Cancelling kills the
+  never output cut short. **A run may be fed its standard input**
+  (`Service::start_with_input`): its child's input is then a pipe, and a
+  fourth thread, its writer, detached as the readers are, writes every
+  byte while the readers read and then drops the pipe, so the child reads
+  end of file; input larger than a pipe cannot hold a child that writes as
+  it reads. A write the child does not take, because it closed its input
+  or ended, is ignored, and the run comes to what the child did. This is
+  how a filter feeds a range of lines to a command (`:{range}!`,
+  `docs/design/keymaps-and-modes.md`). The contract holds it to two more
+  properties: `/bin/cat` fed four pipes' worth, a NUL and a byte that is
+  not UTF-8 among it, gives it back whole; and `/usr/bin/true` fed a
+  mebibyte exits 0. An id in use is refused. Cancelling kills the
   group of a running child, drops its result and never completes it.
   Shutdown refuses every later start (as shut down, completed at once),
   cancels every run, kills every group and blocks until every child is
@@ -214,7 +226,8 @@ job reads as it comes and whose standard input it writes to (phase 2;
   it does every run. The contract holds the port's input to three more
   properties (a write reaches `/bin/cat` byte for byte, a write to an input
   the child closed is `InputClosed`, a child spawned with no input has
-  none to take) and the service to nine more, 26 in all, on real
+  none to take) and the service to nine more, 26 then, 28 with the fed
+  run's two, on real
   processes: lines as they are written and a line written echoed back,
   bytes, 20,000 lines in order at a bound of 256, one completion for
   10,000 lines, a child held at a bound of 4,096 that cannot finish until
@@ -228,9 +241,9 @@ job reads as it comes and whose standard input it writes to (phase 2;
   so neither a cancel nor shutdown can hang on a child that ignores a
   polite signal.
 - **Across the boundary**, `editor-ffi`'s `processes.rs` holds the
-  process's one service, over the real adapter, behind eleven C functions:
+  process's one service, over the real adapter, behind twelve C functions:
   a run (the command as words and one string, as a list of strings
-  crosses), a take (a status, words, a detail and both streams), a cancel,
+  crosses), a fed run (the same, and the bytes of its input), a take (a status, words, a detail and both streams), a cancel,
   a shutdown and a readout of what is pending; and for a streaming child an
   open (a run's words after its input and its two framings, with the bound
   for the limit), a read, a write, a close of its input, a take of a wait's
@@ -1346,6 +1359,414 @@ state the editor can draw itself.
 - **Lean gets**: choose the grammar and queries for a mode; map capture
   names to faces; query results as plain rows (for text objects, outlines,
   indentation, tags).
+
+### Syntax, as built
+
+Built by the syntax roadmap's phase 1 (2026-11-16): the port, the
+reparse off the editor thread, and the Lean interface with its model; and
+by its phase 2 (2026-11-16): highlights, a mode's grammar and capture
+faces ("Highlights, as built", below).
+
+**How grammars are loaded: compiled in.** Each grammar is a crates.io
+grammar crate, pinned exactly (`tree-sitter-rust` 0.24.2,
+`tree-sitter-json` 0.24.8 and `tree-sitter-md` 0.5.4, over `tree-sitter`
+0.27.2), whose build compiles
+the generated `parser.c` (and the grammar's scanner, if it has one) with
+`cc` when Cargo builds the library; the objects end up in
+`libeditor_ffi.a`, which Lake links. Nothing is fetched, generated or
+loaded at run time. Set aside, and why:
+
+- **Native libraries** loaded with `dlopen`: a second build product for
+  each grammar and platform, a search path, a check of the ABI when one is
+  loaded and a failure at run time, and bundling into the app, for no gain
+  while the set of grammars is fixed when the library is built (a
+  non-goal of the roadmap is to download or build grammars at run time).
+- **WebAssembly grammars**, through tree-sitter's `wasm` feature: it brings
+  wasmtime, a JIT and hundreds of crates, and a `.wasm` build of each
+  grammar to make or fetch. Its sandbox protects against a grammar that is
+  not trusted; every grammar here is pinned and reviewed.
+- `tree-sitter-loader`, which finds and builds grammars at run time, and a
+  parser of our own.
+
+`deny.toml` bans `wasmtime` and `tree-sitter-loader` outright, and lets only
+the adapter depend on tree-sitter and the grammars. The grammars are Rust,
+for the editor's own language, JSON, which the Lean model reproduces, and
+Markdown, whose block grammar alone is listed ("Injections, indentation
+and text objects, as built", below).
+
+**The port** (`crates/editor-syntax`, over `editor-text` alone) is
+`Syntax`: the grammars it has, a parser for one, a parse of a snapshot
+(handed an old tree that has been told every edit since, it reuses what the
+edits left alone), an edit told to a tree, a query compiled or refused as a
+value with its kind and offset, a query's capture names, its captures in or
+around a range, a tree read as plain `Node`s in pre-order (kind, named,
+field, depth, range and points, error, missing), and whether a tree has an
+error or a missing node, answered without reading it out. Two trees are
+equal when their nodes are. The tree, the parser and the query are the
+implementation's own types. `fake::Parens` is the published fake, a toy
+grammar of parens and atoms that reparses whole.
+
+**The contract** (`editor_syntax::contract::check`, over a `Corpus` of a
+grammar: texts, pieces random edits insert, a query and its names, bad
+queries with their kinds, the kinds of query it ships, a query with `#set!`
+settings) holds every implementation to fourteen properties:
+the grammar listed and opening a parser; a whole tree (the root reaches
+the text's end, each node within its parent on positions with their points,
+siblings in order; the root may start after the blanks that lead the text,
+as tree-sitter's does); two fresh parses equal; a tree having errors
+exactly when one of its nodes is an error or missing, over a corpus with
+texts of both; the incremental reparse, as the core makes it, equal to a
+fresh parse; queries refused by kind; capture names in order; a
+range answering the whole text's captures that overlap it; and every
+capture naming one of the query's and being a node's range, in the core's
+order; the grammar shipping a query of each kind the corpus lists, each
+compiling, and none of another kind, and an unlisted grammar shipping none
+(`SHIPPED`); over the same edits as the incremental property, the shipped
+highlights of the reparsed tree equal to a fresh parse's
+(`HIGHLIGHTS_AFTER_EDITS`); a parse in ranges reading only the ranges
+(`IN_RANGES`); a range's matches, flattened, being its captures, each with
+its node's named children (`MATCHES`); and each pattern's `#set!` settings
+(`SETTINGS`). Each property is seen to bite on an implementation written to
+break it. The fake passes it, and the adapter passes it for Rust, JSON and
+Markdown.
+
+- **Incremental equals fresh** is checked on named cases (an insert inside
+  a token, a delete across lines, everything deleted, an edit at offset 0
+  and at the end, a CRLF, multibyte text, one transaction of several
+  changes, several transactions pulled as one patch) and on a sweep of
+  random edit sequences from a fixed seed, each ended by its own inverse.
+  Every edit goes through a real `Text`, and the tree is told the log's own
+  patch, so this is where `Edit::input_edit` is held to tree-sitter. Every
+  reparse is compared exactly, texts with errors among them, and at least
+  one incremental parse must be kept, so the property is never held only by
+  whole parses.
+- **A reparse with an error is parsed again whole** (the fallback rule,
+  `session::reparse`, which the session and the contract both run). How
+  tree-sitter recovers from an error depends on what it reuses, and its own
+  randomized tests compare reparses with fresh parses only of texts without
+  errors: seen on 2026-11-16, 11 of some 6,700 incremental parses of random
+  edits of Rust differed from the fresh parse, every one with an error, and
+  none of JSON. So the core drops an incremental parse whose tree has an
+  error or a missing node and parses the snapshot whole, with no old tree,
+  and the tree a round makes is always the tree a fresh parse gives. The
+  second parse is on the worker thread; the editor thread never waits for
+  it. It costs a whole parse for every edit while a text has an error. On
+  sweeps of five times the contract's, from three seeds (some 23,000
+  reparses of Rust and JSON), every incremental parse with no error equalled
+  the fresh parse, and every fresh parse had an error exactly when the
+  incremental one did.
+
+**What a range answers** is the core's rule (`query::captures_in`), so the
+model and every implementation answer alike: the captures whose node
+shares a byte with the range, or, when the node or the range is empty,
+starts within it, its ends included; each once; by start, the longer
+first, then by pattern, then by capture. A range that is not two positions
+in order is refused. The port is asked about the range widened by a byte on
+each side: tree-sitter leaves out a node that only touches an end of its
+byte range, and answers nothing of an empty one.
+
+**A session and the worker.** A `Session` is one text's parse state: its
+grammar and parser, its `Source`, its consumers, the last tree parsed (the
+base, delivered or not) and the newest revision it has been told of.
+
+1. A round asks the source for the text as it is now and the patch since
+   the base's revision, taken together under the document's lock
+   (`Source::latest`, which `editor_ffi::snapshot::Source` implements over
+   a snapshot's weak hold on its document's text). A text gone ends the
+   session; one at the base's revision needs nothing.
+2. With a base and a patch that chains from it, a clone of the base tree is
+   told each edit of the patch, in order, and the text reparsed with it;
+   otherwise (the first parse, a log that has forgotten the base's
+   revision, a patch that does not chain) it is parsed whole. The bytes go
+   from the snapshot's chunks to the parser; parsing never passes through
+   Lean. An incremental parse whose tree has an error or a missing node is
+   dropped and the text parsed whole (the fallback rule above).
+3. **The delivery rule.** The result is the new base. It is delivered only
+   if its revision is at least the newest the session has been told of;
+   delivering moves that revision to the result's, keeps the result and
+   hands it to each consumer. A result older than a revision the session
+   has been told of is stale: nobody sees it, and the session is queued
+   again. So the revisions delivered only grow.
+
+The `Worker` holds a queue of sessions, each in it at most once; a touch
+tells a session of a revision and queues it, and the worker takes one out
+before its round, so a touch during a round queues it again. Its loop
+blocks with no deadline while the queue is empty. The crate starts no
+thread.
+
+**Locks.** A round holds the session's work lock (its parser and base),
+which only the worker takes, and no other lock while it parses: it takes
+the document's lock only inside `Source::latest`, and the session's state
+lock only to deliver. A touch takes the registry's lock, then the
+session's state lock, then the worker's queue lock, each let go before the
+next where it can, and never the document's: the edit paths touch once the
+edit is made and the document's lock let go. There is no cycle. A consumer
+is called under the session's state lock and must not call back into it.
+
+**In `editor-ffi`** the syntax service is one process-wide registry of the
+attached documents by key, the tree-sitter adapter, and one worker thread
+named `syntax`, started at the first attach. Every edit path of a document
+(a replace, a transaction, an inverse) touches it, and freeing a document
+detaches it. A question of captures is refused as not attached for a
+document not in the registry, and otherwise forwarded to the document's
+session (`Session::captures`), whose rule it is, pinned on the fake: it is
+answered at once from the tree the session last delivered, if that tree
+is of the snapshot's revision, and is otherwise refused as not parsed, so
+the editor thread never waits for a parse; the refusals are checked in the
+order not attached, wrong grammar, bad range, not parsed, which the Lean
+model reproduces. The wiring tests run on the process's registry, which
+the edit paths reach; keys are given out once in the process, so tests in
+parallel never share a session.
+
+**In Lean**, `Editor.SyntaxTree` is a port of its own: the grammars,
+attaching a text to a grammar, a query compiled, its capture names and its
+captures in a range, each refusal a value. Its model knows JSON alone: a
+pure parser of a subset of JSON (no escapes, no comments) that builds the
+tree `tree-sitter-json` builds, and a subset of the query language that
+refuses quantifiers, alternations, anchors, negated fields, predicates and
+groupings as unsupported. One contract, whose exact cases are the
+library's answers, holds the model and the real binding to the same
+properties. It is the seventh sub-port of the editor's port
+(`docs/design/lean-runtime.md`, "The editor's port is a composite").
+
+### Highlights, as built
+
+Built by the syntax roadmap's phase 2 (2026-11-16).
+
+**The queries ship with the grammar crates.** The port answers
+`Syntax::shipped_query(grammar, QueryKind::Highlights)`: the adapter's
+table holds each grammar crate's `HIGHLIGHTS_QUERY` (its
+`queries/highlights.scm`), so a query is pinned with the grammar it was
+written for by the same exact version, under the crate's licence, and an
+update is one version bump. A vendored copy could drift from the grammar's
+node types. A mode's config may give a query source of its own in place of
+the shipped one. Richer third-party query sets (nvim-treesitter's,
+Helix's) are set aside: their captures and predicates are written for
+those editors. The fake ships `PARENS_HIGHLIGHTS`; the Lean model ships a
+JSON query of its own in its query subset, since the library's uses an
+alternation the model refuses.
+
+**The highlighter and the highlight rule** (`editor_syntax::highlight`). A
+`Highlighter` is a compiled query and a face, or none, for each of its
+captures, which Lean's config chose; it is refused (`BadFaces`) unless
+there is one entry for each capture name. The rule turns a query's
+captures, in the core's order, into spans: a capture whose face is none is
+dropped, so it never hides a mapped one; an empty node is dropped; of the
+captures of one node the first, the earliest pattern, is kept, as
+tree-sitter-highlight does; and the core's order is kept, by start and the
+outer node first, so layout, which stacks spans in the order given, draws
+an inner node over its outer one. `highlight::fresh` (a whole parse, the
+whole text's captures and the rule) is the reference the tests compare
+with.
+
+**Which tree draws a snapshot** (`Session::highlights`), resolved once a
+frame and fixed for it, with the tree delivered last of revision M and a
+snapshot of revision N: nothing with no highlighter or no delivery; the
+tree itself when M is N; when M is older, the tree carried through the
+log's patch from M to N, asked of the session's `Source` (one
+`Source::latest`, under the document's lock); and nothing when the text
+has moved past N, the log has forgotten M, or M is newer. It takes the
+session's state lock, lets it go, and then the source's: never the work
+lock a parse holds, so it never waits for a parse.
+
+**Carried through the patch, not interpolated.** A range of N is mapped
+back to M (an end inside an edit's new span goes to its old start or old
+end), the captures there are drawn by the rule, and each span's parts
+outside every edit's old span are moved forward to N; a part inside an
+edited range is dropped, so text typed since M is plain until the reparse
+is delivered. Every end lands on a position of N. Set aside: editing a
+clone of the delivered tree with the patch and querying it against N (Zed's
+`SyntaxSnapshot::interpolate`), which draws an insertion inside a token in
+the token's face, but rests on where tree-sitter's `Tree::edit` moves
+nodes, a rule tree-sitter owns that the contract does not pin and the fake
+does not model. Carrying is ours, exact and tested on the fake; the cost is
+that typed characters are plain for one reparse.
+
+**Asked only for what is shown.** The highlights are the text's own spans
+in layout (`editor_layout::scene::TextSpans`, carried on a `TextRef`), and
+layout asks a source only for the bytes of the rows it lays out, in a frame
+and in the rows and move queries alike. `editor-ffi` hands layout a
+document's session as those spans (`Syntaxes::spans`), from the one
+function that makes a `TextRef` of a snapshot (`display::text_ref`), so a
+frame and a query of one snapshot see the same spans. There is no
+whole-text highlight pass on any thread.
+
+**A delivery is reported.** The first highlighter set on a session
+subscribes a consumer (`ParsedNotice`) that pushes one `EventKind::Parsed`
+(tag 13) from the library's source, the syntax service's id 6, onto the
+editor queue for each delivery. Lean's host hands it to its loop, which
+changes no state and publishes a scene, laid out with the new tree: the
+old highlights stay until then, and a file is highlighted on open with no
+key pressed. The consumer takes only the queue's lock, under the session's
+state lock, which nothing takes the other way round.
+
+**An attach with the grammar a document has keeps its session**, its tree
+and its highlighter, so a switch between two modes of one grammar does not
+draw the text plain again; another grammar replaces the session and drops
+the highlighter, and a detach drops both.
+
+**The C functions** are `editor_ffi_syntax_shipped_query` (a grammar and a
+kind's tag in, the source in a `RawText` with a status out) and
+`editor_ffi_syntax_highlight` (a snapshot, a query and the faces in, as a
+list of strings in the borrowed layout, the empty string none; a status
+out: highlighted, not attached, wrong grammar, bad faces). `SyntaxQuery`
+holds its query in an `Arc`, so a highlighter outlives the query's handle.
+In Lean, a major mode's `syntaxTree` says the grammar, the query's source
+and config's capture faces, and setting the mode attaches and highlights
+its buffer's text (`lean/Editor/Highlight.lean`).
+
+**Open questions:**
+
+- Cancelling a parse a newer revision has overtaken, with tree-sitter's
+  progress callback: a stale parse runs to its end today, and only its
+  delivery is withheld.
+- A pool of workers, where one thread parses every document in turn.
+- A job's wait for a parse, in place of the test-only settle.
+- Coalescing the `Parsed` events of a burst of deliveries: one event for
+  each delivery today, bounded by the edits, each of which already
+  published.
+- A fallback of a capture dotted more than once to its longest mapped
+  prefix (`a.b.c` to `a.b`): today it falls to its first component only.
+- Highlighting again the buffers whose major mode a reload changed.
+- Keeping a compiled highlights query per grammar and source across
+  buffers, in place of one compiled each time a mode is set.
+- Drawing typed text in its token's face before the reparse, by
+  interpolating the tree (set aside above).
+
+### Injections, indentation and text objects, as built
+
+Built by the syntax roadmap's phase 3 (2026-11-16).
+
+**Where each query comes from.** The port's `QueryKind` is `Highlights`,
+`Injections`, `TextObjects` and `Indents`, and the adapter's table lists,
+for each grammar, the queries it ships by kind. A grammar crate's own query
+is used wherever it ships one, as phase 2 decided for highlights:
+
+| Grammar | Highlights | Injections | Text objects | Indents |
+|---|---|---|---|---|
+| `rust` | the crate's | the crate's (a macro's or a macro rule's token tree, as Rust, its children included) | ours | ours |
+| `json` | the crate's | none | none | none |
+| `markdown` | the crate's, of the block grammar | the crate's, of the block grammar (a fence's code in the language its info string names) | none | none |
+
+`tree-sitter-rust` 0.24.2 ships no `indents.scm` or `textobjects.scm`, so
+Rust's are this repository's (`crates/editor-syntax-treesitter/queries/rust/`,
+GPL-3.0-or-later), each opening with a comment naming the Lean rule that
+reads it, with nvim-treesitter's capture names so a config author can read
+them. Third-party query sets are set aside for the reason phase 2 gave:
+their captures and directives are written for their own editors' rules
+(nvim-treesitter-textobjects' `#make-range!`, nvim's `@indent.align` with
+`#set!` metadata, Helix's `#same-line?` and `@outdent`), which tree-sitter's
+Rust crate does not evaluate and our rules do not read. Drift is guarded
+twice: the contract's `SHIPPED` (every kind a corpus lists compiles), and
+real-only Lean checks that the capture names of Rust's shipped indents and
+text objects are among the names their rules read. A mode's config may
+replace any of the four with a source of its own; an empty source captures
+nothing, which turns that part off. The indents query's `>` is a branch
+only as a generic list's closing angle bracket (`type_arguments`,
+`type_parameters`), never as a comparison leading a continuation row, which
+keeps that row's level (the plan review's advice; the Rust indent fixture
+has such a row).
+
+**Markdown is `tree-sitter-md`'s block grammar alone.** `tree-sitter-md`
+0.5.4 (MIT, the tree-sitter-grammars project's, the one nvim, Helix and Zed
+use) is depended on with no features: its `parser` feature only adds a
+wrapper over tree-sitter the adapter does not use. Its inline grammar is not
+listed: in a sweep of 4,000 random incremental reparses on 2026-11-16, 598
+gave a tree other than a fresh parse's with no error in it, so the core's
+fallback would not catch them and `INCREMENTAL` would fail; the block
+grammar's 6,000 all equalled the fresh parse. So inline Markdown (emphasis,
+code spans, links) is not highlighted, and the block grammar's injection of
+each `(inline)` node as `markdown_inline` names a grammar the service does
+not have. A Markdown tree may say it has an error with no error node the
+walk shows (a heading marker that ends the text), which only makes the core
+parse it whole.
+
+**What the port gains.** `Syntax::matches` (a query's matches, each with
+its captures, and each captured node's named children), `pattern_settings`
+(a pattern's `#set!`s) and `parse_in` (the tree of the bytes in some ranges
+only, parsed whole, nodes keeping the text's offsets and points; the
+adapter sets the parser's included ranges and sets them back after). A
+leaf of tree-sitter's may run from one range into the next, its lexer going
+on at the next range's start, so `IN_RANGES` holds a leaf to starting and
+ending in the ranges, not to lying within one; what a leaf holds of a gap is
+not the layer's, and a layer's spans are cut to its ranges.
+
+**The injection rule** (`editor_syntax::inject`). Each match of an
+injections query over a tree's ranges says one injection: its language,
+the text of its first `injection.language` capture, trimmed and lower-cased
+in ASCII, or else its pattern's `injection.language` setting; its content,
+the ranges of its `injection.content` captures, each node's named children
+taken out unless the pattern sets `injection.include-children` (so a
+fence's code keeps its punctuation and leaves out a block quote's `> `),
+cut to the parent's ranges and made one where they touch. A match injects
+nothing with no language, no range left, ranges that are the parent's own,
+or a language not known: nothing aliases a name. Each match is a layer of
+its own; `injection.combined` is not built.
+
+**Layers in a round.** A session's round finds the new tree's layers, and
+each layer's own down to three below the host, each parsed whole in its
+ranges by a parser kept for its grammar, on the worker. A tree parsed whole
+equals a fresh parse with nothing to prove, and injected regions are small.
+The round reads the injections and their generation once, briefly under the
+state lock (nothing takes the state lock and then the work lock). When only
+the injections changed, the base tree is kept and its layers found again,
+and the result is delivered at the same revision when the layers differ
+from the base's (by language, grammar, depth and ranges, which fix a
+layer's tree); otherwise the round is up to date, a language's new faces
+being read when highlights are asked. So the layers a mode's injections
+find are drawn with no key pressed, and a mode set over a text with nothing
+to inject reports no parse.
+
+**Layers drawn over the host.** A snapshot's highlights are the host's
+spans, then each layer's, by depth and then by start: its language's
+highlighter's spans of its tree, cut to its ranges and carried through the
+patch as the host's are. Layout stacks spans in the order given, so an
+injected span is drawn over the host's, and where the injected language has
+no face the host's shows through. The faces are one table, the host's
+names then each language's, no name twice. A layer whose language is gone,
+or is now of another grammar, is not drawn.
+
+**Measured** by hand on 2026-11-16, in a release build on the owner's
+machine: a round after an edit of `crates/editor-layout/src/frame.rs`
+(138,437 bytes, the largest Rust file in the repository, 392 macro layers)
+takes 10.0 ms at the median and 10.8 ms at most over 20 runs, under a
+16 ms frame, so reusing a layer's tree across rounds stays an open
+question.
+
+**Kept queries.** A session keeps one query of each structural kind it is
+given (`Session::keep`), and answers a kept query's names and captures in a
+range from the tree delivered (`Session::kept_captures`), refused, in this
+order, with `NoQuery`, `BadRange` and `NotParsed`. A structural question
+before its reparse is delivered is refused, not carried as highlights are:
+an indent level or a text object of a tree that lacks the latest edit would
+be wrong, not stale, and the caller keeps the row's indent or finds no
+object. An attach with the same grammar keeps the kept queries and the
+injections; a detach, or another grammar, drops them.
+
+**The C functions** are `editor_ffi_syntax_inject`,
+`editor_ffi_syntax_inject_language` (a language's name, its highlights
+query and faces, and its injections query or null),
+`editor_ffi_syntax_keep`, `editor_ffi_syntax_kept_names` and
+`editor_ffi_syntax_kept_captures`, each with a status of its own; a kind
+crosses as a tag, 0 to 3. In Lean, entering a major mode with a syntax tree
+injects, gives a language for each grammar, and keeps the text objects and
+indents queries (`lean/Editor/Highlight.lean`); the indent rule
+(`lean/Editor/Indent.lean`) and the text-object rule
+(`lean/Editor/Evil/TreeObjects.lean`) are Lean's, over plain rows.
+
+**Open questions:**
+
+- Reusing an injected layer's tree across rounds (measured above).
+- Listing a grammar that is only ever parsed whole as an injected layer:
+  Markdown's inline grammar.
+- Language aliases for injections (`rs`, `jsonc`), and where they are
+  configured.
+- `injection.combined`: one layer of several matches.
+- A structural question asked before its reparse is delivered: a macro or
+  `.` that runs a text object right after an edit, a wait for a parse, or
+  carrying.
+- Text objects and indent levels inside injected layers: they are answered
+  from the host tree only today.
 
 ## Built in Lean on these services
 

@@ -5,10 +5,11 @@ import Editor.Evil.Motions
 # Evil's text objects
 
 Vim's text objects as vocabulary entries (`Editor/Vocabulary.lean`, "Text
-objects"), the table the operate command and the select command look names
-up in (`objects`), and the select command (`selectObject`), which sets a
-visual selection to an object (`docs/design/keymaps-and-modes.md`, "Text
-objects as built"). The names are the ones the Vim scheme's default tables
+objects"), their table (`vimObjects`), and the select command
+(`selectObject`), which sets a visual selection to an object
+(`docs/design/keymaps-and-modes.md`, "Text objects as built"). The table the
+operate command and the select command look names up in, `Evil.objects`, is
+these and the syntax tree's (`Editor/Evil/TreeObjects.lean`). The names are the ones the Vim scheme's default tables
 bind keys to (`Editor/InputScheme/Vim/Default.lean`). Nothing here names a
 key. What an operator does with an object is the operate command's
 (`Editor/Evil/Operators.lean`).
@@ -486,6 +487,56 @@ def openingOf (text : TextId) (bracket : Bracket) (count p : Nat) : TextM (Optio
     reached := found
   return some reached
 
+/-- The ends of Vim's inner block between the bracket at `opening` and its
+partner at `closing`: from the position after the opening bracket, past a
+line break that ends its line, up to the cell before the closing bracket,
+passed back over the blanks and blank lines before it when only blanks are
+before it in its line; and whether that closing bracket's line was passed
+back over, which Vim calls `sol`. `last` is the text's last line
+(`lastLine`). The part of `current_block` that `innerBetween` shares. -/
+def innerEnds (text : TextId) (last opening closing : Nat) : TextM (Nat × Nat × Bool) := do
+  let start := (← incl text last opening).1
+  let mut sol ← atLineStart text closing
+  let mut stop := (← decl text closing).1
+  while stop < (← text.motion .lineFirstNonBlank stop) do
+    sol := true
+    let (p, step) ← decl text stop
+    stop := p
+    if step != .within then
+      break
+  return (start, stop, sol)
+
+/-- The span of Vim's inner block whose ends `innerEnds` found: in a visual
+state inclusive, through the closing bracket's line's start when it was
+passed back over; under an operator, up to the start of the closing
+bracket's line when it was passed back over, so an operator takes whole
+lines, and otherwise inclusive, or empty at `start` when there is nothing
+between. -/
+def innerSpan (text : TextId) (last start stop : Nat) (sol visual : Bool) : TextM Vocabulary.Span :=
+  do
+  if visual then
+    let stop ←
+      if sol && stop < (← text.motion .lineEnd stop) then
+        pure (← inc text last stop).1
+      else
+        pure stop
+    return { start, stop, reach := .inclusive }
+  if sol then
+    return { start, stop := (← incl text last stop).1 }
+  if start ≤ stop then
+    return { start, stop, reach := .inclusive }
+  return { start, stop := start }
+
+/-- Vim's inner block between the bracket at `opening` and its partner at
+`closing`, as `i{` takes it (`innerEnds`, `innerSpan`): what a syntax
+tree's inner object between two brackets covers
+(`Editor/Evil/TreeObjects.lean`), so it is the same code `i{` runs. -/
+def innerBetween (text : TextId) (opening closing : Nat) (visual : Bool) : TextM Vocabulary.Span :=
+  do
+  let last ← lastLine text
+  let (start, stop, sol) ← innerEnds text last opening closing
+  innerSpan text last start stop sol visual
+
 /-- Vim 9.1's `current_block`: the block of `bracket` round the cursor, with
 its brackets when `include` and without them otherwise ("Text objects as
 built"). -/
@@ -528,15 +579,7 @@ def currentBlock (text : TextId) (bracket : Bracket) (around : Bool) (within : V
   -- Inside the brackets; a closing bracket that only blanks are before in
   -- its line is passed back over, with the blank lines before it.
   repeat
-    start := (← incl text last opening).1
-    sol ← atLineStart text closing
-    stop := (← decl text closing).1
-    while stop < (← text.motion .lineFirstNonBlank stop) do
-      sol := true
-      let (p, step) ← decl text stop
-      stop := p
-      if step != .within then
-        break
+    (start, stop, sol) ← innerEnds text last opening closing
     -- In a visual state, a block no bigger than the selection is the next
     -- one out.
     if visual && start ≥ oldStart && stop ≤ oldEnd && start != stop then
@@ -547,15 +590,7 @@ def currentBlock (text : TextId) (bracket : Bracket) (around : Bool) (within : V
       closing := partner
     else
       break
-  if visual then
-    if sol && stop < (← text.motion .lineEnd stop) then
-      stop := (← inc text last stop).1
-    return some { start, stop, reach := .inclusive }
-  if sol then
-    return some { start, stop := (← incl text last stop).1 }
-  if start ≤ stop then
-    return some { start, stop, reach := .inclusive }
-  return some { start, stop := start }
+  return some (← innerSpan text last start stop sol visual)
 
 /-- The block object called `name`, of `bracket`, with its brackets when
 `include`. -/
@@ -586,9 +621,11 @@ def innerBrace : Vocabulary.TextObject :=
 def aBrace : Vocabulary.TextObject :=
   blockObject "a-brace" .curly true
 
-/-- The table the operate and select commands look a text object's name up
-in: one entry for each name the Vim scheme's default tables bind a key to. -/
-def objects : Array Vocabulary.TextObject :=
+/-- Vim's own text objects: an entry for each name of Vim's the Vim scheme's
+default tables bind a key to. `Evil.objects`, which the operate and select
+commands look a name up in, is these and the syntax tree's
+(`Editor/Evil/TreeObjects.lean`). -/
+def vimObjects : Array Vocabulary.TextObject :=
   #[innerWord, aWord, innerBigword, aBigword, innerDoubleQuote, aDoubleQuote, innerSingleQuote,
     aSingleQuote, innerBackquote, aBackquote, innerParen, aParen, innerBracket, aBracket,
     innerBrace, aBrace]

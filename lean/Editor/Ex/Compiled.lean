@@ -1,4 +1,5 @@
 import Editor.Buffers
+import Editor.Compile
 import Editor.Config.Registry
 import Editor.Ex
 import Editor.Files
@@ -18,7 +19,9 @@ drops it.
   (`Action.call`).
   - `ex` opens the ex line, and runs the line it is answered
     (`Ex.exCommand`). A host must be handed the minibuffer's commands too
-    (`Editor/Minibuffer/Compiled.lean`) for that prompt to be answered.
+    (`Editor/Minibuffer/Compiled.lean`) for that prompt to be answered, and
+    the shell's commands and job (`Editor/Shell/Compiled.lean`) for a `:!`
+    line or a filter to run.
   - `quit` asks the editor to quit, and says a refusal in the echo area
     (`Ex.quitCommand`).
   - `save-and-quit` saves the buffer of the window it was called with and
@@ -44,9 +47,10 @@ drops it.
   - `e!` runs `edit-file` with `true` first, and takes text: with no
     argument the reload is forced, the file's text taken as one step that
     `u` undoes ("take theirs"); with a path it opens it as `e` does, since
-    buffers persist and nothing is discarded. `!` is not parsed: `e!` and
-    `w!` are names of their own (`Editor/Ex/Line.lean`), each a binding
-    with fixed arguments (`Binding.arguments`).
+    buffers persist and nothing is discarded. Only a leading `!` is
+    parsed, as the shell's: `e!` and `w!` are names of their own
+    (`Editor/Ex/Line.lean`), each a binding with fixed arguments
+    (`Binding.arguments`).
   - `q` runs `quit` and takes nothing. It quits the editor, not the
     window the line was asked from: no shipped command splits a window.
   - `wq` runs `save-and-quit` and takes nothing.
@@ -60,6 +64,13 @@ drops it.
   - `bd` runs `close-buffer` and takes text: the rest of the line is the
     name of the buffer to close, and with none it closes the buffer of the
     window the line was asked from.
+  - `compile` runs `compile` (`Editor/Compile.lean`) and takes text: the
+    rest of the line is the command line, run in the buffer's workspace;
+    with none it asks for one. A host must be handed the compile mode's
+    commands and job (`Editor/Compile/Compiled.lean`).
+  - `recompile` runs `recompile` and takes nothing: it reruns the
+    workspace's last line.
+  - `kill-compilation` runs `kill-compilation` and takes nothing.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -93,6 +104,9 @@ def bindings : Array Binding :=
     { name := "reload", command := reloadName },
     { name := "b", command := Buffers.switchName, takes := .text },
     { name := "ls", command := Buffers.listName },
-    { name := "bd", command := Buffers.closeName, takes := .text }]
+    { name := "bd", command := Buffers.closeName, takes := .text },
+    { name := "compile", command := Compile.compileName, takes := .text },
+    { name := "recompile", command := Compile.recompileName },
+    { name := "kill-compilation", command := Compile.killName }]
 
 end Editor.Ex

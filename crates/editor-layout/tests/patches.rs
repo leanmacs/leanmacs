@@ -41,11 +41,7 @@ impl Changes for Refused {
 
 /// The text `text` as `key`, its changes pulled through `changes`.
 fn text_ref(key: u64, text: &Text, changes: Arc<dyn Changes>) -> TextRef {
-    TextRef {
-        key: TextKey(key),
-        snapshot: text.snapshot(),
-        changes,
-    }
+    TextRef::fixed(TextKey(key), text.snapshot()).with_changes(changes)
 }
 
 /// A scene of one view of each of `texts`, 4 cells wide and 10 rows tall.

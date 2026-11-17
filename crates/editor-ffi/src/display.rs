@@ -111,6 +111,7 @@ use crate::document::RawText;
 use crate::log::RawWords;
 use crate::render::{PRESENTER, Presenter};
 use crate::snapshot::{Snapshot, Source};
+use crate::syntax::syntaxes;
 use crate::text;
 use crate::words::Writer;
 
@@ -135,12 +136,18 @@ impl Changes for Source {
     }
 }
 
-/// The text a snapshot handle stands for, as layout takes it.
+/// The text a snapshot handle stands for, as layout takes it: its key, its
+/// text, its document's changes, and, when its document is attached to the
+/// syntax service, its highlights as its own spans
+/// ([`crate::syntax::Syntaxes::spans`]). A scene's views and the rows and
+/// move queries all make their text here, so a frame and a query of one
+/// snapshot see the same spans.
 pub fn text_ref(snapshot: &Snapshot) -> TextRef {
-    TextRef {
-        key: TextKey(snapshot.key()),
-        snapshot: snapshot.text().clone(),
-        changes: Arc::new(snapshot.source().clone()),
+    let text = TextRef::fixed(TextKey(snapshot.key()), snapshot.text().clone())
+        .with_changes(Arc::new(snapshot.source().clone()));
+    match syntaxes().spans(snapshot.key()) {
+        Some(spans) => text.with_spans(spans),
+        None => text,
     }
 }
 

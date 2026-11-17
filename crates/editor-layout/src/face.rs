@@ -17,7 +17,10 @@
 //! 1. (highest) the selection, drawn in the face [`SELECTION_FACE`];
 //! 2. the decorations of the view, a later one in the view's list over an
 //!    earlier one;
-//! 3. (lowest) the face [`DEFAULT_FACE`]; and where that leaves an
+//! 3. the text's own spans, a syntax's highlights
+//!    ([`TextSpans`](crate::scene::TextSpans), carried on the view's
+//!    text), a later one in the text's order over an earlier one;
+//! 4. (lowest) the face [`DEFAULT_FACE`]; and where that leaves an
 //!    attribute unset, the base value: no family, 16 points, weight 400,
 //!    upright, black on white, no underline, no strike-through, and lines
 //!    of the font's own height ([`FontSpec::default`], [`BASE_FOREGROUND`],
@@ -29,13 +32,15 @@
 //! unselected window's `mode-line.inactive`, when the scene names one),
 //! over [`MODE_LINE_FACE`], over the default face; and a cursor's face is
 //! over the default face. A name
-//! nothing defines sets nothing. A source of decorations added later
-//! (syntax highlighting) says where it is in this order when it is added.
+//! nothing defines sets nothing. A source of decorations added later says
+//! where it is in this order when it is added.
 //!
 //! [`Faces::resolve`] is that rule for a stack of faces given lowest
 //! first, under the default face. The frame builds a run's stack in the
-//! order above ([`frame`](crate::frame)), and so does a query, from the
-//! selections and decorations of the last frame that showed its text.
+//! order above ([`frame`](crate::frame)), and so does a query: the text's
+//! own spans resolved for the snapshot asked, as the frame of that
+//! snapshot resolves them, under the selections and decorations of the
+//! last frame that showed its text.
 //!
 //! # What is font and what is paint
 //!

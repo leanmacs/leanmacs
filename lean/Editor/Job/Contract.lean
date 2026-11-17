@@ -29,7 +29,9 @@ which is what shows those scripts true. And so do the watch requests,
 `fileWatchProperties`, last: against the model and the fake, which each
 property's scripts tell what each command changes on disk, and against the
 library's watch service on real files, each property in a temporary
-directory.
+directory. A job's posts have a list of their own, `postProperties`, last:
+against the model, and against the runner over the fake clock and over the
+library's timer service, each with a host that records what it is handed.
 
 Every property is an inequality. A real clock only promises "not before": a
 wait may return late, and time passes between two requests. So nothing here
@@ -675,6 +677,15 @@ def ranOk (command : Process.Command) (limit : Nat := roomyOutput) : JobM Proces
 def errBytes : ByteArray :=
   "err".toUTF8.push 0xFF
 
+/-- What the fed run's property feeds `/bin/cat`: lines, a NUL and the byte
+`FF`, which is not UTF-8. -/
+def fedBytes : ByteArray :=
+  ("b\nc\na\n".toUTF8.push 0 |>.push 0xFF).push 10
+
+/-- `/bin/cat` in `directory`. -/
+def cat (directory : System.FilePath) : Process.Command :=
+  { program := "/bin/cat", directory }
+
 /-- The script that writes `out` and a line feed, `err` and the byte `FF`, and
 ends with the status 3. -/
 def runScript : String :=
@@ -801,6 +812,28 @@ feed. -/
 def longLine : ByteArray :=
   (String.ofList (List.replicate 4999 ' ')).toUTF8 ++ "x".toUTF8
 
+/-- The script of the streaming child that pauses between two lines: `one`,
+then it waits, polling every 10 ms, until there is a file `go` in the
+directory its first argument names, then `two`. -/
+def pausingScript : String :=
+  "echo one; while [ ! -e \"$1/go\" ]; do sleep 0.01; done; echo two"
+
+/-- The child that pauses between two lines (`pausingScript`), in and on
+`root`. -/
+def pausing (root : System.FilePath) : Process.Command :=
+  { program := "/bin/sh", arguments := #["-c", pausingScript, "sh", root.toString]
+    directory := root }
+
+/-- What releases the pausing child: makes the file `go` in `root`. -/
+def release (root : System.FilePath) : Process.Command :=
+  sh root "touch go"
+
+/-- What the pausing child does, as the model's script: on the model it is
+released when the job clock has passed its pause. -/
+def pausingStream (root : System.FilePath) : Process.StreamScript :=
+  { command := pausing root
+    steps := #[.write .out "one\n".toUTF8, .pause 500, .write .out "two\n".toUTF8] }
+
 /-- The properties every implementation of the job port's streaming process
 requests has. -/
 def streamProperties : List ProcessProperty :=
@@ -895,7 +928,23 @@ def streamProperties : List ProcessProperty :=
       streams := fun root => #[{ command := sh root "/bin/sleep 600", steps := #[.awaitClosed] }]
       holds := fun root => do
         discard <| started (sh root "/bin/sleep 600") (lines 64 true)
-        return true }]
+        return true },
+    -- Gated, not timed: the real child waits for a file the job makes, and
+    -- the model's is released by the job clock passing its pause. The run
+    -- that makes the file is a run of the model's that does nothing.
+    { name :=
+        "a child that pauses between two lines delivers the first, alone and with no end, before it is released, and the second with its end after it"
+      streams := fun root => #[pausingStream root]
+      scripts := fun root => #[{ command := release root, reply := wrote "" }]
+      holds := fun root => do
+        let child ← started (pausing root) (lines roomyOutput)
+        let first ← delivered child
+        discard <| ranOk (release root)
+        let rest ← toTheEnd child
+        return first.stdout == .lines (linesFrom ["one"]) && first.stderr == .lines #[] &&
+            first.ended.isNone &&
+            linesOf rest .out == linesFrom ["two"] &&
+            endOf rest == some (.exited (.code 0)) }]
 
 /-- The properties every implementation of the job port's process requests
 has. -/
@@ -985,6 +1034,32 @@ def processProperties : List ProcessProperty :=
               match within with
               | .ok ran => ran.exit == .code 0
               | .error _ => false },
+      { name :=
+          "a run fed its standard input hands it to the child whole, then end of file: `/bin/cat` answers it byte for byte"
+        scripts := fun root =>
+          #[{ command := cat root,
+              reply := .ok { exit := .code 0, stdout := fedBytes, stderr := .empty } }]
+        holds := fun root => do
+          match ← Process.runWithInput (cat root) fedBytes roomyOutput 10000 with
+          | .ok ran =>
+            return ran.exit == .code 0 && ran.stdout == fedBytes && ran.stderr.isEmpty
+          | .error _ =>
+            return false },
+      { name :=
+          "a fed run that outlives its time limit is refused as timedOut, its child killed, and the job goes on"
+        scripts := fun root =>
+          #[{ command := sh root "/bin/sleep 600"
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+              takes := 600000 },
+            { command := sh root "exit 0"
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
+        holds := fun root => do
+          let late ← Process.runWithInput (sh root "/bin/sleep 600") fedBytes roomyOutput 50
+          let after ← ranOk (sh root "exit 0")
+          return (match late with
+              | .error (.timedOut 50) => true
+              | _ => false) &&
+              after.exit == .code 0 },
       { name := "output past the limit is refused as too large, with the stream and the limit"
         scripts := fun root =>
           #[{ command := sh root "printf 0123456789"
@@ -1240,5 +1315,53 @@ def fileWatchFailures (run : FileWatchProperty → IO (Job.Outcome Bool))
       return some s!"{property.name} (the job failed with `{message}`)"
     | .cancelled =>
       return some s!"{property.name} (the job was cancelled)"
+
+/-! ## Posts
+
+A property of a job's posts (`JobRequest.post`) is a job and the posts its
+host must have been handed once it has ended, in order. The model records
+them (`JobModel.posted`); the runner hands each to what it was spawned with,
+which a check records. -/
+
+/-- One property of a job's posts. -/
+structure PostProperty where
+  /-- What must hold, as a sentence; printed when it does not. -/
+  name : String
+  /-- The job. -/
+  job : JobM Unit
+  /-- The posts its host has been handed once it has ended, oldest first. -/
+  posted : Array Invocation
+
+/-- The invocation a post property posts, called `name`. -/
+def posting (name : String) (arguments : List Argument := []) : Invocation :=
+  { command := name, arguments }
+
+/-- The properties every implementation of a job's posts has. -/
+def postProperties : List PostProperty :=
+  [{  name := "a job's posts reach its host in the order they were made, a wait between them"
+      job := do
+        post (posting "first" [.nat 1, .str "a"])
+        sleep 1
+        post (posting "second")
+        post (posting "third" [.bool true])
+      posted :=
+        #[posting "first" [.nat 1, .str "a"], posting "second", posting "third" [.bool true]] },
+    { name := "a job that posts and then fails has made its posts"
+      job := do
+        post (posting "made")
+        throw "no thanks"
+      posted := #[posting "made"] }]
+
+/-- Runs each of `properties` with `run`, which runs the job to its end and
+answers what its host was handed, and returns the names of those whose posts
+were not the property's. -/
+def postFailures (run : JobM Unit → IO (Array Invocation)) (properties : List PostProperty) :
+    IO (List String) :=
+  properties.filterMapM fun property => do
+    let posted ← run property.job
+    if posted == property.posted then
+      return none
+    else
+      return some s!"{property.name} (posted {repr posted})"
 
 end Editor.JobContract

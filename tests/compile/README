@@ -1,0 +1,12 @@
+The fixture of contract-test's compile checks (lean/ContractTest.lean,
+compileChecks), which `mise run ffi-test` hands contract-test as its fourth
+argument. It must stay executable (mode 100755).
+
+- three-lines: prints `one`, waits for a file `go-1` in its working
+  directory, prints `two`, waits for `go-2`, prints `three` on standard
+  error and exits 2. Each wait polls every 10 ms and gives up with exit 9
+  after 10 s. contract-test runs it with `compile` over the real process
+  service, in a temporary directory of its own, and makes each file only
+  once it has seen the line before it in the compilation buffer: the pause
+  is the test's to end, not a timer's, so the check is deterministic. Shell
+  builtins and `sleep` only.

@@ -17,6 +17,7 @@ There is one editor loop; this module only wires it to a window:
 |---|---|---|
 | Display | the recorder, in cells of 8 by 16 | the real binding over a display on the system's fonts, bound to the window (`Ffi.Display.newSystem`, `Ffi.Display.present`) |
 | Clipboard | the host's own | the system's (`Clipboard.Real.system`), or `Clipboard.unavailable` when it cannot be opened, which the echo area says once |
+| Syntax tree | the real binding over the library's syntax service (`Editor/SyntaxTree/Real.lean`), made once over the table of snapshots the loop's text binding publishes | the same |
 | Driver | the script | none: the open command with the file, when one was given, what the echo area has to say, and a reload when config is loaded at start, are posted before the first event (`Options.starts`), and the window's events are the input |
 
 - **The main thread.** `main` calls `Ffi.windowRun`, which blocks until the
@@ -231,17 +232,21 @@ after the run is reached then.
 The exit status: 0 when the window ran with something drawing in it; 1 when
 it could not be opened, when nothing could draw in it (`nothingDrew`, said
 on stderr, and in the echo area while the loop still runs), or when the loop
-ended with an error. -/
+ended with an error. The editor's working directory is `workingDirectory`
+(`Headless.Collaborators.workingDirectory`): the process's, which `main`
+read at the edge. -/
 def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (display : Ffi.Display)
     (clipboard : ClipboardHandler) (said : Array String) (shutdown : IO Unit)
-    (processes : Process.Host) (patience : Option Nat := some configPatience) : IO UInt32 := do
+    (processes : Process.Host) (patience : Option Nat := some configPatience)
+    (workingDirectory : System.FilePath := "/") : IO UInt32 := do
   let shipped ←
     Headless.shipped (options.sysroot.getD "") options.oleans (options.config.getD "") IO.eprintln
         processes
   let collaborators :=
     { shipped with
       display := hostDisplay display platform
-      clipboard := pure clipboard }
+      clipboard := pure clipboard
+      workingDirectory }
   display.present
   let host ← Headless.start collaborators
   for start in options.starts plan said do
@@ -347,6 +352,7 @@ def main (arguments : List String) : IO UInt32 := do
   let home := environment.home.filter (!·.isEmpty) |>.map System.FilePath.mk
   let status ←
     host .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown (.window home)
+        (workingDirectory := environment.workingDirectory)
   IO.Process.exit status.toUInt8
 
 end Editor.Window

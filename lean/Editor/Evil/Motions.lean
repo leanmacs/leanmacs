@@ -258,14 +258,12 @@ def bigwordEnd : Vocabulary.Motion :=
   repeating "bigword-end" (.nextWordEnd .bigWord) .inclusive
 
 /-- The last line of `text`, as a row: the last row a cursor may rest in
-outside insert state. A text that ends in a line feed has an empty last row
-with no cell, which is no line: the last line is then the row before it.
-It is row 0 for the empty text and for a text that is one line feed. -/
-def lastLine (text : TextId) : TextM Nat := do
-  let rows ← text.rowCount
-  if rows > 1 && (← text.offsetOf ⟨rows - 1, 0⟩) == (← text.byteLength) then
-    return rows - 2
-  return rows - 1
+outside insert state, the row of its last line (`TextId.lineCount`). A text
+that ends in a line feed has an empty last row with no cell, which is no
+line: the last line is then the row before it. It is row 0 for the empty
+text and for a text that is one line feed. -/
+def lastLine (text : TextId) : TextM Nat :=
+  return (← text.lineCount) - 1
 
 /-- To the line's start, whatever the count: a `0` typed after a digit is
 part of a count, so none is ever given. -/

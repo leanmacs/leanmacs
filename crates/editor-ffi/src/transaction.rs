@@ -240,7 +240,11 @@ impl Document {
     /// returns the revision it produced ([`editor_text::Text::apply`]). A
     /// refused transaction changes nothing.
     pub fn apply(&self, transaction: &Transaction, origin: Origin) -> Result<Revision, ApplyError> {
-        self.lock().apply(transaction, origin)
+        let applied = self.lock().apply(transaction, origin);
+        if let Ok(revision) = applied {
+            crate::syntax::touched(self.key(), revision);
+        }
+        applied
     }
 }
 
@@ -342,7 +346,8 @@ impl Document {
     /// revision `base`. Refused, changing nothing, with
     /// [`ApplyStatus::Moved`] when the text's revision is not `base`, and
     /// then with [`ApplyStatus::BadChange`] when the steps do not walk the
-    /// whole of the text and of `source`, at character boundaries.
+    /// whole of the text and of `source`, at character boundaries. An
+    /// applied script tells the syntax service, once the lock is let go.
     pub fn apply_script(
         &self,
         base: u64,
@@ -350,16 +355,22 @@ impl Document {
         steps: &[Step],
         origin: Origin,
     ) -> Result<Revision, ApplyStatus> {
-        let mut text = self.lock();
-        if text.current().revision().get() != base {
-            return Err(ApplyStatus::Moved);
+        let applied = {
+            let mut text = self.lock();
+            if text.current().revision().get() != base {
+                return Err(ApplyStatus::Moved);
+            }
+            let changes = script_changes(steps, source).ok_or(ApplyStatus::BadChange)?;
+            text.apply(&Transaction::new(changes), origin)
+                .map_err(|refused| match refused {
+                    ApplyError::BadChange => ApplyStatus::BadChange,
+                    ApplyError::BadSelection => ApplyStatus::BadSelection,
+                })
+        };
+        if let Ok(revision) = applied {
+            crate::syntax::touched(self.key(), revision);
         }
-        let changes = script_changes(steps, source).ok_or(ApplyStatus::BadChange)?;
-        text.apply(&Transaction::new(changes), origin)
-            .map_err(|refused| match refused {
-                ApplyError::BadChange => ApplyStatus::BadChange,
-                ApplyError::BadSelection => ApplyStatus::BadSelection,
-            })
+        applied
     }
 }
 

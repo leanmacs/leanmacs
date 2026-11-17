@@ -23,7 +23,7 @@ process, its runtime is the only one that schedules editor code.
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
 | **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state"). As built it owns the renderer alone (the device, the surface, the glyph atlas, the quads kept per row), takes frames from a mailbox, and never lays out. `editor-ffi` starts it when a window opens and ends it when the window closes; idle, it is blocked with no deadline | Run Lean code; call layout or a shaper; hold a lock while it draws; touch the window's loop |
 | **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
-| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. The diff is built: the diff service, `editor-diff-imara`'s line diff of two snapshots on a thread of its own (`editor-diffs`), answering a job's `diff` request through the completion queue, so a long diff holds up neither a load nor the editor thread, which only applies the script it answers. Tree-sitter and fuzzy matching over long lists are not built. The fuzzy matcher that is built answers in the call, on the thread that asked, which is the editor thread (`rust-library.md`, "Fuzzy matching, as built") | Hold editor state |
+| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. The syntax worker is built: one thread named `syntax`, started by `editor-ffi` at the first attach and blocked with no deadline while it has nothing to parse, which reparses each attached document from snapshots and the edit log's patches, and parses its injected layers, each whole in its ranges, and holds no editor state. A result is tagged with the revision it parsed and handed out only if no newer revision has been told by then; a stale one is never delivered, and is only the base of the next reparse (`rust-library.md`, "Syntax, as built"). A round takes the session's state lock briefly at its start, to read the injections, and never the other way round, so an edit's touch and a change of injections never wait for a parse; when only the injections changed and they find new layers, the round delivers again at the same revision (`rust-library.md`, "Injections, indentation and text objects, as built"). Highlight queries do not run on the worker: they run at frame time, on the thread that lays the frame out (the editor thread, in Lean's publish), over the rows shown only, from the tree delivered last, carried through the edits since; no lock is nested on that path, and none of it waits for a parse (`rust-library.md`, "Highlights, as built"). The diff is built: the diff service, `editor-diff-imara`'s line diff of two snapshots on a thread of its own (`editor-diffs`), answering a job's `diff` request through the completion queue, so a long diff holds up neither a load nor the editor thread, which only applies the script it answers. Fuzzy matching over long lists is not built. The fuzzy matcher that is built answers in the call, on the thread that asked, which is the editor thread (`rust-library.md`, "Fuzzy matching, as built") | Hold editor state |
 
 Rust never calls Lean. The main thread and the services push events onto a
 queue, and the editor thread pulls them with a blocking call. Measured in
@@ -298,6 +298,14 @@ time, in order, on the editor thread.
     and followed by a scene. So is a major mode's on-enter action, which
     runs inside the command that set the mode. Built by the command loop's
     phase 8; before it the driver's run and a job's command were run bare.
+  - **A job is cancelled by a command, not by the flag.** No job reads
+    the flag. Under the Vim scheme `C-g` is bound in normal state to
+    `keyboard-quit` (`lean/Editor/Shell.lean`), which the key runs once it
+    has lowered the flag: it cancels the `:!` or filter running in the
+    focused buffer's workspace by that workspace's job key (`cancelJob`,
+    "Getting results back"), which kills its child, and says
+    `<line>: interrupted`, or `Quit` with nothing running. It is made of
+    state requests alone, so the flag it lowered cannot stop it.
   - **Only the command is checked.** The loop's own requests (keeping what
     it rolls back to, rolling back, publishing) are not, so a flag that is
     up never stops a rollback or a scene. **The follow is one of them**
@@ -920,6 +928,33 @@ transaction through. Where those come from is open.
     and a cancel ends the job, finished and not delivered or not, by
     `Jobs.cancel`, which takes it out of the table, so its command never
     runs. Before this only removing an owner or shutdown cancelled a job.
+- **A job posts a command while it runs** (`post`, `lean/Editor/Job.lean`;
+  2026-11-16): a request of the job port that holds an invocation, a
+  registered command's name and plain arguments, as a command starts a job
+  by name. It is answered at once, as a request for the shared
+  environments is, waits for nothing and moves no clock: there is no
+  back-pressure through it, so a job that posts often batches by itself.
+  The runner hands the invocation, on the job's thread, to what its host
+  gave it, unless the job was cancelled. The headless host keeps it in a
+  mailbox, with the job's id, and posts an event to the editor queue under
+  a source of its own (`Collaborators.posts`); the editor thread takes the
+  job's oldest post for each such event and, while the job is still in the
+  table, runs it as a delivery labelled `job <id> <name>` (`runPosted`,
+  `lean/Editor/Api.lean`). So a job's posts run in the order it made them,
+  each between two events, and all before its own command, whose wake-up
+  is posted after its last post. A cancelled or removed job's posts are
+  dropped, as its result is. The loop's driver on the models holds a job
+  at each post until the test says it arrives (`Loop.Driver.posted`,
+  `lean/Editor/Loop/Driver.lean`).
+  - **a command may key a job and cancel one** too: `startJob name
+    arguments (key := some key)` starts the job under a key, so it ends the
+    running job of that key first, and `cancelJob key` asks for the job of
+    a key to be ended. The cancels are kept in the state with the starts
+    (`EditorState.cancels`) and handed back in `Loop.Stepped.cancels`,
+    ahead of the loop's own; a command that is refused or interrupted
+    cancels nothing. `:!` runs its child under one key a workspace, and
+    `C-g` cancels it by that key ([keymaps-and-modes.md](keymaps-and-modes.md),
+    "The ex command line");
   
   An owner other than the registering one (a buffer or a view, whose jobs
   end with it) is not built. On the models the loop's driver
@@ -1636,11 +1671,22 @@ same editor queue.
   a window; [rust-library.md](rust-library.md), "Watching, as built").
 - A handler runs as a foreground command, or starts a job if it has real
   work to do.
+- **A parse delivered is an event.** The syntax worker pushes one `parsed`
+  event onto the editor queue for each delivery of a highlighted
+  document's parse; the loop changes nothing for it and publishes a scene,
+  which lays the text out with the new tree. The worker's consumer takes
+  only the queue's lock, under the session's state lock, which nothing
+  takes the other way round. Coalescing a burst of them is an open question
+  ([rust-library.md](rust-library.md), "Highlights, as built").
 - High-rate streams never reach the editor thread per item: terminal output
   goes to the grid inside Rust, and process output is framed and batched in
   Rust and reaches the job that reads it by pull, one completion a read on
   the completion queue, never the editor queue. The editor thread sees
-  only the job's result when the job ends.
+  the job's result when the job ends, and what the job posts while it
+  runs: a job that must show its progress, a compile streaming its output
+  into its buffer, posts a command by name with plain arguments
+  (`post`, below), batched by the job itself, at most one a pause between
+  reads.
 
 Subscriptions are registered by name and owner, and replaced by owner on
 reload. See [lean-runtime.md](lean-runtime.md).

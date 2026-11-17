@@ -106,6 +106,13 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   does not judge whether the editor may quit: the command that asks
   checks first (`quit`, `Editor/Api.lean`), since that needs the text
   store, and the loop decides when the editor leaves.
+- **A job is started by one request, and cancelled by another.**
+  `startJob` keeps the start, with its name, its arguments and its key if
+  it has one, in the state (`EditorState.starts`), and `cancelJob` keeps a
+  key (`EditorState.cancels`), until the loop hands them to its host once
+  the command has run to its end (`Editor/Loop.lean`, "Jobs from
+  commands"). A start of a key cancels the running job of that key, and a
+  cancel ends the job of its key; the host keeps the keys.
 - **A reload of the config is asked for by one request**, `reload`,
   which sets a flag of the state (`EditorState.reload`) until the loop
   hands it to its host, as `starts` holds the jobs a command asked for
@@ -154,18 +161,22 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   number of rows (`Editor/State.lean`, "The scroll margin"). It is never
   refused: any number is taken. A command reads the margin with a read of
   the state (`EditorState.scrollMargin`).
-- **Workspaces are changed by four requests** (`Editor/State.lean`,
+- **Workspaces are changed by five requests** (`Editor/State.lean`,
   "Workspaces"): `recordWorkspace` takes in what the finder answered for a
   directory, and is never refused; `registerWorkspace` makes a workspace
   that is not on this machine, and refuses `local`; `setWorkspaceValue` and
   `setProjectValue` set a value in a store, and refuse `noSuchWorkspace`
-  and `noSuchProject` (`WorkspaceRefusal`). A command reads them with a
+  and `noSuchProject` (`WorkspaceRefusal`); `setUnscopedValue` sets a
+  value in the store of the buffers outside any workspace, and is never
+  refused. A command reads them with a
   read of the state (`EditorState.workspaceOf?`, `workspaces`).
 - **What the finder is handed is asked by one request**,
   `workspaceSettings`: config's workspace roots and the config generation,
   which the loop answers from what it was told of the registry
   (`Editor/Command/Dispatch.lean`). Here, with no registry, it is answered
   no root and generation 0.
+- **Config's shell time limit is asked by one request**, `shellTimeLimit`,
+  which the loop answers the same way; here it is answered `none`.
 
 ## Where an addition goes
 
@@ -221,8 +232,12 @@ inductive StateRequest where
   | «show» (view : ViewId) (buffer : BufferId) (scroll selection : MarkerId)
   /-- Put `text` in the echo area. -/
   | message (text : String)
-  /-- Start the job registered under `name`, with `arguments`. -/
-  | startJob (name : String) (arguments : List Argument)
+  /-- Start the job registered under `name`, with `arguments`, under the key
+  `key` if it has one. -/
+  | startJob (name : String) (arguments : List Argument) (key : Option String := none)
+  /-- Cancel the job of the key `key`, if there is one, once the asking
+  command has run to its end. -/
+  | cancelJob (key : String)
   /-- Have the buffer `id` hold the file at `path`, whose stamp is `stamp`,
   with `ending` as the buffer's line ending. -/
   |
@@ -240,6 +255,8 @@ inductive StateRequest where
   | markChanged (id : BufferId) (stamp : File.Stamp) (found : Option File.Stamp) (told : Bool)
   /-- Mark the change on disk of the buffer `id`'s file as told. -/
   | tellChanged (id : BufferId)
+  /-- Make the buffer `id` read-only to editing commands, or not. -/
+  | setReadOnly (id : BufferId) (on : Bool)
   /-- Choose auto-reload on or off, for as long as the editor runs. -/
   | setAutoReload (on : Bool)
   /-- Whether auto-reload is in effect: a command's choice, or else config's
@@ -317,6 +334,12 @@ inductive StateRequest where
   /-- Config's display rules, in order, which the loop that runs the
   command answers with. -/
   | displayRules
+  /-- Have the unscoped store, of the buffers outside any workspace, keep
+  `value` under `name`. -/
+  | setUnscopedValue (name : String) (value : Value)
+  /-- How long a `:!` or a filter may run, in milliseconds, as config set
+  it, which the loop that runs the command answers with. -/
+  | shellTimeLimit
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -337,11 +360,13 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .show .. => Except LayoutRefusal Unit
   | .message _ => Unit
   | .startJob .. => Except JobRefusal Unit
+  | .cancelJob _ => Unit
   | .attachFile .. => Except BufferRefusal Unit
   | .beginSave .. => Except BufferRefusal Unit
   | .endSave .. => Except BufferRefusal Unit
   | .markChanged .. => Except BufferRefusal Unit
   | .tellChanged _ => Except BufferRefusal Unit
+  | .setReadOnly .. => Except BufferRefusal Unit
   | .setAutoReload _ => Unit
   | .autoReloadMode => Bool
   | .unfollow _ => Unit
@@ -371,6 +396,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setProjectValue .. => Except WorkspaceRefusal Unit
   | .workspaceSettings => Workspace.Settings × Nat
   | .displayRules => Array DisplayRule
+  | .setUnscopedValue .. => Unit
+  | .shellTimeLimit => Option Nat
 
 namespace EditorState
 
@@ -408,13 +435,15 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .focus view, state => state.focusWindow view
   | .show view buffer scroll selection, state => state.showBuffer view buffer scroll selection
   | .message text, state => ((), { state with echo := text })
-  | .startJob name arguments, state =>
-    (.ok (), { state with starts := state.starts.push { name, arguments } })
+  | .startJob name arguments key, state =>
+    (.ok (), { state with starts := state.starts.push { name, arguments, key } })
+  | .cancelJob key, state => ((), { state with cancels := state.cancels.push key })
   | .attachFile id path stamp ending, state => state.attachFile id path stamp ending
   | .beginSave id snapshot saved, state => state.beginSave id snapshot saved
   | .endSave id snapshot stamp, state => state.endSave id snapshot stamp
   | .markChanged id stamp found told, state => state.markChanged id stamp found told
   | .tellChanged id, state => state.tellChanged id
+  | .setReadOnly id on, state => state.setReadOnly id on
   | .setAutoReload on, state => ((), { state with autoReload := some on })
   -- Config's setting is the loop's to answer with (`Program.dispatched`):
   -- here, with no loop, a choice no command made is off.
@@ -458,6 +487,11 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   -- Config's rules are the loop's to answer with (`Program.dispatched`):
   -- here, with no loop, config has none.
   | .displayRules, state => (#[], state)
+  | .setUnscopedValue name value, state =>
+    ((), { state with workspaces := state.workspaces.setUnscopedValue name value })
+  -- Config's limit is the loop's to answer with (`Program.dispatched`):
+  -- here, with no loop, config set none.
+  | .shellTimeLimit, state => (none, state)
 
 end EditorState
 

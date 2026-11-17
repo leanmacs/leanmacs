@@ -55,6 +55,11 @@ It imports only the plain trees and the pure part of a child's environment
   as a buffer's locals are, so a reload leaves them.
 - **Registering** (`Table.register`) makes a workspace that is not found,
   for a location that is not `local`: its project is its remote's.
+- **The unscoped store** (`Table.unscoped`) is the store of the buffers
+  outside any workspace, which have no project either: one store, by name,
+  in place of both, as long as the session.
+  `:!` keeps the history and the output buffer of such buffers there
+  (`Editor/Shell.lean`).
 
 ## Adding to this
 
@@ -483,6 +488,10 @@ structure Table where
   /-- Each directory asked about, the location of its workspace or none, and
   the config generation it was found under. -/
   cache : Array (System.FilePath × Option Location × Nat) := #[]
+  /-- The store of the buffers outside any workspace: values by name, kept
+  for the session as a workspace's are. A buffer with no workspace has no
+  project either, so this one store stands in for both. -/
+  unscoped : Array (String × Value) := #[]
   deriving BEq, Repr
 
 /-- Where a command started in a buffer's name runs (`BufferId.workingDirectory`). -/
@@ -523,6 +532,15 @@ def workspaceValue? (table : Table) (location : Location) (name : String) : Opti
 def projectValue? (table : Table) (identity : Project.Identity) (name : String) : Option Value := do
   let (_, cells) ← table.projects.find? (·.1.identity == identity)
   (← cells.find? (·.1 == name)).2
+
+/-- The value the unscoped store keeps under `name`. -/
+def unscopedValue? (table : Table) (name : String) : Option Value :=
+  (table.unscoped.find? (·.1 == name)).map (·.2)
+
+/-- `table` with the unscoped store keeping `value` under `name`. Never
+refused: the store is always there. -/
+def setUnscopedValue (table : Table) (name : String) (value : Value) : Table :=
+  { table with unscoped := setCell table.unscoped name value }
 
 /-- `table` with `workspace` in it: a workspace already at its location
 keeps its root, its project and its store, and takes `workspace`'s branch;

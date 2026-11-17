@@ -124,7 +124,7 @@ run = "git ls-files -z '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' | xargs -0 clang-forma
 # The time limit turns a hang into a failure: a deadlock in the main-thread
 # hand-off, or a process that waits for a task still blocked in the library.
 [tasks.ffi-test]
-description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's and the job port's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean) and the editor executable"
+description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean) and the editor executable"
 depends = ["lean"]
 dir = "lean"
 timeout = "60s"
@@ -141,13 +141,18 @@ run = [
   # The same properties `lean-test` runs against the pure models, here against
   # the Rust library: the text port's, and the job port's over the timer
   # service. Its check of Lean's task pool pins no size, so LEAN_NUM_THREADS
-  # in the developer's shell does it no harm. Its two arguments are the
+  # in the developer's shell does it no harm. Its first two arguments are the
   # directory of the fixtures that stand in for mise in the checks of a
   # child's environment (tests/process-environment), and the directory of
   # the fixture that stands in for git in the workspace finder's checks,
   # whose properties `lean-test` runs against the finder's model
-  # (tests/workspaces).
-  ".lake/build/bin/contract-test ../tests/process-environment ../tests/workspaces",
+  # (tests/workspaces). Its third is the directory of the fixture `:!` runs
+  # over the real process service, which is also the editor's working
+  # directory in those checks (tests/shell). Its fourth is the directory of
+  # the fixture `compile` runs over the real process service (tests/compile),
+  # and its fifth the directory of the syntax fixtures, whose Rust fixtures the
+  # indent and text-object checks read (tests/syntax).
+  ".lake/build/bin/contract-test ../tests/process-environment ../tests/workspaces ../tests/shell ../tests/compile ../tests/syntax",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment.

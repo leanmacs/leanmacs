@@ -28,7 +28,9 @@ check (`Themes.problems`, `Editor/Themes/Check.lean`) holds that it does.
   common highlight captures; diff, gutter and review faces; and a
   block header. A dotted capture such as `keyword.control` or
   `function.builtin` is not a vocabulary face: the rule that draws it in the
-  face of its first component is the syntax roadmap's.
+  face of its first component is `Highlight.faceOf`'s
+  (`Editor/Highlight.lean`), whose default mapping is computed from
+  `syntaxCaptures`.
 - **A feature that draws a face not listed adds it here**, gives it a
   definition in the palette mapping (`Palette.theme`, `Editor/Face.lean`),
   and so in every shipped theme; the check fails until it has.
@@ -47,19 +49,24 @@ structure Entry where
   meaning : String
   deriving DecidableEq, Repr
 
+/-- Each top-level name of tree-sitter's common highlight captures, with what
+it is used for: the syntax faces are `syntax.` and each
+(`syntaxEntries`). -/
+def syntaxCaptures : Array (String × String) :=
+  #[("attribute", "an attribute or annotation"), ("comment", "a comment"),
+    ("constant", "a constant, builtin or not"), ("constructor", "a constructor"),
+    ("embedded", "code embedded in another language"),
+    ("function", "a function or method, where it is defined or called"), ("keyword", "a keyword"),
+    ("module", "a module or namespace's name"), ("number", "a numeric literal"),
+    ("operator", "an operator"), ("property", "a field or property"),
+    ("punctuation", "a bracket, delimiter or separator"),
+    ("string", "a string or character literal"), ("tag", "a markup tag"), ("type", "a type's name"),
+    ("variable", "a variable or parameter")]
+
 /-- The syntax faces declared ahead: `syntax.` and each top-level name of
 tree-sitter's common highlight captures, with what it is used for. -/
 def syntaxEntries : Array Entry :=
-  #[("attribute", "an attribute or annotation"), ("comment", "a comment"),
-        ("constant", "a constant, builtin or not"), ("constructor", "a constructor"),
-        ("embedded", "code embedded in another language"),
-        ("function", "a function or method, where it is defined or called"),
-        ("keyword", "a keyword"), ("module", "a module or namespace's name"),
-        ("number", "a numeric literal"), ("operator", "an operator"),
-        ("property", "a field or property"), ("punctuation", "a bracket, delimiter or separator"),
-        ("string", "a string or character literal"), ("tag", "a markup tag"),
-        ("type", "a type's name"), ("variable", "a variable or parameter")].map
-    fun (capture, what) =>
+  syntaxCaptures.map fun (capture, what) =>
     { name := ⟨s!"syntax.{capture}"⟩
       meaning :=
         s!"Text tree-sitter captures as `{capture}`, {what}: drawn by the syntax-tree-sitter roadmap, declared ahead." }

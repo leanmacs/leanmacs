@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use editor_process::contract::{
-    self, AFTER_REAP, CANCEL, ESCAPED, INPUT, INPUT_CLOSED, KILL, RUN, SHUTDOWN, SIGNAL,
+    self, AFTER_REAP, CANCEL, ESCAPED, INPUT, INPUT_CLOSED, KILL, RUN, RUN_INPUT, SHUTDOWN, SIGNAL,
     STRAGGLERS, STREAM_CANCEL, STREAM_LINE_TOO_LONG, STREAM_LINES, STREAM_SHUTDOWN, TOO_LARGE,
 };
 use editor_process::fake::{FakeChild, FakeInput, FakeOutput, FakeProcesses, Flaws};
@@ -104,7 +104,7 @@ fn a_fake_that_loses_what_is_written_to_a_childs_input_is_reported() {
         ..Flaws::default()
     });
 
-    assert_eq!(failures(&fake, &fake), [INPUT, STREAM_LINES]);
+    assert_eq!(failures(&fake, &fake), [RUN_INPUT, INPUT, STREAM_LINES]);
 }
 
 #[test]

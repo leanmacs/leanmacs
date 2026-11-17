@@ -6,6 +6,7 @@ import Editor.Evil.Objects
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
 import Editor.Evil.Scroll
+import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
 import Editor.InputScheme.Vim
 
@@ -28,7 +29,7 @@ they hold when config fails to load, and a reload does not replace them.
   | `insert`, `append`, `insert-line-start`, `append-line-end` | `Evil.insert`, `Evil.append`, `Evil.insertLineStart`, `Evil.appendLineEnd`: an insert before the cursor's cell, after it, at the line's first character that is not a blank, and at the line's end |
   | `self-insert` (`Vim.selfInsertCommand`) | `Evil.selfInsert`: typed text, in insert state and in the minibuffer |
   | `operate` (`Vim.operateCommand`) | `Evil.operate` over the compiled vocabulary, `Evil.operators`, `Evil.motions` and `Evil.objects` (`Editor/Evil/Operators.lean`) |
-  | `select-object` (`Vim.selectObjectCommand`) | `Evil.selectObject` over `Evil.objects`: a visual selection set to a text object (`Editor/Evil/Objects.lean`) |
+  | `select-object` (`Vim.selectObjectCommand`) | `Evil.selectObject` over `Evil.objects`, Vim's objects and the syntax tree's: a visual selection set to a text object (`Editor/Evil/Objects.lean`, `Editor/Evil/TreeObjects.lean`) |
   | `delete-char` | `Evil.deleteChar`: the cell under the cursor, which is the operator `delete` over the motion `right` |
   | `put-after`, `put-before` | `Evil.putAfter`, `Evil.putBefore`: the register the call names, after and before the cursor (`Editor/Evil/Registers.lean`) |
   | `open-below`, `open-above` | `Evil.openBelow`, `Evil.openAbove`: an empty line below and above the cursor's, and an insert on it |

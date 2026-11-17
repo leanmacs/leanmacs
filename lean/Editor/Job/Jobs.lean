@@ -26,6 +26,12 @@ moment it is started until its result is taken or its owner is removed.
   was waiting for the editor thread, has no entry, so `finish` finds nothing
   and no handler runs for it.
 - **`cancelAll`** cancels every job, for a runtime that is ending.
+- **A job's posts** (`JobRequest.post`) are handed, with the job's id, to
+  what the runtime gave `start`. The runtime runs one only while the job is
+  still in the table (`has`): a post of a job that was cancelled or removed
+  is dropped, as its result is. A runtime whose posts cross threads keeps
+  them in a `Mailbox`, which the job's thread pushes to and the editor
+  thread takes from, a job's oldest first.
 - **What a job holds is released.** A job that finished holds what its
   loads made until its command has run (`Editor/Job/Runner.lean`, "What a
   job holds"): whoever takes its result with `finish` runs the command and
@@ -49,12 +55,19 @@ def running (jobs : Jobs) : Nat :=
   jobs.table.entries.size
 
 /-- Starts `work` for `owner`, under `name`: its id, and the jobs with it.
-`finished` is what the runner calls, with that id, once the job has ended. -/
+`finished` is what the runner calls, with that id, once the job has ended,
+and `posted` what it calls with that id and each post the job makes. -/
 def start (jobs : Jobs) (owner : Config.Owner) (name : String) (work : Work)
-    (finished : Nat → BaseIO Unit) : BaseIO (Nat × Jobs) := do
-  let handle ← spawn jobs.services work (finished jobs.table.next)
+    (finished : Nat → BaseIO Unit) (posted : Nat → Invocation → BaseIO Unit := fun _ _ => pure ()) :
+    BaseIO (Nat × Jobs) := do
+  let handle ← spawn jobs.services work (finished jobs.table.next) (posted jobs.table.next)
   let (id, table) := jobs.table.add owner name handle
   return (id, { jobs with table })
+
+/-- Whether the job `id` is in the table: started, and neither taken nor
+removed nor cancelled. A post of a job that is not is dropped. -/
+def has (jobs : Jobs) (id : Nat) : Bool :=
+  jobs.table.entries.any (·.id == id)
 
 /-- Takes the job `id`, which has ended: its entry and how it ended, and the
 jobs without it. `none`, with nothing changed, if `id` is not in the table
@@ -99,5 +112,41 @@ def cancelAll (jobs : Jobs) : BaseIO Unit := do
     entry.handle.settle
 
 end Jobs
+
+/-- The posts of a runtime's jobs that the editor thread has not taken, each
+with its job's id, oldest first: a job's thread pushes one, and the editor
+thread takes it when the event that says so arrives. -/
+structure Mailbox where
+  /-- The posts. Every change to it is one atomic step. -/
+  entries : IO.Ref (Array (Nat × Invocation))
+
+namespace Mailbox
+
+/-- A mailbox with no post. -/
+def new : BaseIO Mailbox :=
+  return { entries := ← IO.mkRef #[] }
+
+/-- Adds `invocation`, a post of the job `id`, last. -/
+def push (mailbox : Mailbox) (id : Nat) (invocation : Invocation) : BaseIO Unit :=
+  mailbox.entries.modify (·.push (id, invocation))
+
+/-- Takes the oldest post of the job `id` out of the mailbox; `none` when it
+has none. The posts of one job are taken in the order it made them,
+whatever other jobs posted between them. -/
+def take (mailbox : Mailbox) (id : Nat) : BaseIO (Option Invocation) :=
+  mailbox.entries.modifyGet fun entries =>
+    match entries.findIdx? (·.1 == id) with
+    | some index =>
+      match entries[index]? with
+      | some (_, invocation) =>
+        (some invocation, entries.extract 0 index ++ entries.extract (index + 1) entries.size)
+      | none => (none, entries)
+    | none => (none, entries)
+
+/-- How many posts the mailbox holds. -/
+def size (mailbox : Mailbox) : BaseIO Nat :=
+  return (← mailbox.entries.get).size
+
+end Mailbox
 
 end Editor.Job

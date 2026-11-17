@@ -80,6 +80,15 @@ names a snapshot.
   it and goes on, or throws `FileError.describe` of it, as it chooses.
   Nothing about a file cancels a job or ends it.
 
+**The store's byte escape rule** is here, pure, for whatever must turn
+bytes that are not a text into one, or a text back into bytes, as the
+library does: the file model (`Editor/File/Model.lean`) and the shell's
+output and filters (`Editor/Shell.lean`). `File.decodeBytes` keeps each
+valid character as it is, each byte that starts none as its escape
+(`File.escape`, the character `U+10DC00` plus the byte) and a valid
+character that is itself an escape as the escapes of its bytes, so the way
+back, `File.encodeText`, is one-to-one.
+
 Which line ending a new line gets is the editor's policy, so the library
 sends the counts and `File.LineEndings.dominant` decides. The buffer keeps
 the answer (`Buffer.lineEnding`, `Editor/State.lean`), and the one
@@ -144,6 +153,54 @@ all. `none` for a file with no line break: the editor's default decides
 then. -/
 def LineEndings.dominant (endings : LineEndings) : Option LineEnding :=
   if endings.crlf > endings.lf then some .crlf else if endings.lf > 0 then some .lf else none
+
+/-- The escape of `byte`: the character the text store keeps a byte that is
+not valid UTF-8 as, `U+10DC00` plus the byte. -/
+def escape (byte : UInt8) : Char :=
+  Char.ofNat (0x10DC00 + byte.toNat)
+
+/-- The byte `character` is the escape of, if it is one: the escapes are the
+128 characters from `U+10DC80` to `U+10DCFF`. -/
+def escaped? (character : Char) : Option UInt8 :=
+  if 0x10DC80 ≤ character.toNat ∧ character.toNat ≤ 0x10DCFF then
+    some (character.toNat - 0x10DC00).toUInt8
+  else none
+
+/-- The text the store keeps `bytes` as: each valid character as it is,
+each byte that starts none as its escape, and a valid character that is
+itself an escape as the escapes of its four bytes.
+
+It walks the bytes a character at a time. Each step takes at least one byte,
+so the walk is over in at most as many steps as there are bytes. -/
+def decodeBytes (bytes : ByteArray) : String :=
+  Id.run do
+    let mut text := ""
+    let mut index := 0
+    for _ in [0:bytes.size] do
+      if index ≥ bytes.size then
+        break
+      match bytes.utf8DecodeChar? index with
+      | some character =>
+        if (escaped? character).isSome then
+          for offset in [0:character.utf8Size] do
+            text := text.push (escape (bytes.get! (index + offset)))
+        else
+          text := text.push character
+        index := index + character.utf8Size
+      | none =>
+        text := text.push (escape (bytes.get! index))
+        index := index + 1
+    return text
+
+/-- The bytes of `text` as a save writes them: an escape as the one byte it
+stands for, and every other character as its UTF-8. -/
+def encodeText (text : String) : ByteArray :=
+  text.foldl
+    (fun bytes character =>
+      match escaped? character with
+      | some byte => bytes.push byte
+      | none => bytes ++ (String.singleton character).toUTF8)
+    ByteArray.empty
 
 /-- What a save expects to find at its path. -/
 inductive Expect where

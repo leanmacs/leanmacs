@@ -461,6 +461,14 @@ A prompt is a request for one string, with a text to show beside the input
   shown buffer cannot be removed (`Editor/Buffers.lean`, "Close").
 - `scratchName` is the editor's one name for its empty buffer with no file:
   the initial state's, and the one left after the last buffer is closed.
+- A buffer may be **read-only** (`Buffer.readOnly`, set by `setReadOnly`,
+  which refuses `noSuchBuffer`): an edit of its text by a command is
+  refused where commands are dispatched (`Editor/Command/Dispatch.lean`,
+  "Read-only buffers"), and a committed text into it is dropped
+  (`Editor/Loop.lean`). `readOnly?` finds the read-only buffer over a
+  text, with its name, and `readOnlyReason` is what is said. The command
+  that owns such a buffer writes it inside `BufferId.writing`
+  (`Editor/Api.lean`), as Emacs's `inhibit-read-only`.
 
 ### Most recently used
 
@@ -669,6 +677,15 @@ leaves them.
   location that is not on this machine; it refuses `local`.
 - `setWorkspaceValue` and `setProjectValue` set a value in a workspace's or
   a project's store; they refuse `noSuchWorkspace` and `noSuchProject`.
+- `setUnscopedValue` sets a value in the store of the buffers outside any
+  workspace (`Workspace.Table.unscoped`); it is never refused.
+- **The editor's working directory** (`workingDirectory`) is where a
+  command run for a buffer with no workspace and no file runs. A host sets
+  it once, when its loop's frame is made, from its own working directory
+  (`Headless.Collaborators.workingDirectory`); it is `/` until then. A
+  buffer's own answer (`BufferId.workingDirectory`, `Editor/Api.lean`)
+  is still `none` for such a buffer: the command that runs something
+  falls back to this.
 
 ## Where a new field goes
 
@@ -753,6 +770,9 @@ structure Buffer where
   ending, and a line feed for a buffer with no file or a file with no line
   break. Nothing else is decided by it. -/
   lineEnding : File.LineEnding := .lf
+  /-- Whether its text is read-only to editing commands ("Buffers", in the
+  module docs). -/
+  readOnly : Bool := false
   deriving BEq, Repr
 
 /-- Whether the buffer's text is in another state than the one last saved,
@@ -1123,6 +1143,9 @@ structure EditorState where
   /-- The jobs commands asked to be started, in order, which the loop has
   not yet handed to its host. -/
   starts : Array JobStart := #[]
+  /-- The keys of the jobs commands asked to be cancelled, in order, which
+  the loop has not yet handed to its host. -/
+  cancels : Array String := #[]
   /-- The prompt that is open, if one is: its view is a window of `windows`
   that is not in the frame's list. -/
   prompt : Option Prompt := none
@@ -1181,6 +1204,10 @@ structure EditorState where
   /-- The workspaces and projects of the session, with their stores, and
   each directory's cached answer ("Workspaces", in the module docs). -/
   workspaces : Workspace.Table := {}
+  /-- The editor's working directory: where a command run for a buffer with
+  no workspace and no file runs ("Workspaces", in the module docs). A host
+  sets it once, from its own; `/` until it does. -/
+  workingDirectory : System.FilePath := "/"
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -1893,6 +1920,27 @@ def untold? (state : EditorState) (text : TextId) :
         | some { path, changed := some { found, told := false }, .. } => some (⟨index⟩, path, found)
         | _ => none
     | none => none
+
+/-- Makes the buffer `id` read-only to editing commands, or not, as `on`
+says. Refused, with the state unchanged, with `noSuchBuffer` for a buffer
+there is none of. -/
+def setReadOnly (id : BufferId) (on : Bool) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with readOnly := on })) state
+
+/-- The buffer over the text `text` that is read-only, with its name: what
+refuses an edit of that text ("Buffers", in the module docs). -/
+def readOnly? (state : EditorState) (text : TextId) : Option (BufferId × String) :=
+  (List.range state.buffers.size).findSome? fun index =>
+    match state.buffer? ⟨index⟩ with
+    | some buffer =>
+      if buffer.text == text && buffer.readOnly then some (⟨index⟩, buffer.name) else none
+    | none => none
+
+/-- What is said of an edit refused because the buffer called `name` is
+read-only. -/
+def readOnlyReason (name : String) : String :=
+  s!"{name} is read-only"
 
 /-- The register kept under `name`, if one was set under it. -/
 def register? (state : EditorState) (name : String) : Option Register :=

@@ -38,6 +38,14 @@ Starting, waiting for, killing and reaping a child are the library's
   that many milliseconds after it was started, and which then answers
   `timedOut`. The limit is measured on the job clock. A run that ends just
   as its limit comes may be answered either way.
+- **A fed run** (`ProcessRequest.runInput`) is a run with a time limit
+  whose child's standard input is a pipe: the library writes the input to
+  it, on a thread of its own while it reads the output, and then closes it,
+  so the child reads the input and then end of file. Input larger than a
+  pipe holds cannot hold a child that writes as it reads. A child that
+  does not read its input, or not all of it, is no refusal: the run
+  answers what the child did. It is how a filter feeds lines to a command
+  (`Editor/Shell.lean`).
 - **What a run answers** (`Process.Ran`): how the child ended, by a status
   or a signal, and its standard output and standard error as bytes, kept as
   they were written.
@@ -70,6 +78,11 @@ Starting, waiting for, killing and reaping a child are the library's
   the child, its group killed, with `lineTooLong`, the frames before it
   intact. A last line exactly the bound long, with no line feed, is
   delivered whole.
+- **A child that pauses** between two lines, for however long, has the
+  first delivered alone, with no end: a read waits for whatever comes next,
+  and gives what there is. So a job sees output before its child ends, which
+  is what the compile mode streams (`Editor/Compile.lean`). The model has a
+  step for it (`Process.Step.pause`, `Editor/Process/Model.lean`).
 - **The last delivery** says how the child ended (`Process.End`): `exited`
   once both streams have ended and every frame is in it. The child is then
   forgotten: a later read of it is `noSuchProcess`.
@@ -274,6 +287,9 @@ inductive ProcessRequest where
   /-- Run `command` as `run` does, but kill it, with its group, if it has not
   ended `time` milliseconds after it was started. -/
   | runWithin (command : Process.Command) (limit : Nat) (time : Nat)
+  /-- Run `command` as `runWithin` does, with `input` as its standard input,
+  followed by end of file. -/
+  | runInput (command : Process.Command) (input : ByteArray) (limit : Nat) (time : Nat)
   /-- Start `command` as a streaming child, as `streaming` says: the child,
   named for the job. -/
   | start (command : Process.Command) (streaming : Process.Streaming)
@@ -286,14 +302,18 @@ inductive ProcessRequest where
   | closeInput (process : Process.Id)
   deriving DecidableEq
 
-/-- A request as a test prints it: a write's bytes by their count, since
-`ByteArray` has no `Repr`. -/
+/-- A request as a test prints it: a write's bytes, and a fed run's input, by
+their count, since `ByteArray` has no `Repr`. -/
 instance : Repr ProcessRequest where
   reprPrec request _ :=
     match request with
     | .run command limit => "ProcessRequest.run " ++ repr command ++ " " ++ repr limit
     | .runWithin command limit time =>
       "ProcessRequest.runWithin " ++ repr command ++ " " ++ repr limit ++ " " ++ repr time
+    | .runInput command input limit time =>
+      "ProcessRequest.runInput " ++ repr command ++ s!" ({input.size} bytes) " ++ repr limit ++
+        " " ++
+        repr time
     | .start command streaming => "ProcessRequest.start " ++ repr command ++ " " ++ repr streaming
     | .read process => "ProcessRequest.read " ++ repr process
     | .write process bytes => "ProcessRequest.write " ++ repr process ++ s!" ({bytes.size} bytes)"
@@ -304,6 +324,7 @@ A refusal is a value, never a throw. -/
 def ProcessRequest.Reply : ProcessRequest → Type
   | .run .. => Except ProcessError Process.Ran
   | .runWithin .. => Except ProcessError Process.Ran
+  | .runInput .. => Except ProcessError Process.Ran
   | .start .. => Except ProcessError Process.Id
   | .read .. => Except ProcessError Process.Delivery
   | .write .. => Except ProcessError Unit
@@ -314,6 +335,7 @@ request: for a service that answers without asking anyone. -/
 def ProcessRequest.refused (error : ProcessError) : (request : ProcessRequest) → request.Reply
   | .run .. => .error error
   | .runWithin .. => .error error
+  | .runInput .. => .error error
   | .start .. => .error error
   | .read .. => .error error
   | .write .. => .error error

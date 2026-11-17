@@ -1,4 +1,5 @@
 import Editor.Command
+import Editor.Highlight
 import Editor.Mode
 
 /-!
@@ -123,6 +124,15 @@ from the next command.
   action of each mode of its lineage runs, root first, each once, with the
   view, before the command goes on with its reply. Setting the major mode
   the buffer already has runs nothing.
+- **A major mode with a syntax tree is highlighted first.** When the new
+  lineage says how its text is parsed and drawn (`Mode.syntaxTreeOf`), the
+  loop runs `Highlight.enter` for the buffer's text before the on-enter
+  actions: it attaches the text and has it highlighted, and says a refusal
+  in the echo area without refusing the command (`Editor/Highlight.lean`).
+  When it says nothing and the old major mode's lineage did, the text is
+  detached (`Highlight.leave`). When neither says, the syntax tree port is
+  asked nothing. It runs inside the command as an on-enter action does, so
+  its requests are guarded.
 - **An on-enter action runs inside the command.** Its program is put before
   the rest of the command's and goes through this same transformation: its
   state requests are answered from the state the command had reached, its
@@ -133,9 +143,11 @@ from the next command.
   reply to that request.
 - **Starting a job** (`StateRequest.startJob`) is refused with `noSuchJob`
   for a name no job is registered under (`Loop.Registered.jobs`), with the
-  state as it was. Otherwise the start is kept in the state, for the loop
-  to hand to its host once the command has run to its end
-  (`Editor/Loop.lean`, "Jobs from commands").
+  state as it was. Otherwise the start is kept in the state, with its key
+  if it has one, for the loop to hand to its host once the command has run
+  to its end (`Editor/Loop.lean`, "Jobs from commands"). A cancel
+  (`StateRequest.cancelJob`) is the handler's: its key is kept the same
+  way, whether or not a job of that key is running.
 - **Asking for an ex binding** (`StateRequest.ex`) is answered the binding
   the registry has for the ex name (`Loop.Registered.ex`): the command the
   name runs and what it takes, or `none` for a name nobody bound. The
@@ -164,6 +176,10 @@ from the next command.
   (`Loop.Registered.displayRules`), in order, the state not read and not
   changed. `BufferId.display` asks, to decide where a buffer a command
   made goes (`Editor/DisplayRules.lean`, `EditorState.displaying`).
+- **Asking for the shell time limit** (`StateRequest.shellTimeLimit`) is
+  answered config's limit the loop was told of
+  (`Loop.Registered.shellTimeLimit`), or `none`, the state not read and
+  not changed. `:!` asks, for its run's limit (`Editor/Shell.lean`).
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -211,10 +227,24 @@ changed on disk"), so the next edit lands. An edit script
 (`TextId.applyScript`) is not looked at: a reload is never refused by it.
 Undo is an edit here too; the loop's own rollback is not dispatched.
 
+## Read-only buffers
+
+Before the first-edit check, the same requests (`TextRequest.edited?`) are
+looked at for a read-only buffer over the text (`EditorState.readOnly?`,
+`Editor/State.lean`, "Buffers"): the program ends there, the edit not made,
+as a command that gives up, with `<name> is read-only`
+(`EditorState.readOnlyReason`). So the loop rolls the command back and says
+`<command>: <name> is read-only` ("A command that gives up"). Undo is an
+edit here too, so `u` in a read-only buffer is refused. The command that
+owns the buffer writes it inside `BufferId.writing` (`Editor/Api.lean`),
+which clears the flag for the edit, as a state request this transformation
+answers in place.
+
 Pinned by `ModelTest.guardChecks` (the guard, on commands that make no
 state request), `ModelTest.dispatchStateChecks`,
-`ModelTest.modeEnterChecks` and, for the first edit after a change on disk,
-`ModelTest.stalenessChecks`.
+`ModelTest.modeEnterChecks`, for the first edit after a change on disk,
+`ModelTest.stalenessChecks`, and, for read-only buffers,
+`ModelTest.readOnlyChecks`.
 -/
 
 namespace Editor
@@ -287,6 +317,10 @@ structure Loop.Registered where
   order, as the install left them: each rule's target exists under the
   layout config chose. -/
   displayRules : Array DisplayRule := #[]
+  /-- How long a `:!` or a filter may run, in milliseconds, as config set it
+  (`shellTimeLimit`, `Editor/Setup.lean`); `none` for the shell's
+  default. -/
+  shellTimeLimit : Option Nat := none
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -318,10 +352,18 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     match state.target? view, registered.entering name with
     | none, _ => dispatched registered state (next (.error (.noSuchWindow view)))
     | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
-    | some _, some lineage =>
+    | some target, some lineage =>
+      let before := (target.buffer.major.bind registered.entering).bind Mode.syntaxTreeOf
       match state.handle (.setMajorMode view name) with
       | (.ok true, state) =>
-        let entering : EditorM Unit := lineage.forM (·.onEnter view)
+        let highlighting : EditorM Unit :=
+          match Mode.syntaxTreeOf lineage, before with
+          | some syntaxTree, _ => Highlight.enter name target.buffer.text syntaxTree
+          | none, some _ => Highlight.leave target.buffer.text
+          | none, none => pure ()
+        let entering : EditorM Unit := do
+          highlighting
+          lineage.forM (·.onEnter view)
         dispatched registered state do
           match ← entering.run with
           | .ok () =>
@@ -329,9 +371,9 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           | .error error =>
             pure (.error error)
       | (reply, state) => dispatched registered state (next reply)
-  | state, .step (.state (.startJob name arguments)) next =>
+  | state, .step (.state (.startJob name arguments key)) next =>
     if registered.jobs name then
-      let (reply, state) := state.handle (.startJob name arguments)
+      let (reply, state) := state.handle (.startJob name arguments key)
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchJob name)))
   | state, .step (.state (.ex name)) next => dispatched registered state (next (registered.ex name))
@@ -345,6 +387,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     else dispatched registered state (next (.error (.noSuchTheme name)))
   | state, .step (.state .autoReloadMode) next =>
     dispatched registered state (next (state.autoReload.getD registered.autoReload))
+  | state, .step (.state .shellTimeLimit) next =>
+    dispatched registered state (next registered.shellTimeLimit)
   | state, .step (.state .workspaceSettings) next =>
     dispatched registered state
       (next ({ roots := registered.workspaceRoots }, registered.generation))
@@ -369,6 +413,12 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     .step (.watch .interrupted) fun (raised : Bool) =>
       if raised then .done (.interrupted, state)
       else
+        -- An edit of a read-only buffer is not made ("Read-only buffers",
+        -- in the module docs), and is looked at first.
+        let readOnly :=
+          match request with
+          | .text text => text.edited?.bind state.readOnly?
+          | _ => none
         -- The first edit of a buffer whose file changed on disk, which the
         -- user was not told of, is not made ("The first edit after a change
         -- on disk", in the module docs).
@@ -376,9 +426,10 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           match request with
           | .text text => text.edited?.bind state.untold?
           | _ => none
-        match untold with
-        | some (buffer, path, found) => .done (.superseded buffer path found, state)
-        | none => .step request fun reply => dispatched registered state (next reply)
+        match readOnly, untold with
+        | some (_, name), _ => .done (.gaveUp (EditorState.readOnlyReason name), state)
+        | none, some (buffer, path, found) => .done (.superseded buffer path found, state)
+        | none, none => .step request fun reply => dispatched registered state (next reply)
 
 /-- `command` as the loop runs it from the editor state `state`: its state
 requests answered in place, and stopped at its next other request once the

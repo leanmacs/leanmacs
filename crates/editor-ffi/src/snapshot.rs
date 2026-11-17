@@ -116,12 +116,31 @@ impl Source {
         self.read(|text| text.changes_since(revision).ok())
     }
 
+    /// Whether there is a document and it is still alive.
+    pub fn has_document(&self) -> bool {
+        self.read(|_| Some(())).is_some()
+    }
+
     /// `read` of the document's text, locked, if there is a document and it
     /// is still alive. A poisoned lock is used as it is, as a document does.
     fn read<T>(&self, read: impl FnOnce(&Text) -> Option<T>) -> Option<T> {
         let text = self.0.as_ref()?.upgrade()?;
         let text = text.lock().unwrap_or_else(PoisonError::into_inner);
         read(&text)
+    }
+}
+
+/// The syntax service reaches a document's text through a source, as
+/// layout does: the text as it is now and the patch since a revision, read
+/// under one lock so the patch reaches exactly the snapshot.
+impl editor_syntax::Source for Source {
+    fn latest(&self, since: Option<Revision>) -> Option<editor_syntax::Latest> {
+        self.read(|text| {
+            Some(editor_syntax::Latest {
+                snapshot: text.snapshot(),
+                patch: since.and_then(|since| text.changes_since(since).ok()),
+            })
+        })
     }
 }
 

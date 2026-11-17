@@ -265,6 +265,70 @@
 # `memchr` and `log`, which the libraries bring, have none: they are
 # reached only through them, or many crates of the graph depend on them.
 #
+# For syntax trees (2026-11-16, the syntax-tree-sitter roadmap's phase 1).
+# The Syntax port's crate, `editor-syntax`, parses snapshots and reparses
+# from the edit log's patches, so it joined the wrappers of `editor-text`'s
+# entry in the commit that added it: with the wrapper not yet there, it
+# fails on the new crate's edge ("crate 'editor-text = 0.1.0' is explicitly
+# banned"). `editor-syntax` itself had no entry while nothing depended on
+# it.
+#
+# The port's adapter, `editor-syntax-treesitter`, brought the rest of the
+# phase's entries but one, in the commit that added it (2026-11-16). Each
+# third-party entry was seen to bite with its wrappers naming another
+# crate: `tree-sitter`, `tree-sitter-rust` and `tree-sitter-json`, whose
+# one wrapper is the adapter ("crate 'tree-sitter = 0.27.2' is explicitly
+# banned", and the same for `tree-sitter-rust = 0.24.2` and
+# `tree-sitter-json = 0.24.8`); `tree-sitter-language`, whose wrappers are
+# tree-sitter and its two grammars, which depend on it themselves, as
+# `fontique`'s are Parley's own crates ("crate 'tree-sitter-language =
+# 0.1.9' is explicitly banned"); `streaming-iterator`, whose one wrapper is
+# tree-sitter, the adapter naming it through tree-sitter's re-export
+# ("crate 'streaming-iterator = 0.1.9' is explicitly banned"); `regex`, new
+# to the graph with tree-sitter's `#match?` predicates ("crate 'regex =
+# 1.13.1' is explicitly banned"); and `regex-syntax`, which was in the graph
+# before, by `proptest`, a dev-dependency of `editor-text`, so `proptest`
+# is a wrapper beside `regex` and `regex-automata` ("crate 'regex-syntax =
+# 0.8.11' is explicitly banned"). `aho-corasick` and `memchr` have none:
+# they are reached only through `regex`, as wgpu's internals are through
+# wgpu. `regex-automata` had none on this roadmap's branch, reached only
+# through `regex`; when main was merged in, it brought search's entries for
+# `regex-automata` and `regex-syntax`, and `regex` joined the wrappers of
+# both, as tree-sitter's way to them beside regex-cursor's. `editor-syntax`,
+# the port's crate, got its entry with the adapter its one wrapper: with
+# the wrapper naming another crate, it fails on the adapter's edge
+# ("crate 'editor-syntax = 0.1.0' is explicitly banned"). The adapter
+# joined the wrappers of `editor-text`'s entry: with the wrapper not yet
+# there, it fails on the adapter's edge ("crate 'editor-text = 0.1.0' is
+# explicitly banned").
+#
+# The plain bans of `wasmtime` and `tree-sitter-loader` hold the decision
+# that grammars are compiled in (the adapter's crate docs, "How grammars
+# are loaded"): neither tree-sitter's `wasm` feature nor its loader enters
+# the graph unnoticed. Neither is in the graph, so neither could be seen to
+# bite on its own edge: with the `wasm` feature turned on, `cargo deny`
+# could not resolve the graph from the index on 2026-11-16 (wasmtime
+# 48.0.8 wants a `wasmprinter` the index lacked). The form of a plain ban
+# was seen to bite instead, with `wasmtime`'s entry naming
+# `streaming-iterator`, a crate in the graph, and that crate's own entry
+# taken out ("crate 'streaming-iterator = 0.1.9' is explicitly banned").
+# `editor-syntax-treesitter` itself had no entry while nothing depended on
+# it. Its entry came in the commit in which `editor-ffi` came to depend on
+# it, for the process's syntax service: with the entry's wrapper naming
+# another crate, it fails ("crate 'editor-syntax-treesitter = 0.1.0' is
+# explicitly banned"); and in that commit `editor-ffi` joined the wrappers
+# of `editor-syntax`'s entry: with the wrapper not yet there, it fails on
+# that edge ("crate 'editor-syntax = 0.1.0' is explicitly banned").
+#
+# The Markdown grammar, `tree-sitter-md` (2026-11-16, the syntax-tree-sitter
+# roadmap's phase 3), got its entry in the commit that added it, with the
+# adapter its one wrapper, as the other grammars': with the wrapper naming
+# another crate, it fails on the adapter's edge ("crate 'tree-sitter-md =
+# 0.5.4' is explicitly banned"). In the same commit it joined the wrappers
+# of `tree-sitter-language`, which it depends on itself: with the wrapper
+# not yet there, it fails on the new edge ("crate 'tree-sitter-language =
+# 0.1.9' is explicitly banned").
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -289,7 +353,7 @@ deny = [
   { crate = "arboard", wrappers = ["editor-platform-arboard"], reason = "arboard stays behind the clipboard port: only its adapter crate may name its types" },
   { crate = "editor-platform-arboard", wrappers = ["editor-ffi"], reason = "the clipboard adapter is linked only by the crate that wires the library together, for the clipboard Lean's window mode opens; everything else reaches a clipboard through the port, and every test through its memory clipboard" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
-  { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout"], reason = "text storage has two users, the crate that puts a text behind a handle for Lean and layout, which reads its snapshots, patches and selections as plain values; and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
+  { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout", "editor-syntax", "editor-syntax-treesitter"], reason = "text storage has three users, the crate that puts a text behind a handle for Lean, layout, which reads its snapshots, patches and selections as plain values, and the syntax core, which parses snapshots and reparses from the edit log's patches; the file port it defines has one adapter, which implements it; and the syntax port's adapter reads a snapshot's chunks into the parser and takes the port's edits and points in its types; another is a decision, so it is made here" },
   { crate = "editor-layout", wrappers = ["editor-ffi", "editor-shape-parley", "editor-render", "editor-render-wgpu"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text; the Shaper port it defines has one real adapter, which implements it; and the Renderer port's crate and the crate of its real adapters take its frames as plain data; another user is a decision, so it is made here" },
   { crate = "editor-render", wrappers = ["editor-render-wgpu", "editor-ffi"], reason = "the Renderer port and the render loop have two users: the crate of the port's real adapters, which implements it and runs its contract, and the crate that wires the library together, which starts the render thread and turns what a window tells into words left with the loop; a third is a decision, so it is made here" },
   { crate = "etagere", wrappers = ["editor-render-wgpu"], reason = "the atlas packer stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
@@ -312,9 +376,20 @@ deny = [
   { crate = "nucleo-matcher", wrappers = ["editor-fuzzy-nucleo"], reason = "the matching library stays behind the Scorer port: only its adapter crate may name its types" },
   { crate = "editor-fuzzy", wrappers = ["editor-fuzzy-nucleo", "editor-ffi"], reason = "the Scorer port and the ranking rule have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose one C function asks the ranking rule over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-fuzzy-nucleo", wrappers = ["editor-ffi"], reason = "the scorer's real adapter is linked only by the crate that wires the library together; everything else reaches a scorer through the port, and its tests through the port's fake" },
+  { crate = "editor-syntax", wrappers = ["editor-syntax-treesitter", "editor-ffi"], reason = "the Syntax port, its contract and the worker that reparses have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the syntax service over the adapter; a third is a decision, so it is made here" },
+  { crate = "editor-syntax-treesitter", wrappers = ["editor-ffi"], reason = "the syntax adapter is linked only by the crate that wires the library together, for the process's syntax service; everything else reaches a parser through the port, and editor-syntax's tests through its fake" },
+  { crate = "tree-sitter", wrappers = ["editor-syntax-treesitter"], reason = "tree-sitter stays behind the Syntax port: only its adapter crate may name its types" },
+  { crate = "tree-sitter-rust", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },
+  { crate = "tree-sitter-json", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },
+  { crate = "tree-sitter-md", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },
+  { crate = "tree-sitter-language", wrappers = ["tree-sitter", "tree-sitter-rust", "tree-sitter-json", "tree-sitter-md"], reason = "the type a grammar crate hands its language in is between tree-sitter and its grammars: no crate of the workspace names it, the adapter handing each grammar's language straight to tree-sitter" },
+  { crate = "streaming-iterator", wrappers = ["tree-sitter"], reason = "tree-sitter's query cursor iterates with it, and the adapter names it only through tree-sitter's re-export: no crate of the workspace depends on it" },
+  { crate = "regex", wrappers = ["tree-sitter"], reason = "regular expressions are tree-sitter's, for a query's `#match?` predicates, behind the Syntax port: no crate of the workspace depends on it" },
+  { crate = "wasmtime", reason = "grammars are compiled in (crates/editor-syntax-treesitter, \"How grammars are loaded\"): tree-sitter's `wasm` feature, which loads grammars built as WebAssembly, stays off" },
+  { crate = "tree-sitter-loader", reason = "grammars are compiled in (crates/editor-syntax-treesitter, \"How grammars are loaded\"): nothing finds, builds or loads a grammar at run time" },
   { crate = "regex-cursor", wrappers = ["editor-search-regex"], reason = "the regex library stays behind the search engine port: only its adapter crate may name its types" },
-  { crate = "regex-automata", wrappers = ["regex-cursor"], reason = "regex-cursor's engines are built on it, and it stays behind the search engine port with them: no crate of the workspace may name it" },
-  { crate = "regex-syntax", wrappers = ["editor-search-regex", "regex-cursor", "regex-automata", "proptest"], reason = "the regex syntax's tree is built by the search engine port's adapter alone, from the pattern tree of editor-search, so no pattern string in the library's syntax is ever made; the other wrappers are the third-party crates that depend on it: regex-cursor and regex-automata, and proptest, for its generated strings" },
+  { crate = "regex-automata", wrappers = ["regex-cursor", "regex"], reason = "regex-cursor's engines are built on it, and so are regex's, tree-sitter's for a query's `#match?` predicates; it stays behind the search engine port and the Syntax port with them: no crate of the workspace may name it" },
+  { crate = "regex-syntax", wrappers = ["editor-search-regex", "regex-cursor", "regex-automata", "regex", "proptest"], reason = "the regex syntax's tree is built by the search engine port's adapter alone, from the pattern tree of editor-search, so no pattern string in the library's syntax is ever made; the other wrappers are the third-party crates that depend on it: regex-cursor and regex-automata, regex, tree-sitter's, and proptest, for its generated strings" },
   { crate = "editor-search", wrappers = ["editor-search-regex", "editor-ffi"], reason = "the search engine port, the pattern syntax and the rule of which match have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose two C functions ask the rule over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-search-regex", wrappers = ["editor-ffi"], reason = "the search engine's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
   { crate = "imara-diff", wrappers = ["editor-diff-imara"], reason = "the diff library stays behind the line diff port: only its adapter crate may name its types" },

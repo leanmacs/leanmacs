@@ -75,7 +75,7 @@
 //! | Byte range | Two scalars | A record of two `u64`: a start and an end, half-open, in bytes ([`text::ByteRange`]) |
 //! | List | *Words*: a buffer of 64-bit numbers, eight bytes each, least significant first, as a pointer and a byte length borrowed for the call. A checked reader takes it apart and refuses a length that is not whole words, a count that runs past the buffer and words left over (the private module `words`) | Words in an owned buffer, pointer and length, in the result record ([`log::RawWords`]); the glue copies it and hands it back with one call to [`text::editor_ffi_text_free`], which frees any buffer the library lent |
 //! | List of handles | A C array of handle pointers and its count, borrowed for the call, which the glue builds from a Lean `Array` of handles; words name a handle by its index in it ([`display::editor_ffi_display_publish`]) | None yet |
-//! | List of strings | Words, the count and then the byte length of each string, and one string of all of them end to end, both borrowed for the call. Lengths that do not add up to the string, and one that ends inside a character, are refused with the words that cannot be read ([`fuzzy::editor_ffi_fuzzy_rank`]) | None yet |
+//! | List of strings | Words, the count and then the byte length of each string, and one string of all of them end to end, both borrowed for the call. Lengths that do not add up to the string, and one that ends inside a character, are refused with the words that cannot be read ([`fuzzy::editor_ffi_fuzzy_rank`], [`syntax::editor_ffi_syntax_highlight`]) | The same words and string, each an owned buffer in one result record ([`syntax::RawStrings`]), which the glue copies and hands back with two calls to [`text::editor_ffi_text_free`] ([`syntax::editor_ffi_syntax_grammars`], [`syntax::editor_ffi_syntax_capture_names`]) |
 //!
 //! Prefer a few scalar arguments or one record to many calls. No
 //! `extern "C"` function panics: failure is a return value. A function that
@@ -267,6 +267,8 @@
 //! arrived ([`processes::editor_ffi_processes_take`]): a record of a status,
 //! words, a detail string and the two streams' bytes. Its other C functions
 //! are [`processes::editor_ffi_processes_run`],
+//! [`processes::editor_ffi_processes_run_input`], a run whose child is fed
+//! the bytes it is lent as its standard input,
 //! [`processes::editor_ffi_processes_cancel`], which kills the run's
 //! process group, [`processes::editor_ffi_processes_shutdown`], and, as a
 //! readout for tests, [`processes::editor_ffi_processes_pending`]. A
@@ -347,6 +349,33 @@
 //! script's words), and of `transaction.rs` for applying a script. On the
 //! Lean side: `contract-test`'s diff properties, which run the real engine
 //! through the service on real files.
+//!
+//! ## The syntax service
+//!
+//! Parsing is not a service behind the completion queue either: nothing
+//! waits for it. The process's syntax service ([`syntax`]) parses each
+//! document attached to it with a grammar, on a worker thread of its own
+//! started at the first attach, and reparses it from its edit log after
+//! each edit, which every edit path of a document tells it of. A query is a
+//! handle ([`syntax::SyntaxQuery`]), and its captures in a range of a
+//! snapshot are answered at once from the tree the document's session last
+//! delivered, if that tree is of the snapshot's revision, and are otherwise
+//! refused as not parsed: the editor thread never waits for a parse. A
+//! document is given its injections and the languages they may name, which
+//! its session parses as layers on the worker and draws over its own spans,
+//! and keeps one query of each structural kind (text objects, indents),
+//! whose captures are answered as a query's are.
+//! [`syntax::editor_ffi_syntax_settle`] waits for a delivery, with a bound,
+//! for tests. The rules of when a document is reparsed, which tree is
+//! handed out and what an injection is are `editor-syntax`'s, pinned there
+//! on the fake.
+//!
+//! Tests: the unit tests of `syntax.rs` (each layout), and
+//! `tests/syntax.rs`, the wiring test on real documents and the real
+//! adapter, on the process's service, and `tests/highlight.rs`, highlights
+//! and a Markdown document's injected layers drawn; on the Lean side, the
+//! syntax checks of `ffi-test` and `contract-test`'s syntax-tree
+//! properties.
 //!
 //! ## The window
 //!
@@ -536,6 +565,7 @@ pub mod processes;
 pub mod render;
 pub mod search;
 pub mod snapshot;
+pub mod syntax;
 pub mod text;
 pub mod timers;
 pub mod transaction;

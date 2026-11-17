@@ -38,8 +38,8 @@ with no file, or whose path's parent is absent, empty or `.`;
 opened from a file, since opening a file sets no major mode; `line-column`
 and `position` for a window whose cursor could not be read; `modified` for
 a buffer that is not modified; `changed` for a buffer whose file no check
-has found changed. Buffers have no read-only state yet, so
-there is no read-only mark; the feature that adds read-only buffers adds a
+has found changed. Buffers may be read-only (`Buffer.readOnly`), but the
+mode line has no read-only mark yet: task `mode-line-read-only-mark` adds a
 segment for it.
 
 **The column is the text's cells**, as the cursor's other readers count

@@ -83,7 +83,11 @@ impl Document {
         last: Revision,
         origin: Origin,
     ) -> Result<Inverted, InverseError> {
-        self.lock().apply_inverse(first, last, origin)
+        let inverted = self.lock().apply_inverse(first, last, origin);
+        if let Ok(inverted) = &inverted {
+            crate::syntax::touched(self.key(), inverted.revision);
+        }
+        inverted
     }
 
     /// Drops the kept inverses of the revisions from `first` to `last`

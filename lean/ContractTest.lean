@@ -4,13 +4,17 @@ import Editor.Clipboard.InProcess
 import Editor.Clipboard.Real
 import Editor.Command.Model
 import Editor.Command.Real
+import Editor.Compile.Compiled
 import Editor.Display.Contract
 import Editor.Display.Real
 import Editor.Display.Recorder
 import Editor.Event.Queue
+import Editor.Evil.TreeObjects
+import Editor.Ex.Compiled
 import Editor.File.Cases
 import Editor.Fuzzy.Contract
 import Editor.Fuzzy.Real
+import Editor.Indent
 import Editor.InputScheme.Test
 import Editor.Job.Contract
 import Editor.Job.Fake
@@ -18,6 +22,9 @@ import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Key.Notation
 import Editor.Loop
+import Editor.Shell.Compiled
+import Editor.SyntaxTree.Contract
+import Editor.SyntaxTree.Real
 import Editor.Text.Contract
 import Editor.Text.Model
 import Editor.Text.Real
@@ -56,7 +63,9 @@ library.
 - The job port's contract (`Editor/Job/Contract.lean`) against the runner
   over the library's timer service, with the completion pump
   (`Editor/Job/Real.lean`). `model-test` runs it against the model and
-  against the runner over the fake clock.
+  against the runner over the fake clock. So it runs the post properties
+  (`JobContract.postProperties`, `postFailures`), each job spawned with a
+  host that records the posts it is handed.
 - The job port's file properties (`JobContract.fileProperties`) against the
   runner over the library's file service, on real files
   (`runFilesOnService`, `fileFailures`). Each property has a temporary
@@ -156,6 +165,42 @@ job port's, read from a fake clock here, and, with the command loop over
 the real text binding, an interrupt key that arrives while a command runs.
 That check is single-threaded, so where the key arrives is exact: the
 display handler posts it during one of the command's own publishes.
+
+The syntax tree interface's contract (`Editor/SyntaxTree/Contract.lean`) is
+run against its real binding (`Editor/SyntaxTree/Real.lean`), so against the
+library's syntax service, tree-sitter's JSON grammar over its worker thread
+(`syntaxTreeFailures`): each property's texts are made documents and
+snapshots in the library, entered in a table of the text binding, and the
+property runs against a new binding over that table. The library parses off
+the editor thread, so the runner's handler waits, with a bound, for the
+snapshot's tree to be delivered before it forwards each question of
+captures (`Ffi.syntaxSettle`): the one difference from `model-test`'s run of
+the same list against the model. `syntaxTreeChecks` pins what only the real
+binding shows: that the library has a Rust grammar, a Rust function's name
+captured, a query of one grammar asked of a text parsed with another, and a
+text edited through its document reparsed, its new function's name captured
+once the tree of the edit is delivered. That the text of a file the file
+service loaded is of no document is `ffi-test`'s (`FfiTest.syntaxChecks`).
+
+`shellChecks` runs `:!` and a filter (`Editor/Shell.lean`) over the real
+process service, with the command loop over the real text binding: the ex
+line's commands and the shell's are registered, the editor's working
+directory is the fixtures' (`tests/shell`), and each line is run as a host
+runs it, its invocations as steps of their own, each job it starts spawned
+on the runner over the library's services and its command delivered once
+the job has ended (`settle`). `:!` of the fixture `hello` leaves `hello` in
+the echo area, and `%!/usr/bin/sort` over `b`, `c`, `a` leaves `a`, `b`,
+`c`; every child is reaped.
+
+`compileChecks` runs `compile` (`Editor/Compile.lean`) over the real process
+service, with the command loop over the real text binding, in a temporary
+directory of its own as the editor's working directory: its job is spawned
+on the runner over the library's services with a host that records its
+posts, and each post is delivered as it arrives. The fixture
+`tests/compile/three-lines` waits for a file before each of its last two
+lines, which the check makes only once it has seen the line before in the
+compilation buffer: so each line is shown before the child ends, the last
+line says its exit status, 2, and the child is reaped.
 
 The cases of the editor API (`Editor/Api/Cases.lean`) are played on the
 real text binding, with a recorder as the display and nothing watched
@@ -382,6 +427,26 @@ def runOnTimers (services : Job.Services) (job : JobM Bool) : IO (Job.Outcome Bo
 runner over the library's timer service. -/
 def jobFailures (services : Job.Services) : IO (List String) := do
   let failed ← JobContract.failures (runOnTimers services) JobContract.properties
+  return failed.map (s!"the job runner over the timer service: {·}")
+
+/-- Runs `job` on the runner over the library's services, spawned with a host
+that records each post it is handed, and answers the posts once the job has
+ended. A job that does not end in time is cancelled, and a job that ended is
+settled. -/
+def postedOnTimers (services : Job.Services) (job : JobM Unit) : IO (Array Invocation) := do
+  let posts ← IO.mkRef #[]
+  let handle ←
+    Job.spawn services (Work.of (fun _ => job) fun _ => pure ()) (pure ()) fun invocation =>
+        posts.modify (·.push invocation)
+  unless ← eventually handle.ended do
+    handle.cancel
+  handle.settle
+  posts.get
+
+/-- The names of the job port's post properties that do not hold of the
+runner over the library's timer service. -/
+def postFailures (services : Job.Services) : IO (List String) := do
+  let failed ← JobContract.postFailures (postedOnTimers services) JobContract.postProperties
   return failed.map (s!"the job runner over the timer service: {·}")
 
 /-- Everything in `directory`, each as its name and its bytes. A directory
@@ -881,6 +946,56 @@ def jobChecks (services : Job.Services) (pool : Array UInt64) : List Check :=
         let threads ← Job.Pool.warm (pool.size + 2) warmPatience
         return !pool.isEmpty && threads.size == pool.size && threads.all pool.contains }]
 
+/-- `handler`, a real syntax tree binding's over `table`, which after an
+attach waits, with a bound, for the attached text's tree to be delivered:
+so a highlighter set after the attach sees no delivery of that parse, and
+no `parsed` event of it is left on the editor queue, which the watch checks
+pull after these. A delivery a check makes after a highlight, by an edit,
+leaves one, which the check pulls (`pulledParsed`). -/
+def settlingAttach (table : Snapshots) (handler : SyntaxTreeHandler) : SyntaxTreeHandler :=
+  fun request => do
+  let reply ← handler request
+  if let .attach snapshot _ := request then
+    if let some found← table.find? snapshot then
+      discard (Ffi.syntaxSettle found 5000)
+  return reply
+
+/-- `handler`, a real syntax tree binding's over `table`, which waits, with
+a bound, for a snapshot's tree to be delivered before it forwards a question
+of its captures or of a kept query's, and after an attach
+(`settlingAttach`). -/
+def settling (table : Snapshots) (handler : SyntaxTreeHandler) : SyntaxTreeHandler :=
+  settlingAttach table fun request => do
+    let asked :=
+      match request with
+      | .captures snapshot _ _ _ => some snapshot
+      | .capturesOf snapshot _ _ _ => some snapshot
+      | _ => none
+    if let some snapshot := asked then
+      if let some found← table.find? snapshot then
+        discard (Ffi.syntaxSettle found 5000)
+    handler request
+
+/-- Whether the editor queue holds exactly one event, the library's report
+of a parse delivered, which is pulled: what an edit of a highlighted text
+leaves once its tree is delivered. It never parks a pull on an empty
+queue. -/
+def pulledParsed : IO Bool := do
+  unless (← Ffi.queued .editor) == 1 do
+    return false
+  let event ← Ffi.nextEvent .editor
+  return event.kind == .parsed && event.source.kind == .library
+
+/-- How many events the editor queue held, each pulled: what a mode set over
+a highlighted text leaves once its tree and its layers are delivered, the
+library's reports of parses. It never parks a pull on an empty queue. -/
+def drainedParsed : IO Nat := do
+  let mut pulled := 0
+  while (← Ffi.queued .editor) > 0 do
+    discard (Ffi.nextEvent .editor)
+    pulled := pulled + 1
+  return pulled
+
 /-- What a check of the runner over the library's file service works with: a
 text store whose table of snapshots is published, the file service over its
 read half, and a fake clock a check parks a job on. The file waits are
@@ -973,6 +1088,33 @@ def fileChecks (completions : Job.Completions) : List Check :=
                 (← eventually (return (← Ffi.Snapshot.live) == live))
           finally
             handle.cancel },
+    { name :=
+        "a job's command run by Job.finishWith reaches the syntax tree it is handed: its text, highlighted as a mode with a syntax tree is entered, is attached in the library, and a query of it answers"
+      run := do
+        let rig ← FileRig.new completions
+        let handle ← Job.spawn rig.services (reporting fun _ => pure 1) (pure ())
+        unless ← eventually handle.ended do
+          return false
+        let real ← RealSyntaxTree.new rig.published.reader
+        let syntaxTree := settlingAttach rig.published real.handle
+        let command : EditorM SnapshotId := do
+          let text ← createText "[1, 2]"
+          Highlight.enter "json" text { grammar := "json" }
+          text.snapshot
+        let display := (← recorderOf rig.published).handle
+        let (.ok snapshot, texts) ←
+          Job.finishWith rig.held handle command (.over rig.published) display (syntaxTree :=
+              syntaxTree) | return false
+        let numbers : SyntaxTreeM Nat := do
+          let query ← SyntaxTree.compile "json" "(number) @n"
+          return (← SyntaxTree.captures snapshot query 0 6).size
+        let some found ← rig.published.find? snapshot | return false
+        unless ← Ffi.syntaxSettle found 5000 do
+          return false
+        let answered ← numbers.runWith syntaxTree
+        -- The text's document is held until here: a document freed is
+        -- detached.
+        return answered matches .ok 2 && texts.documents.size == 1 },
     { name :=
         "a snapshot a job loaded that no command adopted is freed when the job is settled: the library holds what it held, and the editor's table never grew"
       run :=
@@ -1429,6 +1571,430 @@ def fuzzyChecks : List Check :=
           | .ok ranked => ranked == #[2, 0]
           | .error _ => false }]
 
+/-- Documents of `texts` in the library, a table of a snapshot of each, the
+ids of those snapshots in the order of `texts`, and a real syntax tree
+binding over the table whose handler waits, with a bound, for a snapshot's
+tree to be delivered before it forwards a question of its captures or of a
+kept query's, and after an attach (`settlingAttach`). The
+documents are returned so that the caller keeps them alive: a document
+freed detaches its text. -/
+def syntaxTreeOver (texts : Array String) :
+    IO (Array Ffi.Document × Snapshots × Array SnapshotId × SyntaxTreeHandler) := do
+  let table ← Snapshots.new
+  let documents ← texts.mapM Ffi.Document.new
+  let ids ←
+    documents.mapM fun document => do
+        table.add (← document.snapshot)
+  let real ← RealSyntaxTree.new table.reader
+  return (documents, table, ids, settling table real.handle)
+
+/-- Runs `property` of the syntax tree interface's contract against the real
+binding, over documents of its texts. -/
+def runOnRealSyntaxTree (property : SyntaxTreeContract.Property) : IO Bool := do
+  let (documents, _, ids, handler) ← syntaxTreeOver property.texts
+  let result ← (property.holds ids).runWith handler
+  -- The documents are read here, so they are alive for the whole run.
+  for document in documents do
+    discard document.read
+  return result matches .ok true
+
+/-- The names of the syntax tree interface's contract properties that do not
+hold of its real binding. -/
+def syntaxTreeFailures : IO (List String) := do
+  let failed ← SyntaxTreeContract.failures runOnRealSyntaxTree SyntaxTreeContract.properties
+  return failed.map (s!"the real syntax tree binding: {·}")
+
+/-- Runs `check` against the real syntax tree binding over documents of
+`texts`, handed the documents, which it may edit, the table of snapshots the
+binding reads, which it may add to, the snapshots' ids and the binding's
+handler; whether it answered `true`. -/
+def onRealSyntaxTree (texts : Array String)
+    (check : Array Ffi.Document → Snapshots → Array SnapshotId → SyntaxTreeHandler → IO Bool) :
+    IO Bool := do
+  let (documents, table, ids, handler) ← syntaxTreeOver texts
+  let held ← check documents table ids handler
+  for document in documents do
+    discard document.read
+  return held
+
+/-- The captures `query` answers of the whole of `text`, as the texts of
+their nodes. -/
+def capturedTexts (text : String) (captures : Array SyntaxTree.Capture) : Array String :=
+  captures.map fun capture => String.fromUTF8! (text.toUTF8.extract capture.start capture.stop)
+
+/-- The capture names of the query of `kind` the library ships for
+`grammar`; none when it ships none or the query does not compile. -/
+def shippedNames (grammar : String) (kind : QueryKind) : IO (Option (Array String)) := do
+  let table ← Snapshots.new
+  let real ← RealSyntaxTree.new table.reader
+  let program : SyntaxTreeM (Array String) := do
+    let query ← SyntaxTree.compile grammar (← SyntaxTree.shippedQuery grammar kind)
+    SyntaxTree.captureNames query
+  return (← program.runWith real.handle).toOption
+
+/-- What the indent primitive answers of each row of `text`, whose major
+mode is the shipped Rust one, over the real syntax tree binding: the text,
+the levels, and the texts the run left. Each question waits for its
+snapshot's tree (`settling`). -/
+def rustIndentLevels (table : Snapshots) (texts : RealTexts) (text : TextId) :
+    IO (Option (Array (Option Nat))) := do
+  let real ← RealSyntaxTree.new table.reader
+  let levels : EditorM (Except SyntaxTreeError (Array (Option Nat))) := do
+    text.indentLevels 0 ((← text.rowCount) - 1)
+  let (.ok (.ok answered), _) ←
+    levels.runReal texts (← recorderOf table).handle (syntaxTree :=
+        settling table real.handle) | return none
+  return some answered
+
+/-- The levels the indent rule must give `source`, a rustfmt-formatted Rust
+text indented four spaces a level, for each of its rows: `none` for the
+rows in `kept`, kept as they are, `some` of the leading spaces divided by
+four for every other row with content, and nothing asked of a blank row. -/
+def rustIndentHolds (source : String) (kept : List String) (levels : Array (Option Nat)) : Bool :=
+  let lines := (source.splitOn "\n").toArray
+  lines.size == levels.size &&
+    (lines.zip levels).all fun (line, level) =>
+      if kept.contains line then level == none
+      else
+        if line.trimAscii.isEmpty then true
+        else level == some ((line.toList.takeWhile (· == ' ')).length / 4)
+
+/-- A row of the tree's text objects over the Rust fixture: where the
+cursor is, as the text it is at the start of (its first occurrence), the
+object, the count, where the anchor of a visual selection is, as a text
+whose first occurrence it is at the start of, or the end of when `atEnd`,
+and the text the object covers and how, or none for no object. -/
+structure ObjectRow where
+  /-- The text the cursor is at the start of. -/
+  needle : String
+  /-- The object. -/
+  object : Vocabulary.TextObject
+  /-- The count, if one was typed. -/
+  count : Option Nat := none
+  /-- The text the anchor is at, in a visual state. -/
+  anchor : Option (String × Bool) := none
+  /-- What it covers: its text and its reach; none for no object. -/
+  covers : Option (String × Vocabulary.Reach)
+
+/-- The rows of the tree's text objects over `tests/syntax/rust/objects.rs`,
+written by hand: all six objects; a count of 2, the method round a
+closure; a visual selection of the closure widened to the method; the
+inside of a unit struct, which is none; an argument first, last, alone and
+on lines of its own; the inside of a closure whose body is an expression;
+and the inside of a function, a struct, an impl and a closure from a cursor
+in the node but outside the inside, on its `fn`, `struct`, `impl` or
+parameters. -/
+def objectRows : List ObjectRow :=
+  [{  needle := "a + b", object := Evil.aFunction
+      covers := some ("fn free(a: u8, b: u8) -> u8 {\n    a + b\n}", .exclusive) },
+    { needle := "a + b", object := Evil.innerFunction, covers := some ("    a + b\n", .exclusive) },
+    { needle := "v + extra", object := Evil.aFunction,
+      covers := some ("|v| v + extra", .exclusive) },
+    { needle := "v + extra", object := Evil.innerFunction,
+      covers := some ("v + extra", .exclusive) },
+    { needle := "v + extra", object := Evil.aFunction, count := some 2
+      covers :=
+        some
+          ("fn sum(&self, extra: u8) -> u8 {\n        let add = |v| v + extra;\n        add(self.x) + call(\n            self.y,\n            extra,\n        )\n    }",
+            .exclusive) },
+    { needle := "|v|", object := Evil.aFunction, anchor := some ("v + extra", true)
+      covers :=
+        some
+          ("fn sum(&self, extra: u8) -> u8 {\n        let add = |v| v + extra;\n        add(self.x) + call(\n            self.y,\n            extra,\n        )\n    }",
+            .exclusive) },
+    { needle := "x: u8", object := Evil.aClass
+      covers := some ("struct Fields {\n    x: u8,\n    y: u8,\n}", .exclusive) },
+    { needle := "x: u8", object := Evil.innerClass
+      covers := some ("    x: u8,\n    y: u8,\n", .exclusive) },
+    { needle := "Unit", object := Evil.aClass, covers := some ("struct Unit;", .exclusive) },
+    { needle := "Unit", object := Evil.innerClass, covers := none },
+    { needle := "Circle", object := Evil.aClass
+      covers := some ("enum Shape {\n    Circle(f64),\n    Square(f64),\n}", .exclusive) },
+    { needle := "area(&self) -> f64;", object := Evil.aFunction
+      covers := some ("fn area(&self) -> f64;", .exclusive) },
+    { needle := "area(&self) -> f64;", object := Evil.innerFunction, covers := none },
+    { needle := "area(&self) -> f64;", object := Evil.aClass
+      covers := some ("trait Area {\n    fn area(&self) -> f64;\n}", .exclusive) },
+    { needle := "a: u8", object := Evil.anArgument, covers := some ("a: u8, ", .exclusive) },
+    { needle := "b: u8", object := Evil.anArgument, covers := some (", b: u8", .exclusive) },
+    { needle := "b: u8", object := Evil.innerArgument, covers := some ("b: u8", .exclusive) },
+    { needle := "self.x", object := Evil.anArgument, covers := some ("self.x", .exclusive) },
+    { needle := "self.y", object := Evil.anArgument
+      covers := some ("self.y,\n            ", .exclusive) },
+    { needle := "one: u8", object := Evil.anArgument, covers := some ("one: u8, ", .exclusive) },
+    { needle := "fn free", object := Evil.anArgument, covers := none },
+    { needle := "fn free", object := Evil.innerFunction,
+      covers := some ("    a + b\n", .exclusive) },
+    { needle := "struct Fields", object := Evil.innerClass
+      covers := some ("    x: u8,\n    y: u8,\n", .exclusive) },
+    { needle := "impl Fields", object := Evil.innerClass
+      covers :=
+        some
+          ("    fn sum(&self, extra: u8) -> u8 {\n        let add = |v| v + extra;\n        add(self.x) + call(\n            self.y,\n            extra,\n        )\n    }\n",
+            .exclusive) },
+    { needle := "|v|", object := Evil.innerFunction, covers := some ("v + extra", .exclusive) }]
+
+/-- The byte offset of the first occurrence of `needle` in `text`, or of
+its end when `atEnd`; none when `text` does not hold it. -/
+def offsetOfNeedle (text needle : String) (atEnd : Bool := false) : Option Nat :=
+  match text.splitOn needle with
+  | before :: _ :: _ => some (before.utf8ByteSize + if atEnd then needle.utf8ByteSize - 1 else 0)
+  | _ => none
+
+/-- What is wrong with each of `rows` over `text`, a text of the Rust
+fixture whose mode is the shipped Rust one, each row's covered text edited
+by `edited`, through the real syntax tree binding over `table`. -/
+def objectRowsWrong (table : Snapshots) (texts : RealTexts) (text : TextId) (source : String)
+    (edited : String → String) (rows : List ObjectRow) : IO (List String) := do
+  let real ← RealSyntaxTree.new table.reader
+  rows.filterMapM fun row => do
+      let some head := offsetOfNeedle source row.needle | return some s!"no {row.needle}"
+      let anchor := row.anchor.bind fun (needle, atEnd) => offsetOfNeedle source needle atEnd
+      let asked : EditorM (Option (String × Vocabulary.Reach)) := do
+        let some span ← row.object.span text { head, count := row.count, anchor } | return none
+        let stop ←
+          if span.reach == .inclusive then
+            text.motion .nextCell span.stop
+          else
+            pure span.stop
+        return some (← text.slice span.start stop, span.reach)
+      let (answer, _) ←
+        asked.runReal texts (← recorderOf table).handle (syntaxTree := settling table real.handle)
+      let expected := row.covers.map fun (covered, reach) => (edited covered, reach)
+      return match answer with
+        | .ok covers =>
+          if covers == expected then none
+          else some s!"{row.object.name} at {repr row.needle}: {repr covers}"
+        | .error refusal => some s!"{row.object.name} at {repr row.needle}: {repr refusal}"
+
+/-- What only the real syntax tree binding shows over the fixtures in
+`fixtures` (`tests/syntax`): the indent levels of a Rust fixture, before
+and after an edit, the tree's text objects of another, before and after
+edits, and the names the shipped Rust indents and text objects queries
+capture. -/
+def syntaxFixtureChecks (fixtures : System.FilePath) : List Check :=
+  [{  name := "the shipped Rust text objects query names only what the text-object rule reads"
+      run := do
+        let some names ← shippedNames "rust" .textObjects | return false
+        return !names.isEmpty && names.all Evil.TreeObjects.names.contains },
+    { name :=
+        "the tree's text objects of the Rust fixture, through the Lean editor API, cover the ranges written by hand, and still do after a function is inserted above and a line added inside a method's body"
+      run := do
+        let source ← IO.FS.readFile (fixtures / "rust" / "objects.rs")
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let entered : EditorM TextId := do
+          let text ← createText source
+          Highlight.enter "rust" text { grammar := "rust" }
+          return text
+        let (.ok text, texts) ←
+          entered.runReal (.over table) (← recorderOf table).handle (syntaxTree :=
+              settling table real.handle) | return false
+        let before ← objectRowsWrong table texts text source id objectRows
+        let line := "        let add = |v| v + extra;\n"
+        let added := line ++ "        let unused = 1;\n"
+        let inserted := "fn inserted() {}\n\n"
+        let some at_ := offsetOfNeedle source line | return false
+        let edit : EditorM Unit := do
+          text.insert (at_ + line.utf8ByteSize) "        let unused = 1;\n"
+          text.insert 0 inserted
+        let (.ok (), texts) ← edit.runReal texts (← recorderOf table).handle | return false
+        let edited := inserted ++ source.replace line added
+        let after ← objectRowsWrong table texts text edited (·.replace line added) objectRows
+        let read : EditorM String := text.read
+        let (.ok now, _) ← read.runReal texts (← recorderOf table).handle | return false
+        unless before.isEmpty && after.isEmpty do
+          throw (IO.userError ("; ".intercalate (before ++ after)))
+        return now == edited },
+    { name := "the shipped Rust indents query names only what the indent rule reads"
+      run := do
+        let some names ← shippedNames "rust" .indents | return false
+        return !names.isEmpty && names.all Indent.names.contains },
+    { name :=
+        "the indent levels of the Rust fixture are its own indentation, and the rows inside its multi-line string and block comment keep theirs, before and after an edit that wraps a statement in a new block"
+      run := do
+        let source ← IO.FS.readFile (fixtures / "rust" / "indent.rs")
+        let kept := ["not indented by the rule\";", "       comment */"]
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let entered : EditorM TextId := do
+          let text ← createText source
+          Highlight.enter "rust" text { grammar := "rust" }
+          return text
+        let (.ok text, texts) ←
+          entered.runReal (.over table) (← recorderOf table).handle (syntaxTree :=
+              settling table real.handle) | return false
+        let some before ← rustIndentLevels table texts text | return false
+        -- A statement wrapped in a new `if` block, formatted.
+        let statement := "                let y = x + 1;\n"
+        let wrapped :=
+          "                if y > 0 {\n                    let y = x + 1;\n                }\n"
+        let some offset := (source.splitOn statement).head?.map (·.utf8ByteSize) | return false
+        let edit : EditorM Unit := do
+          text.delete offset (offset + statement.utf8ByteSize)
+          text.insert offset wrapped
+        let (.ok (), texts) ← edit.runReal texts (← recorderOf table).handle | return false
+        let edited := source.replace statement wrapped
+        let some after ← rustIndentLevels table texts text | return false
+        -- The documents are read, so they live to here.
+        let read : EditorM String := text.read
+        let (.ok now, _) ← read.runReal texts (← recorderOf table).handle | return false
+        return now == edited && rustIndentHolds source kept before &&
+            rustIndentHolds edited kept after }]
+
+/-- What only the real syntax tree binding shows: the library's Rust
+grammar, a query of one grammar asked of a text parsed with another, and a
+text edited through its document reparsed. -/
+def syntaxTreeChecks : List Check :=
+  [{  name := "the library's syntax service has a Rust grammar beside JSON"
+      run := do
+        let grammars ←
+          SyntaxTree.grammars.runWith fun request => do
+              let (_, _, _, handler) ← syntaxTreeOver #[]
+              handler request
+        return grammars.toOption.any fun names => names.contains "rust" && names.contains "json" },
+    { name := "a Rust function's name is captured through the binding, by its field"
+      run :=
+        onRealSyntaxTree #["fn one() {}\nstruct S;\nfn two(x: u8) {}\n"] fun _ _ ids handler => do
+          let program : SyntaxTreeM (Array SyntaxTree.Capture) := do
+            SyntaxTree.attach (SyntaxTreeContract.nth ids 0) "rust"
+            let query ← SyntaxTree.compile "rust" "(function_item name: (identifier) @name)"
+            SyntaxTree.captures (SyntaxTreeContract.nth ids 0) query 0 39
+          let text := "fn one() {}\nstruct S;\nfn two(x: u8) {}\n"
+          return match ← program.runWith handler with
+            | .ok captures => capturedTexts text captures == #["one", "two"]
+            | .error _ => false },
+    { name := "a query of JSON asked of a text parsed as Rust is refused as of the wrong grammar"
+      run :=
+        onRealSyntaxTree #["fn one() {}"] fun _ _ ids handler => do
+          let program : SyntaxTreeM Bool := do
+            SyntaxTree.attach (SyntaxTreeContract.nth ids 0) "rust"
+            let query ← SyntaxTree.compile "json" "(number) @n"
+            SyntaxTreeContract.refusedWith .wrongGrammar
+                (SyntaxTree.captures (SyntaxTreeContract.nth ids 0) query 0 3)
+          return (← program.runWith handler) matches .ok true },
+    { name :=
+        "a text edited through its document is reparsed: its new function's name is captured once the tree of the edit is delivered"
+      run :=
+        onRealSyntaxTree #["fn one() {}\n"] fun documents table ids handler => do
+          let some document := documents[0]? | return false
+          let attached ← (SyntaxTree.attach (SyntaxTreeContract.nth ids 0) "rust").runWith handler
+          unless ← document.replace 0 0 "fn zero() {}\n" do
+            return false
+          -- The snapshot of the edited text enters the table, as the
+          -- editor's would after the edit.
+          let edited ← table.add (← document.snapshot)
+          let program : SyntaxTreeM (Array SyntaxTree.Capture) := do
+            let query ← SyntaxTree.compile "rust" "(function_item name: (identifier) @name)"
+            SyntaxTree.captures edited query 0 25
+          let text := "fn zero() {}\nfn one() {}\n"
+          return attached matches .ok () &&
+              match ← program.runWith handler with
+              | .ok captures => capturedTexts text captures == #["zero", "one"]
+              | .error _ => false },
+    { name :=
+        "an injection and a keep with a query of another grammar than the text's, and a language whose injections query is of another grammar than its highlights query, are refused as of the wrong grammar"
+      run :=
+        onRealSyntaxTree #["fn one() {}"] fun _ _ ids handler => do
+          let snapshot := SyntaxTreeContract.nth ids 0
+          let program : SyntaxTreeM Bool := do
+            SyntaxTree.attach snapshot "rust"
+            let json ← SyntaxTree.compile "json" "(number) @n"
+            let rust ← SyntaxTree.compile "rust" "(identifier) @id"
+            return (←
+                  SyntaxTreeContract.refusedWith .wrongGrammar (SyntaxTree.inject snapshot json)) &&
+                (←
+                  SyntaxTreeContract.refusedWith .wrongGrammar
+                      (SyntaxTree.keep snapshot .indents json)) &&
+                (←
+                  SyntaxTreeContract.refusedWith .wrongGrammar
+                      (SyntaxTree.injectLanguage snapshot "rust" rust #[none] (some json)))
+          return (← program.runWith handler) matches .ok true },
+    { name :=
+        "a highlight with a query of another grammar than its text's is refused as of the wrong grammar"
+      run :=
+        onRealSyntaxTree #["fn one() {}"] fun _ _ ids handler => do
+          let program : SyntaxTreeM Bool := do
+            SyntaxTree.attach (SyntaxTreeContract.nth ids 0) "rust"
+            let query ← SyntaxTree.compile "json" "(number) @n"
+            SyntaxTreeContract.refusedWith .wrongGrammar
+                (SyntaxTree.highlight (SyntaxTreeContract.nth ids 0) query #[none])
+          return (← program.runWith handler) matches .ok true },
+    { name :=
+        "a Rust text highlighted by the shipped default and edited is drawn by the real display with its keywords in the keyword face's colour, once the edit's tree is delivered and reported on the editor queue"
+      run := do
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let syntaxTree := settlingAttach table real.handle
+        let red := Color.rgb 0xcc 0 0
+        let display ← Ffi.Display.newCells 8 16
+        let shown ←
+          RealDisplay.over display table.reader
+              #[{ name := ⟨"syntax.keyword"⟩, face := { foreground := some red } }]
+        let highlighted : EditorM TextId := do
+          let text ← createText "fn one() {}\n"
+          Highlight.enter "rust" text { grammar := "rust" }
+          return text
+        let (.ok text, texts) ←
+          highlighted.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
+        let edited : EditorM (SnapshotId × MarkerId) := do
+          text.insert 0 "fn zero() {}\n"
+          return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
+        let (.ok (snapshot, scroll), texts) ←
+          edited.runReal texts shown.handle (syntaxTree := syntaxTree) | return false
+        let some found ← table.find? snapshot | return false
+        unless ← Ffi.syntaxSettle found 5000 do
+          return false
+        let reported ← pulledParsed
+        let scene : Scene :=
+          { size := { width := 160, height := 64 }
+            views :=
+              #[{ id := ⟨0⟩, rect := { x := 0, y := 0, width := 160, height := 64 }, snapshot
+                  scroll, selections := #[], cursor := { shape := .block, face := ⟨"cursor"⟩ }
+                  decorations := #[], status := #[] }]
+            focused := none, echo := "", pending := "", preedit := none }
+        let publish : EditorM Unit := Display.publish scene
+        let (published, _) ← publish.runReal texts shown.handle
+        let frame ← display.frameText
+        -- Each row starts with `fn`: its first run, two bytes, in red.
+        return reported && published.isOk && (frame.splitOn "runs 0..2:cc0000ff/").length == 3 },
+    { name :=
+        "a Markdown text with a fenced Rust block, entered with the shipped default, is drawn by the real display with the fence's `fn` in the keyword face's colour"
+      run := do
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let syntaxTree := settlingAttach table real.handle
+        let red := Color.rgb 0xcc 0 0
+        let display ← Ffi.Display.newCells 8 16
+        let shown ←
+          RealDisplay.over display table.reader
+              #[{ name := ⟨"syntax.keyword"⟩, face := { foreground := some red } }]
+        let entered : EditorM (SnapshotId × MarkerId) := do
+          let text ← createText "# Title\n\n```rust\nfn one() {}\n```\n"
+          Highlight.enter "markdown" text { grammar := "markdown" }
+          return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
+        let (.ok (snapshot, scroll), texts) ←
+          entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
+        let some found ← table.find? snapshot | return false
+        -- The settle waits for the layers the injections find, which the
+        -- library delivers at the same revision.
+        unless ← Ffi.syntaxSettle found 5000 do
+          return false
+        let reported ← drainedParsed
+        let scene : Scene :=
+          { size := { width := 160, height := 96 }
+            views :=
+              #[{ id := ⟨0⟩, rect := { x := 0, y := 0, width := 160, height := 96 }, snapshot
+                  scroll, selections := #[], cursor := { shape := .block, face := ⟨"cursor"⟩ }
+                  decorations := #[], status := #[] }]
+            focused := none, echo := "", pending := "", preedit := none }
+        let publish : EditorM Unit := Display.publish scene
+        let (published, _) ← publish.runReal texts shown.handle
+        let frame ← display.frameText
+        -- One row starts with a keyword: the fence's `fn`, in red.
+        return reported > 0 && published.isOk &&
+            (frame.splitOn "runs 0..2:cc0000ff/").length == 2 }]
+
 /-- Runs a property of the watch port's contract against the real binding
 over `timers`. The library is told the interrupt key, and the property's
 interrupt keys arrive through the library's window input, as a window's
@@ -1574,6 +2140,205 @@ def watchChecks (timers : Job.Timers) : List Check :=
               next == some ("", "C-c s")
         finally
           discard <| Event.setInterruptKey none }]
+
+/-! ## `:!` over the real process service -/
+
+/-- The keys of the shell checks: none bound, and the ex line's commands and
+the shell's by name; the shell's job is the one registered. -/
+def shellKeys : Loop.Keys TestScheme.scheme :=
+  { command? := fun name =>
+      ((Ex.commands ++ Shell.commands).find? (·.name == name)).bind fun registration =>
+        match registration.action with
+        | .call run =>
+          some fun call => do
+            run call
+            return none
+        | _ => none
+    registered := { jobs := (· == Shell.runJob) } }
+
+/-- `stepped`'s loop once what the step asked for is done, as a host does
+it: each invocation it answered run as a step of its own, and each job it
+started spawned on `services`, waited for, and its command delivered, each
+taken in the same way, at most `depth` deep. `none` when a job did not end
+in time or ended otherwise than finished, or a step was refused. -/
+partial def settle (services : Job.Services) (display : DisplayHandler) (texts : RealTexts)
+    (stepped : Loop.Stepped TestScheme.scheme) (depth : Nat := 8) :
+    IO (Option (Loop TestScheme.scheme × RealTexts)) := do
+  if depth == 0 then
+    return none
+  let mut loop := stepped.loop
+  let mut texts := texts
+  for invocation in stepped.answered do
+    let (next, after) ← (loop.invoke shellKeys invocation).runReal texts display
+    let .ok next := next | return none
+    let some (settled, after) ← settle services display after next (depth - 1) | return none
+    loop := settled
+    texts := after
+  for start in stepped.starts do
+    let some work :=
+      (Shell.jobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
+    let handle ← Job.spawn services work (pure ())
+    unless ← eventually handle.ended do
+      handle.cancel
+      return none
+    let some (.finished command) ← handle.outcome? | return none
+    handle.settle
+    let (next, after) ← (loop.deliver shellKeys s!"job {start.name}" command).runReal texts display
+    let .ok next := next | return none
+    let some (settled, after) ← settle services display after next (depth - 1) | return none
+    loop := settled
+    texts := after
+  return some (loop, texts)
+
+/-- What only the real process service shows of `:!` and a filter, with the
+loop's working directory the fixtures' (`fixtures`, `tests/shell`). -/
+def shellChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
+  let ran (line : String) (contents : String) : IO (Option (String × String)) := do
+    let published ← Snapshots.new
+    let recorder ← DisplayRecorder.new { advance := 8, lineHeight := 16 } published.reader
+    let display := recorder.handle
+    let begin : EditorM (Loop TestScheme.scheme) := do
+      let loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
+      let some target := loop.state.focusedTarget? | throw TextError.noSuchText
+      target.buffer.text.insert 0 contents
+      return { loop with state := { loop.state with workingDirectory := fixtures } }
+    let (started, texts) ← begin.runReal (RealTexts.over published) display
+    let .ok loop := started | return none
+    let (stepped, texts) ←
+      (loop.invoke shellKeys { command := Ex.name, arguments := [.str line] }).runReal texts display
+    let .ok stepped := stepped | return none
+    let some (loop, texts) ← settle services display texts stepped | return none
+    let read : EditorM String := do
+      let some target := loop.state.focusedTarget? | throw TextError.noSuchText
+      target.buffer.text.read
+    let (text, _) ← read.runReal texts display
+    let .ok text := text | return none
+    return some (loop.state.echo, text)
+  [{  name :=
+        "criterion 16: over the real process service, `:!` running the fixture `hello` leaves `hello` in the echo area, and its child is reaped"
+      run := do
+        let before ← Ffi.processesPending
+        let said ← ran s!"!'{fixtures / "hello"}'" ""
+        let reaped ← eventually (return (← Ffi.processesPending) == before)
+        return said == some ("hello", "") && reaped },
+    { name :=
+        "criterion 17: over the real process service, `:%!/usr/bin/sort` over the lines b, c and a leaves a, b and c, and its child is reaped"
+      run := do
+        let before ← Ffi.processesPending
+        let said ← ran "%!/usr/bin/sort" "b\nc\na\n"
+        let reaped ← eventually (return (← Ffi.processesPending) == before)
+        return said == some ("3 lines filtered", "a\nb\nc\n") && reaped }]
+
+/-! ## A compile over the real process service -/
+
+/-- The keys of the compile checks: none bound, and the compile mode's
+commands by name; its job is the one registered. -/
+def compileKeys : Loop.Keys TestScheme.scheme :=
+  { command? := fun name =>
+      (Compile.commands.find? (·.name == name)).bind fun registration =>
+        match registration.action with
+        | .call run =>
+          some fun call => do
+            run call
+            return none
+        | _ => none
+    registered := { jobs := (· == Compile.runJob) } }
+
+/-- The text of the first compilation buffer, if there is one. -/
+def compilationText (loop : Loop TestScheme.scheme) : EditorM (Option String) := do
+  match (loop.state.buffers.toList.filterMap id).find? (·.name.startsWith "*compilation: ") with
+  | some buffer =>
+    return some (← buffer.text.read)
+  | none =>
+    return none
+
+/-- What only the real process service shows of a compile: its output in
+the compilation buffer before the child ends, with the fixture
+`three-lines` (`fixtures`, `tests/compile`), which waits for files the
+check makes. -/
+def compileChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
+  [{  name :=
+        "criterion 11: over the real process service, the fixture three-lines shows each line in the compilation buffer before it ends, and its exit status in the last line; its child is reaped"
+      run := do
+        let before ← Ffi.processesPending
+        let directory ← IO.FS.createTempDir
+        try
+          let published ← Snapshots.new
+          let recorder ← DisplayRecorder.new { advance := 8, lineHeight := 16 } published.reader
+          let display := recorder.handle
+          -- A scratch buffer has no workspace: the directory scope is the
+          -- loop's working directory, where the fixture looks for its files.
+          let begin : EditorM (Loop TestScheme.scheme) := do
+            let loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
+            return { loop with state := { loop.state with workingDirectory := directory } }
+          let (started, texts) ← begin.runReal (RealTexts.over published) display
+          let .ok loop := started | return false
+          let line := s!"'{fixtures / "three-lines"}'"
+          let (stepped, texts) ←
+            (loop.invoke compileKeys
+                    { command := Compile.compileName, arguments := [.str line] }).runReal
+                texts display
+          let .ok stepped := stepped | return false
+          let some start := stepped.starts[0]? | return false
+          let some work :=
+            (Compile.jobs.find? (·.name == start.name)).map (·.work start.arguments) | return false
+          let posts ← IO.mkRef (#[] : Array Invocation)
+          let handle ←
+            Job.spawn services work (pure ()) fun invocation => posts.modify (·.push invocation)
+          let loopRef ← IO.mkRef stepped.loop
+          let textsRef ← IO.mkRef texts
+          -- Delivers `command` as the loop delivers a job's, and reads the
+          -- compilation buffer after it.
+          let deliver (command : EditorM Unit) : IO (Option String) := do
+            let (next, after) ←
+              ((← loopRef.get).deliver compileKeys s!"job 1 {Compile.runJob}" command).runReal
+                  (← textsRef.get) display
+            textsRef.set after
+            let .ok next := next | return none
+            loopRef.set next.loop
+            let (text, after) ← (compilationText next.loop).runReal (← textsRef.get) display
+            textsRef.set after
+            return (text.toOption).join
+          let postsAt (count : Nat) : IO Bool := eventually (return (← posts.get).size ≥ count)
+          let deliverPost (index : Nat) : IO (Option String) := do
+            let some invocation := (← posts.get)[index]? | return none
+            deliver (runPosted invocation)
+          unless ← postsAt 1 do
+            handle.cancel
+            return false
+          let first ← deliverPost 0
+          IO.FS.writeFile (directory / "go-1") ""
+          unless ← postsAt 2 do
+            handle.cancel
+            return false
+          let second ← deliverPost 1
+          IO.FS.writeFile (directory / "go-2") ""
+          unless ← eventually handle.ended do
+            handle.cancel
+            return false
+          -- What the child wrote after `two` came in posts of its own or with
+          -- its end: each is delivered, in order, then the job's command.
+          let mut last := second
+          for index in [2:(← posts.get).size] do
+            last ← deliverPost index
+          let some (.finished command) ← handle.outcome? | return false
+          last ← deliver command
+          handle.settle
+          let reaped ← eventually (return (← Ffi.processesPending) == before)
+          let lastLine (text : String) : String :=
+            ((text.splitOn "\n").filter (!·.isEmpty)).getLast?.getD ""
+          let has (text : Option String) (part : String) : Bool :=
+            text.any fun text => (text.splitOn "\n").contains part
+          return has first "one" && !has first "two" &&
+              !(first.any fun text => (text.splitOn "Compilation").length > 1) &&
+              has second "two" &&
+              !has second "three" &&
+              has last "three" &&
+              (last.map lastLine).any
+                (·.startsWith "Compilation exited abnormally with code 2 after ") &&
+              reaped
+        finally
+          IO.FS.removeDirAll directory }]
 
 /-! ## A child's environment over the real process service -/
 
@@ -1832,11 +2597,14 @@ timer service, the display interface's against the recorder and the watch
 port's against its real binding, then shuts down: exits 0 when everything
 holds, and 1 after naming on stderr what does not.
 
-Its two arguments are the directory of the fixtures a child's environment
-is looked up with (`tests/process-environment`) and the directory of the
-fixture that stands in for git in the workspace finder's checks
-(`tests/workspaces`), each made absolute here; any other command line is
-status 2, with the usage on stderr.
+Its five arguments are the directory of the fixtures a child's
+environment is looked up with (`tests/process-environment`), the directory
+of the fixture that stands in for git in the workspace finder's checks
+(`tests/workspaces`), the directory of the fixture `:!` runs, which is also
+the editor's working directory in those checks (`tests/shell`), the
+directory of the fixture `compile` runs (`tests/compile`), and the directory
+of the syntax fixtures (`tests/syntax`), each made absolute here;
+any other command line is status 2, with the usage on stderr.
 
 The pool's threads are learnt first, by warming it, before anything else
 runs: the check that the pump is not one of the pool's tasks compares
@@ -1844,15 +2612,18 @@ against them. Then the completion pump runs on a dedicated task for the rest
 of the run. Shutdown is quit, which must end the pump, then an explicit
 exit: a task that failed a check may still be blocked in the library. -/
 def main (arguments : List String) : IO UInt32 := do
-  -- The fixtures of the environment checks and of the workspace checks, made
-  -- absolute here, at the edge.
-  let (fixtures, workspaceFixtures) ←
+  -- The fixtures of the environment checks, the workspace checks, the shell
+  -- checks, the compile checks and the syntax checks, made absolute here, at
+  -- the edge.
+  let (fixtures, workspaceFixtures, shellFixtures, compileFixtures, syntaxFixtures) ←
     match arguments with
-    | [directory, workspaces] =>
-      pure (← IO.FS.realPath directory, ← IO.FS.realPath workspaces)
+    | [directory, workspaces, shell, compile, syntaxDirectory] =>
+      pure
+          (← IO.FS.realPath directory, ← IO.FS.realPath workspaces, ← IO.FS.realPath shell,
+            ← IO.FS.realPath compile, ← IO.FS.realPath syntaxDirectory)
     | _ =>
       IO.eprintln
-          "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures>"
+          "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures> <the directory of the shell fixtures> <the directory of the compile fixtures> <the directory of the syntax fixtures>"
       return 2
   let pool ← Editor.Job.Pool.whole ContractTest.warmPatience
   let completions ← Editor.Job.Completions.new
@@ -1880,6 +2651,7 @@ def main (arguments : List String) : IO UInt32 := do
   let pairChecks := ContractTest.pairChecks
   let pairCheckFailed ← ContractTest.checkFailures pairChecks
   let jobFailed ← ContractTest.jobFailures services
+  let postFailed ← ContractTest.postFailures services
   let fileFailed ← ContractTest.fileFailures services held
   let processFailed ← ContractTest.processFailures services
   let processChecks := ContractTest.processChecks services
@@ -1889,6 +2661,10 @@ def main (arguments : List String) : IO UInt32 := do
   let workspaceFailed ← ContractTest.workspaceFailures services workspaceFixtures
   let workspaceChecks := ContractTest.workspaceChecks services workspaceFixtures
   let workspaceCheckFailed ← ContractTest.checkFailures workspaceChecks
+  let shellChecks := ContractTest.shellChecks services shellFixtures
+  let shellCheckFailed ← ContractTest.checkFailures shellChecks
+  let compileChecks := ContractTest.compileChecks services compileFixtures
+  let compileCheckFailed ← ContractTest.checkFailures compileChecks
   let fileWatchFailed ← ContractTest.fileWatchFailures services
   let fileWatchChecks := ContractTest.fileWatchChecks services
   let fileWatchCheckFailed ← ContractTest.checkFailures fileWatchChecks
@@ -1910,6 +2686,10 @@ def main (arguments : List String) : IO UInt32 := do
   let fuzzyFailed ← ContractTest.fuzzyFailures
   let fuzzyChecks := ContractTest.fuzzyChecks
   let fuzzyCheckFailed ← ContractTest.checkFailures fuzzyChecks
+  let syntaxTreeFailed ← ContractTest.syntaxTreeFailures
+  let syntaxTreeChecks :=
+    ContractTest.syntaxTreeChecks ++ ContractTest.syntaxFixtureChecks syntaxFixtures
+  let syntaxTreeCheckFailed ← ContractTest.checkFailures syntaxTreeChecks
   let watchFailed ← ContractTest.watchFailures services.timers
   let watchChecks := ContractTest.watchChecks services.timers
   let watchCheckFailed ← ContractTest.checkFailures watchChecks
@@ -1917,12 +2697,15 @@ def main (arguments : List String) : IO UInt32 := do
   Editor.Ffi.quit
   let pumpEnded ← ContractTest.eventually (IO.hasFinished pump)
   let failed :=
-    textFailed.map (s!"the real text binding: {·}") ++ pairCheckFailed ++ jobFailed ++ fileFailed ++
+    textFailed.map (s!"the real text binding: {·}") ++ pairCheckFailed ++ jobFailed ++ postFailed ++
+      fileFailed ++
       processFailed ++
       processCheckFailed ++
       environmentFailed ++
       workspaceFailed ++
       workspaceCheckFailed ++
+      shellCheckFailed ++
+      compileCheckFailed ++
       fileWatchFailed ++
       fileWatchCheckFailed ++
       checkFailed ++
@@ -1936,6 +2719,8 @@ def main (arguments : List String) : IO UInt32 := do
       clipboardCheckFailed ++
       fuzzyFailed ++
       fuzzyCheckFailed ++
+      syntaxTreeFailed ++
+      syntaxTreeCheckFailed ++
       watchFailed ++
       watchCheckFailed ++
       apiFailed ++
@@ -1945,6 +2730,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

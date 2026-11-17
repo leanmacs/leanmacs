@@ -27,6 +27,16 @@ scheme are made from that (`Mode.keymaps`).
 - **No owner.** The owner is on the registry's entry
   (`Config.ModeEntry`), as for commands and key bindings, so `setup`
   cannot choose it.
+- **`syntaxTree` is how the mode's text is parsed and drawn**
+  (`Mode.SyntaxTree`): a grammar of the library's syntax service, the
+  source of the highlights query (none: the grammar's shipped one),
+  config's mapping of capture names to faces, over the shipped default
+  (`Editor/Highlight.lean`), and the sources of the injections, text
+  objects and indents queries (each none: the grammar's shipped one). A derived mode with none takes the nearest one
+  of its lineage (`Mode.syntaxTreeOf`). When the mode becomes a buffer's
+  major mode, the loop attaches and highlights the buffer's text before
+  the lineage's on-enter actions run (`Editor/Command/Dispatch.lean`). It
+  is not called `syntax`, which is a keyword of Lean's.
 - **`onEnter` runs when the mode becomes a buffer's major mode**, with the
   view it was set through, once. A command asks for the mode
   (`ViewId.setMajorMode`, `Editor/Api.lean`), and the loop that runs the
@@ -67,6 +77,7 @@ a strict prefix of one of theirs is not reported (the open question
 | Addition | Where |
 |---|---|
 | A new kind of key a mode declares | A field of `Mode`, and its keymap in `Mode.keymaps` |
+| Something more a mode says of how its text is parsed or drawn | A field of `Mode.SyntaxTree`, and what setting the mode does with it in `Editor/Highlight.lean` |
 | A new role | `Editor/Role.lean`; nothing here |
 | A new mistake a mode can make | A variant of `Mode.Problem`, its sentence in `describe`, and its case in `problems` (or in `check`, when it needs a scheme) |
 
@@ -75,9 +86,36 @@ Pinned by `ModelTest.modeRecordChecks`, on the test scheme.
 
 namespace Editor
 
+/-- How a mode's text is parsed and drawn: a grammar of the library's
+syntax service, the highlights query's source, config's mapping of capture
+names to faces (`Editor/Highlight.lean`), and the sources of its
+injections, text objects and indents queries. -/
+structure Mode.SyntaxTree where
+  /-- The grammar the text is parsed with: `rust`, `json`. -/
+  grammar : String
+  /-- The source of the highlights query; `none` for the one the grammar
+  ships (`SyntaxTree.shippedQuery`). -/
+  highlights : Option String := none
+  /-- Config's mapping of capture names to faces, over the shipped default
+  (`Highlight.defaultFaces`): a capture's full name, or a first component,
+  and its face, `none` for one that draws nothing (`Highlight.faceOf`). -/
+  captures : List (String × Option FaceName) := []
+  /-- The source of the injections query, which finds text of another
+  language in the mode's text; `none` for the one the grammar ships. An
+  empty source captures nothing, which turns injections off. -/
+  injections : Option String := none
+  /-- The source of the text objects query (`Editor/Evil/TreeObjects.lean`);
+  `none` for the one the grammar ships. -/
+  textObjects : Option String := none
+  /-- The source of the indents query (`Editor/Indent.lean`); `none` for the
+  one the grammar ships. -/
+  indents : Option String := none
+  deriving DecidableEq, Repr
+
 /-- A mode: what it is called, what it derives from, the roles it fills,
-its local commands, and what runs when it becomes a buffer's major mode.
-No key of a top-level binding and no scheme's binding type appears in it. -/
+its local commands, how its text is parsed and drawn, and what runs when it
+becomes a buffer's major mode. No key of a top-level binding and no
+scheme's binding type appears in it. -/
 structure Mode where
   /-- Its name, by which a buffer holds it and the registry finds it. -/
   name : String
@@ -90,6 +128,9 @@ structure Mode where
   /-- Its local commands: each suffix, as a key string typed after the
   scheme's leader, and the name of the command it runs. -/
   locals : List (String × String) := []
+  /-- How its text is parsed and drawn, if it says: none for a mode of
+  plain text, or one that takes its parent's (`Mode.syntaxTreeOf`). -/
+  syntaxTree : Option Mode.SyntaxTree := none
   /-- What runs, given the view, when the mode becomes a buffer's major
   mode, and also, before the derived mode's own, when a mode derived from
   this one does (the loop runs the lineage's, root first, inside the
@@ -98,6 +139,12 @@ structure Mode where
   onEnter : ViewId → EditorM Unit := fun _ => pure ()
 
 namespace Mode
+
+/-- How the text of a mode whose lineage is `lineage`, root first, is
+parsed and drawn: the nearest of its modes that says (the last), or none
+when none does. -/
+def syntaxTreeOf (lineage : List Mode) : Option Mode.SyntaxTree :=
+  lineage.reverse.findSome? (·.syntaxTree)
 
 /-- The suffixes that are keys, as chords, each with its command's name, in
 order. A string `Key.parse` refuses, or one that names no keys, is left

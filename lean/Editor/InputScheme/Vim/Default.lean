@@ -18,8 +18,10 @@ changed in its row and in its registration together. Nothing here says what
 a name does. The motions' entries are `Evil.motions`
 (`Editor/Evil/Motions.lean`), and the commands that are built are
 registered in `Editor/Evil/Compiled.lean`,
-`Editor/Minibuffer/Compiled.lean` and, for `ex`, which `:` names and
-which opens the ex command line, `Editor/Ex/Compiled.lean`; a name with
+`Editor/Minibuffer/Compiled.lean`, for `ex`, which `:` names and
+which opens the ex command line, `Editor/Ex/Compiled.lean`, and, for
+`keyboard-quit`, which `C-g` names and which cancels a running `:!`,
+`Editor/Shell/Compiled.lean`; a name with
 nothing registered under it says so in the echo area when its key runs.
 The operators' entries are `Evil.operators`
 (`Editor/Evil/Operators.lean`), and the text objects' `Evil.objects`
@@ -29,8 +31,8 @@ The operators' entries are `Evil.operators`
 |---|---|
 | `motions` | The motions of normal state and the visual states. `f`, `F`, `t` and `T` are motions that take the character the next key names (`Bound.charMotion`), and `/` and `?` motions that ask for a pattern in the minibuffer (`Bound.promptMotion`, labelled `/` and `?`). `%` is the motion `matching-bracket` |
 | `operators` | The operators. `c` names the state `insert`, and `y` changes no text |
-| `objects` | The text objects: `i` or `a` and then `w`, `W`, `"`, `'`, `` ` ``, `(`, `[` or `{`. `)` and `b` are aliases of `(`, `]` of `[`, and `}` and `B` of `{`, bound to the same names |
-| `normalCommands` | Normal state's commands: those that begin an insert, those that change text, undo, redo and the command line, the two that enter a visual state, the register prefix, and the repeat key, `.`, which is a part of speech of its own and no command's key (`Bound.repeat`) |
+| `objects` | The text objects: `i` or `a` and then `w`, `W`, `"`, `'`, `` ` ``, `(`, `[` or `{`, Vim's; or `f`, `c` or `a`, the syntax tree's function, class and argument (`Editor/Evil/TreeObjects.lean`). `)` and `b` are aliases of `(`, `]` of `[`, and `}` and `B` of `{`, bound to the same names |
+| `normalCommands` | Normal state's commands: those that begin an insert, those that change text, undo, redo and the command line, `C-g`, which cancels a running `:!` or filter (`keyboard-quit`), the two that enter a visual state, the register prefix, and the repeat key, `.`, which is a part of speech of its own and no command's key (`Bound.repeat`) |
 | `insertCommands` | Insert state's: the key that returns to normal state, and its editing keys, `<Backspace>`, `C-w` (Vim's word delete), `RET`, `TAB` and the four arrow keys (`Editor/Evil.lean`, "Editing keys"), each bound as a command that changes no text for the grammar, so it is not the last change. `<Backspace>`, `C-w`, `RET` and `TAB` add themselves to the session's recording (`Command.typed`), so `.` replays them; each arrow key restarts the last change as `i` once something is typed after it (`Command.restarts`), as Vim 9.1's `ins-special-special` says |
 | `visualCommands`, `visualLineCommands` | A visual state's: the keys that return to normal state, the key that enters the other visual state, and the register prefix |
 | `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, `<Escape>`, which cancels it, `TAB` and `C-n`, which move to the next of its candidates, `S-TAB` and `C-p`, which move to the previous, `<Backspace>`, which deletes the character before the bar, and cancels the prompt when the minibuffer is empty, as Vim's command line does, `<ArrowLeft>` and `<ArrowRight>`, the motions `left` and `right`, and `C-u`, which deletes from the bar to the input's start |
@@ -221,7 +223,10 @@ def objects : List (String × Bound) :=
     ("a [", .textObject "a-bracket"), ("a ]", .textObject "a-bracket"),
     ("i {", .textObject "inner-brace"), ("i }", .textObject "inner-brace"),
     ("i B", .textObject "inner-brace"), ("a {", .textObject "a-brace"),
-    ("a }", .textObject "a-brace"), ("a B", .textObject "a-brace")]
+    ("a }", .textObject "a-brace"), ("a B", .textObject "a-brace"),
+    ("a f", .textObject "a-function"), ("i f", .textObject "inner-function"),
+    ("a c", .textObject "a-class"), ("i c", .textObject "inner-class"),
+    ("a a", .textObject "an-argument"), ("i a", .textObject "inner-argument")]
 
 /-- Normal state's commands, and the register prefix. -/
 def normalCommands : List (String × Bound) :=
@@ -229,7 +234,8 @@ def normalCommands : List (String × Bound) :=
     ("A", inserting "append-line-end"), ("o", inserting "open-below"),
     ("O", inserting "open-above"), ("x", changing "delete-char"), ("p", changing "put-after"),
     ("P", changing "put-before"), ("u", running "undo"), ("C-r", running "redo"), (".", .repeat),
-    (":", running "ex"), ("v", entering "visual"), ("V", entering "visual-line"), ("\"", .register)]
+    (":", running "ex"), ("v", entering "visual"), ("V", entering "visual-line"), ("\"", .register),
+    ("C-g", running "keyboard-quit")]
 
 /-- Insert state's commands: the key that returns to normal state, and the
 editing keys. -/

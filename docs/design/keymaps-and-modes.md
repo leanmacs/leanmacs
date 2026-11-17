@@ -1629,7 +1629,7 @@ options:
 |---|---|---|
 | `<Backspace>` | `insert-delete-backward` | Deletes the character before the bar; a carriage return and line feed, or a character of several bytes, goes whole. At a line's start it joins the line to the one above, and it deletes past where the insert began: `i_<BS>` under `backspace=indent,eol,start`, Vim 9.1's default. At the text's start it deletes nothing |
 | `C-w` | `insert-delete-word-backward` | "Delete the word before the cursor" (`i_CTRL-W`): from the later of the line's start and the start of the word before the bar (`previousWordStart .word`) to the bar, so the blanks before the bar and the word before them go, as Vim's `ins_bs` with `BACKSPACE_WORD` does; a run of punctuation is a word; blanks back to the line's start go when no word is before them on the line. At a line's start it joins the line to the one above, as `<Backspace>` does there (`backspace=eol`); at the text's start it deletes nothing |
-| `RET` | `insert-newline` | Breaks the line at the bar with the buffer's own line ending (`Target.insertLineBreak`), as `o` and `O` read it. No indent: Vim's default is `noautoindent`, and indentation waits for syntax |
+| `RET` | `insert-newline` | Breaks the line at the bar with the buffer's own line ending (`Target.insertLineBreak`), as `o` and `O` read it. No indent: Vim's default is `noautoindent`. The primitive an indenting line break would call, each row's level from its mode's indents query (`TextId.indentLevels`, `lean/Editor/Indent.lean`), is built; indenting on `RET`, `o` and `O`, and the `=` operator, are task `syntax-done-signal-mode-and-indent-operator`'s |
 | `TAB` | `insert-tab` | Inserts a tab character: Vim's defaults `noexpandtab` and `softtabstop=0` |
 | `<ArrowLeft>` | `insert-left` | One cell back, no further than the line's start (`whichwrap=b,s`: no wrap) |
 | `<ArrowRight>` | `insert-right` | One cell on, no further than where the line's content ends |
@@ -2015,9 +2015,61 @@ literal port of Vim 9.1's `textobject.c`:
     built (Vim's "another string is included"): there is none, and the
     selection is as it was.
   - Word classes beyond ASCII are the text's word class as it stands.
-  - `i<` `a<`, `it` `at`, `is` `as` and `ip` `ap` are not built; the
-    syntax-aware objects are rdm:roadmap/syntax-tree-sitter phase 3's,
-    and reuse this vocabulary's shape.
+  - `i<` `a<`, `it` `at`, `is` `as` and `ip` `ap` are not built.
+
+#### The syntax tree's objects
+
+Status: built, by the syntax-tree-sitter roadmap's phase 3
+(`lean/Editor/Evil/TreeObjects.lean`; pinned by `treeObjectRuleChecks`,
+`evilObjectChecks`, `ContractTest`'s rows over `tests/syntax/rust/objects.rs`
+and `ConfigTest`'s `v a f`, and `v i f` from a `fn` line, through a host of
+the Vim scheme).
+
+Six more entries of `Evil.objects` (which is `Evil.vimObjects`, the sixteen
+above, and these) take their ranges from the syntax tree of a buffer's
+text: the captures of the text objects query its major mode keeps
+(`Mode.SyntaxTree.textObjects`, or the grammar's shipped one), asked of the
+library as plain rows (`SyntaxTree.capturesOf`), the rule Lean's:
+
+| Keys | Objects | Captures read | Rule |
+|---|---|---|---|
+| `af`, `if` | `a-function`, `inner-function` | `function.outer`, `function.inner` | The function round the cursor; inside, its body |
+| `ac`, `ic` | `a-class`, `inner-class` | `class.outer`, `class.inner` | The class round the cursor (a struct, enum, union, trait, impl or mod in Rust); inside, its body |
+| `aa`, `ia` | `an-argument`, `inner-argument` | `parameter.inner` | The argument round the cursor, with its separator; alone |
+
+- **The rule** (`TreeObjects.choose`): the nodes of the object's outer
+  capture, each range once; those enclosing the selection (`start ≤ low`,
+  `high < stop`), smallest first; in a visual state with a selection wider
+  than one cell, a node no bigger than the selection passed over for the
+  next one out, as block objects do; the `count`th (1 with none typed),
+  too few being no object; and for `if` and `ic` the longest inner row
+  within the chosen node, asked again over the node's own range so that a
+  cursor on a `fn`, a `struct` or a closure's parameters, outside the
+  inside, still has it, none being no object (a unit struct, a signature
+  with no body).
+- **Inside brackets**: an inner range that starts with an opening bracket
+  and ends with its partner is Vim's inner block between them
+  (`Evil.innerBetween`, which `i{` runs too, factored out of
+  `currentBlock`); any other inner range is taken as it is, exclusive (a
+  closure whose body is an expression).
+- **Outer objects** are the node's range, exclusive. `d af` of a function
+  that fills its lines takes them whole, by `d`'s own rule over lines (a
+  charwise span from a line's indent to the end of a later line); `c` and
+  `y` take it charwise.
+- **The separator** of `aa`: a comma after the argument (blanks before it
+  allowed) is taken with the blanks after it, line breaks included, up to
+  the next non-blank; otherwise a comma before it, blanks and line breaks
+  between allowed; otherwise the argument alone.
+- **No object** where the syntax tree port refuses: a text with no syntax
+  tree, one whose mode keeps no text objects query, and one whose last
+  edit's tree is not yet delivered ("A structural question before its
+  reparse", `docs/design/README.md`). Under an operator the command gives
+  up (`noObjectHere`); in a visual state the selection stays.
+- **Open points**: a node found forward when none encloses the cursor, as
+  `ib` finds the next pair; `d af` taking whole lines when the function
+  fills them under `c` and `y` too; text objects inside injected layers
+  (`vaf` in a Markdown fence finds nothing); and a macro or `.` that runs an
+  object right after an edit, before its reparse is delivered.
 
 ### Operators as built
 
@@ -2502,11 +2554,12 @@ Which names have something behind them:
 | `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
 | `insert-delete-backward`, `insert-delete-word-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up`, `insert-down` | Built and registered (`Evil.commands`; "Insert state") |
 | The operators (`delete`, `change`, `yank`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
-| The sixteen text objects of `objects` | Built: entries of `Evil.objects`, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (`Evil.commands`; "Text objects as built") |
+| The twenty-two text objects of `objects` | Built: entries of `Evil.objects`, Vim's sixteen and the syntax tree's six, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (`Evil.commands`; "Text objects as built") |
 | `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo` | Built and registered (`Evil.commands`) |
 | `repeat`, which no table names: the repeat key's invocation | Built and registered |
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
 | `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
+| `keyboard-quit` | Built and registered (`Shell.commands`): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
 | The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
 | `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (`Evil.commands`, `lean/Editor/Evil/Clipboard.lean`); the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
@@ -2514,9 +2567,9 @@ Which names have something behind them:
 | Table | Keys |
 |---|---|
 | `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse; `n` search-next, `N` search-previous, `*` word-search-forward, `#` word-search-backward, `%` matching-bracket |
-| `objects` | `i w` inner-word, `a w` a-word, `i W` inner-bigword, `a W` a-bigword, `i "` `a "`, `i '` `a '`, `` i ` `` `` a ` `` the quote objects, `i (` `i )` `i b` inner-paren, `a (` `a )` `a b` a-paren, `i [` `i ]` inner-bracket, `a [` `a ]` a-bracket, `i {` `i }` `i B` inner-brace, `a {` `a }` `a B` a-brace: in normal state's pending keymaps, read only while an operator waits, and in both visual states' keymaps |
+| `objects` | `i w` inner-word, `a w` a-word, `i W` inner-bigword, `a W` a-bigword, `i "` `a "`, `i '` `a '`, `` i ` `` `` a ` `` the quote objects, `i (` `i )` `i b` inner-paren, `a (` `a )` `a b` a-paren, `i [` `i ]` inner-bracket, `a [` `a ]` a-bracket, `i {` `i }` `i B` inner-brace, `a {` `a }` `a B` a-brace, `a f` a-function, `i f` inner-function, `a c` a-class, `i c` inner-class, `a a` an-argument, `i a` inner-argument: in normal state's pending keymaps, read only while an operator waits, and in both visual states' keymaps |
 | `operators` | `d` delete, `c` change (enters insert), `y` yank (changes no text) |
-| `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex; `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
+| `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex, `C-g` keyboard-quit; `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
 | `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `C-w` insert-delete-word-backward, `RET` insert-newline, `TAB` insert-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down (each enters no state, and none is a change dot repeat replays) |
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
@@ -2548,7 +2601,8 @@ and `z` is text. `C-u` is built in `minibuffer`, where it deletes to the
 input's start; `C-d` is built in neither, nor `C-u` in `insert`. `z` begins three sequences and is
 bound to nothing itself, so in those three states it is a prefix: a `z`
 followed by a key that completes none of them runs nothing. None of the
-four control keys is the interrupt key, `C-g`.
+four control keys is the interrupt key, `C-g`, which normal state binds
+to `keyboard-quit`.
 
 No key enters `minibuffer`: the registry names it as the state of the
 minibuffer's view (`states.minibuffer`), and the scheme puts a view in it
@@ -2582,8 +2636,9 @@ and Testing).
 
 Status: built (`lean/Editor/Role.lean`, `lean/Editor/Mode.lean`, the
 registry's modes in `lean/Editor/Config/Registry.lean`, a buffer's modes in
-`lean/Editor/State.lean`; the module docs have the detail). One mode
-ships: the minibuffer's ("The minibuffer").
+`lean/Editor/State.lean`; the module docs have the detail). Two modes
+ship: the minibuffer's ("The minibuffer") and `compilation` ("The compile
+mode, as built").
 
 A mode is a value in a registry keyed by name. It is not a type class,
 because instances resolve at elaboration time and the active mode is chosen
@@ -2592,12 +2647,32 @@ add modes.
 
 ```lean
 structure Mode where
-  name    : String
-  parent  : Option String := none                -- derived modes
-  roles   : List (Role × String) := []           -- role, command name
-  locals  : List (String × String) := []         -- suffix as a key string, command name
-  onEnter : ViewId → EditorM Unit := fun _ => pure ()
+  name       : String
+  parent     : Option String := none                -- derived modes
+  roles      : List (Role × String) := []           -- role, command name
+  locals     : List (String × String) := []         -- suffix as a key string, command name
+  syntaxTree : Option Mode.SyntaxTree := none       -- how its text is parsed and drawn
+  onEnter    : ViewId → EditorM Unit := fun _ => pure ()
+
+structure Mode.SyntaxTree where
+  grammar     : String                               -- the library's grammar: rust, json, markdown
+  highlights  : Option String := none                -- query source; none: the grammar's shipped one
+  captures    : List (String × Option FaceName) := [] -- config's capture faces, over the shipped default
+  injections  : Option String := none                -- injections query source; none: the shipped one
+  textObjects : Option String := none                -- text objects query source; none: the shipped one
+  indents     : Option String := none                -- indents query source; none: the shipped one
 ```
+
+- **`syntaxTree` says how the mode's text is parsed and drawn**: a grammar
+  of the library's syntax service, the highlights query's source (none for
+  the one the grammar ships), config's mapping of capture names to faces
+  over the shipped default (`lean/Editor/Highlight.lean`), and the sources
+  of the injections, text objects and indents queries, each none for the
+  grammar's shipped one; an empty source captures nothing, which turns that
+  part off. It is not
+  called `syntax`, which is a keyword of Lean's. A derived mode with none
+  takes the nearest of its lineage (`Mode.syntaxTreeOf`). Config writes it
+  in `defineMode`; there is no other registry API.
 
 No `Key` for a top-level binding and no scheme's `Binding` type appears in
 `Mode`. A mode cannot name the binding type of a scheme it has never heard
@@ -2757,10 +2832,45 @@ contributes nothing.
   state and handed it back; that operation is gone, because an action's
   own state requests would have been answered from a state it could not
   see.
+- **A major mode with a syntax tree is highlighted.** When the mode that
+  became the major mode, or the nearest of its lineage, has a syntax tree,
+  the loop runs `Highlight.enter` before the on-enter actions, inside the
+  command: with a snapshot of the buffer's text it attaches the text with
+  the grammar, compiles the query (the mode's own or the grammar's shipped
+  highlights), and has the library draw the text with each capture in the
+  face `Highlight.faceOf` gives (the capture's own entry, else its first
+  component's, else none; config's mapping over the shipped
+  `syntax.<capture>` default), then releases the query, which the library's
+  highlighter keeps. A refusal of the syntax tree port is said in the echo
+  area, ``highlights: `<mode>`: <refusal>``, and stops those steps: the
+  mode is set and the command is not refused, so a query of config's that
+  does not compile keeps no buffer out of its mode. The text is detached
+  first, so it is drawn plain, as the echo area says: a refused attach
+  replaces nothing, and an attach with the grammar the text already has
+  keeps its highlighter, so without it the mode before would still be
+  drawn. After highlights
+  that succeeded, four more steps, each from the mode's own source or the
+  grammar's shipped query, a grammar that ships none of a kind skipping its
+  step: the text's injections (compiled, `inject`ed, released); a language
+  for each grammar the library has (its highlights, the mode's own for its
+  grammar, in the faces of the mode's mapping, so config's capture faces
+  reach embedded code, and its injections; names are grammar names, an
+  alias names nothing); and the text objects and indents queries, each kept
+  as its kind (`keep`). A refusal in one of these stops that step alone and
+  is said under the mode's name, ``injections: `<mode>`: …``,
+  ``text objects: `<mode>`: …`` or ``indents: `<mode>`: …``; the
+  highlights stay and the text is not detached. When a mode with no
+  syntax tree replaces one with a syntax tree, the text is detached, which
+  drops its highlights; when neither has one, the port is asked nothing.
+  What the port did is not undone on rollback, as the clipboard is not.
+  Choosing a major mode when a file is opened is not built.
 - **Adding a minor mode runs no action** yet (left open).
 
-Pinned by `ModelTest.modeEnterChecks`, through the loop, and
-`ModelTest.apiStateChecks`.
+Pinned by `ModelTest.modeEnterChecks`, through the loop,
+`ModelTest.apiStateChecks`, and, for a syntax tree,
+`ModelTest.highlightFaceChecks` and `ModelTest.highlightEnterChecks`, and
+`ConfigTest`'s check that a job's command setting such a mode reaches the
+host's syntax tree.
 
 ### Why this shape
 
@@ -3017,6 +3127,66 @@ and the fixture `tests/headless/candidates`, which is where `<Tab>` and
 `<Enter>` are pressed under the Vim scheme the executable runs, with the
 library's matcher.
 
+### The compile mode, as built
+
+Status: built by `shell-and-compile` phase 3 (`lean/Editor/Compile.lean`,
+`lean/Editor/Compile/Compiled.lean`; the module docs have the detail).
+Emacs's `M-x compile`, one per workspace: a build or test command runs as
+`/bin/sh -c <line>` and its output arrives in the workspace's compilation
+buffer while editing goes on.
+
+- **The scope.** Each command acts on the focused buffer's workspace; a
+  buffer with no workspace uses its file's directory, or the editor's
+  working directory, as a workspace of its own; a compilation buffer, its
+  own scope ([projects.md](projects.md), "A buffer's workspace"). A
+  location that cannot run commands refuses `compile` and `recompile`
+  before anything is asked or started, and says why.
+- **The commands.** `compile` takes the line, or asks for it, `Compile
+  command: `, with the scope's last line as the prompt's text and the
+  project's compile history as its candidates. `recompile` reruns the
+  scope's last line in the directory it ran in, with no prompt.
+  `kill-compilation` cancels the scope's run, which kills the child with
+  its process group. Starting a run while the scope's own runs asks,
+  `Kill the compilation running in <label>? (y or n) `: `y` or `yes`
+  kills the old one and empties the buffer, anything else leaves both. The
+  ex line ships `compile` (taking the line), `recompile` and
+  `kill-compilation`; no key binds them yet.
+- **The buffer** is `*compilation: <label>*`, with the root's parent
+  directory in parentheses when that name is taken by another workspace
+  of the same label, then the first free name of that. It is found by the
+  number its scope keeps, never by its name. Its first line is the header,
+  `<label> in <directory>: <line>`; its last, once the run ends,
+  `Compilation <how> after <s>.<tenths> s`, with Emacs's words for how:
+  `finished`, `exited abnormally with code <n>`, `killed by signal <n>`,
+  `killed`, or `stopped: <why>` and `could not start: <why>`. The echo area
+  says the same with the label. When no view shows the buffer, the asking
+  view is split and the new view below shows it, the focus staying.
+- **Streaming.** The run is a job keyed by its scope. It reads the child a
+  delivery at a time and posts each batch of lines to the editor as it
+  comes (`post`, [concurrency.md](concurrency.md), "Getting results
+  back"), pausing 50 ms after each, so a fast child is drawn at most twenty
+  times a second. Within a delivery, standard output's lines come before
+  standard error's: the true interleaving of the two needs them merged in
+  the process service, which is not built. A killed or replaced run's late
+  output is dropped.
+- **Following.** A view whose cursor is on the buffer's last line, or the
+  empty row after it, follows: its cursor goes to the start of the new
+  last line, and the view scrolls with it. A view whose cursor was moved
+  up stays where it is. A restart puts every view's cursor on the header.
+- **Read-only.** The buffer is read-only to editing commands
+  (`Buffer.readOnly`): an edit gives the command up, `<command>: <name> is
+  read-only`, undo included, and a committed text is dropped and said. The
+  compile mode writes it inside `BufferId.writing`, Emacs's
+  `inhibit-read-only`. The mode line has no read-only mark yet.
+- **The mode** `compilation` fills the role `refresh` with `recompile`.
+- **Not built here**: errors and `next-error` (phase 4), the hook a minor
+  mode gives a project (phase 5), a time limit (a build may run for many
+  minutes; `kill-compilation` ends it, and `C-g` does not, as in Emacs).
+
+Pinned by `ModelTest.compileChecks` and `readOnlyChecks` on the models, and
+by `ContractTest.compileChecks` over the real process service, with the
+fixture `tests/compile/three-lines`.
+
 ## The ex command line
 
 Status: decided 2026-11-14 and built, by the command loop's phase 12
@@ -3030,32 +3200,111 @@ The ex line is a prompt whose answer is run as a named ex command. The
 command `ex` opens it, and the Vim scheme's default table binds `:` to
 that name, so the key opens the line.
 
-**A line is its first word and the rest.**
+**A line is a range, then its first word and the rest, or `!` and a shell
+command** (`:!` built by the shell-and-compile roadmap's phase 2,
+`lean/Editor/Shell.lean`).
 
 - **Parsing** (`Ex.parse`). Leading and trailing ASCII white space is
-  dropped. The *ex name* is everything up to the first white space. The
-  argument is the rest, with the white space before it dropped, kept
-  whole: the spaces inside it are part of it. A line that is empty or all
-  white space runs nothing and says nothing, as Vim's does.
+  dropped. **A range may come first**: `%`, the whole buffer; or one
+  address, or two with a comma between, where an address is `.` (the
+  cursor's line), `$` (the last line) or a line number. An address left
+  out beside the comma is the cursor's line, as in Vim (`,5` is `.,5`).
+  White space may follow it. **A line whose first character after the
+  range is `!` is the bang form**: the name `!`, and the rest, trimmed, its
+  argument. Otherwise the *ex name* is everything up to the first white
+  space, and the argument is the rest, with the white space before it
+  dropped, kept whole: the spaces inside it are part of it. A line that is
+  empty or all white space runs nothing and says nothing, as Vim's does.
 - **The argument is one string, handed on unchanged**: `e /tmp/my
   notes.txt` opens that path. Nothing is escaped or expanded.
-- **Set aside: Vim's rule, a run of letters and then the rest** (`w!`,
-  `e#`, `w>>file`). A name config registers may hold a hyphen or a digit,
-  and `!`, ranges and `#` are not built. So `w!` is an unknown name and
-  says so. The parser is one pure function, and the phase that builds `!`
-  replaces it there.
+- **Only a leading `!` starts the bang form**, so `w!` and `e!` are still
+  names of their own. Vim's rule for a name, a run of letters and then the
+  rest (`e#`, `w>>file`), is not built: a name config registers may hold
+  a hyphen or a digit after its first character.
+- **A name must read back as itself.** `exCommand` refuses a name the ex
+  line would not read as that name with no range, no bang and no argument
+  (`Ex.reachable`): one that is empty, holds white space, or starts with
+  `!`, `%`, `.`, `$`, `,` or a digit.
+- **A range before a name** is refused, `<name>: takes no range`: no name
+  that ships takes one. A range alone, which in Vim goes to that line,
+  says that is not built.
+- **Resolving a range** (`Range.resolve`) is the ex command's, against the
+  view the line was asked from: `.` is the primary cursor's line and `$`
+  the last. A buffer's lines are its rows, but for the empty row after a
+  last line feed (`b\nc\na\n` is three lines; the empty text is one).
+  Line 0, a range that runs backwards and a line past the end are refused,
+  the last as `line 7 is past the end of the buffer (3 lines)`.
 - **Set aside: a leading colon or a count.** Neither is dropped: `:w`
   typed on the ex line is the unknown name `:w`.
+
+**`:!cmd` runs a shell command in the focused buffer's workspace**
+(`lean/Editor/Shell.lean`; [projects.md](projects.md)).
+
+- **What runs**: `/bin/sh -c cmd`, as a job (`shell-run`), so the editor
+  stays responsive; not `$SHELL`, so a user's interactive set-up cannot
+  change what runs. The environment is the directory's, as every child's
+  is.
+- **Where**: the workspace's root; with no workspace, the directory of the
+  buffer's file; with neither, the editor's working directory, which the
+  host set from its own. A workspace whose location cannot run commands
+  runs nothing and says so: `!: <label> is <location>, where commands
+  cannot run`.
+- **For how long**: 30 seconds, or config's `shellTimeLimit`. A run past
+  it is killed, its process group with it, and the echo area says
+  `<line>: the run did not end within <n> ms and was killed`.
+- **What is shown**: one line of output or none, with nothing on standard
+  error, goes to the echo area, with ` [exit <n>]` after it when the
+  status is not 0; no output says `<line>: no output`. Anything longer, or
+  anything on standard error, replaces the text of the workspace's output
+  buffer, `*shell output: <workspace label>*`, with standard output, then
+  standard error, then a last line `[exit <n>]`, and it is shown in the
+  view the line was asked from. A second run in that workspace replaces
+  its text, as one edit `u` takes back; another workspace has a buffer of
+  its own. A buffer outside any workspace uses one editor-wide `*shell
+  output*`. A refusal, a program not there or output past 16 MiB among
+  them, is said as `<line>: ` and its sentence.
+- **One run a workspace**: each runs under its workspace's job key, so a
+  second `:!` there while one runs cancels the first, and one elsewhere is
+  left alone. **`C-g` cancels it** (`keyboard-quit`, "Default bindings"):
+  its child is killed, and the echo area says `<line>: interrupted`.
+- **History**: each line run is kept in the project's history, newest
+  first, each once, at most 100, so every worktree of a codebase offers the
+  same lines; a buffer outside any workspace keeps one editor-wide history.
+  The ex prompt's candidates are the history, then the bound ex names, so
+  typing `!` lists the earlier lines and the minibuffer's keys choose one.
+
+**`:{range}!cmd` filters the range's lines through the command**, in the
+same directory, under the same time limit and job key as `:!`:
+
+- **The child is fed the range's lines**, through the last one's line
+  feed, with one line feed added when the buffer's last line has none, and
+  then end of file.
+- **Its output replaces them as one edit** that one `u` takes back, and
+  the echo area says `<n> lines filtered`. When the range had no last line
+  feed, one at the end of the output is dropped.
+- **A status other than 0, or anything on standard error, changes
+  nothing** and says `<line>: exit <n>: <first line of standard error>`.
+- **A buffer edited while the child ran is left as it is**: the result is
+  dropped, `<line>: dropped: the buffer changed while it ran`. The text's
+  revision is the test: Vim, which blocks while the child runs, cannot be
+  edited meanwhile.
+
+Where `:!` differs from Vim: `:!!` and `%` in the command are not
+expanded; output does not take over the screen, it goes to the echo area or
+a buffer; and the time limit is the editor's.
 
 **The ex line's editing keys are the minibuffer's.** It is a prompt, so it
 is typed in the minibuffer's view, in the Vim state `minibuffer`, and
 `<Backspace>`, `<ArrowLeft>`, `<ArrowRight>` and `C-u` edit it as they edit
 any prompt ("The minibuffer"; pinned on both by `evilInsertChecks`).
 
-**The ex line's candidates are the ex names that are bound** (built by the
-command loop's phase 14; "A prompt's candidates", under "The minibuffer").
+**The ex line's candidates are the `:!` history of the asking buffer, then
+the ex names that are bound** (built by the command loop's phase 14; "A
+prompt's candidates", under "The minibuffer"; the history by the
+shell-and-compile roadmap's phase 2).
 
-- `ex` asks for its line with the bound ex names as the prompt's
+- `ex` asks for its line with the asking buffer's `:!` lines, newest first
+  (`Shell.history`), then the bound ex names as the prompt's
   candidates: each name once, in the order they were first bound. A
   command asks for them (`exNames`), and the loop answers from the
   registry as it is when the line is asked for.
@@ -3115,7 +3364,8 @@ command an ex name runs is a step of its own.**
   `:`, whose continuation is `ex` itself. A key bound to it under the Vim
   scheme hands it a count and a register, so it asks. Where the prompt is
   refused, because one is open, it says so.
-- **Running a line**: parse it; ask which binding the name has; say
+- **Running a line**: parse it; hand a bang line to `shell-command`, which
+  runs after `ex` as a step of its own; ask which binding the name has; say
   `<name>: not an ex command` for none; say `<name>: takes no argument`
   for an argument the binding does not take; otherwise ask for the
   invocation to be run after this command.
@@ -3153,12 +3403,15 @@ command an ex name runs is a step of its own.**
 | `b` | `switch-buffer` | Text | Shows the buffer the rest of the line names, exactly or by fuzzy match. With no argument, asks with the open buffers as candidates, by `switch-buffer`'s own rule |
 | `ls` | `list-buffers` | Nothing | Shows the buffer list, a text view of the open buffers, most recently used first, with `+` for unsaved changes |
 | `bd` | `close-buffer` | Text | Closes the buffer the rest of the line names, or the window's own: refused for a buffer of a file with unsaved changes and for a buffer with a save in flight, and every window that showed it shows the most recently used buffer left |
+| `compile` | `compile` | Text | Runs the rest of the line as `/bin/sh -c` in the buffer's workspace, into its compilation buffer ("The compile mode, as built"); with no argument, asks for the line |
+| `recompile` | `recompile` | Nothing | Reruns the workspace's last compiled line |
+| `kill-compilation` | `kill-compilation` | Nothing | Kills the workspace's compilation in flight |
 
 Where they differ from Vim:
 
 - **`q` does not refuse for a modified buffer with no file.** Such a
-  buffer cannot be saved, and `!` is not built, so the rule would leave no
-  way to quit once anything was typed in the scratch buffer. It refuses
+  buffer cannot be saved, and `:w !cmd` is not built, so the rule would
+  leave no way to quit once anything was typed in the scratch buffer. It refuses
   while a buffer that holds a file has unsaved changes.
 - **`q` quits the editor, not the current window.** No shipped command
   splits a window.
@@ -3168,9 +3421,10 @@ Where they differ from Vim:
   the diff kept the text, and `u` takes the reload back. On a buffer with
   no file it asks for a path.
 - **`e!` and `w!` are names of their own**, bound with a fixed argument;
-  `!` is not parsed.
+  only a leading `!` is parsed, as the shell's.
 - **`w` takes no file name.** Saving under another name is not built.
-- **`reload` is no Vim command.**
+- **`reload` is no Vim command**, nor are `compile`, `recompile` and
+  `kill-compilation`, which are Emacs's.
 - **`b <pattern>` takes the best fuzzy match.** Vim refuses a pattern that
   matches more than one buffer.
 - **`bd` never refuses a modified buffer with no file**, by `q`'s rule: it
@@ -3184,7 +3438,12 @@ Where they differ from Vim:
   by `b` or after a `bd`, has its cursor at the buffer's start; Vim gives
   back where the cursor last was in that buffer.
 
-Pinned by `ModelTest.exLineChecks` (the parser and the binding),
+Pinned by `ModelTest.exLineChecks` (the parser, ranges and the binding),
+`shellChecks` (`:!` on the models, in the workspaces of a main checkout,
+a linked worktree and a directory in none), `ContractTest.shellChecks`
+(over the real process service), `compileChecks` (`:compile` and the
+compile mode on the models) and `ConfigTest.shippedChecks` (the names
+bound),
 `registryChecks`, `setupChecks` and `reloadChecks` (ex bindings by owner,
 from `setup`, and across an install), `exChecks` (the ex line and the
 first five names, and `bufferCommandChecks` the last three, on the loop's driver over the editor's models and the model of
@@ -3229,8 +3488,9 @@ which run the executable on a real file.
   `exCommand "greet" "greet-named" (takes := .text)`
   (`lean/Editor/Setup.lean`; "The ex command line"). By default the name
   takes nothing. The command's name is looked up when the line is run, as
-  a key binding's is. A name that is empty or holds white space is
-  refused, since it could not be typed as a line's first word, and a
+  a key binding's is. A name the ex line would not read back as itself is
+  refused (one that is empty, holds white space, or starts with `!`, `%`,
+  `.`, `$`, `,` or a digit), and a
   `setup` that binds one ex name twice is rejected. A reload replaces
   config's ex bindings and never the compiled ones.
 - Built: the window commands in every state, with one line that binds the
@@ -3384,6 +3644,9 @@ names a scheme's key:
 | `modeRegistryChecks` | A mode's lineage, a cycle and a missing parent; the order of the active keymaps; a mode name no mode is registered under; a view with no window |
 | `modeDispatchChecks` | On the editor's models, through the loop: a major mode's role runs its command in a view of its buffer and the global binding elsewhere; a minor mode's wins; a derived mode falls to its parent; the leader then a suffix |
 | `modeEnterChecks` | On the editor's models: the on-enter action runs once, with the view, when the mode becomes the major mode; a derived mode's lineage root first; a refusal runs nothing |
+| `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set and the text detached, a mode before drawn no more, a parent's syntax tree, and the text detached when a mode with none replaces it; then its injections and a language for the model's grammar, its text objects and indents queries kept, and a refusal of one of those steps said and stopping it alone |
+| `treeObjectRuleChecks` | The syntax tree's text-object rule (`Evil.TreeObjects.choose`), pure, over hand-built rows: the smallest node first, a count, a node no bigger than a wider selection passed over, the inside as the longest inner row within, no inside, and no node round the cursor |
+| `indentRuleChecks`, `indentLevelChecks` | The indent rule (`Indent.rule`), pure, over hand-built rows; and the indent primitive (`TextId.indentLevels`) on the editor's models, under a test mode of the model's JSON grammar with an indents query of its own, refused for a text with no syntax tree or no indents query |
 | `ConfigTest.modeChecks` | Through the headless host and the real elaborator: a config mode's role runs its store command, and once a reload drops the mode the role's key runs the global binding; a compiled mode's role runs its command before any reload and after a reload of a config that defines no mode |
 
 Beside them, `stateChecks` pin the three state operations, `registryChecks`

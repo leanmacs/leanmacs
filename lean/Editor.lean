@@ -1,13 +1,16 @@
 import Editor.Api.Theorems
 import Editor.Buffers
 import Editor.Command.Append
+import Editor.Compile
 import Editor.Evil.Clipboard
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
 import Editor.Evil.Scroll
 import Editor.Evil.Theorems
+import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
 import Editor.FrameCommands
+import Editor.Indent
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
@@ -61,7 +64,7 @@ config's asks which candidates a pattern matches with `Fuzzy.rank`
 (`Editor/Fuzzy.lean`), as it asks a text. The ex
 command line is here too (`Editor/Ex.lean`, with an ex line as data in
 `Editor/Ex/Line.lean`): a command of config's runs a line with `Ex.run`,
-and `setup` binds an ex name to a command with `exCommand`
+handed the target it was called with, and `setup` binds an ex name to a command with `exCommand`
 (`Editor/Setup.lean`). The registrations of the ex line's commands and the
 ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The file
 commands come with `Editor/Ex.lean`, whose save-and-quit command calls
@@ -139,6 +142,20 @@ The window layouts are here too, with the editor state that holds the
 frame's (`Editor/Layout.lean`): master-and-stack and monocle, as values a
 pure function lays a list of windows out by.
 
+The syntax tree interface comes with the editor's port, of which it is a
+sub-port (`Editor/SyntaxTree.lean`): which grammars the library has, which
+text it parses with which grammar, off the editor thread, what a query
+captures in a range of a text, and drawing a text with a query's captures
+in faces. A major mode says how its text is parsed and drawn
+(`Mode.SyntaxTree`), and setting it asks the port
+(`Editor/Highlight.lean`, which comes with the loop's dispatch). Setting it
+also keeps the mode's indents and text objects queries for its text: the
+indent level of each row is `TextId.indentLevels` (`Editor/Indent.lean`), a
+primitive config's and evil's indent commands call, and the syntax tree's
+text objects are entries of evil's vocabulary
+(`Editor/Evil/TreeObjects.lean`). Its model and contract are for tests, and
+are not imported.
+
 Projects, workspaces and locations are here too (`Editor/Workspace.lean`):
 which codebase and which checkout a buffer belongs to, as plain values,
 and the finder that answers a directory's workspace through config, git
@@ -151,6 +168,15 @@ brings the data and the finder with it), and
 imported. Its model and its contract
 (`Editor/Workspace/Model.lean`, `Editor/Workspace/Contract.lean`) are for
 tests, and are not imported.
+
+`:!` is here too (`Editor/Shell.lean`, which comes with the ex line): a
+shell command run in the buffer's workspace as a job, and what comes of it
+said in the echo area or shown in the workspace's output buffer. Its
+registrations (`Editor/Shell/Compiled.lean`) name the registry and are not
+imported. So is `compile` (`Editor/Compile.lean`): a build or test command
+run per workspace, its output streamed into the workspace's compilation
+buffer; its registrations (`Editor/Compile/Compiled.lean`) are not
+imported either.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

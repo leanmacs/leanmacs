@@ -1,0 +1,19 @@
+[package]
+name = "editor-syntax"
+version = "0.1.0"
+description = "Syntax trees: the Syntax port, with its fake and its contract, the rule for a query's captures in a range, and the worker that reparses a text from its edit log"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Text storage: what is parsed is a snapshot, read through its chunks, and
+# what changed is the edit log's patch, whose edits the port is handed in
+# the form an incremental parser takes (`editor_text::InputEdit`). The
+# contract drives a real `Text` so that the edits it hands a `Syntax` are
+# the log's own.
+editor-text = { path = "../editor-text" }
+
+# No parsing library: the port names none, and everything here is tested on
+# the published fake, `fake::Parens`. The library that parses is behind the
+# port, in `editor-syntax-treesitter`.

@@ -7,8 +7,9 @@ reload
 settle
 
 # `C-c s` runs `spin`, which loops; `C-g`, the interrupt key, stops it. The
-# command's insertion is rolled back, and the echo area says it was
-# interrupted.
+# command's insertion is rolled back. The key is then stepped like any key:
+# under the Vim scheme it runs `keyboard-quit`, which, with no `:!` running,
+# says `Quit` in place of `spin: interrupted`.
 key c KeyC control
 key s KeyS -
 key g KeyG control

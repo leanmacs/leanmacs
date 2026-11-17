@@ -489,6 +489,21 @@ arrived before it (`Editor/Loop.lean`, "Jobs from commands").
 - **The job is started once the command has run to its end**, for whoever
   registered it. A command that is refused or interrupted after asking
   starts no job.
+- **A job may be started under a key** (`startJob name arguments (key :=
+  some key)`): starting it cancels the running job of that key, so a key
+  has at most one job. `cancelJob key` asks for the job of that key to be
+  cancelled, once the command has run to its end: it never runs its
+  command, even one that has finished and not been delivered. A command
+  that is refused or interrupted after asking cancels nothing. It is how
+  `:!` keeps one run a workspace and `C-g` ends it (`Editor/Shell.lean`).
+- **A job may hand the editor a command while it runs** (`post`,
+  `Editor/Job.lean`): an invocation, which its host runs on the editor
+  thread with `runPosted`, as a delivery labelled `job <id> <name>`, before
+  the job's own command. `runPosted` runs the command registered under the
+  invocation's name inside itself, with the focused window and the
+  invocation's arguments (`runCommand`), and says `<name>: no such command`
+  for a name no command is registered under. It is how a compile streams
+  its output into its buffer (`Editor/Compile.lean`).
 
 Pinned by `ModelTest.driverChecks`.
 
@@ -612,6 +627,13 @@ is one read of the state or one state request (`Editor/State.lean`,
   `Workspace.Table.get` and `getOfProject` read one back, its initial value
   where none was set. The typed operations are here, not beside the table,
   because the stores' module is downstream of the editor state.
+- `Workspace.setUnscopedValue` and `Workspace.setUnscoped` set a value of
+  the unscoped store, the one store of the buffers outside any workspace,
+  which have no project either; `Workspace.Table.getUnscoped` reads one
+  back. Neither is refused.
+- The editor's working directory, where a command run for a buffer with
+  neither a workspace nor a file runs, is the state's
+  (`EditorState.workingDirectory`), read from `editorState`.
 
 Pinned by `ModelTest.workspaceStateChecks`.
 
@@ -680,11 +702,20 @@ def setScrollMargin (rows : Nat) : EditorM Unit :=
   EditorState.ask (.setScrollMargin rows)
 
 /-- Asks for the job registered under `name` to be started with
-`arguments`, once this command has run to its end. Its result comes back
-later, as the command its handler makes. Refused with `noSuchJob` for a
-name no job is registered under. -/
-def startJob (name : String) (arguments : List Argument := []) : EditorM (Except JobRefusal Unit) :=
-  EditorState.ask (.startJob name arguments)
+`arguments`, once this command has run to its end, under the key `key` if
+it is given: the running job of that key is then cancelled first. Its
+result comes back later, as the command its handler makes. Refused with
+`noSuchJob` for a name no job is registered under. -/
+def startJob (name : String) (arguments : List Argument := []) (key : Option String := none) :
+    EditorM (Except JobRefusal Unit) :=
+  EditorState.ask (.startJob name arguments key)
+
+/-- Asks for the job of the key `key` to be cancelled, once this command has
+run to its end: it is ended, even one that has finished and not been
+delivered, so its command never runs. A key no job has cancels nothing. It
+is never refused. -/
+def cancelJob (key : String) : EditorM Unit :=
+  EditorState.ask (.cancelJob key)
 
 /-- The ex binding of the ex name `name`: the command a line of that name
 runs, and what the name takes (`Ex.Binding`, `Editor/Ex/Line.lean`). `none`
@@ -717,6 +748,36 @@ name no command is registered under, and where no loop runs the
 command. -/
 def runCommand (name : String) (call : Call) : EditorM Bool :=
   EditorState.ask (.runCommand name call)
+
+/-- Makes the buffer `id` read-only to editing commands, or not, as `on`
+says (`Editor/State.lean`, "Buffers"). Refused with `noSuchBuffer` for a
+buffer there is none of. -/
+def BufferId.setReadOnly (id : BufferId) (on : Bool) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setReadOnly id on)
+
+/-- Runs `action` with the buffer `id` writable, as Emacs's
+`inhibit-read-only` does, for the command that owns a read-only buffer: a
+buffer that is read-only is made writable, `action` runs, and the buffer is
+made read-only again. A command that does not run to its end is rolled
+back to the state from before it, the flag included. -/
+def BufferId.writing {α : Type} (id : BufferId) (action : EditorM α) : EditorM α := do
+  let was := ((← editorState).buffer? id).any (·.readOnly)
+  if was then
+    discard <| id.setReadOnly false
+  let value ← action
+  if was then
+    discard <| id.setReadOnly true
+  return value
+
+/-- Runs `invocation`, which a job posted ("Jobs", in the module docs): the
+command registered under its name, with the focused window and the
+invocation's arguments, as part of this command (`runCommand`). A name no
+command is registered under says `<name>: no such command`; with no window
+focused nothing runs. -/
+def runPosted (invocation : Invocation) : EditorM Unit := do
+  let some target := (← editorState).focusedTarget? | return
+  unless ← runCommand invocation.command { target, arguments := invocation.arguments } do
+    message s!"{invocation.command}: no such command"
 
 /-- Asks for `invocation` to be run once this command has run to its end, as
 a step of its own, before the next event: the command is looked up then,
@@ -1427,6 +1488,22 @@ store does not decode. -/
 def Table.getOfProject {α : Type} (table : Table) (store : Store α) (identity : Project.Identity) :
     α :=
   ((table.projectValue? identity store.name).bind store.decode).getD store.initial
+
+/-- Has the unscoped store, of the buffers outside any workspace, keep
+`value` under `name`. Never refused. -/
+def setUnscopedValue (name : String) (value : Value) : EditorM Unit :=
+  EditorState.ask (.setUnscopedValue name value)
+
+/-- Has the unscoped store keep `value` as the value of `store`, by the
+store's encoding. Never refused. -/
+def setUnscoped {α : Type} (store : Store α) (value : α) : EditorM Unit :=
+  setUnscopedValue store.name (store.encode value)
+
+/-- The value of `store` in the unscoped store: what its cell decodes to, or
+the store's initial value when it has no cell or one the store does not
+decode. -/
+def Table.getUnscoped {α : Type} (table : Table) (store : Store α) : α :=
+  ((table.unscopedValue? store.name).bind store.decode).getD store.initial
 
 end Workspace
 

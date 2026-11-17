@@ -618,6 +618,10 @@ def realProcesses (completions : Completions) (refused : RefusedRuns) (timers : 
                   let environment := command.environment
                   Ffi.processesRun id command.program command.arguments environment.clear
                     environment.set environment.unset command.directory.toString (word limit)
+                | .runInput command input limit _ =>
+                  let environment := command.environment
+                  Ffi.processesRunInput id command.program command.arguments environment.clear
+                    environment.set environment.unset command.directory.toString (word limit) input
                 | .start command streaming =>
                   let environment := command.environment
                   Ffi.processesOpen id streaming.input (streaming.stdout == .bytes)
@@ -630,15 +634,18 @@ def realProcesses (completions : Completions) (refused : RefusedRuns) (timers : 
                 IO Bool).catchExceptions
             fun _ => pure false
       if started then
-        if let .runWithin _ _ time := request then
+        match request with
+        | .runWithin _ _ time | .runInput _ _ _ time =>
           arm completions timers timed id time
+        | _ =>
+          pure ()
       else
         refused.refused.modify (·.insert id runNotTaken)
         completions.finish id .completed
     take := fun id request =>
       match request with
       | .run .. => takenRun refused id
-      | .runWithin _ _ time => do
+      | .runWithin _ _ time | .runInput _ _ _ time => do
         match ← timed.take id with
         | some run =>
           disarm completions timers run
@@ -829,14 +836,20 @@ whose loop delivers the command hands in what its loop watches.
 
 `clipboard` answers the program's clipboard requests. By default there is
 none (`Clipboard.unavailable`), as for any command run where no host handed
-one in; a host hands in the clipboard its loop's commands reach. -/
+one in; a host hands in the clipboard its loop's commands reach.
+
+`syntaxTree` answers the program's syntax tree requests. By default there is
+none (`SyntaxTree.none`, which has no grammars), as for any command run
+where no host handed one in; a host hands in the one its loop's commands
+reach, so a job's command that sets a major mode with a syntax attaches and
+highlights its text as a key's command does. -/
 def finishWith {α : Type} (held : HeldSnapshots) (handle : Handle) (command : EditorM α)
     (texts : RealTexts) (display : DisplayHandler) (watch : WatchHandler := Watch.idle)
-    (clipboard : ClipboardHandler := Clipboard.unavailable) : IO (Except TextError α × RealTexts) :=
-  do
+    (clipboard : ClipboardHandler := Clipboard.unavailable)
+    (syntaxTree : SyntaxTreeHandler := SyntaxTree.none) : IO (Except TextError α × RealTexts) := do
   let arrived ← (← handle.holding).filterMapM fun id => return (← held.find? id).map (id, ·)
   try
-    command.runReal texts display arrived watch clipboard
+    command.runReal texts display arrived watch clipboard syntaxTree
   finally
     handle.settle
 

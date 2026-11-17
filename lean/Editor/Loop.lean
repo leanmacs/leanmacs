@@ -197,6 +197,13 @@ holds no job table.
   takes the starts out of the state and hands them back with the step, in
   the order they were asked for. A command that did not run to its end
   starts no job: its starts go with the state it left.
+- **A start may carry a key, and a command may cancel a key**
+  (`cancelJob`): the cancels are kept in the state too
+  (`EditorState.cancels`), taken out with the starts after a command that
+  ran to its end, and handed back in `Loop.Stepped.cancels`, ahead of the
+  loop's own ("Auto-reload"). A command that did not run to its end
+  cancels nothing. The host ends the job of each key, and starting a job
+  of a key ends the running job of that key first ("Keyed jobs", below).
 - **The host starts each**, for whoever registered it, and when the job has
   ended hands the loop the command it finished with (`Loop.deliver`). The
   result comes back through the host's queue, so events that arrived before
@@ -473,8 +480,10 @@ they were before it (`docs/design/concurrency.md`, "Foreground: commands").
   the kept state is a node's, and the revert leaves nothing pending, no
   node and nothing to redo.
 - **What is not undone**: the texts, snapshots and markers the command
-  made, and the scenes it published. The step publishes the true scene
-  right after.
+  made, the scenes it published, what it wrote to the clipboard, and what
+  it asked of the syntax tree port: a text attached, highlighted or
+  detached stays so in the library, as the clipboard is outside the editor
+  state. The step publishes the true scene right after.
 - **A rollback that is refused is said, and the rest is still done.** A
   command that released a buffer's text, gave up a window's marker or
   dropped the inverses of its own edits cannot be rolled back. The echo
@@ -567,7 +576,7 @@ is queued, and marks that event. What the loop does with the flag is here
 
 | Event | What it does to the state |
 |---|---|
-| `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped, and so is the first commit into a buffer whose file changed on disk unbeknown to the user ("Files that changed on disk"). Either way it clears the preedit |
+| `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped, and so is a commit into a read-only buffer (`Buffer.readOnly`), the echo area saying `<name> is read-only`, and the first commit into a buffer whose file changed on disk unbeknown to the user ("Files that changed on disk"). Either way it clears the preedit |
 | `preedit text` | Sets the preedit to `text`; an empty one clears it |
 | `compositionDisabled` | Clears the preedit |
 | `resize` | Sets the frame's size, whether the window is in fullscreen (`Frame.fullscreen`), its corner clearance in points (`Frame.corner`), which the bottom row is inset by (`EditorState.bottomInset`), and its top inset in points (`Frame.top`), which the views along the frame's top edge start their text below (`EditorState.topInset`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: Lean handles no scale, and the display lays out at its own |
@@ -579,6 +588,7 @@ is queued, and marks that event. What the loop does with the flag is here
 | `menu name` | Tells the scheme that a menu item named the command `name`, with no arguments, for the focused view (`InputScheme.invoked`), and runs the invocation it hands back as one no key yielded, in the focused window, with the report of the scheme's state it hands back: guarded, rolled back and published as every command is, and config's command of the name runs in its place. A name no command is registered under says so, as an invocation does. The scheme's states are then as after a key: a command that runs to its end keeps the state handed back, which is the state at rest when nothing is pending, and one that does not puts the scheme back at rest. A scheme that treats no menu item apart hands back the invocation and the state as they were, so the command `name` runs |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
 | a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
+| `parsed` | Nothing; the scene is published, laid out with the tree the library delivered, so a highlighted text is drawn with its new highlights, which replace the old ones only then (`Editor/Highlight.lean`) |
 
 **A committed text is typed text.** It is inserted only where the scheme
 says the view takes text, which under a scheme that says nothing is every
@@ -1147,8 +1157,9 @@ structure Loop.Stepped (scheme : InputScheme) where
   ended : Option Loop.Ending := none
   /-- The keys of the jobs the host is to cancel: a cancel ends the job of
   that key, if there is one, even one that has finished and not yet been
-  delivered, so its command never runs ("Auto-reload", in the module
-  docs). -/
+  delivered, so its command never runs. Those the command the step ran
+  asked for (`cancelJob`), when it ran to its end, come first, then the
+  loop's own ("Jobs from commands", "Auto-reload", in the module docs). -/
   cancels : Array String := #[]
 
 namespace EditorState
@@ -1239,8 +1250,8 @@ def statusOf (modeLine : ModeLine) (state : EditorState) (id : ViewId)
 of `state`, whose text is shown at `snapshot` and of which the scheme
 reports the fields `reported` (`ModeLine.Context`): its buffer; its cursor,
 the head of the primary range of its selection, as a row and a column in
-cells of the snapshot; the snapshot's rows, less an empty last row after a
-final line break; and whether it is the selected view
+cells of the snapshot; the snapshot's lines (`SnapshotId.lineCount`); and
+whether it is the selected view
 (`EditorState.selectedView`). It is not refused: when the selection marker
 or the snapshot does not answer, there is no cursor and no row. -/
 def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : SnapshotId)
@@ -1250,9 +1261,7 @@ def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : 
     let .selection selection ← marker.text.marker marker | throw .noSuchMarker
     let some range := selection.ranges[selection.primary]? | throw .noSuchMarker
     let point ← snapshot.pointOf range.head .cells
-    let rows ← snapshot.rowCount
-    let last ← snapshot.rowContent (rows - 1)
-    return (point, if rows > 1 && last.isEmpty then rows - 1 else rows)
+    return (point, ← snapshot.lineCount)
   let (cursor, lines) :=
     match ← (observing read : TextM (Except TextError (Point × Nat))) with
     | .ok (point, lines) => (some point, lines)
@@ -1518,6 +1527,11 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) : Event →
   | .commit text => do
     let some target := state.focusedTarget? | return { state with preedit := none }
     if report.takesText then
+      -- A commit into a read-only buffer is dropped and said, as a
+      -- command's edit gives up, with no command to name.
+      if let some (_, name) := state.readOnly? target.buffer.text then
+        return { state with
+            echo := EditorState.readOnlyReason name, preedit := none }
       -- The first edit after a change on disk the user was not told of is
       -- dropped and said, as a command's is refused ("Files that changed on
       -- disk", in the module docs).
@@ -1531,14 +1545,18 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) : Event →
 
 /-- The text `handle` inserts for `event` from `state`, `report` being what
 the scheme says of the focused view: a committed text, where there is a
-focused window, the report says its view takes text, and its buffer's file
-did not change on disk unbeknown to the user. None for any other event, and
-for a commit that is dropped. -/
+focused window, the report says its view takes text, its buffer is not
+read-only, and its buffer's file did not change on disk unbeknown to the
+user. None for any other event, and for a commit that is dropped. -/
 def inserts (state : EditorState) (report : InputScheme.Report) : Event → Option String
   | .commit text =>
     match state.focusedTarget? with
     | some target =>
-      if report.takesText && (state.untold? target.buffer.text).isNone then some text else none
+      if
+          report.takesText && (state.readOnly? target.buffer.text).isNone &&
+            (state.untold? target.buffer.text).isNone then
+        some text
+      else none
     | none => none
   | _ => none
 
@@ -1738,6 +1756,9 @@ structure Ran where
   log : Array String := #[]
   /-- The jobs the command asked to be started, when it ran to its end. -/
   starts : Array JobStart := #[]
+  /-- The keys of the jobs the command asked to be cancelled, when it ran to
+  its end. -/
+  cancels : Array String := #[]
   /-- The invocations to run next, when the command ran to its end: the
   continuations of the prompts it accepted, each with its answer, and the
   invocations it asked to be run after it. -/
@@ -1819,13 +1840,14 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     return {
         state :=
           { left.refusedBy ungiven with
-            starts := #[], answered := #[], reload := false, theme := none }
+            starts := #[], cancels := #[], answered := #[], reload := false, theme := none }
         ending
         closed := closedViews state left
         opened := openedMinibuffer state left
         write
         log
         starts := left.starts
+        cancels := left.cancels
         answered := left.answered
         reload := left.reload
         theme := left.theme }
@@ -1885,7 +1907,8 @@ def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
     answered := ran.answered
     reload := ran.reload
     theme := ran.theme
-    ended := some ran.ending }
+    ended := some ran.ending
+    cancels := ran.cancels }
 
 /-- One key through the scheme, for the focused view, and the invocation it
 yields, if it yields one, run (`run`): what the step hands back, with the

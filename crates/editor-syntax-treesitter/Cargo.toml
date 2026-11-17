@@ -1,0 +1,82 @@
+[package]
+name = "editor-syntax-treesitter"
+version = "0.1.0"
+description = "The syntax port's real adapter, over tree-sitter, with the Rust, JSON and Markdown grammars compiled in"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The syntax port, its fake and its contract. This crate implements the
+# port, and its test `tests/contract.rs` runs the contract on the adapter,
+# once for each grammar.
+editor-syntax = { path = "../editor-syntax" }
+# Text storage: the snapshot a parse reads through its chunks, and the edit
+# and point types the port hands an edit in.
+editor-text = { path = "../editor-text" }
+# The parser, the incremental reparse and the query engine. Kept behind the
+# port: no tree-sitter type is public here, and `deny.toml` lets no other
+# crate depend on it. Pinned exactly; 0.27.2 was the newest release on
+# 2026-11-16. Its licence is MIT, compatible with GPL-3.0-or-later, and it
+# is used unmodified. Its build compiles the library's C with `cc`.
+#
+# Its features. `std`, the default, is on: it is what `#match?`
+# predicates' `regex` needs. `wasm` is off and stays off: it brings
+# wasmtime, a JIT and hundreds of crates, to load grammars built as
+# WebAssembly, and grammars are compiled in here (the crate docs, "How
+# grammars are loaded"). `deny.toml` bans `wasmtime` outright.
+#
+# `streaming-iterator`, which its query cursor iterates with, and
+# `tree-sitter-language`, the type a grammar crate hands its language in,
+# come in through it and are not dependencies here: the adapter names the
+# first through tree-sitter's re-export, and hands the second straight to
+# `Language::new`.
+#
+# Looked at on 2026-11-16 and set aside:
+#
+# - The `wasm` feature, above.
+# - `tree-sitter-loader` 0.x, which finds, builds and loads grammars from a
+#   directory at run time, compiling their C with the machine's compiler.
+#   Grammars are fixed when the library is built, so a loader buys
+#   nothing; `deny.toml` bans it outright.
+# - Our own parser: tree-sitter is the incremental parser the grammars
+#   exist for, and writing one is out of all proportion.
+tree-sitter = { version = "=0.27.2" }
+# The grammars, each compiled in: its crate's build compiles the generated
+# `parser.c` (and the grammar's `scanner.c`, if it has one) with `cc` when
+# Cargo builds this crate, and the objects end up in the static library
+# Lean links. Each depends only on `tree-sitter-language`, so they and the
+# library are pinned independently. Both MIT, used unmodified; each was the
+# newest release on 2026-11-16.
+#
+# Rust, for the editor's own language and the adapter's contract on real
+# code.
+tree-sitter-rust = { version = "=0.24.2" }
+# JSON, the grammar the Lean model reproduces in pure Lean
+# (`lean/Editor/SyntaxTree/Model.lean`), so the Lean contract compares the
+# model and the library answer for answer.
+tree-sitter-json = { version = "=0.24.8" }
+# Markdown, for documents and for the code in their fences, which the
+# grammar's own injections query hands to the grammar its info string names
+# (`docs/design/rust-library.md`, "Injections, indentation and text
+# objects, as built"). It is the tree-sitter-grammars project's grammar, the
+# one nvim, Helix and Zed use. MIT, used unmodified; 0.5.4, released on
+# 2026-10-24, was the newest release when looked at on crates.io on
+# 2026-11-16. Its build compiles the C of its two grammars, block and
+# inline, each with its external scanner.
+#
+# Its one feature, `parser`, is off (the crate has no default features): it
+# only turns on an optional dependency on tree-sitter for a
+# `MarkdownParser` wrapper the adapter does not use. So its dependencies are
+# `tree-sitter-language` and `cc` at build time, both already in the graph.
+#
+# Only the block grammar (`LANGUAGE`) is listed. The inline grammar
+# (`INLINE_LANGUAGE`) was seen, on 2026-11-16, to give 598 of 4,000
+# incremental reparses of random edits a tree other than a fresh parse's,
+# none of them with an error, so the core's fallback to a whole parse would
+# not catch it and the contract's `INCREMENTAL`, which runs on every listed
+# grammar, would fail. The block grammar's 6,000 reparses all equalled the
+# fresh parse. So inline Markdown is not highlighted, and the block
+# grammar's injection of each `(inline)` node names a grammar the service
+# does not have, which injects nothing.
+tree-sitter-md = { version = "=0.5.4", default-features = false }

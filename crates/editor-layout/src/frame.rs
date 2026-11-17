@@ -131,8 +131,10 @@
 //!
 //! **Every value is resolved.** A frame names no face: a run carries the
 //! [`Paint`] its faces come to ([`face`](crate::face), "The precedence":
-//! lowest first, the view's decorations in the scene's order and then the
-//! selection, over the default face), a glyph the id of the font it is
+//! lowest first, the text's own spans, resolved once for the frame through
+//! its [`TextSpans`](crate::scene::TextSpans), then the view's decorations
+//! in the scene's order and then the selection, over the default face), a
+//! glyph the id of the font it is
 //! drawn in, a
 //! cursor the paint of the face the scene names for it over the default
 //! face, and a view the default face's background and the selection
@@ -192,7 +194,9 @@ use crate::Layout;
 use std::collections::HashMap;
 
 use crate::cache::{FieldKept, StatusKept, state};
-use crate::decoration::{DecorationSource, FaceSpanSource, SelectionSource, Span, fonts_of, merge};
+use crate::decoration::{
+    DecorationSource, FaceSpanSource, SelectionSource, Span, TextSpansSource, fonts_of, merge,
+};
 use crate::face::{
     Color, ECHO_AREA_FACE, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle,
 };
@@ -909,7 +913,8 @@ impl<S: Shaper> Layout<S> {
     }
 
     /// The frame of `view`, with `extra` sources of spans under its
-    /// decorations: the layers over a run are, lowest first, `extra` in
+    /// decorations: the layers over a run are, lowest first, its text's own
+    /// spans ([`TextRef::spans`](crate::scene::TextRef::spans)), `extra` in
     /// order, the view's decorations in the order the scene lists them, and
     /// the selections ([`face`](crate::face), "The precedence"). A view at
     /// the frame's `bottom_edge` has a status row of the message height,
@@ -973,8 +978,14 @@ impl<S: Shaper> Layout<S> {
             .collect();
         let selection_source = SelectionSource::new(snapshot, &selections, selection_face);
         let face_source = FaceSpanSource::new(decorations);
-        // Every source, lowest layer first.
-        let mut sources: Vec<&dyn DecorationSource> = extra.to_vec();
+        let own = TextSpansSource::of(&mut self.styles, text);
+        // Every source, lowest layer first: the text's own spans, `extra`,
+        // the decorations and the selections.
+        let mut sources: Vec<&dyn DecorationSource> = Vec::new();
+        if let Some(own) = &own {
+            sources.push(own);
+        }
+        sources.extend_from_slice(extra);
         sources.push(&face_source);
         sources.push(&selection_source);
         // Every source's spans of `bytes`, lowest layer first, and how
@@ -1160,6 +1171,7 @@ mod tests {
     use std::cell::RefCell;
     use std::hash::{DefaultHasher, Hash, Hasher};
     use std::ops::Range;
+    use std::sync::Arc;
 
     use editor_text::{Selection, SelectionRange, Shape, Snapshot, Text};
 
@@ -1170,8 +1182,8 @@ mod tests {
         BASE_BACKGROUND, BASE_FOREGROUND, Color, Face, FaceDef, Paint, Underline, UnderlineStyle,
     };
     use crate::scene::{
-        Cursor, CursorShape, Decoration, Padding, Rect, Scene, Side, StatusField, TextKey, TextRef,
-        View, ViewId,
+        Cursor, CursorShape, Decoration, FixedSpans, Padding, Rect, Scene, Side, SpansAt,
+        StatusField, TextKey, TextRef, TextSpans, View, ViewId,
     };
     use crate::shaper::fake::CellShaper;
     use crate::shaper::scripted::{ScriptedShaper, glyph, line};
@@ -3193,6 +3205,108 @@ mod tests {
                 .iter()
                 .all(|bytes| bytes.start >= 2000 && bytes.end <= 2019),
             "{asked:?}"
+        );
+    }
+
+    /// `view` with `spans` as its text's own spans.
+    fn with_spans(mut view: View, spans: &FixedSpans) -> View {
+        view.text = view
+            .text
+            .map(|text| text.with_spans(Arc::new(spans.clone())));
+        view
+    }
+
+    #[test]
+    fn text_spans_are_drawn_in_their_faces() {
+        let mut layout = layout();
+        let spans = FixedSpans::new(&["tab", "face"], vec![(1..3, 0), (4..6, 1)]);
+        let runs = first_runs(
+            &mut layout,
+            with_spans(view("abcdef", 10, 16, 0, &[]), &spans),
+        );
+        assert_eq!(
+            runs,
+            vec![
+                (0..1, PLAIN),
+                (1..3, paint(RED, BASE_BACKGROUND)),
+                (3..4, PLAIN),
+                (4..6, paint(GREEN, BASE_BACKGROUND)),
+            ]
+        );
+    }
+
+    #[test]
+    fn text_spans_are_under_the_scene_decorations_and_the_selection() {
+        let mut layout = layout_with(&[
+            def(
+                "under",
+                Face {
+                    background: Some(GREY),
+                    ..fg(RED)
+                },
+            ),
+            def("over", fg(GREEN)),
+            def("selection", bg(BLUE)),
+        ]);
+        let spans = FixedSpans::new(&["under"], vec![(0..6, 0)]);
+        let view = decorated(view("abcdef", 10, 16, 0, &[(3, 5)]), &[(2..4, "over")]);
+        let runs = first_runs(&mut layout, with_spans(view, &spans));
+        assert_eq!(
+            runs,
+            vec![
+                (0..2, paint(RED, GREY)),
+                // The decoration's foreground over the span's.
+                (2..3, paint(GREEN, GREY)),
+                // The selection's background over both.
+                (3..4, paint(GREEN, BLUE)),
+                (4..5, paint(RED, BLUE)),
+                (5..6, paint(RED, GREY)),
+            ]
+        );
+    }
+
+    #[test]
+    fn text_spans_are_asked_only_for_the_rows_shown() {
+        let text = "row\n".repeat(1000);
+        let mut layout = layout();
+        let spans = FixedSpans::new(&["face"], vec![(0..text.len(), 0)]);
+        // Row 500 starts at byte 2000; five rows are shown.
+        let frame = frame(
+            &mut layout,
+            with_spans(view(&text, 10, 80, 2000, &[]), &spans),
+        );
+        assert_eq!(frame.rows.len(), 5);
+        let asked = spans.asked();
+        assert!(!asked.is_empty());
+        assert!(
+            asked
+                .iter()
+                .all(|bytes| bytes.start >= 2000 && bytes.end <= 2019),
+            "{asked:?}"
+        );
+    }
+
+    #[test]
+    fn a_text_with_no_spans_lays_out_as_before() {
+        /// Spans that draw nothing over any snapshot.
+        struct Nothing;
+        impl TextSpans for Nothing {
+            fn at(&self, _snapshot: &Snapshot) -> Option<Box<dyn SpansAt>> {
+                None
+            }
+        }
+        let text = "ab\ncdé\n";
+        let plain = frame(&mut layout(), view(text, 10, 64, 0, &[(1, 4)]));
+        let mut nothing = view(text, 10, 64, 0, &[(1, 4)]);
+        nothing.text = nothing.text.map(|text| text.with_spans(Arc::new(Nothing)));
+        assert_eq!(frame(&mut layout(), nothing), plain);
+        let empty = FixedSpans::new(&[], vec![]);
+        assert_eq!(
+            frame(
+                &mut layout(),
+                with_spans(view(text, 10, 64, 0, &[(1, 4)]), &empty)
+            ),
+            plain
         );
     }
 

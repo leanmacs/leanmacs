@@ -453,7 +453,9 @@ A fourth, `tests/headless/dispatch/script`, runs on a config of its own,
 inserts `spin` and then asks the text its revision a thousand million
 times, and `mark`, which inserts `mark`, and binds `C-c s` and `C-c m` to
 them. It sends `C-c s` and then `C-g`, the interrupt key, which stops
-`spin` and rolls its insertion back, then `C-c m`, which runs to its end.
+`spin` and rolls its insertion back, and is then looked up as any key is:
+under the Vim scheme it runs `keyboard-quit`, which, with no `:!` running,
+says `Quit`. Then `C-c m`, which runs to its end.
 The config also registers the job `double` and the command `ask` shown
 above, on `C-c d`: the script sends `C-c d`, waits for the job with `join`,
 and asks for the scene, whose echo area holds what the job's command said.
@@ -466,7 +468,7 @@ reload 1: installed, 1 chunks, 3 commands
 key arrived: c KeyC control
 key arrived: s KeyS -
 key arrived: g KeyG control
-scene 0x0, focused 0, echo "spin: interrupted", echo padding 8, preedit -, published 3, theme "default"
+scene 0x0, focused 0, echo "Quit", echo padding 8, preedit -, published 3, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 key arrived: c KeyC control
@@ -1283,7 +1285,8 @@ it did stays, and the key that ran it has entered no state (an operator
 whose motion failed after it moved leaves the cursor where the motion got
 to). `C-g` is the interrupt key: it stops a command that
 is running at its next request to the editor, and is then looked up like
-any other key. A command that takes longer than 100 ms is logged on stderr,
+any other key; under the Vim scheme it runs `keyboard-quit`, which cancels
+a running `:!` or says `Quit`. A command that takes longer than 100 ms is logged on stderr,
 `slow command: <name> took <n> ms`, and not on the output.
 
 A command run by `run <name>` and a job's command are treated the same way,

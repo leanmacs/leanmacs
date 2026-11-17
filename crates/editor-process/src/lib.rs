@@ -29,7 +29,8 @@
 //!   id is the child's, with its standard output and error piped, and its
 //!   standard input closed, or a pipe when the spawn asks for one
 //!   ([`Input`]). The input is the spawn's, not the command's: the service
-//!   decides it, a run's child always closed and a streaming child's as
+//!   decides it, a run's child closed unless the run is fed its input
+//!   ([`service::Service::start_with_input`]), and a streaming child's as
 //!   its [`service::Streaming`] says. A program that cannot be started is a
 //!   [`Refusal`], a value: its kind is what the editor decides on, and its
 //!   detail the platform's words, naming the program and the directory.
