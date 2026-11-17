@@ -83,8 +83,13 @@
 //!    directory without being absolute ([`refusal_before_spawn`]), before
 //!    any spawn;
 //! 2. spawns the command, its standard input closed: a run's child has no
-//!    input, so one that reads it reads its end at once. A refusal is the
-//!    run's result;
+//!    input, so one that reads it reads its end at once. A run started
+//!    with input ([`Service::start_with_input`]) has a pipe instead, and a
+//!    writer thread writes every byte to it and then drops it, so the
+//!    child reads the input and then its end. A write the child does not
+//!    take, because it closed its input or ended, is ignored: the run
+//!    comes to what the child did. A refusal of the spawn is the run's
+//!    result;
 //! 3. takes both streams and starts a reader thread for each, which keeps
 //!    up to `limit` bytes; a stream with more than that kills the group,
 //!    and the run comes to [`RunResult::OutputTooLarge`], never to output
@@ -100,7 +105,10 @@
 //! result. Nothing of a run panics into its caller.
 //!
 //! So each running child has three threads: the run's, which waits, and
-//! one reader for each stream.
+//! one reader for each stream; and a fourth, its writer, when it is fed.
+//! The writer is detached, as the readers are: it writes while the
+//! readers read, so input larger than a pipe cannot hold a child that
+//! writes as it reads, and it ends once its bytes are written or refused.
 //!
 //! # A stream held open after the reap
 //!
@@ -186,9 +194,9 @@ pub enum RunResult {
 /// reaches its job, and its bound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Streaming {
-    /// Its standard input: closed, or a pipe the job writes to. It is the
-    /// one place a child's input is chosen: a [`Command`] carries none, and
-    /// a run's child has its input closed.
+    /// Its standard input: closed, or a pipe the job writes to. A
+    /// [`Command`] carries none: a streaming child's input is chosen here,
+    /// and a run's by whether it is fed ([`Service::start_with_input`]).
     pub input: Input,
     /// How its standard output is framed.
     pub out: Framing,
@@ -531,6 +539,22 @@ impl<P: Processes + 'static> Service<P> {
     /// shutdown the run is accepted, comes to [`RefusalKind::ShutDown`] and
     /// is completed at once.
     pub fn start(&self, id: u64, command: Command, limit: u64) -> bool {
+        self.start_with_input(id, command, None, limit)
+    }
+
+    /// Starts `command` as the run `id`, as [`start`](Self::start) does,
+    /// fed `input`: with some, the child's standard input is a pipe that a
+    /// thread of the run's writes the bytes to and then closes, while the
+    /// run reads the child's output ("A run", in the module docs); with
+    /// none, its input is closed. A write the child does not take is no
+    /// refusal: the run comes to what the child did.
+    pub fn start_with_input(
+        &self,
+        id: u64,
+        command: Command,
+        input: Option<Vec<u8>>,
+        limit: u64,
+    ) -> bool {
         let mut state = self.inner.state();
         if state.in_use(id) {
             return false;
@@ -557,7 +581,7 @@ impl<P: Processes + 'static> Service<P> {
         let inner = Arc::clone(&self.inner);
         let started = thread::Builder::new()
             .name("editor-process".into())
-            .spawn(move || inner.run(id, &command, limit))
+            .spawn(move || inner.run(id, &command, input, limit))
             .is_ok();
         if !started {
             let mut state = self.inner.state();
@@ -946,12 +970,17 @@ impl<P: Processes + 'static> Inner<P> {
     }
 
     /// The run `id`'s thread: the module docs' steps.
-    fn run(&self, id: u64, command: &Command, limit: u64) {
+    fn run(&self, id: u64, command: &Command, input: Option<Vec<u8>>, limit: u64) {
+        let piped = if input.is_some() {
+            Input::Pipe
+        } else {
+            Input::Closed
+        };
         let result = match refusal_before_spawn(command) {
             Some(refusal) => RunResult::Refused(refusal),
-            None => match self.processes.spawn(command, Input::Closed) {
+            None => match self.processes.spawn(command, piped) {
                 Err(refusal) => RunResult::Refused(refusal),
-                Ok(child) => match self.own(id, child, limit) {
+                Ok(child) => match self.own(id, child, input, limit) {
                     Some(result) => result,
                     None => {
                         self.finish(id, None);
@@ -964,14 +993,21 @@ impl<P: Processes + 'static> Inner<P> {
     }
 
     /// Registers `child` as the run `id`'s, kills it if the run was
-    /// cancelled meanwhile, reads its streams, waits for it and says what
-    /// the run came to: `None` if it was cancelled before its streams
-    /// reached their end.
-    fn own(&self, id: u64, mut child: P::Child, limit: u64) -> Option<RunResult> {
+    /// cancelled meanwhile, feeds it `input`, reads its streams, waits for
+    /// it and says what the run came to: `None` if it was cancelled before
+    /// its streams reached their end.
+    fn own(
+        &self,
+        id: u64,
+        mut child: P::Child,
+        input: Option<Vec<u8>>,
+        limit: u64,
+    ) -> Option<RunResult> {
         let outputs = [
             child.take_output(Stream::Out),
             child.take_output(Stream::Err),
         ];
+        let fed = input.and_then(|bytes| child.take_input().map(|pipe| (pipe, bytes)));
         let child = Arc::new(child);
         let reads = Arc::new(Reads::default());
         {
@@ -1023,8 +1059,12 @@ impl<P: Processes + 'static> Inner<P> {
                 child.kill();
             }
         }
+        let unfed = fed.and_then(|(pipe, bytes)| feed(pipe, bytes, &*child));
         let exit = child.wait();
         let streams = reads.wait()?;
+        if let Some(refusal) = unfed {
+            return Some(RunResult::Refused(refusal));
+        }
         let streams = [Stream::Out, Stream::Err].into_iter().zip(streams);
         let mut whole = [Vec::new(), Vec::new()];
         let mut failed = None;
@@ -1270,6 +1310,29 @@ fn stream_writer<P: Processes + 'static>(
         };
         inner.keep(wait, reply);
     }
+}
+
+/// Starts a run's writer: a thread that writes every byte of `bytes` to
+/// `pipe`, the child's standard input, and then drops it, which closes it.
+/// A write the child does not take is ignored: the run's result is what
+/// the child did. The thread is detached, as a run's readers are. `Some`
+/// refusal, with the child killed, when the system refuses the thread: a
+/// child that is never fed must not be taken to have read its input.
+fn feed(mut pipe: impl ChildInput, bytes: Vec<u8>, child: &impl Child) -> Option<Refusal> {
+    let spawned = thread::Builder::new()
+        .name("editor-process-input".into())
+        .spawn(move || {
+            // A refusal is the child's closing its input, or its end: what
+            // the run comes to is what the child did.
+            write_all(&mut pipe, &bytes).ok();
+        });
+    spawned.err().map(|error| {
+        child.kill();
+        Refusal::new(
+            RefusalKind::Failed,
+            format!("no thread to write a child's standard input: {error}"),
+        )
+    })
 }
 
 /// Writes every byte of `bytes` to `input`.
@@ -1560,6 +1623,45 @@ mod tests {
     }
 
     #[test]
+    fn a_fed_run_gives_its_child_the_input_then_closes_it_and_reaps_the_child() {
+        let fake = FakeProcesses::scripted([(
+            command("cat"),
+            Ok(Script::ends(Exit::Code(0)).step(crate::fake::Step::EchoUntilClosed(Stream::Out))),
+        )]);
+        let (service, completed) = service(&fake);
+
+        assert!(service.start_with_input(9, command("cat"), Some(b"in\0\xff".to_vec()), ROOMY));
+
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(9));
+        assert_eq!(service.take(9), Some(ran(Exit::Code(0), b"in\0\xff", b"")));
+        let record = fake.record();
+        let child = record.spawned[0].0;
+        assert_eq!(record.children[&child].input, Input::Pipe);
+        assert_eq!(record.children[&child].received, b"in\0\xff");
+        assert!(
+            record.children[&child].input_closed,
+            "the writer wrote every byte and dropped the input"
+        );
+        assert_eq!(record.reaped, [child]);
+        assert_eq!(service.pending(), 0);
+    }
+
+    #[test]
+    fn a_fed_run_whose_child_reads_nothing_comes_to_what_the_child_did() {
+        let fake = FakeProcesses::scripted([(
+            command("true"),
+            Ok(Script::ends(Exit::Code(0)).stdout("done")),
+        )]);
+        let (service, completed) = service(&fake);
+
+        assert!(service.start_with_input(3, command("true"), Some(vec![b'x'; 1 << 16]), ROOMY));
+
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(3));
+        assert_eq!(service.take(3), Some(ran(Exit::Code(0), b"done", b"")));
+        assert!(pending_comes_to(&service, 0));
+    }
+
+    #[test]
     fn a_run_the_service_does_not_know_has_no_result_and_nothing_to_cancel() {
         let (service, _) = service(&FakeProcesses::new());
 
@@ -1580,7 +1682,7 @@ mod tests {
         drop(state);
 
         let inner = Arc::clone(&service.inner);
-        thread::spawn(move || inner.run(3, &command("x"), ROOMY))
+        thread::spawn(move || inner.run(3, &command("x"), None, ROOMY))
             .join()
             .expect("the run ends");
 

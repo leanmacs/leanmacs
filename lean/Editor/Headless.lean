@@ -19,6 +19,7 @@ import Editor.Job.Real
 import Editor.Loop
 import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
+import Editor.Shell.Compiled
 import Editor.SyntaxTree.Real
 import Editor.Text.Real
 import Editor.Themes.Compiled
@@ -812,6 +813,12 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   `Loop.start` in a frame of 0 by 0, which a resize changes. A test hands
   one that is refused, to see what the host does with no frame. -/
   start : TextM (Loop scheme) := Loop.start scheme ⟨0, 0⟩
+  /-- The host's working directory, which `start` writes into the editor
+  state of the loop it makes (`EditorState.workingDirectory`): where a
+  command run for a buffer with neither a workspace nor a file runs. The
+  window mode's is the process's working directory, read at the edge, and
+  so is the headless mode's. -/
+  workingDirectory : System.FilePath := "/"
   /-- How the host makes its display, over the read half of the table of
   snapshots the text binding publishes (`published`). The headless mode's
   is a recorder in `cells`; a host that draws is handed the real binding. -/
@@ -1640,8 +1647,17 @@ structure Host where
   /-- The loop. -/
   thread : Task (Except IO.Error Unit)
 
-/-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`. -/
+/-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`.
+The loop it makes, when it is first needed, has the collaborators' working
+directory in its state (`Collaborators.workingDirectory`). -/
 def start {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) : IO Host := do
+  let made := collaborators.start
+  let collaborators :=
+    { collaborators with
+      start := do
+        let loop ← made
+        return { loop with
+            state := { loop.state with workingDirectory := collaborators.workingDirectory } } }
   let progress ← IO.mkRef {}
   let thread ← IO.asTask (prio := .dedicated) (loop collaborators progress)
   return { requests := collaborators.requests, posted := ← IO.mkRef 0, progress, thread }
@@ -2133,7 +2149,7 @@ ones, the file commands with their jobs, the minibuffer's commands with its
 mode, evil's commands, the ex line's commands with the ex names that ship,
 the buffer commands, the frame's commands with their bindings, the command that loads a theme
 with the themes that ship, the workspace command with the job that finds a
-file's workspace, and the menu bar (`Menu.standard`) with its
+file's workspace, the shell's command with the job that runs `:!`, and the menu bar (`Menu.standard`) with its
 items' bindings (`Menu.bindings`). Its display is the recorder and its
 clipboard its own, as a host's are by default.
 
@@ -2150,9 +2166,10 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
       Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++ Buffers.commands ++
         FrameCommands.commands ++
         Themes.commands ++
-        Workspace.commands
+        Workspace.commands ++
+        Shell.commands
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
-    compiledJobs := Files.jobs ++ Workspace.jobs
+    compiledJobs := Files.jobs ++ Workspace.jobs ++ Shell.jobs
     modes := Minibuffer.modes, ex := Ex.bindings, themes := Themes.shipped
     segments := ModeLine.shipped, log := IO.eprintln }
 
@@ -2227,7 +2244,10 @@ The Lean toolchain's directory and the directory holding the editor
 package's `.olean` files are the first two of four paths, or, with two, the
 bundle's, resolved from the executable's path, which `main` reads at the
 edge (`IO.appPath`; `Editor/ModuleLookup.lean`). Nothing is read from the
-environment or the working directory. -/
+environment. The working directory is read once, at the edge, as the
+editor's (`Collaborators.workingDirectory`): where `:!` runs for a buffer
+with neither a workspace nor a file; no path of the command line is read
+against it. -/
 def main (arguments : List String) : IO UInt32 := do
   let { render := drawn, sysroot, oleans := oleanDir, config := configDir, script := scriptPath } ←
     match read (← IO.appPath).toString arguments with
@@ -2250,9 +2270,11 @@ def main (arguments : List String) : IO UInt32 := do
       IO.eprintln s!"editor: the headless render session could not be started: {reason}"
       return 1
   let shipped ← shipped sysroot oleanDir configDir IO.println .headless
+  let workingDirectory ← IO.currentDir
   let failure ←
     run
         { shipped with
+          workingDirectory
           display :=
             if drawn then drawnDisplay else fun snapshots => Host.Display.recorder cells snapshots
           render := if drawn then some Render.library else none }

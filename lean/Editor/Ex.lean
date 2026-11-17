@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Ex.Line
 import Editor.Files
+import Editor.Shell
 
 /-!
 # The ex command line
@@ -29,11 +30,15 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 - **Where the prompt is refused**, because one is open, the echo area says
   so (`notAsking`): the command's name, then the refusal's sentence. The
   open prompt stays.
-- **The prompt's candidates are the ex names that are bound** (`exNames`,
+- **The prompt's candidates are the `:!` lines of the buffer's scope, then
+  the ex names that are bound**: the history of the asking buffer's project,
+  or the editor-wide one for a buffer outside any workspace, newest first
+  (`Shell.history`, `Editor/Shell.lean`), then the bound names (`exNames`,
   `Editor/Api.lean`), which the loop answers from the registry as it is
-  when the line is asked for. So while a name is being typed the scene
-  lists the names it matches, a key of the minibuffer chooses one, and
-  accepting runs the chosen name (`Editor/Minibuffer.lean`).
+  when the line is asked for. So while a line is being typed the scene
+  lists the lines and names it matches, a key of the minibuffer chooses
+  one, and accepting runs the chosen one (`Editor/Minibuffer.lean`).
+  Typing `!` lists the history.
   - **The typed line is the pattern, whole.** A line with an argument
     matches no name, so nothing is listed, and accepting runs the line as
     typed. A name is completed, an argument is not.
@@ -42,17 +47,31 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
     and the accept key is the name `r`, which nobody bound, and not
     `reload`.
 - **Running a line** (`run`):
-  1. the line is parsed into its name and its argument (`Ex.parse`,
-     `Editor/Ex/Line.lean`). A line that is empty or all white space runs
-     nothing and says nothing, as Vim's does;
-  2. the command asks which command the name is bound to (`exBinding`),
+  1. the line is parsed into its range, its name and its argument
+     (`Ex.parse`, `Editor/Ex/Line.lean`). A line that is empty or all
+     white space runs nothing and says nothing, as Vim's does. A range
+     before a name, which no name takes, is said (`noRange`), and nothing
+     runs; so is a range alone, which in Vim goes to a line
+     (`rangeAlone`);
+  2. **a line of the bang form** (`:!cmd`, `Line.bang`) is handed to the
+     shell (`Editor/Shell.lean`). With no range, the command
+     `shell-command` is asked to run after this one with the text after
+     the `!` and the line, trimmed (`invoke`). With a range, `:{range}!cmd`,
+     the range is resolved against the view the line was asked from
+     (`Range.resolve`, `Editor/Ex/Line.lean`): `.` is its primary cursor's
+     line, `$` its buffer's last (`linesOf`). A range that resolves to no
+     lines is said, `<line>: ` and why; otherwise `shell-filter` is asked
+     to run with the first and the last line, the text and the line. `:!`
+     with nothing after it is said (`Shell.noCommand`). No binding is asked
+     of a bang line;
+  3. the command asks which command the name is bound to (`exBinding`),
      which the loop answers from the registry as it is at this step. A
      name nobody bound is said in the echo area (`unknown`), and the
      editor goes on;
-  3. the binding makes the invocation (`Binding.invocation?`). An argument
+  4. the binding makes the invocation (`Binding.invocation?`). An argument
      for a name that takes nothing is said (`noArgument`), and nothing
      runs;
-  4. the command asks for the invocation to be run after it (`invoke`).
+  5. the command asks for the invocation to be run after it (`invoke`).
 - **The command a line runs is a step of its own.** `ex` does not run it:
   the loop hands the invocation to its host, which runs it before the next
   event, as it runs a prompt's continuation (`Editor/Loop.lean`,
@@ -75,9 +94,9 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   and says so in the echo area (`notQuitting`): `quit: <name> has unsaved
   changes`, with the first such buffer's name. The editor goes on.
 - **A buffer with no file never blocks it.** The scratch buffer cannot be
-  saved, and `!` is not built, so a rule that counted it would leave no
-  way to quit once anything was typed there. This departs from Vim, which
-  refuses.
+  saved, and `:w !cmd` is not built, so a rule that counted it would leave
+  no way to quit once anything was typed there. This departs from Vim,
+  which refuses.
 - **It waits for a save in flight.** The command asks, and the loop says
   stop once the save's result has been delivered (`Editor/Loop.lean`,
   "Quit"): `w` then `q`, typed as fast as you like, writes the file and
@@ -154,7 +173,7 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 |---|---|
 | An ex name | A binding in `Editor/Ex/Compiled.lean`, or config's `exCommand` (`Editor/Setup.lean`); nothing here |
 | A command an ex name runs | Here if it is the ex line's own, with its name and its messages, and its registration in `Editor/Ex/Compiled.lean` |
-| A part of a line (a range, `!`) | `Editor/Ex/Line.lean`, and its use in `run` |
+| A part of a line | `Editor/Ex/Line.lean`, and its use in `run` |
 
 Pinned by `ModelTest.exChecks`, on the loop's driver over the editor's
 models and the test scheme.
@@ -179,26 +198,68 @@ takes nothing. -/
 def noArgument (name : String) : String :=
   s!"{name}: takes no argument"
 
+/-- What the echo area says when a line gives a range to a name: no name
+but the bang form's takes one. -/
+def noRange (name : String) : String :=
+  s!"{name}: takes no range"
+
+/-- What the echo area says for a line that is a range alone: Vim goes to
+that line, which is not built. -/
+def rangeAlone : String :=
+  "a range alone, to go to a line, is not built"
+
 /-- What the echo area says when the ex command was called with no line and
 could not ask for one: the refusal's own sentence, after the command's
 name. -/
 def notAsking (refusal : PromptRefusal) : String :=
   s!"{name}: {refusal.describe}"
 
-/-- Runs the ex line `line` ("Running a line", in the module docs): parses
-it, asks which command its name is bound to, and asks for that command to
-be run after this one, with the line's argument. A line that is empty or
-all white space runs nothing. A name nobody bound, and an argument for a
-name that takes nothing, are each said in the echo area, and nothing
-runs. -/
-def run (line : String) : EditorM Unit := do
+/-- How many lines the text of `target`'s buffer has (`TextId.lineCount`),
+and the line of its primary cursor, from 1, no further than the last. -/
+def linesOf (target : Target) : TextM (Nat × Nat) := do
+  let text := target.buffer.text
+  let count ← text.lineCount
+  let selection ← target.selection
+  let head := (selection.ranges[selection.primary]?).map (·.head) |>.getD 0
+  return (count, min count ((← text.pointOf head).row + 1))
+
+/-- Runs the ex line `line`, typed in the view of `target` ("Running a
+line", in the module docs): parses it; hands a bang line to the shell,
+resolving its range against `target` first; otherwise asks which command
+its name is bound to, and asks for that command to be run after this one,
+with the line's argument. A line that is empty or all white space runs
+nothing. A name nobody bound, an argument for a name that takes nothing, a
+range before a name and a range that resolves to no lines are each said in
+the echo area, and nothing runs. -/
+def run (target : Target) (line : String) : EditorM Unit := do
   let some parsed := parse line | return
+  let typed := trimmed line
+  if parsed.bang then
+    match parsed.range, parsed.argument with
+    | _, none =>
+      message Shell.noCommand
+    | none, some text =>
+      invoke { command := Shell.commandName, arguments := [.str text, .str typed] }
+    | some range, some text =>
+      let (count, current) ← linesOf target
+      match range.resolve current count with
+      | .error why =>
+        message s!"{typed}: {why}"
+      | .ok (first, last) =>
+        invoke
+            { command := Shell.filterName
+              arguments := [.nat first, .nat last, .str text, .str typed] }
+    return
+  if parsed.range.isSome then
+    message (if parsed.name.isEmpty then rangeAlone else noRange parsed.name)
+    return
   let some binding ← exBinding parsed.name | message (unknown parsed.name)
   let some invocation := binding.invocation? parsed.argument | message (noArgument parsed.name)
   invoke invocation
 
 /-- The ex command as it is called: runs the line that is its first
-argument, a string (`run`). With anything else first, or nothing, it asks
+argument, a string, in the view it was called with (`run`). With anything
+else first, or nothing, it asks
 for the line (`prompt`, labelled `label`), with itself as the continuation
 and the ex names that are bound as the candidates:
 the answer is then its first argument, and it runs in the view it was asked
@@ -207,9 +268,11 @@ echo area (`notAsking`). -/
 def exCommand (call : Call) : EditorM Unit := do
   match call.arguments with
   | .str line :: _ =>
-    run line
+    run call.target line
   | _ =>
-    if let .error refusal← prompt label { command := name } (candidates := exNames) then
+    let candidates : EditorM (Array String) := do
+      return Shell.history (← editorState) call.target.window.buffer ++ (← exNames)
+    if let .error refusal← prompt label { command := name } (candidates := candidates) then
       message (notAsking refusal)
 
 /-- The name the quit command is registered under. -/

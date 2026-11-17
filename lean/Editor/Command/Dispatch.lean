@@ -143,9 +143,11 @@ from the next command.
   reply to that request.
 - **Starting a job** (`StateRequest.startJob`) is refused with `noSuchJob`
   for a name no job is registered under (`Loop.Registered.jobs`), with the
-  state as it was. Otherwise the start is kept in the state, for the loop
-  to hand to its host once the command has run to its end
-  (`Editor/Loop.lean`, "Jobs from commands").
+  state as it was. Otherwise the start is kept in the state, with its key
+  if it has one, for the loop to hand to its host once the command has run
+  to its end (`Editor/Loop.lean`, "Jobs from commands"). A cancel
+  (`StateRequest.cancelJob`) is the handler's: its key is kept the same
+  way, whether or not a job of that key is running.
 - **Asking for an ex binding** (`StateRequest.ex`) is answered the binding
   the registry has for the ex name (`Loop.Registered.ex`): the command the
   name runs and what it takes, or `none` for a name nobody bound. The
@@ -169,6 +171,10 @@ from the next command.
   was told of (`Loop.Registered.workspaceRoots`, `generation`), the state
   not read and not changed. A file's open asks, for its directory's
   workspace (`Editor/Workspace/Attach.lean`).
+- **Asking for the shell time limit** (`StateRequest.shellTimeLimit`) is
+  answered config's limit the loop was told of
+  (`Loop.Registered.shellTimeLimit`), or `none`, the state not read and
+  not changed. `:!` asks, for its run's limit (`Editor/Shell.lean`).
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -288,6 +294,10 @@ structure Loop.Registered where
   directory's cached workspace is an answer only under the generation it
   was found under (`Editor/Workspace.lean`). -/
   generation : Nat := 0
+  /-- How long a `:!` or a filter may run, in milliseconds, as config set it
+  (`shellTimeLimit`, `Editor/Setup.lean`); `none` for the shell's
+  default. -/
+  shellTimeLimit : Option Nat := none
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -338,9 +348,9 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           | .error error =>
             pure (.error error)
       | (reply, state) => dispatched registered state (next reply)
-  | state, .step (.state (.startJob name arguments)) next =>
+  | state, .step (.state (.startJob name arguments key)) next =>
     if registered.jobs name then
-      let (reply, state) := state.handle (.startJob name arguments)
+      let (reply, state) := state.handle (.startJob name arguments key)
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchJob name)))
   | state, .step (.state (.ex name)) next => dispatched registered state (next (registered.ex name))
@@ -354,6 +364,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     else dispatched registered state (next (.error (.noSuchTheme name)))
   | state, .step (.state .autoReloadMode) next =>
     dispatched registered state (next (state.autoReload.getD registered.autoReload))
+  | state, .step (.state .shellTimeLimit) next =>
+    dispatched registered state (next registered.shellTimeLimit)
   | state, .step (.state .workspaceSettings) next =>
     dispatched registered state
       (next ({ roots := registered.workspaceRoots }, registered.generation))

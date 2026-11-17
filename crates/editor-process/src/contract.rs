@@ -10,8 +10,8 @@
 //!
 //! The port's properties are [`RUN`] to [`AFTER_REAP`], and [`INPUT`] to
 //! [`NO_INPUT`] for a child's standard input; the service's, [`CANCEL`] to
-//! [`ESCAPED`] for runs and [`STREAM_LINES`] to [`STREAM_SHUTDOWN`] for
-//! streaming children, run [`Service`] over the processes the check is
+//! [`RUN_INPUT_IGNORED`] for runs and [`STREAM_LINES`] to
+//! [`STREAM_SHUTDOWN`] for streaming children, run [`Service`] over the processes the check is
 //! given, so a real adapter shows them on real processes. A child that
 //! starts a grandchild (`/bin/sleep 600 &`) is how the group's rules are
 //! seen: the script writes its own id (`$$`) and the grandchild's (`$!`) to
@@ -158,6 +158,15 @@ pub const TOO_LARGE: &str = "output past the limit is too large, and kills the g
 /// when the ground has [`ESCAPE`]'s program ([`Ground::escapes`]).
 pub const ESCAPED: &str =
     "a run whose descendant left its group holding its streams ends at a cancel and at shutdown";
+/// What a run is fed reaches its child whole, then end of file: `/bin/cat`
+/// fed more than a pipe holds, a NUL and a byte that is not UTF-8 among
+/// it, answers exactly those bytes on its standard output, and exits 0.
+pub const RUN_INPUT: &str = "what a run is fed reaches its child whole, then end of file";
+/// A run whose child ends without reading what it is fed still comes to
+/// what the child did: `/usr/bin/true` fed a mebibyte exits 0, and the
+/// broken pipe is no refusal.
+pub const RUN_INPUT_IGNORED: &str =
+    "a run whose child does not read what it is fed comes to what the child did";
 
 /// A child's standard input reaches it: `/bin/cat` given a line, a byte
 /// that is not UTF-8 and bytes with no line feed gives them back, and ends
@@ -216,7 +225,7 @@ pub const STREAM_SHUTDOWN: &str =
 pub const ESCAPE: &str = "/usr/bin/perl";
 
 /// Every property, by name, in the order [`check`] runs them.
-pub const PROPERTIES: [&str; 26] = [
+pub const PROPERTIES: [&str; 28] = [
     RUN,
     SIGNAL,
     DIRECTORY,
@@ -231,6 +240,8 @@ pub const PROPERTIES: [&str; 26] = [
     SPAWN_REFUSAL,
     TOO_LARGE,
     ESCAPED,
+    RUN_INPUT,
+    RUN_INPUT_IGNORED,
     INPUT,
     INPUT_CLOSED,
     NO_INPUT,
@@ -303,6 +314,21 @@ const HELD: (usize, u64) = (100_000, 4096);
 const PIPE: usize = 1 << 16;
 /// A script that never stops writing `y` lines.
 const YES: &str = "while :; do echo y; done";
+/// How many bytes [`RUN_INPUT`] feeds its child: four times a pipe.
+const FED: usize = 4 * PIPE;
+/// How many bytes [`RUN_INPUT_IGNORED`] feeds its child: a mebibyte.
+const FED_IGNORED: usize = 1 << 20;
+/// The program [`RUN_INPUT_IGNORED`] runs, which reads nothing.
+const TRUE: &str = "/usr/bin/true";
+
+/// What [`RUN_INPUT`] feeds its child: [`FED`] bytes, a NUL and the byte
+/// `FF`, which is not UTF-8, among them.
+fn fed() -> Vec<u8> {
+    let mut bytes: Vec<u8> = (0..FED).map(|at| b"fed\n"[at % 4]).collect();
+    bytes[1] = 0;
+    bytes[FED / 2] = 0xff;
+    bytes
+}
 
 /// The script that writes the numbers from 0 below `count`, a line each,
 /// then does `then`.
@@ -470,6 +496,10 @@ fn stream_scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
             Ok(Script::ends(Exit::Code(0)).step(Step::EchoUntilClosed(Stream::Out))),
         ),
         (
+            Command::new(TRUE, [""; 0], dir),
+            Ok(Script::ends(Exit::Code(0))),
+        ),
+        (
             sh(dir, INPUT_CLOSED_SCRIPT),
             Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilKilled).steps([
                 Step::CloseInput,
@@ -591,6 +621,8 @@ pub fn check<P: Processes + Clone + 'static>(
         (SPAWN_REFUSAL, check.spawn_refusal(processes)),
         (TOO_LARGE, check.too_large(processes)),
         (ESCAPED, check.escaped(processes)),
+        (RUN_INPUT, check.run_input(processes)),
+        (RUN_INPUT_IGNORED, check.run_input_ignored(processes)),
         (INPUT, check.input(processes)),
         (INPUT_CLOSED, check.input_closed(processes)),
         (NO_INPUT, check.no_input(processes)),
@@ -1061,6 +1093,49 @@ impl<G: Ground> Check<'_, G> {
             && held
             && service.pending() == 0
             && completions.ids().is_empty()
+    }
+
+    /// What the run of `command`, fed `input`, comes to on a service of its
+    /// own, if it is completed within the deadline, with nothing left
+    /// pending once its result is taken.
+    fn fed<P: Processes + Clone + 'static>(
+        &self,
+        processes: &P,
+        command: Command,
+        input: Vec<u8>,
+    ) -> Option<RunResult> {
+        let (service, completions) = Self::service(processes);
+        if !service.start_with_input(1, command, Some(input), ROOMY) {
+            return None;
+        }
+        if !completions.arrives(1, self.ground.deadline()) {
+            self.shut(&service);
+            return None;
+        }
+        let result = service.take(1)?;
+        (completions.ids() == [1] && self.soon(|| service.pending() == 0)).then_some(result)
+    }
+
+    /// [`RUN_INPUT`].
+    fn run_input<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let command = Command::new("/bin/cat", [""; 0], self.dir);
+        self.fed(processes, command, fed())
+            == Some(RunResult::Ran {
+                exit: Exit::Code(0),
+                stdout: fed(),
+                stderr: Vec::new(),
+            })
+    }
+
+    /// [`RUN_INPUT_IGNORED`].
+    fn run_input_ignored<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let command = Command::new(TRUE, [""; 0], self.dir);
+        self.fed(processes, command, vec![b'x'; FED_IGNORED])
+            == Some(RunResult::Ran {
+                exit: Exit::Code(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
     }
 
     /// Writes every byte of `bytes` to `input`.
@@ -1579,10 +1654,10 @@ mod tests {
     use super::PROPERTIES;
 
     #[test]
-    fn the_properties_are_twenty_six_and_each_is_named_once() {
+    fn the_properties_are_twenty_eight_and_each_is_named_once() {
         let mut names = PROPERTIES.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 26);
+        assert_eq!(names.len(), 28);
     }
 }

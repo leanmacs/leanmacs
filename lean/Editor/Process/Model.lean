@@ -29,6 +29,10 @@ runner's process service is this model behind a reference
 - **A run with a time limit** (`runWithin`) whose script takes longer than
   the limit answers `timedOut`, moves the clock on by the limit alone, and
   is recorded as killed. One within the limit is a run.
+- **A fed run** (`runInput`) is answered as a run with a time limit, by the
+  command's script: the script carries what the child writes for that
+  input. It is recorded with its input in `fed`, so a test sees what was
+  written, once it has passed the refusals that start nothing.
 
 The contract (`JobContract.processProperties`, `Editor/Job/Contract.lean`)
 is what says the model, the fake and the library agree: each property
@@ -129,6 +133,8 @@ structure ProcessModel where
   /-- Every command killed because its job was cancelled while it ran,
   oldest first. -/
   killed : Array Process.Command := #[]
+  /-- Every fed run started, with what it was fed, oldest first. -/
+  fed : Array (Process.Command × ByteArray) := #[]
   deriving DecidableEq
 
 namespace ProcessModel.Child
@@ -333,6 +339,10 @@ def handle (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) :
     (request : ProcessRequest) → request.Reply × ProcessModel × Nat
   | .run command limit => model.runFor now cancelAt command limit none
   | .runWithin command limit time => model.runFor now cancelAt command limit (some time)
+  | .runInput command input limit time =>
+    let (reply, after, now') := model.runFor now cancelAt command limit (some time)
+    let fed := after.started.size > model.started.size
+    (reply, if fed then { after with fed := after.fed.push (command, input) } else after, now')
   | .start command streaming =>
     if !command.directory.isAbsolute then (.error .relativeDirectory, model, now)
     else

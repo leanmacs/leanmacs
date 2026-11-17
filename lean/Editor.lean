@@ -60,7 +60,7 @@ config's asks which candidates a pattern matches with `Fuzzy.rank`
 (`Editor/Fuzzy.lean`), as it asks a text. The ex
 command line is here too (`Editor/Ex.lean`, with an ex line as data in
 `Editor/Ex/Line.lean`): a command of config's runs a line with `Ex.run`,
-and `setup` binds an ex name to a command with `exCommand`
+handed the target it was called with, and `setup` binds an ex name to a command with `exCommand`
 (`Editor/Setup.lean`). The registrations of the ex line's commands and the
 ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The file
 commands come with `Editor/Ex.lean`, whose save-and-quit command calls
@@ -156,6 +156,12 @@ brings the data and the finder with it), and
 imported. Its model and its contract
 (`Editor/Workspace/Model.lean`, `Editor/Workspace/Contract.lean`) are for
 tests, and are not imported.
+
+`:!` is here too (`Editor/Shell.lean`, which comes with the ex line): a
+shell command run in the buffer's workspace as a job, and what comes of it
+said in the echo area or shown in the workspace's output buffer. Its
+registrations (`Editor/Shell/Compiled.lean`) name the registry and are not
+imported.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

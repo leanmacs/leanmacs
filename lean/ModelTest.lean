@@ -44,6 +44,7 @@ import Editor.Process.Model
 import Editor.Role
 import Editor.Scene
 import Editor.Scroll
+import Editor.Shell.Compiled
 import Editor.State
 import Editor.State.Request
 import Editor.SyntaxTree.Contract
@@ -1367,6 +1368,7 @@ def processChecks : List Check :=
             | .closeInput _ => "closeInput"
             | .run _ _ => "run"
             | .runWithin .. => "runWithin"
+            | .runInput .. => "runInput"
         return finished && kinds == #["start", "read"] && (← processes.withdrawn).isEmpty },
     -- Seen to bite once by hand, on 2026-11-15: with `Handle.endChildren`
     -- taken out of `Handle.conclude`, this check and the next fail.
@@ -2513,6 +2515,16 @@ def setupChecks : List Check :=
           (["", "w q", " w", "w\t"].all
               (fun name => refusal (after name) == some (unusableExName name "write")) &&
             refusal (after "w-q!") == none) },
+    { name :=
+        "a setup that binds an ex name the ex line cannot read back as that name, one that starts with `!`, `%`, `.`, `$`, `,` or a digit, is refused as one that cannot be typed; `w!` and a name with a digit after its first character are taken"
+      run :=
+        let after (name : String) : SetupM Unit := do
+          command "write" (makes "1")
+          exCommand name "write"
+        pure
+          (["!x", "%s", ".x", "$x", ",x", "3x", "!"].all
+              (fun name => refusal (after name) == some (unusableExName name "write")) &&
+            ["w!", "e2", "w-q!"].all (fun name => refusal (after name) == none)) },
     { name := "defineMode registers the mode, in order, beside the commands"
       run :=
         let setup : SetupM Unit := do
@@ -2667,6 +2679,19 @@ def setupChecks : List Check :=
             (collected.framePadding == some 12 && plain.framePadding == none &&
               refusal twice == some "the frame padding is set twice" &&
               refusal (framePadding 0) == none)
+        | _, _ => pure false },
+    { name :=
+        "a setup's shell time limit is collected, a setup that sets none has none, and one that sets it twice is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          shellTimeLimit 5000
+          shellTimeLimit 100
+        match Config.Registrations.ofSetup (shellTimeLimit 5000),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.shellTimeLimit == some 5000 && plain.shellTimeLimit == none &&
+              refusal twice == some Config.Registrations.shellTimeLimitTwice)
         | _, _ => pure false },
     { name :=
         "a setup's title bar is collected, a setup that chooses none has none, and one that chooses it twice is refused with a message that says so"
@@ -3779,6 +3804,17 @@ def reloadChecks : List Check :=
         pure
           (told (reduce []).1 == (#[], 0) && told loaded == (roots, 1) && told kept == (roots, 1) &&
             told bare == (#[], 2)) },
+    { name :=
+        "an installed reload puts config's shell time limit in the registry, which tells the loop of it; a rejected reload leaves it, and a config that sets none goes back to none"
+      run :=
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (shellTimeLimit 5000))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let told (state : Config.State Elaborated) : Option Nat :=
+          state.registry.registered.shellTimeLimit
+        pure
+          (told (reduce []).1 == none && told loaded == some 5000 && told kept == some 5000 &&
+            told bare == none) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
@@ -5869,11 +5905,13 @@ def fileModelChecks : List Check :=
             stampOf nothing == some none) },
     {
       name :=
-        "the file model decodes bytes to the text the library keeps them as, and encodes that text to the bytes again: thirteen byte strings, each against a text written out by hand",
+        "the store's escape rule decodes bytes to the text the library keeps them as, and encodes that text to the bytes again, and the file model uses it: thirteen byte strings, each against a text written out by hand",
       run :=
         pure
           (decodings.all fun (_, bytes, text) =>
-            FileModel.decode bytes == text && FileModel.encode text == bytes) },
+            File.decodeBytes bytes == text && File.encodeText text == bytes &&
+              FileModel.decode bytes == text &&
+              FileModel.encode text == bytes) },
     { name :=
         "the file model's load answers a snapshot under the next id, holding the file's text, with the file's length in bytes as the stamp's size and its line endings"
       run := do
@@ -8023,9 +8061,10 @@ def stateRequests : List StateRequest :=
     .split ⟨9⟩ .rows (marker 0 8) (marker 0 9), .removeWindow ⟨1⟩, .removeWindow ⟨9⟩, .focus ⟨1⟩,
     .focus ⟨9⟩, .show ⟨0⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .show ⟨0⟩ ⟨9⟩ (marker 2 0) (marker 2 1),
     .show ⟨0⟩ ⟨2⟩ (marker 0 0) (marker 2 1), .show ⟨9⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .message "hi",
-    .startJob "count" [.nat 1], .attachFile ⟨2⟩ notePath noteStamp .crlf,
-    .attachFile ⟨9⟩ notePath noteStamp .lf, .beginSave ⟨0⟩ ⟨4⟩ ⟨0⟩, .beginSave ⟨9⟩ ⟨4⟩ ⟨0⟩,
-    .endSave ⟨0⟩ ⟨4⟩ (some noteStamp), .endSave ⟨9⟩ ⟨4⟩ none,
+    .startJob "count" [.nat 1], .startJob "count" [.nat 1] (some "k"), .cancelJob "k",
+    .attachFile ⟨2⟩ notePath noteStamp .crlf, .attachFile ⟨9⟩ notePath noteStamp .lf,
+    .beginSave ⟨0⟩ ⟨4⟩ ⟨0⟩, .beginSave ⟨9⟩ ⟨4⟩ ⟨0⟩, .endSave ⟨0⟩ ⟨4⟩ (some noteStamp),
+    .endSave ⟨9⟩ ⟨4⟩ none,
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
     .closePrompt none, .closePrompt (some "typed"), .setCandidates #["one", "two"],
@@ -8323,6 +8362,20 @@ def stateRequestChecks : List Check :=
                 #[{ name := "count", arguments := [.nat 3] },
                   { name := "load", arguments := [.str "a", .bool true] }] &&
               { two with starts := #[] } == state },
+    { name :=
+        "a request to start a job with a key keeps the key with the start, and a request to cancel a key is appended to the state's cancels, in order, and changes nothing else"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (started, one) := state.handle (.startJob "count" [.nat 3] (some "k"))
+            let ((), two) := one.handle (.cancelJob "k")
+            let ((), three) := two.handle (.cancelJob "j")
+            replied started == .inr () && state.cancels == #[] &&
+              one.starts == #[{ name := "count", arguments := [.nat 3], key := some "k" }] &&
+              three.cancels == #["k", "j"] &&
+              { three with cancels := #[] } == one },
     { name :=
         "attaching a file to a buffer sets its path, its stamp and its line ending, with no save in flight, and leaves the rest of the buffer and the other buffers; the buffer is then found by that path and by no other"
       run :=
@@ -9776,7 +9829,70 @@ def exLineChecks : List Check :=
             forced.invocation? none == some { command := "edit", arguments := [.bool true] } &&
             write.invocation? none == some { command := "write", arguments := [.bool true] } &&
             write.invocation? (some "x") == none &&
-            (Ex.parse "e! /tmp/a").map (·.name) == some "e!") }]
+            (Ex.parse "e! /tmp/a").map (·.name) == some "e!") },
+    { name :=
+        "criterion 1: an ex line whose first non-blank after its range is `!` is the bang form, named `!`, with the rest as its argument: `!echo hi` has no range, `%!sort` the range 1,$, `.,$!sort` the range .,$ and `3,5!sort` the range 3,5; `w!` is still the name `w!`, with no range and no bang"
+      run :=
+        let shell (range : Option Ex.Range) (argument : String) : Option Ex.Line :=
+          some { name := "!", argument := some argument, range, bang := true }
+        pure
+          (Ex.parse "!echo hi" == shell none "echo hi" &&
+            Ex.parse "%!sort" == shell (some { start := .line 1, stop := .last }) "sort" &&
+            Ex.parse ".,$!sort" == shell (some { start := .current, stop := .last }) "sort" &&
+            Ex.parse "3,5!sort" == shell (some { start := .line 3, stop := .line 5 }) "sort" &&
+            Ex.parse "w!" == some { name := "w!" }) },
+    { name :=
+        "a range of one address is that line to itself, an address left out beside the comma is the cursor's line, spaces may stand between the range, the `!` and the command, `!` alone is the bang form with no argument, line 0 and a range that runs backwards still parse, and a range before a name is kept with the name"
+      run :=
+        pure
+          (Ex.parse "3!sort" ==
+              some
+                { name := "!", argument := some "sort",
+                  range := some { start := .line 3, stop := .line 3 }
+                  bang := true } &&
+            Ex.parse "  % !  sort -r " ==
+              some
+                { name := "!", argument := some "sort -r"
+                  range := some { start := .line 1, stop := .last }, bang := true } &&
+            Ex.parse "!" == some { name := "!", bang := true } &&
+            Ex.parse " ! " == some { name := "!", bang := true } &&
+            (Ex.parse "0!x").bind (·.range) == some { start := .line 0, stop := .line 0 } &&
+            (Ex.parse "5,3!x").bind (·.range) == some { start := .line 5, stop := .line 3 } &&
+            Ex.parse "3,5w" ==
+              some { name := "w", range := some { start := .line 3, stop := .line 5 } } &&
+            (Ex.parse ",5!x").bind (·.range) == some { start := .current, stop := .line 5 } &&
+            (Ex.parse "3,!x").bind (·.range) == some { start := .line 3, stop := .current } &&
+            Ex.parse "12,$ e a b" ==
+              some
+                { name := "e", argument := some "a b"
+                  range := some { start := .line 12, stop := .last } }) },
+    { name :=
+        "criterion 2: a range is resolved against the buffer's lines and the cursor's: over three lines `%` is 1 to 3 and `.` the cursor's line, and line 0, a range that runs backwards and a line past the end are refused, the last with a message naming the line and the count"
+      run :=
+        let over (range : Ex.Range) (current : Nat) : String ⊕ (Nat × Nat) :=
+          match range.resolve current 3 with
+          | .ok lines => .inr lines
+          | .error why => .inl why
+        pure
+          (over { start := .line 1, stop := .line 7 } 1 == .inl (Ex.pastEnd 7 3) &&
+            Ex.pastEnd 7 3 == "line 7 is past the end of the buffer (3 lines)" &&
+            over { start := .line 1, stop := .last } 2 == .inr (1, 3) &&
+            over { start := .current, stop := .current } 2 == .inr (2, 2) &&
+            over { start := .current, stop := .last } 2 == .inr (2, 3) &&
+            over { start := .line 0, stop := .line 0 } 1 == .inl Ex.lineZero &&
+            over { start := .line 3, stop := .line 2 } 1 == .inl (Ex.backwards 3 2) &&
+            over { start := .line 5, stop := .line 3 } 1 == .inl (Ex.pastEnd 5 3) &&
+            over { start := .line 9, stop := .line 8 } 1 == .inl (Ex.pastEnd 9 3)) },
+    { name :=
+        "a text's lines are its rows, but for the empty row after a last line feed: three lines and a last line feed are three lines, the empty text is one, and a last line with no line feed counts; a snapshot of the text counts the same"
+      run :=
+        let counted (initial : String) : Option (Nat × Nat) :=
+          onTextModel do
+            let text ← createText initial
+            return (← text.lineCount, ← (← text.snapshot).lineCount)
+        pure
+          ([("b\nc\na\n", 3), ("", 1), ("a", 1), ("a\nb", 2), ("\n", 1), ("a\n\n", 2)].all
+            fun (initial, lines) => counted initial == some (lines, lines)) }]
 
 /-- The key strings the scheme fixtures are written with. -/
 def schemeKeyStrings : List String :=
@@ -13871,6 +13987,13 @@ def vimDefaultChecks : List Check :=
             selects "V a (" == some none &&
             (vimDefaultRecord "V a (").name == (vimDefaultRecord "v").name &&
             (vimDefaultRecord "V").name != (vimDefaultRecord "v").name) },
+    { name :=
+        "C-g in the initial state runs the interrupt command, which changes no text and enters no state"
+      run :=
+        pure
+          ((vimDefaultCommand "C-g").map
+              (fun command => (command.name, command.changes, command.enters)) ==
+            some (Shell.interruptName, false, none)) },
     { name := "every row of each default table binds its keys, and no table is empty"
       run :=
         pure <|
@@ -15421,7 +15544,10 @@ and is then refused; `none` (`n`) starts `double` with no argument; `bad`
 `load` with `note.txt`, `adopt` (`s`) starts `adopt` with 0, `save` (`w`)
 takes a snapshot of its buffer's text and starts `save` with its index, and
 `lose` (`t`) starts `lose`, and `build` (`e`) starts `build`, which runs
-`/bin/true` in `/p/d`. -/
+`/bin/true` in `/p/d`. `keyed` (`k`) starts `double` with 21 under the key
+`k`, `cancel` (`x`) cancels the key `k`, `cancelFails` (`y`) cancels it
+and is then refused, and `cancelAfterRead` (`z`) reads its buffer's text
+and then cancels it. -/
 def driverKeys : Loop.Keys TestScheme.scheme :=
   let starts (name : String) (arguments : List Argument := []) : Dispatched := fun _ => do
     discard <| startJob name arguments
@@ -15430,7 +15556,9 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
     [("C-c a", invoke "ask"), ("C-c m", invoke "missing"), ("C-c f", invoke "fail"),
       ("C-c n", invoke "none"), ("C-c b", invoke "bad"), ("C-c c", invoke "chain"),
       ("C-c l", invoke "load"), ("C-c s", invoke "adopt"), ("C-c w", invoke "save"),
-      ("C-c t", invoke "lose"), ("C-c e", invoke "build")]
+      ("C-c t", invoke "lose"), ("C-c e", invoke "build"), ("C-c k", invoke "keyed"),
+      ("C-c x", invoke "cancel"), ("C-c y", invoke "cancelFails"),
+      ("C-c z", invoke "cancelAfterRead")]
     [("ask", fun _ => do
         message "asked"
         discard <| startJob "double" [.nat 21]
@@ -15446,7 +15574,20 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
         let taken ← call.target.buffer.text.snapshot
         discard <| startJob "save" [.nat taken.index]
         return none),
-      ("lose", starts "lose"), ("build", starts "build")]
+      ("lose", starts "lose"), ("build", starts "build"),
+      ("keyed", fun _ => do
+        discard <| startJob "double" [.nat 21] (key := some "k")
+        return none),
+      ("cancel", fun _ => do
+        cancelJob "k"
+        return none),
+      ("cancelFails", failingAfter fun _ => cancelJob "k"),
+      ("cancelAfterRead", fun call => do
+        -- A read of the text is a guarded request, which an interrupt ends:
+        -- a command of state requests alone cannot be interrupted.
+        discard <| call.target.buffer.text.read
+        cancelJob "k"
+        return none)]
 
 /-- A driver over the initial state, with the commands and the jobs of the
 driver checks; `none` if making the state was refused. -/
@@ -15586,6 +15727,57 @@ def driverChecks : List Check :=
               echoOf finished == some "job 1 bad: refused: bad range" &&
               finished.model.display.scenes.size == typed.model.display.scenes.size + 1 &&
               driverText after == some "abc" },
+    { name :=
+        "a command that cancels a key ends the pending job of that key: the step hands the key back, the job is no longer pending, and finishing it delivers nothing"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (asked, steps) := fedTo driver (presses "C-c k")
+            let (cancelled, cancelSteps) := fedTo asked (presses "C-c x")
+            let (finished, delivered) := cancelled.finish 1
+            started steps == #[{ name := "double", arguments := [.nat 21], key := some "k" }] &&
+              asked.pending.map (·.id) == #[1] &&
+              cancelSteps.flatMap (fun step => (step.map (·.cancels)).getD #[]) == #["k"] &&
+              cancelled.loop.state.cancels.isEmpty &&
+              cancelled.pending.isEmpty &&
+              delivered.isNone &&
+              driverText finished == some "" },
+    { name :=
+        "a command that cancels a key and is then refused, or is interrupted, cancels nothing: the job of that key is still pending, and the refused one's job is delivered when it finishes"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-c k")
+            let (refused, refusedSteps) := fedTo asked (presses "C-c y")
+            let flagged := { asked with model := { asked.model with watch := { arrived := 1 } } }
+            let (interrupted, interruptedSteps) := fedTo flagged (presses "C-c z")
+            let (finished, _) := refused.finish 1
+            let cancels (steps : Array (Option (Loop.Stepped TestScheme.scheme))) :=
+              steps.flatMap fun step => (step.map (·.cancels)).getD #[]
+            cancels refusedSteps == #[] && refused.pending.map (·.id) == #[1] &&
+              refused.loop.state.cancels.isEmpty &&
+              echoOf refused == some "cancelFails: refused: bad range" &&
+              cancels interruptedSteps == #[] &&
+              interrupted.pending.map (·.id) == #[1] &&
+              echoOf interrupted == some "cancelAfterRead: interrupted" &&
+              driverText finished == some "[42]" },
+    { name :=
+        "a command that starts a job of a key while one of that key is pending cancels the first: only the second is pending, finishing the first delivers nothing, and the second's command is delivered"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (first, _) := fedTo driver (presses "C-c k")
+            let (second, _) := fedTo first (presses "C-c k")
+            let (gone, nothing) := second.finish 1
+            let (finished, _) := gone.finish 2
+            second.pending.map (·.id) == #[2] && nothing.isNone && driverText gone == some "" &&
+              driverText finished == some "[42]" },
     { name :=
         "a delivered command may itself start a job: the delivery hands the start back, the job gets the next id, and its result is delivered in its turn; finishing an id that names no job started changes nothing"
       run :=
@@ -18599,6 +18791,21 @@ def exChecks : List Check :=
             promptEcho refused == Ex.noArgument "plain" && closed refused &&
               !(echoesSince driver refused).contains (greeted hello) &&
               promptEcho ran == greeted [] },
+    { name :=
+        "a range before an ex name, which no shipped name takes, leaves the ex line's message for it in the echo area and runs nothing; a range alone, which would go to a line in Vim, says that is not built"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver (exLine "3,5plain")
+            let (spaced, _) := fedTo driver (exLine "% plain")
+            let (alone, _) := fedTo driver (exLine "3")
+            promptEcho refused == Ex.noRange "plain" && closed refused &&
+              !(echoesSince driver refused).contains (greeted []) &&
+              promptEcho spaced == Ex.noRange "plain" &&
+              promptEcho alone == Ex.rangeAlone &&
+              closed alone },
     { name :=
         "an empty line and a line of white space run nothing and leave the echo area empty, with the prompt closed"
       run :=
@@ -27100,6 +27307,17 @@ def workspaceStateChecks : List Check :=
             table.cached? "/x" 0 == some none &&
             table.cached? "/y" 0 == none) },
     { name :=
+        "with no loop to answer, the shell time limit is none; a dispatched command that asks is answered the limit the loop was told of"
+      run :=
+        let program : EditorM (Guarded (Option Nat) × EditorState) := do
+          (EditorState.ask .shellTimeLimit).dispatched { shellTimeLimit := some 5000 }
+              (← twoBuffers)
+        pure <|
+          (EditorState.none.handle .shellTimeLimit).1 == none &&
+            match (program.runModel editorModel).1 with
+            | .ok (.finished answer, _) => answer == some 5000
+            | _ => false },
+    { name :=
         "with no loop to answer, the workspace settings are config's defaults under generation 0"
       run := pure ((EditorState.none.handle .workspaceSettings).1 == ({}, 0)) },
     { name :=
@@ -27139,6 +27357,25 @@ def workspaceStateChecks : List Check :=
               replied inherited == .inr () &&
               after == found &&
               directory == .workspace "/r"
+          | none => false },
+    { name :=
+        "from a command: the unscoped store, for buffers outside any workspace, reads a store as its initial value until it is set there, then as what was set, a value of its own name beside it; and the editor's working directory is / until a host sets it, while a buffer with no workspace and no file still has none"
+      run :=
+        pure <|
+          match
+            dispatchedFrom do
+              let before := (← editorState).workspaces.getUnscoped countStore
+              Workspace.setUnscoped countStore 4
+              Workspace.setUnscopedValue "other" (.str "kept")
+              return (before, ← (⟨0⟩ : BufferId).workingDirectory) with
+          | some ((before, directory), state) =>
+            before == 0 && state.workspaces.getUnscoped countStore == 4 &&
+              state.workspaces.unscopedValue? "other" == some (.str "kept") &&
+              state.workspaces.unscopedValue? "missing" == none &&
+              state.workspaces.workspaces.isEmpty &&
+              state.workingDirectory == ("/" : System.FilePath) &&
+              EditorState.none.workingDirectory == ("/" : System.FilePath) &&
+              directory == .none
           | none => false },
     { name :=
         "from a command: a buffer with no workspace and no file has no working directory, and the API's registration and project values are the state requests'"
@@ -27182,53 +27419,65 @@ command checks' jobs. -/
 def workspaceJobs (name : String) : Option (List Argument → Work) :=
   if name == Workspace.findJob then some Workspace.findWork else fileJobs Files.limit name
 
-/-- What a step of the workspace driver checks is handed: `C-o a`, `C-o b`
+/-- The bindings of the workspace driver checks: `C-o a`, `C-o b`
 and `C-o c` open `a.lean`, `b.lean` and `c.lean` in `/r/src`, `C-o w`
 opens `/w/src/b.lean` and `C-o x` opens `/x/a.txt`; `C-o i` runs
 `workspace-current`; `C-o n` makes a buffer `made` that inherits the
 workspace of the window's buffer, and a buffer `bare` that does not. -/
-def workspaceKeys : Loop.Keys TestScheme.scheme :=
-  dispatchKeys
-    [("C-o a", opens "/r/src/a.lean"), ("C-o b", opens "/r/src/b.lean"),
-      ("C-o c", opens "/r/src/c.lean"), ("C-o w", opens "/w/src/b.lean"),
-      ("C-o x", opens "/x/a.txt"), ("C-o i", invoke Workspace.currentName),
-      ("C-o n", invoke "inherit")]
-    [(Files.openName, fun call => do
-        Files.openCommand call
-        return none),
-      (Workspace.currentName, fun call => do
-        Workspace.currentCommand call
-        return none),
-      ("inherit", fun call => do
-        if let .ok made← createBuffer "made" then
-          discard <| made.inheritWorkspace call.target.window.buffer
-        discard <| createBuffer "bare"
-        return none)]
+def workspaceBindings : List (String × Invocation) :=
+  [("C-o a", opens "/r/src/a.lean"), ("C-o b", opens "/r/src/b.lean"),
+    ("C-o c", opens "/r/src/c.lean"), ("C-o w", opens "/w/src/b.lean"), ("C-o x", opens "/x/a.txt"),
+    ("C-o i", invoke Workspace.currentName), ("C-o n", invoke "inherit")]
 
-/-- A driver with the keys of the workspace driver checks and the jobs
-`registered`, whose jobs meet the processes and the files of
-`workspaceWorld` for its three directories, with the files the keys open;
-`none` if making the state was refused. -/
-def workspaceDriver (registered : String → Option (List Argument → Work) := workspaceJobs) :
-    Option TestDriver :=
+/-- The commands of the workspace driver checks, by name: the open command,
+`workspace-current` and `inherit` (`workspaceBindings`). -/
+def workspaceCommands : List (String × Dispatched) :=
+  [(Files.openName, fun call => do
+      Files.openCommand call
+      return none),
+    (Workspace.currentName, fun call => do
+      Workspace.currentCommand call
+      return none),
+    ("inherit", fun call => do
+      if let .ok made← createBuffer "made" then
+        discard <| made.inheritWorkspace call.target.window.buffer
+      discard <| createBuffer "bare"
+      return none)]
+
+/-- The keys of the workspace driver checks (`workspaceBindings`,
+`workspaceCommands`). -/
+def workspaceKeys : Loop.Keys TestScheme.scheme :=
+  dispatchKeys workspaceBindings workspaceCommands
+
+/-- A driver with the keys `keys`, those of the workspace driver checks by
+default, and the jobs `registered`, whose jobs meet the processes and the
+files of `workspaceWorld` for its three directories, with the files the
+keys open, and two more in `/r/src` for the shell checks' filters; `none`
+if making the state was refused. -/
+def workspaceDriver (registered : String → Option (List Argument → Work) := workspaceJobs)
+    (keys : Loop.Keys TestScheme.scheme := workspaceKeys) : Option TestDriver :=
   let model := workspaceWorld.jobModel "git" #["/r/src", "/w/src", "/x"]
   let files :=
     [("/r/src/a.lean", "a"), ("/r/src/b.lean", "b"), ("/r/src/c.lean", "c"), ("/w/src/b.lean", "w"),
-          ("/x/a.txt", "x")].foldl
+          ("/x/a.txt", "x"), ("/r/src/s.txt", "b\nc\na\n"), ("/r/src/t.txt", "d\nb\nc\na")].foldl
       (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8) model.files
-  (Loop.Driver.over workspaceKeys registered (EditorState.initial ⟨640, 480⟩)
-        editorModel).toOption.map
+  (Loop.Driver.over keys registered (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := { model with files } }
 
-/-- `driver` once `keys` are pressed and every job they start, and every job
+/-- `driver` once `events` are fed and every job they start, and every job
 those jobs' commands start, is finished, oldest first. -/
-def settledAfter (driver : TestDriver) (keys : String) : TestDriver :=
+def settledOn (driver : TestDriver) (events : List Event) : TestDriver :=
   (List.range 8).foldl
     (fun driver _ =>
       match driver.pending[0]? with
       | some job => (driver.finish job.id).1
       | none => driver)
-    (fedTo driver (presses keys)).1
+    (fedTo driver events).1
+
+/-- `driver` once `keys` are pressed and every job they start, and every job
+those jobs' commands start, is finished, oldest first. -/
+def settledAfter (driver : TestDriver) (keys : String) : TestDriver :=
+  settledOn driver (presses keys)
 
 /-- The workspace of the buffer the view 0 of `driver` shows, and its
 project. -/
@@ -27370,6 +27619,22 @@ def workspaceChecks : List Check :=
                 (state.workspaceOf? bare).isNone
             | _, _ => false },
     { name :=
+        "the unscoped store is the editor state's, so a new config generation and the files opened under it leave it as it was"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let ((), state) := driver.loop.state.handle (.setUnscopedValue countStore.name (.nat 7))
+            let set := { driver with loop := { driver.loop with state } }
+            let reloaded :=
+              { set with
+                keys :=
+                  { set.keys with registered := { set.keys.registered with generation := 1 } } }
+            let opened := settledAfter (settledAfter reloaded "C-o a") "C-o x"
+            opened.loop.state.workspaces.getUnscoped countStore == 7 &&
+              (shownWorkspace opened).isNone },
+    { name :=
         "with no find job registered, a file still opens, its buffer has no workspace, and nothing is said"
       run :=
         pure <|
@@ -27394,6 +27659,512 @@ def workspaceChecks : List Check :=
             [[], [.nat 1, .str "/r"], [.nat 1, .str "/r", .str "git", .nat 0, .str "/t"]].all
               (Workspace.FindOrder.ofArguments? · == none) &&
             ((Workspace.findWork [.nat 1] ()).runModel {}).1 matches .failed _) }]
+
+/-- The jobs of the shell checks: the workspace driver checks', and the
+shell's run job. -/
+def shellJobs (name : String) : Option (List Argument → Work) :=
+  if name == Shell.runJob then some Shell.runWork else workspaceJobs name
+
+/-- `/bin/sh -c text` in `directory`: the child a `:!` line runs. -/
+def shellCommand (directory : System.FilePath) (text : String) : Process.Command :=
+  { program := "/bin/sh", arguments := #["-c", text], directory }
+
+/-- A run of a shell checks' child that wrote `stdout` and `stderr` and
+ended as `exit`. -/
+def shellReply (stdout : String) (stderr : String := "") (exit : Process.Exit := .code 0) :
+    Except ProcessError Process.Ran :=
+  .ok { exit, stdout := stdout.toUTF8, stderr := stderr.toUTF8 }
+
+/-- What each child of the shell checks does. -/
+def shellScripts : Array Process.Script :=
+  #[{ command := shellCommand "/r" "make", reply := shellReply "" },
+    { command := shellCommand "/x" "make", reply := shellReply "" },
+    { command := shellCommand "/home/ada" "make", reply := shellReply "" },
+    { command := shellCommand "/r" "echo hi", reply := shellReply "hi\n" },
+    { command := shellCommand "/r" "fail", reply := shellReply "hi\n" "" (.code 3) },
+    { command := shellCommand "/r" "true", reply := shellReply "" },
+    { command := shellCommand "/r" "build", reply := shellReply "l1\nl2\n" "warn" (.code 2) },
+    { command := shellCommand "/r" "rebuild", reply := shellReply "again\nand again\n" },
+    { command := shellCommand "/r" "warn", reply := shellReply "one\n" "careful\n" },
+    { command := shellCommand "/w" "build", reply := shellReply "w1\nw2\n" },
+    { command := shellCommand "/x" "ls -l", reply := shellReply "a.txt\nb.txt\n" },
+    { command := shellCommand "/r" "sleep 40", reply := shellReply "", takes := 40000 },
+    { command := shellCommand "/r" "sleep 10", reply := shellReply "", takes := 10000 },
+    { command := shellCommand "/r" "sort", reply := shellReply "a\nb\nc\n" },
+    { command := shellCommand "/r" "tac", reply := shellReply "a\nc\n" },
+    { command := shellCommand "/r" "sort -u", reply := shellReply "a\nb\nc\nd\n" }]
+
+/-- `driver` with `script` ahead of the scripts it has, so its command does
+what it says. -/
+def withScript (driver : TestDriver) (script : Process.Script) : TestDriver :=
+  { driver with
+    jobs :=
+      { driver.jobs with
+        processes :=
+          { driver.jobs.processes with scripts := #[script] ++ driver.jobs.processes.scripts } } }
+
+/-- The keys of the shell checks: the workspace driver checks', and `C-e e`
+and `C-e y`, the ex line and its accept key (`exLine`); `C-e g` runs the
+interrupt command, as `C-g` does under the Vim scheme; `C-e k` gives the
+window's buffer a workspace registered as reachable through `kube`, which
+cannot run commands; `C-e u` undoes in the window's buffer; `C-e o` makes
+a buffer `*shell output: r@main*` that the shell did not make; `C-e s`
+splits the window and focuses the new one, and `C-e c` closes the window;
+`C-e x` shows a new buffer `elsewhere` in the window and removes the buffer
+it showed; and `C-o s` and `C-o t` open `/r/src/s.txt` and
+`/r/src/t.txt`. -/
+def shellKeys : Loop.Keys TestScheme.scheme :=
+  let compiled : List (String × Dispatched) :=
+    (Ex.commands ++ Minibuffer.commands ++ Shell.commands).toList.filterMap fun registration =>
+      match registration.action with
+      | .call run =>
+        some
+          (registration.name, fun call => do
+            run call
+            return none)
+      | _ => none
+  dispatchKeys
+    (workspaceBindings ++
+      [("C-e e", invoke Ex.name), ("C-e y", invoke Minibuffer.acceptName), ("C-e k", invoke "kube"),
+        ("C-e g", invoke Shell.interruptName), ("C-e u", invoke "undo"), ("C-e o", invoke "squat"),
+        ("C-e s", invoke "split"), ("C-e c", invoke "close"), ("C-e x", invoke "drop"),
+        ("C-o s", opens "/r/src/s.txt"), ("C-o t", opens "/r/src/t.txt")])
+    (workspaceCommands ++ compiled ++
+      [("kube", fun call => do
+          let location := Location.reachable "kube" "pod" "/app"
+          discard <| Workspace.register location workspaceOrigin
+          Workspace.setBufferWorkspace call.target.window.buffer location
+          return none),
+        ("undo", fun call => do
+          discard <| call.target.window.buffer.undo
+          return none),
+        ("squat", fun (_ : Call) => do
+          discard <| createBuffer "*shell output: r@main*"
+          return none),
+        ("split", fun call => do
+          if let .ok made← call.target.window.id.split .rows then
+            discard <| made.focus
+          return none),
+        ("close", fun call => do
+          discard <| call.target.window.id.close
+          return none),
+        ("drop", fun call => do
+          let window := call.target.window
+          if let .ok elsewhere← createBuffer "elsewhere" then
+            discard <| window.id.show elsewhere
+            discard <| window.buffer.remove
+          return none)])
+
+/-- A driver of the shell checks: the workspace driver's world, with the
+shell's keys and jobs, and the children of `shellScripts`; `none` if
+making the state was refused. -/
+def shellDriver : Option TestDriver :=
+  (workspaceDriver shellJobs shellKeys).map fun driver =>
+    { driver with
+      jobs :=
+        { driver.jobs with
+          processes :=
+            { driver.jobs.processes with
+              scripts := driver.jobs.processes.scripts ++ shellScripts } } }
+
+/-- `driver` once the ex line `line` is run and every job it starts is
+finished. -/
+def shellRan (driver : TestDriver) (line : String) : TestDriver :=
+  settledOn driver (exLine line)
+
+/-- The text of the buffer `id` in `driver`'s text model. -/
+def bufferText (driver : TestDriver) (id : BufferId) : Option String := do
+  let buffer ← driver.loop.state.buffer? id
+  (driver.model.texts.texts[buffer.text.index]?).join.map (·.contents)
+
+/-- The text of the buffer called `name` in `driver`. -/
+def namedText (driver : TestDriver) (name : String) : Option String := do
+  bufferText driver (← driver.loop.state.findBuffer name)
+
+/-- The names of `driver`'s buffers that are shell output buffers. -/
+def outputBuffers (driver : TestDriver) : Array String :=
+  (driver.loop.state.buffers.filterMap id).map (·.name) |>.filter (·.startsWith "*shell output")
+
+/-- The checks of `:!` (`Editor/Shell.lean`), on the loop's driver over the
+editor's models, the job model and the process model, in the world of the
+workspace driver checks: a main checkout `/r`, a linked worktree `/w` of one
+project, and `/x` in none. -/
+def shellChecks : List Check :=
+  let main : Option Location := some (.local "/r")
+  [{  name :=
+        "criterion 3: `:!make` runs /bin/sh -c make in the buffer's workspace root; in a buffer with no workspace, in its file's directory; in one with neither, in the editor's working directory"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let inR := shellRan (settledAfter driver "C-o a") "!make"
+            let inX := shellRan (settledAfter driver "C-o x") "!make"
+            let scratch :=
+              shellRan
+                { driver with
+                  loop :=
+                    { driver.loop with
+                      state := { driver.loop.state with workingDirectory := "/home/ada" } } }
+                "!make"
+            inR.jobs.processes.started.back? == some (shellCommand "/r" "make") &&
+              inX.jobs.processes.started.back? == some (shellCommand "/x" "make") &&
+              scratch.jobs.processes.started == #[shellCommand "/home/ada" "make"] },
+    { name :=
+        "criterion 4: one line of output and exit 0 puts the line in the echo area, and no output buffer is made; a status that is not 0 is said after the line, and no output says so"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let hi := shellRan opened "!echo hi"
+            echoOf hi == some "hi" && outputBuffers hi == #[] &&
+              (showing hi).map (·.buffer.name) == some "a.lean" &&
+              echoOf (shellRan opened "!fail") == some "hi [exit 3]" &&
+              echoOf (shellRan opened "!true") == some "!true: no output" },
+    { name :=
+        "criterion 5: two lines of output and anything on standard error open `*shell output: r@main*`, holding standard output, standard error and the exit status, with the workspace /r, shown in view 0; one line with standard error opens it too"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let built := shellRan opened "!build"
+            let warned := shellRan opened "!warn"
+            match built.loop.state.findBuffer "*shell output: r@main*", showing built with
+            | some id, some shown =>
+              shown.id == id && shown.text == some "l1\nl2\nwarn\n[exit 2]\n" &&
+                (built.loop.state.workspaceOf? id).map (·.1.location) == some (.local "/r") &&
+                namedText warned "*shell output: r@main*" == some "one\ncareful\n[exit 0]\n"
+            | _, _ => false },
+    { name :=
+        "criterion 6: a second run in the workspace replaces the text of the same output buffer, and makes no second one"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let first := shellRan (settledAfter driver "C-o a") "!build"
+            let second := shellRan (settledAfter first "C-o a") "!rebuild"
+            let id := first.loop.state.findBuffer "*shell output: r@main*"
+            id.isSome && second.loop.state.findBuffer "*shell output: r@main*" == id &&
+              (showing second).map (·.id) == id &&
+              namedText second "*shell output: r@main*" == some "again\nand again\n[exit 0]\n" &&
+              outputBuffers second == #["*shell output: r@main*"] },
+    { name :=
+        "a run after the kept output buffer was removed makes a new one, holding the new run's output, and the workspace keeps the new one's number"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let first := shellRan (settledAfter driver "C-o a") "!build"
+            let removed := settledAfter first "C-e x"
+            let second := shellRan (settledAfter removed "C-o a") "!rebuild"
+            let state := second.loop.state
+            match first.loop.state.findBuffer "*shell output: r@main*",
+              state.findBuffer "*shell output: r@main*" with
+            | some old, some made =>
+              (removed.loop.state.buffer? old).isNone && made != old &&
+                bufferText second made == some "again\nand again\n[exit 0]\n" &&
+                (showing second).map (·.id) == some made &&
+                Shell.scopedValue state Shell.outputStore main == some made.index &&
+                (state.workspaceOf? made).map (·.1.location) == some (.local "/r")
+            | _, _ => false },
+    { name :=
+        "with a buffer the shell did not make holding the output buffer's name, a run makes `*shell output: r@main*<2>`, and leaves that buffer alone"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let squatted := settledAfter (settledAfter driver "C-o a") "C-e o"
+            let ran := shellRan squatted "!build"
+            let state := ran.loop.state
+            match state.findBuffer "*shell output: r@main*<2>" with
+            | some made =>
+              bufferText ran made == some "l1\nl2\nwarn\n[exit 2]\n" &&
+                namedText ran "*shell output: r@main*" == some "" &&
+                (showing ran).map (·.id) == some made &&
+                Shell.scopedValue state Shell.outputStore main == some made.index
+            | none => false },
+    { name := "output asked for from a view closed before the run ends is shown in the focused view"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let split := settledAfter (settledAfter driver "C-o a") "C-e s"
+            let asked := (fedTo split (exLine "!build")).1
+            let closed := (fedTo asked (presses "C-e c")).1
+            let finished := asked.pending.foldl (fun driver job => (driver.finish job.id).1) closed
+            let state := finished.loop.state
+            split.loop.state.frame.focused != (⟨0⟩ : ViewId) && asked.pending.size == 1 &&
+              (state.window? split.loop.state.frame.focused).isNone &&
+              state.frame.focused == ⟨0⟩ &&
+              (showing finished).map (·.buffer.name) == some "*shell output: r@main*" &&
+              (showing finished).bind (·.text) == some "l1\nl2\nwarn\n[exit 2]\n" },
+    { name :=
+        "criterion 7: in a buffer with no workspace, long output goes to `*shell output*` and the line to the editor-wide history; the project's history is left as it was"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let ran := shellRan (settledAfter (settledAfter driver "C-o a") "C-o x") "!ls -l"
+            let table := ran.loop.state.workspaces
+            namedText ran "*shell output*" == some "a.txt\nb.txt\n[exit 0]\n" &&
+              (showing ran).map (·.buffer.name) == some "*shell output*" &&
+              table.getUnscoped Shell.historyStore == #["!ls -l"] &&
+              table.getOfProject Shell.historyStore (.remote "github.com/o/r") == #[] },
+    { name :=
+        "criterion 8: runs in two worktrees of one repository open two output buffers, `*shell output: r@main*` and `*shell output: r@feature*`, each holding only its own run's output"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let inR := shellRan (settledAfter driver "C-o a") "!build"
+            let inW := shellRan (settledAfter inR "C-o w") "!build"
+            namedText inW "*shell output: r@main*" == some "l1\nl2\nwarn\n[exit 2]\n" &&
+              namedText inW "*shell output: r@feature*" == some "w1\nw2\n[exit 0]\n" &&
+              outputBuffers inW == #["*shell output: r@main*", "*shell output: r@feature*"] },
+    { name :=
+        "criterion 9: a `:!` line run in one worktree is offered first by the ex prompt in the other worktree's buffer, before the bound ex names; the history is the project's, newest first, each line once"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let ran := shellRan (shellRan (settledAfter driver "C-o a") "!make") "!echo hi"
+            let again := shellRan ran "!make"
+            let asked := (fedTo (settledAfter again "C-o w") (presses "C-e e")).1
+            (candidatesOf asked).map (·.all.toList.take 2) == some ["!make", "!echo hi"] &&
+              again.loop.state.workspaces.getOfProject Shell.historyStore
+                  (.remote "github.com/o/r") ==
+                #["!make", "!echo hi"] },
+    { name :=
+        "criterion 10: in a buffer of a workspace whose location cannot run commands, `:!` starts no job and no process, records nothing, and says why"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let kube := settledAfter (settledAfter driver "C-o a") "C-e k"
+            let ran := shellRan kube "!ls"
+            ran.jobs.processes.started == kube.jobs.processes.started && ran.next == kube.next &&
+              echoOf ran ==
+                some "!: r@app is reachable through kube pod at /app, where commands cannot run" &&
+              ran.loop.state.workspaces.getOfProject Shell.historyStore
+                  (.remote "github.com/o/r") ==
+                #[] },
+    { name :=
+        "criterion 14: the interrupt while `:!sleep 10` runs cancels its job by the workspace's key: the step hands the key back, the job is no longer pending and finishing it delivers nothing, what the workspace runs is cleared, and the echo area says the line was interrupted; with nothing running it says Quit"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let running := (fedTo opened (exLine "!sleep 10")).1
+            let (quit, steps) := fedTo running (presses "C-e g")
+            let (after, delivered) :=
+              match running.pending[0]? with
+              | some job => quit.finish job.id
+              | none => (quit, none)
+            running.pending.map (·.key) == #[some "shell local /r"] &&
+              Shell.scopedValue running.loop.state Shell.runningStore main == some "!sleep 10" &&
+              steps.flatMap (fun step => (step.map (·.cancels)).getD #[]) == #["shell local /r"] &&
+              quit.pending.isEmpty &&
+              delivered.isNone &&
+              Shell.scopedValue after.loop.state Shell.runningStore main == none &&
+              echoOf after == some "!sleep 10: interrupted" &&
+              echoOf (fedTo opened (presses "C-e g")).1 == some Shell.quitText },
+    { name :=
+        "criterion 14 on the job model: a run whose job is cancelled while its child runs ends cancelled, and its child is killed"
+      run :=
+        let order : Shell.Order :=
+          { line := "!sleep 10", text := "sleep 10", directory := "/r", time := 30000, buffer := ⟨0⟩
+            view := ⟨0⟩, scope := main }
+        let model : JobModel :=
+          { processes :=
+              {
+                scripts :=
+                  #[{ command := shellCommand "/r" "sleep 10", reply := shellReply ""
+                      takes := 10000 }] }
+            cancelAt := some 1000 }
+        let (outcome, after) := (Shell.runWork order.arguments ()).runModel model
+        pure
+          ((outcome matches .cancelled) &&
+            after.processes.killed == #[shellCommand "/r" "sleep 10"]) },
+    { name :=
+        "criterion 15: a run past the time limit is killed and the echo area says so, naming the limit, 30 seconds by default or config's; what the workspace runs is cleared"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let running := (fedTo opened (exLine "!sleep 40")).1
+            let ran := shellRan opened "!sleep 40"
+            let limited :=
+              { opened with
+                keys :=
+                  { opened.keys with
+                    registered := { opened.keys.registered with shellTimeLimit := some 5000 } } }
+            let short := shellRan limited "!sleep 40"
+            Shell.scopedValue running.loop.state Shell.runningStore main == some "!sleep 40" &&
+              echoOf ran == some "!sleep 40: the run did not end within 30000 ms and was killed" &&
+              ran.jobs.processes.killed.contains (shellCommand "/r" "sleep 40") &&
+              Shell.scopedValue ran.loop.state Shell.runningStore main == none &&
+              echoOf short == some "!sleep 40: the run did not end within 5000 ms and was killed" },
+    { name :=
+        "criterion 2 on the loop: `:1,7!sort` on a buffer of three lines says that line 7 is past its end, and starts nothing"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o s"
+            let ran := shellRan opened "1,7!sort"
+            echoOf ran == some s!"1,7!sort: {Ex.pastEnd 7 3}" && ran.next == opened.next &&
+              ran.jobs.processes.started == opened.jobs.processes.started &&
+              (showing ran).bind (·.text) == some "b\nc\na\n" },
+    { name :=
+        "criterion 11: `:%!sort` over three unsorted lines feeds the child those lines and leaves them sorted, as one change that one undo takes back"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let sorted := shellRan (settledAfter driver "C-o s") "%!sort"
+            let undone := settledAfter sorted "C-e u"
+            sorted.jobs.processes.fed == #[(shellCommand "/r" "sort", "b\nc\na\n".toUTF8)] &&
+              (showing sorted).bind (·.text) == some "a\nb\nc\n" &&
+              echoOf sorted == some "3 lines filtered" &&
+              (showing undone).bind (·.text) == some "b\nc\na\n" },
+    { name :=
+        "criterion 12: a filter that exits 1, writing to standard error, leaves the buffer unchanged and says the status and the first line of standard error"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let failing :=
+              withScript driver
+                { command := shellCommand "/r" "sort",
+                  reply := shellReply "" "sort: bad\nmore\n" (.code 1) }
+            let ran := shellRan (settledAfter failing "C-o s") "%!sort"
+            (showing ran).bind (·.text) == some "b\nc\na\n" &&
+              echoOf ran == some "%!sort: exit 1: sort: bad" },
+    { name :=
+        "criterion 13: a filter whose buffer is edited before its child ends leaves the edit alone, does not sort, and says it was dropped"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o s"
+            let (asked, _) := fedTo opened (exLine "%!sort")
+            let (edited, _) := fedTo asked [.commit "z"]
+            let finished := asked.pending.foldl (fun driver job => (driver.finish job.id).1) edited
+            asked.pending.size == 1 && (showing edited).bind (·.text) == some "zb\nc\na\n" &&
+              (showing finished).bind (·.text) == some "zb\nc\na\n" &&
+              echoOf finished == some "%!sort: dropped: the buffer changed while it ran" },
+    { name :=
+        "criterion 13: a filter whose buffer is removed before its child ends writes no text, and says it was dropped"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o s"
+            let (asked, _) := fedTo opened (exLine "%!sort")
+            let (removed, _) := fedTo asked (presses "C-e x")
+            let finished := asked.pending.foldl (fun driver job => (driver.finish job.id).1) removed
+            asked.pending.size == 1 && (removed.loop.state.findBuffer "s.txt").isNone &&
+              finished.pending.isEmpty &&
+              finished.model.texts.contents == removed.model.texts.contents &&
+              echoOf finished == some "%!sort: dropped: the buffer changed while it ran" },
+    { name :=
+        "a filter of a range replaces only those lines; a last line with no line feed is fed with one, and the output's last line feed is dropped for it"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let middle := shellRan (settledAfter driver "C-o s") "2,3!tac"
+            let open' := shellRan (settledAfter driver "C-o t") "%!sort -u"
+            middle.jobs.processes.fed == #[(shellCommand "/r" "tac", "c\na\n".toUTF8)] &&
+              (showing middle).bind (·.text) == some "b\na\nc\n" &&
+              echoOf middle == some "2 lines filtered" &&
+              open'.jobs.processes.fed == #[(shellCommand "/r" "sort -u", "d\nb\nc\na\n".toUTF8)] &&
+              (showing open').bind (·.text) == some "a\nb\nc\nd" },
+    { name :=
+        "`:!` with nothing after it says so and starts nothing; a `:!` whose job no one registered says the refusal and records nothing"
+      run :=
+        pure <|
+          match shellDriver, workspaceDriver workspaceJobs shellKeys with
+          | some driver, some unregistered =>
+            let bare := shellRan driver "!"
+            let opened := settledAfter unregistered "C-o a"
+            let refused := shellRan opened "!make"
+            echoOf bare == some Shell.noCommand && bare.next == driver.next &&
+              echoOf refused == some (Shell.notStarted "!make" (.noSuchJob Shell.runJob)) &&
+              refused.loop.state.workspaces.getOfProject Shell.historyStore
+                  (.remote "github.com/o/r") ==
+                #[]
+          | _, _ => false },
+    { name :=
+        "what the echo area says of a run of one line or none, and what the output buffer holds of a longer one: a last carriage return and line feed is dropped, a signal is said, a byte that is not UTF-8 keeps its byte"
+      run :=
+        let ran (stdout stderr : ByteArray) (exit : Process.Exit := .code 0) : Process.Ran :=
+          { exit, stdout, stderr }
+        pure
+          (Shell.echoText "!x" (ran "hi\r\n".toUTF8 .empty) == some "hi" &&
+            Shell.echoText "!x" (ran .empty .empty (.signal 9)) ==
+              some "!x: no output [killed by signal 9]" &&
+            Shell.echoText "!x" (ran "a\nb".toUTF8 .empty) == none &&
+            Shell.echoText "!x" (ran "a".toUTF8 "e".toUTF8) == none &&
+            Shell.echoText "!x" (ran ⟨#[0x61, 0xFF]⟩ .empty) ==
+              some ("a".push (File.escape 0xFF)) &&
+            Shell.outputText (ran "a".toUTF8 "b\n".toUTF8 (.signal 15)) ==
+              "a\nb\n[killed by signal 15]\n" &&
+            Shell.outputText (ran ⟨#[0x61, 0xFF, 0x0A]⟩ .empty (.code 1)) ==
+              ("a".push (File.escape 0xFF)) ++ "\n[exit 1]\n" &&
+            Shell.outputText (ran .empty .empty) == "[exit 0]\n") },
+    { name :=
+        "a shell order crosses as arguments and back, with a scope's location of each kind and with none, with a filter's part and without, and arguments that are no order read as none; the run job started with them fails; each scope has its own job key"
+      run :=
+        let order : Shell.Order :=
+          { line := "!make", text := "make", directory := "/r", time := 30000, buffer := ⟨2⟩
+            view := ⟨0⟩ }
+        let scopes : List (Option Location) :=
+          [none, some (.local "/a b"), some (.reachable "kube" "pod" "/app"),
+            some (.branchOnly "git@h:o/r" "x")]
+        let filters : List (Option Shell.Filter) :=
+          [none,
+            some
+              { start := 2, stop := 9, revision := 4, input := "a b\n", ended := false,
+                lines := 2 }]
+        pure
+          (scopes.all
+              (fun scope =>
+                filters.all fun filter =>
+                  Shell.Order.ofArguments?
+                      { order with
+                          scope, filter }.arguments ==
+                    some
+                      { order with
+                        scope, filter }) &&
+            [[], [.str "!make"], order.arguments ++ [.nat 1]].all
+              (Shell.Order.ofArguments? · == none) &&
+            ((Shell.runWork [.nat 1] ()).runModel {}).1 matches .failed _ &&
+            Shell.keyOf (some (.local "/r")) == "shell local /r" &&
+            Shell.keyOf none == "shell outside" &&
+            Shell.keyOf (some (.local "/w")) != Shell.keyOf (some (.local "/r"))) }]
 
 /-- The names of the workspace finder's contract properties
 (`Editor/Workspace/Contract.lean`) that do not hold of the pure model
@@ -27529,7 +28300,8 @@ def checks : List Check :=
     workspaceDataChecks ++
     workspaceGitChecks ++
     workspaceStateChecks ++
-    workspaceChecks
+    workspaceChecks ++
+    shellChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

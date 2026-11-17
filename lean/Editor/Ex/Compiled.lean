@@ -18,7 +18,9 @@ drops it.
   (`Action.call`).
   - `ex` opens the ex line, and runs the line it is answered
     (`Ex.exCommand`). A host must be handed the minibuffer's commands too
-    (`Editor/Minibuffer/Compiled.lean`) for that prompt to be answered.
+    (`Editor/Minibuffer/Compiled.lean`) for that prompt to be answered, and
+    the shell's commands and job (`Editor/Shell/Compiled.lean`) for a `:!`
+    line or a filter to run.
   - `quit` asks the editor to quit, and says a refusal in the echo area
     (`Ex.quitCommand`).
   - `save-and-quit` saves the buffer of the window it was called with and
@@ -44,9 +46,10 @@ drops it.
   - `e!` runs `edit-file` with `true` first, and takes text: with no
     argument the reload is forced, the file's text taken as one step that
     `u` undoes ("take theirs"); with a path it opens it as `e` does, since
-    buffers persist and nothing is discarded. `!` is not parsed: `e!` and
-    `w!` are names of their own (`Editor/Ex/Line.lean`), each a binding
-    with fixed arguments (`Binding.arguments`).
+    buffers persist and nothing is discarded. Only a leading `!` is
+    parsed, as the shell's: `e!` and `w!` are names of their own
+    (`Editor/Ex/Line.lean`), each a binding with fixed arguments
+    (`Binding.arguments`).
   - `q` runs `quit` and takes nothing. It quits the editor, not the
     window the line was asked from: no shipped command splits a window.
   - `wq` runs `save-and-quit` and takes nothing.

@@ -100,8 +100,9 @@ job reads as it comes and whose standard input it writes to (phase 2;
   both output streams piped and its standard input closed or, when the
   spawn asks (`Input::Pipe`), piped and taken as a `ChildInput`. The input
   is the spawn's, not the command's, and the service decides it once: a
-  run's child has its input closed, and a streaming child's is its
-  `Streaming`'s, as in Lean, where only `Process.Streaming` has one. The child's
+  run's child has its input closed unless the run is fed, and a streaming
+  child's is its `Streaming`'s, as in Lean, where `Process.Streaming` and
+  the fed run (`ProcessRequest.runInput`) have one. The child's
   streams are read with a pull (`Output::read`), it is waited for
   (`Child::wait`) and killed (`Child::kill`). A program is a bare name,
   looked up on the `PATH` the child gets, or an absolute path; the
@@ -156,7 +157,18 @@ job reads as it comes and whose standard input it writes to (phase 2;
   readers: the run is over once its child is reaped, and its readers,
   detached, end when their streams close. A stream past the
   run's limit of bytes kills the group and the run is `OutputTooLarge`,
-  never output cut short. An id in use is refused. Cancelling kills the
+  never output cut short. **A run may be fed its standard input**
+  (`Service::start_with_input`): its child's input is then a pipe, and a
+  fourth thread, its writer, detached as the readers are, writes every
+  byte while the readers read and then drops the pipe, so the child reads
+  end of file; input larger than a pipe cannot hold a child that writes as
+  it reads. A write the child does not take, because it closed its input
+  or ended, is ignored, and the run comes to what the child did. This is
+  how a filter feeds a range of lines to a command (`:{range}!`,
+  `docs/design/keymaps-and-modes.md`). The contract holds it to two more
+  properties: `/bin/cat` fed four pipes' worth, a NUL and a byte that is
+  not UTF-8 among it, gives it back whole; and `/usr/bin/true` fed a
+  mebibyte exits 0. An id in use is refused. Cancelling kills the
   group of a running child, drops its result and never completes it.
   Shutdown refuses every later start (as shut down, completed at once),
   cancels every run, kills every group and blocks until every child is
@@ -214,7 +226,8 @@ job reads as it comes and whose standard input it writes to (phase 2;
   it does every run. The contract holds the port's input to three more
   properties (a write reaches `/bin/cat` byte for byte, a write to an input
   the child closed is `InputClosed`, a child spawned with no input has
-  none to take) and the service to nine more, 26 in all, on real
+  none to take) and the service to nine more, 26 then, 28 with the fed
+  run's two, on real
   processes: lines as they are written and a line written echoed back,
   bytes, 20,000 lines in order at a bound of 256, one completion for
   10,000 lines, a child held at a bound of 4,096 that cannot finish until
@@ -228,9 +241,9 @@ job reads as it comes and whose standard input it writes to (phase 2;
   so neither a cancel nor shutdown can hang on a child that ignores a
   polite signal.
 - **Across the boundary**, `editor-ffi`'s `processes.rs` holds the
-  process's one service, over the real adapter, behind eleven C functions:
+  process's one service, over the real adapter, behind twelve C functions:
   a run (the command as words and one string, as a list of strings
-  crosses), a take (a status, words, a detail and both streams), a cancel,
+  crosses), a fed run (the same, and the bytes of its input), a take (a status, words, a detail and both streams), a cancel,
   a shutdown and a readout of what is pending; and for a streaming child an
   open (a run's words after its input and its two framings, with the bound
   for the limit), a read, a write, a close of its input, a take of a wait's

@@ -105,8 +105,10 @@ def setup : SetupM Unit := do
 
 The command's name is looked up when the line is run, as a key binding's
 is. An ex binding is not a command and is not counted as one. `exCommand`
-refuses a name that is empty or holds white space, which could not be
-typed as a line's first word.
+refuses a name the ex line cannot read back as itself: one that is empty,
+holds white space, or starts with `!`, `%`, `.`, `$`, `,` or a digit, which
+the line reads as a range or as `:!` (`Ex.reachable`,
+`Editor/Ex/Line.lean`).
 
 `setup` is a program over a port of its own, the *setup port*, whose requests
 carry what is registered. It is plain data like any program
@@ -210,6 +212,11 @@ A relative path is refused, and so is a second `processEnvironment` in one
 `setup`. A reload that installs takes the setting, and drops every
 directory's cached environment.
 
+Config sets how long a `:!` or a filter may run before it is killed with
+`shellTimeLimit`, in milliseconds (`shellTimeLimit 5000`); with none it is
+30 seconds. Setting it twice is refused, and a reload changes it for the
+next run.
+
 Config declares a workspace root with `workspace`, for a directory that is
 not a repository, or to split one, with the name of the project it belongs
 to if it gives one (`Editor/Workspace.lean`):
@@ -297,6 +304,9 @@ inductive SetupRequest where
   /-- Declare `root`, an absolute path, a workspace root, of the project
   called `project` when one is given (`Editor/Workspace.lean`). -/
   | workspace (root : System.FilePath) (project : Option String)
+  /-- Set how long a `:!` or a filter may run, in milliseconds, before it is
+  killed (`Editor/Shell.lean`). -/
+  | shellTimeLimit (milliseconds : Nat)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -318,6 +328,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .processEnvironment _ => Unit
   | .autoReload _ => Unit
   | .workspace .. => Unit
+  | .shellTimeLimit _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -395,9 +406,11 @@ def bindKey (keys : String) (command : String) : SetupM Unit := do
     ExceptT.lift (Program.request (port := setupPort) (.bind chords command))
 
 /-- The message a binding of the ex name `name` to the command called
-`command` is refused with when the name is empty or holds white space. -/
+`command` is refused with when the ex line cannot read the name back as
+itself (`Ex.reachable`): it is empty, holds white space, or starts with
+what the line reads as a range or as `!`. -/
 def unusableExName (name command : String) : String :=
-  s!"the ex name `{name}` of the command `{command}` cannot be typed: it is empty or holds white space"
+  s!"the ex name `{name}` of the command `{command}` cannot be typed: it is empty, holds white space, or starts with a range or `!`"
 
 /-- Binds the ex name `name` to the command called `command`: a line of the
 ex command line whose first word is `name` runs that command. With
@@ -406,10 +419,12 @@ string; by default the name takes nothing, and a line with more is refused
 when it is run. The command's name is looked up when the line is run, so
 the command need not be one this `setup` registers.
 
-Refuses the `setup` for a name that is empty or holds white space, which
-could not be typed as a line's first word. -/
+Refuses the `setup` for a name the ex line cannot read back as itself
+(`Ex.reachable`): one that is empty, holds white space, or starts with `!`,
+`%`, `.`, `$`, `,` or a digit, which the line reads as a range or as the
+bang form. -/
 def exCommand (name command : String) (takes : Ex.Takes := .nothing) : SetupM Unit := do
-  if name.isEmpty || name.any (·.isWhitespace) then
+  if !Ex.reachable name then
     throw (unusableExName name command)
   ExceptT.lift (Program.request (port := setupPort) (.ex { name, command, takes }))
 
@@ -507,6 +522,14 @@ it until the editor stops. A second call in one `setup` is refused, as a
 second face of one name is. -/
 def autoReload (on : Bool := true) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.autoReload on))
+
+/-- Sets how long a `:!` or a filter may run before its child is killed and
+the echo area says so, in milliseconds: 30 000 when config says nothing
+(`Shell.defaultTimeLimit`, `Editor/Shell.lean`). A reload changes it for
+the next run. A second call in one `setup` is refused, as a second frame
+padding is. -/
+def shellTimeLimit (milliseconds : Nat) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.shellTimeLimit milliseconds))
 
 /-- The message a workspace root is refused with when it is not absolute. -/
 def relativeWorkspace (root : System.FilePath) : String :=

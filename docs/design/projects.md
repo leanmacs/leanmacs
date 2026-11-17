@@ -133,9 +133,12 @@ does: the workspace is rooted right but is its own project, with no branch.
   as an install drops the cache of children's environments. Reloading a
   buffer from its file leaves its workspace.
 - **A buffer with no file** takes the workspace of the buffer it was made
-  from (`BufferId.inheritWorkspace`), or none. The buffers that are made
-  from buffers, the shell output and the compilation buffer, arrive with
-  the phases that make them.
+  from (`BufferId.inheritWorkspace`), or none. A workspace's shell output
+  buffer, `*shell output: <label>*`, is made with the workspace of the
+  buffer `:!` ran in (`lean/Editor/Shell.lean`), so a `:!` typed in it
+  runs in that workspace again; outside any workspace it is `*shell
+  output*`, with none. The compilation buffer arrives with the phase that
+  makes it.
 
 ## What lives where
 
@@ -143,9 +146,19 @@ does: the workspace is rooted right but is its own project, with no branch.
 |---|---|---|
 | What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer and its error list, running jobs |
 | What belongs to the codebase whichever checkout is open | The project's store, keyed by identity | Command history (`:!` and compile lines), the commands and settings config gives the project |
+| What belongs to the buffers outside any workspace, which have no project either | The unscoped store, one for the editor (`Workspace.Table.unscoped`) | The `:!` history and the `*shell output*` buffer of such buffers |
 
-Both stores are `Value` trees by name, as a buffer's locals are, so a
-reload leaves them; both live as long as the session. A feature declares a
+The stores are `Value` trees by name, as a buffer's locals are, so a
+reload leaves them; they live as long as the session. The unscoped store
+is read with `Workspace.Table.getUnscoped` and written with
+`Workspace.setUnscoped`, and is never refused: it is always there.
+
+A command run for a buffer runs in its workspace's root, or, with no
+workspace, in its file's directory (`BufferId.workingDirectory`). A
+buffer with neither runs in the editor's working directory
+(`EditorState.workingDirectory`), which each host sets once from its own
+process's working directory: the window mode's and the headless mode's
+alike. It is `/` until a host sets it. A feature declares a
 `Store α` (`lean/Editor/Store.lean`) and reads and writes it through
 `Workspace.Table.get` and `Workspace.set`, or `getOfProject` and
 `Project.set`. They are compiled state that follows `Store`'s encoding, not
@@ -176,10 +189,13 @@ open when the table has it: found or registered this session.
   new step of the finder (a step of `Workspace.find`, a clause of
   `World.find` and a contract property).
 - `acp-agents`: a session's workspace, registered when it is not local.
-- `shell-and-compile` phases 2 to 6: `:!` and `compile` run in the
-  workspace's root, and refuse to run locally for a location that cannot
-  run commands; their history is the project's, their buffers the
-  workspace's.
+- `shell-and-compile` phase 2 (built): `:!` runs in the workspace's root,
+  or the file's directory, or the editor's working directory, and refuses
+  to run for a location that cannot run commands; its history is the
+  project's (`Shell.historyStore`), its output buffer and what it runs the
+  workspace's (`Shell.outputStore`, `Shell.runningStore`), each in the
+  unscoped store for a buffer outside any workspace. Phases 3 to 6:
+  `compile`, the same way.
 - Tasks `project-scoped-buffers-and-pickers` (scoping pickers by workspace)
   and `remote-workspace-execution` (running in a `reachable` location).
 

@@ -609,12 +609,15 @@ driver does not need it. The tests of the pool pin no size, so they pass
 whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
-linked against the real library, then `contract-test`, handed two
+linked against the real library, then `contract-test`, handed four
 directories: `tests/process-environment` (the fixtures that stand in for
-mise in the checks of a child's environment) and `tests/workspaces` (the
+mise in the checks of a child's environment), `tests/workspaces` (the
 fixture that stands in for git in the workspace finder's checks, which run
-the finder's contract over the real process and file services); each
-fixture must stay executable. Then `config-test`, and
+the finder's contract over the real process and file services),
+`tests/shell` (the fixture `:!` runs over the real process service, and the
+editor's working directory in those checks) and `tests/syntax` (the syntax
+fixtures, whose Rust fixtures the indent and text-object checks read); each
+executable fixture must stay executable. Then `config-test`, and
 then the editor: once as `editor demo`, the demonstration, ten times in its headless
 mode on the fixtures under `tests/headless`, and twice more on a real file
 in a temporary directory (below): with `script`, whose output must

@@ -48,7 +48,9 @@ A job reaches processes through one request, `process`, which carries a
 `ProcessRequest` (`Editor/Process.lean`): `Process.run` runs a command to
 its end and replies with how it ended and both its output streams, or a
 refusal: an `Except ProcessError`, a value, which the job matches on.
-`Process.start` starts a streaming child, which the job then reads
+`Process.runWithin` does so under a time limit, and `Process.runWithInput`
+also feeds the child its standard input, then end of file, as a filter
+does (`Editor/Shell.lean`). `Process.start` starts a streaming child, which the job then reads
 (`Process.read`, a delivery of lines or bytes at a time), writes to
 (`Process.write`, `Process.writeLine`) and closes the input of
 (`Process.closeInput`). A cancelled job's child is killed, with its process
@@ -385,6 +387,15 @@ gives it (`Process.prepared`). `Editor/Process.lean` has the rules. -/
 def Process.runWithin (command : Process.Command) (limit : Nat) (time : Nat) :
     JobM (Except ProcessError Process.Ran) := do
   Process.request (.runWithin (← Process.prepared command) limit time)
+
+/-- Runs `command` as `Process.runWithin` does, with `input` as its standard
+input, followed by end of file: how the child ended and both its streams,
+or why it was refused. A child that does not read its input is no refusal.
+The child gets the environment its directory's lookup gives it
+(`Process.prepared`). `Editor/Process.lean` has the rules. -/
+def Process.runWithInput (command : Process.Command) (input : ByteArray) (limit : Nat)
+    (time : Nat) : JobM (Except ProcessError Process.Ran) := do
+  Process.request (.runInput (← Process.prepared command) input limit time)
 
 /-- Starts `command` as a streaming child, as `streaming` says, and waits for
 it to start: the child, named for this job, or why it was refused. The child

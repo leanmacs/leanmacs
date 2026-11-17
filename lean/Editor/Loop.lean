@@ -197,6 +197,13 @@ holds no job table.
   takes the starts out of the state and hands them back with the step, in
   the order they were asked for. A command that did not run to its end
   starts no job: its starts go with the state it left.
+- **A start may carry a key, and a command may cancel a key**
+  (`cancelJob`): the cancels are kept in the state too
+  (`EditorState.cancels`), taken out with the starts after a command that
+  ran to its end, and handed back in `Loop.Stepped.cancels`, ahead of the
+  loop's own ("Auto-reload"). A command that did not run to its end
+  cancels nothing. The host ends the job of each key, and starting a job
+  of a key ends the running job of that key first ("Keyed jobs", below).
 - **The host starts each**, for whoever registered it, and when the job has
   ended hands the loop the command it finished with (`Loop.deliver`). The
   result comes back through the host's queue, so events that arrived before
@@ -1136,8 +1143,9 @@ structure Loop.Stepped (scheme : InputScheme) where
   ended : Option Loop.Ending := none
   /-- The keys of the jobs the host is to cancel: a cancel ends the job of
   that key, if there is one, even one that has finished and not yet been
-  delivered, so its command never runs ("Auto-reload", in the module
-  docs). -/
+  delivered, so its command never runs. Those the command the step ran
+  asked for (`cancelJob`), when it ran to its end, come first, then the
+  loop's own ("Jobs from commands", "Auto-reload", in the module docs). -/
   cancels : Array String := #[]
 
 namespace EditorState
@@ -1228,8 +1236,8 @@ def statusOf (modeLine : ModeLine) (state : EditorState) (id : ViewId)
 of `state`, whose text is shown at `snapshot` and of which the scheme
 reports the fields `reported` (`ModeLine.Context`): its buffer; its cursor,
 the head of the primary range of its selection, as a row and a column in
-cells of the snapshot; the snapshot's rows, less an empty last row after a
-final line break; and whether it is the selected view
+cells of the snapshot; the snapshot's lines (`SnapshotId.lineCount`); and
+whether it is the selected view
 (`EditorState.selectedView`). It is not refused: when the selection marker
 or the snapshot does not answer, there is no cursor and no row. -/
 def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : SnapshotId)
@@ -1239,9 +1247,7 @@ def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : 
     let .selection selection ← marker.text.marker marker | throw .noSuchMarker
     let some range := selection.ranges[selection.primary]? | throw .noSuchMarker
     let point ← snapshot.pointOf range.head .cells
-    let rows ← snapshot.rowCount
-    let last ← snapshot.rowContent (rows - 1)
-    return (point, if rows > 1 && last.isEmpty then rows - 1 else rows)
+    return (point, ← snapshot.lineCount)
   let (cursor, lines) :=
     match ← (observing read : TextM (Except TextError (Point × Nat))) with
     | .ok (point, lines) => (some point, lines)
@@ -1717,6 +1723,9 @@ structure Ran where
   log : Array String := #[]
   /-- The jobs the command asked to be started, when it ran to its end. -/
   starts : Array JobStart := #[]
+  /-- The keys of the jobs the command asked to be cancelled, when it ran to
+  its end. -/
+  cancels : Array String := #[]
   /-- The invocations to run next, when the command ran to its end: the
   continuations of the prompts it accepted, each with its answer, and the
   invocations it asked to be run after it. -/
@@ -1798,13 +1807,14 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     return {
         state :=
           { left.refusedBy ungiven with
-            starts := #[], answered := #[], reload := false, theme := none }
+            starts := #[], cancels := #[], answered := #[], reload := false, theme := none }
         ending
         closed := closedViews state left
         opened := openedMinibuffer state left
         write
         log
         starts := left.starts
+        cancels := left.cancels
         answered := left.answered
         reload := left.reload
         theme := left.theme }
@@ -1864,7 +1874,8 @@ def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
     answered := ran.answered
     reload := ran.reload
     theme := ran.theme
-    ended := some ran.ending }
+    ended := some ran.ending
+    cancels := ran.cancels }
 
 /-- One key through the scheme, for the focused view, and the invocation it
 yields, if it yields one, run (`run`): what the step hands back, with the
