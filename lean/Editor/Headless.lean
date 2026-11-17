@@ -1325,6 +1325,25 @@ def describeEnding : Loop.Ending → String
   | .noSuchCommand => "no such command"
   | .noWindow => "no window"
 
+/-- What a pool task does with a frame the editor thread let go of: reads
+one field, so the task holds the frame, which it drops when it ends. It is a
+function of its own, never inlined, so that the task's action holds the
+frame and does not read it where the task is made (as `Job.start` keeps a
+job's work off the calling thread). -/
+@[noinline]
+def held (previous : Option (Loop scheme)) : BaseIO Nat :=
+  return (previous.map (·.shown.size)).getD 0
+
+/-- Lets go of `previous`, the frame a step replaced, on a pool task: what
+only it still holds is freed there and not on the editor thread. That is
+the listing a match job's delivery replaced, up to 100,000 candidates with
+their ranges, whose freeing took the editor thread milliseconds, so a key
+that arrived meanwhile waited (`docs/design/concurrency.md`, "Matching off
+the editor thread, measured"). It is best effort: should the task end
+before the editor thread lets go, the frame is freed here, as before. -/
+def release (previous : Option (Loop scheme)) : BaseIO Unit :=
+  discard <| BaseIO.asTask (held previous)
+
 /-- Takes in what a step of the loop handed back: the loop after it is the
 frame, what the step has to log is logged, what its command asked to be
 written is written back to the stores, and the jobs it hands back are
@@ -1353,6 +1372,8 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
     (stepped : Loop.Stepped scheme) : IO (Running σ scheme) := do
   for entry in stepped.log do
     collaborators.log entry
+  -- The frame the step replaced is let go of on the pool (`release`).
+  release running.frame
   let mut running ←
     ({ running with
           frame := some stepped.loop, stepped := true
