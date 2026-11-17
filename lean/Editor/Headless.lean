@@ -1212,7 +1212,8 @@ def publish (collaborators : Collaborators σ scheme) (running : Running σ sche
   let (published, running) ←
     running.attempt collaborators
         (frame.publish (running.keys collaborators).modeLine (running.keys collaborators).padding
-          (running.keys collaborators).layout (running.keys collaborators).tabBar)
+          (running.keys collaborators).layout (running.keys collaborators).tabBar
+          (running.keys collaborators).matching)
   return { running with frame := some (published.getD frame) }
 
 /-- The loop's frame, made if there is none (`Collaborators.start`): the

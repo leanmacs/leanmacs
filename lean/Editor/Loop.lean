@@ -270,10 +270,22 @@ loop has little of its own to do.
 - **The loop lists a prompt's candidates, before each scene**
   (`Loop.listed`, in `Loop.publish`). While a prompt is open and has
   candidates, the minibuffer's text is read; when it is not the text the
-  listing is for, the fuzzy matcher is asked which candidates' texts it
-  matches and in what order (`Fuzzy.rank`, `Editor/Fuzzy.lean`), and the state
-  keeps the answer (`EditorState.listCandidates`, `Editor/State.lean`,
-  "Prompts"). Nothing else asks the matcher for a prompt.
+  listing is for, the style chosen for the prompt's category
+  (`Loop.Keys.matching`, `Completion.Matching.styleFor`,
+  `Editor/Completion/Style.lean`) is asked which candidates' texts it
+  matches, in what order and with which ranges, and the state keeps the
+  answer, followed by the candidates filtered sources passed
+  (`EditorState.listCandidates`, `Editor/State.lean`, "Prompts"). Nothing
+  else asks a style for a prompt. With nothing chosen by config the style
+  is the fuzzy matcher's (`Completion.Styles.fuzzy`), which asks
+  `Fuzzy.rank` once (`Editor/Fuzzy.lean`).
+  - **The style is looked up for each step**, from the keys the host
+    hands, and never kept in the state: the state holds only the prompt's
+    category. So a reload changes it from the next listing, and a listing
+    already made stays until the text changes.
+  - **It runs on the editor thread**, inside the publish, as config's
+    mode-line segments do: a style is a program over the fuzzy port alone,
+    so it cannot be refused, read the state or be interrupted.
   - So the first listing is made by the scene of the asking step, for the
     initial text, and every event ends in a scene: a command always finds
     the listing of the text the last scene showed.
@@ -285,7 +297,8 @@ loop has little of its own to do.
     leaves the listing and the choice as they were. A new listing has no
     choice: the choice was an index of the old one.
   - **A prompt with no candidates costs what it cost before**: nothing is
-    read and the matcher is not asked.
+    read and no style is asked. Nor is one asked when every candidate was
+    passed by a filtered source.
   - It is the loop's own request, not a command's: it is not guarded, so
     the interrupt flag never stops a scene. A refusal of the read leaves
     the listing as it was and is in the echo area with the publish's other
@@ -1151,6 +1164,13 @@ structure Loop.Keys (scheme : InputScheme) where
   `Editor/Menu/Compiled.lean`); `none` for a host with no menu bar, whose
   scenes name none. -/
   menu : Option Menu := none
+  /-- The styles a prompt's candidates are listed with, chosen by its
+  category (`Editor/Completion/Style.lean`): the host hands the registry's,
+  config's choices or the fuzzy style for every category
+  (`Config.Registry.matching`, `Headless.keys`). It is looked up for each
+  step and never kept in the state, so a reload changes it from the next
+  listing. -/
+  matching : Completion.Matching := Completion.Matching.standard
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -1660,7 +1680,7 @@ def tabBarView (state : EditorState) (shown : Array Shown) :
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
 (`EditorState.settleQuit`), brings an open prompt's listing up to date
-(`listed`), has the frame choose `layout` when one is handed that is not
+with the style `matching` chooses for its category (`listed`), has the frame choose `layout` when one is handed that is not
 the one it last chose (`Frame.choose`), sets when the tab bar is shown
 from `tabBar` when one is handed, has
 each view but the floats follow its cursor (`followed`), places the floats
@@ -1675,8 +1695,8 @@ the floats it closed held, telling the scheme they closed. It is not refused
 text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
 def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0)
-    (layout : Option Layout := none) (tabBar : Option TabBar.Shown := none) :
-    EditorM (Loop scheme) := do
+    (layout : Option Layout := none) (tabBar : Option TabBar.Shown := none)
+    (matching : Completion.Matching := .standard) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
@@ -1685,7 +1705,7 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   let (state, keepRunning) := state.answerSystemQuit
   if keepRunning then
     Display.askFrame .keepRunning
-  let (state, unlisted) ← listed state
+  let (state, unlisted) ← listed state matching
   -- The heights of the rows, as the display answers them now, before the
   -- views are laid out: they size the views and the minibuffer's place.
   -- The padding the views are laid out with is the one handed in, and so
@@ -2248,15 +2268,17 @@ def keyedBy (keys : Keys scheme) (loop : Loop scheme) : Loop scheme :=
 
 /-- `stepped`, a step whose scene is not yet published, once it is
 (`publish`), its views' status lines drawn by the mode line `keys` names
-and padded by its padding, its windows laid out by its layout
-(`Keys.modeLine`, `Keys.padding`, `Keys.layout`): its loop is
+and padded by its padding, its windows laid out by its layout and a
+prompt's candidates listed by its matching (`Keys.modeLine`,
+`Keys.padding`, `Keys.layout`, `Keys.matching`): its loop is
 the one the publish left, with the file jobs it starts and cancels
 (`fileJobs`) after the step's own, and it says stop when the editor then
 leaves (`nextOf`) and to go on otherwise. The scene comes first, so the
 scene of the step that says stop is the last one. -/
 def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
   do
-  let loop ← stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar
+  let loop ←
+    stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
   let (loop, starts, cancels) := loop.fileJobs keys
   return { stepped with
       loop, next := nextOf loop, starts := stepped.starts ++ starts

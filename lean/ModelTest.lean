@@ -20668,6 +20668,8 @@ def filteredSource : Completion.Source :=
   that has filtered already.
 - `ask-category` asks for the sources of the category `pick`, with
   `pickSource` as its default.
+- `ask-other` asks with a source of the category `other` over
+  `pickCandidates`.
 - `picked` says what it was called with (`picked`).
 - `accept` and `cancel` are the API's operations.
 - The test scheme's self-insert inserts its argument at its target's
@@ -20686,6 +20688,7 @@ def candidateCommands : List (String × Dispatched) :=
     ("ask-echo", asks "w" [.given (Completion.Fake.echo "echo" "pick")]),
     ("ask-filtered", asks "" [.given pickSource, .given filteredSource]),
     ("ask-category", asks "" [.category "pick" [pickSource]]),
+    ("ask-other", asks "" [.given (.ofTexts "other" "other" pickCandidates)]),
     ("ask-named", fun _ => do
       if let .error refusal← prompt pickLabel pickContinuation "" [.named pickSource.name] then
         message refusal.describe
@@ -20718,7 +20721,8 @@ def candidateKeys : Loop.Keys TestScheme.scheme :=
       ("C-c f", invoke "edit-then-fail"), ("C-c 2", invoke "ask-two"),
       ("C-c g", invoke "ask-grouped"), ("C-c r", invoke "ask-refusing"),
       ("C-c e", invoke "ask-echo"), ("C-c m", invoke "ask-named"),
-      ("C-c 5", invoke "ask-filtered"), ("C-c 7", invoke "ask-category")]
+      ("C-c 5", invoke "ask-filtered"), ("C-c 7", invoke "ask-category"),
+      ("C-c 6", invoke "ask-other")]
     candidateCommands
 
 /-- A driver over the initial state, with the commands of the candidate
@@ -20842,6 +20846,30 @@ loop does when the listing's read is refused. What is listed is compared
 with what the fuzzy model answers for the same pattern and candidates. -/
 def candidateChecks : List Check :=
   [{  name :=
+        "with the loop handed orderless for the category pick and the fuzzy style for the rest, after w is typed a pick prompt lists the orderless style's hits, in the candidates' order with w last, and a prompt of another category lists the fuzzy model's, with w first"
+      run :=
+        pure <|
+          let keys : Loop.Keys TestScheme.scheme :=
+            { candidateKeys with
+              matching :=
+                { default := Completion.Styles.fuzzy
+                  byCategory := fun category =>
+                    if category == "pick" then some Completion.Styles.orderless else none } }
+          match (Loop.Driver.over keys driverJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption with
+          | none => false
+          | some driver =>
+            let (pick, _) := fedTo driver (presses "C-c a w")
+            let (other, _) := fedTo driver (presses "C-c 6 w")
+            let listing (style : Completion.Style) : Array (String × Array Completion.Span) :=
+              (styled style "w" pickCandidates).map fun hit =>
+                ((pickCandidates[hit.index]?).getD "", hit.ranges)
+            let listed (driver : TestDriver) : Option (Array (String × Array Completion.Span)) :=
+              (candidatesOf driver).map (·.listed.map fun listed => (listed.text, listed.ranges))
+            listed pick == some (listing Completion.Styles.orderless) &&
+              listed other == some (listing Completion.Styles.fuzzy) &&
+              (listed pick).bind (·.back?.map (·.1)) == some "w" &&
+              (listed other).bind (·[0]?.map (·.1)) == some "w" },
+    { name :=
         "a prompt that asks for a category lists its defaults where the loop knows no source of it; the sources registered in it after a default it does not name; and a source registered under a default's name in that default's place"
       run :=
         pure <|
