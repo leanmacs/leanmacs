@@ -16,8 +16,10 @@ A contribution (`Contribution`) is registered under its minor mode's name
 (`mode`): the names of its marker files (`markers`), which turn the mode on
 in a buffer whose file is under one of them inside its workspace
 (`Editor/Workspace.lean`, "Modes on markers"); its named commands
-(`commands`, each a name such as `build` and a command line); and its error
-formats (`formats`, `Editor/Compile/Errors.lean`). Registering a `Mode`
+(`commands`, each a name such as `build` and a command line); its error
+formats (`formats`, `Editor/Compile/Errors.lean`); and whether its root is
+its outermost marker in the workspace rather than its nearest
+(`outermost`). Registering a `Mode`
 record of the same name is optional: a buffer's minor modes are by name.
 A field a later phase needs, such as a command computed from the project,
 is added with a default, so every contribution written now stays valid.
@@ -74,11 +76,15 @@ structure Contribution where
   commands : Array NamedCommand := #[]
   /-- Its error formats, in the order they are tried. -/
   formats : Array Format := #[]
+  /-- Whether its root is its outermost marker in the workspace, not its
+  nearest (`Editor/Workspace.lean`, "Modes on markers"). -/
+  outermost : Bool := false
 
-/-- The contribution's mode and markers, as the marker search is handed
-them. -/
+/-- The contribution's mode, markers and root rule, as the marker search is
+handed them. -/
 def Contribution.markerMode (contribution : Contribution) : Workspace.MarkerMode :=
-  { mode := contribution.mode, markers := contribution.markers }
+  { mode := contribution.mode, markers := contribution.markers,
+    outermost := contribution.outermost }
 
 /-- What config gives one project for one mode ("Project commands", in the
 module docs). -/

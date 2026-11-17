@@ -53,8 +53,12 @@ It imports only the plain trees and the pure part of a child's environment
   so one worktree's modes are found within that worktree; a file with no
   workspace looks in its own directory alone. A mode is on at the nearest
   directory that holds one of its markers, which is its root
-  (`OnMode`). The on-modes are ordered nearest root first and, at one
-  root, in registration order. A marker is there by the finder's rule.
+  (`OnMode`); an outermost mode (`MarkerMode.outermost`), such as
+  `cargo-mode`, whose tool prints paths relative to its outermost marker's
+  directory, at the farthest directory searched that holds one. The
+  on-modes are ordered, once their roots are chosen, nearest root first
+  and, at one root, in registration order. A marker is there by the
+  finder's rule.
   The search is `Workspace.presentMarkers` (`Editor/Workspace/Finder.lean`),
   its model `World.presentMarkers`, and both are held to
   `Workspace.MarkerContract` (`Editor/Workspace/Contract.lean`).
@@ -343,12 +347,16 @@ def defaultMarkers : Array String :=
   #[".git", "mise.toml", "Cargo.toml", "lakefile.lean", ".project"]
 
 /-- A minor mode that markers turn on ("Modes on markers", in the module
-docs): its name and the names of its marker files, in order. -/
+docs): its name, the names of its marker files, in order, and whether its
+root is its outermost marker. -/
 structure MarkerMode where
   /-- The minor mode's name. -/
   mode : String
   /-- The names of its marker files. -/
   markers : Array String
+  /-- Whether its root is the farthest directory searched that holds one of
+  its markers, not the nearest. -/
+  outermost : Bool := false
   deriving DecidableEq, Repr
 
 /-- A minor mode a buffer's markers turned on, with its root: the
@@ -466,20 +474,24 @@ def markerSearchPaths (markers : Array String) (directory bound : System.FilePat
 its root, nearest root first and, at one root, in the order of `modes`
 ("Modes on markers", in the module docs). `present` holds each marker found,
 with the directory it is in; a mode is on at the nearest directory of
-`searchedFrom` that holds one of its markers. -/
+`searchedFrom` that holds one of its markers, or, an outermost one, at the
+farthest. A mode named twice is on by the first of its entries whose markers
+are found. -/
 def onModes (modes : Array MarkerMode) (directory bound : System.FilePath)
     (present : Array (System.FilePath × String)) : Array OnMode :=
-  (searchedFrom directory bound).foldl
-    (fun (on : Array OnMode) at_ =>
-      modes.foldl
-        (fun (on : Array OnMode) mode =>
-          if on.any (·.mode == mode.mode) then on
-          else
-            if mode.markers.any fun marker => present.contains (at_, marker) then
-              on.push { mode := mode.mode, root := at_ }
-            else on)
-        on)
-    #[]
+  let searched := searchedFrom directory bound
+  let roots :=
+    modes.foldl
+      (fun (roots : Array OnMode) mode =>
+        if roots.any (·.mode == mode.mode) then roots
+        else
+          let holding :=
+            searched.filter fun at_ => mode.markers.any fun marker => present.contains (at_, marker)
+          match if mode.outermost then holding.back? else holding[0]? with
+          | some root => roots.push { mode := mode.mode, root }
+          | none => roots)
+      #[]
+  searched.flatMap fun at_ => roots.filter (·.root == at_)
 
 /-- Every marker of `modes`, once, in the order it was first named. -/
 def markersOf (modes : Array MarkerMode) : Array String :=

@@ -28220,6 +28220,24 @@ def modeMarkerChecks : List Check :=
               #[{ mode := "a-mode", root := "/r/k/l" }] &&
             Workspace.onModes modes "/r/k/l" "/r" #[] == #[] &&
             Workspace.markersOf modes == #["b.toml", "a.toml"]) },
+    { name :=
+        "an outermost mode's root is its farthest marker within the bound: a nearest mode at a deeper root still comes first, a marker above the bound is not looked at, and with one marker the root is that one's"
+      run :=
+        let outer : Workspace.MarkerMode :=
+          { mode := "o-mode", markers := #["o.toml"], outermost := true }
+        let nearest : Workspace.MarkerMode := { mode := "n-mode", markers := #["n.toml"] }
+        let present : Array (System.FilePath × String) :=
+          #[("/r/k/l", "o.toml"), ("/r/k", "n.toml"), ("/r", "o.toml"), ("/", "o.toml")]
+        pure
+          (Workspace.onModes #[outer, nearest] "/r/k/l" "/r" present ==
+              #[{ mode := "n-mode", root := "/r/k" }, { mode := "o-mode", root := "/r" }] &&
+            Workspace.onModes #[{ outer with outermost := false }, nearest] "/r/k/l" "/r" present ==
+              #[{ mode := "o-mode", root := "/r/k/l" }, { mode := "n-mode", root := "/r/k" }] &&
+            Workspace.onModes #[outer, nearest] "/r/k/l" "/r" #[("/r/k/l", "o.toml")] ==
+              #[{ mode := "o-mode", root := "/r/k/l" }] &&
+            (Compile.Contribution.markerMode
+                { mode := "o-mode", markers := #["o.toml"], outermost := true }) ==
+              outer) },
     { name := "an on-mode crosses as a tree and back; a tree that is no on-mode reads as none"
       run :=
         let on : Workspace.OnMode := { mode := "a-mode", root := "/a b/é" }
