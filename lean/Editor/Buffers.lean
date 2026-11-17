@@ -60,9 +60,14 @@ checks compare the echo area with that function, never with a sentence.
   made under a free name made from `listBuffer`
   (`EditorState.freeName`).
 - **The first list makes the buffer, and a later one replaces its text**,
-  whole: there is one list. Either way it is shown in the window the
-  command was called with. The text is what the buffers were when the
+  whole: there is one list. The text is what the buffers were when the
   command ran; listing again brings it up to date.
+- **The list is shown where the display rules say** (`BufferId.display`,
+  `Editor/DisplayRules.lean`), for the opener `list-buffers`: by default in
+  a new window at the end of the tiled list, the stack, focused, so the
+  window the command was called in keeps its buffer. A window that shows
+  the list already is used, so `ls` again focuses the list's window and
+  makes no other.
 - **It is an ordinary buffer.** Motions and search work in it, it is a
   candidate of the switch, and closing it is closing a buffer. A mode of
   its own, with keys that act on the line's buffer, is not built.
@@ -249,8 +254,9 @@ text of the buffer list (`listing`), with each buffer's unsaved changes as
 `BufferId.hasUnsavedChanges` answers them; puts it in the buffer list
 (`listOf`), made by the first list, called `listBuffer` or, where a buffer
 has that name, a free name made from it, and marked with `listMark`, and
-with its whole text replaced by a later list; and shows that buffer in the
-window it was called with. It reads nothing else of its call. -/
+with its whole text replaced by a later list; and displays that buffer
+where the display rules say, for the opener `listName`, from the window it
+was called with (`BufferId.display`). It reads nothing else of its call. -/
 def listCommand (call : Call) : EditorM Unit := do
   let state ← editorState
   let mut unsaved : Array BufferId := #[]
@@ -268,7 +274,7 @@ def listCommand (call : Call) : EditorM Unit := do
     if let .ok ()← id.setValue listMark (.bool true) then
       made := some id
   let some id := made | message notListed
-  if let .error _← (Files.shownIn state call.target.window.id).show id then
+  if let .error _← id.display call.target.window.id listName then
     message notListed
 
 /-- Ends the command, rolled back, for a request the command's own reading

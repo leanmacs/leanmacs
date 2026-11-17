@@ -7580,107 +7580,6 @@ def directionStates : List EditorState :=
     edged.flatMap fun (tiles, docked, layout) =>
       withPrompt (onTextModel (dockedUnder tiles docked layout))
 
-/-- The checks of display rules (`Editor/DisplayRules.lean`): which rule a
-buffer's facts choose, and which targets a layout lacks; and where a
-buffer is displayed (`EditorState.displaying`). -/
-def displayRuleChecks : List Check :=
-  let facts : DisplayRule.Facts := { name := "notes", modes := ["text", "notes"], opener := "make" }
-  [{  name :=
-        "a rule matches when every field it sets holds: a mode is the buffer's major mode or any of its minor modes, a name is the buffer's exactly, and an opener is the command's that asked; a rule that sets none matches every buffer"
-      run :=
-        pure <|
-          let rule (mode name opener : Option String) : DisplayRule :=
-            { mode, name, opener, target := .stack }
-          (rule (some "text") none none).matches facts &&
-            (rule (some "notes") none none).matches facts &&
-            !(rule (some "lisp") none none).matches facts &&
-            (rule none (some "notes") none).matches facts &&
-            !(rule none (some "note") none).matches facts &&
-            (rule none none (some "make")).matches facts &&
-            !(rule none none (some "list-buffers")).matches facts &&
-            (rule (some "notes") (some "notes") (some "make")).matches facts &&
-            !(rule (some "notes") (some "notes") (some "other")).matches facts &&
-            (rule none none none).matches facts },
-    { name :=
-        "the first rule that matches is chosen, in order; with none matching the fallback is, which sends the buffer to the stack and focuses it"
-      run :=
-        pure <|
-          let toLeft : DisplayRule := { mode := some "notes", target := .edge .left }
-          let toMain : DisplayRule := { opener := some "make", target := .main, focus := false }
-          let never : DisplayRule := { name := some "other", target := .focused }
-          DisplayRule.choose #[never, toLeft, toMain] facts == toLeft &&
-            DisplayRule.choose #[never, toMain, toLeft] facts == toMain &&
-            DisplayRule.choose #[never] facts == DisplayRule.fallback &&
-            DisplayRule.choose #[] facts == DisplayRule.fallback &&
-            DisplayRule.fallback.target == .stack &&
-            DisplayRule.fallback.focus },
-    { name :=
-        "a target is missing when the layout lacks it: floats and tabs always, for now, and an edge the layout has no edge at; the focused window, main and the stack never are"
-      run :=
-        pure <|
-          let edged := Layout.edge .left 25 Layout.default
-          [Layout.default, edged].all
-              (fun layout =>
-                [DisplayTarget.focused, .main, .stack].all (·.missing? layout == none) &&
-                  DisplayTarget.float.missing? layout == some DisplayTarget.noFloats &&
-                  DisplayTarget.newTab.missing? layout == some DisplayTarget.noTabs) &&
-            (DisplayTarget.edge .left).missing? Layout.default == some (Layout.noEdge .left) &&
-            (DisplayTarget.edge .left).missing? edged == none &&
-            (DisplayTarget.edge .right).missing? edged == some (Layout.noEdge .right) },
-    { name :=
-        "a window of the frame that shows the buffer is used, a tile or a docked one, whatever the rules say; otherwise the rule's target decides: the focused window, main, a new window in the stack, or at an edge the layout has, else the stack; floats and tabs go to the stack; the focus is the rule's"
-      run :=
-        pure <|
-          match onTextModel twoBuffers,
-            onTextModel (dockedUnder 1 [.left] (.edge .left 25 Layout.default)) with
-          | some two, some docked =>
-            let docked : EditorState :=
-              { docked with
-                buffers := two.buffers
-                windows :=
-                  docked.windows.map fun window =>
-                    if window.id == ⟨1⟩ then { window with buffer := ⟨1⟩ } else window }
-            let rule (target : DisplayTarget) (focus : Bool := true) : Array DisplayRule :=
-              #[{ target, focus }]
-            let fresh : EditorState :=
-              { two with
-                frame := { two.frame with windows := #[⟨0⟩] }
-                windows := two.windows.filter (·.id == ⟨0⟩) }
-            two.displaying (rule .main) ⟨1⟩ ⟨0⟩ "make" == (.shown ⟨1⟩, true) &&
-              docked.displaying (rule .main false) ⟨1⟩ ⟨0⟩ "make" == (.shown ⟨1⟩, false) &&
-              fresh.wellFormed &&
-              fresh.displaying #[] ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
-              fresh.displaying (rule .focused) ⟨1⟩ ⟨0⟩ "make" == (.showIn ⟨0⟩, true) &&
-              fresh.displaying (rule .main false) ⟨1⟩ ⟨0⟩ "make" == (.showIn ⟨0⟩, false) &&
-              fresh.displaying (rule .stack) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
-              fresh.displaying (rule (.edge .left)) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
-              fresh.displaying (rule .float) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
-              fresh.displaying (rule .newTab) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
-              ({ fresh with
-                        frame := { fresh.frame with layout := .edge .left 25 Layout.default } } :
-                      EditorState).displaying
-                  (rule (.edge .left)) ⟨1⟩ ⟨0⟩ "make" ==
-                (.opened (.edge .left), true)
-          | _, _ => false },
-    { name :=
-        "the focused target, asked from the minibuffer's view, is the window the prompt was asked from, a tiled one or a docked one; asked from another window, that window"
-      run :=
-        pure <|
-          match onTextModel sidebar with
-          | none => false
-          | some state =>
-            let fromMain := (prompted state).2
-            let fromSidebar := (prompted (state.focusWindow ⟨2⟩).2).2
-            let minibuffer (asking : EditorState) : ViewId := asking.minibufferView?.getD ⟨9⟩
-            let focused : Array DisplayRule := #[{ target := .focused }]
-            -- No window shows buffer 9, so the rule decides.
-            fromMain.shownIn (minibuffer fromMain) == ⟨0⟩ &&
-              fromSidebar.shownIn (minibuffer fromSidebar) == ⟨2⟩ &&
-              fromSidebar.shownIn ⟨1⟩ == ⟨1⟩ &&
-              Files.shownIn fromSidebar (minibuffer fromSidebar) == ⟨2⟩ &&
-              fromSidebar.displaying focused ⟨9⟩ (minibuffer fromSidebar) "e" ==
-                (.showIn ⟨2⟩, true) }]
-
 /-- The checks of the operations on the frame's windows that the window
 commands are made of (`Editor/State.lean`): a split's placement, a
 removal's inheritor under manual splits, zoom, the last window focused,
@@ -20684,12 +20583,15 @@ def autoReloadChecks : List Check :=
 ones compiled code registers for files, the minibuffer, the buffers and the
 ex line (`Files.commands`, `Minibuffer.commands`, `Buffers.commands`,
 `Ex.commands`), each under the name it is registered under, told of the ex
-names that ship (`Ex.bindings`), and three written here: `split`, which
+names that ship (`Ex.bindings`), and five written here: `split`, which
 splits the window it is called with and leaves the focus,
 `edit-then-close`, which inserts `x` at its window's cursors and then runs
 `close-buffer` inside itself, so the edit and the close are one command,
-and `dock-others`, which docks every other window of the tiled list at the
-left edge.
+`dock-others`, which docks every other window of the tiled list at the
+left edge, `focus-main`, which focuses the first window of the tiled list,
+and `make-notes`, which makes a buffer called `notes`, or a free name made
+from it, holding `a note`, adds the minor mode `notes` to it and displays
+it for the command `make-notes` (`BufferId.display`).
 
 One keymap, the same for every view: `C-e e` runs the ex command, `C-e y`
 and `C-e t` the minibuffer's accept command and its command that moves to
@@ -20697,8 +20599,9 @@ the next candidate, `C-b b` runs `switch-buffer` with the arguments the Vim
 scheme gives a command a key is bound to, a count and a register, `C-b n`
 runs it with `note.txt`, `C-b s` runs `split`, `C-b x` runs
 `edit-then-close`, `C-b d` runs `close-buffer` with no argument, `C-b m`
-runs it with the name the minibuffer's buffer has (`Prompt.bufferName`)
-and `C-b h` runs `dock-others`. -/
+runs it with the name the minibuffer's buffer has (`Prompt.bufferName`),
+`C-b h` runs `dock-others`, `C-b f` runs `focus-main` and `C-b o` runs
+`make-notes`. -/
 def bufferKeys : Loop.Keys TestScheme.scheme :=
   let registrations := Files.commands ++ Minibuffer.commands ++ Buffers.commands ++ Ex.commands
   let compiled : List (String × Dispatched) :=
@@ -20722,6 +20625,16 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         for view in (← editorState).frame.windows do
           if view != call.target.window.id then
             discard <| view.arrange (.edge .left)
+        return none),
+      ("focus-main", fun _ => do
+        if let some main := (← editorState).frame.windows[0]? then
+          discard <| main.focus
+        return none),
+      ("make-notes", fun call => do
+        let name := (← editorState).freeName "notes"
+        let .ok notes ← createBuffer name "a note" | giveUp "making notes was refused"
+        discard <| notes.addMinorMode "notes"
+        discard <| notes.display call.target.window.id "make-notes"
         return none)]
   {
     dispatchKeys
@@ -20732,7 +20645,8 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         ("C-b s", invoke "split"), ("C-b x", invoke "edit-then-close"),
         ("C-b d", invoke Buffers.closeName),
         ("C-b m", { command := Buffers.closeName, arguments := [.str Prompt.bufferName] }),
-        ("C-b h", invoke "dock-others")]
+        ("C-b h", invoke "dock-others"), ("C-b f", invoke "focus-main"),
+        ("C-b o", invoke "make-notes")]
       (compiled ++ written) with
     registered :=
       { ex := fun name => Ex.bindings.findRev? (·.name == name),
@@ -20848,7 +20762,7 @@ def bufferCommandChecks : List Check :=
               switched.loop.state.prompt.isSome &&
               switched.loop.state.wellFormed },
     { name :=
-        "ls shows, in the window it was called in, a buffer called buffer-list with no file, whose text is one line per open buffer, most recently used first, + for unsaved changes and the path of a buffer with a file; the minibuffer and the list itself are not in it, and the modified scratch buffer, which holds no file, has no +"
+        "ls shows, in a new window at the end of the list, focused, a buffer called buffer-list with no file, whose text is one line per open buffer, most recently used first, + for unsaved changes and the path of a buffer with a file; the minibuffer and the list itself are not in it, and the modified scratch buffer, which holds no file, has no +; the window it was called in keeps its buffer"
       run :=
         pure <|
           match buffersDriver with
@@ -20859,10 +20773,16 @@ def bufferCommandChecks : List Check :=
             let path (name : String) : String := (inFiles name).toString
             let expected :=
               s!"+ note.txt  {path "note.txt"}\n  lf.txt  {path "lf.txt"}\n  crlf.txt  {path "crlf.txt"}\n  scratch\n"
-            ((showing listed).map fun shown => (shown.buffer.name, shown.buffer.file.isNone)) ==
+            let state := listed.loop.state
+            let list := showing listed state.frame.focused
+            (list.map fun shown => (shown.buffer.name, shown.buffer.file.isNone)) ==
                 some (Buffers.listBuffer, true) &&
-              (showing listed).bind (·.text) == some expected &&
-              listed.loop.state.wellFormed },
+              list.bind (·.text) == some expected &&
+              state.frame.windows.size == 2 &&
+              state.frame.windows.back? == some state.frame.focused &&
+              state.frame.focused != ⟨0⟩ &&
+              shownName listed ⟨0⟩ == some "note.txt" &&
+              state.wellFormed },
     { name :=
         "ls again replaces the list's text and makes no second buffer: after note.txt is saved its line has no +"
       run :=
@@ -20877,10 +20797,11 @@ def bufferCommandChecks : List Check :=
             let path (name : String) : String := (inFiles name).toString
             let expected :=
               s!"  note.txt  {path "note.txt"}\n  lf.txt  {path "lf.txt"}\n  crlf.txt  {path "crlf.txt"}\n  scratch\n"
+            let focused := again.loop.state.frame.focused
             bufferNamed first Buffers.listBuffer != none &&
               bufferNamed again Buffers.listBuffer == bufferNamed first Buffers.listBuffer &&
-              shownName again == some Buffers.listBuffer &&
-              (showing again).bind (·.text) == some expected &&
+              shownName again focused == some Buffers.listBuffer &&
+              (showing again focused).bind (·.text) == some expected &&
               (again.loop.state.buffers.filter
                     (·.any (·.name.startsWith Buffers.listBuffer))).size ==
                 1 },
@@ -20901,11 +20822,13 @@ def bufferCommandChecks : List Check :=
             let (back, _) := fedTo again (exLine s!"b {Buffers.listBuffer}")
             let expected := s!"  {Buffers.listBuffer}  {path}\n  scratch\n"
             let state := again.loop.state
+            let list := listed.loop.state.frame.focused
             (showing opened).bind (·.text) == some contents &&
-              ((showing listed).map fun shown => (shown.buffer.file.isNone, shown.text)) ==
+              ((showing listed list).map fun shown => (shown.buffer.file.isNone, shown.text)) ==
                 some (true, some expected) &&
-              shownName listed == some (opened.loop.state.freeName Buffers.listBuffer) &&
-              (showing again).bind (·.text) == some expected &&
+              shownName listed list == some (opened.loop.state.freeName Buffers.listBuffer) &&
+              again.loop.state.frame.focused == list &&
+              (showing again list).bind (·.text) == some expected &&
               state.openBuffers.size == 3 &&
               state.findFile path == bufferNamed opened Buffers.listBuffer &&
               (heldFile back).map (·.path) == some path &&
@@ -21108,6 +21031,162 @@ def bufferCommandChecks : List Check :=
                 shownName closed sidebar == some "note.txt" &&
                 closed.loop.state.frame.docked == #[(sidebar, .left)] &&
                 closed.loop.state.wellFormed
+            | _ => false }]
+
+/-- The checks of display rules (`Editor/DisplayRules.lean`): which rule a
+buffer's facts choose, and which targets a layout lacks; and where a
+buffer is displayed (`EditorState.displaying`). -/
+def displayRuleChecks : List Check :=
+  let facts : DisplayRule.Facts := { name := "notes", modes := ["text", "notes"], opener := "make" }
+  [{  name :=
+        "a rule matches when every field it sets holds: a mode is the buffer's major mode or any of its minor modes, a name is the buffer's exactly, and an opener is the command's that asked; a rule that sets none matches every buffer"
+      run :=
+        pure <|
+          let rule (mode name opener : Option String) : DisplayRule :=
+            { mode, name, opener, target := .stack }
+          (rule (some "text") none none).matches facts &&
+            (rule (some "notes") none none).matches facts &&
+            !(rule (some "lisp") none none).matches facts &&
+            (rule none (some "notes") none).matches facts &&
+            !(rule none (some "note") none).matches facts &&
+            (rule none none (some "make")).matches facts &&
+            !(rule none none (some "list-buffers")).matches facts &&
+            (rule (some "notes") (some "notes") (some "make")).matches facts &&
+            !(rule (some "notes") (some "notes") (some "other")).matches facts &&
+            (rule none none none).matches facts },
+    { name :=
+        "the first rule that matches is chosen, in order; with none matching the fallback is, which sends the buffer to the stack and focuses it"
+      run :=
+        pure <|
+          let toLeft : DisplayRule := { mode := some "notes", target := .edge .left }
+          let toMain : DisplayRule := { opener := some "make", target := .main, focus := false }
+          let never : DisplayRule := { name := some "other", target := .focused }
+          DisplayRule.choose #[never, toLeft, toMain] facts == toLeft &&
+            DisplayRule.choose #[never, toMain, toLeft] facts == toMain &&
+            DisplayRule.choose #[never] facts == DisplayRule.fallback &&
+            DisplayRule.choose #[] facts == DisplayRule.fallback &&
+            DisplayRule.fallback.target == .stack &&
+            DisplayRule.fallback.focus },
+    { name :=
+        "a target is missing when the layout lacks it: floats and tabs always, for now, and an edge the layout has no edge at; the focused window, main and the stack never are"
+      run :=
+        pure <|
+          let edged := Layout.edge .left 25 Layout.default
+          [Layout.default, edged].all
+              (fun layout =>
+                [DisplayTarget.focused, .main, .stack].all (·.missing? layout == none) &&
+                  DisplayTarget.float.missing? layout == some DisplayTarget.noFloats &&
+                  DisplayTarget.newTab.missing? layout == some DisplayTarget.noTabs) &&
+            (DisplayTarget.edge .left).missing? Layout.default == some (Layout.noEdge .left) &&
+            (DisplayTarget.edge .left).missing? edged == none &&
+            (DisplayTarget.edge .right).missing? edged == some (Layout.noEdge .right) },
+    { name :=
+        "a window of the frame that shows the buffer is used, a tile or a docked one, whatever the rules say; otherwise the rule's target decides: the focused window, main, a new window in the stack, or at an edge the layout has, else the stack; floats and tabs go to the stack; the focus is the rule's"
+      run :=
+        pure <|
+          match onTextModel twoBuffers,
+            onTextModel (dockedUnder 1 [.left] (.edge .left 25 Layout.default)) with
+          | some two, some docked =>
+            let docked : EditorState :=
+              { docked with
+                buffers := two.buffers
+                windows :=
+                  docked.windows.map fun window =>
+                    if window.id == ⟨1⟩ then { window with buffer := ⟨1⟩ } else window }
+            let rule (target : DisplayTarget) (focus : Bool := true) : Array DisplayRule :=
+              #[{ target, focus }]
+            let fresh : EditorState :=
+              { two with
+                frame := { two.frame with windows := #[⟨0⟩] }
+                windows := two.windows.filter (·.id == ⟨0⟩) }
+            two.displaying (rule .main) ⟨1⟩ ⟨0⟩ "make" == (.shown ⟨1⟩, true) &&
+              docked.displaying (rule .main false) ⟨1⟩ ⟨0⟩ "make" == (.shown ⟨1⟩, false) &&
+              fresh.wellFormed &&
+              fresh.displaying #[] ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              fresh.displaying (rule .focused) ⟨1⟩ ⟨0⟩ "make" == (.showIn ⟨0⟩, true) &&
+              fresh.displaying (rule .main false) ⟨1⟩ ⟨0⟩ "make" == (.showIn ⟨0⟩, false) &&
+              fresh.displaying (rule .stack) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              fresh.displaying (rule (.edge .left)) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              fresh.displaying (rule .float) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              fresh.displaying (rule .newTab) ⟨1⟩ ⟨0⟩ "make" == (.opened .stack, true) &&
+              ({ fresh with
+                        frame := { fresh.frame with layout := .edge .left 25 Layout.default } } :
+                      EditorState).displaying
+                  (rule (.edge .left)) ⟨1⟩ ⟨0⟩ "make" ==
+                (.opened (.edge .left), true)
+          | _, _ => false },
+    { name :=
+        "the focused target, asked from the minibuffer's view, is the window the prompt was asked from, a tiled one or a docked one; asked from another window, that window"
+      run :=
+        pure <|
+          match onTextModel sidebar with
+          | none => false
+          | some state =>
+            let fromMain := (prompted state).2
+            let fromSidebar := (prompted (state.focusWindow ⟨2⟩).2).2
+            let minibuffer (asking : EditorState) : ViewId := asking.minibufferView?.getD ⟨9⟩
+            let focused : Array DisplayRule := #[{ target := .focused }]
+            -- No window shows buffer 9, so the rule decides.
+            fromMain.shownIn (minibuffer fromMain) == ⟨0⟩ &&
+              fromSidebar.shownIn (minibuffer fromSidebar) == ⟨2⟩ &&
+              fromSidebar.shownIn ⟨1⟩ == ⟨1⟩ &&
+              Files.shownIn fromSidebar (minibuffer fromSidebar) == ⟨2⟩ &&
+              fromSidebar.displaying focused ⟨9⟩ (minibuffer fromSidebar) "e" ==
+                (.showIn ⟨2⟩, true) },
+    { name :=
+        "criterion 1, in the model: with no rules, ls from main, which shows a file, leaves main on the file and shows the list in a new window at the end of the list, the stack, focused; ls from main again focuses that window and makes no third; a command that makes a buffer and displays it puts it in a new window at the end of the stack, and main still shows the file"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let (listed, _) := fedTo opened (exLine "ls")
+            let (again, _) := fedTo listed (presses "C-b f" ++ exLine "ls")
+            let (noted, _) := fedTo again (presses "C-b f" ++ presses "C-b o")
+            let state := listed.loop.state
+            match state.frame.windows.toList, noted.loop.state.frame.windows.toList with
+            | [main, list], [_, _, notes] =>
+              main == ⟨0⟩ && shownName listed main == some "lf.txt" &&
+                state.frame.focused == list &&
+                shownName listed list == some Buffers.listBuffer &&
+                (state.rect? main).map (·.width) == some 320 &&
+                (state.rect? list).map (fun rect => (rect.x, rect.width)) == some (320, 320) &&
+                again.loop.state.frame.windows == state.frame.windows &&
+                again.loop.state.frame.focused == list &&
+                noted.loop.state.frame.windows == state.frame.windows.push notes &&
+                noted.loop.state.frame.focused == notes &&
+                shownName noted notes == some "notes" &&
+                shownName noted main == some "lf.txt" &&
+                noted.loop.state.wellFormed
+            | _, _ => false },
+    { name :=
+        "criterion 2, in the model: under a layout with a left edge, a rule that sends a mode's buffers to the left edge docks the buffer a command makes with that minor mode there, in the edge's strip of 25 percent, focused, and main still shows the file"
+      run :=
+        pure <|
+          match buffersOpen with
+          | none => false
+          | some opened =>
+            let ruled :=
+              { opened with
+                keys :=
+                  { opened.keys with
+                    layout := some (.edge .left 25 Layout.default)
+                    registered :=
+                      { opened.keys.registered with
+                        displayRules := #[{ mode := some "notes", target := .edge .left }] } } }
+            -- The first step publishes the layout config chose, as a reload
+            -- does, before the command runs.
+            let (noted, _) := fedTo ruled ([.preedit ""] ++ presses "C-b o")
+            let state := noted.loop.state
+            match state.frame.docked.toList with
+            | [(notes, .left)] =>
+              state.frame.windows == #[⟨0⟩] && state.frame.focused == notes &&
+                shownName noted notes == some "notes" &&
+                shownName noted ⟨0⟩ == some "lf.txt" &&
+                (state.rect? notes).map (fun rect => (rect.x, rect.y, rect.width)) ==
+                  some (0, 0, 160) &&
+                (state.rect? ⟨0⟩).map (fun rect => (rect.x, rect.width)) == some (160, 480) &&
+                state.wellFormed
             | _ => false }]
 
 /-- The command `other` of the theme command's checks: it says `other`. -/
