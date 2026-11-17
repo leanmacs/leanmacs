@@ -26,6 +26,7 @@ import Editor.SyntaxTree.Real
 import Editor.TabCommands.Compiled
 import Editor.Text.Real
 import Editor.Themes.Compiled
+import Editor.VersionControl.Compiled
 import Editor.Watch.Real
 import Editor.Window
 import Editor.WindowCommands.Compiled
@@ -201,6 +202,12 @@ as before, so reload and job completion work as they did.
   `find-mode-markers`, which gives a buffer the minor modes the compile
   contributions' markers turn on, and which every file's open starts once
   its workspace is known, since contributions ship. And it is handed the
+  status buffer's commands, jobs and mode (`VersionControl.commands`,
+  `VersionControl.jobs`, `VersionControl.modes`,
+  `Editor/VersionControl/Compiled.lean`): `vc-status` and the commands of
+  its buffer, the jobs `vc-status-read` and `vc-status-apply`, which run
+  git, and the mode `vc-status`; the ex name `vc-status` runs the first.
+  And it is handed the
   `code` mode and the languages that ship (`Language.modes`,
   `Language.shipped`, `Editor/Language.lean`): `rust`, `json` and
   `markdown`, so a file of one of them opens in `code`, highlighted. The ex
@@ -2245,7 +2252,8 @@ with the themes that ship, the workspace command with the job that finds a
 file's workspace, the shell's command with the job that runs `:!`, the
 compile mode's commands, its jobs, its mode and the contributions that ship,
 `cargo-mode`, `lake-mode` and `mise-mode` (`Editor/Compile.lean`,
-`Editor/Compile/Shipped.lean`), the `code` mode with the languages that ship
+`Editor/Compile/Shipped.lean`), the status buffer's commands, its jobs and
+its mode (`Editor/VersionControl/Compiled.lean`), the `code` mode with the languages that ship
 (`Editor/Language.lean`), and the menu bar (`Menu.standard`) with its
 items' bindings (`Menu.bindings`). Its display is the recorder and its
 clipboard its own, as a host's are by default.
@@ -2267,10 +2275,13 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         Themes.commands ++
         Workspace.commands ++
         Shell.commands ++
-        Compile.commands
+        Compile.commands ++
+        VersionControl.commands
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
-    compiledJobs := Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs
-    modes := Minibuffer.modes ++ Compile.modes ++ Language.modes, ex := Ex.bindings
+    compiledJobs :=
+      Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs ++ VersionControl.jobs
+    modes := Minibuffer.modes ++ Compile.modes ++ VersionControl.modes ++ Language.modes
+    ex := Ex.bindings
     themes := Themes.shipped, languages := Language.shipped
     segments := ModeLine.shipped, contributions := Compile.shipped, log := IO.eprintln }
 

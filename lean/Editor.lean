@@ -16,6 +16,7 @@ import Editor.Minibuffer
 import Editor.Setup
 import Editor.TabCommands
 import Editor.Themes
+import Editor.VersionControl.Status
 
 /-!
 # The editor
@@ -197,6 +198,17 @@ and error formats (`Editor/Compile/Contribution.lean`, with the formats of
 registers it (`compileContribution`, `projectCommands`). The formats that
 ship (`Editor/Compile/Shipped.lean`) are imported, so config can build on
 them.
+
+Version control is here too (`Editor/VersionControl.lean`): the interface
+a version-control system answers, in the editor's own terms, with its git
+implementation (`Editor/VersionControl/Git.lean`), which runs git as jobs,
+and the status buffer, `vc-status`, which shows a workspace's changed files
+and stages and unstages them (`Editor/VersionControl/Status.lean`, which
+brings the interface and git with it). Its registrations
+(`Editor/VersionControl/Compiled.lean`) name the registry and are not
+imported. Its model and its contract (`Editor/VersionControl/Model.lean`,
+`Editor/VersionControl/Contract.lean`) are for tests, and are not
+imported.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

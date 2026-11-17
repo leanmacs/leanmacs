@@ -3,6 +3,7 @@ import Editor.Compile
 import Editor.Config.Registry
 import Editor.Ex
 import Editor.Files
+import Editor.VersionControl.Status
 
 /-!
 # The ex line's commands and the ex names that ship, as compiled code registers them
@@ -78,6 +79,11 @@ drops it.
     `previous-error` and take nothing: they step through the locations of
     the focused buffer's workspace's compilation. No global key binds
     them.
+  - `vc-status` runs `vc-status` (`Editor/VersionControl/Status.lean`)
+    and takes nothing: it opens the status buffer of the workspace of the
+    buffer the line was asked from. A host must be handed the status
+    buffer's commands, jobs and mode
+    (`Editor/VersionControl/Compiled.lean`).
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -117,6 +123,7 @@ def bindings : Array Binding :=
     { name := "recompile", command := Compile.recompileName },
     { name := "kill-compilation", command := Compile.killName },
     { name := "next-error", command := Compile.nextName },
-    { name := "previous-error", command := Compile.previousName }]
+    { name := "previous-error", command := Compile.previousName },
+    { name := "vc-status", command := VersionControl.statusName }]
 
 end Editor.Ex
