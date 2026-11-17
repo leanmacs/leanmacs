@@ -26,7 +26,7 @@
 //!    a library recovers from an error can depend on what it reuses, so
 //!    while a text has an error its tree may differ from a fresh parse's;
 //!    on a text without errors the grammar is held equal to a fresh parse
-//!    ([`crate::contract::INCREMENTAL`]). Exactness is restored once the
+//!    ([`crate::contract::GRAMMAR_QUALITY`]). Exactness is restored once the
 //!    text is quiet, by the idle refresh.
 //! 4. **Layers.** When the session has an injections query
 //!    ([`Session::set_injections`]), the new tree's layers are found

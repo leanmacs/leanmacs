@@ -543,6 +543,7 @@ pub const PARENS_CORPUS: Corpus = Corpus {
         &[],
         &[("key", None)],
     ],
+    policy: ReparsePolicy::Incremental,
 };
 
 #[cfg(test)]

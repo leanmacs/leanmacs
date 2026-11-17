@@ -12,7 +12,7 @@
 //! `include_str!`, and a few written here.
 
 use editor_syntax::contract::{self, Corpus};
-use editor_syntax::{QueryErrorKind, QueryKind};
+use editor_syntax::{QueryErrorKind, QueryKind, ReparsePolicy};
 use editor_syntax_treesitter::TreeSitter;
 
 /// The Rust grammar's corpus.
@@ -70,6 +70,7 @@ const RUST: Corpus = Corpus {
         &[],
         &[("priority", Some("2"))],
     ],
+    policy: ReparsePolicy::Incremental,
 };
 
 /// The JSON grammar's corpus.
@@ -98,6 +99,7 @@ const JSON: Corpus = Corpus {
     shipped: &[QueryKind::Highlights],
     settings_query: "((pair) @p (#set! key value))\n(number) @n\n",
     settings: &[&[("key", Some("value"))], &[]],
+    policy: ReparsePolicy::Incremental,
 };
 
 /// The Markdown grammar's corpus: the block grammar, the one listed.
@@ -125,6 +127,7 @@ const MARKDOWN: Corpus = Corpus {
     shipped: &[QueryKind::Highlights, QueryKind::Injections],
     settings_query: "((fenced_code_block) @f (#set! injection.language \"rust\"))\n(paragraph) @p\n",
     settings: &[&[("injection.language", Some("rust"))], &[]],
+    policy: ReparsePolicy::Incremental,
 };
 
 #[test]

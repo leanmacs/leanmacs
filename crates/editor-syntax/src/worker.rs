@@ -26,7 +26,7 @@
 //! - **A touch at a revision told already** (an attach, or a change of
 //!   injections at the text's own revision) sets and moves no deadline.
 //! - **A session whose grammar's policy is
-//!   [`ReparsePolicy::Whole`](crate::ReparsePolicy::Whole)** is never
+//!   [`ReparsePolicy::Whole`]** is never
 //!   scheduled: each of its rounds is a whole parse already.
 //! - **What runs next.** A queued round runs first: edits before refreshes.
 //!   Otherwise the first refresh whose deadline the clock has reached runs
