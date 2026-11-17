@@ -3,6 +3,12 @@
 # tested with Cargo alone; only `editor-ffi` knows about Lean.
 [workspace]
 members = ["crates/*"]
+# A vendored crate (vendor/README.md) is a path dependency, not a member: its
+# dev-dependencies never enter the lock (the Lean grammar's `tree-sitter 0.25`
+# would conflict with the pinned library's `links`), and the gate's clippy, doc
+# and test leave third-party code alone. `cargo fmt --all` still reads its
+# Rust, which is upstream's and passes as is.
+exclude = ["vendor"]
 resolver = "3"
 
 [workspace.package]

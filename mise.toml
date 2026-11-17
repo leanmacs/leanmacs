@@ -111,14 +111,17 @@ run = [
 ]
 
 # Tracked files only, so Lake's fetched packages and build output are never
-# looked at. A new C file is checked once it is `git add`ed.
+# looked at. A new C file is checked once it is `git add`ed. Vendored C
+# (`vendor/`, vendor/README.md) is left out: it is upstream's generated code,
+# neither checked nor rewritten here, and clang-format takes about 51 s on the
+# Lean grammar's `parser.c` alone.
 [tasks.c-fmt]
 description = "Check the formatting of the C and C++ sources (.clang-format); changes nothing"
-run = "git ls-files -z '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' | xargs -0 clang-format --dry-run --Werror"
+run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xargs -0 clang-format --dry-run --Werror"
 
 [tasks.c-format]
 description = "Rewrite the C and C++ sources in the style .clang-format sets"
-run = "git ls-files -z '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' | xargs -0 clang-format -i"
+run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xargs -0 clang-format -i"
 
 # Runs the built executables only (no Lake), so it needs just `lean` before it.
 # The time limit turns a hang into a failure: a deadlock in the main-thread

@@ -1,0 +1,4 @@
+# Vendored third-party code (vendor/README.md): not ours, and its generated
+# parser shows in `git diff` as a binary change, not 49 MB of text.
+vendor/** linguist-vendored
+vendor/tree-sitter-lean/src/parser.c -diff
