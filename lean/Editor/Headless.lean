@@ -2536,7 +2536,9 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     segments := ModeLine.shipped, contributions := Compile.shipped
     sources :=
       Ex.sources ++ Buffers.sources ++ TabCommands.sources ++ Themes.sources ++
-        Completion.Words.shipped
+        Completion.Words.shipped ++
+        Files.sources
+    styleDefaults := Files.styleDefaults
     atPoints := Completion.AtPoint.shipped, atPointUses := #[(none, "words")]
     log := IO.eprintln }
 

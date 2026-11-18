@@ -4880,28 +4880,38 @@ def fileChecks (context : Context) : List Check :=
                   echo == (Files.notOpened path .notFound).quote &&
                   lines == #[viewLine "kept" 4, statusOf (modified := true) (cursor := ⟨0, 4⟩)] },
     { name :=
-        "the open command with no path asks for one and opens the answer: run by its name, with the path of a file in a temporary directory committed into the minibuffer and the accept key pressed, the host says the load job started and ended, the prompt is closed, and the view the command was asked from shows the file's text in a buffer called by its base name"
+        "the open command with no path asks for one and opens the answer: run by its name, it lists the stage's working directory, /; with the path of a file in a temporary directory committed into the minibuffer after its /, read by the restart after //, which lists that directory, and the accept key pressed, the host says the listing jobs and the load job started and ended, the prompt is closed, and the view the command was asked from shows the file's text in a buffer called by its base name"
       run :=
         IO.FS.withTempDir fun files => do
           let path := files / "note.txt"
           IO.FS.writeBinFile path noteText.toUTF8
           withFileHost context [] fun session => do
               session.ask [.run Files.openName]
+              -- The prompt lists the stage's working directory, /: the
+              -- listing is waited for, so its job's lines are all printed.
+              let listed := (← session.host.join patience) == .settled
+              -- The path is committed after the prompt's /: the restart
+              -- after // reads it as it is. Its directory is listed in
+              -- turn, and waited for.
               unless ← Event.post (.commit path.toString) do
                 return false
+              let relisted := (← session.host.join patience) == .settled
               let asking ← session.sceneLines
               session.pressKeys acceptKeys
               let joined := (← session.host.join patience) == .settled
               let (echo, lines) ← session.viewsAndStatus
               let output ← session.output.get
-              return joined && !acceptKeys.isEmpty &&
-                  asking.extract 1 ==
-                    #[viewLine "" 0, statusOf,
-                      minibufferLine path.toString path.toString.utf8ByteSize,
+              let typed := "/" ++ path.toString
+              let files := Completion.Paths.job
+              return listed && relisted && joined && !acceptKeys.isEmpty &&
+                  asking.extract 1 5 ==
+                    #[viewLine "" 0, statusOf, minibufferLine typed typed.utf8ByteSize,
                       promptStatus Files.openPrompt] &&
                   output.contains s!"run {Files.openName}: ok" &&
                   output.filter (·.startsWith "job ") ==
-                    #[s!"job 1 {Files.loadJob}: started", s!"job 1 {Files.loadJob}: ok"] &&
+                    #[s!"job 1 {files}: started", s!"job 1 {files}: ok", s!"job 1 {files}: ok",
+                      s!"job 2 {files}: started", s!"job 2 {files}: ok", s!"job 2 {files}: ok",
+                      s!"job 3 {Files.loadJob}: started", s!"job 3 {Files.loadJob}: ok"] &&
                   echo == "".quote &&
                   lines == #[viewLine noteText 0, noteStatus path] }]
 
@@ -5677,6 +5687,24 @@ keymap of its bindings. Its services are a fake clock's over a table of
 waits of its own, which no pump reads: nothing here starts a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
+        "the executable's hosts start with the source files registered compiled in the category file, its job files, the style path, and the file category matched with path"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return registry.sources.any
+              (fun entry => entry.source.name == "files" && entry.owner == .compiled) &&
+            registry.sourcesIn Completion.Paths.category == #["files"] &&
+            registry.jobs.any
+              (fun entry =>
+                entry.registration.name == Completion.Paths.job && entry.owner == .compiled) &&
+            (registry.style? "path").isSome &&
+            (registry.matching.styleFor (some Completion.Paths.category)).name == "path" &&
+            registry.matching.ownerFor (some Completion.Paths.category) == .compiled },
+    { name :=
         "the executable's hosts start with the source words registered compiled in the category word, its job words registered compiled, the at-point source words registered compiled, and a modeless buffer's at-point chain is words"
       run := do
         let completions ← Job.Completions.new

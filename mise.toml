@@ -208,11 +208,8 @@ run = [
   # shows with the prompt text as its status line; `<Enter>` accepts with
   # the compiled command `minibuffer-accept`, and config's command that
   # receives the answer says it in the echo area; `<Escape>` cancels with
-  # `minibuffer-cancel`, and that command does not run; and the compiled
-  # `open-file`, run with no path, asks for one and opens the answer, here
-  # a committed text, a path that is not absolute, which the library
-  # refuses before it asks the file system, so the run touches no file
-  # (`prompt/expected`).
+  # `minibuffer-cancel`, and that command does not run (`prompt/expected`).
+  # It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/prompt/config ../tests/headless/prompt/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/prompt/expected -",
   # A prompt with candidates, on a config of its own (tests/headless/
   # candidates), under the editor's input scheme and with the library's
@@ -345,9 +342,10 @@ run = [
   # no `reload`, so the ex command and every ex name are the ones the
   # editor ships. Two of its lines are opened with the `:` key, as a user
   # opens them. A name nobody bound is said in the echo area, `w` in the
-  # scratch buffer says it has no file, and `q` quits the editor: the loop
-  # ends, the `scene` line after it is not run, and the status is 0
-  # (`ex/expected`). It touches no file.
+  # scratch buffer says it has no file, `e` with no path asks with the file
+  # prompt, whose listing of the working directory is waited for and not
+  # printed, and `q` quits the editor: the loop ends, the `scene` line after
+  # it is not run, and the status is 0 (`ex/expected`). It writes no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/ex/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/ex/expected -",
   # `e`, an edit, `w` and `q` on a real file, as a process. Lean spawns no
   # child (docs/design/overview.md), so the check is here: this entry is one

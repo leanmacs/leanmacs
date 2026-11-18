@@ -1,8 +1,8 @@
 # The script `mise run ffi-test` has the editor's headless mode run against
 # the config in `../config/`, of which it loads nothing: there is no
 # `reload`. So every command and every ex name it runs is one the editor
-# ships, compiled in. What it prints must be exactly `expected`. It touches
-# no file.
+# ships, compiled in. What it prints must be exactly `expected`. It writes
+# no file: the file prompt lists the working directory.
 
 # `ex` is the compiled command that opens the ex line: a prompt labelled
 # `:`, whose answer is run as an ex command. The first line is opened as a
@@ -27,17 +27,21 @@ scene
 # minibuffer the status line is the line's label alone, and the candidate
 # list, a view of its own, lists `e`, which is the text, first, then the
 # other names that hold an `e`, at most ten, each with what matched in the
-# match face. `<Tab>` chooses the first, and `<Enter>` runs it: `e` with no
-# path asks for one, with a prompt of its own, which has no candidates, so
-# it lists none and its status line is its label alone. `<Escape>` cancels
-# that prompt.
+# match face. `<Tab>` puts the first listed in the input, `e`, which is
+# what is there already, and `<Enter>` runs it: `e` with no path asks for
+# one with the file prompt, which starts with the executable's working
+# directory and lists that directory, a machine's path, so its scene is not
+# printed. `join` waits for its listing job, which posts one batch and ends,
+# and `<Escape>` cancels that prompt; the scene after it shows view 0
+# alone.
 key : Semicolon shift
 commit e
 scene
 key <Tab> Tab -
 key <Enter> Enter -
-scene
+join
 key <Escape> Escape -
+scene
 
 # `q` is bound to `quit`. Nothing has unsaved changes, so the editor quits:
 # the loop ends at the accept key, and the `scene` line after it is not

@@ -38,9 +38,16 @@ for the owner `compiled` when its loop starts, before any config
   (`Files.limit`), `save-file`, and `check-files`, which the loop itself
   starts to check file buffers for a change on disk, one stat a file
   (`Editor/Loop.lean`, "Files that changed on disk"): a host that is not
-  handed it checks nothing. Each is started by its command with an order as its
+  handed it checks nothing, and `files`, the file source's job
+  (`Completion.Paths.gather`), which lists the directory a file prompt's
+  text names. Each is started by its command with an order as its
   arguments. They are compiled jobs, so a reload does not cancel one: a
   save that was started is ended.
+
+- **`Files.sources`**: the file source, `files`, of the category `file`
+  (`Editor/Completion/Paths.lean`), which `open-file`'s prompt asks for.
+- **`Files.styleDefaults`**: the path style for the category `file`, a
+  compiled default config's `useStyleFor` overrides.
 
 This module is apart from `Editor/Files.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -66,6 +73,18 @@ and the save job. -/
 def jobs : Array Config.JobRegistration :=
   #[{ name := loadJob, work := loadWork limit }, { name := saveJob, work := saveWork },
     { name := reloadJob, work := reloadWork limit }, { name := checkJob, work := checkWork },
-    { name := followJob, work := followWork }]
+    { name := followJob, work := followWork },
+    { name := Completion.Paths.job, work := Completion.answering Completion.Paths.gather }]
+
+/-- The completion sources the file prompt lists, as a host registers them
+for the owner `compiled`: the file source, in the category `file`. -/
+def sources : Array Completion.Source :=
+  Completion.Paths.shipped
+
+/-- The style compiled code gives the category `file`: the path style, which
+config's `useStyleFor "file"` overrides and its `useStyle` does not reach
+(`Config.Registry.styleDefaults`). -/
+def styleDefaults : Array (String × String) :=
+  #[(Completion.Paths.category, Completion.Styles.path.name)]
 
 end Editor.Files

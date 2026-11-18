@@ -23742,7 +23742,8 @@ source that makes a text and one that is refused. -/
 def sourceContractChecks : List Check :=
   let subjects : List Completion.Source :=
     [.fixed "fixed" "test" (offered #["wq", "w"]), Completion.Fake.echo "echo" "test",
-      Ex.historySource, Ex.namesSource, Buffers.source, TabCommands.source, Themes.source]
+      Ex.historySource, Ex.namesSource, Buffers.source, TabCommands.source, Themes.source,
+      Completion.Paths.source]
   let writes : Completion.Source :=
     { name := "writes", category := "test"
       candidates := fun _ => do
@@ -23795,7 +23796,7 @@ def inFiles (name : String) : System.FilePath :=
 
 /-- The keys of the file command checks that open a file, and the path each
 opens: `missing.txt` is not there, and `relative.txt` is not an absolute
-path. -/
+path, which the open command reads under the working directory. -/
 def openKeys : List (String × System.FilePath) :=
   [("C-o n", inFiles "note.txt"), ("C-o c", inFiles "crlf.txt"), ("C-o l", inFiles "lf.txt"),
     ("C-o p", inFiles "plain.txt"), ("C-o m", inFiles "missing.txt"), ("C-o r", "relative.txt"),
@@ -23887,7 +23888,11 @@ def fileKeys : Loop.Keys TestScheme.scheme :=
 are refused over `limit` bytes, and the save job. -/
 def fileJobs (limit : Nat := Files.limit) (name : String) : Option (List Argument → Work) :=
   if name == Files.loadJob then some (Files.loadWork limit)
-  else if name == Files.saveJob then some Files.saveWork else none
+  else
+    if name == Files.saveJob then some Files.saveWork
+    else
+      if name == Completion.Paths.job then some (Completion.answering Completion.Paths.gather)
+      else none
 
 /-- A driver over the initial state with the keys of the file command
 checks, the jobs `registered`, and `files` as the files its jobs reach;
@@ -24290,6 +24295,14 @@ def openFilesChecks : List Check :=
             echoOf after == some "mine: 2" && after.pending.isEmpty &&
               after.loop.state.buffers.size == 1 }]
 
+/-- `driver` once its first load job not yet delivered is delivered, with
+the step the delivery handed back: the load among other jobs, a file
+prompt's source's among them. -/
+def finishedLoad (driver : TestDriver) : TestDriver × Option (Loop.Stepped TestScheme.scheme) :=
+  match driver.pending.find? (·.name == Files.loadJob) with
+  | some job => driver.finish job.id
+  | none => (driver, none)
+
 /-- The checks of the file commands (`Editor/Files.lean`), on the loop's
 driver over the editor's models and the model of files: opening a file into
 a buffer, and saving a buffer to its file. No file is touched. -/
@@ -24375,7 +24388,7 @@ def fileCommandChecks : List Check :=
               refused.model.texts.snapshots.size == asked.model.texts.snapshots.size &&
               refused.jobs.files == asked.jobs.files },
     { name :=
-        "a file longer than the limit the load job is registered with is refused as too large, with its size and the limit, and a path that is not absolute as a relative path: each is said in the echo area by the same route, and nothing is opened"
+        "a file longer than the limit the load job is registered with is refused as too large, with its size and the limit, and a path that is not absolute is read under the working directory, /, where nothing is: each is said in the echo area by the same route, and nothing is opened"
       run :=
         pure <|
           match filesDriver (fileJobs 4), filesDriver with
@@ -24388,7 +24401,7 @@ def fileCommandChecks : List Check :=
                 some
                   (Files.notOpened (inFiles "note.txt") (.tooLarge FileCases.noteBytes.size 4)) &&
               large.loop.state.buffers.size == 1 &&
-              echoOf relative == some (Files.notOpened "relative.txt" .relativePath) &&
+              echoOf relative == some (Files.notOpened "/relative.txt" .notFound) &&
               relative.loop.state.buffers.size == 1
           | _, _ => false },
     { name :=
@@ -24588,7 +24601,8 @@ def fileCommandChecks : List Check :=
                 state.wellFormed
             let (prompted, _) := fedTo driver (presses "C-o o")
             let (asked, steps) := fedTo prompted (presses "C-o n")
-            let (opened, delivered) := asked.finish 1
+            -- The prompt's file source started a job of its own first.
+            let (opened, delivered) := finishedLoad asked
             -- The file is open in view 0, which then shows the scratch
             -- buffer again.
             let (shown, _) := fedTo noted (presses "C-o 0 C-o o")
@@ -24601,7 +24615,7 @@ def fileCommandChecks : List Check :=
               behind prompted opened &&
               (showing shown).map (·.id) == some ⟨0⟩ &&
               started repeated == #[] &&
-              again.pending.isEmpty &&
+              again.pending.all (·.name == Completion.Paths.job) &&
               behind shown again
           | _, _ => false },
     { name :=
@@ -24841,7 +24855,7 @@ def fileCommandChecks : List Check :=
               (opened.loop.state.findFile crlf).isSome &&
               opened.loop.state.wellFormed },
     { name :=
-        "the open command with no path among its arguments, with none and with the count and the register an input scheme hands a command, starts no job and asks for the path: a prompt is open, labelled as the open command's, whose continuation is the open command with no argument of its own, asked from the view the command was called in"
+        "the open command with no path among its arguments, with none and with the count and the register an input scheme hands a command, starts no load and asks for the path: a prompt is open, labelled as the open command's, whose continuation is the open command with no argument of its own, asked from the view the command was called in, starting at the working directory, /, with the file source asking, whose job is the one started"
       run :=
         pure <|
           match filesDriver with
@@ -24849,11 +24863,16 @@ def fileCommandChecks : List Check :=
           | some driver =>
             ["C-o o", "C-o V"].all fun typed =>
               let (asked, steps) := fedTo driver (presses typed)
-              started steps == #[] && asked.pending.isEmpty && echoOf asked == some "" &&
-                asked.loop.state.prompt ==
-                  some
-                    { label := Files.openPrompt, view := ⟨1⟩, asker := ⟨0⟩
-                      continuation := { command := Files.openName } } &&
+              (started steps).map (·.name) == #[Completion.Paths.job] &&
+                asked.pending.all (·.name == Completion.Paths.job) &&
+                echoOf asked == some "" &&
+                asked.loop.state.prompt.map
+                    (fun prompt =>
+                      (prompt.label, prompt.view, prompt.asker, prompt.continuation)) ==
+                  some (Files.openPrompt, ⟨1⟩, ⟨0⟩, { command := Files.openName }) &&
+                asked.loop.state.prompt.map (·.candidates.asking.map (·.source)) ==
+                  some #["files"] &&
+                minibufferText asked == some "/" &&
                 !Files.openPrompt.isEmpty &&
                 asked.loop.state.frame.focused == ⟨1⟩ &&
                 asked.loop.state.wellFormed },
@@ -24871,7 +24890,7 @@ def fileCommandChecks : List Check :=
               again.loop.state.prompt.isSome &&
               again.loop.state.windows.size == 2 },
     { name :=
-        "the open command asks for its path and opens the answer: with the commands compiled code registers, the open command with no argument, the path of a file committed into the minibuffer, the accept command and the load job finished leave the view the command was called in showing the file's text, in a buffer called by the file's base name, with the prompt closed, and one job was started"
+        "the open command asks for its path and opens the answer: with the commands compiled code registers, the open command with no argument, the path of a file committed into the minibuffer after its /, read by the restart after //, the accept command and the load job finished leave the view the command was called in showing the file's text, in a buffer called by the file's base name, with the prompt closed, and the file source's job and one load were started"
       run :=
         pure <|
           match compiledDriver with
@@ -24881,15 +24900,17 @@ def fileCommandChecks : List Check :=
             let (asked, _) := fedTo driver (presses "C-o o")
             let (typed, _) := fedTo asked [.commit path.toString]
             let (accepted, _) := fedTo typed (presses "C-o y")
-            let (opened, delivered) := accepted.finish 1
-            asked.loop.state.prompt.isSome && asked.pending.isEmpty &&
-              minibufferText typed == some path.toString &&
+            let (opened, delivered) := finishedLoad accepted
+            asked.loop.state.prompt.isSome && asked.pending.all (·.name == Completion.Paths.job) &&
+              -- The path is typed after the prompt's /, and the restart
+              -- after // reads it as it is.
+              minibufferText typed == some ("/" ++ path.toString) &&
               accepted.loop.state.prompt == none &&
               accepted.loop.state.frame.focused == ⟨0⟩ &&
-              accepted.pending.map (fun job => (job.id, job.name)) == #[(1, Files.loadJob)] &&
+              -- The file source's jobs were cancelled when the prompt closed.
+              accepted.pending.map (·.name) == #[Files.loadJob] &&
               (delivered.map (·.ended)) == some (some .finished) &&
               opened.pending.isEmpty &&
-              opened.next == 2 &&
               (showing opened).map (fun shown => (shown.buffer.name, shown.text)) ==
                 some ("note.txt", some FileCases.noteText) &&
               statusOf opened == some (named "note.txt") &&
@@ -25140,7 +25161,7 @@ def fileCommandChecks : List Check :=
               saved.loop.state.buffers == removed.loop.state.buffers &&
               saved.loop.state.wellFormed },
     { name :=
-        "the file commands and their jobs as compiled code registers them: the open, save, edit and reload commands are registered under their names and the load, save and reload jobs under theirs, the open command with a path opens the file and the save command saves the buffer, and the open command with no path starts nothing and asks for one"
+        "the file commands and their jobs as compiled code registers them: the open, save, edit and reload commands are registered under their names and the load, save and reload jobs under theirs, the open command with a path opens the file and the save command saves the buffer, and the open command with no path starts no load, only the file source's job, and asks for one"
       run :=
         pure <|
           match compiledDriver with
@@ -25160,9 +25181,10 @@ def fileCommandChecks : List Check :=
                 #[Files.openName, Files.saveName, Files.editName, Files.reloadName,
                   Files.autoReloadName] &&
               Files.jobs.map (·.name) ==
-                #[Files.loadJob, Files.saveJob, Files.reloadJob, Files.checkJob, Files.followJob] &&
-              started steps == #[] &&
-              bare.pending.isEmpty &&
+                #[Files.loadJob, Files.saveJob, Files.reloadJob, Files.checkJob, Files.followJob,
+                  Completion.Paths.job] &&
+              (started steps).map (·.name) == #[Completion.Paths.job] &&
+              bare.pending.all (·.name == Completion.Paths.job) &&
               bare.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
                 some (Files.openPrompt, { command := Files.openName }) &&
               (showing opened).bind (·.text) == some FileCases.noteText &&
@@ -25932,7 +25954,7 @@ def exChecks : List Check :=
               (heldFile opened).map (·.path) == some path &&
               closed opened },
     { name :=
-        "the ex name e with no argument asks for a path, with the open command's prompt, and starts nothing"
+        "the ex name e with no argument asks for a path, with the open command's prompt, and starts no load"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -25941,7 +25963,7 @@ def exChecks : List Check :=
             let (asking, _) := fedTo driver (exLine "e")
             asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
                 some (Files.openPrompt, { command := Files.openName }) &&
-              asking.pending.isEmpty },
+              asking.pending.all (·.name == Completion.Paths.job) },
     { name :=
         "the ex name w after an edit starts a save, which is in flight until its job is finished: the file then holds the buffer's text, the buffer is not modified, and the echo area says the file was written"
       run :=
@@ -26227,7 +26249,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, compile-command, recompile, next-error and previous-error, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, compile-command, recompile, next-error and previous-error, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, asks the file source"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -26241,7 +26263,7 @@ def exChecks : List Check :=
                   #["e", "e!", "autoread", "noautoread", "reload", "compile", "compile-command",
                     "recompile", "next-error", "previous-error"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
-              candidatesOf opening == some {} }]
+              (candidatesOf opening).map (·.asking.map (·.source)) == some #["files"] }]
 
 /-- The commands compiled code registers for files, the minibuffer and the ex
 line, each under its name, and `undo` and `redo`, which move one step of the
@@ -40748,6 +40770,336 @@ def atPointByItselfChecks : List Check :=
               drained.loop.state.echo != AtPoint.noCompletions &&
               drained.loop.state.echo == typed.loop.state.echo }]
 
+/-- The files of the path checks: `/w` holds `b.txt`, `A.txt`, `.hidden`,
+and the directories `src` and `.git`; `/w/locked` is a directory too. -/
+def pathsFiles : FileModel :=
+  ((((((({} : FileModel).withDirectory "/w").withFile "/w/b.txt" "b".toUTF8).withFile "/w/A.txt"
+                    "a".toUTF8).withFile
+                "/w/.hidden" "h".toUTF8).withDirectory
+            "/w/src").withDirectory
+        "/w/.git").withDirectory
+    "/w/locked"
+
+/-- What the file source's job delivers for `text`, read under `place`, over
+`files`, on the job model: its batches, decoded from its posts, and how it
+ended. -/
+def gatheredPaths (text : String) (files : FileModel := pathsFiles)
+    (place : Completion.Place := { directory := some "/w" }) :
+    Job.Outcome Unit × Array (Array Completion.Candidate) :=
+  let order : Completion.Order :=
+    { view := ⟨3⟩, index := 0, generation := 1, query := { text, view := ⟨0⟩, place } }
+  let (outcome, model) :=
+    (Completion.answering Completion.Paths.gather order.arguments ()).runModel { files }
+  (match outcome with
+    | .finished _ => .finished ()
+    | .failed message => .failed message
+    | .cancelled => .cancelled,
+    model.posted.filterMap fun posted =>
+      (Completion.batchOfArguments? posted.arguments).map fun (_, _, _, batch) => batch)
+
+/-- Why the file source's job refused `text`, read under `place`, over
+`files`: what it threw, or `none` when it did not. -/
+def pathsRefusal (text : String) (files : FileModel := pathsFiles)
+    (place : Completion.Place := { directory := some "/w" }) : Option String :=
+  let job : JobM String := do
+    try
+      Completion.Paths.gather { text, view := ⟨0⟩, place } fun _ => pure ()
+      return ""
+    catch message =>
+      return message
+  match (job.runModel { files }).1 with
+  | .finished "" => none
+  | .finished message => some message
+  | _ => none
+
+/-- The checks of the file source (`Editor/Completion/Paths.lean`) on the job
+model. -/
+def pathsChecks : List Check :=
+  [{  name :=
+        "the file source lists a directory's entries directories first, by name ignoring case, a directory with a trailing /, its name and a / as its label, annotated directory, of the kind directory and partial; a file of the kind file; a name that starts with . hidden until a . is typed"
+      run :=
+        pure <|
+          let (outcome, batches) := gatheredPaths "/w/"
+          let all := batches.flatten
+          (outcome matches .finished ()) && batches.size == 1 &&
+            all.map (·.text) ==
+              #["/w/.git/", "/w/locked/", "/w/src/", "/w/.hidden", "/w/A.txt", "/w/b.txt"] &&
+            all.map (·.label) ==
+              #[some ".git/", some "locked/", some "src/", some ".hidden", some "A.txt",
+                some "b.txt"] &&
+            all.map (·.hiddenUntil) == #[some ".", none, none, some ".", none, none] &&
+            all.map (·.isPartial) == #[true, true, true, false, false, false] &&
+            all.map (·.kind) ==
+              #[some "directory", some "directory", some "directory", some "file", some "file",
+                some "file"] &&
+            all.map (·.annotation) ==
+              #[some "directory", some "directory", some "directory", none, none, none] },
+    { name := "the texts are written under the tidied directory: /x//w/ lists /w/'s entries as /w/…"
+      run :=
+        pure <|
+          let (_, batches) := gatheredPaths "/x//w/"
+          (batches.flatten.map (·.text))[0]? == some "/w/.git/" },
+    { name := "2,500 entries come in three batches of at most 1,000, in order"
+      run :=
+        pure <|
+          let names := (Array.range 2500).map fun index => s!"f{1000000 + index}"
+          let files :=
+            names.foldl
+              (fun (model : FileModel) (name : String) => model.withFile ("/big" / name) .empty)
+              (({} : FileModel).withDirectory "/big")
+          let (_, batches) := gatheredPaths "/big/" files
+          batches.map (·.size) == #[1000, 1000, 500] &&
+            batches.flatten.map (·.text) == names.map ("/big/" ++ ·) },
+    { name :=
+        "an unreadable directory, a missing one, a file, a ~ with no home and a relative text with no directory each throw cannot list <shown>: <why>"
+      run :=
+        pure <|
+          let locked := { pathsFiles with unreadable := #["/w/locked"] }
+          pathsRefusal "/w/locked/" locked ==
+              some "cannot list /w/locked/: the file system does not allow it" &&
+            pathsRefusal "/w/missing/" == some "cannot list /w/missing/: nothing is at the path" &&
+            pathsRefusal "/w/b.txt/" ==
+              some "cannot list /w/b.txt/: what is at the path is not a directory" &&
+            pathsRefusal "~/x" == some "cannot list ~/: the home directory is not known" &&
+            pathsRefusal "x" (place := {}) == some "cannot list ./: no directory to read it from" },
+    { name :=
+        "the file source is named files, of the category file, and answers later from the job files, asked again by its directory part"
+      run :=
+        pure
+          (Completion.Paths.source.name == "files" && Completion.Paths.source.category == "file" &&
+            Completion.Paths.source.later == some { job := "files", reask := .beforeLast '/' } &&
+            Completion.Paths.shipped.map (·.name) == #["files"]) }]
+
+/-- The files of the file name checks: `/w` holds `alpha.txt`, `alps.md`,
+`beta.txt` and the directories `notes` and `src`; `/w/notes` holds
+`todo.md`; `/w/src` holds `main.lean`, `.env` and the directory
+`.cache`. -/
+def fileNameFiles : FileModel :=
+  let model :=
+    [("alpha.txt", "alpha\n"), ("alps.md", "alps\n"), ("beta.txt", "beta\n")].foldl
+      (fun (model : FileModel) (name, text) => model.withFile ("/w" / name) text.toUTF8)
+      ((({} : FileModel).withDirectory "/").withDirectory "/w")
+  ((((model.withDirectory "/w/notes").withDirectory "/w/src").withFile "/w/notes/todo.md"
+              "todo\n".toUTF8).withFile
+          "/w/src/main.lean" "main\n".toUTF8).withFile
+      "/w/src/.env" "env\n".toUTF8 |>.withDirectory
+    "/w/src/.cache"
+
+/-- What a step of the file name checks is handed: `C-o o` runs the open
+command with no path, `TAB` the minibuffer's insert, `C-n` its next,
+`C-u` its delete to the start, `<Backspace>` its delete backward and `RET`
+its accept, and a key that prints is typed; the commands are the ones
+compiled code registers for files and the minibuffer; the category `file`
+is matched with the path style; and a prompt over more than `inline`
+candidates is matched by a job. -/
+def fileNameKeys (inline : Nat := Loop.inlineMatches) : Loop.Keys TestScheme.scheme :=
+  let compiled : List (String × Dispatched) :=
+    (Files.commands ++ Minibuffer.commands).toList.filterMap
+      fun (registration : Config.Registration) =>
+      match registration.action with
+      | .call run =>
+        let dispatched : Dispatched := fun call => do
+          run call
+          return none
+        some (registration.name, dispatched)
+      | _ => none
+  let keys :=
+    dispatchKeys
+      [("C-o o", invoke Files.openName), ("TAB", invoke Minibuffer.insertName),
+        ("C-n", invoke Minibuffer.nextName), ("C-u", invoke Minibuffer.deleteToStartName),
+        ("<Backspace>", invoke Minibuffer.deleteBackwardName),
+        ("RET", invoke Minibuffer.acceptName)]
+      (compiled ++
+        [((TestScheme.selfInsert "").command, fun call => do
+            let [.str text] := call.arguments | throw .badRange
+            call.target.insertAtSelections text
+            return none)])
+  { keys with
+    inlineMatches := inline
+    matching :=
+      { default := Completion.Styles.fuzzy
+        byCategory := fun category =>
+          if category == Completion.Paths.category then some Completion.Styles.path else none } }
+
+/-- A driver of the file name checks over the initial state with `/w` as
+the working directory and `home` as the home directory, its jobs the ones
+compiled code registers for files, over `files`; `none` if making the state
+was refused. -/
+def fileNameDriver (home : Option System.FilePath := none) (files : FileModel := fileNameFiles)
+    (inline : Nat := Loop.inlineMatches) : Option TestDriver :=
+  let start : TextM EditorState := do
+    return { (← EditorState.initial ⟨640, 480⟩) with
+        workingDirectory := "/w", home }
+  (Loop.Driver.over (fileNameKeys inline)
+        (fun name => (Files.jobs.find? (·.name == name)).map (·.work)) start
+        editorModel).toOption.map
+    fun driver => { driver with jobs := { driver.jobs with files } }
+
+/-- `driver` once every job it holds at a post has posted and every job it
+started has been delivered, for at most `fuel` deliveries. -/
+def settled (driver : TestDriver) : (fuel : Nat := 64) → TestDriver
+  | 0 => driver
+  | fuel + 1 =>
+    match driver.posting[0]? with
+    | some job => settled (driver.posted job.id).1 fuel
+    | none =>
+      match driver.pending[0]? with
+      | some job => settled (driver.finish job.id).1 fuel
+      | none => driver
+
+/-- The labels the open prompt of `driver` lists, a candidate with none by
+its text. -/
+def fileLabels (driver : TestDriver) : Array String :=
+  ((candidatesOf driver).map
+        (·.listed.map fun listed => listed.candidate.label.getD listed.text)).getD
+    #[]
+
+/-- The starts of the file source's job among `steps`. -/
+def filesStarts (steps : Array (Option (Loop.Stepped TestScheme.scheme))) : Array JobStart :=
+  ((steps.filterMap id).flatMap (·.starts)).filter (·.name == Completion.Paths.job)
+
+/-- The checks of `open-file`'s prompt over file names, on the editor's
+models with the file model: the file source, the path style, the insert and
+the accept, through the loop's driver. -/
+def fileNameChecks : List Check :=
+  let opened? : Option TestDriver := do
+    let driver ← fileNameDriver
+    return settled (fedTo driver (presses "C-o o")).1
+  let labels := #["notes/", "src/", "alpha.txt", "alps.md", "beta.txt"]
+  let lasts := #["notes", "src", "alpha.txt", "alps.md", "beta.txt"]
+  [{  name :=
+        "AC 1 on the model: C-o o opens the prompt with /w/ and lists notes/, src/, alpha.txt, alps.md, beta.txt once the job is finished; typing al lists the fuzzy model's order over the last components, each with its matched range on its label"
+      run :=
+        pure <|
+          match fileNameDriver, opened? with
+          | some driver, some opened =>
+            let (asked, _) := fedTo driver (presses "C-o o")
+            let (typed, _) := fedTo opened (presses "a l")
+            minibufferText asked == some "/w/" && fileLabels opened == labels &&
+              fileLabels typed == (FuzzyModel.rank "al" lasts).filterMap (labels[·]?) &&
+              (candidatesOf typed).map
+                  (·.listed.all fun listed => !(Completion.Displays.labelRanges listed).isEmpty) ==
+                some true
+          | _, _ => false },
+    { name :=
+        "AC 2 on the model: C-n chooses notes/ and TAB makes the input /w/notes/, hands back a start of files whose order's text is /w/notes/, and once it is finished the listing is todo.md"
+      run :=
+        pure <|
+          match opened? with
+          | none => false
+          | some opened =>
+            let (inserted, steps) := fedTo opened (presses "C-n TAB")
+            minibufferText inserted == some "/w/notes/" &&
+              (filesStarts steps).map
+                  (fun start =>
+                    (Completion.Order.ofArguments? start.arguments).map (·.query.text)) ==
+                #[some "/w/notes/"] &&
+              fileLabels (settled inserted) == #["todo.md"] },
+    { name :=
+        "AC 3 on the model, with the counting fake: after C-o o, a, l, p and the job finished, /w was listed once and one files start was handed back; after TAB on notes/ the listings are /w and /w/notes"
+      run :=
+        pure <|
+          match fileNameDriver with
+          | none => false
+          | some driver =>
+            let (asked, first) := fedTo driver (presses "C-o o")
+            let opened := settled asked
+            let (typed, more) := fedTo opened (presses "a l p")
+            let done := settled typed
+            let into := settled (fedTo opened (presses "C-n TAB")).1
+            done.jobs.files.listed == #[("/w" : System.FilePath)] &&
+              (filesStarts first).size + (filesStarts more).size == 1 &&
+              into.jobs.files.listed == #[("/w" : System.FilePath), "/w/notes"] },
+    { name :=
+        "AC 4 on the model: al, C-n, RET closes the prompt and starts load-file for the chosen file's path; once that is finished view 0 shows a buffer of that name holding the file's text"
+      run :=
+        pure <|
+          match opened? with
+          | none => false
+          | some opened =>
+            let (typed, _) := fedTo opened (presses "a l")
+            let first := (fileLabels typed)[0]?.getD ""
+            let (picked, _) := fedTo typed (presses "C-n RET")
+            let shown := showing (settled picked)
+            picked.loop.state.prompt.isNone && picked.pending.map (·.name) == #[Files.loadJob] &&
+              shown.bind (·.buffer.file.map (·.path)) == some (("/w" : System.FilePath) / first) &&
+              shown.map (·.buffer.name) == some first &&
+              shown.bind (·.text) == some (if first == "alpha.txt" then "alpha\n" else "alps\n") },
+    { name :=
+        "dotfiles are hidden until . is typed, from one read: src/ lists main.lean alone; . lists .cache/, .env and main.lean in the fuzzy model's order in the scene of that key, with no files start; /w/src was read once; <Backspace> back to src/ hides them again"
+      run :=
+        pure <|
+          match opened? with
+          | none => false
+          | some opened =>
+            let inSrc := settled (fedTo opened (presses "C-u s r c /")).1
+            let (dotted, steps) := fedTo inSrc (presses ".")
+            let (back, _) := fedTo dotted (presses "<Backspace>")
+            let dots := #[".cache/", ".env", "main.lean"]
+            fileLabels inSrc == #["main.lean"] &&
+              fileLabels dotted ==
+                (FuzzyModel.rank "." #[".cache", ".env", "main.lean"]).filterMap (dots[·]?) &&
+              (filesStarts steps).isEmpty &&
+              (dotted.jobs.files.listed.filter (· == ("/w/src" : System.FilePath))).size == 1 &&
+              dotted.jobs.files.listed.back? == some ("/w/src" : System.FilePath) &&
+              fileLabels back == #["main.lean"] },
+    { name := "RET on a chosen directory keeps the prompt open with /w/notes/"
+      run :=
+        pure <|
+          match opened? with
+          | none => false
+          | some opened =>
+            let (entered, _) := fedTo opened (presses "C-n RET")
+            entered.loop.state.prompt.isSome && minibufferText entered == some "/w/notes/" },
+    { name :=
+        "a relative text is read under /w: notes/ lists todo.md, and RET on notes/todo.md opens /w/notes/todo.md; with /w as the home ~/alpha.txt opens /w/alpha.txt, and with no home it says the home is not known"
+      run :=
+        pure <|
+          match opened?, fileNameDriver (home := some "/w"), fileNameDriver with
+          | some opened, some homed, some homeless =>
+            let relative := settled (fedTo opened (presses "C-u n o t e s /")).1
+            let fileOf (driver : TestDriver) : Option System.FilePath :=
+              (showing (settled driver)).bind (·.buffer.file.map (·.path))
+            let relativeOpened := (fedTo relative (presses "t o d o . m d RET")).1
+            let homedOpened :=
+              (fedTo (settled (fedTo homed (presses "C-o o")).1)
+                  (presses "C-u ~ / a l p h a . t x t RET")).1
+            let refused :=
+              (fedTo (settled (fedTo homeless (presses "C-o o")).1)
+                  (presses "C-u ~ / a l p h a . t x t RET")).1
+            fileLabels relative == #["todo.md"] &&
+              fileOf relativeOpened == some "/w/notes/todo.md" &&
+              fileOf homedOpened == some "/w/alpha.txt" &&
+              refused.pending.isEmpty &&
+              refused.loop.state.echo == "cannot open ~/alpha.txt: the home directory is not known"
+          | _, _, _ => false },
+    { name :=
+        "an unreadable directory: TAB on notes/ says files: cannot list /w/notes/: the file system does not allow it, and lists nothing"
+      run :=
+        pure <|
+          match fileNameDriver (files := { fileNameFiles with unreadable := #["/w/notes"] }) with
+          | none => false
+          | some driver =>
+            let opened := settled (fedTo driver (presses "C-o o")).1
+            let refused := settled (fedTo opened (presses "C-n TAB")).1
+            refused.loop.state.echo ==
+                "files: cannot list /w/notes/: the file system does not allow it" &&
+              fileLabels refused == #[] },
+    { name :=
+        "performance, structurally: with a prompt matched by a job past 2 candidates, typing a within the directory hands back no files start and spawns one match, whose finish lists the path style's order"
+      run :=
+        pure <|
+          match fileNameDriver (inline := 2) with
+          | none => false
+          | some driver =>
+            let opened := settled (fedTo driver (presses "C-o o")).1
+            let (typed, steps) := fedTo opened (presses "a")
+            let spawned := ((steps.filterMap id).flatMap (·.spawns))
+            let matched := settled typed
+            (filesStarts steps).isEmpty && spawned.size == 1 &&
+              spawned.map (·.label) == #[Loop.matchLabel] &&
+              fileLabels matched == (FuzzyModel.rank "a" lasts).filterMap (labels[·]?) }]
+
 /-- The checks of putting a prompt's candidate into its minibuffer
 (`minibuffer-insert`, `insertCandidate`, `Editor/Api.lean`) and of going
 into a partial candidate (`Completion.Candidate.isPartial`, `acceptPrompt`),
@@ -40917,6 +41269,8 @@ def checks : List Check :=
     completionJobChecks ++
     directoryChecks ++
     insertCandidateChecks ++
+    pathsChecks ++
+    fileNameChecks ++
     laterLoopChecks ++
     sourceContractChecks ++
     atPointContractChecks ++

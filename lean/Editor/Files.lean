@@ -1,3 +1,4 @@
+import Editor.Completion.Paths
 import Editor.Language
 import Editor.Workspace.Attach
 
@@ -138,6 +139,22 @@ are in `Editor/Files/Compiled.lean`.
   argument is no path, and it asks. Where the prompt is refused, because
   one is open, the echo area says so (`notAsking`), with the refusal's
   sentence.
+- **The prompt completes file names** (`askPath`), as Emacs's `find-file`
+  under Doom's vertico does. It starts with the asking view's directory as
+  its text (`EditorState.directoryOf`, written with `~` under the home,
+  `TypedPath.directoryText`), and asks the sources of the category `file`,
+  with the shipped file source (`Completion.Paths.source`) as their
+  default, so config adds to what it lists by registering a source in the
+  category. The style compiled code gives the category is the path style
+  (`Files.styleDefaults`).
+- **The command resolves each path it is given** (`resolve`) before it
+  opens it, as Emacs reads a typed file name (`TypedPath.expand`): `~`
+  under the home directory, an absolute path as it is, and anything else
+  under the asking view's directory, after a restart (`//`, `/~/`) and
+  with `.` and `..` read lexically. One that cannot be resolved, a `~`
+  with no home known, is said (`notResolved`) and left out, and the rest
+  still open. `Files.open`, which config calls, does not resolve: it is
+  handed a path.
 - **Not built**: a buffer for a file that is not there yet. Opening a path
   with no file is an error. Saving under another name is not built
   either, and the save command does not ask for one: a buffer with a file
@@ -375,6 +392,28 @@ name. -/
 def notAsking (refusal : PromptRefusal) : String :=
   s!"{openName}: {refusal.describe}"
 
+/-- What the echo area says when the text `text` an open was given cannot be
+read as a path, for `why`. -/
+def notResolved (text : String) (why : String) : String :=
+  s!"cannot open {text}: {why}"
+
+/-- The absolute path `text`, as a person typed it, means in `view`
+(`TypedPath.expand`): read under the view's place (`EditorState.placeOf`),
+its directory and the home; or why not. -/
+def resolve (state : EditorState) (view : ViewId) (text : String) : Except String System.FilePath :=
+  let place := state.placeOf view
+  TypedPath.expand text place.directory place.home
+
+/-- Asks for a path to open in `view`, with the prompt labelled `openPrompt`
+whose continuation is the open command: its text starts as the view's
+directory (`TypedPath.directoryText`), and it asks the sources of the
+category `file`, the shipped file source by default. -/
+def askPath (view : ViewId) : EditorM (Except PromptRefusal ViewId) := do
+  let state ← editorState
+  prompt openPrompt { command := openName }
+      (TypedPath.directoryText (state.directoryOf view) state.home)
+      [.category Completion.Paths.category [Completion.Paths.source]]
+
 /-- The view a buffer is shown in when it is to be shown in `view`
 (`EditorState.shownIn`): `view`, or, when `view` is the minibuffer's, which
 shows no other buffer, the window the open prompt was asked from. -/
@@ -521,20 +560,38 @@ def leadingPaths : List Argument → List System.FilePath
   | .str path :: rest => path :: leadingPaths rest
   | _ => []
 
+/-- Opens each of `texts`, as typed, in `view`: each resolved (`resolve`),
+one that cannot be said and left out, and the rest opened one after another
+(`Files.open`). -/
+def openTexts (view : ViewId) (texts : List String) : EditorM Unit := do
+  let state ← editorState
+  let mut paths : List System.FilePath := []
+  for text in texts do
+    match resolve state view text with
+    | .ok path =>
+      paths := paths ++ [path]
+    | .error why =>
+      message (notResolved text why)
+  match paths with
+  | path :: next =>
+    openAll view (path :: next)
+  | [] =>
+    pure ()
+
 /-- The open command as it is called: opens the path that is its first
 argument, a string, in the window it was called with, and after it the
 strings that follow it, up to the first argument that is not one, one after
-another. With anything else first, or nothing, it asks for the path
-(`prompt`, labelled `openPrompt`), with itself as the continuation: the
-answer is then its first argument, and it runs in the view it was asked
-from. Where the prompt is refused, because one is open, it says so in the
-echo area (`notAsking`). -/
+another, each resolved as typed (`openTexts`). With anything else first, or
+nothing, it asks for the path (`askPath`, labelled `openPrompt`), with
+itself as the continuation: the answer is then its first argument, and it
+runs in the view it was asked from. Where the prompt is refused, because
+one is open, it says so in the echo area (`notAsking`). -/
 def openCommand (call : Call) : EditorM Unit := do
   match call.arguments with
   | .str path :: rest =>
-    Files.open call.target.window.id path (leadingPaths rest)
+    openTexts call.target.window.id (path :: (leadingPaths rest).map (·.toString))
   | _ =>
-    if let .error refusal← prompt openPrompt { command := openName } then
+    if let .error refusal← askPath call.target.window.id then
       message (notAsking refusal)
 
 /-- The name the save command is registered under. -/
@@ -877,12 +934,12 @@ def editCommand (call : Call) : EditorM Unit := do
     | rest => (false, rest)
   match rest with
   | .str path :: more =>
-    Files.open call.target.window.id path (leadingPaths more)
+    openTexts call.target.window.id (path :: (leadingPaths more).map (·.toString))
   | _ =>
     let buffer := call.target.window.buffer
     if (((← editorState).buffer? buffer).bind (·.file)).isSome then
       reload buffer force
-    else if let .error refusal← prompt openPrompt { command := openName } then
+    else if let .error refusal← askPath call.target.window.id then
       message (notAsking refusal)
 
 /-- The name the job that checks files for a change on disk is registered
