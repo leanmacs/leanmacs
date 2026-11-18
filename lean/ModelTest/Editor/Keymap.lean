@@ -333,9 +333,39 @@ def continuationChecks : List Check :=
           (listed == [⟨cx, .prefix none 2⟩, ⟨charKey "f", .bound 2 none⟩] &&
             walksAsListed (Keymap.walk [keymap]) [] listed) }]
 
+/-- The checks of every sequence the walk completes from rest
+(`Keymap.reachableOver`): which are listed, in which order, and with which
+description. -/
+def reachableChecks : List Check :=
+  let cx := controlKey "x"
+  [{  name :=
+        "reachableOver lists every sequence the walk completes from rest, specific tier first, each once, with the deciding tier's description"
+      run :=
+        let specific : Keymap Nat :=
+          Keymap.ofDescribed [([cx, charKey "f"], 1, some "One"), ([charKey "g"], 2, none)]
+        let defaults : Keymap Nat :=
+          Keymap.ofDescribed
+            [([cx], 3, none), ([charKey "g"], 4, some "Four"),
+              ([charKey "z", charKey "z"], 5, some "Five"), ([charKey "a"], 6, none),
+              ([charKey "a", charKey "b"], 7, none)]
+        pure
+          (Keymap.reachableOver [specific] [defaults] ==
+            [⟨[cx, charKey "f"], 1, some "One"⟩, ⟨[charKey "g"], 2, none⟩,
+              ⟨[charKey "z", charKey "z"], 5, some "Five"⟩, ⟨[charKey "a"], 6, none⟩]) },
+    { name := "reachableOver of a single tier is the sequences its continuations complete"
+      run :=
+        let keymap : Keymap Nat :=
+          Keymap.ofDescribed
+            [([cx, controlKey "s"], 1, some "Save"), ([charKey "f"], 2, none),
+              ([cx, controlKey "s", charKey "q"], 3, none)]
+        pure
+          (Keymap.reachableOver [keymap] [] ==
+            [⟨[cx, controlKey "s"], 1, some "Save"⟩, ⟨[charKey "f"], 2, none⟩]) }]
+
 /-- The checks of a keymap (`Editor/Keymap.lean`): its lookup, its
-descriptions, and what can follow a pending prefix. -/
+descriptions, what can follow a pending prefix, and what the walk reaches
+from rest. -/
 def keymapChecks : List Check :=
-  keymapLookupChecks ++ descriptionChecks ++ continuationChecks
+  keymapLookupChecks ++ descriptionChecks ++ continuationChecks ++ reachableChecks
 
 end ModelTest

@@ -77,6 +77,18 @@ walked after the pending keys, gives what the list says
 (`Keymap.walk_listed`, `Keymap.walkOver_listed`), and a key the list leaves
 out resets the walk (`Keymap.walk_unlisted`, `Keymap.walkOver_unlisted`).
 
+## What the walk reaches
+
+`Keymap.reachableOver` lists every sequence the walk over two tiers can
+complete from rest (`Keymap.Reached`): one `resolveOver` binds, each of
+whose strict non-empty prefixes is pending. Each is listed once, the
+specific tier's first, with the deciding tier's description. A default
+binding a specific prefix or binding shadows is left out, as is a binding
+under a shorter bound sequence, so a listed sequence is one a person can
+type. That each listed sequence resolves so is proved
+(`Keymap.reachableOver_resolves`); that a scheme's walk agrees once the keys
+are chords is the scheme contract's (`keyBindingsWalk`).
+
 ## The chord
 
 A key from a window carries where it is on the keyboard and whether the
@@ -97,6 +109,7 @@ caller looks a key up by its chord, so a keymap never holds anything else.
 | A new way to make a keymap from another, such as keeping the bindings a predicate keeps (`Keymap.filter`) | A function here that only removes or rebinds through `Keymap.bind`, so the invariants hold |
 | A label of a bound sequence | `Keymap.descriptions`, set by `Keymap.bind` and kept by `Keymap.filter` |
 | What can follow a prefix (`Keymap.continuations`) | A function over `bindings` and `descriptions` that adds nothing, over the walk's own `resolve` or `resolveOver`, with its agreement with the walk proved |
+| Every sequence the walk can complete from rest (`Keymap.reachableOver`) | A function over the walk's own `resolveOver`, with what it says of the lookup proved |
 | A new outcome of a lookup, such as a timeout | A variant of `Lookup`, and its case in `Keymap.walk` |
 | What a key is bound to | The input scheme's `Binding`; nothing here |
 
@@ -387,6 +400,14 @@ the one whose binding `resolve` gives. -/
 private def describeIn (maps : List (Keymap β)) (keys : List Key) : Option String :=
   (maps.find? fun keymap => (keymap.find? keys).isSome).bind (·.describe? keys)
 
+/-- The description of `keys` over two tiers, `specific` over `defaults`:
+the deciding tier's, the one whose binding `resolveOver` gives. -/
+private def describeOver (specific defaults : List (Keymap β)) (keys : List Key) :
+    Option String :=
+  match resolve specific keys with
+  | .bound _ => describeIn specific keys
+  | _ => describeIn defaults keys
+
 /-- The keys that can follow `pending` in `maps`, in precedence order, and
 what `walk` makes of each: the keys in the order first seen, through the
 keymaps in precedence order and each keymap's bindings in order. A prefix is
@@ -401,12 +422,60 @@ specific tier's keys first. A binding's description is the deciding
 tier's. -/
 def continuationsOver (specific defaults : List (Keymap β)) (pending : List Key)
     (names : List Key → Option String := fun _ => none) : List (Continuation β) :=
-  continuationsBy (resolveOver specific defaults)
-    (fun keys =>
-      match resolve specific keys with
-      | .bound _ => describeIn specific keys
-      | _ => describeIn defaults keys)
+  continuationsBy (resolveOver specific defaults) (describeOver specific defaults)
     (sequencesOf (specific ++ defaults)) names pending
+
+/-- A sequence the walk can complete from rest, what it is bound to, and its
+description. -/
+structure Reached (β : Type) where
+  /-- The sequence, as chords. -/
+  keys : List Key
+  /-- What the walk gives at its last key. -/
+  binding : β
+  /-- The deciding tier's description of it, if it has one. -/
+  desc : Option String
+  deriving DecidableEq, Repr
+
+/-- Every sequence the walk over `specific` and `defaults` can complete from
+rest: `resolveOver` binds it, and every strict non-empty prefix of it is
+pending. Each is listed once, in the order first seen through the specific
+tier's keymaps and then the defaults', with the deciding tier's
+description. A default binding that a specific prefix or binding shadows is
+not listed, nor is a binding under a shorter bound sequence. -/
+def reachableOver (specific defaults : List (Keymap β)) : List (Reached β) :=
+  (sequencesOf (specific ++ defaults)).eraseDups.filterMap fun keys =>
+    match resolveOver specific defaults keys with
+    | .bound binding =>
+      if reaches (resolveOver specific defaults) [] keys then
+        some ⟨keys, binding, describeOver specific defaults keys⟩
+      else none
+    | _ => none
+
+/-- Every sequence `reachableOver` lists is what the walk's lookup binds, and
+every strict non-empty prefix of it is pending: the walk over the two tiers
+completes it from rest. -/
+theorem reachableOver_resolves {specific defaults : List (Keymap β)} {r : Reached β}
+    (listed : r ∈ reachableOver specific defaults) :
+    resolveOver specific defaults r.keys = .bound r.binding ∧
+      ∀ n, 0 < n → n < r.keys.length →
+        resolveOver specific defaults (r.keys.take n) = .pending := by
+  simp only [reachableOver, List.mem_filterMap] at listed
+  obtain ⟨keys, _, found⟩ := listed
+  split at found
+  · next binding bound =>
+      split at found
+      · next reached =>
+          cases found
+          refine ⟨bound, fun n positive short => ?_⟩
+          simp only [reaches, Bool.and_eq_true, List.all_eq_true, List.mem_range] at reached
+          have pending := reached.2 (n - 1) (by simp at short ⊢; omega)
+          have index : 0 + 1 + (n - 1) = n := by omega
+          rw [List.length_nil, index] at pending
+          split at pending
+          · next isPending => exact isPending
+          · cases pending
+      · cases found
+  · cases found
 
 /-- A listed continuation is what the lookup makes of its key. -/
 private theorem continuationsBy_walked {lookup : List Key → Lookup β}
