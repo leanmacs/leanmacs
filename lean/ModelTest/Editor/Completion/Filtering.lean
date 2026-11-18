@@ -243,6 +243,30 @@ def filteringChecks : List Check :=
               some (.inl "/usr/bin/git: exited with status 128: fatal: not a git repository") &&
             model.posted.isEmpty },
     { name :=
+        "a filter that outlives its time limit answers an error naming the filter's program and the time-out, and the job posts nothing"
+      run :=
+        pure <|
+          let f := filtering
+          let scripts : Array Process.Script :=
+            #[{ command := lister,
+                reply := .ok { exit := .code 0, stdout := listed, stderr := .empty } },
+              { command := f.filterFor "x", reply := .error (.timedOut f.time) }]
+          let (_, model) := answered f scripts "x"
+          failsWith "fzf: the run did not end within 10000 ms" (matched f scripts "x") &&
+            model.posted.isEmpty },
+    { name :=
+        "a lister that outlives its time limit answers an error naming the lister's program and the time-out, the filter is never run, and the job posts nothing"
+      run :=
+        pure <|
+          let f := filtering
+          let scripts : Array Process.Script :=
+            #[{ command := lister, reply := .error (.timedOut f.time) },
+              { command := f.filterFor "x", reply := ran "ab\n" }]
+          let (_, model) := answered f scripts "x"
+          failsWith "/usr/bin/git: the run did not end within 10000 ms" (matched f scripts "x") &&
+            model.processes.started == #[lister] &&
+            model.posted.isEmpty },
+    { name :=
         "through the loop: a new text cancels the source's job and starts the next generation for it after the pause; a batch of the cancelled generation is never listed, and the new one's is listed in the filter's order, none dropped, the style's ranges on those it matches"
       run :=
         pure <|

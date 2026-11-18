@@ -461,7 +461,7 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   canned process answers, the lister then the filter fed its output with
   the typed text as one argument, the first records delivered in one batch,
   a cut head's whole records, the no-matches statuses and the failures
-  naming the program; and through the loop on the driver, a new text
+  naming the program, a lister's or a filter's time-out among them; and through the loop on the driver, a new text
   cancelling the old generation, a stale batch never listed, the filter's
   order kept with the style's ranges, and a missing filter said in the
   echo area;

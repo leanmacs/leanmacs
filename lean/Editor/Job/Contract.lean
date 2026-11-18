@@ -1174,6 +1174,21 @@ def processProperties : List ProcessProperty :=
             return ran.exit == .code 0 && ran.stdout == fedBytes && ran.stderr.isEmpty
           | _ =>
             return false },
+      { name :=
+          "a run that keeps its head and outlives its time limit is refused as timedOut, its child killed, and the job goes on"
+        scripts := fun root =>
+          #[{ command := sh root "/bin/sleep 600"
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }
+              takes := 600000 },
+            { command := sh root "exit 0"
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
+        holds := fun root => do
+          let late ← Process.runHead (sh root "/bin/sleep 600") fedBytes roomyOutput 50
+          let after ← ranOk (sh root "exit 0")
+          return (match late with
+              | .error (.timedOut 50) => true
+              | _ => false) &&
+              after.exit == .code 0 },
       { name := "output past the limit is refused as too large, with the stream and the limit"
         scripts := fun root =>
           #[{ command := sh root "printf 0123456789"
