@@ -50,9 +50,10 @@ message, as it is.
   - **Any other refusal** (git could not run, or printed what cannot be
     read) is said in the echo area only.
 - **`vc-commit-abort`** (`abortName`; the mode's leader suffix `k`, as
-  magit's `C-c C-k`): in the kept message buffer, closes it (every window
-  that showed it shows the most recent buffer left,
-  `Buffers.closeInto`) and forgets it; refused while a commit runs.
+  magit's `C-c C-k`): in the kept message buffer, closes it as the
+  editor closes any buffer (`Buffers.close`: every window that showed it
+  shows the most recent buffer left) and forgets it; refused while a
+  commit runs. A commit made closes it the same way.
 
 ## The record
 
@@ -186,20 +187,6 @@ def CommitOrder.read (order : CommitOrder) : ReadOrder :=
 
 /-! ## The buffers and the commands -/
 
-/-- Closes the message buffer `id` (`Buffers.closeInto`): every window that
-showed it shows the most recent buffer left, or a new empty one. -/
-def closeMessage (id : BufferId) : EditorM Unit := do
-  let state ← editorState
-  match state.mostRecent id with
-  | some fallback =>
-    Buffers.closeInto id fallback
-  | none =>
-    let .ok made ←
-      createBuffer
-          (state.freeName EditorState.scratchName) | giveUp "making the empty buffer was refused"
-    Buffers.closeInto id made
-    Buffers.unrefused "naming the empty buffer" (← made.rename EditorState.scratchName)
-
 /-- Writes `output` into the output buffer of `order`'s workspace, made if it
 has none, and shows it without taking the focus ("The commands", in the
 module docs). -/
@@ -237,7 +224,7 @@ def committed (order : CommitOrder) (reply : Except Error Unit) : EditorM Unit :
     | some id =>
       let some buffer := state.buffer? id | return
       if id == order.buffer && (← buffer.text.revision) == order.revision then
-        closeMessage id
+        Buffers.close id
         let record := (← editorState).workspaces.get commitStore location
         discard <| Workspace.set commitStore location { record with buffer := none }
         message said
@@ -331,7 +318,7 @@ def abortCommand (call : Call) : EditorM Unit := do
   if record.committing then
     message s!"{abortName}: a commit is running"
     return
-  closeMessage call.target.window.buffer
+  Buffers.close call.target.window.buffer
   discard <| Workspace.set commitStore (.local root) { record with buffer := none }
 
 /-- The `vc-commit` mode ("The mode", in the module docs). -/

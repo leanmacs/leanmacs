@@ -24010,7 +24010,8 @@ splits the window it is called with and leaves the focus,
 left edge, `focus-main`, which focuses the first window of the tiled list,
 and `make-notes`, which makes a buffer called `notes`, or a free name made
 from it, holding `a note`, adds the minor mode `notes` to it and displays
-it for the command `make-notes` (`BufferId.display`).
+it for the command `make-notes` (`BufferId.display`), and `close-anyway`,
+which closes its window's buffer with `Buffers.close`, checking nothing.
 
 One keymap, the same for every view: `C-e e` runs the ex command, `C-e y`
 and `C-e t` the minibuffer's accept command and its command that moves to
@@ -24020,8 +24021,9 @@ runs it with `note.txt`, `C-b s` runs `split`, `C-b x` runs
 `edit-then-close`, `C-b d` runs `close-buffer` with no argument, `C-b m`
 runs it with the name the minibuffer's buffer has (`Prompt.bufferName`),
 `C-b h` runs `dock-others`, `C-b f` runs `focus-main`, `C-b o` runs
-`make-notes` and `C-b t` runs `new-tab`, which opens a tab after the one in
-view on the call's window's buffer (`ViewId.newTab`). -/
+`make-notes`, `C-b t` runs `new-tab`, which opens a tab after the one in
+view on the call's window's buffer (`ViewId.newTab`), and `C-b c` runs
+`close-anyway`. -/
 def bufferKeys : Loop.Keys TestScheme.scheme :=
   let registrations := Files.commands ++ Minibuffer.commands ++ Buffers.commands ++ Ex.commands
   let compiled : List (String × Dispatched) :=
@@ -24053,6 +24055,9 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
       ("new-tab", fun call => do
         discard <| call.target.window.id.newTab
         return none),
+      ("close-anyway", fun call => do
+        Buffers.close call.target.window.buffer
+        return none),
       ("make-notes", fun call => do
         let name := (← editorState).freeName "notes"
         let .ok notes ← createBuffer name "a note" | giveUp "making notes was refused"
@@ -24069,7 +24074,8 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         ("C-b d", invoke Buffers.closeName),
         ("C-b m", { command := Buffers.closeName, arguments := [.str Prompt.bufferName] }),
         ("C-b h", invoke "dock-others"), ("C-b f", invoke "focus-main"),
-        ("C-b o", invoke "make-notes"), ("C-b t", invoke "new-tab")]
+        ("C-b o", invoke "make-notes"), ("C-b t", invoke "new-tab"),
+        ("C-b c", invoke "close-anyway")]
       (compiled ++ written) with
     registered :=
       { ex := fun name => Ex.bindings.findRev? (·.name == name),
@@ -24433,6 +24439,23 @@ def bufferCommandChecks : List Check :=
               state.openBuffers.size == 1 &&
               ["note.txt", "crlf.txt", "lf.txt"].all (bufferNamed closed · == none) &&
               state.wellFormed },
+    { name :=
+        "Buffers.close closes a buffer whatever it holds, unsaved changes too: the window shows the most recently used buffer left; on the only buffer it leaves an empty buffer called scratch with no file"
+      run :=
+        pure <|
+          match buffersOpen, buffersDriver with
+          | some opened, some driver =>
+            let (closed, _) :=
+              fedTo opened (exLine "b note.txt" ++ [.commit "x"] ++ presses "C-b c")
+            let (last, _) := fedTo driver ([.commit "typed"] ++ presses "C-b c")
+            bufferNamed closed "note.txt" == none && shownName closed == some "lf.txt" &&
+              closed.loop.state.wellFormed &&
+              ((showing last).map fun shown =>
+                  (shown.buffer.name, shown.buffer.file.isNone, shown.text)) ==
+                some (EditorState.scratchName, true, some "") &&
+              last.loop.state.openBuffers.size == 1 &&
+              last.loop.state.wellFormed
+          | _, _ => false },
     { name :=
         "bd on note.txt with an edit committed leaves the buffer open and shown, with the edit, and the echo area says why by the close command's message; and so when the edit and the close are one command"
       run :=
