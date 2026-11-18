@@ -179,7 +179,7 @@ def executeCommandChecks : List Check :=
                 (·.label) ==
               some ExecuteCommand.label },
     { name :=
-        "the style the loop is handed for the category command decides the order of the command prompt's candidates, and the order a typed fragment is resolved in: a fake that reverses lists them in reverse and runs the last registered, marked, for a text that is no name; a theme prompt from the same keys keeps its own order"
+        "the style the loop is handed for the category command decides the order of the command prompt's candidates, and the order a typed fragment is resolved in: a fake that reverses lists them in reverse and runs the last registered, marked, for a text that is no name, yet runs a command's exact name, load-theme, which asks, with spaces around it or not; a theme prompt from the same keys keeps its own order"
       run :=
         pure <|
           let keys : Loop.Keys TestScheme.scheme :=
@@ -194,9 +194,14 @@ def executeCommandChecks : List Check :=
             let listed := calling driver
             let themed := calling driver { command := Themes.loadName }
             let ran := accepting driver "x"
+            let exact := accepting driver Themes.loadName
+            let padded := accepting driver s!"  {Themes.loadName}  "
             (candidatesOf listed).map (·.listed.map (·.candidate.text)) == some names.reverse &&
               (candidatesOf themed).map (·.listed.map (·.candidate.text)) ==
                 some #[Theme.defaultName, "second"] &&
-              promptEcho ran == "marked" }]
+              promptEcho ran == "marked" &&
+              [exact, padded].all fun driver =>
+                driver.loop.state.prompt.map (·.label) == some Themes.label &&
+                  promptEcho driver != "marked" }]
 
 end ModelTest
