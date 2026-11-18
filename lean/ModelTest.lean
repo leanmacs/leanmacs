@@ -33,6 +33,7 @@ import ModelTest.Editor.Completion.AtPointContract
 import ModelTest.Editor.Completion.Contract
 import ModelTest.Editor.Completion.DisplayContract
 import ModelTest.Editor.Completion.Displays
+import ModelTest.Editor.Completion.Filtering
 import ModelTest.Editor.Completion.Keys
 import ModelTest.Editor.Completion.Later
 import ModelTest.Editor.Completion.Paths
@@ -455,6 +456,15 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   the loop on that driver, completion phase 3's four criteria on the
   models, with a job held at each post and a match job delivered at
   `finish`, and a match that fails;
+- `filteringChecks`: a source a command filters
+  (`Editor/Completion/Filtering.lean`): its job on the job model with
+  canned process answers, the lister then the filter fed its output with
+  the typed text as one argument, the first records delivered in one batch,
+  a cut head's whole records, the no-matches statuses and the failures
+  naming the program; and through the loop on the driver, a new text
+  cancelling the old generation, a stale batch never listed, the filter's
+  order kept with the style's ranges, and a missing filter said in the
+  echo area;
 - `sourceContractChecks`: the completion sources' contract
   (`Editor/Completion/Contract.lean`) on the model, the fake, each
   shipped source and the key hints' source, run on `twoBuffers` over the
@@ -1049,6 +1059,7 @@ def checks : List Check :=
     pathsChecks ++
     fileNameChecks ++
     laterLoopChecks ++
+    filteringChecks ++
     sourceContractChecks ++
     keyHintSourceChecks ++
     atPointContractChecks ++

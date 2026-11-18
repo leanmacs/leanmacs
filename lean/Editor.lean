@@ -4,6 +4,7 @@ import Editor.BindingSearch
 import Editor.Command.Append
 import Editor.Compile
 import Editor.Compile.Shipped
+import Editor.Completion.Filtering
 import Editor.Completion.Words
 import Editor.Evil.Clipboard
 import Editor.Evil.Operators
@@ -65,7 +66,10 @@ chosen from when it gives completion sources that answer them
 `defineSource` (`Editor/Setup.lean`). A source that answers later, from a
 job, is `.answeringLater name category job` (`Editor/Completion/Later.lean`),
 and its job is registered with `sourceJob name answer`, which delivers
-candidates in batches as they come. Which candidates the typed text
+candidates in batches as they come. A source a command filters, a lister's
+output fed to a filter such as fzf with the typed text as an argument, is
+`Completion.Filtering.source`, its job's answer `Completion.Filtering.answer`
+(`Editor/Completion/Filtering.lean`). Which candidates the typed text
 matches is a completion style's (`Editor/Completion/Style.lean`): the
 shipped ones, `fuzzy`, `orderless` and `path`, which matches a path's last
 component, come with `Editor/Setup.lean` (`Editor/Completion/Styles.lean`),
