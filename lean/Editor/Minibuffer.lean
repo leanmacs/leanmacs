@@ -33,12 +33,19 @@ fails to load, and a reload does not replace them.
     new text.
   - With nothing listed, and in a prompt with no candidates, each changes
     nothing.
+- **`minibuffer-insert`** (`insertName`, `insertCommand`) puts a candidate
+  in the minibuffer (`insertCandidate`, `Editor/Api.lean`), as vertico's
+  `TAB` does: the chosen one, or the first listed when nothing is chosen,
+  replaces the whole input, the bar at its end, and the prompt stays open.
+  It works in every prompt, so any candidate can be edited before it is
+  accepted, and in a file prompt it goes into a directory. With nothing
+  listed for the text it changes nothing.
 - **`minibuffer-delete-backward`** (`deleteBackwardName`,
   `deleteBackwardCommand`) edits the open prompt's minibuffer ("Deleting
   backward", below).
 - **`minibuffer-delete-to-start`** (`deleteToStartName`,
   `deleteToStartCommand`) edits it too ("Deleting to the start", below).
-- **With no prompt open** each of the six says `notOpen` in the echo area
+- **With no prompt open** each of the seven says `notOpen` in the echo area
   and does nothing else. Any can be bound in the global keymap or run by
   its name, so it can run in any view.
 - **The mode** (`mode`) is the major mode the minibuffer's buffer is made
@@ -144,6 +151,11 @@ under. -/
 def previousName : String :=
   "minibuffer-previous"
 
+/-- The name the command that puts a candidate in the minibuffer is
+registered under. -/
+def insertName : String :=
+  "minibuffer-insert"
+
 /-- The name the command that deletes backward is registered under. -/
 def deleteBackwardName : String :=
   "minibuffer-delete-backward"
@@ -207,6 +219,13 @@ the open prompt's choice one step back through its listing. With no prompt
 open it says so in the echo area. -/
 def previousCommand (_ : Call) : EditorM Unit := do
   if let .error _← chooseCandidate .previous then
+    message notOpen
+
+/-- The command that puts a candidate in the minibuffer, as it is called:
+the chosen candidate, or the first listed, replaces the input
+(`insertCandidate`). With no prompt open it says so in the echo area. -/
+def insertCommand (_ : Call) : EditorM Unit := do
+  if let .error _← insertCandidate then
     message notOpen
 
 /-- The command that deletes backward, as it is called ("Deleting

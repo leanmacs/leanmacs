@@ -219,12 +219,15 @@ run = [
   # fuzzy matcher: a command of config's asks with three candidates, a key
   # is typed, and the scene lists the candidates the text matches after
   # the prompt's label, in the minibuffer's status line, the one that is
-  # the text first; `<Tab>`, pressed twice, chooses the second with the
+  # the text first; `C-n`, pressed twice, chooses the second with the
   # compiled command `minibuffer-next`, and the scene shows it in the
   # chosen face; `<Enter>` accepts, and config's command that receives the
-  # answer says the chosen candidate in the echo area; and with a text no
-  # candidate matches the scene lists none, and the command receives the
-  # typed text (`candidates/expected`). It touches no file.
+  # answer says the chosen candidate in the echo area; with a text no
+  # candidate matches the scene lists none, `<Tab>` puts nothing in the
+  # input, and the command receives the typed text; and `<Tab>`, the
+  # compiled command `minibuffer-insert`, puts the first listed candidate
+  # in the input, the prompt still open (`candidates/expected`). It touches
+  # no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/candidates/expected -",
   # Named themes, on a config of its own (tests/headless/themes) that
   # defines two themes and names the first: the scene line names the theme

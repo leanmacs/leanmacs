@@ -1,8 +1,8 @@
 # The script `mise run ffi-test` has the editor's headless mode run against
 # the config in `config/`, under the editor's input scheme and with the
 # library's fuzzy matcher, to ask for a prompt with candidates, to choose
-# one with the keys the editor ships and to accept it. What it prints must
-# be exactly `expected`.
+# one with the keys the editor ships, to put one in the input and to accept
+# it. What it prints must be exactly `expected`.
 
 reload
 settle
@@ -20,13 +20,13 @@ run pick
 key w KeyW -
 scene
 
-# `<Tab>` moves to the next candidate, with the compiled command
+# `C-n` moves to the next candidate, with the compiled command
 # `minibuffer-next`: under the Vim scheme the minibuffer's view is in a Vim
 # state of its own, which binds the key. Once chooses `w`, twice `wq`,
 # whose row of the list is then in the face of the chosen candidate. The
 # minibuffer's text is still `w`.
-key <Tab> Tab -
-key <Tab> Tab -
+key n KeyN control
+key n KeyN control
 scene
 
 # `<Enter>` accepts, and config's `picked` receives the chosen candidate,
@@ -38,10 +38,22 @@ scene
 # the scene, since the list's place grows and never shrinks while the
 # prompt is open (the empty initial text listed all three). It took its
 # view id the first time it was drawn, so this prompt's minibuffer is view
-# 3. `<Tab>` chooses nothing, and `<Enter>` gives `picked` the typed text.
+# 3. `<Tab>`, the compiled command `minibuffer-insert`, has nothing listed
+# to put in the input, and `<Enter>` gives `picked` the typed text.
 run pick
 key z KeyZ -
 scene
 key <Tab> Tab -
+key <Enter> Enter -
+scene
+
+# `<Tab>` with a candidate listed puts it in the input: `e` lists `edit`
+# alone, nothing is chosen, and `<Tab>` puts the first listed in the
+# minibuffer, the bar at its end, with the prompt still open. `<Enter>`
+# then gives `picked` the text, `edit`.
+run pick
+key e KeyE -
+key <Tab> Tab -
+scene
 key <Enter> Enter -
 scene

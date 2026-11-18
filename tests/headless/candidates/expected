@@ -9,8 +9,8 @@ status 1: minibuffer.prompt "Pick: "
 view 2 0,0 0x0: "w\nwq", scroll 0, selections , padding 8 0
 decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.candidate 2..4 minibuffer.match 2..3
 status 2: -
-key arrived: <Tab> Tab -
-key arrived: <Tab> Tab -
+key arrived: n KeyN control
+key arrived: n KeyN control
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
@@ -35,5 +35,20 @@ status 2: -
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "picked z", echo padding 8, preedit -, published 15, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run pick: ok
+key arrived: e KeyE -
+key arrived: <Tab> Tab -
+scene 0x0, focused 4, echo "", echo padding 8, preedit -, published 19, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 4 0,0 0x0: "edit", scroll 0, selections 4..4, padding 8 0
+status 4: minibuffer.prompt "Pick: "
+view 2 0,0 0x0: "edit", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..4 minibuffer.match 0..4
+status 2: -
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "picked edit", echo padding 8, preedit -, published 22, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

@@ -1143,19 +1143,6 @@ open. -/
 def chooseCandidate (step : Candidates.Step) : EditorM (Except PromptRefusal Unit) :=
   EditorState.ask (.chooseCandidate step)
 
-/-- Accepts the open prompt: it is closed, and its continuation's command is
-run with the answer once this command has run to its end ("Prompts", in
-the module docs). The answer is the chosen candidate, when one is chosen
-and the prompt's listing is for the text of its minibuffer, and otherwise
-that text (`Candidates.answer`). Refused with `notOpen` when no prompt is
-open. -/
-def acceptPrompt : EditorM (Except PromptRefusal Unit) := do
-  let state ← editorState
-  let some asked := state.prompt | return .error .notOpen
-  let some minibuffer := state.target? asked.view | return .error .notOpen
-  let text ← minibuffer.buffer.text.read
-  EditorState.ask (.closePrompt (some (asked.candidates.answer text)))
-
 /-- Cancels the open prompt: it is closed, and its continuation does not
 run. It makes one request of the editor state and none of the library.
 Refused with `notOpen` when no prompt is open. -/
@@ -1560,6 +1547,50 @@ def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : Ed
       target.buffer.text.withSnapshot fun snapshot => run (.ofRect snapshot rect bottom padding)
 
 end Target
+
+/-- Replaces the whole of `minibuffer`'s text, which is `text`, with
+`replacement`, as one transaction made by the user, the bar left at its
+end. -/
+private def replaceMinibuffer (minibuffer : Target) (text replacement : String) : EditorM Unit := do
+  let selection ← minibuffer.selection
+  minibuffer.replaceExtents selection #[⟨0, text.utf8ByteSize⟩] replacement
+
+/-- Accepts the open prompt: it is closed, and its continuation's command is
+run with the answer once this command has run to its end ("Prompts", in
+the module docs). The answer is the chosen candidate, when one is chosen
+and the prompt's listing is for the text of its minibuffer, and otherwise
+that text (`Candidates.answer`). A chosen candidate that is partial
+(`Completion.Candidate.isPartial`, `Candidates.entered?`) is gone into
+instead: its text replaces the minibuffer's, as `insertCandidate` puts it,
+and the prompt stays open. Refused with `notOpen` when no prompt is
+open. -/
+def acceptPrompt : EditorM (Except PromptRefusal Unit) := do
+  let state ← editorState
+  let some asked := state.prompt | return .error .notOpen
+  let some minibuffer := state.target? asked.view | return .error .notOpen
+  let text ← minibuffer.buffer.text.read
+  -- A chosen partial candidate is gone into, not answered.
+  if let some entered := asked.candidates.entered? text then
+    replaceMinibuffer minibuffer text entered.text
+    return .ok ()
+  EditorState.ask (.closePrompt (some (asked.candidates.answer text)))
+
+/-- Puts the candidate the open prompt would insert (`Candidates.toInsert`)
+in its minibuffer ("Prompts", in the module docs): the chosen one, or the
+first listed when nothing is chosen, when the listing is for the
+minibuffer's text. The whole text is replaced with the candidate's, as one
+transaction made by the user, with the bar left at the end, and the prompt
+stays open. The loop then lists again for the new text, which forgets the
+choice. With nothing to insert it changes nothing. Refused with `notOpen`
+when no prompt is open. -/
+def insertCandidate : EditorM (Except PromptRefusal Unit) := do
+  let state ← editorState
+  let some asked := state.prompt | return .error .notOpen
+  let some minibuffer := state.target? asked.view | return .error .notOpen
+  let text ← minibuffer.buffer.text.read
+  if let some candidate := asked.candidates.toInsert text then
+    replaceMinibuffer minibuffer text candidate.text
+  return .ok ()
 
 namespace ViewId
 

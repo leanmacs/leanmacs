@@ -5,13 +5,14 @@ import Editor.Minibuffer
 # The minibuffer's commands and its mode, as compiled code registers them
 
 What a host is handed so that a prompt can be answered
-(`Editor/Minibuffer.lean`): the registrations of the six commands, and the
+(`Editor/Minibuffer.lean`): the registrations of its commands, and the
 mode. A host registers both for the owner `compiled` when its loop starts,
 before any config (`Editor/Config/Registry.lean`, "Compiled commands"), so
 they hold when config fails to load, and a reload does not replace them.
 
 - **`Minibuffer.commands`**: `minibuffer-accept`, `minibuffer-cancel`,
-  `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`,
+  `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`,
+  `minibuffer-delete-backward`,
   `minibuffer-delete-to-start`, `minibuffer-ask` and
   `minibuffer-candidates`, in that order,
   each a command that is given what it was called with (`Action.call`):
@@ -41,6 +42,7 @@ def commands : Array Config.Registration :=
     { name := cancelName, action := .call cancelCommand },
     { name := nextName, action := .call nextCommand },
     { name := previousName, action := .call previousCommand },
+    { name := insertName, action := .call insertCommand },
     { name := deleteBackwardName, action := .call deleteBackwardCommand },
     { name := deleteToStartName, action := .call deleteToStartCommand },
     { name := askName, action := .call askCommand },

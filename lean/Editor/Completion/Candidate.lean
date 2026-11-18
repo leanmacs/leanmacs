@@ -59,6 +59,12 @@ structure Candidate where
   It is filtered where a listing is made (`Candidates.answering`,
   `Editor/State.lean`), so a style is handed only what is shown. -/
   hiddenUntil : Option String := none
+  /-- Whether it is a prefix to go on from rather than an answer: accepting
+  it puts its text in the minibuffer and keeps the prompt open, as Doom's
+  `vertico-directory-enter` goes into a directory (`acceptPrompt`,
+  `Editor/Api.lean`). Generic data, which the file source sets on a
+  directory. (`partial` is a keyword, hence the name.) -/
+  isPartial : Bool := false
   deriving DecidableEq, Repr
 
 /-- The candidate of `text`, with nothing beside it. -/

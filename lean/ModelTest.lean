@@ -18873,7 +18873,7 @@ def vimDefaultChecks : List Check :=
                 (vimDefault "c w").1.lastChange &&
               (vimDefault s!"c w x {arrow} <Escape> y").1.inserted == some "x") },
     { name :=
-        "insert state binds C-SPC, C-n, C-p, TAB, S-TAB, RET and C-g to the at-point commands, each changing no text for the grammar; the minibuffer state's keys are unchanged"
+        "insert state binds C-SPC, C-n, C-p, TAB, S-TAB, RET and C-g to the at-point commands, each changing no text for the grammar; the minibuffer state binds TAB to minibuffer-insert, C-n and C-p to next and previous, and S-TAB to nothing"
       run :=
         pure <|
           let bound :=
@@ -18897,10 +18897,9 @@ def vimDefaultChecks : List Check :=
                     | .command command => command.name
                     | _ => "")) ==
               [("RET", "minibuffer-accept"), ("<Escape>", "minibuffer-cancel"),
-                ("TAB", "minibuffer-next"), ("C-n", "minibuffer-next"),
-                ("S-TAB", "minibuffer-previous"), ("C-p", "minibuffer-previous"),
-                ("<Backspace>", "minibuffer-delete-backward"), ("<ArrowLeft>", ""),
-                ("<ArrowRight>", ""), ("C-u", "minibuffer-delete-to-start")] },
+                ("TAB", "minibuffer-insert"), ("C-n", "minibuffer-next"),
+                ("C-p", "minibuffer-previous"), ("<Backspace>", "minibuffer-delete-backward"),
+                ("<ArrowLeft>", ""), ("<ArrowRight>", ""), ("C-u", "minibuffer-delete-to-start")] },
     { name :=
         "every command a key of insert state's table or of the minibuffer's state's table runs is registered under its name by evil's commands, the minibuffer's or completion at point's"
       run :=
@@ -19078,7 +19077,7 @@ def vimDefaultChecks : List Check :=
             (["RET", "<Escape>"].all fun text => (parsed text).1 == told) &&
             told.stateOf states ⟨0⟩ == states.initial.name) },
     { name :=
-        "under the default Vim scheme the minibuffer's state binds the keys that move through a prompt's candidates: TAB and C-n each run the minibuffer's command that moves to the next, S-TAB and C-p the one that moves to the previous; each enters no state and leaves nothing pending, and none of the four is text"
+        "under the default Vim scheme the minibuffer's state binds TAB to minibuffer-insert, C-n to the command that moves to the next candidate and C-p to the one that moves to the previous; each enters no state and leaves nothing pending, and none is text; S-TAB runs nothing there and inserts nothing"
       run :=
         let states := Vim.Default.states
         let told : Vim.State := Vim.Default.scheme.openMinibuffer ⟨5⟩ (Vim.scheme states).init
@@ -19089,11 +19088,13 @@ def vimDefaultChecks : List Check :=
           | [.edit (.run command none none)] => some command.name
           | _ => none
         pure
-          (command "TAB" == some Minibuffer.nextName && command "C-n" == some Minibuffer.nextName &&
-            command "S-TAB" == some Minibuffer.previousName &&
+          (command "TAB" == some Minibuffer.insertName &&
+            command "C-n" == some Minibuffer.nextName &&
             command "C-p" == some Minibuffer.previousName &&
             Minibuffer.nextName != Minibuffer.previousName &&
-            ["TAB", "C-n", "S-TAB", "C-p"].all fun text => (parsed text).1 == told) },
+            command "S-TAB" == none &&
+            (parsed "S-TAB").2.all (· == .nothing) &&
+            ["TAB", "C-n", "C-p"].all fun text => (parsed text).1 == told) },
     { name :=
         "the default Vim scheme reports a fresh view as a block with an inclusive selection, no selecting and no insert session; after i a bar, an exclusive selection, an insert session and a view that takes text; and after i and <Escape> what it reported first"
       run :=
@@ -22076,14 +22077,14 @@ def promptModeChecks : List Check :=
               closed accepted ⟨1⟩ &&
               accepted.loop.state.windows.map (·.id) == #[⟨1⟩] },
     { name :=
-        "the minibuffer's commands are registered under their eight names, each another, the one that asks for the input scheme under the name the Vim scheme yields and the one that takes a batch under the name a source's job posts; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
+        "the minibuffer's commands are registered under their nine names, each another, the one that asks for the input scheme under the name the Vim scheme yields and the one that takes a batch under the name a source's job posts; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
       run :=
         pure
           (Minibuffer.commands.map (·.name) ==
               #[Minibuffer.acceptName, Minibuffer.cancelName, Minibuffer.nextName,
-                Minibuffer.previousName, Minibuffer.deleteBackwardName,
+                Minibuffer.previousName, Minibuffer.insertName, Minibuffer.deleteBackwardName,
                 Minibuffer.deleteToStartName, Minibuffer.askName, Minibuffer.candidatesName] &&
-            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 8 &&
+            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 9 &&
             Minibuffer.askName == Vim.askCommand &&
             Minibuffer.candidatesName == Completion.candidatesCommand &&
             Minibuffer.modes.map (·.name) == #[Prompt.mode] &&
@@ -22994,7 +22995,9 @@ def laterChecks : List Check :=
       run :=
         pure <|
           let batch : Array Completion.Candidate :=
-            #[.ofText "a", { text := "", label := some "" },
+            #[.ofText "a", { text := "", label := some "" }, { text := "dir/", isPartial := true },
+              { text := ".env", hiddenUntil := some "." },
+              { text := ".git/", isPartial := true, hiddenUntil := some "." },
               { text := "b", annotation := some "n" }, { text := "c", kind := some "k" },
               { text := "d", group := some "g" },
               { text := "e", label := some "l", annotation := some "a", kind := some "k"
@@ -23023,7 +23026,16 @@ def laterChecks : List Check :=
                 [.nat 3, .nat 1, .nat 2, .nat 0, .bool false, .bool false, .bool false,
                   .bool false] ==
               none &&
-            Completion.batchOfArguments? [.nat 3, .nat 1] == none },
+            Completion.batchOfArguments? [.nat 3, .nat 1] == none &&
+            Completion.batchOfArguments?
+                [.nat 3, .nat 1, .nat 2, .str "a", .bool false, .bool false, .bool false,
+                  .bool false] ==
+              none &&
+            Completion.batchOfArguments?
+                [.nat 3, .nat 1, .nat 2, .str "a", .bool false, .bool false, .bool false,
+                  .bool false, .bool false] ==
+              none &&
+            (Completion.Candidate.arguments { text := "a" }).length == 7 },
     { name :=
         "a source's job on the job model, given two batches, posts a minibuffer-candidates invocation for each, whose arguments decode to the batch with the order's view, index and generation, and then finishes; it waits the order's pause before its first post; one that echoes posts a candidate of the text it was asked; a malformed order fails the job"
       run :=
@@ -40736,6 +40748,78 @@ def atPointByItselfChecks : List Check :=
               drained.loop.state.echo != AtPoint.noCompletions &&
               drained.loop.state.echo == typed.loop.state.echo }]
 
+/-- The checks of putting a prompt's candidate into its minibuffer
+(`minibuffer-insert`, `insertCandidate`, `Editor/Api.lean`) and of going
+into a partial candidate (`Completion.Candidate.isPartial`, `acceptPrompt`),
+under the Vim scheme that ships, whose minibuffer state binds `TAB` to the
+insert and `RET` to the accept. -/
+def insertCandidateChecks : List Check :=
+  let ask (candidates : Array Completion.Candidate) : Dispatched := fun _ => do
+    discard <|
+        prompt pickLabel { command := "picked" } "" [.given (.fixed "pick" "pick" candidates)]
+    return none
+  let handed :=
+    evilHanded #[]
+      [("pick", ask (offered pickCandidates)),
+        ("dirs", ask #[{ text := "src/", isPartial := true }, .ofText "a.txt"]),
+        ("picked", fun call => do
+          message (picked call.arguments)
+          return none)]
+  let asked (command : String) : Option EvilDriver := do
+    let driver ← evilDriver "|" handed
+    return (driver.stepped (driver.loop.runNamed driver.handed command)).1
+  let listed (driver : EvilDriver) : Array String :=
+    ((driver.loop.state.prompt.map (·.candidates.listed.map (·.text))).getD #[])
+  [{  name :=
+        "TAB, minibuffer-insert, with a candidate chosen replaces the input with its text, the bar at its end, and leaves the prompt open; with nothing chosen it inserts the first listed; with nothing listed it changes nothing"
+      run :=
+        pure <|
+          match asked "pick" with
+          | none => false
+          | some asking =>
+            let chosen := evilFed asking "C-n C-n TAB"
+            let typed := evilFed asking "e"
+            let first := evilFed typed "TAB"
+            let unmatched := evilFed asking "z z TAB"
+            let second := (listed asking)[1]?.getD ""
+            evilShown chosen ⟨1⟩ == second ++ "|" && chosen.loop.state.prompt.isSome &&
+              second != (listed asking)[0]?.getD "" &&
+              evilShown first ⟨1⟩ == (listed typed)[0]?.getD "" ++ "|" &&
+              first.loop.state.prompt.isSome &&
+              evilShown unmatched ⟨1⟩ == "zz|" &&
+              unmatched.loop.state.prompt.isSome },
+    { name :=
+        "a candidate is inserted only from a listing for the text: chosen, or the first listed with none chosen; a listing for another text inserts nothing, and with no prompt the command says it is not open"
+      run :=
+        pure <|
+          let candidates : Candidates :=
+            { listedFor := some "e", listed := #[.of (.ofText "edit"), .of (.ofText "rewrite")] }
+          let unasked :=
+            match evilDriver "a|bc" handed with
+            | none => false
+            | some driver =>
+              let (ran, _) :=
+                driver.stepped (driver.loop.runNamed driver.handed Minibuffer.insertName)
+              ran.loop.state.echo == Minibuffer.notOpen && evilShown ran == "a|bc"
+          (candidates.toInsert "e").map (·.text) == some "edit" &&
+            (Candidates.toInsert { candidates with chosen := some 1 } "e").map (·.text) ==
+              some "rewrite" &&
+            (candidates.toInsert "ed").isNone &&
+            (({} : Candidates).toInsert "").isNone &&
+            unasked },
+    { name :=
+        "RET on a chosen partial candidate inserts it and keeps the prompt open; on a candidate that is not partial it closes the prompt and answers it"
+      run :=
+        pure <|
+          match asked "dirs" with
+          | none => false
+          | some asking =>
+            let entered := evilFed asking "C-n RET"
+            let answered := evilFed asking "C-n C-n RET"
+            evilShown entered ⟨1⟩ == "src/|" && entered.loop.state.prompt.isSome &&
+              answered.loop.state.prompt.isNone &&
+              answered.loop.state.echo == picked [.str "a.txt"] }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -40832,6 +40916,7 @@ def checks : List Check :=
     laterChecks ++
     completionJobChecks ++
     directoryChecks ++
+    insertCandidateChecks ++
     laterLoopChecks ++
     sourceContractChecks ++
     atPointContractChecks ++

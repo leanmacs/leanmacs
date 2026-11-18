@@ -156,20 +156,25 @@ def optionalOfArgument? : Argument → Option (Option String)
   | .bool false => some none
   | _ => none
 
-/-- `candidate` as five arguments: its text, then its label, annotation,
-kind and group, each a string or `false` for none. -/
+/-- `candidate` as seven arguments: its text, then its label, annotation,
+kind and group, each a string or `false` for none, then whether it is
+partial, a `Bool`, then what reveals it when it is hidden, a string or
+`false` for none. -/
 def Candidate.arguments (candidate : Candidate) : List Argument :=
   [.str candidate.text, optionalArgument candidate.label, optionalArgument candidate.annotation,
-    optionalArgument candidate.kind, optionalArgument candidate.group]
+    optionalArgument candidate.kind, optionalArgument candidate.group, .bool candidate.isPartial,
+    optionalArgument candidate.hiddenUntil]
 
-/-- The candidates `arguments` hold, five arguments each, after
+/-- The candidates `arguments` hold, seven arguments each, after
 `gathered`; `none` for arguments that are not candidates. -/
 def candidatesOfArguments? (gathered : Array Candidate) : List Argument → Option (Array Candidate)
   | [] => some gathered
-  | .str text :: label :: annotation :: kind :: group :: rest => do
+  | .str text :: label :: annotation :: kind :: group :: .bool isPartial :: hiddenUntil :: rest =>
+    do
     let candidate : Candidate :=
       { text, label := ← optionalOfArgument? label, annotation := ← optionalOfArgument? annotation
-        kind := ← optionalOfArgument? kind, group := ← optionalOfArgument? group }
+        kind := ← optionalOfArgument? kind, group := ← optionalOfArgument? group, isPartial
+        hiddenUntil := ← optionalOfArgument? hiddenUntil }
     candidatesOfArguments? (gathered.push candidate) rest
   | _ => none
 

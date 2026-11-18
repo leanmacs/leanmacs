@@ -1540,6 +1540,26 @@ def exhausted (candidates : Candidates) (typed : String) : Bool :=
       candidates.listedFor == some typed && candidates.listedAt == candidates.revision &&
         candidates.listed.isEmpty)
 
+/-- The candidate `minibuffer-insert` puts in a minibuffer holding `text`:
+when the listing is for `text`, the chosen candidate, or the first listed
+when nothing is chosen, as vertico preselects the first; `none` with
+nothing listed, and for a listing of another text, which a match job has
+not yet replaced. -/
+def toInsert (candidates : Candidates) (text : String) : Option Completion.Candidate :=
+  if candidates.listedFor != some text then none
+  else
+    let index := candidates.chosen.getD 0
+    (candidates.listed[index]?).map (·.candidate)
+
+/-- The chosen candidate, when the listing is for `text` and the candidate
+is partial (`Completion.Candidate.isPartial`): what accepting goes into
+instead of answering. -/
+def entered? (candidates : Candidates) (text : String) : Option Completion.Candidate :=
+  if candidates.listedFor != some text then none
+  else
+    (candidates.chosen.bind (candidates.listed[·]?)).bind fun listed =>
+      if listed.candidate.isPartial then some listed.candidate else none
+
 /-- What a prompt with these candidates answers with when the minibuffer
 holds `text`: the chosen candidate's text, when one is chosen and the
 listing is for `text`, and otherwise `text`. -/

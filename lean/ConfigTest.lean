@@ -6176,6 +6176,55 @@ def atPointChecks (context : Context) : List Check :=
             session.typed "C-g"
           return held }]
 
+/-- A chunk whose `setup` registers `pick`, which asks `Pick: ` over the
+fixed candidates `wq`, `edit` and `w`, and `picked`, which says its
+answer in the echo area. -/
+def pickChunk : String :=
+  "def setup : SetupM Unit := do
+  command \"pick\" (discard <| prompt \"Pick: \" { command := \"picked\" }
+    (sources := [.given (.ofTexts \"picks\" \"pick\" #[\"wq\", \"edit\", \"w\"])]))
+  commandWith \"picked\" fun _ => message \"picked\"
+"
+
+/-- Whether `lines` show the minibuffer holding `text` with the bar at its
+end, whichever view it is: a view line of that text with one selection,
+empty, at its end. -/
+def minibufferHolds (lines : Array String) (text : String) : Bool :=
+  let at_ := text.utf8ByteSize
+  lines.any fun line =>
+    line.startsWith "view " &&
+      (afterId line).startsWith s!": {text.quote}, scroll 0, selections {at_}..{at_}, padding"
+
+/-- The checks of the file prompt and of putting a candidate into the
+minibuffer, over the recorder, under the Vim scheme that ships. -/
+def filePromptChecks (context : Context) : List Check :=
+  [{  name :=
+        "AC 5: under the Vim scheme, in a prompt that is not a file prompt, C-n C-n TAB puts the second listed candidate in the minibuffer with the bar at its end, not the first; e TAB puts the first listed for e; the prompt stays open, its status line and the list view still drawn, and nothing is refused"
+      run :=
+        withVimHost context [("10-pick.lean", pickChunk)] fun session => do
+          session.ask [.reload]
+          let listed ← realOrder "" #["wq", "edit", "w"]
+          let some second := listed[1]? | return false
+          let some first := listed[0]? | return false
+          session.ask [.run "pick"]
+          session.typed "C-n C-n TAB"
+          let chosen ← session.sceneLines
+          session.typed "C-u e TAB"
+          let fallback ← session.sceneLines
+          let some typedFirst := (← realOrder "e" #["wq", "edit", "w"])[0]? | return false
+          let open_ (lines : Array String) : Bool :=
+            lines.any
+                (fun line =>
+                  line.startsWith "status " &&
+                    (afterId line).endsWith "minibuffer.prompt \"Pick: \"") &&
+              lines.any fun line =>
+                line.startsWith "view " &&
+                  ((afterId line).splitOn "selections , padding").length > 1
+          return second != first && minibufferHolds chosen second && open_ chosen &&
+              minibufferHolds fallback typedFirst &&
+              open_ fallback &&
+              !(← session.output.get).any (·.startsWith "loop: refused") }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
@@ -6190,6 +6239,7 @@ def checks (context : Context) : List Check :=
     hostLoopChecks context ++
     modeChecks context ++
     promptChecks context ++
+    filePromptChecks context ++
     atPointChecks context ++
     exChecks context ++
     evilChecks context ++
