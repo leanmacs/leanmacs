@@ -1376,12 +1376,14 @@ def vimHintChecks : List Check :=
                 | .bound (.textObject _) _ => true
                 | _ => false) &&
             (vimHints "i" vimNoMaps Vim.Default.states).isEmpty) },
-    { name := "an operator alone, a count alone and the register prefix alone list nothing"
+    { name :=
+        "an operator, a count, the register prefix or a motion that takes a character, typed alone, leaves no keymap prefix walked and lists nothing"
       run :=
         pure
           ((vimHints "d" vimNoMaps Vim.Default.states).isEmpty &&
             (vimHints "2" vimNoMaps Vim.Default.states).isEmpty &&
             (vimHints "\"" vimNoMaps Vim.Default.states).isEmpty &&
+            (vimHints "f" vimNoMaps Vim.Default.states).isEmpty &&
             (vimHints "" vimNoMaps Vim.Default.states).isEmpty) },
     { name := "the Vim scheme reports what can follow through its continuations field"
       run :=

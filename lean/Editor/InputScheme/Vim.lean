@@ -1014,12 +1014,13 @@ def State.tiers (states : States) (maps : ViewId → List (Keymap Bound)) (view 
 /-- The keys that can follow the keymap prefix walked so far for `view`, and
 what the walk makes of each, from the same tiers `parse` walks
 (`State.tiers`), with prefixes named by `names`. None when no keymap prefix
-is walked, or while the next key names a character or a register: a count,
-the register prefix or an operator alone is no keymap prefix. -/
+is walked: a count, the register prefix, a motion that takes a character or
+an operator alone is no keymap prefix, as `parse` leaves nothing walked
+once it reaches a binding. -/
 def State.continuations (states : States) (maps : ViewId → List (Keymap Bound))
     (names : List Key → Option String) (view : ViewId) (state : State) :
     List (Keymap.Continuation Bound) :=
-  if state.walked.isEmpty || state.awaitsChar.isSome || state.awaitsRegister then []
+  if state.walked.isEmpty then []
   else
     let (active, own) := state.tiers states maps view
     Keymap.continuationsOver active own state.walked names
