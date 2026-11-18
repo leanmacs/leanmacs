@@ -425,7 +425,27 @@ def driverChecks : List Check :=
               lastHints after == some #[] &&
               after.model.display.scenes.size == completed.model.display.scenes.size &&
               lastHints stale == some #[] &&
-              stale.loop.state.keyHints == prefixed.loop.state.keyHints }]
+              stale.loop.state.keyHints == prefixed.loop.state.keyHints },
+    { name :=
+        "a pass past a key hint delay and pauses on either side of it fires them in the order of their deadlines: the pause due before the hints and the pause due at the same reading first, their scenes with no hints, then the hints, then the pause due after them, its scene with the hints"
+      run :=
+        pure <|
+          match
+            (Loop.Driver.over (hintedKeys 500) (fun _ => none) (EditorState.initial ⟨640, 480⟩)
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let (prefixed, _) := fedTo driver (presses "C-x")
+            -- Pauses for the focused view due at 300, at the hints' 500 and
+            -- at 700, as a typed key arms them (`Loop.Stepped.pause`).
+            let armed : TestDriver :=
+              { prefixed with armed := #[(⟨0⟩, 300, 300), (⟨0⟩, 500, 500), (⟨0⟩, 700, 700)] }
+            let passed := armed.pass 700
+            let before := armed.model.display.scenes.size
+            let scenes := passed.model.display.scenes
+            prefixed.hinted == some (1, 500) && passed.armed.isEmpty && passed.hinted == none &&
+              (scenes.extract before scenes.size).map (·.keyHints) ==
+                #[#[], #[], afterPrefix, afterPrefix] }]
 
 /-- What a step of the prompt checks is handed: one keymap, the same for
 every view, the minibuffer's among them, that binds a key sequence under
