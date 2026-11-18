@@ -612,6 +612,25 @@ def reviewBufferChecks : List Check :=
               (entrySources since).map (·.1) == #["y.txt@C", "y.txt"] &&
               strayShots since == 0 },
     { name :=
+        "a working buffer edited between the read of a review since a commit and its diff says so as vc-review-since, names vc-review-since to run again, and opens nothing"
+      run :=
+        pure <|
+          match reviewOpened sinceRepository with
+          | none => false
+          | some opened =>
+            let seeded := reviewAfter opened "C-y c"
+            let (asked, _) := fedTo seeded (presses "C-y s")
+            let read := finishNamed asked reviewReadJob
+            let (edited, _) := fedTo read (presses "C-y e")
+            let diffed := reviewSettledOn edited []
+            read.pending.any (·.name == reviewDiffJob) &&
+              fileText edited "/r/y.txt" == some "0\nY\n" &&
+              echoOf diffed ==
+                some
+                  "vc-review-since: y.txt changed while the review was read; run vc-review-since again" &&
+              (showing diffed).map (·.buffer.name) == some "a.lean" &&
+              strayShots diffed == 0 },
+    { name :=
         "with the last round at a commit HEAD was rewritten past, vc-review-since opens the range-diff of the branch's commits since then as text, read-only, and focused"
       run :=
         pure <|

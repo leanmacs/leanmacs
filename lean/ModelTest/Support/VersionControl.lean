@@ -243,8 +243,9 @@ which puts `0\n` at the start of the buffer of `/r/lean/Pkg/B.lean`; and `0`
 to `9`, which put the cursor at the start of that excerpt of the window's
 text. Under `C-y`: `s`, `vc-review-since`; `c`, `z`, `h` and `0`, which
 write the workspace at `/r` a review store of one round against `base`
-whose head is `C`, `Z`, `head` or empty; and `m` and `b`, which open the
-review of the commit `C` or `B` (`startCommitReview`). Under `C-l`: `l`,
+whose head is `C`, `Z`, `head` or empty; `m` and `b`, which open the
+review of the commit `C` or `B` (`startCommitReview`); and `e`, which puts
+`0\n` at the start of the buffer of `/r/y.txt`. Under `C-l`: `l`,
 `f` and `d`, `vc-log` of `HEAD`, of `feature` and of `-x`; `v` and `r`,
 `vc-log-visit` and `vc-log-refresh`; `a` and `s`, which open `/r/a.txt`
 and `/r/s.txt`; `e`, `k` and `x`, `vc-blame` at `HEAD`, at `B` and at `-x`;
@@ -259,7 +260,7 @@ def reviewBindings : List (String × Invocation) :=
       ("C-t v", invoke VersionControl.reviewRevertName),
       ("C-t f", invoke VersionControl.reviewRefreshName), ("C-t u", invoke "undo-here"),
       ("C-t i", invoke "insert-x"), ("C-t x", invoke "no-hunks"), ("C-t z", invoke "noop"),
-      ("C-t e", invoke "edit-b")] ++
+      ("C-t e", { command := "edit-file", arguments := [.str "/r/lean/Pkg/B.lean"] })] ++
     (List.range 10).map
       (fun index => (s!"C-t {index}", { command := "to-excerpt", arguments := [.nat index] })) ++
     [("C-y s", invoke VersionControl.reviewSinceName),
@@ -269,6 +270,7 @@ def reviewBindings : List (String × Invocation) :=
       ("C-y 0", { command := "seed-round", arguments := [.str ""] }),
       ("C-y m", { command := "review-commit", arguments := [.str "C"] }),
       ("C-y b", { command := "review-commit", arguments := [.str "B"] }),
+      ("C-y e", { command := "edit-file", arguments := [.str "/r/y.txt"] }),
       ("C-l l", invoke VersionControl.logName),
       ("C-l f", { command := VersionControl.logName, arguments := [.str "feature"] }),
       ("C-l d", { command := VersionControl.logName, arguments := [.str "-x"] }),
@@ -306,9 +308,10 @@ def reviewKeys : Loop.Keys TestScheme.scheme :=
                       VersionControl.ReviewRecord).encode
             return none),
           ("noop", fun _ => pure none),
-          ("edit-b", fun _ => do
-            if let some id := (← editorState).findFile "/r/lean/Pkg/B.lean" then
-              discard <| id.insertAt 0 "0\n"
+          ("edit-file", fun call => do
+            if let .str path :: _ := call.arguments then
+              if let some id := (← editorState).findFile path then
+                discard <| id.insertAt 0 "0\n"
             return none),
           ("to-excerpt", fun call => do
             if let .nat index :: _ := call.arguments then

@@ -85,7 +85,9 @@ diff service is a job, and each job's command does the next step:
    releases every snapshot, on every path. A diff refused says
    `vc-review: <DiffError.describe>`; a working buffer whose text moved
    since its snapshot says `vc-review: <path> changed while the review was
-   read; run vc-review again`. Otherwise the files are ordered
+   read; run vc-review again`; in a review since a commit, each says
+   `vc-review-since` where it says `vc-review` (`ReviewScope.commandName`).
+   Otherwise the files are ordered
    (`orderFiles`), each with the lines its spans change. With no hunk at
    all it says the files left out, or that there is no change. Otherwise
    the buffer is built ("Hunks and their excerpts"): a new one called
@@ -757,8 +759,8 @@ def reviewBuilt (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff.
     if let some working := file.working then
       if let .ok text← working.text then
         if (← text.revision) != file.revision then
-          message
-              s!"{reviewName}: {file.path} changed while the review was read; run {reviewName} again"
+          let command := order.order.scope.commandName
+          message s!"{command}: {file.path} changed while the review was read; run {command} again"
           return false
   let against := order.order.against
   let scope := order.order.scope
