@@ -1402,6 +1402,30 @@ def setup : SetupM Unit := do
   command \"rust-buffer\" rustBuffer
 "
 
+/-- A stage for a host whose jobs reach real files: one over the real
+elaborator and `source`, with what `compiled` hands it, whose services have
+the library's file service, its diff service and its watch service, as the
+executable wires them, over the table of waits the file checks share
+(`Context.fileWaits`), which the one completion pump runs over. Its clock is
+still a fake one: the watch service coalesces on the library's own. -/
+def Stage.overFiles (context : Context) (source : Config.Source) (compiled : Compiled := {}) :
+    IO (Stage Config.Elaborate.State) := do
+  let completions ← context.fileWaits
+  let stage ← Stage.new context context.elaborator source compiled (some completions)
+  let collaborators := stage.collaborators
+  let refusedDiffs ← Job.RefusedDiffs.new
+  let watches ← Job.RealWatches.new
+  return { stage with
+      collaborators :=
+        { collaborators with
+          services :=
+            { collaborators.services with
+              fileWatches := Job.realFileWatches completions watches
+              files := Job.realFiles completions collaborators.published.reader collaborators.held
+              diffs :=
+                Job.realDiffs completions collaborators.published.reader collaborators.held
+                  refusedDiffs } } }
+
 /-- Runs `check` against a host of the Vim scheme that ships, made over the
 collaborators the executable's hosts are made of (`Headless.shippedOver`),
 with the real elaborator, a config directory of `files` and the services of
@@ -1409,15 +1433,29 @@ a stage of its own; its syntax tree is the real binding over the library's
 syntax service, which after an attach, and before a question of a text's
 captures, waits, with a bound, for the text's tree to be delivered. Stops the host; `false` if the check did not
 hold or the host did not stop. The directory is removed. -/
-def withVimHost (context : Context) (files : List (String × String)) (check : Session → IO Bool) :
-    IO Bool :=
+def withVimHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
+    (fileModel : Option FileModel := none) (realFiles : Bool := false) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeFiles directory files
     let source := Config.Directory.source directory
-    let stage ← Stage.new context context.elaborator source
+    -- With `realFiles`, the jobs reach real files through the library's
+    -- file service, as a file check's do (`Stage.overFiles`).
+    let stage ←
+      if realFiles then
+        Stage.overFiles context source
+      else
+        Stage.new context context.elaborator source
     let staged := stage.collaborators
-    let shipped :=
-      Headless.shippedOver "" "" "" staged.emit staged.services staged.published staged.held
+    -- With a model, the jobs reach its files and no real one.
+    let services ←
+      match fileModel with
+      | some model =>
+        do
+          let faked ← Job.FakeFiles.new staged.services.completions model
+          pure { staged.services with files := faked.files }
+      | none =>
+        pure staged.services
+    let shipped := Headless.shippedOver "" "" "" staged.emit services staged.published staged.held
     let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
       let real ← RealSyntaxTree.new snapshots
       return fun request => do
@@ -4403,30 +4441,6 @@ def setup : SetupM Unit := do
     ") fun loaded => discard loaded.toText
 "
 
-/-- A stage for a host whose jobs reach real files: one over the real
-elaborator and `source`, with what `compiled` hands it, whose services have
-the library's file service, its diff service and its watch service, as the
-executable wires them, over the table of waits the file checks share
-(`Context.fileWaits`), which the one completion pump runs over. Its clock is
-still a fake one: the watch service coalesces on the library's own. -/
-def Stage.overFiles (context : Context) (source : Config.Source) (compiled : Compiled := {}) :
-    IO (Stage Config.Elaborate.State) := do
-  let completions ← context.fileWaits
-  let stage ← Stage.new context context.elaborator source compiled (some completions)
-  let collaborators := stage.collaborators
-  let refusedDiffs ← Job.RefusedDiffs.new
-  let watches ← Job.RealWatches.new
-  return { stage with
-      collaborators :=
-        { collaborators with
-          services :=
-            { collaborators.services with
-              fileWatches := Job.realFileWatches completions watches
-              files := Job.realFiles completions collaborators.published.reader collaborators.held
-              diffs :=
-                Job.realDiffs completions collaborators.published.reader collaborators.held
-                  refusedDiffs } } }
-
 /-- A compiled command called `name`, written for the file checks, that runs
 the compiled open command with `path` as its argument: the driver's `run`
 hands a command no argument, so a check that opens a file hands its host a
@@ -6223,10 +6237,154 @@ def minibufferHolds (lines : Array String) (text : String) : Bool :=
     line.startsWith "view " &&
       (afterId line).startsWith s!": {text.quote}, scroll 0, selections {at_}..{at_}, padding"
 
+/-- The rows the candidate list of `lines` shows, one a line, whichever view
+it is: the text of the view line with no selection; `none` when no list is
+drawn. -/
+def listRows (lines : Array String) : Option (List String) :=
+  lines.findSome? fun line =>
+    let after := afterId line
+    if line.startsWith "view " && (after.splitOn "selections , padding").length > 1 then
+      match after.splitOn "\", scroll" with
+      | head :: _ => some ((String.ofList (head.toList.drop 3)).splitOn "\\n")
+      | [] => none
+    else none
+
+/-- The labels the candidate list of `lines` shows, each row's text up to its
+first space: a row's annotation follows its label after spaces. -/
+def listLabels (lines : Array String) : List String :=
+  ((listRows lines).getD []).map fun row => String.ofList (row.toList.takeWhile (· != ' '))
+
+/-- The files of the file prompt checks over the recorder: `/`, and in it
+`/w`, holding `alpha.txt`, `alps.md`, `beta.txt`, `.hidden` and the
+directories `notes` and `locked`; `/w/notes` holds `todo.md`; `/w/locked`
+cannot be read. -/
+def promptFiles : FileModel :=
+  let model :=
+    [("alpha.txt", "alpha\n"), ("alps.md", "alps\n"), ("beta.txt", "beta\n"),
+          (".hidden", "hidden\n")].foldl
+      (fun (model : FileModel) (name, text) => model.withFile ("/w" / name) text.toUTF8)
+      ((({} : FileModel).withDirectory "/").withDirectory "/w")
+  {
+    (((model.withDirectory "/w/notes").withDirectory "/w/locked").withFile "/w/notes/todo.md"
+      "todo\n".toUTF8) with
+    unreadable := #["/w/locked"] }
+
+/-- How many listing jobs `output` says were started. -/
+def listingsStarted (output : Array String) : Nat :=
+  (output.filter fun line =>
+      line.startsWith "job " && line.endsWith s!" {Completion.Paths.job}: started").size
+
+/-- Runs `check` on a host under the Vim scheme over `promptFiles`, with
+`open-file` run, its listing of `/` waited for, `w/` committed after its
+`/`, and the listing of `/w/` waited for. -/
+def atW (context : Context) (check : Session → IO Bool) : IO Bool :=
+  withVimHost context [] (fileModel := some promptFiles) fun session => do
+    session.ask [.run Files.openName]
+    unless (← session.host.join patience) == .settled do
+      return false
+    unless ← Event.post (.commit "w/") do
+      return false
+    unless (← session.host.join patience) == .settled do
+      return false
+    check session
+
 /-- The checks of the file prompt and of putting a candidate into the
 minibuffer, over the recorder, under the Vim scheme that ships. -/
 def filePromptChecks (context : Context) : List Check :=
   [{  name :=
+        "AC 1 over the recorder: the file prompt at /w/ lists locked/, notes/, alpha.txt, alps.md, beta.txt, directories first, notes/ annotated directory and no .hidden; after a l it lists the library's order of alpha.txt and alps.md"
+      run :=
+        atW context fun session => do
+          let at_ ← session.sceneLines
+          session.typed "a l"
+          let typed ← session.sceneLines
+          let labels := #["locked/", "notes/", "alpha.txt", "alps.md", "beta.txt"]
+          let ordered ← realOrder "al" #["locked", "notes", "alpha.txt", "alps.md", "beta.txt"]
+          let expected :=
+            ordered.filterMap fun last =>
+              labels.find? fun label => label == last || label == last ++ "/"
+          return listLabels at_ == labels.toList &&
+              ((listRows at_).getD []).any
+                (fun row => row.startsWith "notes/" && row.endsWith "directory") &&
+              listLabels typed == expected &&
+              !(← session.output.get).any (·.startsWith "loop: refused") },
+    { name :=
+        "dotfiles over the recorder: at /w/, a . lists .hidden among the names that hold a ., in the library's order, in the scene of that key, and no listing is started for it"
+      run :=
+        atW context fun session => do
+          let before := listingsStarted (← session.output.get)
+          session.typed "."
+          let dotted ← session.sceneLines
+          let ordered ←
+            realOrder "." #["locked", "notes", ".hidden", "alpha.txt", "alps.md", "beta.txt"]
+          return listLabels dotted == ordered && ordered.contains ".hidden" &&
+              listingsStarted (← session.output.get) == before },
+    { name :=
+        "AC 2 over the recorder: at /w/, n o TAB makes the input /w/notes/ and starts one listing, after which t lists todo.md"
+      run :=
+        atW context fun session => do
+          let before := listingsStarted (← session.output.get)
+          session.typed "n o TAB"
+          let inserted ← session.sceneLines
+          unless (← session.host.join patience) == .settled do
+            return false
+          session.typed "t"
+          let typed ← session.sceneLines
+          return minibufferHolds inserted "/w/notes/" && listLabels typed == ["todo.md"] &&
+              listingsStarted (← session.output.get) == before + 1 },
+    { name :=
+        "AC 4 over the recorder, on real files: in a temporary directory holding alpha.txt and alps.md, committed after the prompt's /, a l C-n RET opens the first listed file: view 0's status line names it, the view holds its text, and the load job ended"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          IO.FS.writeFile (directory / "alpha.txt") "alpha\n"
+          IO.FS.writeFile (directory / "alps.md") "alps\n"
+          withVimHost context [] (realFiles := true) fun session => do
+              session.ask [.run Files.openName]
+              unless (← session.host.join patience) == .settled do
+                return false
+              unless ← Event.post (.commit s!"{directory}/") do
+                return false
+              unless (← session.host.join patience) == .settled do
+                return false
+              let some first := (← realOrder "al" #["alpha.txt", "alps.md"])[0]? | return false
+              session.typed "a l C-n RET"
+              unless (← session.host.join patience) == .settled do
+                return false
+              let lines ← session.sceneLines
+              let text := if first == "alpha.txt" then "alpha\n" else "alps\n"
+              let output ← session.output.get
+              return lines.any
+                    (fun line =>
+                      line.startsWith "status 0: " &&
+                        (line.splitOn s!"mode-line.buffer {first.quote}").length > 1) &&
+                  lines.any (fun line => line.startsWith s!"view 0 0,0 0x0: {text.quote}") &&
+                  output.any
+                    (fun line =>
+                      line.startsWith "job " && line.endsWith s!" {Files.loadJob}: ok") &&
+                  !output.any (·.startsWith "loop: refused") },
+    { name :=
+        "AC 6 over the recorder: committing w/locked/ says files: cannot list /w/locked/: the file system does not allow it in the echo area and lists nothing; RET then says the load's refusal, and no prompt is left open"
+      run :=
+        withVimHost context [] (fileModel := some promptFiles) fun session => do
+          session.ask [.run Files.openName]
+          unless (← session.host.join patience) == .settled do
+            return false
+          unless ← Event.post (.commit "w/locked/") do
+            return false
+          unless (← session.host.join patience) == .settled do
+            return false
+          let lines ← session.sceneLines
+          let (echo, _) ← session.scene
+          session.typed "RET"
+          unless (← session.host.join patience) == .settled do
+            return false
+          let (after, views) ← session.scene
+          return echo == "files: cannot list /w/locked/: the file system does not allow it".quote &&
+              (listRows lines).getD [""] == [""] &&
+              after == (Files.notOpened "/w/locked" .notAFile).quote &&
+              views.size == 1 &&
+              !(← session.output.get).any (·.startsWith "loop: refused") },
+    { name :=
         "AC 5: under the Vim scheme, in a prompt that is not a file prompt, C-n C-n TAB puts the second listed candidate in the minibuffer with the bar at its end, not the first; e TAB puts the first listed for e; the prompt stays open, its status line and the list view still drawn, and nothing is refused"
       run :=
         withVimHost context [("10-pick.lean", pickChunk)] fun session => do

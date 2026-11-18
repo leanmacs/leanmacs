@@ -376,6 +376,21 @@ run = [
   # selection, the state and the echo of every scene), and the copy must
   # hold the bytes of `session/verse-expected`.
   "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/session/verse.txt \"$dir/verse.txt\" && sed \"s|@FILE@|$dir/verse.txt|\" ../tests/headless/session/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/session/expected - && cmp \"$dir/verse.txt\" ../tests/headless/session/verse-expected",
+  # `open-file`'s prompt over real files, as a process, with no config
+  # (tests/headless/open-file): the file source lists the directory typed so
+  # far through the library's file service, directories first with
+  # `directory` beside them and `.hidden` left out until a `.` is typed, from
+  # the one read; `no` lists `notes/` with its match; `<Tab>` goes into it
+  # and lists `todo.md`; `C-n` and `<Enter>` open it; and a directory that
+  # is not there says why in the echo area and lists nothing. This entry is
+  # one shell, as the session's is: it makes a temporary directory and
+  # removes it by a trap, copies `open-file/tree` there, and writes the
+  # script there from the template `open-file/script` with the directory's
+  # absolute path in place of `@DIR@`. The editor must exit with status 0,
+  # and its output, with that path written `@DIR@`, must be exactly
+  # `open-file/expected`. Every job is waited for with `join`, so its lines
+  # are fixed. No file is written.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/open-file/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/open-file/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/open-file/expected -",
   # A view that follows its cursor, as a process, with no config
   # (tests/headless/view): the script sizes the frame, opens a file of 120
   # lines with `:e`, and moves the cursor 100 lines down, with a scene
