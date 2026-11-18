@@ -7,11 +7,11 @@ import Editor.Event
 import Editor.Ex
 import Editor.Files
 import Editor.Gutter
-import Editor.VersionControl.Gutter
 import Editor.InputScheme
 import Editor.Key.Notation
 import Editor.ModeLine
 import Editor.State
+import Editor.VersionControl.Gutter
 
 /-!
 # The command loop
@@ -1498,7 +1498,8 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
 (`marksOf`), each read with its scroll anchor where the follow left it. -/
 def decorated (state : EditorState) (views : Array View) : TextM (Array View) :=
   views.mapM fun view =>
-    return { view with decorations := ← decorationsOf state view, marks := ← marksOf state view }
+    return { view with
+        decorations := ← decorationsOf state view, marks := ← marksOf state view }
 
 /-- The face the dividers between tiled windows are drawn in, Emacs's
 `window-divider`: the divider is filled in its foreground. -/

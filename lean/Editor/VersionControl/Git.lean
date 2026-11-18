@@ -151,8 +151,9 @@ def watchedOf (root : System.FilePath) (stdout : ByteArray) : Except Error Watch
     let resolved (path : String) : System.FilePath :=
       if (path : System.FilePath).isAbsolute then path else root / path
     let (gitDir, commonDir) := (resolved gitDir, resolved commonDir)
-    .ok
-      { directory := commonDir, paths := #[gitDir / "HEAD", gitDir / "index", commonDir / "packed-refs"]
+    .ok {
+        directory := commonDir,
+        paths := #[gitDir / "HEAD", gitDir / "index", commonDir / "packed-refs"]
         trees := #[commonDir / "refs"] }
   | _ => .error (.unparsable s!"rev-parse printed {lines.length} lines, not two")
 

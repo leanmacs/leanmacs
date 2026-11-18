@@ -323,19 +323,22 @@ def jobModel (repository : Repository) (git : String) (root : System.FilePath)
       {
         scripts :=
           #[script Git.statusArguments repository.porcelain] ++
-                writes.filterMap (fun write =>
-                  match write with
-                  | .stage paths => some (script (Git.stageArguments paths) .empty)
-                  | .unstage paths => some (script (Git.unstageArguments paths) .empty)
-                  | _ => none) ++
-              files.flatMap (fun (revision, path, content) =>
+            writes.filterMap
+              (fun write =>
+                match write with
+                | .stage paths => some (script (Git.stageArguments paths) .empty)
+                | .unstage paths => some (script (Git.unstageArguments paths) .empty)
+                | _ => none) ++
+            files.flatMap
+              (fun (revision, path, content) =>
                 #[script (Git.revisionArguments revision path) s!"{blobId content}\n".toUTF8,
                   script (Git.blobArguments (blobId content)) (File.encodeText content)]) ++
-            missing.map (fun (revision, path) =>
-              { command := Git.command git root (Git.revisionArguments revision path)
-                reply := .ok { exit := .code 1, stdout := .empty, stderr := .empty } }) ++
-          #[script Git.watchedArguments
-              s!"{repository.gitDir}\n{repository.commonDir}\n".toUTF8] } }
+            missing.map
+              (fun (revision, path) =>
+                { command := Git.command git root (Git.revisionArguments revision path)
+                  reply := .ok { exit := .code 1, stdout := .empty, stderr := .empty } }) ++
+            #[script Git.watchedArguments
+                s!"{repository.gitDir}\n{repository.commonDir}\n".toUTF8] } }
 
 end Repository
 

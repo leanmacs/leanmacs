@@ -38048,14 +38048,14 @@ def versionControlShowChecks : List Check :=
             after.processes.started ==
               #[gitRun #["rev-parse", "--verify", "--quiet", "HEAD:src/a.txt"],
                 gitRun #["cat-file", "blob", blob "one\n"]] },
-    { name :=
-        "fileAt of a path the revision lacks is none: rev-parse exits 1 and no cat-file runs"
+    { name := "fileAt of a path the revision lacks is none: rev-parse exits 1 and no cat-file runs"
       run :=
         pure <|
           let model := repository.jobModel "git" "/r" (missing := #[("HEAD", "n.txt")])
           let (missing, after) := gitShow "HEAD" "n.txt" model
           missing == .finished (.ok none) &&
-            after.processes.started == #[gitRun #["rev-parse", "--verify", "--quiet", "HEAD:n.txt"]] },
+            after.processes.started ==
+              #[gitRun #["rev-parse", "--verify", "--quiet", "HEAD:n.txt"]] },
     { name := "fileAt whose rev-parse fails otherwise failed, with what git said"
       run :=
         pure <|
@@ -38080,14 +38080,16 @@ def versionControlShowChecks : List Check :=
           main ==
               .finished
                 (.ok
-                  { directory := "/r/.git", paths := #["/r/.git/HEAD", "/r/.git/index", "/r/.git/packed-refs"]
+                  { directory := "/r/.git",
+                    paths := #["/r/.git/HEAD", "/r/.git/index", "/r/.git/packed-refs"]
                     trees := #["/r/.git/refs"] }) &&
             linked ==
               .finished
                 (.ok
                   { directory := "/m/.git"
                     paths :=
-                      #["/m/.git/worktrees/w/HEAD", "/m/.git/worktrees/w/index", "/m/.git/packed-refs"]
+                      #["/m/.git/worktrees/w/HEAD", "/m/.git/worktrees/w/index",
+                        "/m/.git/packed-refs"]
                     trees := #["/m/.git/refs"] }) &&
             after.processes.started == #[gitRun #["rev-parse", "--git-dir", "--git-common-dir"]] },
     { name := "watched whose output is not two lines is unparsable"
@@ -38099,7 +38101,8 @@ def versionControlShowChecks : List Check :=
       run :=
         pure <|
           let watched : VersionControl.Watched :=
-            { directory := "/r/.git", paths := #["/r/.git/HEAD", "/r/.git/index", "/r/.git/packed-refs"]
+            { directory := "/r/.git",
+              paths := #["/r/.git/HEAD", "/r/.git/index", "/r/.git/packed-refs"]
               trees := #["/r/.git/refs"] }
           let at_ (path : System.FilePath) (kinds : FileWatch.Kinds := { written := true }) :=
             watched.matters { path, kinds }
@@ -38116,7 +38119,7 @@ def versionControlShowChecks : List Check :=
       run :=
         pure <|
           let fileAt (repository : VersionControl.Model.Repository) (revision : String) :
-              Except VersionControl.Error (Option String) :=
+            Except VersionControl.Error (Option String) :=
             (VersionControl.Model.handle (.fileAt revision "src/a.txt") repository).1
           let watched : Except VersionControl.Error VersionControl.Watched :=
             (VersionControl.Model.handle .watched repository).1
@@ -38126,8 +38129,9 @@ def versionControlShowChecks : List Check :=
             fileAt staged "" == .ok (some "staged\n") &&
             fileAt repository "v2" == .ok none &&
             watched ==
-              .ok
-                { directory := "/r/.git", paths := #["/r/.git/HEAD", "/r/.git/index", "/r/.git/packed-refs"]
+              .ok {
+                  directory := "/r/.git",
+                  paths := #["/r/.git/HEAD", "/r/.git/index", "/r/.git/packed-refs"]
                   trees := #["/r/.git/refs"] } }]
 
 /-- What the status buffer of `r@main` shows of the contract's first
@@ -38246,8 +38250,9 @@ def statusViewChecks : List Check :=
 the status buffer's read and apply jobs. -/
 def statusJobs (name : String) : Option (List Argument → Work) :=
   if name == VersionControl.readJob then some VersionControl.readWork
-  else if name == VersionControl.applyJob then some VersionControl.applyWork
-  else if name == VersionControl.showJob then some VersionControl.showWork else workspaceJobs name
+  else
+    if name == VersionControl.applyJob then some VersionControl.applyWork
+    else if name == VersionControl.showJob then some VersionControl.showWork else workspaceJobs name
 
 /-- The bindings of the status buffer checks: the workspace driver checks',
 and `C-v s` (`vc-status`), `C-v t` (`vc-status-toggle`), `C-v v`
@@ -38262,11 +38267,12 @@ def statusBindings : List (String × Invocation) :=
       ("C-v v", invoke VersionControl.visitName), ("C-v r", invoke VersionControl.refreshName),
       ("C-v a", invoke VersionControl.stageName), ("C-v u", invoke VersionControl.unstageName),
       ("C-v k", invoke "kube")] ++
-    (List.range 6).map (fun row => (s!"C-v {row}", { command := "to-row", arguments := [.nat row] })) ++
-      [("C-v w", { command := VersionControl.showName, arguments := [.str "v1 src/a.lean"] }),
-        ("C-v h", invoke VersionControl.showName),
-        ("C-v n", { command := VersionControl.showName, arguments := [.str "HEAD nope.txt"] }),
-        ("C-v x", { command := VersionControl.showName, arguments := [.str "-x src/a.lean"] })]
+    (List.range 6).map
+      (fun row => (s!"C-v {row}", { command := "to-row", arguments := [.nat row] })) ++
+    [("C-v w", { command := VersionControl.showName, arguments := [.str "v1 src/a.lean"] }),
+      ("C-v h", invoke VersionControl.showName),
+      ("C-v n", { command := VersionControl.showName, arguments := [.str "HEAD nope.txt"] }),
+      ("C-v x", { command := VersionControl.showName, arguments := [.str "-x src/a.lean"] })]
 
 /-- The commands of the status buffer checks (`statusBindings`). -/
 def statusCommands : List (String × Dispatched) :=
@@ -38351,8 +38357,7 @@ def showRepository : VersionControl.Model.Repository :=
 `showRepository`, whose git says `HEAD` has no `nope.txt`, with `/r/src/a.lean`
 open and settled in view 0. -/
 def showDriver : Option TestDriver :=
-  (statusDriverOf showRepository (missing := #[("HEAD", "nope.txt")])).map
-    (settledAfter · "C-o a")
+  (statusDriverOf showRepository (missing := #[("HEAD", "nope.txt")])).map (settledAfter · "C-o a")
 
 /-- The checks of `vc-show` (`Editor/VersionControl/Show.lean`), on the loop's
 driver over the editor's models, the job model and the model of a
@@ -38438,8 +38443,7 @@ def gutterCarryCommands : List (String × Dispatched) :=
   [("mark-gutter", fun call => do
       let text := call.target.buffer.text
       let revision ← text.revision
-      discard <|
-          call.target.window.buffer.setGutter (some { revision, marks := #[addedMark 0 2] })
+      discard <| call.target.window.buffer.setGutter (some { revision, marks := #[addedMark 0 2] })
       return none),
     ("edit-top", fun call => do
       call.target.buffer.text.insert 0 "z\n"
@@ -38449,8 +38453,7 @@ def gutterCarryCommands : List (String × Dispatched) :=
 `C-g m` and `C-g e`; `none` if making the state was refused. -/
 def gutterCarryDriver : Option TestDriver :=
   let keys :=
-    dispatchKeys [("C-g m", invoke "mark-gutter"), ("C-g e", invoke "edit-top")]
-      gutterCarryCommands
+    dispatchKeys [("C-g m", invoke "mark-gutter"), ("C-g e", invoke "edit-top")] gutterCarryCommands
   (Loop.Driver.over keys (fun _ => none) (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver =>
     let typed := (fedTo driver [.preedit "", .commit "a\nb\n"]).1
@@ -38476,7 +38479,8 @@ def gutterCarryChecks : List Check :=
         pure <|
           carried (gutterEdit 2 4 0) (addedMark 2 4) == none &&
             carried (gutterEdit 1 3 0) (addedMark 2 4) == some (addedMark 1 2) },
-    { name := "an empty mark stays at its line: moved by an insert above, and kept at the start of its line by one at its offset"
+    { name :=
+        "an empty mark stays at its line: moved by an insert above, and kept at the start of its line by one at its offset"
       run :=
         pure <|
           carried (gutterEdit 0 0 2) (addedMark 6 6) == some (addedMark 8 8) &&
@@ -38490,7 +38494,8 @@ def gutterCarryChecks : List Check :=
                 (addedMark 8 10) ==
               some (addedMark 7 9) &&
             carried (gutterEdit 9 9 3) (addedMark 2 4) == some (addedMark 2 4) },
-    { name := "the marks of a text whose log is forgotten past their revision draw none, and those at the snapshot's revision are kept as they are"
+    { name :=
+        "the marks of a text whose log is forgotten past their revision draw none, and those at the snapshot's revision are kept as they are"
       run :=
         pure <|
           let program : TextM (Array GutterMark × Array GutterMark) := do
@@ -38516,7 +38521,8 @@ def gutterCarryChecks : List Check :=
             let shown ← text.snapshot
             Gutter.marksOf text (some gutter) shown 2 6
           (program.runModel {}).1.toOption == some #[addedMark 2 4, addedMark 4 6] },
-    { name := "a buffer with a gutter has the gutter's column in its view's padding and its marks in the scene, carried through an edit; one with none has neither"
+    { name :=
+        "a buffer with a gutter has the gutter's column in its view's padding and its marks in the scene, carried through an edit; one with none has neither"
       run :=
         pure <|
           match gutterCarryDriver with
@@ -38525,8 +38531,7 @@ def gutterCarryChecks : List Check :=
             let bare := gutterView driver
             let (marked, _) := fedTo driver (presses "C-g m")
             let (edited, _) := fedTo marked (presses "C-g e")
-            (bare.map (·.padding.gutter)) == some 0 &&
-              (bare.map (·.marks)) == some #[] &&
+            (bare.map (·.padding.gutter)) == some 0 && (bare.map (·.marks)) == some #[] &&
               (gutterView marked).map (·.padding.gutter) == some Buffer.Gutter.width &&
               (gutterView marked).map (·.marks) == some #[addedMark 0 2] &&
               (gutterView edited).map (·.marks) == some #[addedMark 2 4] }]
@@ -38772,7 +38777,7 @@ def gutterKeys : Loop.Keys TestScheme.scheme :=
       [("C-g x", invoke "gutter-edit"), ("C-g z", invoke "gutter-top"),
         ("C-g k", invoke Buffers.closeName)])
     (workspaceCommands ++ dispatchedOf VersionControl.gutterCommands ++
-        dispatchedOf Buffers.commands ++
+      dispatchedOf Buffers.commands ++
       [("gutter-edit", fun call => do
           let text := call.target.buffer.text
           text.replaceRange 0 (← text.byteLength) "new\na\nB\nc\n"
@@ -38857,7 +38862,8 @@ def gutterChecks : List Check :=
             let opened := settledAfter driver "C-o a"
             let started := gitStarted opened
             (started.idxOf? headRun).isSome &&
-              started.contains (gitRun #["cat-file", "blob", VersionControl.Model.blobId gutterHead]) &&
+              started.contains
+                (gitRun #["cat-file", "blob", VersionControl.Model.blobId gutterHead]) &&
               ((trackedShown opened).bind (·.head)).bind (snapshotText opened) == some gutterHead &&
               ((showing opened).bind (·.buffer.gutter)).isSome &&
               (gutterView opened).map (·.padding.gutter) == some Buffer.Gutter.width &&
@@ -38949,7 +38955,8 @@ def gutterChecks : List Check :=
           | some driver =>
             let opened := settledAfter driver "C-o a"
             let touched :=
-              opened.touch #[("/r/.git/objects/ab/cdef", .created), ("/r/.git/index.lock", .created)]
+              opened.touch
+                #[("/r/.git/objects/ab/cdef", .created), ("/r/.git/index.lock", .created)]
             touched.posting.isEmpty && touched.openWatches == 1 },
     { name :=
         "closing the buffer cancels its jobs, releases its snapshot of HEAD, takes it off the tracked buffers, and, the last buffer of its repository, cancels the watch"

@@ -201,8 +201,8 @@ def refsArguments (root : System.FilePath) (git : String) : List Argument :=
 def headFetched (order : HeadOrder) (reply : Except Error (Option String)) : EditorM Unit := do
   let state ← editorState
   let some entry :=
-    state.tracked.find? fun entry => entry.buffer == order.buffer && entry.epoch == order.epoch |
-    return
+    state.tracked.find? fun entry =>
+      entry.buffer == order.buffer && entry.epoch == order.epoch | return
   let some buffer := state.buffer? order.buffer | return
   match reply with
   | .ok (some content) =>
@@ -225,7 +225,8 @@ arguments that are not an order. -/
 def headWork (arguments : List Argument) : Work := fun _ => do
   let some order :=
     HeadOrder.ofArguments? arguments | throw s!"{headJob}: its arguments are not a head order"
-  return headFetched order (← Program.runM (Git.handler order.git order.root) (fileAt "HEAD" order.path))
+  return headFetched order
+      (← Program.runM (Git.handler order.git order.root) (fileAt "HEAD" order.path))
 
 /-- The command a diff finishes with ("The jobs", in the module docs). -/
 def diffed (order : DiffOrder) (reply : Except DiffError Diff.Hunks) : EditorM Unit := do
@@ -237,7 +238,8 @@ def diffed (order : DiffOrder) (reply : Except DiffError Diff.Hunks) : EditorM U
   discard <| EditorState.ask (.gutter (.diffed order.buffer order.epoch order.revision))
   if let .ok hunks := reply then
     if latest then
-      discard <| order.buffer.setGutter (some { revision := order.revision, marks := marksOf hunks })
+      discard <|
+          order.buffer.setGutter (some { revision := order.revision, marks := marksOf hunks })
 
 /-- The diff job ("The jobs", in the module docs). It fails only for
 arguments that are not an order. -/
@@ -314,7 +316,8 @@ def reconcile (registered : String → Bool) (git : String) (state : EditorState
   let on := [headJob, diffJob, refsJob].all registered
   let wanted := if on then wantedBuffers state else #[]
   let wants (entry : Tracked) : Bool :=
-    wanted.any fun (id, root, path) => id == entry.buffer && root == entry.root && path == entry.path
+    wanted.any fun (id, root, path) =>
+      id == entry.buffer && root == entry.root && path == entry.path
   let mut state := state
   let mut starts : Array JobStart := #[]
   let mut cancels : Array String := #[]
@@ -336,7 +339,9 @@ def reconcile (registered : String → Bool) (git : String) (state : EditorState
     let mut entry := entry
     let mut fetch := added.any (·.buffer == entry.buffer)
     if entry.stale && !entry.fetching then
-      entry := { entry with stale := false, fetching := true, epoch := entry.epoch + 1 }
+      entry :=
+        { entry with
+          stale := false, fetching := true, epoch := entry.epoch + 1 }
       fetch := true
     if fetch then
       starts :=
@@ -361,15 +366,21 @@ def reconcile (registered : String → Bool) (git : String) (state : EditorState
                       { buffer := entry.buffer, epoch := entry.epoch, head, taken, revision } }
     tracked := tracked.push entry
   -- One watch a repository with a tracked buffer.
-  let roots := tracked.foldl (fun (roots : Array System.FilePath) entry =>
-    if roots.contains entry.root then roots else roots.push entry.root) #[]
+  let roots :=
+    tracked.foldl
+      (fun (roots : Array System.FilePath) entry =>
+        if roots.contains entry.root then roots else roots.push entry.root)
+      #[]
   let watching := state.refWatches.filter (roots.contains ·.root)
   for watch in state.refWatches.filter (!roots.contains ·.root) do
     cancels := cancels.push (refsKey watch.root)
   let arming := roots.filter fun root => !watching.any (·.root == root)
   for root in arming do
-    starts := starts.push { name := refsJob, key := some (refsKey root), arguments := refsArguments root git }
+    starts :=
+      starts.push
+        { name := refsJob, key := some (refsKey root), arguments := refsArguments root git }
   return ({ state with
-      tracked, refWatches := watching ++ arming.map fun root => { root } }, starts, cancels)
+        tracked, refWatches := watching ++ arming.map fun root => { root } },
+      starts, cancels)
 
 end Editor.VersionControl

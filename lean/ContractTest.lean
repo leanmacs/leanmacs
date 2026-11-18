@@ -3478,7 +3478,8 @@ def versionControlChecks (services : Job.Services) : List Check :=
           -- through a link (a temporary directory's on macOS), so the
           -- answer is held to the names of what it names.
           let asked : JobM Bool := do
-            match ← Program.runM (VersionControl.Git.handler "git" linked) VersionControl.watched with
+            match
+              ← Program.runM (VersionControl.Git.handler "git" linked) VersionControl.watched with
             | .ok answer =>
               let common := answer.directory
               let own := common / "worktrees" / "linked"

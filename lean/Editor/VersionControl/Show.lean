@@ -105,8 +105,7 @@ def showTarget (text : String) : String × Option String :=
 /-- `path`, which is absolute, relative to `root`, when it is under it. -/
 def relativeTo (root path : System.FilePath) : Option String :=
   let lead := root.toString ++ if root.toString.endsWith "/" then "" else "/"
-  if path.toString.startsWith lead then some (path.toString.drop lead.length).toString
-  else none
+  if path.toString.startsWith lead then some (path.toString.drop lead.length).toString else none
 
 /-- The command a finished read hands the loop ("What the read comes to", in
 the module docs). -/
@@ -149,17 +148,17 @@ def showCommand (call : Call) : EditorM Unit := do
     return
   let state ← editorState
   let buffer := call.target.window.buffer
-  let some (workspace, _) := state.workspaceOf? buffer |
-    message s!"{showName}: {call.target.buffer.name} has no workspace"
-  let .local root := workspace.location |
-    message s!"{showName}: {workspace.label} cannot run commands"
+  let some (workspace, _) :=
+    state.workspaceOf? buffer | message s!"{showName}: {call.target.buffer.name} has no workspace"
+  let .local root :=
+    workspace.location | message s!"{showName}: {workspace.label} cannot run commands"
   unless workspace.location.can.runCommands do
     message s!"{showName}: {workspace.label} cannot run commands"
     return
   let path? :=
     path? <|> ((state.buffer? buffer).bind (·.file)).bind fun file => relativeTo root file.path
-  let some path := path? |
-    message s!"{showName}: {call.target.buffer.name} has no file in {workspace.label}"
+  let some path :=
+    path? | message s!"{showName}: {call.target.buffer.name} has no file in {workspace.label}"
   let order : ShowOrder :=
     { root, git := (← EditorState.ask .workspaceSettings).1.git, revision, path
       view := call.target.window.id }

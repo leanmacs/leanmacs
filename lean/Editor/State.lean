@@ -2083,8 +2083,10 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
     else
       let top := if (state.rect? id).any (·.y == 0) then state.topInset else 0
       let gutter :=
-        if ((state.window? id).bind fun window => (state.buffer? window.buffer).bind (·.gutter)).isSome
-        then Buffer.Gutter.width
+        if
+            ((state.window? id).bind fun window =>
+                (state.buffer? window.buffer).bind (·.gutter)).isSome then
+          Buffer.Gutter.width
         else 0
       { across := state.padding, down := state.padding, top, gutter }
 
@@ -2717,7 +2719,8 @@ def changeGutter (change : GutterChange) (state : EditorState) : EditorState :=
       tracked :=
         state.tracked.map fun entry =>
           if entry.buffer == buffer && entry.epoch == epoch then
-            { entry with head, fetching := false, diffed := none }
+            { entry with
+              head, fetching := false, diffed := none }
           else entry }
   | .diffed buffer epoch revision =>
     { state with
@@ -2730,11 +2733,14 @@ def changeGutter (change : GutterChange) (state : EditorState) : EditorState :=
           else entry }
   | .moved root =>
     { state with
-      tracked := state.tracked.map fun entry => if entry.root == root then { entry with stale := true } else entry }
+      tracked :=
+        state.tracked.map fun entry =>
+          if entry.root == root then { entry with stale := true } else entry }
   | .refused root =>
     { state with
       refWatches :=
-        state.refWatches.map fun watch => if watch.root == root then { watch with refused := true } else watch }
+        state.refWatches.map fun watch =>
+          if watch.root == root then { watch with refused := true } else watch }
 
 /-- Sets the gutter of the buffer `id`, or takes it away with `none`
 ("Buffers", in the module docs). Refused with `noSuchBuffer` for a buffer

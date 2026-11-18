@@ -4422,13 +4422,14 @@ def gutterChecks (context : Context) : List Check :=
           discard <| gitOutside home repo #["-c", "init.defaultBranch=main", "init", "-q"]
           IO.FS.writeFile file "a\nb\nc\n"
           discard <| gitOutside home repo #["add", "a.txt"]
-          discard <| gitOutside home repo #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "one"]
+          discard <|
+              gitOutside home repo #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "one"]
           IO.FS.writeFile file "a\nB\nc\n"
           let stage ←
             Stage.overFiles context (Config.Directory.source configDir)
                 { commands :=
                     Files.commands ++ Minibuffer.commands ++ Workspace.commands ++
-                        VersionControl.gutterCommands ++
+                      VersionControl.gutterCommands ++
                       #[opening "open-a" file]
                   jobs := Files.jobs ++ Workspace.jobs ++ VersionControl.gutterJobs
                   modes := Minibuffer.modes }
@@ -4443,25 +4444,26 @@ def gutterChecks (context : Context) : List Check :=
                 { collaborators with
                   services := { services with processes := isolatedProcesses processes home } } }
           onStage stage fun host stage => do
-            let session : Session :=
-              { host, directory := configDir, output := stage.output, threads := stage.threads
-                clock := stage.clock, watches := stage.watches, log := stage.log }
-            -- The watch job never ends, so the host's jobs never settle: the
-            -- open is asked for, and its outcome polled.
-            session.ask [.run "open-a"]
-            let changed := "marks 0: ~ diff.changed 2..4"
-            let (marked, saw) ← session.within 5000 (·.contains changed)
-            unless marked.isSome do
-              throw (IO.userError s!"the changed mark was not shown: {saw}")
-            discard <|
-                gitOutside home repo #["-c", "commit.gpgsign=false", "commit", "-q", "-a", "-m", "two"]
-            let (cleared, last) ←
-              session.within 5000 fun lines =>
-                  !lines.any (·.startsWith "marks 0:") &&
-                    lines.any fun line => line.startsWith "view 0" && line.endsWith " gutter 12"
-            unless cleared.isSome do
-              throw (IO.userError s!"the mark was not cleared after the commit: {last}")
-            return true }]
+              let session : Session :=
+                { host, directory := configDir, output := stage.output, threads := stage.threads
+                  clock := stage.clock, watches := stage.watches, log := stage.log }
+              -- The watch job never ends, so the host's jobs never settle: the
+              -- open is asked for, and its outcome polled.
+              session.ask [.run "open-a"]
+              let changed := "marks 0: ~ diff.changed 2..4"
+              let (marked, saw) ← session.within 5000 (·.contains changed)
+              unless marked.isSome do
+                throw (IO.userError s!"the changed mark was not shown: {saw}")
+              discard <|
+                  gitOutside home repo
+                    #["-c", "commit.gpgsign=false", "commit", "-q", "-a", "-m", "two"]
+              let (cleared, last) ←
+                session.within 5000 fun lines =>
+                    !lines.any (·.startsWith "marks 0:") &&
+                      lines.any fun line => line.startsWith "view 0" && line.endsWith " gutter 12"
+              unless cleared.isSome do
+                throw (IO.userError s!"the mark was not cleared after the commit: {last}")
+              return true }]
 
 /-- The directives of one ex line of a script: the ex command run by its
 name, which asks, `line` committed into the minibuffer, and the accept

@@ -298,7 +298,8 @@ def properties (cells : Display.Cells) : List Property :=
             paddedMove != (← move 6 0) },
     { name :=
         "the rows, a spot and a move of a view with a gutter are those of a view the gutter's width narrower, its spot's x the gutter's width further right"
-      texts := #["abcdefghijkl
+      texts :=
+        #["abcdefghijkl
 mn
 op
 qr"]
@@ -313,7 +314,8 @@ qr"]
           Display.spotOf
               { snapshot, width := 6 * cells.advance, height, anchor := 0, padding, position := 5 }
         let bare ←
-          Display.spotOf { snapshot, width := 4 * cells.advance, height, anchor := 0, position := 5 }
+          Display.spotOf
+              { snapshot, width := 4 * cells.advance, height, anchor := 0, position := 5 }
         let move (columns gutter : Nat) : DisplayM Display.Moved :=
           Display.linesFrom
             { snapshot, width := columns * cells.advance, gutter, position := 1, lines := 1
