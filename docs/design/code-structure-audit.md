@@ -312,6 +312,47 @@ command's setting and a reconciler's bookkeeping. The placement table
 ("Where a new field goes") gained rows for the outbox, the Vim memory, the
 display readings and the fields the loop's reconcilers keep.
 
+**Done** (roadmap `structural-splits`, phase
+`phase-4-narrow-state-request-port`): `StateRequest` had 84 variants at
+6fbbd9f (nineteen were added after 37b1335) and has 64 now (`awk
+'/^inductive StateRequest/,/^abbrev/' lean/Editor/State/Request.lean |
+grep -cE '^  \|'`), and `EditorState.handle` has no stand-in case left:
+it had 20 at 6fbbd9f. Twenty variants moved, not fourteen: six added after
+the audit were stand-ins too (`hasJob`, `categorySources`,
+`atPointSources`, `askSource`, `askAtPoint`, `matchCandidates`). They went
+to two new sub-ports of `EditorRequest`, both answered in place by the
+loop (`Program.dispatched`, before the guard, so neither request is
+guarded, though the program a control request runs is) and,
+where no loop dispatched a command, by a runner as with nothing registered
+(`RegistryRequest.bare`, `ControlRequest.bare`, the values the stand-ins
+had). `EditorRequest.registry` (`RegistryRequest`,
+`lean/Editor/Command/Registry.lean`) holds fourteen questions, answered by
+one pure function of what the loop is told (`Loop.Registered.answer`):
+the eleven the finding named, with `autoReloadMode` now `autoReload`,
+config's setting alone, since a command's choice is read from the state
+(`Files.autoReloadOn`); and `hasJob`, `categorySources` and
+`atPointSources`, which now takes the buffer's major and minor modes in
+place of a view. `EditorRequest.control` (`ControlRequest`,
+`lean/Editor/Command/Control.lean`) holds the three control requests and
+`askSource`, `askAtPoint` and `matchCandidates`: the loop acts on each by
+ending the command's program or putting a registered program before its
+rest, not by answering, and `giveUp` and `breakOff` ask the registry
+nothing, so they are a sub-port apart. No single read of config's
+readings replaced the questions: the language table cannot be in a reply,
+since `Language` holds a `Mode.SyntaxTree` and `lean/Editor/Mode.lean`
+imports `Editor.Command`, and `ex`, `hasJob`, `categorySources` and
+`atPointSources` are lookups over what the registry holds as functions, so
+a read would have taken at most eight of the fourteen
+(`docs/design/lean-runtime.md`, "The editor's port is a composite", has
+the record). `setMajorMode`, `setBufferMajorMode`, `startJob` and
+`loadTheme` stay state requests: each is a state operation, which the
+handler makes, and the loop gates on a registered name. The operations of
+`lean/Editor/Api.lean` keep their signatures and their answers; they and
+the editor's other modules that asked `EditorState.ask` for a moved
+variant ask `RegistryRequest.ask` or `ControlRequest.ask` now, except
+`lean/Editor/Highlight.lean`, below the API, which builds its `.registry`
+request by hand as it built the `.state` one.
+
 ### The bindings: `lean/Editor/Ffi.lean`
 
 **Cohesion**: The largest non-test file, 4,300 lines: about 450 lines of
@@ -542,8 +583,8 @@ running another command, quit, reload, themes, jobs, prompts, files,
 workspaces).
 
 **Interfaces**: Each operation is a program over the editor's port, close
-to one request each, so its breadth is `StateRequest`'s and the text
-port's. Its shape is right; what it forwards to is narrowed by
+to one request each, so its breadth is `StateRequest`'s, the registry's
+and the control sub-port's, and the text port's. Its shape is right; what it forwards to is narrowed by
 `narrow-state-request-port`, which leaves it unchanged from a command's
 side.
 

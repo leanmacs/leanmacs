@@ -966,8 +966,9 @@ auto-reload is on.** A config's own jobs may still watch, as a plugin would.
   by `auto-reload-mode`, the ex names `autoread` and `noautoread`), which
   lasts until the editor stops and survives a reload of config; and
   otherwise config's setting (`autoReload` in `setup`,
-  `Loop.Registered.autoReload`); and otherwise off. The state request
-  `autoReloadMode` answers it from the dispatcher.
+  `Loop.Registered.autoReload`); and otherwise off. `Files.autoReloadOn`
+  reads the choice from the state and asks the registry for config's
+  setting (`RegistryRequest.autoReload`), which the dispatcher answers.
 - **The reconciler** (`Loop.reconcile`, after each publish, in
   `Loop.fileJobs`) keeps `EditorState.following` in step with what is
   wanted: every open file buffer with no save in flight, while the mode is

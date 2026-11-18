@@ -21,7 +21,7 @@ code registers them are in `Editor/Workspace/Compiled.lean`.
 
 - **When a file opens** (`attach`, called by `Files.takeIn` once the buffer
   holds the file), the workspace settings are asked of the loop
-  (`StateRequest.workspaceSettings`): config's roots and the config
+  (`RegistryRequest.workspaceSettings`): config's roots and the config
   generation. A cached answer for the file's directory under that
   generation (`Workspace.Table.cached?`) is the buffer's at once, and
   starts no job: a second file of a directory asks git nothing.

@@ -509,7 +509,7 @@ so that a change to one breaks no other's checks:
   replaced by an install, which keeps the compiled ones.
 - **The requests a command makes for it**: which command an ex name is
   bound to, answered by the dispatcher from what it is told of the
-  registry (`stateRequestChecks`, `dispatchStateChecks`); an invocation
+  registry (`registryRequestChecks`, `dispatchStateChecks`); an invocation
   to be run after the command (`stateRequestChecks`, `promptChecks`, on
   the driver); and quit (`stateChecks`, `stateRequestChecks`,
   `apiStateChecks`, and one case of the API on the models and on the real

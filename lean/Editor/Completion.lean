@@ -36,7 +36,7 @@ again as the text changes (`Reask`). How that goes is in
 
 A prompt is asked with a list of `SourceRef`s: a source given as a value,
 or one named, which the loop that runs the asking command looks up among
-the registered sources (`StateRequest.askSource`,
+the registered sources (`ControlRequest.askSource`,
 `Editor/Command/Dispatch.lean`). A source is a program over the port a
 request is part of, so a request cannot hold one, nor a reply: the name
 crosses, and the loop runs the source it stands for inside the asking
@@ -44,7 +44,7 @@ command, as it runs a command named by `runCommand`.
 
 A prompt may also ask for a category (`.category category defaults`): it
 is answered by every source registered in the category, compiled and
-config alike, in registration order (`StateRequest.categorySources`,
+config alike, in registration order (`RegistryRequest.categorySources`,
 `Config.Registry.sourcesIn`). The defaults are what the prompt lists on a
 host that registered nothing; each is asked by name where a source of its
 name is registered in the category, so config's source of a shipped name

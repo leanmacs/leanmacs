@@ -852,9 +852,11 @@ editor state's buffers and windows through one port, whose shape is:
   `EditorRequest.display` one of the display port, `EditorRequest.watch`
   one of the watch port, `EditorRequest.clipboard` one of the clipboard
   port, `EditorRequest.fuzzy` one of the fuzzy port,
-  `EditorRequest.syntaxTree` one of the syntax tree port
-  and `EditorRequest.state` a request about the editor state: seven
-  sub-ports. The reply to each is its sub-port's reply. `editorPort` is
+  `EditorRequest.syntaxTree` one of the syntax tree port,
+  `EditorRequest.state` a request about the editor state,
+  `EditorRequest.registry` a question to the registry and config, and
+  `EditorRequest.control` a request to end the running command or to run
+  something registered inside it: nine sub-ports. The reply to each is its sub-port's reply. `editorPort` is
   an `abbrev`, as every port is.
 - **The fuzzy port** (`lean/Editor/Fuzzy.lean`, added by the command
   loop's phase 14) is what the editor asks of a fuzzy matcher:
@@ -890,7 +892,7 @@ editor state's buffers and windows through one port, whose shape is:
     answered by `Fuzzy.real`, one call, as a text request is by the text
     binding: the matcher needs nothing a host could hand in, so no runner
     takes a handler for it and no host changed. It is guarded like any
-    request that is not the state's.
+    request the loop does not answer in place.
   - Set aside: a function handed to the loop. The loop's publish and a
     command would then reach the matcher two ways, and config not at
     all.
@@ -914,7 +916,7 @@ editor state's buffers and windows through one port, whose shape is:
   publishes, once as its loop starts (`Collaborators.syntaxTree`,
   `Running.syntaxTree`), and hands it to every command it runs, a finished
   job's through `Job.finishWith` too. A syntax tree request is guarded like
-  any request that is not the state's, and what it did is not undone on
+  any request the loop does not answer in place, and what it did is not undone on
   rollback: the library parses and draws outside the editor state. What
   setting a major mode with a syntax tree asks of it is
   `lean/Editor/Highlight.lean`'s ([keymaps-and-modes.md](keymaps-and-modes.md),
@@ -1005,10 +1007,20 @@ editor state's buffers and windows through one port, whose shape is:
     by construction, since it runs above both runners;
   - the loop, and every test that builds one, is as it was.
 
+  The registry's questions (`lean/Editor/Command/Registry.lean`) and the
+  control requests (`lean/Editor/Command/Control.lean`) are the loop's to
+  answer in the same way, and for the same reasons: a question is answered
+  by one pure function of what the loop was told of the registry and
+  config (`Loop.Registered.answer`), and a control request by ending the
+  command's program or putting a registered program before its rest. So
+  neither has a model, a contract or a binding.
+
   A runner still answers every request of the port. Each answers a state
   request that reaches it as an editor with no buffer and no window would
-  (`EditorState.none`), and keeps nothing: a command run where no loop
-  dispatched it finds nothing. Every command a host runs goes through the
+  (`EditorState.none`), a question as with nothing registered
+  (`RegistryRequest.bare`) and a control request with nothing run and
+  nothing ended (`ControlRequest.bare`), and keeps nothing: a command run
+  where no loop dispatched it finds nothing. Every command a host runs goes through the
   loop; only a test runs one bare. A split of the port into one for
   commands and a smaller one for runners, which the types would then check,
   was set aside: it would rename the loop's monad and every call that runs
@@ -1020,12 +1032,53 @@ editor state's buffers and windows through one port, whose shape is:
   made by the host from the registry for each step), and answers those two
   requests with it: it refuses a name no one registered, runs a mode's
   on-enter actions inside the command, and hands the jobs a command asked
-  for back to the host to start.
+  for back to the host to start. A control request names the command, the
+  source or the style it runs, and a question's reply is names and
+  settings, never a program.
 - **Where it grows.** A new request about the editor state is a constructor
   of `StateRequest` and an operation of `lean/Editor/State.lean`
   (`lean/Editor/State/Request.lean`, "Where an addition goes"). A new
-  sub-port is a constructor and a lift. A new question about text or
-  layout stays inside its own sub-port and changes nothing here.
+  question to the registry or config, a new config setting a command reads
+  among them, is a constructor of `RegistryRequest`, and a new way to end
+  the command or to run something registered inside it one of
+  `ControlRequest` (each module's "Where an addition goes"). A new
+  sub-port is a constructor and a lift, or, for one the loop answers in
+  place, a constructor and an `ask`. A new question about text or layout
+  stays inside its own sub-port and changes nothing here.
+- **The registry's questions and the loop's control are sub-ports of their
+  own.** Decided 2026-11-18, by roadmap `structural-splits` phase 4. They
+  had been `StateRequest` variants that `EditorState.handle` answered with
+  a stand-in, since only the loop can answer them; twenty such variants had
+  grown there, so a sub-port whose rule is that it reaches nothing outside
+  the state grew a stub with each new config setting.
+  - **Two sub-ports, not one.** A question to the registry is answered by a
+    pure function of what the loop was told and changes neither the state
+    nor the program, so it is one arm of the dispatcher. A control request
+    changes the command's program: `giveUp` and `breakOff` end it, and
+    `runCommand`, `askSource`, `askAtPoint` and `matchCandidates` put a
+    registered program before the rest, so each is an arm of its own, in
+    one exhaustive match. `giveUp` and `breakOff` ask the registry nothing,
+    so a registry sub-port holding them would be misnamed. `askSource`,
+    `askAtPoint` and `matchCandidates` are control requests because they
+    are answered as `runCommand` is: a program runs inside the asking
+    command, guarded, and can refuse it.
+  - **No single read of config's readings**, as `StateRequest.read` is of
+    the state. The language table cannot be in a reply: a `Language` holds
+    a `Mode.SyntaxTree`, defined in `lean/Editor/Mode.lean`, which imports
+    `Editor.Command`, so a reply type over it would make the port depend on
+    itself. `ex`, `hasJob`, `categorySources` and `atPointSources` are
+    lookups over what the registry holds as functions. A read would have
+    replaced at most eight of the fourteen questions, and the sub-port would
+    have had two shapes of question; AGENTS.md asks for a variant per
+    question, and no command changes config's readings, so the state's
+    reason for one read does not hold.
+  - **Where no loop runs a command**, a runner answers both as with nothing
+    registered (`RegistryRequest.bare`, `ControlRequest.bare`), the values
+    the stand-ins had, `hasJob` answering yes for any name as `startJob`
+    takes any. Behaviour seen from a command did not change.
+  - `setMajorMode`, `setBufferMajorMode`, `startJob` and `loadTheme` stayed
+    state requests: each is a state operation the loop gates on a
+    registered name.
 
 | Piece | Where |
 |---|---|
@@ -1045,7 +1098,9 @@ editor state's buffers and windows through one port, whose shape is:
 | Its contract, imported from the port alone, run against the model by `lake test` and against the in-process clipboard by `contract-test` | `lean/Editor/Clipboard/Contract.lean` |
 | The clipboard where there is no window (the headless host): a cell of the process that answers with the model's rule | `lean/Editor/Clipboard/InProcess.lean` |
 | The state requests and their pure handler: one read of the whole state, and a request a write (a buffer, its history, values and modes; a window; the echo; a job to start), each refused with a value | `lean/Editor/State/Request.lean`, over the operations of `lean/Editor/State.lean` |
-| A dispatched command: its state requests answered from the loop's state, every other request guarded, so that it stops at its next one once the flag is up, a major mode's on-enter actions run inside it; `Guarded`, how it ended; and `Loop.Registered`, what the loop is told of the registry. The guard has this one definition | `lean/Editor/Command/Dispatch.lean` |
+| The questions to the registry and config: an ex binding, the themes, config's settings, the language table, the jobs and the completion sources registered; what a runner answers where no loop runs the command | `lean/Editor/Command/Registry.lean` |
+| The loop's control of a running command: giving up, breaking off, and running a command, a completion source, an at-point source or a category's style inside it; what a runner answers where no loop runs the command | `lean/Editor/Command/Control.lean` |
+| A dispatched command: its state, registry and control requests answered from the loop's state and what it is told of the registry (`Loop.Registered.answer`), every other request guarded, so that it stops at its next one once the flag is up, a major mode's on-enter actions run inside it; `Guarded`, how it ended; and `Loop.Registered`, what the loop is told of the registry. The guard has this one definition | `lean/Editor/Command/Dispatch.lean` |
 | The composite's model runner, over the five models side by side, and the fuzzy model, which has no state | `lean/Editor/Command/Model.lean` |
 | The composite's real runner, over the text binding, a display handler, a watch handler, a clipboard handler, a syntax tree handler and the fuzzy port's real binding | `lean/Editor/Command/Real.lean` |
 | `DisplayHandler`, and running a display program against one | `lean/Editor/Display.lean` |
@@ -1060,7 +1115,8 @@ editor state's buffers and windows through one port, whose shape is:
 Built by the command loop's phase 8 (`lean/Editor/Api.lean`, whose module
 docs have each operation's rules). It is what a command is written with
 beyond the text port's own operations: programs over the composite port,
-made of state requests and text requests. Config sees it through
+made of state requests, questions to the registry, control requests and
+text requests. Config sees it through
 `Editor.lean`.
 
 | A command can | With | Reaches the library |
@@ -1186,7 +1242,8 @@ made of state requests and text requests. Config sees it through
   `reload-config`. They needed four state requests. Two name something
   the host holds: which command an ex name is bound to (`exBinding`),
   which the dispatcher answers from the registry, as it answers a major
-  mode's name and a job's; and a reload (`reloadConfig`), a one-shot
+  mode's name and a job's (a question to the registry,
+  `RegistryRequest.ex`, since roadmap `structural-splits` phase 4); and a reload (`reloadConfig`), a one-shot
   output of the step. One has a command run after another (`invoke`), in
   the field a prompt's answer is recorded in. One asks the editor to quit
   (`quit`), which is a flag of the state the step turns into "stop"

@@ -29,39 +29,19 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
   named, and so is a job, and what the name stands for is the registry's.
-  So ten requests are answered with more than this handler by the loop,
+  So four requests are answered with more than this handler by the loop,
   which knows the registry: `setMajorMode` and `setBufferMajorMode`, which
   there refuse a name no mode is registered under and run the mode's
-  on-enter actions,
-  `startJob`, which there refuses a name no job is registered under,
-  `ex`, which there is answered the binding the registry has for an ex
-  name (`Editor/Ex/Line.lean`), `exNames`, which there is answered the ex
-  names that are bound, `themeNames`, which there is answered the names
-  themes are registered under, `loadTheme`, which there refuses a name no
-  theme is registered under, `runCommand`, which there runs the
-  command registered under a name inside the asking command, `askSource`,
-  which there runs the completion source registered under a name inside
-  the asking command (`Editor/Completion.lean`), `categorySources`, which
-  there is answered the names of the sources registered in a category,
-  `matchCandidates`, which there runs the completion style chosen for a
-  category (`Editor/Completion/Style.lean`) inside the asking command, and
-  `displayRules`, which there is answered config's display rules
-  (`Editor/DisplayRules.lean`), and `hasJob`, which there is answered
-  whether a job is registered under a name. Here
-  `setMajorMode`, `setBufferMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
-  answered `none`, `exNames` and `themeNames` are answered no name,
-  `runCommand` is answered `false` and runs nothing, `askSource` is answered
-  `none` and runs nothing, `categorySources` is answered no name,
-  `matchCandidates` is answered no hit and asks the matcher nothing,
-  `displayRules` is
-  answered no rule, and `hasJob` is answered `true`, as `startJob` takes any
-  name: this handler knows no registry.
-- **A reply holds plain data too**, so no request is answered a command:
-  a command is a program over the port these requests are part of, and a
-  reply that held one would be a type that refers to itself. A command
-  that needs what the registry holds for a command's name has the loop
-  run it (`runCommand`), with the call it hands it, which is plain data
-  (`Editor/Command/Call.lean`).
+  on-enter actions, `startJob`, which there refuses a name no job is
+  registered under, and `loadTheme`, which there refuses a name no theme
+  is registered under. Here they take any name: this handler knows no
+  registry. Each is still a state operation, which this handler makes.
+- **Every request is answered from the state.** A question to the registry
+  or config is `RegistryRequest`'s (`Editor/Command/Registry.lean`), and
+  what ends the command or runs something registered inside it is
+  `ControlRequest`'s (`Editor/Command/Control.lean`): both are sub-ports of
+  their own, which the loop answers. So the handler has no case it cannot
+  answer from the state.
 - **A marker is made by the caller.** `split`, `show` and `openWindow` are
   handed the markers of the window they make or change, which the command
   marked on the buffer's text first: the handler asks the text store
@@ -71,7 +51,7 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   or docked at an edge. It is refused with a `LayoutRefusal`, the state as
   it was, `noSuchEdge` among them for an edge the layout has none at.
   Where a buffer goes is the asking command's to decide, with the display
-  rules (`displayRules`, `EditorState.displaying`).
+  rules (`RegistryRequest.displayRules`, `EditorState.displaying`).
 - **The frame's tabs are changed by one request**, `tab`, with the change
   as data (`TabChange`: select, close, rename, move). A new tab is a spot
   of `openWindow` (`WindowSpot.tab`). It is refused with a
@@ -119,42 +99,17 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   loop hands them to its host once the command has run to its end
   (`Editor/Loop.lean`, "Prompts"). This is how a command has another run
   after it, as a step of its own.
-- **A command is run inside the asking command by one request**,
-  `runCommand`, with the name it is registered under and the call it is
-  to be run with. It is the loop's to act on: the transformation that
-  runs a command puts the named command's program before the rest of the
-  asking command's (`Editor/Command/Dispatch.lean`, "Requests that name
-  something registered"). The reply says whether a command was registered
-  under the name.
 - **A session at point is opened, moved, retyped, retaken and closed by
   one request each** (`openAtPoint`, `chooseAtPoint`, `retypeAtPoint`,
   `retakeAtPoint`, `closeAtPoint`), each refused with an `AtPointRefusal`
   (`Editor/State.lean`, "A session at point"). Which at-point sources a
-  buffer's chain has for an occasion (`atPointSources`) and an at-point
-  source's region (`askAtPoint`, run inside the asking command as
-  `askSource` is) are the loop's to answer, from the registry: here they
-  are answered no name and `none`. `retype` records what a command typed in
+  buffer's chain has for an occasion is a question to the registry
+  (`RegistryRequest.atPointSources`, `Editor/Command/Registry.lean`), and
+  an at-point source's region is asked inside the asking command
+  (`ControlRequest.askAtPoint`, `Editor/Command/Control.lean`). `retype`
+  records what a command typed in
   place of typed text (`EditorState.retyped`), which the loop tells the
   input scheme once the command has run to its end.
-- **A completion source is asked inside the asking command by one
-  request**, `askSource`, with the name it is registered under and the
-  query (`Editor/Completion.lean`). It is the loop's to act on, as
-  `runCommand` is: the source's program is put before the rest of the
-  asking command's. The reply is what it answered, its candidates with its
-  category and whether it filtered already (`Completion.Answer`), or
-  `none` when no source is registered under the name. A source is a
-  program over this port, so the request names it and the reply holds its
-  candidates, which are plain data. Which sources a category has is asked
-  by another, `categorySources`, whose reply is their names: plain data
-  too, so no program crosses the request.
-- **A text is matched with a category's completion style by one
-  request**, `matchCandidates`, with the category, the text and the
-  candidates' texts. It is the loop's to act on: the style the loop
-  chooses for the category is run inside the asking command, over the
-  fuzzy port, and the reply is its hits (`Completion.Hit`). A command
-  that resolves a typed answer asks it, so the answer is resolved as the
-  prompt of that category listed it. The request carries the category and
-  the reply the hits, plain data, so no style crosses it.
 - **The editor is asked to quit by one request**, `quit`, which sets the
   state's flag and nothing else (`Editor/State.lean`, "Quit"). The handler
   does not judge whether the editor may quit: the command that asks
@@ -191,17 +146,6 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   file found is recorded by one request, `markChanged`, and that the user
   was told of it by another, `tellChanged`, so the command a check finishes
   with is made of state requests alone and cannot be interrupted.
-- **A command gives up by one request**, `giveUp`, with its reason
-  (`giveUp`, `Editor/Api.lean`). It is the loop's to act on: the
-  transformation that runs a command ends the command's program at this
-  request, with the reason (`Editor/Command/Dispatch.lean`, "A command
-  that gives up"). This handler knows no command to end, so here the
-  request changes nothing and is answered like a write that has no reply.
-- **A command breaks off by one request**, `breakOff`, with its reason
-  (`breakOff`, `Editor/Api.lean`). It is the loop's to act on as `giveUp`
-  is, and differs in what the loop then does: what the command did stays
-  (`Editor/Command/Dispatch.lean`, "A command that breaks off"). Here it
-  changes nothing either.
 - **A register is set by one request**, `setRegister`, with its name
   (`Editor/State.lean`, "Registers"). It is never refused: a name is any
   string, and which names mean something is the asking command's rule. A
@@ -225,24 +169,8 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   value in the store of the buffers outside any workspace, and is never
   refused. A command reads them with a
   read of the state (`EditorState.workspaceOf?`, `workspaces`).
-- **What the finder is handed is asked by one request**,
-  `workspaceSettings`: config's workspace roots and the config generation,
-  which the loop answers from what it was told of the registry
-  (`Editor/Command/Dispatch.lean`). Here, with no registry, it is answered
-  no root and generation 0.
-- **Config's shell time limit is asked by one request**, `shellTimeLimit`,
-  which the loop answers the same way; here it is answered `none`. So is
-  **config's syntax refresh delay**, `syntaxRefreshDelay`, and **a path's
-  language**, `languageOf`, which the loop answers with the name of the
-  language its table chooses for the path (`Language.forPath`), and **a
-  language's indent unit**, `indentUnitOf`, which the loop answers with the
-  unit of its table's first entry of that name.
 - **A buffer's language is recorded by name**, `setLanguage`, as its major
   mode is: any name is taken, and refused `noSuchBuffer` alone.
-- **The compile contributions are asked by one request**, `compileHook`:
-  the registered contributions in registration order and config's project
-  commands (`Compile.Hook`), which the loop answers the same way; here it
-  is answered empty.
 
 ## Where an addition goes
 
@@ -250,8 +178,10 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 |---|---|
 | A question about the state | A pure function over `EditorState` (`Editor/State.lean`); nothing here |
 | A new way to change the state | An operation in `Editor/State.lean`, a constructor here with its case in `Reply` and in `handle`, and the operation a command calls in `Editor/Api.lean` |
-| A request that needs the registry | The same, and its case in `EditorM.dispatched` (`Editor/Command/Dispatch.lean`) |
+| A change of the state the registry gates (a name it must know) | The same, and its case in `Program.dispatched` (`Editor/Command/Dispatch.lean`) |
 | Something a command asks the loop to hand its host | A field of `EditorState.Outbox` (`Editor/State/Outbox.lean`, "Where a new entry goes"), a constructor here whose case sets it, and the function a command calls in `Editor/Api.lean` |
+| A question to the registry or config, a new config setting a command reads among them | Not here: a constructor of `RegistryRequest` (`Editor/Command/Registry.lean`, "Where an addition goes") |
+| A way to end the command, or to run something registered inside it | Not here: a constructor of `ControlRequest` (`Editor/Command/Control.lean`, "Where an addition goes") |
 
 Pinned by `ModelTest.stateRequestChecks`.
 -/

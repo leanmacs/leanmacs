@@ -15,8 +15,11 @@ command, so that the user can stop it: the watch port's interrupt flag
 (`Editor/Watch.lean`) is asked before each of the command's requests that
 reaches the library, and once the flag is up the command makes no further
 request. And it answers the command's state requests
-(`Editor/State/Request.lean`), from the editor state the loop hands in.
-What comes back is how the command ended (`Guarded`) and the state it left.
+(`Editor/State/Request.lean`), from the editor state the loop hands in,
+its questions to the registry and config (`Editor/Command/Registry.lean`),
+from what the loop is told of them, and its control requests
+(`Editor/Command/Control.lean`), by ending its program or putting a
+registered program before the rest. What comes back is how the command ended (`Guarded`) and the state it left.
 
 ## The guard
 
@@ -24,8 +27,8 @@ The rule has one definition, the last case of `Program.dispatched`: nothing
 else guards a program, and every command a host runs goes through it.
 
 - **A command stops at its next request.** One question, whether the flag
-  is up, is put before each request of the program that is not a state
-  request. When the answer is yes the program is finished there: the
+  is up, is put before each request of the program that is not a state,
+  registry or control request. When the answer is yes the program is finished there: the
   request is not made, and the continuation is not applied.
 - **A command cannot catch an interrupt.** Being interrupted is not a reply
   to the command's request and nothing is thrown: the rest of the command is
@@ -38,15 +41,16 @@ else guards a program, and every command a host runs goes through it.
   ("A command that gives up"), or it broke off ("A command that breaks
   off"). So the loop that runs it goes on to roll back, where it does, and
   to publish whichever it was.
-- **A state request is not guarded.** It is pure Lean, not a call into the
-  library, and what the guard bounds is the requests that reach the library
+- **A state, registry or control request is not guarded.** Each is pure
+  Lean, not a call into the library, and what the guard bounds is the requests that reach the library
   (`docs/design/concurrency.md`, "When it is asked"). It also keeps a move
   in the history whole towards the guard: the last text request of an undo
   drops the inverses it crossed, and the request after it is the state
   request that records the moved tree. A check between the two could stop a
   command with the inverses dropped and the move unrecorded, which no
   rollback could then take back. A check before the drop stops it with
-  nothing dropped.
+  nothing dropped. The program a control request runs is guarded: its
+  requests are the command's own.
 - **A command that makes no request is not interruptible**, nor is one that
   makes state requests alone: there is no request to stop it at. That is
   accepted (`docs/design/concurrency.md`, "Runaway code is not a design
@@ -64,6 +68,11 @@ else guards a program, and every command a host runs goes through it.
   after it. No state request is left in the program it returns, so none
   reaches a runner, and the handler is the same function on the models and
   against the library by construction.
+- **So are the registry's questions and the control requests.** A
+  question is answered `Loop.Registered.answer`, and a control request
+  ends the program or puts a registered program before its rest ("Requests
+  that name something registered"). Neither is left in the program it
+  returns either.
 - **The state comes back however the command ended**: finished, refused,
   interrupted, having given up or having broken off. A rollback needs the undo trees the
   command left (`Editor/Loop.lean`, "Rollback"), so the state a command
@@ -75,8 +84,8 @@ else guards a program, and every command a host runs goes through it.
 
 ## A command that gives up
 
-A command ends itself, with a reason, by one state request
-(`StateRequest.giveUp`, made by `giveUp`, `Editor/Api.lean`): it found that
+A command ends itself, with a reason, by one control request
+(`ControlRequest.giveUp`, made by `giveUp`, `Editor/Api.lean`): it found that
 what it was asked cannot be done, and what it did so far is to be taken
 back (`docs/design/concurrency.md`, "Foreground: commands").
 
@@ -95,8 +104,8 @@ back (`docs/design/concurrency.md`, "Foreground: commands").
 
 ## A command that breaks off
 
-A command also ends itself, with a reason, by a second state request
-(`StateRequest.breakOff`, made by `breakOff`, `Editor/Api.lean`): it found
+A command also ends itself, with a reason, by a second control request
+(`ControlRequest.breakOff`, made by `breakOff`, `Editor/Api.lean`): it found
 that what its key stands for cannot be done, and what it did so far is to
 stay. Evil's operate command breaks off when its motion failed after it
 moved the cursor, as Vim cancels the operator and leaves the cursor where
@@ -167,63 +176,59 @@ from the next command.
   to its end (`Editor/Loop.lean`, "Jobs from commands"). A cancel
   (`StateRequest.cancelJob`) is the handler's: its key is kept the same
   way, whether or not a job of that key is running.
-- **Asking for an ex binding** (`StateRequest.ex`) is answered the binding
-  the registry has for the ex name (`Loop.Registered.ex`): the command the
-  name runs and what it takes, or `none` for a name nobody bound. The
-  state is not read and not changed. What the answer is used for, the ex
-  line's rules, is the asking command's (`Editor/Ex.lean`).
-- **Asking which ex names are bound** (`StateRequest.exNames`) is answered
-  the names the loop was told (`Loop.Registered.exNames`): each bound name
-  once. The state is not read and not changed. The ex line asks, for the
-  candidates of its prompt.
-- **Asking which themes are registered** (`StateRequest.themeNames`) is
-  answered the names the loop was told (`Loop.Registered.themeNames`), the
-  state not read and not changed. The command that loads a theme asks, for
-  the candidates of its prompt.
+- **A question to the registry or config** (`RegistryRequest`,
+  `Editor/Command/Registry.lean`) is answered `Loop.Registered.answer`, the
+  state not read and not changed. What each asker uses its answer for:
+  - an ex binding (`ex`, from `Loop.Registered.ex`): the command the name
+    runs and what it takes, or `none` for a name nobody bound; the ex
+    line's rules are the asking command's (`Editor/Ex.lean`), and the ex
+    names that are bound (`exNames`), each once, are its prompt's
+    candidates;
+  - the themes registered (`themeNames`): the command that loads a theme
+    asks, for the candidates of its prompt;
+  - config's auto-reload setting (`autoReload`): whether auto-reload is in
+    effect where no command chose (`Files.autoReloadOn`,
+    `Editor/Files.lean`), a command's choice being the state's;
+  - the workspace settings (`workspaceSettings`, from
+    `Loop.Registered.workspaceSettings`: config's workspace roots, the git
+    program and the contributions' marker modes) and the config generation
+    (`generation`): a file's open asks, for its directory's workspace
+    (`Editor/Workspace/Attach.lean`), and the version-control commands ask,
+    for the git program; the gutter's reconciler is handed the same
+    (`Editor/Loop.lean`, `Stepped.published`);
+  - config's display rules (`displayRules`), in order: `BufferId.display`
+    asks, to decide where a buffer a command made goes
+    (`Editor/DisplayRules.lean`, `EditorState.displaying`);
+  - config's shell time limit (`shellTimeLimit`), or `none`: `:!` asks, for
+    its run's limit (`Editor/Shell.lean`); and its syntax refresh delay
+    (`syntaxRefreshDelay`): a mode's entry asks, for the interval it hands
+    the syntax service (`Editor/Highlight.lean`);
+  - a path's language (`languageOf`): the name of the language the loop's
+    table chooses (`Language.forPath` over `Loop.Registered.languages`), or
+    `none`; a file's open asks, for the language its buffer records
+    (`Editor/Files.lean`);
+  - a language's indent unit (`indentUnitOf`): the unit of the first entry
+    of that name in the table (config's entries first), or `none`; `=` and
+    the commands that open a line ask (`Target.indentUnit`,
+    `Editor/Api.lean`);
+  - the compile hook (`compileHook`, from `Loop.Registered.compile`): the
+    compile mode asks (`Editor/Compile.lean`, "The hook");
+  - whether a job is registered (`hasJob`, from `Loop.Registered.jobs`, as
+    a start is checked): `prompt` asks it of a source that answers later;
+  - which sources a category has (`categorySources`, filled from
+    `Config.Registry.sourcesIn`), none for a category with none: `prompt`
+    asks each by name with `askSource`;
+  - which at-point sources a buffer's chain has for an occasion
+    (`atPointSources`, from `Loop.Registered.atPointNames` and
+    `atPoint`), handed the buffer's major and minor modes:
+    `completeAtPoint` asks (`Editor/Api.lean`).
 - **Loading a theme** (`StateRequest.loadTheme`) is refused with
   `noSuchTheme` for a name the loop was not told a theme is registered
   under, with the state as it was. Otherwise the name is kept in the state,
   for the loop to hand to its host once the command has run to its end
   (`Editor/Loop.lean`, "A theme switch from a command").
-- **Asking for the workspace settings** (`StateRequest.workspaceSettings`)
-  is answered the workspace settings the loop was told of
-  (`Loop.Registered.workspaceSettings`: config's workspace roots and the
-  git program) and the config generation (`generation`), the state not
-  read and not changed. A file's open asks, for its directory's workspace
-  (`Editor/Workspace/Attach.lean`), and the version-control commands ask,
-  for the git program; the gutter's reconciler is handed the same
-  (`Editor/Loop.lean`, `Stepped.published`).
-- **Asking for the display rules** (`StateRequest.displayRules`) is
-  answered config's display rules the loop was told of
-  (`Loop.Registered.displayRules`), in order, the state not read and not
-  changed. `BufferId.display` asks, to decide where a buffer a command
-  made goes (`Editor/DisplayRules.lean`, `EditorState.displaying`).
-- **Asking for the shell time limit** (`StateRequest.shellTimeLimit`) is
-  answered config's limit the loop was told of
-  (`Loop.Registered.shellTimeLimit`), or `none`, the state not read and
-  not changed. `:!` asks, for its run's limit (`Editor/Shell.lean`).
-- **Asking for the syntax refresh delay**
-  (`StateRequest.syntaxRefreshDelay`) is answered the same way, from
-  `Loop.Registered.syntaxRefreshDelay`. A mode's entry asks, for the
-  interval it hands the syntax service (`Editor/Highlight.lean`).
-- **Asking for a path's language** (`StateRequest.languageOf`) is answered
-  the name of the language the loop's table chooses for the path
-  (`Language.forPath` over `Loop.Registered.languages`), or `none`, the
-  state not read and not changed. A file's open asks, for the language its
-  buffer records (`Editor/Files.lean`).
-- **Asking for a language's indent unit** (`StateRequest.indentUnitOf`) is
-  answered the unit of the first entry of that name in the loop's table
-  (`Loop.Registered.languages`, config's entries first), or `none`. `=`
-  and the commands that open a line ask (`Target.indentUnit`,
-  `Editor/Api.lean`).
-- **Asking for the compile hook** (`StateRequest.compileHook`) is answered
-  the compile contributions and config's project commands the loop was
-  told of (`Loop.Registered.compile`), the state not read and not changed.
-  The compile mode asks (`Editor/Compile.lean`, "The hook"). The workspace
-  settings carry the contributions' marker modes too
-  (`Workspace.Settings.markerModes`), for what opens a file.
 - **Running a command inside the asking command**
-  (`StateRequest.runCommand`) is answered `false` for a name no command is
+  (`ControlRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
   Otherwise the command's program, for the call the request hands it, is
   put before the rest of the asking command's, as an on-enter action's
@@ -245,7 +250,7 @@ from the next command.
     repeat replays a change with the command the change's own keys ran
     (`Editor/Evil/Repeat.lean`).
 - **Asking a completion source inside the asking command**
-  (`StateRequest.askSource`) is answered `none` for a name no source is
+  (`ControlRequest.askSource`) is answered `none` for a name no source is
   registered under (`Loop.Registered.sources`), with nothing run.
   Otherwise the source's program, for the query the request hands it, is
   put before the rest of the asking command's, as a command's is for
@@ -262,16 +267,14 @@ from the next command.
   (`Completion.Source.later`) is not run: the reply is its category,
   whether it filtered, no candidates and how it answers, and its job
   answers (`Editor/Completion/Later.lean`).
-- **Whether a job is registered** (`StateRequest.hasJob`) is answered from
-  the names the loop was told (`Loop.Registered.jobs`), as a start is
-  checked: `prompt` asks it of a source that answers later.
-- **Which sources a category has** (`StateRequest.categorySources`) is
-  answered the names the loop was told (`Loop.Registered.categorySources`,
-  filled from `Config.Registry.sourcesIn`), none for a category with none.
-  The reply is names, so no program crosses it: `prompt` asks each by name
-  with `askSource`.
+- **Asking an at-point source inside the asking command**
+  (`ControlRequest.askAtPoint`) is answered `none` for a name no at-point
+  source is registered under (`Loop.Registered.atPoint`), with nothing
+  run. Otherwise the source's program, for the spot the request hands it,
+  is put before the rest of the asking command's, as a source's is for
+  `askSource`, and the reply is the region it answered.
 - **Matching a text with a category's style**
-  (`StateRequest.matchCandidates`) runs the style the loop was told for
+  (`ControlRequest.matchCandidates`) runs the style the loop was told for
   the category (`Loop.Registered.matching`, `Completion.Matching.styleFor`:
   the default for a category with none chosen and for none) over the text
   and the candidates, before the rest of the asking command's program,
@@ -346,7 +349,9 @@ mapped to its buffer (`EditorState.bufferOver?`).
   in that buffer does.
 
 Pinned by `ModelTest.guardChecks` (the guard, on commands that make no
-state request), `ModelTest.dispatchStateChecks`,
+state request), `ModelTest.dispatchStateChecks`, for the questions to the
+registry and where the registry's and the control's arms stand towards the
+guard, `ModelTest.dispatchRegistryChecks`,
 `ModelTest.modeEnterChecks`, for the first edit after a change on disk,
 `ModelTest.stalenessChecks`, for read-only buffers,
 `ModelTest.readOnlyChecks`, and for excerpt sources,
@@ -436,8 +441,10 @@ def TextRequest.accepted : (request : TextRequest) → request.Reply → Bool
   | .apply .., reply => ((reply : Except TextError Nat) matches .ok _)
   | _, _ => false
 
-/-- What the loop is told of the registry for the state requests that name
-something registered. A step is handed one, made from the registry as it
+/-- What the loop is told of the registry and config, for the state
+requests that name something registered, the questions to the registry
+(`Loop.Registered.answer`) and the control requests that run something
+registered. A step is handed one, made from the registry as it
 then is. -/
 structure Loop.Registered where
   /-- The modes whose on-enter actions run when the mode of this name
@@ -494,33 +501,33 @@ structure Loop.Registered where
   project commands (`Config.Registry.compileHook`). -/
   compile : Compile.Hook := {}
   /-- The completion source registered under a name, for a prompt that asks
-  for it by name (`StateRequest.askSource`). `none` for a name no source is
+  for it by name (`ControlRequest.askSource`). `none` for a name no source is
   registered under. -/
   sources : String → Option Completion.Source := fun _ => none
   /-- The names of the completion sources registered in a category, in
   registration order, for a prompt that asks for a category
-  (`StateRequest.categorySources`). None for a category no source is
+  (`RegistryRequest.categorySources`). None for a category no source is
   registered in. -/
   categorySources : String → Array String := fun _ => #[]
   /-- The completion styles chosen by category, for a command that matches
   a text as a prompt of a category lists it
-  (`StateRequest.matchCandidates`). The loop fills it from the styles it
+  (`ControlRequest.matchCandidates`). The loop fills it from the styles it
   lists prompts with (`Loop.Keys.matching`). -/
   matching : Completion.Matching := Completion.Matching.standard
   /-- The at-point source registered under a name
   (`Editor/Completion/AtPoint.lean`), for a command that asks it
-  (`StateRequest.askAtPoint`). `none` for a name none is registered
+  (`ControlRequest.askAtPoint`). `none` for a name none is registered
   under. -/
   atPoint : String → Option Completion.AtPoint := fun _ => none
   /-- The names of a buffer's chain of at-point sources, given its major
   mode and its minor modes in the order they were added
   (`Config.Registry.atPointNames`), for a command that asks
-  (`StateRequest.atPointSources`). -/
+  (`RegistryRequest.atPointSources`). -/
   atPointNames : Option String → Array String → Array String := fun _ _ => #[]
 
 /-- The workspace settings `registered` says: config's workspace roots, the
 git program, and the marker modes of the compile contributions. What the
-workspace settings are asked for answers (`StateRequest.workspaceSettings`),
+workspace settings are asked for answers (`RegistryRequest.workspaceSettings`),
 and what the loop hands the version-control gutter, so that every reader of
 the git program reads the one. -/
 def Loop.Registered.workspaceSettings (registered : Loop.Registered) : Workspace.Settings :=
@@ -575,23 +582,25 @@ def enteringMode (name : String) (text : TextId) (lineage : List Mode)
     lineage.forM (·.onEnter view)
 
 /-- `program`, a command's, with its state requests answered from `state`,
-each from the state the one before left, and the interrupt flag asked
-before each of its other requests: how the command ended, and the state it
-left, or had reached when it was refused or when the flag was found up,
-with that request and everything after it not made. A request to give up
-ends the program there, with its reason and the state it had reached ("A
-command that gives up", in the module docs), and so does a request to
-break off ("A command that breaks off").
+each from the state the one before left, its questions to the registry and
+config answered from `registered` (`Loop.Registered.answer`), and the
+interrupt flag asked before each of its other requests but its control
+requests: how the command ended, and the state it left, or had reached when
+it was refused or when the flag was found up, with that request and
+everything after it not made. A control request to give up ends the program
+there, with its reason and the state it had reached ("A command that gives
+up", in the module docs), and so does one to break off ("A command that
+breaks off").
 
 A request to set a major mode, of a view's buffer or of a buffer by its id,
 is answered with what `registered` says of the mode ("Requests that name
 something registered", in the module docs):
 the on-enter actions it runs are put before the rest of the program. A
-request to start a job and one for an ex binding are answered with what
-`registered` says of the name, and for a request to run a command the
-command `registered` has of the name is put before the rest of the
-program, and for a request to ask a completion source, the source's
-program. -/
+request to start a job or to load a theme is answered with what
+`registered` says of the name. For a control request to run a command, the
+command `registered` has of the name is put before the rest of the program,
+and for one to ask a completion source, an at-point source or a category's
+style, that program. -/
 partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     EditorState →
       Program editorPort (Except TextError α) → Program editorPort (Guarded α × EditorState)

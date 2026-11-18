@@ -217,7 +217,7 @@ Minor modes give the compile mode what fits a kind of project
 on-modes (`Workspace.onModesOf`, `Editor/Workspace/Modes.lean`), nearest
 root first, then in registration order, decide where a run goes, what
 `compile` offers and how the output is read. The contributions are asked of
-the loop (`StateRequest.compileHook`), so a reload's change holds from the
+the loop (`RegistryRequest.compileHook`), so a reload's change holds from the
 next command.
 
 - **Where.** With on-modes, `compile` runs its line, typed or default, in

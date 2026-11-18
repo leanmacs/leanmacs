@@ -3450,7 +3450,7 @@ asked and what accepting gives).
   (`.category category defaults`, below):
   `prompt label continuation initial (sources := …)`. A source given is
   run by `prompt`; a named one is run by the loop that runs the asking
-  command, which looks the name up (`StateRequest.askSource`), since a
+  command, which looks the name up (`ControlRequest.askSource`), since a
   request cannot carry a program over the port it is part of. A name no
   source is registered under refuses the prompt, as a value,
   `noSuchSource`, with no text made.
@@ -3464,7 +3464,7 @@ asked and what accepting gives).
 - **A prompt may ask for a category.** `.category c defaults`
   (`SourceRef.ofCategory c` for none) is answered by every source
   registered in `c`, compiled and config alike. `prompt` asks the loop for
-  the names once (`StateRequest.categorySources`, answered from
+  the names once (`RegistryRequest.categorySources`, answered from
   `Config.Registry.sourcesIn`): the names whose latest entry is of `c`,
   each once, in the order the name was first registered. Compiled entries
   come before config's, so this is registration order across owners. Each
@@ -3878,8 +3878,8 @@ and orderless choose it.
   chosen answers the typed text (`Candidates.answer`), and `switch-buffer`
   and `tab-switch` take a text that is no candidate, label or number as
   their best match. They match it with `matchByCategory`
-  (`lean/Editor/Api.lean`): one state request,
-  `StateRequest.matchCandidates`, with the category, the text and the
+  (`lean/Editor/Api.lean`): one control request,
+  `ControlRequest.matchCandidates`, with the category, the text and the
   candidates in the prompt's order, which the loop answers by running the
   style it chooses for that category (`Loop.Registered.matching`, filled
   from `Loop.Keys.matching`). So they take what the prompt lists first
@@ -3956,7 +3956,7 @@ Doom Emacs's corfu module (owner decisions, 2026-11-17).
   trigger character, a pause), and answers nothing, or the region to
   replace, which holds the offset, and the sources to complete it from,
   named (`Region`, `Named`): it runs inside the asking command through a
-  dispatcher request (`StateRequest.askAtPoint`), and a reply cannot hold a
+  dispatcher request (`ControlRequest.askAtPoint`), and a reply cannot hold a
   program. It may declare trigger characters and a pause after which it
   asks by itself. Its model is `AtPoint.fixed`, its fake
   `Fake.AtPoint.refusing`, and its contract (`AtPointContract`) holds it to
@@ -4231,7 +4231,7 @@ buffer while editing goes on.
 - **Project commands.** Config gives one project, by its identity, its own
   named commands and settings for a mode (`projectCommands`). They have
   one source, config's latest as the loop is told it
-  (`StateRequest.compileHook`), keyed by identity, and are copied into no
+  (`RegistryRequest.compileHook`), keyed by identity, and are copied into no
   store: `compile`, `compile-command` and `Compile.projectSettings` read
   them from there, so every worktree of the codebase has them, no other
   project does, and a reload's change is read at once, before any compile.

@@ -250,7 +250,7 @@ open when the table has it: found or registered this session.
   and `compile` runs there, its output still in the workspace's
   compilation buffer. Config's commands and settings for a project, by its
   identity, are read from config's latest as the loop is told it
-  (`StateRequest.compileHook`), not copied into the project's store, so
+  (`RegistryRequest.compileHook`), not copied into the project's store, so
   every worktree of the codebase offers them, no other project does, and a
   reload's change is read at once.
   The on-modes a run started with are part of the workspace's record.

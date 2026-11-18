@@ -49,7 +49,11 @@ to answer, from the state the loop holds (`Editor/Command.lean`, "The state
 requests are the loop's to answer"), and a command the loop runs has none
 left when it reaches these models. One that does reach them, from a command
 run bare, is answered as an editor with no buffer and no window would
-(`EditorState.none`), with nothing kept and the clock where it was.
+(`EditorState.none`), with nothing kept and the clock where it was. So are
+a question to the registry and a control request: the loop answers them,
+and one that reaches these models is answered as with nothing registered
+and no loop to act (`RegistryRequest.bare`, `ControlRequest.bare`), with
+the clock where it was.
 -/
 
 namespace Editor
@@ -94,7 +98,8 @@ def snapshotDocuments (texts : TextModel) : Array (SnapshotId × Nat) :=
 /-- Answers `request` with its sub-port's model. A text request, a display
 request, a clipboard request, a fuzzy request and a syntax tree request each
 move the watch model's clock on by its pace. A state request is answered from an editor with
-nothing in it, and changes nothing. -/
+nothing in it, and changes nothing; a question to the registry and a control
+request are answered `bare`, and change nothing either. -/
 def handle : (request : EditorRequest) → EditorModel → request.Reply × EditorModel
   | .state request, model => ((EditorState.none.handle request).1, model)
   | .registry request, model => (request.bare, model)

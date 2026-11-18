@@ -8,8 +8,9 @@ import Editor.Store
 
 The operations a command is written with, beyond the text port's own
 (`Editor/Text.lean`): each is a program over the editor's port (`EditorM`,
-`Editor/Command.lean`) made of state requests (`Editor/State/Request.lean`)
-and text requests. `Editor.lean` imports this module, so config sees them.
+`Editor/Command.lean`) made of state requests (`Editor/State/Request.lean`),
+questions to the registry (`Editor/Command/Registry.lean`), control
+requests (`Editor/Command/Control.lean`) and text requests. `Editor.lean` imports this module, so config sees them.
 
 ## Asking the state
 
@@ -25,6 +26,20 @@ state. What the text store refuses is thrown, as everywhere in `EditorM`.
 The loop that runs a command answers its state requests
 (`Editor/Command/Dispatch.lean`). Run bare, a command finds an editor with
 nothing in it.
+
+## Asking the registry, and the loop's control
+
+- `RegistryRequest.ask request` asks one question of the registry and
+  config (`Editor/Command/Registry.lean`): an ex binding, the language
+  table, a config setting. The loop answers it from what it was told of
+  them; run bare, as with nothing registered.
+- `ControlRequest.ask request` asks the loop to end the command or to run
+  something registered inside it (`Editor/Command/Control.lean`). Run bare,
+  nothing is run and nothing is ended.
+
+Neither is refused. The operations below ask them where they need to, and
+keep their own signatures: a command outside the editor calls the
+operation, such as `exBinding`, `runCommand` or `giveUp`, not the request.
 
 ## Buffers
 
@@ -250,7 +265,8 @@ a value, with their `LayoutRefusal`.
   a new window. The window is focused when the rule says so; with no rule
   that matches, when the caller's `focus` says so, `true` unless it is
   given (the compile mode gives `false`, so the focus stays). It reads the
-  rules with a state request the loop answers (`.displayRules`). A docked
+  rules with a question to the registry the loop answers
+  (`RegistryRequest.displayRules`). A docked
   window, at an edge (`Frame.docked`), is a window like any other to every
   operation here, and so is a float (`Frame.floats`). A rule's float
   target opens a float centred in the frame; the spot is handed through.
@@ -392,8 +408,8 @@ cannot be done (`docs/design/concurrency.md`, "Foreground: commands").
   (`Editor/Loop.lean`, "Running an invocation"). The input scheme goes
   back to its state at rest, so a key that entered a state of the scheme's
   has not entered it.
-- **It cannot be caught.** It makes one state request
-  (`StateRequest.giveUp`), at which the loop ends the command's program
+- **It cannot be caught.** It makes one control request
+  (`ControlRequest.giveUp`), at which the loop ends the command's program
   (`Editor/Command/Dispatch.lean`, "A command that gives up"). Nothing is
   thrown, so a `try` round the call does not go on.
 - **Run where no loop dispatches the command** it is refused, with
@@ -412,8 +428,8 @@ motion got to before it failed, with the operator cancelled
 (`Editor/Evil/Operators.lean`).
 
 - **Its type is `EditorM α` for any `α`**, and it cannot be caught, as
-  `giveUp` cannot: it makes one state request (`StateRequest.breakOff`),
-  at which the loop ends the command's program
+  `giveUp` cannot: it makes one control request
+  (`ControlRequest.breakOff`), at which the loop ends the command's program
   (`Editor/Command/Dispatch.lean`, "A command that breaks off").
 - **The loop rolls nothing back.** The texts, the markers and the editor
   state the command reached are kept, as a finished command's are, and
@@ -611,7 +627,7 @@ A command asks for a string without waiting for it
     (`.given (.ofTexts name category names)`).
   - **It is given as a value or named.** `.given source` is run by
     `prompt`; `.named name` is run by the loop, which looks the name up
-    among the registered sources (`StateRequest.askSource`), and a name no
+    among the registered sources (`ControlRequest.askSource`), and a name no
     source is registered under refuses the prompt with `noSuchSource`,
     with no text made.
   - **Each source is asked once, by `prompt`**, in order, inside the
@@ -632,7 +648,7 @@ A command asks for a string without waiting for it
     has its candidates kept apart (`passed`): they are listed after the
     matches, in the order it gave, whatever is typed.
   - **A category may be asked for** (`.category category defaults`): the
-    sources registered in it, by name (`StateRequest.categorySources`),
+    sources registered in it, by name (`RegistryRequest.categorySources`),
     with `defaults` first, each asked by name where one of its name is
     registered in the category and as itself otherwise, then the
     category's other sources, in registration order. A category with no
@@ -699,9 +715,9 @@ at-point sources name (`docs/design/keymaps-and-modes.md`, "Completion at
 point"; `Editor/Completion/AtPoint.lean`).
 
 - `completeAtPoint occasion` asks the chain of the focused window's buffer
-  for the sources that ask on the occasion (`StateRequest.atPointSources`),
+  for the sources that ask on the occasion (`RegistryRequest.atPointSources`),
   and asks each, in order, for its region at the cursor
-  (`StateRequest.askAtPoint`), **stopping at the first that answers**. A
+  (`ControlRequest.askAtPoint`), **stopping at the first that answers**. A
   region that does not hold the cursor, or whose ends are not positions of
   the text, is refused `outside`. The sources it names are asked with the
   region's text (`collectSources`, shared with `prompt`), the region's ends
@@ -1127,7 +1143,7 @@ prompt keeps what they answered, each source's candidates in its group
 (`Completion.Candidate.inGroup`), in the sources' order: a filtered
 source's apart, to be listed as given, and every other's to be matched.
 The prompt's category is its first reference's. A source given as
-a value is run here; one named is run by the loop (`StateRequest.askSource`),
+a value is run here; one named is run by the loop (`ControlRequest.askSource`),
 and refused, with no text made, with `noSuchSource` when no source is
 registered under its name. A source that answers later
 (`Completion.Source.later`), given or named, is not run: it is recorded as
@@ -1135,7 +1151,7 @@ asking, for `initial`, and the loop starts its job
 (`Editor/Completion/Later.lean`); the prompt is refused, with no text made,
 with `noSuchJob` when no job is registered under its job's name. A category (`.category category defaults`) is
 asked for the names of its registered sources once
-(`StateRequest.categorySources`): each default is asked by name where one
+(`RegistryRequest.categorySources`): each default is asked by name where one
 of its name is registered in the category and as itself otherwise, then
 each other name in the category, in registration order. A category with
 no source and no defaults asks nothing. If a source is refused, so is this

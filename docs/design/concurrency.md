@@ -289,7 +289,12 @@ time, in order, on the editor thread.
   - **A state request is answered without asking.** A request about the
     editor state is pure Lean, answered by the loop from the state it
     holds, not a call into the library, and what the guard bounds is the
-    calls into the library. It also keeps a move in the history whole
+    calls into the library. So is a question to the registry or config,
+    answered from what the loop was told of them, and a control request,
+    which ends the command or runs a registered program inside it
+    (`lean/Editor/Command/Registry.lean`, `Control.lean`); the program a
+    control request runs is guarded, as the command's own requests are.
+    A state request also keeps a move in the history whole
     towards the guard: the last text request of an undo drops the inverses
     it crossed, and the request after it records the moved tree in the
     buffer. A check between the two could stop a command with the inverses
@@ -346,7 +351,7 @@ time, in order, on the editor thread.
   keys begin and end a session). A view's wanted column is editor state,
   so it is rolled back with everything else, and so are the registers.
   - **A command gives up, with its reason** (the command loop's phase 13;
-    `giveUp reason` in `lean/Editor/Api.lean`, `StateRequest.giveUp`,
+    `giveUp reason` in `lean/Editor/Api.lean`, `ControlRequest.giveUp`,
     `Guarded.gaveUp`, `Loop.Ending.gaveUp`). It is the third way a command
     ends without having run to its end, beside a refusal by the store and
     an interrupt, and the one a command chooses: evil's operator whose
@@ -365,8 +370,8 @@ time, in order, on the editor thread.
       return would leave the view in insert state after a failed `cj`, and
       make the failed edit the last change.
   - **A command breaks off, with its reason** (`breakOff reason`,
-    `StateRequest.breakOff`, `Guarded.brokeOff`, `Loop.Ending.brokeOff`).
-    It ends itself as one that gives up does, at one state request the
+    `ControlRequest.breakOff`, `Guarded.brokeOff`, `Loop.Ending.brokeOff`).
+    It ends itself as one that gives up does, at one control request the
     dispatcher finishes the program at, and differs in what the loop then
     keeps: nothing is rolled back. The texts, the markers and the editor
     state the command reached are the loop's, as a finished command's
@@ -1075,7 +1080,7 @@ later and matching off the editor thread by completion's phase 3.
 | `ex` asking for its line, and running the answer's command | `lean/Editor/Ex.lean` (`exCommand`, `run`) |
 | A prompt's candidates, records, their listing and the choice; setting them and choosing | `lean/Editor/State.lean` ("Prompts": `Candidates`), `lean/Editor/State/Request.lean` |
 | Completion sources, the query and the candidate record; their model, fake and contract | `lean/Editor/Completion.lean`, `lean/Editor/Completion/Candidate.lean`, `lean/Editor/Completion/Fake.lean`, `lean/Editor/Completion/Contract.lean` |
-| Sources registered by name; a named source run inside the asking command; the names of the sources registered in a category, for a prompt that asks for one | `lean/Editor/Config/Registry.lean` ("Sources": `sourcesIn`), `lean/Editor/Setup.lean` (`defineSource`), `lean/Editor/Command/Dispatch.lean` (`StateRequest.askSource`, `StateRequest.categorySources`) |
+| Sources registered by name; a named source run inside the asking command; the names of the sources registered in a category, for a prompt that asks for one | `lean/Editor/Config/Registry.lean` ("Sources": `sourcesIn`), `lean/Editor/Setup.lean` (`defineSource`), `lean/Editor/Command/Dispatch.lean` (`ControlRequest.askSource`, `RegistryRequest.categorySources`) |
 | Matching styles: the interface, its model and contract, the fuzzy and orderless styles; their registration and config's choice by category | `lean/Editor/Completion/Style.lean`, `lean/Editor/Completion/Styles.lean`, `lean/Editor/Completion/StyleContract.lean`, `lean/Editor/Config/Registry.lean` ("Styles"), `lean/Editor/Setup.lean` (`defineStyle`, `useStyle`, `useStyleFor`) |
 | `prompt` with candidates from sources, `setCandidates`, `chooseCandidate`; accepting the chosen candidate | `lean/Editor/Api.lean` ("Prompts") |
 | The listing, made before each scene from what the prompt's style answers, the style chosen by its category from the matching the host hands | `lean/Editor/Loop.lean` ("Prompts": `Loop.listed`, `Loop.Keys.matching`), `lean/Editor/Completion/Style.lean`, `lean/Editor/Fuzzy.lean` |
@@ -1264,7 +1269,7 @@ prompt.** Built by the command loop's phase 12.
   the editor's port, the registry is the host's, and the one way a
   command had another run after it was a prompt's continuation.
 - **A command can have another run inside it, where the other is to be
-  part of it** (`runCommand name call`, `StateRequest.runCommand`; the
+  part of it** (`runCommand name call`, `ControlRequest.runCommand`; the
   command loop's phase 13). The loop puts the named command's program
   before the rest of the asking command's, as it puts a mode's on-enter
   action: guarded, answered from the same state, one step of the history
@@ -1365,12 +1370,12 @@ accepting hands the continuation the chosen candidate.
   ([keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's sources"). It
   may ask what a command may: the state's buffers, the bound ex names.
   - A source is given as a value, which `prompt` runs, or named, which the
-    loop runs from the registered sources (`StateRequest.askSource`): a
+    loop runs from the registered sources (`ControlRequest.askSource`): a
     request cannot carry the program, so the name crosses. A name no source
     is registered under refuses the prompt with `noSuchSource`.
   - A prompt may ask for a category instead: `prompt` asks the loop once
     for the names of the sources registered in it
-    (`StateRequest.categorySources`), whose reply is names and never a
+    (`RegistryRequest.categorySources`), whose reply is names and never a
     program, and then asks each by name, after the defaults the prompt
     gave, each of which is asked by name where one of its name is
     registered there. A category with no source lists nothing and is not

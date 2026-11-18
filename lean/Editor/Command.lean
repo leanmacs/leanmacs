@@ -13,7 +13,7 @@ import Editor.Watch
 A command is a value of `EditorM`: a program over the editor's port that may
 be refused. The editor's port is a composite: its requests are a sum of the
 requests of its sub-ports, one constructor a sub-port (`EditorRequest`), and
-the reply to each is its sub-port's reply. Today it has seven:
+the reply to each is its sub-port's reply. Today it has nine:
 
 - **text** (`Editor/Text.lean`): texts, snapshots, markers, the edit log;
 - **display** (`Editor/Display.lean`): publishing a scene, and the two
@@ -29,7 +29,12 @@ the reply to each is its sub-port's reply. Today it has seven:
   faces, which setting a major mode with a syntax asks
   (`Editor/Highlight.lean`);
 - **state** (`Editor/State/Request.lean`): the editor state's buffers and
-  windows, the echo area and the jobs to start.
+  windows, the echo area and the jobs to start;
+- **registry** (`Editor/Command/Registry.lean`): the questions to the
+  registry and config, such as an ex binding, the language table or a
+  config setting;
+- **control** (`Editor/Command/Control.lean`): the loop's control of the
+  running command: ending it, or running something registered inside it.
 
 The first six keep their own programs (`TextM`, `DisplayM`, `WatchM`,
 `ClipboardM`, `FuzzyM`, `SyntaxTreeM`), operations, model and contract,
@@ -75,14 +80,24 @@ command's program reaches a runner (`EditorM.dispatched`,
 models and against the library by construction, the loop stays the one
 writer of the editor state, and neither runner holds a state of its own.
 
-A runner still has to answer every request of the port. Both answer a state
-request as an editor with no buffer and no window would
-(`EditorState.none`), and keep nothing of it: a command run where no loop
-dispatched it finds no buffer and no window, and what it adds is gone at
-its next request. Every command a host runs goes through the loop; only a
-test runs one bare. A state request does not reach the library, and on the
-models it does not move the clock. `docs/design/lean-runtime.md` ("The
-editor's port is a composite") says why the state is not the runners'.
+The registry's questions and the control requests are the loop's in the
+same way: it answers a question with one pure function of what it was told
+of the registry and config (`Loop.Registered.answer`), and acts on a
+control request by changing the command's program, both in place and above
+both runners. Neither sub-port has a model, a contract or a binding, for
+the same reason.
+
+A runner still has to answer every request of the port. Both answer each of
+these three sub-ports as an editor with nothing in it would: a state
+request as an editor with no buffer and no window (`EditorState.none`), a
+question as with nothing registered (`RegistryRequest.bare`), and a
+control request with nothing run and nothing ended (`ControlRequest.bare`).
+They keep nothing of it: a command run where no loop dispatched it finds no
+buffer and no window, and what it adds is gone at its next request. Every
+command a host runs goes through the loop; only a test runs one bare. None
+of the three reaches the library, and on the models none moves the clock.
+`docs/design/lean-runtime.md` ("The editor's port is a composite") says why
+the state is not the runners'.
 
 A refusal is a `TextError`. The display's two refusals mean what the text
 port's refusals of the same names mean (a snapshot that names nothing, an
@@ -95,8 +110,9 @@ be reached is nothing the text store refused, so the error is not widened
 and a command matches on the reply (`Editor/Clipboard.lean`, "A refusal is
 a value").
 
-A clipboard request is guarded like any request that is not the state's:
-the loop asks the interrupt flag before it
+A clipboard request is guarded like any request the loop does not answer
+in place (the state's, the registry's and the control's): the loop asks the
+interrupt flag before it
 (`Editor/Command/Dispatch.lean`, "The guard"). What a command wrote to the
 clipboard is not taken back when the command is rolled back: the clipboard
 is outside the editor.
@@ -110,7 +126,8 @@ SyntaxTreeError`, which the command matches on: a grammar the library lacks
 or a query that does not compile is nothing the text store refused, so
 `TextError` is not widened. Its result type is not the program's, so it is
 no `MonadLift` instance: a command calls it by name. A syntax tree request
-is guarded like any request that is not the state's, and is not undone on
+is guarded like any request the loop does not answer in place, and is not
+undone on
 rollback: the library parses and draws outside the editor state
 (`Editor/Loop.lean`, "What is not undone").
 
@@ -132,7 +149,9 @@ why it has this shape.
 | A new question about a text, or a new text request | Inside the text port (`Editor/Text.lean`, "Adding to the port"): nothing here changes |
 | A new question of layout | Inside the display port (`Editor/Display.lean`): nothing here changes |
 | A request about buffers, windows or the rest of the editor state | Inside the state requests (`Editor/State/Request.lean`, "Where an addition goes"): nothing here changes |
-| A new sub-port | A constructor of `EditorRequest`, its case in `EditorRequest.Reply`, a `Program.embed…`, a lift and its `MonadLift` instance here (or a lift by name, when its refusal is a value of another type, as `SyntaxTree.lift`), and its case in both runners |
+| A question to the registry or config | Inside the registry's questions (`Editor/Command/Registry.lean`, "Where an addition goes"): nothing here changes |
+| A way to end the command, or to run something registered inside it | Inside the control requests (`Editor/Command/Control.lean`, "Where an addition goes"): nothing here changes |
+| A new sub-port | A constructor of `EditorRequest`, its case in `EditorRequest.Reply`, a `Program.embed…`, a lift and its `MonadLift` instance here (or a lift by name, when its refusal is a value of another type, as `SyntaxTree.lift`), and its case in both runners. A sub-port whose requests the loop answers in place, as the state's, the registry's and the control's are, is asked like the state instead: one `ask` in `Editor/Api.lean` (`EditorState.ask`), with no program type, embedding or lift |
 
 What the composite runners do with each sub-port is pinned by
 `ModelTest.commandPortChecks`.

@@ -189,7 +189,12 @@ and the watch model side by side (`EditorModel`). `commandPortChecks` pin
 what that runner does with each sub-port's requests: a text program lifted
 into a command does what it does alone, the display answers from the text
 model's snapshots, a display refusal is the text port's of the same name,
-and a watch request goes to the watch model.
+and a watch request goes to the watch model. `registryRequestChecks` and
+`controlRequestChecks` pin what a runner answers a question to the
+registry and a control request where no loop runs the command
+(`Editor/Command/Registry.lean`, `Editor/Command/Control.lean`), and
+`dispatchRegistryChecks` the loop's answers to the questions and that
+neither sub-port is guarded.
 
 The watch port's contract (`Editor/Watch/Contract.lean`: the interrupt flag
 and a clock) is run against its model here (`watchFailures`), and
