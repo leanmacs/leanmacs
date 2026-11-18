@@ -497,11 +497,11 @@ def stateRequestChecks : List Check :=
           | some state =>
             let (first, one) := state.handle (.startJob "count" [.nat 3])
             let (_, two) := one.handle (.startJob "load" [.str "a", .bool true])
-            replied first == .inr () && state.starts == #[] &&
-              two.starts ==
+            replied first == .inr () && state.outbox.starts == #[] &&
+              two.outbox.starts ==
                 #[{ name := "count", arguments := [.nat 3] },
                   { name := "load", arguments := [.str "a", .bool true] }] &&
-              { two with starts := #[] } == state },
+              { two with outbox.starts := #[] } == state },
     { name :=
         "a request to start a job with a key keeps the key with the start, and a request to cancel a key is appended to the state's cancels, in order, and changes nothing else"
       run :=
@@ -512,10 +512,10 @@ def stateRequestChecks : List Check :=
             let (started, one) := state.handle (.startJob "count" [.nat 3] (some "k"))
             let ((), two) := one.handle (.cancelJob "k")
             let ((), three) := two.handle (.cancelJob "j")
-            replied started == .inr () && state.cancels == #[] &&
-              one.starts == #[{ name := "count", arguments := [.nat 3], key := some "k" }] &&
-              three.cancels == #["k", "j"] &&
-              { three with cancels := #[] } == one },
+            replied started == .inr () && state.outbox.cancels == #[] &&
+              one.outbox.starts == #[{ name := "count", arguments := [.nat 3], key := some "k" }] &&
+              three.outbox.cancels == #["k", "j"] &&
+              { three with outbox.cancels := #[] } == one },
     { name :=
         "attaching a file to a buffer sets its path, its stamp and its line ending, with no save in flight, and leaves the rest of the buffer and the other buffers; the buffer is then found by that path and by no other"
       run :=
@@ -686,7 +686,7 @@ def stateRequestChecks : List Check :=
               without.prompt == none &&
               replied accepted == .inr () &&
               answered == (asking.closePrompt (some "a")).2 &&
-              answered.answered.size == 1 &&
+              answered.outbox.answered.size == 1 &&
               replied refused == .inl .notOpen &&
               same == state },
     { name :=
@@ -889,8 +889,8 @@ def stateRequestChecks : List Check :=
             let (second, again) := loaded.handle (.loadTheme "second")
             names == #[] && after == state && replied first == .inr () &&
               replied second == .inr () &&
-              loaded == { state with theme := some "first" } &&
-              again == { state with theme := some "second" } },
+              loaded == { state with outbox.theme := some "first" } &&
+              again == { state with outbox.theme := some "second" } },
     { name :=
         "the request to have an invocation run next records it after what is recorded, the answer of a prompt that was closed among it, and changes nothing else"
       run :=
@@ -905,10 +905,10 @@ def stateRequestChecks : List Check :=
             let (_, asking) := prompted state
             let (_, answered) := asking.handle (.closePrompt (some "typed"))
             let (_, after) := answered.handle (.invoke second)
-            once.answered == #[first] && twice.answered == #[first, second] &&
-              { twice with answered := #[] } == state &&
-              after.answered == answered.answered.push second &&
-              answered.answered.size == 1 },
+            once.outbox.answered == #[first] && twice.outbox.answered == #[first, second] &&
+              { twice with outbox.answered := #[] } == state &&
+              after.outbox.answered == answered.outbox.answered.push second &&
+              answered.outbox.answered.size == 1 },
     { name :=
         "the request to quit sets the state's flag that the editor was asked to quit and changes nothing else; asked again, the state is as it was"
       run :=
@@ -928,7 +928,8 @@ def stateRequestChecks : List Check :=
           | none => false
           | some state =>
             let (_, asked) := state.handle .reload
-            !state.reload && asked.reload && { asked with reload := false } == state },
+            !state.outbox.reload && asked.outbox.reload &&
+              { asked with outbox.reload := false } == state },
     { name :=
         "the request by which a command gives up changes nothing of the state: the handler knows no command to end, and the state after it is the state before"
       run :=

@@ -68,7 +68,7 @@ def promptModeChecks : List Check :=
   let answer (text : String) : List Argument := [.str text, .nat 7]
   let closed (driver : TestDriver) (view : ViewId := ⟨0⟩) : Bool :=
     let state := driver.loop.state
-    state.prompt == none && state.frame.focused == view && state.answered.isEmpty &&
+    state.prompt == none && state.frame.focused == view && state.outbox.answered.isEmpty &&
       state.wellFormed
   [{  name :=
         "criterion 1: a command prompts, keys are typed and the accept key is pressed: the continuation's command receives the typed string, with the asking view as its target, and the minibuffer's window is closed; the state has no prompt, one window, the tree it had and the focus on the asking view, the minibuffer's buffer slot is empty and its text refuses noSuchText, and the scene has one view"

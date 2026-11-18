@@ -119,8 +119,8 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   list: it holds the candidates themselves, not indices.
 - **An invocation to run next is recorded by one request**, `invoke`: it
   is put after the invocations already recorded
-  (`EditorState.answered`), a prompt's answer among them, and the loop
-  hands them to its host once the command has run to its end
+  (`EditorState.Outbox.answered`), a prompt's answer among them, and the
+  loop hands them to its host once the command has run to its end
   (`Editor/Loop.lean`, "Prompts"). This is how a command has another run
   after it, as a step of its own.
 - **A command is run inside the asking command by one request**,
@@ -166,19 +166,20 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   store, and the loop decides when the editor leaves.
 - **A job is started by one request, and cancelled by another.**
   `startJob` keeps the start, with its name, its arguments and its key if
-  it has one, in the state (`EditorState.starts`), and `cancelJob` keeps a
-  key (`EditorState.cancels`), until the loop hands them to its host once
-  the command has run to its end (`Editor/Loop.lean`, "Jobs from
+  it has one, in the state's outbox (`EditorState.Outbox.starts`,
+  `Editor/State/Outbox.lean`, "The outbox"), and `cancelJob` keeps a key
+  (`EditorState.Outbox.cancels`), until the loop hands them to its host
+  once the command has run to its end (`Editor/Loop.lean`, "Jobs from
   commands"). A start of a key cancels the running job of that key, and a
   cancel ends the job of its key; the host keeps the keys.
 - **A reload of the config is asked for by one request**, `reload`,
-  which sets a flag of the state (`EditorState.reload`) until the loop
-  hands it to its host, as `starts` holds the jobs a command asked for
-  (`Editor/Loop.lean`, "Reload from a command").
+  which sets a flag of the state (`EditorState.Outbox.reload`) until the
+  loop hands it to its host, as `starts` holds the jobs a command asked
+  for (`Editor/Loop.lean`, "Reload from a command").
 - **A theme is loaded by one request**, `loadTheme`, which keeps the name
-  in the state (`EditorState.theme`), the latest one wins, until the loop
-  hands it to its host, as `reload` is kept (`Editor/Loop.lean`, "A theme
-  switch from a command").
+  in the state (`EditorState.Outbox.theme`), the latest one wins, until
+  the loop hands it to its host, as `reload` is kept (`Editor/Loop.lean`,
+  "A theme switch from a command").
 - **A window's wanted column is set by one request**, `setWanted`, with
   the column, a goal of the display's or the line's end, and the offset it
   is kept at, or with none (`Editor/State.lean`, "The wanted column"). The
@@ -254,6 +255,7 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 | A question about the state | A pure function over `EditorState` (`Editor/State.lean`); nothing here |
 | A new way to change the state | An operation in `Editor/State.lean`, a constructor here with its case in `Reply` and in `handle`, and the operation a command calls in `Editor/Api.lean` |
 | A request that needs the registry | The same, and its case in `EditorM.dispatched` (`Editor/Command/Dispatch.lean`) |
+| Something a command asks the loop to hand its host | A field of `EditorState.Outbox` (`Editor/State/Outbox.lean`, "Where a new entry goes"), a constructor here whose case sets it, and the function a command calls in `Editor/Api.lean` |
 
 Pinned by `ModelTest.stateRequestChecks`.
 -/
@@ -637,8 +639,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .show view buffer scroll selection, state => state.showBuffer view buffer scroll selection
   | .message text, state => ((), { state with echo := text })
   | .startJob name arguments key, state =>
-    (.ok (), { state with starts := state.starts.push { name, arguments, key } })
-  | .cancelJob key, state => ((), { state with cancels := state.cancels.push key })
+    (.ok (), { state with outbox.starts := state.outbox.starts.push { name, arguments, key } })
+  | .cancelJob key, state => ((), { state with outbox.cancels := state.outbox.cancels.push key })
   | .attachFile id path stamp ending, state => state.attachFile id path stamp ending
   | .beginSave id snapshot saved, state => state.beginSave id snapshot saved
   | .endSave id snapshot stamp, state => state.endSave id snapshot stamp
@@ -690,14 +692,15 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .ex _, state => (none, state)
   | .exNames, state => (#[], state)
   | .themeNames, state => (#[], state)
-  | .loadTheme name, state => (.ok (), { state with theme := some name })
-  | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
+  | .loadTheme name, state => (.ok (), { state with outbox.theme := some name })
+  | .invoke invocation, state =>
+    ((), { state with outbox.answered := state.outbox.answered.push invocation })
   | .runCommand .., state => (false, state)
   | .askSource .., state => (none, state)
   | .categorySources _, state => (#[], state)
   | .matchCandidates .., state => (#[], state)
   | .quit, state => ((), { state with quitting := true })
-  | .reload, state => ((), { state with reload := true })
+  | .reload, state => ((), { state with outbox.reload := true })
   | .giveUp _, state => ((), state)
   | .breakOff _, state => ((), state)
   | .setRegister name register, state => ((), state.setRegister name register)

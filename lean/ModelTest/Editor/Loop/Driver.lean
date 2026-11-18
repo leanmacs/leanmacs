@@ -188,7 +188,7 @@ def driverChecks : List Check :=
             let (finished, delivered) := asked.finish 1
             started steps == #[{ name := "double", arguments := [.nat 21] }] &&
               asked.pending.map (fun job => (job.id, job.name)) == #[(1, "double")] &&
-              asked.loop.state.starts.isEmpty &&
+              asked.loop.state.outbox.starts.isEmpty &&
               driverText asked == some "" &&
               echoOf asked == some "asked" &&
               (delivered.map (·.ended)) == some (some .finished) &&
@@ -239,7 +239,8 @@ def driverChecks : List Check :=
           | none => false
           | some driver =>
             let (failed, steps) := fedTo driver (presses "C-c f")
-            started steps == #[] && failed.pending.isEmpty && failed.loop.state.starts.isEmpty &&
+            started steps == #[] && failed.pending.isEmpty &&
+              failed.loop.state.outbox.starts.isEmpty &&
               (steps.back?.join.map (·.ended)) == some (some (.refused .badRange)) &&
               echoOf failed == some "fail: refused: bad range" },
     { name :=
@@ -270,7 +271,7 @@ def driverChecks : List Check :=
             started steps == #[{ name := "double", arguments := [.nat 21], key := some "k" }] &&
               asked.pending.map (·.id) == #[1] &&
               cancelSteps.flatMap (fun step => (step.map (·.cancels)).getD #[]) == #["k"] &&
-              cancelled.loop.state.cancels.isEmpty &&
+              cancelled.loop.state.outbox.cancels.isEmpty &&
               cancelled.pending.isEmpty &&
               delivered.isNone &&
               driverText finished == some "" },
@@ -289,7 +290,7 @@ def driverChecks : List Check :=
             let cancels (steps : Array (Option (Loop.Stepped TestScheme.scheme))) :=
               steps.flatMap fun step => (step.map (·.cancels)).getD #[]
             cancels refusedSteps == #[] && refused.pending.map (·.id) == #[1] &&
-              refused.loop.state.cancels.isEmpty &&
+              refused.loop.state.outbox.cancels.isEmpty &&
               echoOf refused == some "cancelFails: refused: bad range" &&
               cancels interruptedSteps == #[] &&
               interrupted.pending.map (·.id) == #[1] &&
@@ -432,7 +433,7 @@ def promptLoopChecks : List Check :=
   let closed (driver : TestDriver) : Bool :=
     let state := driver.loop.state
     state.prompt == none && state.windows.map (·.id) == #[⟨0⟩] && state.frame.focused == ⟨0⟩ &&
-      state.answered.isEmpty &&
+      state.outbox.answered.isEmpty &&
       state.wellFormed
   [{  name :=
         "ask, then accept: the accepting step hands back one answered invocation, the continuation with the answer first, and the answer's command has then run with those arguments, the asking view as its target and no keys; the loop's state keeps no answer, and the scene after it has one view"
@@ -578,7 +579,7 @@ def promptLoopChecks : List Check :=
                 some (some .interrupted, #[]) &&
               promptEcho stopped == "accept: interrupted" &&
               stopped.loop.state.prompt == typed.loop.state.prompt &&
-              stopped.loop.state.answered.isEmpty &&
+              stopped.loop.state.outbox.answered.isEmpty &&
               minibufferText stopped == some "hi" &&
               stopped.model.watch.arrived == 1 &&
               lowered.model.watch.arrived == 0 &&

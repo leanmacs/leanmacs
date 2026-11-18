@@ -2198,7 +2198,7 @@ def stateChecks : List Check :=
                     closed.frame.focused == ⟨0⟩ &&
                     closed.frame.windows == asking.frame.windows &&
                     closed.nextView == asking.nextView &&
-                    closed.answered == #[] &&
+                    closed.outbox.answered == #[] &&
                     closed.wellFormed
                 | _ => false },
         { name :=
@@ -2211,9 +2211,9 @@ def stateChecks : List Check :=
                 let (_, asking) := prompted state
                 match asking.closePrompt none, asking.closePrompt (some "héllo") with
                 | (.ok (), cancelled), (.ok (), accepted) =>
-                  accepted.answered ==
+                  accepted.outbox.answered ==
                       #[{ command := "greet", arguments := [.str "héllo", .nat 7] }] &&
-                    { accepted with answered := #[] } == cancelled &&
+                    { accepted with outbox.answered := #[] } == cancelled &&
                     accepted.wellFormed
                 | _, _ => false },
         { name :=
@@ -2229,7 +2229,7 @@ def stateChecks : List Check :=
                 let minibuffer := two.minibufferBuffer?
                 let (_, two) := two.closePrompt (some "b")
                 replied first == .inr ⟨1⟩ && replied second == .inr ⟨2⟩ && minibuffer == some ⟨2⟩ &&
-                  two.answered ==
+                  two.outbox.answered ==
                     #[{ command := "greet", arguments := [.str "a", .nat 7] },
                       { command := "greet", arguments := [.str "b", .nat 7] }] &&
                   two.buffers.size == 3 &&
@@ -2263,7 +2263,7 @@ def stateChecks : List Check :=
                   without.frame.focused == ⟨3⟩ &&
                   closed.frame.focused == ⟨1⟩ &&
                   closed.frame.windows == #[⟨1⟩, ⟨2⟩] &&
-                  closed.answered.size == 1 &&
+                  closed.outbox.answered.size == 1 &&
                   closed.wellFormed },
         { name :=
             "closing a prompt when none is open is refused with notOpen, with or without an answer, and the state is as it was"

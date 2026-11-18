@@ -781,7 +781,8 @@ def promptCases : List Case :=
         let state ← editorState
         return accepted matches .ok () && state.prompt == none && state.window? view == none &&
             state.frame.focused == ⟨0⟩ &&
-            state.answered == #[{ command := "greet", arguments := [.str "héllo", .nat 7] }] &&
+            state.outbox.answered ==
+              #[{ command := "greet", arguments := [.str "héllo", .nat 7] }] &&
             state.wellFormed },
     { name :=
         "cancelling a prompt replies ok, closes it and answers nothing: the minibuffer's window is gone and the focus is on the view the prompt was asked from"
@@ -791,7 +792,7 @@ def promptCases : List Case :=
         let state ← editorState
         return cancelled matches .ok () && state.prompt == none && state.window? view == none &&
             state.frame.focused == ⟨0⟩ &&
-            state.answered == #[] &&
+            state.outbox.answered == #[] &&
             state.wellFormed },
     { name :=
         "accepting a prompt whose listing is for the minibuffer's text, with a candidate chosen, replies ok, closes it and answers with that candidate, not with the text: the continuation is recorded with the candidate as its first argument"
@@ -801,7 +802,8 @@ def promptCases : List Case :=
         let accepted ← acceptPrompt
         let state ← editorState
         return chosen == some (some 1) && accepted matches .ok () && state.prompt == none &&
-            state.answered == #[{ greeting with arguments := .str "wq" :: greeting.arguments }] },
+            state.outbox.answered ==
+              #[{ greeting with arguments := .str "wq" :: greeting.arguments }] },
     { name :=
         "accepting and cancelling with no prompt open are each refused with notOpen, a value, and leave the state as it was"
       run := do

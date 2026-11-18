@@ -9,6 +9,7 @@ import Editor.GeneratedView
 import Editor.Invocation
 import Editor.Layout
 import Editor.Scene
+import Editor.State.Outbox
 import Editor.TabBar
 import Editor.UndoTree
 import Editor.Workspace
@@ -594,8 +595,9 @@ A prompt is a request for one string, with a text to show beside the input
     minibuffer's view and needs a window of the list in its place.
   - **Given an answer it records the continuation**, with the answer as
     its first argument and the continuation's own after it
-    (`EditorState.answered`), until the loop hands it to its host
-    (`Editor/Loop.lean`), as `starts` holds the jobs a command asked for.
+    (`EditorState.Outbox.answered`, `Editor/State/Outbox.lean`), until the
+    loop hands it to its host (`Editor/Loop.lean`), as `starts` holds the
+    jobs a command asked for.
     Closing and recording are one operation, so one request.
   - **The minibuffer's markers and text are not given up here**: the loop
     gives them up once the command that closed the prompt has run to its
@@ -702,8 +704,9 @@ candidates, sheet and high-water mark.
   minibuffer's strip is the list's rows above the bottom row, with no input
   row (`listRows`, `minibufferPlace`, `cutStrip`, `candidateListRect?`),
   growing and never shrinking while it is open.
-- `retyped` is a one-shot, as `answered` is: what commands typed in place
-  of typed text (`retype`), which the loop tells the input scheme.
+- `retyped` is a one-shot, as the outbox's `answered` is: what commands
+  typed in place of typed text (`retype`), which the loop tells the input
+  scheme.
 - `wellFormed` holds a session to a view that is a window and a choice
   inside its listing.
 
@@ -970,13 +973,6 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
   window; `none` when it is composing nothing.
 - No ambient context: a handler is given the window it acts on and its
   buffer, as a `Target`, never "the current buffer".
-- The jobs a command asked to be started are kept, in order, until the
-  loop hands them to its host (`EditorState.starts`, a `JobStart` each: a
-  registered job's name and plain arguments).
-- The invocations to run next are kept the same way
-  (`EditorState.answered`): the continuation of a prompt that was
-  accepted ("Prompts", above), and an invocation a command asked to be run
-  after it. The field is named for the first, which came first.
 - `EditorState.none` is an editor with no buffer and no window. It is not
   well formed, and no loop holds it: it is what a command's state requests
   are answered from where no loop runs the command
@@ -1456,20 +1452,6 @@ def focusedOn (frame : Frame) (id : ViewId) : Frame :=
 
 end Frame
 
-/-- A job a command asked to be started: the name it is registered under,
-and the arguments to start it with. It is plain data: the job itself is
-the registry's. -/
-structure JobStart where
-  /-- The name the job is registered under. -/
-  name : String
-  /-- What the job is started with, in order. -/
-  arguments : List Argument := []
-  /-- The key a host keeps the job under, if it has one: starting a job of a
-  key cancels the running job of that key, and a cancel of the key ends it
-  (`Loop.Stepped.cancels`). -/
-  key : Option String := none
-  deriving DecidableEq, Repr
-
 /-- A file buffer the loop follows for auto-reload: a `follow-file` job of
 the key `Following.key` is armed for it ("Auto-reload", `Editor/Loop.lean`). -/
 structure Following where
@@ -1899,12 +1881,9 @@ structure EditorState where
   /-- The id the next new window gets, unless a window already has one as
   great: an id is never used again. -/
   nextView : Nat := 1
-  /-- The jobs commands asked to be started, in order, which the loop has
-  not yet handed to its host. -/
-  starts : Array JobStart := #[]
-  /-- The keys of the jobs commands asked to be cancelled, in order, which
-  the loop has not yet handed to its host. -/
-  cancels : Array String := #[]
+  /-- What commands asked the loop to hand its host, which it has not yet
+  handed (`Editor/State/Outbox.lean`). -/
+  outbox : EditorState.Outbox := {}
   /-- The prompt that is open, if one is: its view is a window of `windows`
   that is not in the frame's list. -/
   prompt : Option Prompt := none
@@ -1916,24 +1895,12 @@ structure EditorState where
   characters for the cells a command removed, then what it inserted, as the
   scheme records typed text ("A session at point", in the module docs). -/
   retyped : Array (ViewId × String) := #[]
-  /-- The invocations to run next, in order, which the loop has not yet
-  handed to its host: the continuations of the prompts commands accepted,
-  each with its answer as its first argument, and the invocations commands
-  asked to be run after them (`StateRequest.invoke`,
-  `Editor/State/Request.lean`). -/
-  answered : Array Invocation := #[]
   /-- Whether a command asked the editor to quit ("Quit", in the module
   docs). -/
   quitting : Bool := false
   /-- Whether the system asked the program to quit and has not been
   answered (`Event.quitRequested`; "Quit", in the module docs). -/
   systemQuit : Bool := false
-  /-- Whether a command asked for the config to be reloaded, which the loop
-  has not yet handed to its host. -/
-  reload : Bool := false
-  /-- The theme a command asked to be loaded, the latest if it asked more
-  than once, which the loop has not yet handed to its host. -/
-  theme : Option String := none
   /-- The registers, each under its name, in the order each name was first
   set ("Registers", in the module docs). No name is here twice. -/
   registers : Array (String × Register) := #[]
@@ -4112,12 +4079,12 @@ def closePrompt (answer : Option String) (state : EditorState) :
         windows := state.windows.filter (·.id != asked.view)
         frame := { state.frame with focused := state.askedFrom asked }
         prompt := none
-        answered :=
+        outbox.answered :=
           match answer with
           | some answer =>
-            state.answered.push
+            state.outbox.answered.push
               { asked.continuation with arguments := .str answer :: asked.continuation.arguments }
-          | none => state.answered })
+          | none => state.outbox.answered })
 
 /-- The state with the open prompt's candidates changed by `change`.
 Refused, with the state unchanged, with `notOpen` when no prompt is

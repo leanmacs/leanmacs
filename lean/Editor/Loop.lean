@@ -200,15 +200,17 @@ holds no job table.
   as a value the command sees, with `noSuchJob` for a name the step was not
   told a job is registered under (`Loop.Registered.jobs`).
 - **A start is kept in the state** until the command ends
-  (`EditorState.starts`). After a command that ran to its end the loop
-  takes the starts out of the state and hands them back with the step, in
-  the order they were asked for. A command that did not run to its end
+  (`EditorState.Outbox.starts`). The starts, the cancels, the answers, the
+  reload and the theme are one field of the state (`EditorState.outbox`,
+  `Editor/State/Outbox.lean`), which the loop takes out whole. After a
+  command that ran to its end the loop takes the starts out of the state
+  and hands them back with the step, in the order they were asked for. A command that did not run to its end
   starts no job: its starts go with the state it left.
 - **A start may carry a key, and a command may cancel a key**
   (`cancelJob`): the cancels are kept in the state too
-  (`EditorState.cancels`), taken out with the starts after a command that
-  ran to its end, and handed back in `Loop.Stepped.cancels`, ahead of the
-  loop's own ("Auto-reload"). A command that did not run to its end
+  (`EditorState.Outbox.cancels`), taken out with the starts after a
+  command that ran to its end, and handed back in `Loop.Stepped.cancels`,
+  ahead of the loop's own ("Auto-reload"). A command that did not run to its end
   cancels nothing. The host ends the job of each key, and starting a job
   of a key ends the running job of that key first ("Keyed jobs", below).
 - **The host starts each**, for whoever registered it, and when the job has
@@ -236,8 +238,9 @@ The open prompt is editor state (`Editor/State.lean`, "Prompts"), so the
 loop has little of its own to do.
 
 - **An answer is kept in the state** until the accepting command ends
-  (`EditorState.answered`): the prompt's continuation with the answer as
-  its first argument, recorded by the request that closed the prompt.
+  (`EditorState.Outbox.answered`): the prompt's continuation with the
+  answer as its first argument, recorded by the request that closed the
+  prompt.
   After a command that ran to its end the loop takes the answers out of
   the state and hands them back with the step (`Loop.Stepped.answered`),
   as it does the jobs to start. A command that did not run to its end
@@ -449,10 +452,10 @@ one-shot output of the step, like the jobs to start
 (`docs/design/concurrency.md`, "Reload").
 
 - **The request is kept in the state** until the command ends
-  (`EditorState.reload`). After a command that ran to its end the loop
-  takes it out and hands it back with the step (`Loop.Stepped.reload`). A
-  command that did not run to its end asks for none: the flag goes with
-  the state it left.
+  (`EditorState.Outbox.reload`). After a command that ran to its end the
+  loop takes it out and hands it back with the step
+  (`Loop.Stepped.reload`). A command that did not run to its end asks for
+  none: the flag goes with the state it left.
 - **The host asks its config session**, as it does for its driver's
   request: one reload job at a time, and a request made while one runs
   makes one follow-up (`Editor/Config/Reload.lean`). The reload is
@@ -472,9 +475,9 @@ theme in force is the reload reducer's, so the request is a one-shot output
 of the step, as a reload is.
 
 - **The request is kept in the state** until the command ends
-  (`EditorState.theme`, the latest one asked for). After a command that ran
-  to its end the loop takes it out and hands it back with the step
-  (`Loop.Stepped.theme`). A command that did not run to its end asks for
+  (`EditorState.Outbox.theme`, the latest one asked for). After a command
+  that ran to its end the loop takes it out and hands it back with the
+  step (`Loop.Stepped.theme`). A command that did not run to its end asks for
   none.
 - **The host switches the theme** with no reload: it feeds its reload
   reducer a choice (`Config.Event.choose`), hands its display the new theme
@@ -2507,20 +2510,9 @@ structure Ran where
   write : Option Config.Write := none
   /-- The log entry of a command that took longer than the threshold. -/
   log : Array String := #[]
-  /-- The jobs the command asked to be started, when it ran to its end. -/
-  starts : Array JobStart := #[]
-  /-- The keys of the jobs the command asked to be cancelled, when it ran to
-  its end. -/
-  cancels : Array String := #[]
-  /-- The invocations to run next, when the command ran to its end: the
-  continuations of the prompts it accepted, each with its answer, and the
-  invocations it asked to be run after it. -/
-  answered : Array Invocation := #[]
-  /-- Whether the command asked for the config to be reloaded, when it ran
-  to its end. -/
-  reload : Bool := false
-  /-- The theme the command asked to be loaded, when it ran to its end. -/
-  theme : Option String := none
+  /-- What the command asked to be handed on, when it ran to its end or
+  broke off (`EditorState.outbox`); empty for a command that did not. -/
+  outbox : EditorState.Outbox := {}
   /-- What the command typed in place of typed text, each with its view,
   when it ran to its end (`EditorState.retyped`): the input scheme is told
   it as committed text (`ranInto`). -/
@@ -2553,14 +2545,13 @@ def writesInside (name : String) : String :=
 command ("Every command goes through the loop", in the module docs):
 dispatched (`EditorM.dispatched`: guarded, with its state requests answered
 from `state`). The state of a command that ran to its end is the one it
-left, with the jobs it asked for, the invocations to run next and a reload
-it asked for taken out and handed back. It is not
-refused: a refusal of the command, an interrupt and the reason of a command
-that gave up are each said in the echo area, after `name`, and a command
-that was refused or interrupted, or that gave up, is rolled back to the
-state from before it, with what could not be said after it. The reason of
-a command that broke off is said the same way, and the state it reached is
-kept as that of a command that ran to its end is.
+left, with its outbox (`EditorState.Outbox`) taken out and handed back.
+It is not refused: a refusal of the command, an interrupt and the reason
+of a command that gave up are each said in the echo area, after `name`,
+and a command that was refused or interrupted, or that gave up, is rolled
+back to the state from before it, with what could not be said after it.
+The reason of a command that broke off is said the same way, and the
+state it reached is kept as that of a command that ran to its end is.
 
 A command the command has run inside it is the one `keys` has of the name
 (`Loop.Keys.command?`), and one that asks for a store to be written gives
@@ -2598,18 +2589,13 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     return {
         state :=
           { left.refusedBy ungiven with
-            starts := #[], cancels := #[], answered := #[], reload := false, theme := none
-            retyped := #[] }
+            outbox := {}, retyped := #[] }
         ending
         closed := closedViews state left
         opened := openedMinibuffer state left
         write
         log
-        starts := left.starts
-        cancels := left.cancels
-        answered := left.answered
-        reload := left.reload
-        theme := left.theme
+        outbox := left.outbox
         retyped := if ending == .finished then left.retyped else #[] }
   match outcome with
   | .finished write =>
@@ -2667,12 +2653,12 @@ def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
     next := .continue
     write := ran.write
     log := ran.log
-    starts := ran.starts
-    answered := ran.answered
-    reload := ran.reload
-    theme := ran.theme
+    starts := ran.outbox.starts
+    answered := ran.outbox.answered
+    reload := ran.outbox.reload
+    theme := ran.outbox.theme
     ended := some ran.ending
-    cancels := ran.cancels }
+    cancels := ran.outbox.cancels }
 
 /-- One key through the scheme, for the focused view, and the invocation it
 yields, if it yields one, run (`run`): what the step hands back, with the

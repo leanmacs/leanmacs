@@ -1955,7 +1955,7 @@ def dispatchStateChecks : List Check :=
                 match outcome with
                 | .finished reply => some (replied reply)
                 | _ => none
-              return (reply, state.theme, { state with theme := none } == start)
+              return (reply, state.outbox.theme, { state with outbox.theme := none } == start)
             (program.runModel editorModel).1.toOption
           asks "second" == some (some (.inr ()), some "second", true) &&
             asks "nope" == some (some (.inl (.noSuchTheme "nope")), none, true) &&
@@ -2464,7 +2464,7 @@ def dispatchGiveUpChecks : List Check :=
                 loop.state.echo,
                 loop.state.prompt == state.prompt && loop.state.frame.focused == ⟨1⟩ &&
                   loop.state.wellFormed,
-                loop.state.answered.isEmpty &&
+                loop.state.outbox.answered.isEmpty &&
                   steps.back?.map (·.ended) == some (some (.refused .badRange)))
           (program.runModel editorModel).1.toOption ==
             some (some "abc", [none, none], "go: refused: bad range", true, true) }]
@@ -4628,6 +4628,15 @@ it is refused, for a buffer called `name`. -/
 def notLeaving (name : String) : String :=
   s!"not leaving: {name}"
 
+/-- What the commands `ask-all` and `ask-all-then-fail` of the quit checks
+ask for: a cancel of the key `k`, `other` to be run after the command, a
+reload of config and the theme `second`. -/
+def askAll (_ : Call) : EditorM Unit := do
+  cancelJob "k"
+  Editor.invoke { command := "other" }
+  reloadConfig
+  discard <| loadTheme "second"
+
 /-- What a step of the quit checks is handed: the open command with the
 path of `note.txt` (`C-o n`) and the save command (`C-o w`), as the file
 command checks have them, and six commands written here, under `C-l`:
@@ -4639,7 +4648,9 @@ to be run after it, and `hand-leave-other` (`t`) asks for `leave` and then
 (`r`), and `again-then-fail` (`g`), which asks and is then refused; and two
 ask for the theme `second` to be loaded, which the loop is told is
 registered: `pick` (`p`), and `pick-then-fail` (`k`), which asks and is then
-refused. -/
+refused. Two ask for all of it at once, a cancel of the key `k`, `other` to
+be run after it, a reload and the theme `second`: `ask-all` (`a`), and
+`ask-all-then-fail` (`b`), which asks and is then refused. -/
 def quitKeys : Loop.Keys TestScheme.scheme :=
   {
     dispatchKeys
@@ -4648,7 +4659,8 @@ def quitKeys : Loop.Keys TestScheme.scheme :=
         ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave"),
         ("C-l t", invoke "hand-leave-other"), ("C-l r", invoke "again"),
         ("C-l g", invoke "again-then-fail"), ("C-l p", invoke "pick"),
-        ("C-l k", invoke "pick-then-fail")]
+        ("C-l k", invoke "pick-then-fail"), ("C-l a", invoke "ask-all"),
+        ("C-l b", invoke "ask-all-then-fail")]
       [(Files.openName, fun call => do
           Files.openCommand call
           return none),
@@ -4677,7 +4689,11 @@ def quitKeys : Loop.Keys TestScheme.scheme :=
         ("pick", fun _ => do
           discard <| loadTheme "second"
           return none),
-        ("pick-then-fail", failingAfter fun _ => discard <| loadTheme "second")] with
+        ("pick-then-fail", failingAfter fun _ => discard <| loadTheme "second"),
+        ("ask-all", fun call => do
+          askAll call
+          return none),
+        ("ask-all-then-fail", failingAfter askAll)] with
     registered := { themeNames := #["second"] } }
 
 /-- A driver of the quit checks over the files `files`, with the file
@@ -4907,11 +4923,11 @@ def dispatchQuitChecks : List Check :=
             let (other, went) := fedTo once (presses "C-l o")
             let (failed, lost) := fedTo other (presses "C-l g")
             let (twice, _) := fedTo failed (presses "C-l r")
-            asked steps == #[some false, some true] && !once.loop.state.reload &&
+            asked steps == #[some false, some true] && !once.loop.state.outbox.reload &&
               once.reloads == 1 &&
               asked went == #[some false, some false] &&
               asked lost == #[some false, some false] &&
-              !failed.loop.state.reload &&
+              !failed.loop.state.outbox.reload &&
               failed.reloads == 1 &&
               twice.reloads == 2 &&
               driver.reloads == 0 },
@@ -4927,13 +4943,39 @@ def dispatchQuitChecks : List Check :=
             let (once, steps) := fedTo driver (presses "C-l p")
             let (other, went) := fedTo once (presses "C-l o")
             let (failed, lost) := fedTo other (presses "C-l k")
-            asked steps == #[some none, some (some "second")] && once.loop.state.theme == none &&
+            asked steps == #[some none, some (some "second")] &&
+              once.loop.state.outbox.theme == none &&
               once.themes == #["second"] &&
               asked went == #[some none, some none] &&
               asked lost == #[some none, some none] &&
-              failed.loop.state.theme == none &&
+              failed.loop.state.outbox.theme == none &&
               failed.themes == #["second"] &&
-              driver.themes == #[] }]
+              driver.themes == #[] },
+    { name :=
+        "a step whose command asked for a cancel, an invocation, a reload and a theme at once hands each back, and the state after it has an empty outbox; one whose command asked them all and was then refused hands back none, and its state's outbox is empty too"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (once, steps) := fedTo driver (presses "C-l a")
+            let (failed, lost) := fedTo driver (presses "C-l b")
+            let refused := lost.filterMap id
+            steps.size == 2 &&
+              (steps[1]?.join.any fun step =>
+                step.reload && step.theme == some "second" && step.cancels.contains "k" &&
+                  step.answered == #[{ command := "other" }]) &&
+              once.loop.state.outbox == {} &&
+              once.reloads == 1 &&
+              once.themes == #["second"] &&
+              refused.size == 2 &&
+              refused.all
+                (fun step =>
+                  !step.reload && step.theme == none && !step.cancels.contains "k" &&
+                    step.answered.isEmpty) &&
+              failed.loop.state.outbox == {} &&
+              failed.reloads == 0 &&
+              failed.themes == #[] }]
 
 /-- The compiled quit command (`Ex.quitCommand`), as the system quit checks
 register it. -/

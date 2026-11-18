@@ -151,7 +151,8 @@ read from the function that makes it. -/
 def exChecks : List Check :=
   let closed (driver : TestDriver) : Bool :=
     let state := driver.loop.state
-    state.prompt == none && state.frame.focused == ⟨0⟩ && state.answered.isEmpty && state.wellFormed
+    state.prompt == none && state.frame.focused == ⟨0⟩ && state.outbox.answered.isEmpty &&
+      state.wellFormed
   let hello : List Argument := [.str "hello there"]
   [{  name :=
         "the ex command opens a prompt labelled with the ex line's label, whose continuation is the ex command itself, with the focus in the minibuffer's view; called with a count and a register first, as a key under the Vim scheme calls it, it asks the same"
