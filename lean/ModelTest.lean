@@ -340,6 +340,13 @@ registered command:
   and a mark of the saved state is;
 - `dispatchInterruptChecks`: on the watch model, an interrupt key that
   arrives while a command runs, before one and between two;
+- `pressedChecks`: the reserved invocation that presses keys
+  (`InputScheme.keysName`, `Loop.pressed`): its keys are fed from rest,
+  even with a prefix pending, and what they complete runs with those keys
+  as pressing them does, under the test scheme and, over evil's driver,
+  under the Vim scheme (`i` enters insert, `x` deletes); a sequence they do
+  not complete is said (`Loop.notBound`) and runs nothing. They are
+  registered after `dispatchChecks`;
 - `dispatchSlowChecks`: on the watch model's clock, which a command's
   requests move, a command slower than the threshold is logged once;
 - `dispatchGiveUpChecks`: what the loop gives up once a command has run to
@@ -949,6 +956,7 @@ def checks : List Check :=
     continuationsContractChecks ++
     keyBindingsContractChecks ++
     dispatchChecks ++
+    pressedChecks ++
     vimEditChecks ++
     vimRegistryChecks ++
     vimGrammarChecks ++

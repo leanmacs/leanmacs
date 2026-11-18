@@ -556,6 +556,13 @@ prompt lists (`Editor/ExecuteCommand.lean`). Where no loop runs the command
 it answers none. It makes no request of the library. Pinned by
 `ModelTest.dispatchStateChecks`.
 
+`keyBindings` answers the key sequences that reach a command in a view, as
+the input scheme says in the scheme's state of the step that asks, each
+with the command's name and description (`KeyBinding`). The binding search
+lists them (`Editor/BindingSearch.lean`), and the command prompt shows a
+command's keys from them. Where no loop runs the command, and for a
+command a job runs, it answers `#[]`.
+
 ## Jobs
 
 `startJob name arguments` asks for the job registered under `name` to be
@@ -889,6 +896,13 @@ first and then config's, in the order they were first registered
 ("Commands", in the module docs). None where no loop runs the command. -/
 def commandNames : EditorM (Array String) :=
   EditorState.ask .commandNames
+
+/-- The key sequences that reach a command in `view`, as the input scheme
+says in the state this command runs in, each with the command's name and
+its description ("Commands", in the module docs). None where no loop runs
+the command. -/
+def keyBindings (view : ViewId) : EditorM (Array KeyBinding) :=
+  EditorState.ask (.keyBindings view)
 
 /-- Asks for the theme registered under `name` to be the theme in force,
 once this command has run to its end ("Themes", in the module docs).

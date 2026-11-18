@@ -109,8 +109,8 @@ The model tests of `Editor/Loop.lean`: `loopChecks`, `commitChecks`,
 `laterLoopChecks`, `openFilesChecks`, `dispatchQuitChecks`,
 `systemQuitChecks`, `stalenessChecks`, `autoReloadChecks`,
 `searchDecorationChecks`, `viewChecks`, `floatViewChecks`,
-`atPointRepeatChecks`, `atPointLoopChecks`, `atPointAskChecks` and
-`atPointByItselfChecks`. `searchDecorationChecks` are of the loop's
+`atPointRepeatChecks`, `atPointLoopChecks`, `atPointAskChecks`,
+`atPointByItselfChecks` and `pressedChecks`. `searchDecorationChecks` are of the loop's
 decorations under the Vim scheme, and `modeDispatchChecks` of modes in the
 loop. `directoryChecks` also cover the reasking of a source
 (`Editor/Completion/Candidate.lean`) and what the state lists while it is
@@ -2106,6 +2106,21 @@ def dispatchStateChecks : List Check :=
             (program.runModel editorModel).1.toOption
           asks { commandNames := #["load-theme", "quit", "mine"] } ==
               some (.finished #["load-theme", "quit", "mine"], true) &&
+            asks {} == some (.finished #[], true) },
+    { name :=
+        "a command that asks which key sequences reach a command in a view is answered what the loop was told for that view, and none where it was told nothing; the state is as it was"
+      run :=
+        pure <|
+          let bound : KeyBinding :=
+            { keys := [controlKey "c", charKey "m"], command := "marked", desc := some "Mark" }
+          let asks (registered : Loop.Registered) : Option (Guarded (Array KeyBinding) × Bool) :=
+            let program : EditorM (Guarded (Array KeyBinding) × Bool) := do
+              let start ← EditorState.initial ⟨640, 480⟩
+              let (outcome, state) ← (keyBindings ⟨3⟩).dispatched registered start
+              return (outcome, state == start)
+            (program.runModel editorModel).1.toOption
+          asks { keyBindings := fun view => if view == ⟨3⟩ then #[bound] else #[] } ==
+              some (.finished #[bound], true) &&
             asks {} == some (.finished #[], true) },
     { name :=
         "a command that asks which themes are registered is answered the names the loop was told, in their order, with the state as it was"
@@ -7025,5 +7040,75 @@ def atPointByItselfChecks : List Check :=
               drained.loop.state.atPoint.isNone &&
               drained.loop.state.echo != AtPoint.noCompletions &&
               drained.loop.state.echo == typed.loop.state.echo }]
+
+/-- The command `marked` of the pressed-keys checks: it says `marked`, then
+what it was called with (`calledWith`). -/
+def saysCalled : Dispatched := fun call => do
+  message s!"marked {calledWith call}"
+  return none
+
+/-- A driver of the pressed-keys checks over the initial state: `C-c m`
+bound to `marked` (`saysCalled`); `none` if making the state was
+refused. -/
+def pressedDriver : Option TestDriver :=
+  (Loop.Driver.over (dispatchKeys [("C-c m", invoke "marked")] [("marked", saysCalled)])
+      (fun _ => none) (EditorState.initial ⟨640, 480⟩) editorModel).toOption
+
+/-- `driver` after the reserved invocation that presses the keys the key
+string `text` names (`InputScheme.keysInvocation`) is run as a step of its
+own. -/
+def pressing {scheme : InputScheme} (driver : Loop.Driver scheme) (text : String) :
+    Loop.Driver scheme :=
+  (driver.stepped (driver.loop.invoke driver.handed (InputScheme.keysInvocation (keys text)))).1
+
+/-- The checks of the reserved invocation that presses keys
+(`InputScheme.keysName`, `Loop.pressed`): the loop feeds its keys to the
+scheme from rest and runs what they complete as the keys would, and says a
+sequence they do not complete. -/
+def pressedChecks : List Check :=
+  [{  name :=
+        "the reserved keys invocation of C-c m runs marked with the keys C-c m and no argument, as pressing C-c m at rest does"
+      run :=
+        pure <|
+          match pressedDriver with
+          | none => false
+          | some driver =>
+            promptEcho (pressing driver "C-c m") == "marked C-c m" &&
+              promptEcho (fedTo driver (presses "C-c m")).1 == "marked C-c m" },
+    { name := "the reserved keys invocation of a sequence nothing binds says so and runs nothing"
+      run :=
+        pure <|
+          match pressedDriver with
+          | none => false
+          | some driver =>
+            let pressed := pressing driver "C-c q"
+            promptEcho pressed == Loop.notBound "C-c q" &&
+              promptEcho pressed == "C-c q: not bound" },
+    { name :=
+        "the reserved keys invocation feeds its keys from rest: with C-c pending, C-c m still runs marked with the keys C-c m"
+      run :=
+        pure <|
+          match pressedDriver with
+          | none => false
+          | some driver =>
+            let waiting := (fedTo driver (presses "C-c")).1
+            TestScheme.scheme.pending waiting.loop.input == keys "C-c" &&
+              promptEcho (pressing waiting "C-c m") == "marked C-c m" },
+    { name :=
+        "under the Vim scheme the reserved keys invocation runs a key as pressing it does: i enters insert state, and x deletes the character under the cursor"
+      run :=
+        pure <|
+          match evilDriver "|x foo" with
+          | none => false
+          | some driver =>
+            let report (driver : EvilDriver) := Vim.Default.scheme.report driver.loop.input ⟨0⟩
+            let pressedI := pressing driver "i"
+            let typedI := evilFed driver "i"
+            let pressedX := pressing driver "x"
+            let typedX := evilFed driver "x"
+            report pressedI == report typedI && report pressedI != report driver &&
+              evilShown pressedI == evilShown typedI &&
+              evilText pressedX == some " foo" &&
+              evilShown pressedX == evilShown typedX }]
 
 end ModelTest

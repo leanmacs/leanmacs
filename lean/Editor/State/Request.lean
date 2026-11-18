@@ -1,6 +1,7 @@
 import Editor.Command.Call
 import Editor.Compile.Contribution
 import Editor.Ex.Line
+import Editor.InputScheme
 import Editor.Invocation
 import Editor.Language.IndentUnit
 import Editor.State
@@ -42,7 +43,9 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   name (`Editor/Ex/Line.lean`), `exNames`, which there is answered the ex
   names that are bound, `themeNames`, which there is answered the names
   themes are registered under, `commandNames`, which there is answered the
-  names commands are registered under, `loadTheme`, which there refuses a name no
+  names commands are registered under, `keyBindings`, which there is
+  answered the key sequences the input scheme says reach a command in the
+  view, in the state the command runs in, `loadTheme`, which there refuses a name no
   theme is registered under, `runCommand`, which there runs the
   command registered under a name inside the asking command, `askSource`,
   which there runs the completion source registered under a name inside
@@ -55,7 +58,7 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   whether a job is registered under a name. Here
   `setMajorMode`, `setBufferMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
   answered `none`, `exNames`, `themeNames` and `commandNames` are answered
-  no name,
+  no name, `keyBindings` is answered no sequence,
   `runCommand` is answered `false` and runs nothing, `askSource` is answered
   `none` and runs nothing, `categorySources` is answered no name,
   `matchCandidates` is answered no hit and asks the matcher nothing,
@@ -424,6 +427,9 @@ inductive StateRequest where
   | themeNames
   /-- Which names commands are registered under. -/
   | commandNames
+  /-- Which key sequences reach a command in the view, as the input scheme
+  says in the state the command runs in. -/
+  | keyBindings (view : ViewId)
   /-- Have the theme called `name` loaded once this command has run to its
   end. -/
   | loadTheme (name : String)
@@ -562,6 +568,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .exNames => Array String
   | .themeNames => Array String
   | .commandNames => Array String
+  | .keyBindings _ => Array KeyBinding
   | .loadTheme _ => Except ThemeRefusal Unit
   | .invoke _ => Unit
   | .runCommand .. => Bool
@@ -696,6 +703,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .exNames, state => (#[], state)
   | .themeNames, state => (#[], state)
   | .commandNames, state => (#[], state)
+  | .keyBindings _, state => (#[], state)
   | .loadTheme name, state => (.ok (), { state with theme := some name })
   | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
   | .runCommand .., state => (false, state)

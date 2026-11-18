@@ -74,7 +74,7 @@ def stateRequests : List StateRequest :=
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
-    .commandNames, .categorySources "buffer", .matchCandidates (some "buffer") "w" #["w"],
+    .commandNames, .keyBindings ⟨0⟩, .categorySources "buffer", .matchCandidates (some "buffer") "w" #["w"],
     .loadTheme "second", .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
     .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
     .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
@@ -868,6 +868,15 @@ def stateRequestChecks : List Check :=
           | some state =>
             let (names, after) := state.handle .commandNames
             names == #[] && after == state },
+    { name :=
+        "the handler knows no input scheme: asked which key sequences reach a command in a view, it answers none, and leaves the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (bound, after) := state.handle (.keyBindings ⟨0⟩)
+            bound == #[] && after == state },
     { name :=
         "the handler knows no registry: asked which sources are registered in a category, it answers none, and leaves the state as it was"
       run :=

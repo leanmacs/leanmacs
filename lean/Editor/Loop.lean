@@ -271,6 +271,24 @@ loop has little of its own to do.
   state at rest when the command ran to its end, and put back to the state
   at rest when it did not. This is how Vim's `/` asks for its pattern and
   then makes its edit (`Editor/InputScheme/Vim.lean`, "Motions that ask").
+- **Keys pressed by an invocation** are one whose name is the reserved
+  `InputScheme.keysName`, with a key string as its argument: `Loop.invoke`
+  hands it to `Loop.pressed`, which feeds the keys to the scheme for the
+  focused view and runs what they complete as `Loop.key` runs a key's,
+  with those keys, the scheme's report after them, and the same rule for
+  the state at rest. It looks no command up. The keys are fed from the
+  state at rest (`Loop.atRest`), the scheme's state with nothing pending,
+  so a prefix left pending cannot extend them, and the Vim scheme still
+  knows which state each view is in. Keys that complete nothing are said
+  (`Loop.notBound`). The binding search runs the binding accepted this way
+  (`Editor/BindingSearch.lean`), so it runs as its key would: the scheme's
+  own invocation, with no count and no register, and the scheme's state
+  changed as the key changes it.
+- **Which keys reach a command** (`StateRequest.keyBindings`) is answered
+  per step, from the scheme's state the step's report is computed from
+  (`Loop.keyBindingsIn`): after the key, after the answer, the loop's for
+  an invocation, after `invoked` for a menu item. A command a job runs is
+  answered none.
 - **A command has another run after it the same way** (`invoke`,
   `Editor/Api.lean`): the invocation is recorded in the same field, after
   what is there, with no prompt, and is handed back and run by the host
@@ -2714,6 +2732,15 @@ another", in the module docs). -/
 def writesInside (name : String) : String :=
   s!"{name} writes a store, which a command run inside another cannot"
 
+/-- The key sequences that reach a command in each view, as the scheme says
+in `input`, over the active keymaps of `state` (`InputScheme.keyBindings`):
+what a command run in a step whose scheme state is `input` is answered when
+it asks. A function, so nothing is listed for a step whose command does not
+ask. -/
+def keyBindingsIn (keys : Keys scheme) (state : EditorState) (input : scheme.State) :
+    ViewId → Array KeyBinding :=
+  fun view => (scheme.keyBindings (keys.maps state) view input).toArray
+
 /-- Runs `command` from `state`, under `name`, as the loop runs every
 command ("Every command goes through the loop", in the module docs):
 dispatched (`EditorM.dispatched`: guarded, with its state requests answered
@@ -2738,9 +2765,15 @@ rollback.
 
 The clock is read just before the command and just after it, however it
 ended, and a command that took longer than the threshold is logged
-(`slow`). Keeping and rolling back are not timed. -/
+(`slow`). Keeping and rolling back are not timed.
+
+The command is answered `keyBindings` when it asks which key sequences
+reach a command in a view: what the scheme says in the state of the step
+that runs it (`keyBindingsIn`), or none for a command no step hands it
+to, as a job's. -/
 def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
-    (command : EditorM (Option Config.Write)) : EditorM Ran := do
+    (command : EditorM (Option Config.Write))
+    (keyBindings : ViewId → Array KeyBinding := fun _ => #[]) : EditorM Ran := do
   let kept ← keep state
   let started ← Watch.now
   -- A command run inside this one is looked up as an invocation's is, and
@@ -2748,6 +2781,7 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
   let registered : Registered :=
     { keys.registered with
       matching := keys.matching
+      keyBindings
       command := fun inside =>
         (keys.command? inside).map fun run call => do
           if (← run call).isSome then
@@ -2804,7 +2838,8 @@ focused view. It is not refused: a name with no command and a state with no
 focused window are each said in the echo area, as what became of a command
 that did not run to its end is. -/
 def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (typed : List Key)
-    (report : InputScheme.Report := {}) : EditorM Ran := do
+    (report : InputScheme.Report := {}) (keyBindings : ViewId → Array KeyBinding := fun _ => #[]) :
+    EditorM Ran := do
   let state := { state with echo := "" }
   let name := invocation.command
   let some command :=
@@ -2813,7 +2848,7 @@ def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (ty
   let some target :=
     state.focusedTarget? | return { state := said state name "no window is focused", ending := .noWindow }
   dispatch keys state name
-      (command { target, arguments := invocation.arguments, keys := typed, report })
+      (command { target, arguments := invocation.arguments, keys := typed, report }) keyBindings
 
 /-- What a step that ran a command hands back, before its scene is
 published: `loop` with the state the command left, and the scheme's two
@@ -2862,7 +2897,9 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped
           { loop with
             input, atRest := if (scheme.pending input).isEmpty then input else loop.atRest }
         next := .continue, key := some (focused, none) }
-  let ran ← run keys loop.state invocation (before ++ [key.chord]) (scheme.report input focused)
+  let ran ←
+    run keys loop.state invocation (before ++ [key.chord]) (scheme.report input focused)
+      (keyBindingsIn keys loop.state input)
   -- The key typed its text where typing was text before it and after it,
   -- outside the minibuffer, and its command ran to its end.
   let typed :=
@@ -3228,7 +3265,47 @@ def answer (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
   let (input, yielded) := scheme.answered focused text loop.input
   let some completed := yielded |
     return ← ({ loop := { loop with input, atRest := input }, next := .continue } : Stepped scheme).published keys
-  let ran ← run keys loop.state completed [] (scheme.report input focused)
+  let ran ←
+    run keys loop.state completed [] (scheme.report input focused)
+      (keyBindingsIn keys loop.state input)
+  let stepped :=
+    if ran.finished then
+      ({ loop with input, atRest := input } : Loop scheme).ranInto ran
+    else ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
+  stepped.published keys
+
+/-- What the echo area says when the keys of the key string `text`, pressed
+from rest by the reserved keys invocation (`pressed`), complete nothing. -/
+def notBound (text : String) : String :=
+  s!"{text}: not bound"
+
+/-- Runs the reserved invocation that presses keys
+(`InputScheme.keysName`), whose first argument is a key string, and
+publishes a scene of the state after it ("Prompts", in the module docs).
+The keys are fed to the scheme for the focused view from its state at rest
+(`InputScheme.feed`), so nothing pending extends them. When every key but
+the last yields nothing and the last yields an invocation, that invocation
+runs as `key` runs a key's: told of the keys, of the scheme's report of the
+focused view after them, and keeping the scheme's state after them as its
+state at rest when the command ran to its end, or going back to the state
+at rest when it did not. Otherwise the echo area says so (`notBound`) and
+nothing runs. No command of the reserved name is looked up. -/
+def pressed (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
+    EditorM (Stepped scheme) := do
+  let text :=
+    match invocation.arguments with
+    | .str text :: _ => text
+    | _ => ""
+  let chords := ((Key.parse text).toOption.getD []).map Key.chord
+  let focused := loop.state.frame.focused
+  let (input, yields) := scheme.feed (keys.maps loop.state) focused loop.atRest chords
+  let completed := if yields.dropLast.all (·.isNone) then yields.getLast?.join else none
+  let some completed := completed |
+    let said : Loop scheme := { loop with state := { loop.state with echo := notBound text } }
+    return ← ({ loop := said, next := .continue } : Stepped scheme).published keys
+  let ran ←
+    run keys loop.state completed chords (scheme.report input focused)
+      (keyBindingsIn keys loop.state input)
   let stepped :=
     if ran.finished then
       ({ loop with input, atRest := input } : Loop scheme).ranInto ran
@@ -3239,14 +3316,20 @@ def answer (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
 the state after it: the echo area is cleared, the command is looked up, and
 it is called with the focused window, the invocation's arguments, no keys,
 and what the scheme reports of the focused view in the state it is in. The
-scheme's states are left as they are, but for a view the command closed. -/
+scheme's states are left as they are, but for a view the command closed.
+The two reserved names are no command's: an answer is handed to the scheme
+(`answer`), and keys are pressed (`pressed`). -/
 def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
     EditorM (Stepped scheme) := do
   let loop := loop.keyedBy keys
   if invocation.command == InputScheme.answerName then
     return ← loop.answer keys invocation
+  if invocation.command == InputScheme.keysName then
+    return ← loop.pressed keys invocation
   let report := scheme.report loop.input loop.state.frame.focused
-  (loop.ranInto (← run keys loop.state invocation [] report)).published keys
+  (loop.ranInto
+          (← run keys loop.state invocation [] report (keyBindingsIn keys loop.state loop.input))).published
+    keys
 
 /-- Runs the command registered under `name` as an invocation with no
 arguments that no key yielded (`invoke`), and publishes a scene of the
@@ -3307,7 +3390,9 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
     -- as in the focused view's state, and the state it leaves.
     let focused := loop.state.frame.focused
     let (input, invocation) := scheme.invoked focused loop.input { command := name }
-    let ran ← run keys loop.state invocation [] (scheme.report input focused)
+    let ran ←
+      run keys loop.state invocation [] (scheme.report input focused)
+        (keyBindingsIn keys loop.state input)
     if ran.finished then
       let atRest := if (scheme.pending input).isEmpty then input else loop.atRest
       (({ loop with

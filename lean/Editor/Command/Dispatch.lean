@@ -184,6 +184,13 @@ from the next command.
   is answered the names the loop was told (`Loop.Registered.commandNames`),
   each once, in their order, the state not read and not changed. The
   command prompt asks, for its candidates (`Editor/ExecuteCommand.lean`).
+- **Asking which key sequences reach a command in a view**
+  (`StateRequest.keyBindings`) is answered what the loop was told for that
+  view (`Loop.Registered.keyBindings`), the state not read and not
+  changed. The loop fills it per step from the input scheme, in the
+  scheme's state of that step, not from the registry. The binding search
+  and the command prompt ask (`Editor/BindingSearch.lean`,
+  `Editor/ExecuteCommand.lean`).
 - **Loading a theme** (`StateRequest.loadTheme`) is refused with
   `noSuchTheme` for a name the loop was not told a theme is registered
   under, with the state as it was. Otherwise the name is kept in the state,
@@ -465,6 +472,11 @@ structure Loop.Registered where
   prompt (`Editor/ExecuteCommand.lean`). Whoever fills this and `command`
   fills them from one registry. -/
   commandNames : Array String := #[]
+  /-- The key sequences that reach a command in each view, as the input
+  scheme says (`InputScheme.keyBindings`): filled per step by the loop
+  (`Loop.run`), in the scheme's state of that step, not from the registry.
+  None where no loop runs the command. -/
+  keyBindings : ViewId → Array KeyBinding := fun _ => #[]
   /-- The command registered under this name, as one run inside another is
   run: given the call, its program. `none` for a name no command is
   registered under. The loop fills it from the lookup a key's invocation
@@ -632,6 +644,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     dispatched registered state (next registered.themeNames)
   | state, .step (.state .commandNames) next =>
     dispatched registered state (next registered.commandNames)
+  | state, .step (.state (.keyBindings view)) next =>
+    dispatched registered state (next (registered.keyBindings view))
   | state, .step (.state (.loadTheme name)) next =>
     if registered.themeNames.contains name then
       let (reply, state) := state.handle (.loadTheme name)
