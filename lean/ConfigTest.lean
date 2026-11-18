@@ -132,8 +132,10 @@ show:
   them in the first scene; the pending keys are drawn in the selected
   window's status line while pending and cleared once the sequence
   completes; a display config chooses for `key` draws them; `.never` arms
-  nothing; and a reload refuses a delay over a minute, one that is not a
-  delay and one set twice;
+  nothing; a reload while `SPC` is pending that sets `.never` closes hints
+  shown and withdraws a wait, one that keeps the delay keeps its wait,
+  and one that sets it again arms a new wait; and a reload refuses a delay
+  over a minute, one that is not a delay and one set twice;
 - `defaultConfigChecks`: the default config `mise run install` ships, read
   from the directory the fourth argument names: a reload of it through a
   host of the Vim scheme that ships installs with no diagnostic and
@@ -6751,8 +6753,9 @@ def noPendingDrawn (lines : Array String) : Bool :=
 /-- The checks of when and where the key hints are shown, and of the pending
 keys drawn, through a host of the Vim scheme that ships (`withVimHost`),
 with the real elaborator, the fake clock the host's waits are on and the
-recorder: the phase's five criteria, a delay of `.never`, and the delays a
-reload refuses. What the hints list is `hintChecks`'; how the delay is
+recorder: the phase's five criteria, a delay of `.never`, a reload while a
+prefix is pending (the publish after an install, `Headless.Running.publish`),
+and the delays a reload refuses. What the hints list is `hintChecks`'; how the delay is
 armed and the list placed, `ModelTest`'s. -/
 def keyHintChecks (context : Context) : List Check :=
   [{  name :=
@@ -6853,6 +6856,68 @@ def keyHintChecks (context : Context) : List Check :=
           return armed == 0 && joined && (listViewId lines).isNone &&
               !lines.any (·.startsWith "hint ") &&
               pendingDrawn lines "SPC" },
+    { name :=
+        "a reload that sets the delay to .never while SPC is pending with its hints shown closes them: the scene after it lists no hints and draws no list, and SPC is still drawn pending"
+      run :=
+        withVimHost context [("10-hint.lean", delayChunk (some "0"))] fun session => do
+          session.ask [.reload]
+          session.typed "SPC"
+          let shown ← session.sceneLines
+          session.write "10-hint.lean" (delayChunk (some ".never"))
+          session.ask [.reload]
+          let lines ← session.sceneLines
+          return shown.any (·.startsWith "hint ") && (listViewId shown).isSome &&
+              (listViewId lines).isNone &&
+              !lines.any (·.startsWith "hint ") &&
+              pendingDrawn lines "SPC" },
+    { name :=
+        "a reload before the default delay has passed keeps its wait when the delay is still wanted, so the hints are shown 500 ms after SPC; one that sets .never withdraws the wait, and one that then sets the delay again arms a new wait of the whole delay, all with SPC still pending"
+      run :=
+        withVimHost context [("10-hint.lean", delayChunk none)] fun session => do
+          session.ask [.reload]
+          session.typed "SPC"
+          let armed := (← session.clock.waiting) == 1
+          let withdrawnArmed := (← session.clock.withdrawn).size
+          session.clock.advance 200
+          discard <| session.host.join patience
+          -- A reload that leaves the delay as it was: the wait is kept.
+          session.ask [.reload]
+          let kept :=
+            (← session.clock.waiting) == 1 && (← session.clock.withdrawn).size == withdrawnArmed
+          session.clock.advance 299
+          discard <| session.host.join patience
+          let early ← session.sceneLines
+          session.clock.advance 1
+          discard <| session.host.join patience
+          let due ← session.sceneLines
+          session.typed "<Escape>"
+          session.typed "SPC"
+          let withdrawnPending := (← session.clock.withdrawn).size
+          -- A reload that sets `.never`: the wait is withdrawn.
+          session.write "10-hint.lean" (delayChunk (some ".never"))
+          session.ask [.reload]
+          let closed :=
+            (← session.clock.waiting) == 0 &&
+              (← session.clock.withdrawn).size == withdrawnPending + 1
+          -- A reload that sets the delay again: a new wait of the whole delay.
+          session.write "10-hint.lean" (delayChunk none)
+          session.ask [.reload]
+          let rearmed := (← session.clock.waiting) == 1
+          session.clock.advance 499
+          discard <| session.host.join patience
+          let rearmedEarly ← session.sceneLines
+          session.clock.advance 1
+          discard <| session.host.join patience
+          let rearmedDue ← session.sceneLines
+          return armed && kept && !early.any (·.startsWith "hint ") &&
+              due.filter (·.startsWith "hint ") ==
+                #["hint f: prefix \"file\" 1", "hint s: binding \"Save\""] &&
+              closed &&
+              rearmed &&
+              !rearmedEarly.any (·.startsWith "hint ") &&
+              pendingDrawn rearmedEarly "SPC" &&
+              rearmedDue.filter (·.startsWith "hint ") ==
+                #["hint f: prefix \"file\" 1", "hint s: binding \"Save\""] },
     { name :=
         "a reload refuses a delay over a minute, saying keyHintDelayTooLong's sentence, a delay that is not one, and a delay set twice; the previous config's bindings keep working"
       run :=

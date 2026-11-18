@@ -581,6 +581,12 @@ list through the completion display, as which-key shows them:
   an unbound key that resets it, a command that fails and sends the
   scheme back to rest, and a prompt or a session at point that opens all
   withdraw the delay and close the hints (`Loop.armedHints`).
+- **A reload mid-sequence reconciles them with no key typed.** The
+  publish after an install is the same as a step's (`Loop.publishHinted`):
+  a reload that sets `.never` closes hints shown and withdraws a wait; one
+  that leaves them wanted keeps the wait, which still runs from the start
+  of the sequence; and one that sets a delay again, with the prefix still
+  pending, arms a new wait of the whole delay.
 - **The delay is a wait on the job clock**, armed and withdrawn per step
   as completion at point's pause is (`Loop.Stepped.hintDelay`,
   `Headless.Running.delayHints`), not a spawned job: it prints nothing,
