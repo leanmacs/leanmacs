@@ -586,10 +586,16 @@ need no model and no fake of a collaborator:
   strings: what the keys of a bound sequence yield, that an unbound key
   resets the scheme, which of two keymaps wins, the pending keys it
   reports, its self-insert, and the leaders in force;
+- `schemeHintChecks`: what a scheme says can follow a pending prefix
+  (`InputScheme.continuations`): nothing from a scheme that says nothing,
+  the test scheme's list, and a continuation as a key hint;
 - `schemeContractChecks`: the scheme contract
   (`Editor/InputScheme/Contract.lean`) holds of the test scheme, and
   reports schemes written here that each break one property of it, `eager`
-  among them, which emits on a strict prefix.
+  among them, which emits on a strict prefix;
+- `continuationsContractChecks`: the contract's property of what can
+  follow a pending prefix reports a scheme that lists a prefix key its walk
+  does not continue, and one that lists keys at rest.
 
 The Vim scheme (`Editor/InputScheme/Vim.lean`) is checked the same way,
 with no model:
@@ -872,7 +878,9 @@ def checks : List Check :=
     invocationChecks ++
     exLineChecks ++
     schemeChecks ++
+    schemeHintChecks ++
     schemeContractChecks ++
+    continuationsContractChecks ++
     dispatchChecks ++
     vimEditChecks ++
     vimRegistryChecks ++

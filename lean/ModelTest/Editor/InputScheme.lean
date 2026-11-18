@@ -190,4 +190,46 @@ def schemeChecks : List Check :=
             reported "C-x C-s" ⟨0⟩ == plain &&
             reported "a" ⟨0⟩ == plain) }]
 
+/-- A scheme that says nothing of what can follow a pending prefix: the test
+scheme's state and walk, with every field that has a default left out. -/
+def silentScheme : InputScheme :=
+  { State := TestScheme.State, Binding := Invocation, init := {}, step := TestScheme.step
+    pending := (·.pending), command := fun name => { command := name } }
+
+/-- The hints the test scheme gives for view 0 after the keys `text` name,
+with `C-x r` named `rect`. -/
+def schemeHints (text : String) : List KeyHint :=
+  let names (typed : List Key) : Option String :=
+    if typed == keys "C-x r" then some "rect" else none
+  (TestScheme.scheme.continuations schemeMaps names ⟨0⟩ (fed ⟨0⟩ text).1).map (·.hint)
+
+/-- The checks of what a scheme says can follow a pending prefix
+(`InputScheme.continuations`) and of a continuation as a key hint
+(`Keymap.Continuation.hint`), on the test scheme. -/
+def schemeHintChecks : List Check :=
+  [{  name := "a scheme that says nothing of what can follow a pending prefix lists nothing"
+      run :=
+        let state : TestScheme.State := { pending := keys "C-x" }
+        pure (silentScheme.continuations schemeMaps (fun _ => none) ⟨0⟩ state).isEmpty },
+    { name :=
+        "the test scheme lists the keys that can follow its pending keys in the view's keymaps, and nothing at rest"
+      run :=
+        pure
+          (schemeHints "C-x" ==
+              [{ key := "C-s", leads := .binding none }, { key := "C-f", leads := .binding none },
+                { key := "r", leads := .prefix (some "rect") 1 }] &&
+            schemeHints "C-x r" == [{ key := "t", leads := .binding none }] &&
+            schemeHints "" == [] &&
+            schemeHints "C-x C-s" == []) },
+    { name :=
+        "a continuation as a key hint is its key's notation and what it leads to, without the binding: a binding's description, or a prefix's name and count"
+      run :=
+        let bound : Keymap.Continuation Invocation :=
+          { key := controlKey "s", next := .bound (invoke "save") (some "Save") }
+        let named : Keymap.Continuation Invocation :=
+          { key := charKey " ", next := .prefix (some "file") 3 }
+        pure
+          (bound.hint == { key := "C-s", leads := .binding (some "Save") } &&
+            named.hint == { key := "SPC", leads := .prefix (some "file") 3 }) }]
+
 end ModelTest

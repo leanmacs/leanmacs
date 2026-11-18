@@ -30,6 +30,20 @@ A step returns the next state and the invocation the key completed, if it
 completed one. A scheme also reports the keys of a sequence begun and not
 yet completed (`pending`), for the scene's pending text.
 
+### What can follow a pending prefix
+
+A scheme reports the keys that can follow the keymap prefix pending for a
+view (`continuations`), given the active keymaps and the names of prefixes
+(a function of a prefix's keys), and what its walk would make of each: a
+binding with its description, or a further prefix with its name and count
+(`Keymap.Continuation`). Only the scheme knows which of its pending keys
+are a keymap prefix (the Vim scheme's counts and register are not) and
+which tiers its walk looks in, so the core cannot work it out from
+`pending`. It lists nothing when no keymap prefix is pending, and that is
+the default, for a scheme that says nothing. The loop turns the list into
+the scene's key hints (`Keymap.Continuation.hint`, `Scene.keyHints`),
+dropping the bindings, which are the scheme's own type.
+
 Which keys print text is the same for every scheme (`Key.printed?`): a
 scheme that yields a self-insert for an unbound key asks it what the key
 prints. Which keys are modifiers by themselves is too (`Key.isModifier`):
@@ -162,7 +176,7 @@ the test scheme, published for other modules' tests.
 | Addition | Where |
 |---|---|
 | A new scheme | A value of `InputScheme` in a module of its own, which runs the contract check |
-| Something every scheme must report to the core | A field of `InputScheme`, and a property of the contract |
+| Something every scheme must report to the core | A field of `InputScheme`, and a property of the contract, as `continuations` and `continuationsWalk` are |
 | What a scheme makes of an invocation no key yielded, such as a menu item's | `invoked`, which `invokedKeepsUnknown` in the contract holds to its default for a name the scheme does not know |
 | Something a scheme says of one view, for the scene, the loop or a command | A field of `InputScheme.Report`, with the default a scheme that says nothing reports |
 | Something one scheme remembers between keys | That scheme's `State`; nothing here |
@@ -272,6 +286,23 @@ structure InputScheme where
   chords, and its binding, consulted with that mode ahead of its roles and
   suffixes. -/
   tuned : List (String × List Key × Binding) := []
+  /-- The keys that can follow the keymap prefix pending for the view, given
+  the active keymaps of each view and the names of prefixes, and what the
+  scheme's walk would make of each, in the scheme's order. None when no
+  keymap prefix is pending, and none from a scheme that says nothing. -/
+  continuations :
+    (ViewId → List (Keymap Binding)) →
+      (List Key → Option String) → ViewId → State → List (Keymap.Continuation Binding) :=
+    fun _ _ _ _ => []
+
+/-- `c` as a key hint (`KeyHint`): its key as a key string names it, and what
+it leads to, without the binding, which is the scheme's own. -/
+def Keymap.Continuation.hint {β : Type} (c : Keymap.Continuation β) : KeyHint :=
+  { key := c.key.notation
+    leads :=
+      match c.next with
+      | .bound _ desc => .binding desc
+      | .prefix name count => .prefix name count }
 
 /-- The reserved name of a prompt's continuation whose answer is the input
 scheme's (`InputScheme.answered`): the loop hands the answer to the scheme

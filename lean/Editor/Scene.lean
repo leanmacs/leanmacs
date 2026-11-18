@@ -44,6 +44,11 @@ the last scene published, on its own thread, so painting never waits on Lean
   input scheme's to say (`InputScheme.report`, `Editor/InputScheme.lean`):
   the Vim scheme's is the cursor of the view's Vim state. The pending key
   prefix is rendered by Lean into a string.
+- **The key hints are a Lean-only readout.** The keys that can follow the
+  pending prefix (`Scene.keyHints`, from `InputScheme.continuations`) are
+  data the command loop fills, but they do not cross to the Rust scene:
+  hints are drawn by the completion display, a view Lean makes, as the
+  candidate list is, so no Rust code reads them.
 - **A block is text only.** A view's blocks (`View.blocks`) are rows of
   text of their own between its rows, each in its own faces: which ones,
   and where, is the command loop's choice (an excerpt buffer's headers,
@@ -68,6 +73,7 @@ the last scene published, on its own thread, so painting never waits on Lean
 | A new cursor shape | A constructor of `CursorShape` | Its drawing |
 | A new kind of thing a view shows (a terminal) | A field or a constructor here | The view's renderer |
 | A new decoration of a view drawn beside its text (a gutter mark) | A field of `View`, as `marks` | A field of the Rust `View`, drawn as rows of the frame, and its crossing |
+| A readout only Lean draws, as a view of its own (the key hints) | A field here | Nothing: it does not cross |
 | Something more the menu bar shows | A field or a constructor of `Editor/Menu.lean`'s types | `editor_platform::menu`, and the scene's crossing (`editor-ffi`'s `display/wire.rs` and `menu.rs`) |
 
 The scene is pinned by `ModelTest.sceneChecks`. It is published through the
@@ -265,6 +271,26 @@ structure Divider where
   face : FaceName
   deriving DecidableEq, Repr
 
+/-- What a key that can follow the pending prefix leads to, as a key hint
+shows it. -/
+inductive KeyHint.Leads where
+  /-- A binding, with its description if it has one. -/
+  | binding (desc : Option String)
+  /-- A further prefix, with its name if it is named, and how many bindings
+  under it the walk can reach. -/
+  | prefix (name : Option String) (count : Nat)
+  deriving DecidableEq, Repr
+
+/-- A key that can follow the pending prefix, for the key hints: the key as
+a key string names it, and what it leads to. It is scheme-neutral: what the
+key is bound to is the scheme's and is not here. -/
+structure KeyHint where
+  /-- The key, as a key string names it (`Key.notation`). -/
+  key : String
+  /-- What it leads to. -/
+  leads : KeyHint.Leads
+  deriving DecidableEq, Repr
+
 /-- Everything the display shows, as published after a command. -/
 structure Scene where
   /-- The frame's size. -/
@@ -285,6 +311,11 @@ structure Scene where
   /-- The pending key prefix, as Lean renders it; empty when there is
   none. -/
   pending : String
+  /-- The keys that can follow the pending prefix, in the input scheme's
+  order, for the key hints (`InputScheme.continuations`); none when no
+  keymap prefix is pending. A Lean-only readout: it does not cross to the
+  Rust scene. -/
+  keyHints : Array KeyHint := #[]
   /-- The text an input method is composing in the focused view, if it is
   composing. -/
   preedit : Option String

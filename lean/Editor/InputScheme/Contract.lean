@@ -72,6 +72,12 @@ the pending keys the scheme reports. Nothing here knows what a binding is.
   as it was, and the scheme's report of the view is as it was. A scheme may
   run a name it knows as something else, as a key bound to it would, but a
   name it does not know is the registry's, and runs as named.
+- `continuationsWalk`: what the scheme says can follow a pending prefix
+  (`InputScheme.continuations`) agrees with its walk. From the initial
+  state it lists nothing. After each strict prefix of a sequence, every key
+  it lists as leading to a prefix, typed next, yields nothing and leaves
+  that prefix's chords and the key pending. A scheme that lists nothing
+  keeps it.
 
 The contract compares no states: a scheme's state may hold what a reset
 must keep, such as its last edit, and the record carries no equality on it.
@@ -285,11 +291,32 @@ def invokedKeepsUnknown : Property :=
         subject.scheme.report state subject.view ==
           subject.scheme.report subject.scheme.init subject.view }
 
+/-- What the scheme says can follow a pending prefix agrees with its walk:
+from the initial state it lists nothing, and after each strict prefix of a
+sequence every key it lists as leading to a prefix, typed next, yields
+nothing and leaves that prefix's chords and the key pending. -/
+def continuationsWalk : Property :=
+  { name :=
+      "the scheme lists nothing that can follow at rest, and each key it lists as leading to a prefix after a strict prefix of a complete input, typed next, yields no invocation and leaves the keys so far pending"
+    holds := fun subject =>
+      let listed (state : subject.scheme.State) :=
+        subject.scheme.continuations subject.maps (fun _ => none) subject.view state
+      (listed subject.scheme.init).isEmpty &&
+        subject.allPrefixes fun _ typed =>
+          let state := (subject.feed typed).1
+          (listed state).all fun c =>
+            match c.next with
+            | .prefix .. =>
+              let (next, yields) := subject.feedFrom state [c.key]
+              yields == [none] &&
+                subject.scheme.pending next == typed.map Key.chord ++ [c.key.chord]
+            | .bound .. => true }
+
 /-- Every property of the contract. -/
 def properties : List Property :=
   [hasPrefixes, strictPrefixEmitsNothing, strictPrefixIsPending, completeEmits, unboundResets,
     namedCommandRuns, everyRoleHasKey, leaderAndRolesApart, modeCommandRuns, minibufferTakesText,
-    quietKeyKeepsReport, unaskedAnswerYieldsNothing, invokedKeepsUnknown]
+    quietKeyKeepsReport, unaskedAnswerYieldsNothing, invokedKeepsUnknown, continuationsWalk]
 
 /-- The names of the properties that do not hold of `subject`; none when the
 scheme keeps the contract. -/

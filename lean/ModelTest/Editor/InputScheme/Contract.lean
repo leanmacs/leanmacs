@@ -398,6 +398,45 @@ def schemeContractChecks : List Check :=
           (failsOnly (subjectOf meddling schemeMaps) [SchemeContract.invokedKeepsUnknown] &&
             failsOnly (subjectOf menuStartled schemeMaps) [SchemeContract.invokedKeepsUnknown]) }]
 
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that after a pending prefix it also lists `z`, which the walk does
+not continue, as leading to a prefix. -/
+def overpromising : InputScheme :=
+  { TestScheme.scheme with
+    continuations := fun maps names view (state : TestScheme.State) =>
+      if state.pending.isEmpty then []
+      else Keymap.continuations (maps view) state.pending names ++ [⟨charKey "z", .prefix none 1⟩] }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that it lists the keys that can follow even when nothing is
+pending. -/
+def restless : InputScheme :=
+  { TestScheme.scheme with
+    continuations := fun maps names view (state : TestScheme.State) =>
+      Keymap.continuations (maps view) state.pending names }
+
+/-- The checks of the scheme contract's property of what can follow a
+pending prefix (`SchemeContract.continuationsWalk`). -/
+def continuationsContractChecks : List Check :=
+  [{  name :=
+        "the scheme contract reports a scheme that lists, after a pending prefix, a key as leading to a prefix that the walk does not continue, for that property alone"
+      run :=
+        pure (failsOnly (subjectOf overpromising schemeMaps) [SchemeContract.continuationsWalk]) },
+    { name :=
+        "the scheme contract reports a scheme that lists keys that can follow when nothing is pending, for that property alone"
+      run := pure (failsOnly (subjectOf restless schemeMaps) [SchemeContract.continuationsWalk]) },
+    { name :=
+        "the test scheme lists a key that leads to a prefix after a pending prefix, so the contract's property of what can follow has something to hold of"
+      run :=
+        let subject := subjectOf TestScheme.scheme schemeMaps
+        let state := (subject.feed (keys "C-x")).1
+        pure
+          ((subject.scheme.continuations subject.maps (fun _ => none) subject.view state).any
+            fun c =>
+            match c.next with
+            | .prefix .. => true
+            | .bound .. => false) }]
+
 /-- The key the Vim checks give the scheme contract as unbound: a named
 key. A key that prints goes on with one strict prefix whatever is bound,
 the register prefix, by naming the register. -/

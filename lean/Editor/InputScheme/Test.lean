@@ -21,6 +21,10 @@ Its rules:
 - **Keys are walked through the view's keymaps** with `Keymap.walk`: a
   prefix is pending and yields nothing, and an unbound key drops the prefix
   and yields nothing.
+- **What can follow is listed from the same keymaps** (`continuations`):
+  its state is its keymap prefix, so while keys are pending it lists
+  `Keymap.continuations` of the view's keymaps after them, and nothing at
+  rest.
 - **An unbound printable key with nothing pending yields a self-insert**
   (`selfInsert`), an invocation whose argument is the key's character.
   Which keys are printable is the scheme interface's (`Key.printed?`): the
@@ -99,12 +103,19 @@ are under `C-c`. -/
 def localLeader : List Key.Stroke :=
   [.leader]
 
+/-- The keys that can follow the test scheme's pending keys in the view's
+keymaps, and what the walk makes of each; none when nothing is pending. -/
+def continuations (maps : ViewId → List (Keymap Binding)) (names : List Key → Option String)
+    (view : ViewId) (state : State) : List (Keymap.Continuation Binding) :=
+  if state.pending.isEmpty then [] else Keymap.continuations (maps view) state.pending names
+
 /-- The test scheme. -/
 def scheme : InputScheme :=
   { State, Binding, init := {}, step, pending := (·.pending)
     command := fun name => { command := name }
     roles
     leader
-    localLeader }
+    localLeader
+    continuations }
 
 end Editor.TestScheme
