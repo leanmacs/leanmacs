@@ -2,7 +2,9 @@
 
 What the editor asks of a version-control system, the status buffer that
 shows it, a file at a revision, the gutter that marks a tracked file's
-lines against `HEAD`, staging a hunk, and the message buffer that commits. The model is magit: every operation is a git command and its
+lines against `HEAD`, staging a hunk, the message buffer that commits, and
+the worktrees, the branches and a branch's change against its base, with
+the worktree list. The model is magit: every operation is a git command and its
 parsed output, run as a job over the process service
 ([review-and-navigation.md](review-and-navigation.md), "Version control").
 Git is one implementation of a small interface in the editor's own terms,
@@ -10,6 +12,8 @@ so jj, or an in-process library, is another.
 
 Built in `lean/Editor/VersionControl.lean` (the interface),
 `lean/Editor/VersionControl/Porcelain.lean` (the reader of git's status),
+`lean/Editor/VersionControl/Plumbing.lean` (the readers of its worktree
+list, branches, raw diff and blobs),
 `lean/Editor/VersionControl/Git.lean` (the git implementation),
 `lean/Editor/VersionControl/Model.lean` and
 `lean/Editor/VersionControl/Contract.lean` (its model and its contract),
@@ -18,7 +22,8 @@ Built in `lean/Editor/VersionControl.lean` (the interface),
 `lean/Editor/VersionControl/Gutter.lean` (the gutter),
 `lean/Editor/VersionControl/Hunk.lean` and
 `lean/Editor/VersionControl/Stage.lean` (staging a hunk),
-`lean/Editor/VersionControl/Commit.lean` (the message buffer) and
+`lean/Editor/VersionControl/Commit.lean` (the message buffer),
+`lean/Editor/VersionControl/Worktrees.lean` (the worktree list) and
 `lean/Editor/VersionControl/Compiled.lean` (their registrations).
 
 ## The interface
@@ -38,6 +43,11 @@ request in `JobM`, run with `Program.runM` inside a job.
 | `stageHunk path hunk` | Nothing; `hunk`, of the file against the index, is applied to the index |
 | `unstageHunk path hunk` | Nothing; the reverse of `hunk`, of the index against `HEAD`, is applied to the index |
 | `commit message` | Nothing; `HEAD` is a new commit of the index with `message` |
+| `worktrees` | Every worktree of the repository, each its path and what is checked out there: the main one first, then the linked ones in path order. A bare main repository is no worktree; a worktree whose directory is gone is still listed |
+| `branches` | Every local branch's name, in byte order; an unborn branch has no commit and is not one |
+| `changes revision against` | The merge base's id of `revision` and `against`, and every path whose content differs between that base and `revision`, with both contents. A name that is not a commit, or two with no merge base, refuse it |
+| `addWorktree path branch start` | Nothing; a worktree at `path`, on a new branch `branch` made at `start`, or on the existing branch `branch` without a start |
+| `removeWorktree path` | Nothing; the linked worktree at `path` and its directory are gone, its branch kept |
 
 - **Paths** are relative to the repository's root, `/`-separated, as UTF-8
   strings.
@@ -82,16 +92,43 @@ request in `JobM`, run with `Program.runM` inside a job.
 - **A commit** refused (nothing staged, a conflict, a hook that says no)
   is a refusal with everything the system printed, so a hook's output can
   be shown, not swallowed.
+- **A branch's change is committed content only.** It is of `revision`
+  against the merge base of `revision` and a branch the caller names, so
+  `main`'s commits after the fork are not in it. An agent's uncommitted
+  work is its worktree's status. The reply carries the merge base's id, so
+  a consumer reads more at the base with `fileAt`. A change is of content:
+  renames are off, so a moved file is its old path deleted and its new
+  path added, and a change of mode alone, which keeps the content, is not
+  listed. Content is decoded by the store's escape rule, as `fileAt`'s is,
+  and a submodule's side reads `Subproject commit <id>`, as git prints it.
+  A name that is not a commit is refused with status 1, `<name> is not a
+  commit`, and two commits with no merge base with status 1, `<revision>
+  and <against> have no merge base`, by the model and by git alike.
+- **Making a worktree** with a start makes the branch there; without one
+  it checks out an existing local branch. A branch that exists (with a
+  start), a missing branch or one checked out in another worktree (without
+  one), or a path that is a worktree already, refuses it and nothing
+  changes. **Removing one** keeps its branch, and is refused for the main
+  worktree, for a path that is no worktree, and for one holding a modified
+  or untracked file. Neither has a command yet: agent dispatch calls them
+  ([agent-hosting.md](agent-hosting.md)).
+- **A name that starts with `-`** (a revision, `against`, a branch, a
+  start), which a system could read as an option, and a worktree path that
+  is not absolute are refused before anything runs, as `invalid`. One pure
+  function, `Request.invalid?`, says so, and the model and git both call it
+  first, so they cannot disagree.
 - **Errors are values**: the system could not be run (missing, denied,
   past its time or output limit), it ran and refused (its exit and its
-  standard error), or what it printed cannot be read.
+  standard error), what it printed cannot be read, or the request was
+  refused before anything ran.
 
 The interface grows by data, one request at a time, with the phase that
 first uses it: a file at a revision and what to watch came with the gutter
 marks, a hunk staged and unstaged and a commit with staging hunks, and the
-branches, the worktrees and a diff between two revisions
-come with worktree lifecycle. Each comes with its reply type, a clause of the model, a clause
-of the git implementation and a property of the contract.
+worktrees, the branches, a branch's change and making and removing a
+worktree with worktree lifecycle. Each comes with its reply type, a clause
+of the model, a clause of the git implementation and a property of the
+contract.
 
 ## The model and the contract
 
@@ -112,6 +149,23 @@ does: each path added in the index, in path order, takes the first path
 deleted in the index whose `HEAD` content is its content. An empty file is
 paired too; git pairs it, and a property of the contract says so.
 
+It also has a commit graph, its branches and its linked worktrees: the main
+worktree's directory, commits besides `HEAD`'s by id (parents before
+children), branches besides the checked-out one, `HEAD`'s parents and its
+id, and each linked worktree's directory, its branch or none for detached,
+and whether it holds an untracked file. A name resolves to `HEAD`'s
+commit (`HEAD`, or the checked-out branch while it is born), a branch's
+commit, a tag (a parentless commit of its files) or a commit's id, and
+`fileAt` reads through that. The merge base is the first of one commit's
+ancestors, breadth-first, that is the other's: git's answer wherever the
+merge base is unique, as in every property's graph; a criss-cross history
+has several, and git picks one. A commit freezes `HEAD`'s commit into the
+graph and makes `HEAD` a new commit whose parent it is, so a branch made
+from `HEAD` before a commit stays where it was. Making and removing a
+worktree refuse with status 128 and git's message. git itself exits 255
+when a new branch's name is taken, so the properties compare the exit only
+where git's is 128.
+
 The model also prints its status as git prints it with the git
 implementation's flags, so the real parser reads the model's status, and
 it builds the job model whose process scripts answer the git
@@ -120,8 +174,9 @@ writes a test names (a hunk's apply exits 0 whatever it is fed, and a
 commit too, unless the repository has a hook), both runs of `fileAt` for
 each file of `HEAD`, of the index and of each named revision (an id made of the content alone, then its bytes), the
 first run exiting 1 for each revision and path a test names missing, and
-`watched`. A command no script names is refused as "not found", so a test
-that asks for a missing path names it.
+`watched`, and the worktree list read, printed as git prints it with `-z`.
+A command no script names is refused as "not found", so a test that asks
+for a missing path names it.
 
 The contract is one list of properties, each a program over the port and
 the repository it starts from, run three ways:
@@ -145,8 +200,17 @@ the repository it starts from, run three ways:
   `diff.renames`, no untracked files listed, a patch's whitespace fixed
   (`apply.whitespace=fix`) and its context matched loosely
   (`apply.ignoreWhitespace=change`), and a message's `#` lines stripped
-  (`commit.cleanup=strip`); with a user, which no commit runs without,
-  and signing off. A repository's hook is written as an executable
+  (`commit.cleanup=strip`), remote branches guessed for a new worktree
+  (`worktree.guessRemote`) and every new branch tracking its start
+  (`branch.autoSetupMerge=always`), neither of which may change what is
+  made; with a user, which no commit runs without, and signing off.
+  The writer also writes the model's graph, each commit with
+  `commit-tree` over its parents' real ids, `HEAD`'s over its parents
+  with its branch pointed at it and the index read from it, each other
+  branch with `update-ref`, and each linked worktree with `git worktree
+  add` beside the repository, a dirty one given an untracked file. The
+  temporary directory is spelled with links resolved, as git spells a
+  worktree's path. A repository's hook is written as an executable
   `.git/hooks/pre-commit` run by `/bin/sh`, its first line printed on its
   standard output and the rest on its standard error. The editor runs git
   under the user's config, so the contract does too, under a hostile one.
@@ -164,6 +228,21 @@ added line ending in spaces, quoted paths and an empty index file; unstage
 one of two staged hunks; and commit, on an unborn branch, with nothing
 staged, with a conflicted file (refused with status 128 before the hook
 runs, as the model refuses it) and under a hook that refuses.
+
+The properties of worktrees never write a path: each takes the main
+worktree's path from the `worktrees` reply and names the others beside it,
+so one program holds of the model's `/r` and of a temporary directory. One
+is the adapter test that creating a worktree for a new branch and removing
+it leaves the list as it was, with the worktree on its branch in between;
+others list linked and detached worktrees, make one on an existing branch,
+refuse each bad making and removal (a dirty worktree among them, under the
+hostile config's `status.showUntrackedFiles=no`), refuse a leading `-` and
+a relative path, list the branches, and take a branch's change against
+`main`: each file changed since the fork with both contents and `main`'s
+later commits not in it, a branch made from `HEAD` before a commit, a move
+and a copy under a config asking for copies, a byte that is not UTF-8,
+and the two refusals with their exit and message, so a drift between
+model and git is caught.
 
 ## The git implementation
 
@@ -183,6 +262,11 @@ cancelled. No binding is added.
 | stageHunk | `git -c apply.whitespace=nowarn -c apply.ignoreWhitespace=false apply --cached -`, fed the hunk's patch |
 | unstageHunk | The same with `--reverse`, fed the patch of the hunk of the index against `HEAD` |
 | commit | `git commit --file=- --cleanup=whitespace`, fed the message |
+| worktrees | `git worktree list --porcelain -z` |
+| branches | `git for-each-ref --format=%(refname) refs/heads/` |
+| changes | `git rev-parse --verify --quiet <name>^{commit}` for each name, `git merge-base <R> <A>`, `git diff-tree -r -z --no-renames <M> <R>`, then `git cat-file --batch` fed each distinct blob id, one a line |
+| addWorktree | `git worktree list --porcelain -z`; without a start, `git rev-parse --verify --quiet refs/heads/<branch>`; then `git worktree add --quiet -b <branch> <path> <start>`, or `git worktree add --quiet <path> <branch>` |
+| removeWorktree | `git -c status.showUntrackedFiles=normal worktree remove <path>` |
 
 - git runs under the user's config, so each flag pins what that config
   could change: `-z` ends each record with a NUL and never quotes a path;
@@ -250,6 +334,40 @@ cancelled. No binding is added.
 - **A refused commit** carries git's standard error and then its standard
   output, each trimmed: git says `nothing to commit` on its standard
   output, and sends a hook's standard output to its standard error.
+- **The worktree list** is read with `-z` (git 2.36 and later), which never
+  quotes a path. A bare main repository's record is dropped, the linked
+  worktrees after the first record are sorted by path, `branch
+  refs/heads/<b>` is the branch and `detached` detached, and `locked`,
+  `prunable` and attributes a later git may add are ignored.
+- **The branches** are read as full ref names with `refs/heads/` stripped,
+  never `%(refname:short)`, which git shortens differently when a tag
+  shares a branch's name.
+- **A change** resolves each name first, so the merge base and the diff are
+  of one pair of commits even if a branch moves meanwhile. `diff-tree` is
+  plumbing: no textconv, external diff or colour, and `--no-renames` also
+  pins it against `diff.renames=copies`. `cat-file --batch`, without
+  `--textconv` or `--filters`, prints raw blobs, each read by its size, so
+  one holding a line feed or a NUL is whole; its output must name every id
+  asked for, as a blob. `rev-parse` exiting 1 is `<name> is not a commit`,
+  and `merge-base` exiting 1 with nothing printed is the no-merge-base
+  refusal; the model gives the same. Every stream is held to 16 MiB, so
+  the old and new contents together are; past it the request could not
+  run, never a partial change.
+- **Making a worktree** first lists the worktrees and refuses a path that is
+  one, since git makes a new branch before it refuses an existing path;
+  and, without a start, checks the branch is a local one, since `git
+  worktree add <path> <name>` would otherwise detach at a tag or commit of
+  that name, or make a branch from a remote one. A non-empty directory
+  that is no worktree is git's to refuse, after it has made the branch.
+- **Removing a worktree** pins `status.showUntrackedFiles=normal`: under a
+  user's `no`, git does not see an untracked file and deletes it with the
+  worktree. The hostile config of the contract sets `no`, and its
+  property of a dirty worktree caught this.
+- **Making and removing** run under the commit's environment and limit of
+  their own, `worktreeTime` (10 minutes): checking out a large tree takes
+  time, and git runs the `post-checkout` hook, which must see pathspecs as
+  patterns. A hook that fails leaves the worktree made while git exits
+  non-zero; the reply is git's refusal, and the list then shows it.
 - **What to watch** reads its two lines, each resolved against the root
   when git prints it relative, so both are spelled as the root is and a
   watch's changes, spelled under its target, compare with them. Output
@@ -307,6 +425,7 @@ in the major mode `vc-status`.
 | `vc-status-refresh` | `refresh` | Reads the status again, without showing the buffer again |
 | `vc-status-stage` | leader `s` | Stages the cursor's file, or says there is nothing to stage |
 | `vc-status-unstage` | leader `u` | Unstages the cursor's file, or says nothing is staged |
+| `vc-worktrees` | leader `w` | Opens the worktree list of the workspace's repository ("The worktree list") |
 
 A stage or an unstage is a job of its own, unkeyed, which then starts the
 keyed read, so the buffer shows the new state. The ex name `vc-status` runs
@@ -509,7 +628,51 @@ the buffer's text, and a pre-commit hook's lines on both streams are shown
 with `HEAD` as it was. A commit run by the checks has git's user from the
 hostile config, never guessed from the host's name.
 
+## The worktree list: `vc-worktrees`
+
+`vc-worktrees` (the ex name, and the status buffer's leader `w`) lists
+every worktree of the focused buffer's workspace's repository, one per
+row, in a read-only buffer `*vc-worktrees: <label>*` in the mode
+`vc-worktrees`, kept in the workspace's store as the status buffer is.
+
+- **Its text** is `<label>: worktrees`, then `<head>: <path>` per worktree,
+  the head its branch or `detached`: `main: /r (this one)`, `feature:
+  /w`, `detached: /d`. ` (this one)` marks the asking workspace's root.
+- **Its read** is `vc-status`'s gate, then a job keyed by the workspace that
+  asks `worktrees`; a failure is said, and a list replaces the kept
+  buffer's text, each view keeping its row, or makes the buffer and shows
+  it for the opener `vc-worktrees`.
+- **`activate`** (`vc-worktrees-visit`) opens the status buffer of the
+  worktree on the cursor's row: the asking workspace's own row reads its
+  status at once; a path the table has a cached answer for under the
+  current generation reads that workspace's; any other runs the workspace
+  finder on the path as a job, records its answer as a file's open would,
+  and then reads the status of the workspace found. Local workspaces are
+  found, never registered, so the status buffer opened is the one opening
+  a file in that worktree gives. A worktree whose directory is gone says
+  `<path> is not a repository any more`. `refresh` reads the list again.
+
+Pinned by `ModelTest.worktreeViewChecks` and `ModelTest.worktreeBufferChecks`
+on the models, and `ContractTest.statusBufferChecks` over real git: the
+list of a repository with a worktree on `feature` holding a changed file,
+and visiting its row opens `*vc-status: repo@feature*` naming that file.
+
 ## Open questions
+
+- **A worktree list per repository.** The list is kept per workspace, as
+  the status buffer is, though every worktree of a repository lists the
+  same rows. One per repository (per common directory, in the project's
+  store) would share it.
+- **Uncommitted work in a change.** `changes` is committed content; an
+  agent's uncommitted work is its worktree's status and `fileAt` of the
+  index. A working-tree side may be wanted by the change view.
+- **The change's output limit.** One `cat-file --batch` holds every
+  content of a change, under 16 MiB a stream; a larger change could not
+  run. A larger named limit, or a read per file, would lift it.
+- **Path spelling.** git spells a worktree's path with links resolved. The
+  ` (this one)` mark and visiting the asking workspace's own row compare
+  the stored root with that spelling, and miss it for a root spelled
+  through a link; a find then runs, which is harmless.
 
 - **A config root below the top level.** The status buffer takes the
   workspace's root to be the repository's top level, which it is for every

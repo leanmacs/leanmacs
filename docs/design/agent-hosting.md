@@ -178,7 +178,9 @@ request is waiting loses nothing.
   than a copy of its transcript. "Restore agents" and "restore window
   layout" are separate features.
 - **One worktree, one branch, one agent per task** is the pattern nearly
-  every orchestration tool uses. Worktree lifecycle is Lean, over git.
+  every orchestration tool uses. Worktree lifecycle is Lean, over git:
+  the version-control interface's `addWorktree` and `removeWorktree`
+  ([version-control.md](version-control.md)).
   Worktrees isolate files, not privileges: they are not a security boundary.
 - **Workspace identity is one stored root.** `edmacs` rebuilt its workspace
   shell three times because project identity was stored in several places
