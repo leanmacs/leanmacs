@@ -7,7 +7,9 @@ import Editor.Program
 What the editor asks of a version-control system, in its own terms: which
 files of a repository have changed and how, to stage or unstage files or
 one hunk of a file, to commit what is staged, its worktrees and branches, a
-branch's change against its base, and to make and remove a worktree.
+branch's change against its base, to make and remove a worktree, and a
+branch's history: its log, a file's blame, and two ranges of commits
+compared.
 It is a port like the others (`Editor/Program.lean`): requests, a reply
 type for each, a pure model of a repository
 (`Editor/VersionControl/Model.lean`) and a contract every implementation is
@@ -88,7 +90,31 @@ against it.
   `Subproject commit <id>` and a line feed, as git prints it. A name that
   is not a commit is refused with status 1, `<name> is not a commit`, and
   two with no merge base with status 1, `<revision> and <against> have no
-  merge base`.
+  merge base`. The reply's `tip` is the id `revision` resolved to. An empty
+  `against` is no base: every file of `revision` is added, and the reply's
+  `base` is empty, which is a root commit's change.
+- **`log revision limit`** is `revision` and its first parents, newest
+  first, at most `limit` (`LogEntry`): each its id, its parents (the first
+  first; none for a root) and who wrote it (`Authored`: the author's name,
+  the author time in seconds and the subject, the message's first paragraph
+  joined by spaces). A merge is one entry. A name that is not a commit, an
+  unborn `HEAD` among them, is refused with status 1, `<name> is not a
+  commit`, as `changes` refuses it.
+- **`blame revision path`** is each line of `path` at `revision` with the
+  commit that last changed it (`Blame`): a line is passed to the first
+  parent, then each other parent in order, whose file has it unchanged, and
+  stays with the commit that has no such parent. Each named commit is
+  listed once, in the order of its first line, with who wrote it. A line
+  has no line feed: git's porcelain cannot tell a last line without one.
+  `none` when the revision lacks the path; a name that is not a commit is
+  refused as `log` refuses it.
+- **`rangeDiff base old new`** is the commits of `base..old` against those
+  of `base..new` (`RangeDiff`), merges left out, oldest first, each pair
+  (`RangePair`) naming each side's commit by its 1-based index in its range,
+  or none, and how they stand: the same change (`=`), the same commit
+  changed (`!`), or in one range alone (`<`, `>`), in the order git's
+  `range-diff` prints them; and the text it printed. Each name that is not
+  a commit is refused as `log` refuses it.
 - **`addWorktree path branch start`** makes a worktree at `path`: with
   `start`, on a new branch `branch` made there; without it, on the
   existing local branch `branch`. A branch that exists (with `start`), a
@@ -99,7 +125,7 @@ against it.
   worktree and one holding a modified or untracked file refuse it, and
   nothing changes.
 - **A name that starts with `-`** (a revision, `against`, a branch, a
-  start), which a system could read as an option, and a worktree path that
+  start, a range's base and tips), which a system could read as an option, and a worktree path that
   is not absolute refuse the request before anything runs, as `invalid`
   (`Request.invalid?`). Every implementation calls it first.
 - **Errors are values** (`Error`): a reply is an `Except`, and nothing is
@@ -112,7 +138,7 @@ both implementations behind it; none goes in ahead of them.
 
 | Addition | Where |
 |---|---|
-| Another question of the repository or another write. A file at a revision (`fileAt`) and what to watch (`watched`) are here (phase 2), staging and unstaging a hunk (`stageHunk`, `unstageHunk`) and committing (`commit`) (phase 3), and the worktrees (`worktrees`), the branches (`branches`), a branch's change against its base (`changes`) and making and removing a worktree (`addWorktree`, `removeWorktree`) (phase 4) | A constructor of `Request`, its case in `Request.Reply`, an operation here, a clause of `Model.handle`, a clause of `Git.handler`, and a property of the contract |
+| Another question of the repository or another write. A file at a revision (`fileAt`) and what to watch (`watched`) are here (phase 2), staging and unstaging a hunk (`stageHunk`, `unstageHunk`) and committing (`commit`) (phase 3), and the worktrees (`worktrees`), the branches (`branches`), a branch's change against its base (`changes`) and making and removing a worktree (`addWorktree`, `removeWorktree`) (phase 4), and a branch's log (`log`), a file's blame (`blame`) and two ranges compared (`rangeDiff`) (phase 5) | A constructor of `Request`, its case in `Request.Reply`, an operation here, a clause of `Model.handle`, a clause of `Git.handler`, and a property of the contract |
 | Another way a file differs | A constructor of `FileState` (or of `Change` or `Conflict`), its case in the parser (`Editor/VersionControl/Porcelain.lean`), in the model's status and printer, and in the status buffer's view (`Editor/VersionControl/Status.lean`) |
 | Another way a request fails | A constructor of `Error`, with its sentence in `Error.describe`; one refused before anything runs is a case of `Request.invalid?` |
 | Another system (jj) | A handler of these requests, held to the contract; nothing here |

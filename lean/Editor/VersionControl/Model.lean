@@ -18,8 +18,9 @@ model (`JobModel`, `Editor/Job/Model.lean`) whose process scripts answer
 the git implementation's command lines in a repository, so the git
 implementation runs on the models too. `Model.readHandler` answers the
 port's requests inside a job from a repository as it is, for a read whose
-replies the job model's scripts do not print (the review's read,
-`Editor/VersionControl/Review.lean`).
+replies the job model's scripts do not print (the review's, the log's and
+the blame's reads, `Editor/VersionControl/Review.lean`,
+`Editor/VersionControl/Log.lean`, `Editor/VersionControl/Blame.lean`).
 
 ## How it answers
 
@@ -67,22 +68,33 @@ replies the job model's scripts do not print (the review's read,
 - **`commit message`**: a conflict entry refuses it (128); then a `hook`
   that refuses (1, what it printed); then an index equal to `HEAD` (1,
   `nothing to commit`). Otherwise `HEAD`'s files become the index's
-  (`Repository.commit`). The model keeps no message.
-- **`Repository.commit`** (also for tests) makes `HEAD`'s files the index's,
-  as a commit made outside the editor does. It first freezes `HEAD`'s
-  commit into the graph, with its parents, when the branch is born, and
-  `HEAD` becomes a new commit whose parent it is, so a branch made from
-  `HEAD` before a commit stays where it was.
+  (`Repository.commit`). The model keeps the message's subject alone, as
+  git's `%s` gives it (`subjectOf`): the first paragraph after any blank
+  lines, each line's trailing white space dropped, its lines joined by a
+  space.
+- **`Repository.commit subject`** (also for tests, `commit` by default)
+  makes `HEAD`'s files the index's, as a commit made outside the editor
+  does. It first freezes `HEAD`'s commit into the graph, with its parents
+  and who wrote it (`headAuthored`), when the branch is born, and `HEAD`
+  becomes a new commit whose parent it is, its subject `subject`, so a
+  branch made from `HEAD` before a commit stays where it was.
 
 ## The graph
 
-- **Commits**: `HEAD`'s, whose files are `committed`, its id `headId` and
-  its parents `parents`; the others in `commits`, by id, parents before
-  children, none naming `HEAD`'s; and each tag of `revisions`, a
+- **Commits**: `HEAD`'s, whose files are `committed`, its id `headId`, its
+  parents `parents` and who wrote it `headAuthored`; the others in
+  `commits`, by id, parents before children, none naming `HEAD`'s, each
+  with who wrote it (`Commit.authored`); and each tag of `revisions`, a
   parentless commit of its files whose id is its name.
+- **Who wrote a commit** (`authoredOf`): unless it says otherwise, `a` at
+  2026-01-01T00:00:00Z (`fixedAuthored`), the writer's fixed author and
+  time; an empty subject is the commit's id, and a tag's is its name, which
+  is what the writer's messages are (`ContractTest.writeGitRepository`).
+  `HEAD`'s subject is `head`, the writer's message, until a commit makes
+  another.
 - **A name resolves** (`resolve`) to `HEAD`'s commit for `HEAD` and the
   checked-out branch while it is born, to a branch's commit, to a tag, or
-  to a commit's id; `fileAt` reads through it.
+  to a commit's id, `HEAD`'s among them; `fileAt` reads through it.
 - **The merge base** (`mergeBase`) is the first of one commit's ancestors,
   breadth-first, that is also the other's. That is git's answer wherever
   the merge base is unique, as in every property's graph; a criss-cross
@@ -94,7 +106,37 @@ replies the job model's scripts do not print (the review's read,
 - **`changes revision against`**: `Request.invalid?` first; then each name
   resolved, or refused with status 1, `<name> is not a commit`; then their
   merge base, or status 1, `<revision> and <against> have no merge base`;
-  then every path of either side whose content differs, sorted.
+  then every path of either side whose content differs, sorted. The tip is
+  the revision's id; an empty `against` is no base, an empty `base` and
+  every file of the revision added.
+- **`log revision limit`**: `Request.invalid?` first; the revision
+  resolved, or refused as `changes` refuses it; then it and its first
+  parents (`parentsOf`), newest first, at most `limit`, each with its
+  parents and `authoredOf`.
+- **`blame revision path`**: `Request.invalid?` first; the revision
+  resolved, or refused; `none` when its commit lacks the path; otherwise
+  each line (`linesOf`, its line feed dropped) handed down the graph
+  (`blameRows`): a commit's lines outside every hunk of its parent's text
+  against its own (`DiffModel.lineHunks`) pass to that parent, the first
+  parent first, then each other in order, carried to their rows there, and
+  on through it; what no parent has stays with the commit. That is git's
+  rule when no rename or move is to be followed, as in every property's
+  graph: git also follows a file renamed whole, which the model does not.
+- **`rangeDiff base old new`**: `Request.invalid?` first; each name
+  resolved, or refused; each range (`rangeOf`) the ancestors of its tip
+  that are not `base`'s, merges dropped, oldest first; each commit's patch
+  (`patchOf`) its change against its first parent, each changed path's
+  hunks (`LineHunk.ofTexts` over `DiffModel.hunks`) with their rows
+  dropped. A new commit is paired `=` with the first old one not yet
+  paired of equal subject, author and patch, then `!` with the first of
+  equal subject; the rest are `<` and `>`. git pairs `!` by the cost of
+  the diff of the two patches, under `--creation-factor`, so the two agree
+  where an amended commit keeps its subject and most of its patch, and two
+  commits of different subjects change different files, as in every
+  property's graph. The pairs are listed in git's order (range-diff.c's
+  `output`): an unpaired old commit once the old ones before it are shown,
+  then the unpaired new ones, then each pair, in the new range's order. The
+  text is each pair's header line as git prints it, with the model's ids.
 - **`addWorktree path branch start`**: `Request.invalid?` first; a path
   that is, once `normal`, the root, a linked worktree or an `occupied`
   directory is refused (128), `'<path>' already exists`. With `start`, a

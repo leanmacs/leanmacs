@@ -4,7 +4,9 @@ What the editor asks of a version-control system, the status buffer that
 shows it, a file at a revision, the gutter that marks a tracked file's
 lines against `HEAD`, staging a hunk, the message buffer that commits, and
 the worktrees, the branches and a branch's change against its base, with
-the worktree list, and the review buffer of a branch's change. The model is magit: every operation is a git command and its
+the worktree list, the review buffer of a branch's change, and a branch's
+history: its log, a file's blame, a commit's change, and the change since
+the last review. The model is magit: every operation is a git command and its
 parsed output, run as a job over the process service
 ([review-and-navigation.md](review-and-navigation.md), "Version control").
 Git is one implementation of a small interface in the editor's own terms,
@@ -14,6 +16,8 @@ Built in `lean/Editor/VersionControl.lean` (the interface),
 `lean/Editor/VersionControl/Porcelain.lean` (the reader of git's status),
 `lean/Editor/VersionControl/Plumbing.lean` (the readers of its worktree
 list, branches, raw diff and blobs),
+`lean/Editor/VersionControl/HistoryRead.lean` (the readers of its log,
+blame and range-diff),
 `lean/Editor/VersionControl/Git.lean` (the git implementation),
 `lean/Editor/VersionControl/Model.lean` and
 `lean/Editor/VersionControl/Contract.lean` (its model and its contract),
@@ -25,7 +29,9 @@ list, branches, raw diff and blobs),
 `lean/Editor/VersionControl/Commit.lean` (the message buffer),
 `lean/Editor/VersionControl/Worktrees.lean` (the worktree list),
 `lean/Editor/VersionControl/ReviewHunks.lean` and
-`lean/Editor/VersionControl/Review.lean` (the review buffer) and
+`lean/Editor/VersionControl/Review.lean` (the review buffer),
+`lean/Editor/VersionControl/Log.lean` (the log buffer),
+`lean/Editor/VersionControl/Blame.lean` (the blame view) and
 `lean/Editor/VersionControl/Compiled.lean` (their registrations).
 
 ## The interface
@@ -47,9 +53,12 @@ request in `JobM`, run with `Program.runM` inside a job.
 | `commit message` | Nothing; `HEAD` is a new commit of the index with `message` |
 | `worktrees` | Every worktree of the repository, each its path and what is checked out there: the main one first, then the linked ones in path order. A bare main repository is no worktree; a worktree whose directory is gone is still listed |
 | `branches` | Every local branch's name, in byte order; an unborn branch has no commit and is not one |
-| `changes revision against` | The merge base's id of `revision` and `against`, and every path whose content differs between that base and `revision`, with both contents. A name that is not a commit, or two with no merge base, refuse it |
+| `changes revision against` | The merge base's id of `revision` and `against`, the id `revision` resolved to (its tip), and every path whose content differs between that base and `revision`, with both contents; against `""`, no base, every file of `revision` added. A name that is not a commit, or two with no merge base, refuse it |
 | `addWorktree path branch start` | Nothing; a worktree at `path`, on a new branch `branch` made at `start`, or on the existing branch `branch` without a start |
 | `removeWorktree path` | Nothing; the linked worktree at `path` and its directory are gone, its branch kept |
+| `log revision limit` | `revision` and its first parents, newest first, at most `limit`: each its id, its parents and who wrote it (author, author time, subject). A name that is not a commit, an unborn `HEAD` among them, refuses it |
+| `blame revision path` | Each line of `path` at `revision` with the commit that last changed it, and each such commit once with who wrote it; none when the revision lacks the path |
+| `rangeDiff base old new` | The commits of `base..old` against those of `base..new`, paired as `git range-diff` pairs them (each side's index, and `=`, `!`, `<` or `>`), and the text it printed |
 
 - **Paths** are relative to the repository's root, `/`-separated, as UTF-8
   strings.
@@ -105,7 +114,28 @@ request in `JobM`, run with `Program.runM` inside a job.
   and a submodule's side reads `Subproject commit <id>`, as git prints it.
   A name that is not a commit is refused with status 1, `<name> is not a
   commit`, and two commits with no merge base with status 1, `<revision>
-  and <against> have no merge base`, by the model and by git alike.
+  and <against> have no merge base`, by the model and by git alike. The
+  reply carries its tip, the id `revision` resolved to, so a consumer
+  records the commit it read at. An empty `against` is no base: every file
+  of `revision` is added and the base is empty, which is a root commit's
+  change.
+- **A log** is first-parent: a branch's own commits, magit's
+  `--first-parent` view, deterministic, so the model matches git exactly.
+  A merge is one entry; its change is against its first parent. Each entry
+  has its id, its parents (the first first) and who wrote it: the
+  author's name, the author time in seconds and the subject, git's `%s`,
+  the message's first paragraph joined by spaces. The graph view waits.
+- **A blame** is of the committed file at a revision, not of a buffer's
+  unsaved text: a line is passed to the first parent, then each other in
+  order, whose file has it unchanged, and stays with a commit none of whose
+  parents has it. Each line has no line feed, since git's porcelain cannot
+  tell a last line without one. Each commit a line names is listed once,
+  in the order of its first line, with who wrote it.
+- **A range-diff's reply is pairs and text.** The pairs, each side's
+  commit by its 1-based index in its range (never an id, so no
+  abbreviation length is pinned) and how they stand, are what the contract
+  compares; the text, what git printed, the diff of each changed pair's
+  diffs among it, is what a buffer shows.
 - **Making a worktree** with a start makes the branch there; without one
   it checks out an existing local branch. A branch that exists (with a
   start), a missing branch or one checked out in another worktree (without
@@ -116,7 +146,7 @@ request in `JobM`, run with `Program.runM` inside a job.
   or untracked file. Neither has a command yet: agent dispatch calls them
   ([agent-hosting.md](agent-hosting.md)).
 - **A name that starts with `-`** (a revision, `against`, a branch, a
-  start), which a system could read as an option, and a worktree path that
+  start, a range's base and tips), which a system could read as an option, and a worktree path that
   is not absolute are refused before anything runs, as `invalid`. One pure
   function, `Request.invalid?`, says so, and the model and git both call it
   first, so they cannot disagree.
@@ -129,7 +159,8 @@ The interface grows by data, one request at a time, with the phase that
 first uses it: a file at a revision and what to watch came with the gutter
 marks, a hunk staged and unstaged and a commit with staging hunks, and the
 worktrees, the branches, a branch's change and making and removing a
-worktree with worktree lifecycle. Each comes with its reply type, a clause
+worktree with worktree lifecycle, and a log, a blame and a range-diff with
+the history views. Each comes with its reply type, a clause
 of the model, a clause of the git implementation and a property of the
 contract.
 
@@ -146,7 +177,8 @@ and refuses one whose lines are not there; git may apply a hunk at an
 offset when its lines are found elsewhere, but the editor's hunks are made
 from the index just read, so their rows are exact. It refuses a commit on
 a conflict, then on its hook, then on an index equal to `HEAD`, as git
-checks them, and keeps no message. Its status compares `HEAD` with the index and the
+checks them, and keeps the message's subject alone, as git's `%s` gives
+it. Its status compares `HEAD` with the index and the
 index with the working tree, path by path, and pairs renames as git's exact rename detection
 does: each path added in the index, in path order, takes the first path
 deleted in the index whose `HEAD` content is its content. An empty file is
@@ -161,13 +193,30 @@ root that hold a file and are no worktree. A worktree's path is taken as
 git takes it, `normal`: a trailing separator dropped and each `..`
 resolved, which is git's answer while the directories hold no link. A name resolves to `HEAD`'s
 commit (`HEAD`, or the checked-out branch while it is born), a branch's
-commit, a tag (a parentless commit of its files) or a commit's id, and
-`fileAt` reads through that. The merge base is the first of one commit's
+commit, a tag (a parentless commit of its files) or a commit's id,
+`HEAD`'s among them, and `fileAt` reads through that. Each commit says who
+wrote it: unless it says otherwise, `a` at 2026-01-01T00:00:00Z, the
+writer's fixed author and time, its subject its id (a tag's its name,
+`HEAD`'s `head`), which is what the writer's messages are; a property
+gives a commit another author or time. The merge base is the first of one commit's
 ancestors, breadth-first, that is the other's: git's answer wherever the
 merge base is unique, as in every property's graph; a criss-cross history
 has several, and git picks one. A commit freezes `HEAD`'s commit into the
 graph and makes `HEAD` a new commit whose parent it is, so a branch made
-from `HEAD` before a commit stays where it was. Making and removing a
+from `HEAD` before a commit stays where it was. Its log walks first
+parents. Its blame hands each line down the graph as git's rule says,
+through the model's line diff of each parent's text against the commit's:
+git's answer when no rename or move is to be followed, as in every
+property's graph; git also follows a file renamed whole, which the model
+does not. Its range-diff takes each range as the ancestors of its tip that
+are not the base's, merges dropped, oldest first, and pairs a new commit
+`=` with the first old one of equal subject, author and patch (its change
+against its first parent, hunks without row numbers), then `!` with the
+first of equal subject. git pairs `!` by the cost of the diff of the two
+patches under `--creation-factor`, so the two agree only where an amended
+commit keeps its subject and most of its patch and two commits of
+different subjects change different files, as in every property's graph.
+It lists the pairs in git's order (range-diff.c's `output`). Making and removing a
 worktree refuse with status 128 and git's message. git itself exits 255
 when a new branch's name is taken, so the properties compare the exit only
 where git's is 128.
@@ -209,13 +258,21 @@ the repository it starts from, run three ways:
   (`commit.cleanup=strip`), remote branches guessed for a new worktree
   (`worktree.guessRemote`) and every new branch tracking its start
   (`branch.autoSetupMerge=always`), neither of which may change what is
-  made; with a user, which no commit runs without, and signing off.
+  made, and every commit but `HEAD`'s ignored by blame
+  (`blame.ignoreRevsFile`); with a user, which no commit runs without, and
+  signing off.
   The writer also writes the model's graph, each commit with
   `commit-tree` over its parents' real ids, `HEAD`'s over its parents
   with its branch pointed at it and the index read from it, each other
   branch with `update-ref`, and each linked worktree with `git worktree
   add` beside the repository, a dirty one given an untracked file, and
-  each directory that holds a file beside it with one file. The
+  each directory that holds a file beside it with one file. Each commit
+  is written by its author at its time (`GIT_AUTHOR_NAME`,
+  `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE`), the committer always `a`, so
+  a commit by `b` has an author who is not its committer, and its message
+  is its subject. The writer also writes `~/ignore-revs` naming every
+  commit but `HEAD`'s, which the hostile config's `blame.ignoreRevsFile`
+  names. The
   temporary directory is spelled with links resolved, as git spells a
   worktree's path. A repository's hook is written as an executable
   `.git/hooks/pre-commit` run by `/bin/sh`, its first line printed on its
@@ -254,11 +311,28 @@ and a copy under a config asking for copies, a byte that is not UTF-8,
 and the two refusals with their exit and message, so a drift between
 model and git is caught.
 
+The properties of a branch's history never compare an id with a written
+one: ids come from replies, and authors, times and subjects are compared.
+A log lists a branch's commits through a merge, each with its parents and
+who wrote it, one of them by `b` a day later, and gives the two newest when
+asked for two; a blame names each line's commit and its author through a
+commit that changed one line, written by `b` and committed by `a`, so an
+author read from the wrong commit, or the committer read for it, fails; its
+changed line is close to the one it replaced, so it fails too if the
+command line stops clearing `blame.ignoreRevsFile`, under which git would
+hand that line to the parent. A range-diff pairs an amended last commit
+`!`, a branch rebased past a commit of `main` on another file all `=`, and
+a dropped commit and a gained one `<` then `>` in git's order. A change's
+tip is its revision's commit, and a root commit's change against `""` is
+its files added. Each refusal of a name that is not a commit has its exit
+and message.
+
 ## The git implementation
 
 Each run is one `Process.runWithin` in the repository's root, or a fed
-`Process.runWithInput` for a hunk and a commit, one a request but
-`fileAt`, which is two, so the child gets its directory's
+`Process.runWithInput` for a hunk, a commit, a change's blobs and the empty
+tree, one a request but `fileAt`, `changes`, `addWorktree`, `log`, `blame`
+and `rangeDiff`, which run several, so the child gets its directory's
 environment and is killed with its process group when its job is
 cancelled. No binding is added.
 
@@ -274,7 +348,10 @@ cancelled. No binding is added.
 | commit | `git commit --file=- --cleanup=whitespace`, fed the message |
 | worktrees | `git worktree list --porcelain -z` |
 | branches | `git for-each-ref --format=%(refname) refs/heads/` |
-| changes | `git rev-parse --verify --quiet <name>^{commit}` for each name, `git merge-base <R> <A>`, `git diff-tree -r -z --no-renames <M> <R>`, then `git cat-file --batch` fed each distinct blob id, one a line |
+| changes | `git rev-parse --verify --quiet <name>^{commit}` for each name, `git merge-base <R> <A>`, `git diff-tree -r -z --no-renames <M> <R>`, then `git cat-file --batch` fed each distinct blob id, one a line; against `""`, `git hash-object -t tree --stdin` fed nothing in place of the merge base |
+| log | The name resolved, then `git rev-list --first-parent --max-count=<limit> --no-commit-header --encoding=UTF-8 --format=%H%x00%P%x00%an%x00%at%x00%s <id> --` |
+| blame | The name resolved, `git rev-parse --verify --quiet <id>:<path>` (exit 1 is none), then `git blame --porcelain --ignore-revs-file= <id> -- <path>` |
+| rangeDiff | Each name resolved, then `git range-diff --no-color --no-notes --creation-factor=60 <B> <O> <N>` |
 | addWorktree | `git rev-parse --verify --quiet refs/heads/<branch>`; then `git worktree add --quiet -b <branch> <path> <start>`, and `git branch -D <branch>` when that exits non-zero, or `git worktree add --quiet <path> <branch>` |
 | removeWorktree | `git -c status.showUntrackedFiles=normal worktree remove <path>` |
 
@@ -363,6 +440,20 @@ cancelled. No binding is added.
   refusal; the model gives the same. Every stream is held to 16 MiB, so
   the old and new contents together are; past it the request could not
   run, never a partial change.
+- **A change against no base** hashes the empty tree with `git
+  hash-object -t tree --stdin` fed nothing, so the id is the repository's
+  own hash's, and diffs the revision against it: every file is added.
+- **The history reads** resolve each name first, as a change does, so a
+  name that is not a commit is refused with the same status and message.
+  A log is `rev-list`, plumbing, so no `log.*` config
+  (`log.showSignature`, `log.mailmap`, `log.decorate`) applies;
+  `--no-commit-header` (git 2.33) leaves only the format, whose fields are
+  separated by NULs, and `--encoding=UTF-8` pins `i18n.logOutputEncoding`.
+  A blame first checks the path is there, as `fileAt` does, and clears a
+  user's `blame.ignoreRevsFile` with an empty `--ignore-revs-file=`. A
+  range-diff is git's three-argument form, `<base>..<old>` against
+  `<base>..<new>`, on the resolved ids; `--no-color` and `--no-notes` pin
+  its text, and `--creation-factor=60` pins git's default.
 - **Making a worktree** first checks whether the branch is a local one:
   with a start, one that is refused before git runs, so a branch git
   makes later is known to be new; without one, one that is not is
@@ -411,6 +502,31 @@ An unknown kind or `XY`, a short record, a rename with no origin and output
 with no `branch.head` are refused, with the record quoted. Git lists
 conflicts and untracked files after the other changes; the reader sorts
 the files as a status holds them.
+
+### Reading the history
+
+The readers of a log, a blame and a range-diff are pure too, and tested on
+fixtures git printed (`ModelTest.versionControlHistoryParserChecks`), text
+decoded by the store's escape rule.
+
+- **A log**: one record a line, five fields separated by NULs: the id, the
+  parents separated by spaces (none for a root), the author's name, the
+  author time and the subject. A record of another number of fields, a
+  time that is not all digits and an empty id are refused.
+- **A blame** (`--porcelain`): for each line a header `<id> <orig> <final>
+  [<count>]`, then, the first time a commit is named, its headers, of which
+  `author`, `author-time` and `summary` are read and the rest (the
+  committer's, `previous`, `boundary`, `filename`) ignored, then a tab and
+  the line. Lines are placed by their final number, which must be each of
+  1 to n once, and the commits listed in the order of their first line. A
+  commit whose line comes before its headers is refused. The fixture's
+  author is not its committer, so a reader that took the committer would
+  fail.
+- **A range-diff**: a pair header is a line with fewer than four leading
+  spaces, `<n|->: <id|-…> <=|!|<|>> <n|->: <id|-…> <subject>`, its numbers
+  padded to the widest; a line with four leading spaces or more, and an
+  empty line, are the diff of a pair's diffs. Any other line is refused. The
+  reply's text is the whole output.
 
 ## The status buffer
 
@@ -684,7 +800,12 @@ against its base as an excerpt buffer
 buffers"), hunk by hunk, each kept or reverted, with what was never on
 screen drawn so ([review-and-navigation.md](review-and-navigation.md),
 "What review needs"). It is the first consumer of `changes revision
-against`.
+against`. A review is of a scope (`ReviewScope`), which every entry point
+sets and the whole pipeline carries: a branch against its base
+(`vc-review`), `HEAD` since a commit an earlier review recorded
+(`vc-review-since`), or one commit against its first parent (a visit from
+the log or the blame), so each is the same `vc-review-read` →
+`vc-review-diff` → build pipeline.
 
 - **The command.** The text is the branch to review the focused buffer's
   repository's `HEAD` against; with none, the main worktree's branch
@@ -731,14 +852,43 @@ against`.
   the shipped segments alone, leaves it out; a host's registry holds
   version control's segments, so a host draws it.
 - **The record.** The live record (hunks, excerpts, decisions, branch,
-  base, old buffers) is the review buffer's value `vc-review`. Each round,
-  with each hunk's decision and what was viewed of its excerpts, is copied
-  into the workspace's store (`reviewStore`), the last 20 kept: it outlives
-  the buffer and a config reload, not a restart (task
-  `review-record-on-disk`).
-- **`refresh`** (`vc-review-refresh`) reads the change again against the
-  record's branch into the same buffer, adds a round, and removes the last
-  round's old buffers no window shows.
+  base, the read-only buffers it made, its scope, and `head`, the commit it
+  was made at) is the review buffer's value `vc-review`. `head` is the id
+  `HEAD`, or the commit reviewed, resolved to when the change was read
+  (`Changes.tip`). Each round, with its `head` and each hunk's decision and
+  what was viewed of its excerpts, is copied into the workspace's store
+  (`reviewStore`), the last 20 kept: it outlives the buffer and a config
+  reload, not a restart (task `review-record-on-disk`). Keep and revert
+  rewrite the last round in place, its `head` with it. The store is at
+  version 2: a version-1 cell's rounds migrate as recording no commit.
+- **`refresh`** (`vc-review-refresh`) reads the change again, of the
+  record's scope against its branch, into the same buffer, adds a round,
+  and removes the last round's old buffers no window shows.
+- **A commit's change** (`startCommitReview`, the one entry point the log's
+  and the blame's visits call) is `changes <id> <first parent>`, whose
+  merge base is the parent, so no new diff request, the parent asked of
+  `log <id> 1`; a root commit's is `changes <id> ""`, its files added. Its
+  new side is a read-only buffer of the commit's content,
+  `<path>@<id8>`, not the working file, which is never taken in; its
+  buffer is `*vc-review: <label> <id8>*`. Keep is recorded;
+  `vc-review-revert` says `this review is of commit <id8>; nothing to
+  revert`. It writes no round: rounds are reviews of a branch's work, and
+  "since the last review" reads the last one.
+- **Since the last review** (`vc-review-since`, the ex name of that name):
+  `vc-review`'s gate, then the workspace's last round. None says `no review
+  of <label> is recorded`, and an empty `head` (a round made before rounds
+  held one) `the last review of <label> recorded no commit`. Otherwise its
+  read asks `changes "HEAD" <head>`: `HEAD` still at `head` says `no change
+  since <c8>`; a merge base equal to `head`, which it is exactly when the
+  branch only moved forward, is a review buffer `*vc-review: <label> since
+  <c8>*` of the commits since, over the working files as a branch's review
+  is, whose round, against the same branch at the new `HEAD`, is the next
+  one "since" reads; otherwise `HEAD` was rewritten past it, and
+  `rangeDiff <branch> <head> HEAD` is shown as text in a read-only
+  `*vc-range-diff: <label>*`, its first row `<label>: HEAD was rewritten
+  since <c8>; its commits against <branch>`, for the opener
+  `vc-review-since`, focused. No merge-base request is added: `changes`'
+  base is the answer.
 
 Pinned by `ModelTest.reviewHunkChecks`, `reviewOrderChecks` and
 `reviewRecordChecks` (the pure core), `ModelTest.reviewBufferChecks` on the
@@ -746,7 +896,66 @@ models, the read run over the interface's model (`Model.readHandler`), and
 `ContractTest.reviewBufferChecks` over real git: from a linked worktree,
 `vc-review` with no text reviews against `main`, and reverting one hunk
 makes that file's buffer hold the base's lines for it and leaves the
-other.
+other. `ContractTest.historyBufferChecks` runs `vc-review-since` over real
+git: after `vc-review` against `base` and a new commit it shows that
+commit's hunk alone, and after the commit is amended it opens the
+range-diff, which pairs the amended commit `!`.
+
+## The log buffer: `vc-log`
+
+`vc-log` (the ex name, which takes text: a revision, `HEAD` with none)
+lists a branch's commits, newest first along first parents, in a read-only
+buffer `*vc-log: <label> <revision>*` in the mode `vc-log`, magit's log.
+
+- **Its text** is `<label>: log of <revision>`, then one row per commit,
+  `<id8> <day> <subject> (<author>)`, the day the author time's date in UTC;
+  `no commits` for none. It asks for 256 commits and one more, and when the
+  one more is there shows 256 and a last row `more commits past 256`.
+- **Its read** is `vc-status`'s gate, a name that starts with `-` refused
+  before any job, then a job keyed by the workspace (`vc-log-read`) that
+  asks `log`; a failure is said. A log replaces the text of the
+  workspace's buffer of that name holding this log, each view keeping its
+  row, or makes the buffer and shows it for the opener `vc-log`, focused.
+  The buffer's value `vc-log` holds the root, the revision and each shown
+  commit's id.
+- **`activate`** (`vc-log-visit`) opens the cursor's commit's change as a
+  review buffer ("The review buffer", a commit's change); a row with no
+  commit says so. **`refresh`** (`vc-log-refresh`) reads the log again
+  into the same buffer.
+
+Pinned by `ModelTest.logViewChecks` and `ModelTest.logBufferChecks` on the
+models, and `ContractTest.historyBufferChecks` over real git: `vc-log
+feature` lists feature's two commits newest first, and visiting the older
+one's row opens its change with its one header.
+
+## Blame: `vc-blame`
+
+`vc-blame` (the ex name, which takes text: a revision, `HEAD` with none)
+shows each line of the focused buffer's file at that revision with the
+commit that last changed it and that commit's author, in a read-only buffer
+`*vc-blame: <path>@<revision>*` in the mode `vc-blame`.
+
+- **It blames the committed file**, not the buffer's unsaved text. Its gate
+  is `vc-show`'s: a buffer with no workspace, a location that cannot run
+  commands and no file under the root are said, and a revision that starts
+  with `-` is refused before any job. Its job is keyed by the root, the
+  revision and the path; "not there" says `vc-blame: <path> is not in
+  <revision>`.
+- **Its text** has one row per line and no header row, so row r is line r:
+  `<id8> <author> <day> | <line>`, the author cut at 16 characters and
+  padded to the widest. The buffer's value `vc-blame` holds each row's
+  commit.
+- **`activate`** (`vc-blame-visit`) opens the row's commit's change as a
+  review buffer.
+- Which lines an agent wrote, as against a person, waits for provenance
+  ([review-and-navigation.md](review-and-navigation.md), "History views").
+
+Pinned by `ModelTest.blameViewChecks` and `ModelTest.blameBufferChecks` on
+the models, where the changed line's row names its commit's author `b` and
+the others `a`, and `ContractTest.historyBufferChecks` over real git, under
+the hostile config whose `blame.ignoreRevsFile` names every commit but
+`HEAD`'s: the changed line's row alone names `HEAD`'s commit and its author
+`b`.
 
 ## Open questions
 
@@ -799,6 +1008,19 @@ other.
   spelling of the root, so it has no gutter and `vc-show` with no path
   finds no file. Resolving both, or storing the root as the open spelled
   it, would cover it.
+- **Renames in blame.** git's blame follows a file renamed whole into a
+  parent; the model does not, and no property renames one. A property that
+  does needs the model to follow it.
+- **The model's `!` pairing.** The model pairs a range-diff's changed
+  commits by subject; git by the cost of the diff of their patches. They
+  agree on the properties' graphs only; a model of git's cost and its
+  assignment would agree everywhere.
+- **The log's graph view.** The log is first-parent; a graph of every
+  parent waits.
+- **A range-diff of the review's hunks.** A rewritten branch's change since
+  the last review is git's range-diff as text; the hunks of the diff of
+  diffs as a review buffer, kept and reverted, would review it as the rest
+  is.
 - **Status time on a large repository.** A process per read may be too slow
   on a large repository; an in-process library can sit behind the same
   interface, as the roadmap allows.

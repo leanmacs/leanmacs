@@ -10,9 +10,11 @@ import Editor.Workspace
 `Git.handler git root` answers each request of the version-control port
 (`Editor/VersionControl.lean`) by running `git` in the repository's root as
 a job: each run is one `Process.runWithin` (`Editor/Job.lean`), or a fed
-`Process.runWithInput` for a hunk, a commit and a change's blobs, one for
-each request but `fileAt`, which is two, `changes`, which is five, and
-`addWorktree`, which is up to three, so the child gets its directory's environment, and
+`Process.runWithInput` for a hunk, a commit, a change's blobs and the empty
+tree, one for each request but `fileAt`, which is two, `changes`, which is
+five, or four against no base, `addWorktree`, which is up to three, `log`,
+which is two, `blame`, which is up to three, and `rangeDiff`, which is
+four, so the child gets its directory's environment, and
 is killed with its process group when the job is cancelled. No new binding is needed. Its model is
 `Editor/VersionControl/Model.lean`, and both are held to the contract
 (`Editor/VersionControl/Contract.lean`).
@@ -94,6 +96,30 @@ change:
   a blob, or the change is `unparsable`. A submodule's side is never read:
   it is `Subproject commit <id>`. Each content is decoded by the store's
   escape rule.
+- **changes against no base** (an empty `against`): the revision resolved,
+  then `git hash-object -t tree --stdin` fed nothing, which prints the
+  empty tree's id in the repository's own hash, then the raw diff of the
+  revision against it and the batch as above; there is no merge base, and
+  the reply's base is empty. The reply's tip is always the revision's
+  resolved id.
+- **log**: the revision resolved as `changes` resolves a name, so a
+  refusal reads the same, then `git rev-list --first-parent
+  --max-count=<limit> --no-commit-header --encoding=UTF-8
+  --format=%H%x00%P%x00%an%x00%at%x00%s <id> --`, read by `parseLog`
+  (`Editor/VersionControl/HistoryRead.lean`). `rev-list` is plumbing, so no
+  `log.*` config (`log.showSignature`, `log.mailmap`, `log.decorate`)
+  applies; `--no-commit-header` (git 2.33) leaves only the format, and
+  `--encoding=UTF-8` pins `i18n.logOutputEncoding`.
+- **blame**: the revision resolved, then `git rev-parse --verify --quiet
+  <id>:<path>`, whose exit of 1 is `none`, then `git blame --porcelain
+  --ignore-revs-file= <id> -- <path>`, read by `parseBlame`. The empty
+  `--ignore-revs-file=` clears a user's `blame.ignoreRevsFile`, which
+  would hand an ignored commit's lines to its parents.
+- **rangeDiff**: each of its three names resolved, then `git range-diff
+  --no-color --no-notes --creation-factor=60 <base> <old> <new>` on the
+  ids, git's three-argument form, `<base>..<old>` against `<base>..<new>`,
+  read by `parseRangeDiff`. `--no-color` and `--no-notes` pin its text, and
+  `--creation-factor=60` pins git's default.
 - **addWorktree**: `git rev-parse --verify --quiet refs/heads/<branch>`
   first. With a start, its exit of 0 is refused (128, `a branch named
   '<branch>' already exists`); without one, its exit of 1 is refused (128)

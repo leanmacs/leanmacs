@@ -46,6 +46,18 @@ the worktree on its branch in between. Its refusals compare the exit, and
 a change's the exit and the message, so the model cannot drift from
 git.
 
+The properties of a branch's history (`historyProperties`, phase 5) never
+compare an id with a written one: ids come from replies, and authors,
+times and subjects are compared. The log and blame properties' repository
+(`historyRepository`) has a merge and a commit written by `b` a day later,
+whose author is not its committer over real git, so an author read from
+the wrong commit, or the committer read for the author, fails them. Its
+changed line is close to the line it replaced, so git would hand it to the
+parent were the hostile config's `blame.ignoreRevsFile` read: property 4
+fails if the blame's command line stops clearing it. The range-diff
+properties hold where git's pairing by diff cost and the model's by subject
+agree (`Model.lean`, "The graph").
+
 ## Adding to this
 
 A new request's behaviour is a new property here, with the repository that

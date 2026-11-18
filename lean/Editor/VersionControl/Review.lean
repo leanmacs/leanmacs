@@ -14,7 +14,10 @@ import Editor.VersionControl.Status
 # The review buffer: `vc-review`
 
 A branch's change against its base, hunk by hunk, each kept or reverted,
-with what was not examined drawn so. It is an excerpt buffer
+with what was not examined drawn so; the same for the change since the
+commit the last review recorded, and for one commit's change, which the
+log and the blame open (`Editor/VersionControl/Log.lean`,
+`Editor/VersionControl/Blame.lean`). It is an excerpt buffer
 (`Editor/State.lean`, "Excerpt buffers") of the hunks of each changed
 file: the base's lines a hunk removes, read from a read-only buffer of the
 file at the merge base (the *old buffer*), and the hunk with its context,
@@ -38,6 +41,14 @@ interface refuses it (`Request.invalid?`), with `vc-review: <why>`.
 Otherwise it starts `vc-review-read`, keyed by the workspace
 (`reviewKey`), so asking again replaces the read in flight.
 
+A review is of a scope (`ReviewScope`, `Editor/VersionControl/ReviewHunks.lean`),
+which every entry point sets and the pipeline carries: `vc-review` reviews
+a branch (`branch`), `vc-review-since` the change since a recorded commit
+(`since`, "Since the last review"), and `startCommitReview` one commit
+(`commit`, "A commit's change"). What goes wrong in a review since a commit
+is said as `vc-review-since: <why>`, elsewhere `vc-review: <why>`
+(`ReviewScope.commandName`).
+
 ## The pipeline
 
 A command may not wait and a job may, so each step that asks git or the
@@ -48,7 +59,8 @@ diff service is a job, and each job's command does the next step:
    worktree says `vc-review: the main worktree is detached; name a branch
    to review against`. Then `changes "HEAD" <branch>`, and the load of
    each file with a new side under the root (`File.load`, under
-   `Files.limit`). It finishes with `reviewRead`. Its implementation is a
+   `Files.limit`). It finishes with `reviewRead`. A review since a commit
+   and a commit's read otherwise (their sections). Its implementation is a
    parameter (`connect`, git's by default), so the model checks run the
    read over the interface's model (`Model.readHandler`).
 2. **`reviewRead`**: a failure says `vc-review: <Error.describe>`, and a
@@ -58,7 +70,9 @@ diff service is a job, and each job's command does the next step:
    left out, and named once the buffer is made. Each file with an old side
    gets an old buffer: `<path>@<the base's first 8 characters>`, or the
    first free name of that, holding the base's content, read-only, with no
-   file, the workspace's, with its language and `code`, as `vc-show`'s is.
+   file, the workspace's, with its language and `code`, as `vc-show`'s is
+   (`revisionBufferOf`). A commit's review takes no file in: each new side
+   is a buffer made the same way at the commit.
    It snapshots each old buffer and each working buffer, recording the
    working text's revision, an empty text standing for a side a file lacks,
    and starts `vc-review-diff` with them. A refused start releases every
@@ -75,8 +89,9 @@ diff service is a job, and each job's command does the next step:
    (`orderFiles`), each with the lines its spans change. With no hunk at
    all it says the files left out, or that there is no change. Otherwise
    the buffer is built ("Hunks and their excerpts"): a new one called
-   `*vc-review: <label>*`, or the first free name of that, given the
-   workspace, or, for a refresh, the kept one's list replaced
+   `*vc-review: <label>*` (with ` since <c8>` for a review since a commit,
+   and ` <id8>` for a commit's, `reviewBufferName`), or the first free name
+   of that, given the workspace, or, for a refresh, the kept one's list replaced
    (`BufferId.setExcerpts`). Its
    gutter, mode and record are set, the store written, and a new one shown
    where the display rules say for the opener `vc-review` and focused. A
@@ -89,6 +104,44 @@ The read and the diff are not one job because the working buffers must be
 snapshotted on the editor thread once the files are taken in. The diff is
 not keyed: a keyed restart would cancel a job whose command releases
 snapshots.
+
+## A commit's change
+
+`startCommitReview` is the one entry point of a commit's review: the log's
+and the blame's visits call it. Its read asks `log <id> 1` for the commit's
+first parent, then `changes <id> <parent>`, whose merge base is the parent,
+or `changes <id> ""` for a root commit, whose files are each added; it
+loads no file. The new side of each hunk is a read-only buffer of the
+commit's content, `<path>@<id8>`, so the working files are never taken in:
+keep is recorded, and `vc-review-revert` says `vc-review-revert: this review
+is of commit <id8>; nothing to revert`. Its record's `olds` hold the new
+buffers too, which a refresh and a round that ends early remove as they
+remove old buffers. It writes no round to the store: rounds are reviews of
+a branch's work, which "since the last review" reads. Its record's `head`
+is the commit.
+
+## Since the last review
+
+**`vc-review-since`** (`reviewSinceName`, and the ex name of that name)
+has `vc-review`'s gate. It reads the workspace's last round in the store:
+none says `vc-review-since: no review of <label> is recorded`, and a round
+with an empty `head`, written before rounds held one, says
+`vc-review-since: the last review of <label> recorded no commit`.
+Otherwise it starts the read of the change since `head`, against the
+round's branch. The read asks `changes "HEAD" <head>`:
+
+- `HEAD` still at it says `vc-review-since: no change since <c8>`.
+- Its merge base is `head` exactly when the branch only moved forward:
+  then the change is read as a branch's is, with the working files, into a
+  review buffer `*vc-review: <label> since <c8>*`, whose round, against the
+  same branch at the new `HEAD`, is the next one "since" reads.
+- Otherwise `HEAD` was rewritten past it, and the read asks `rangeDiff
+  <branch> <head> HEAD`, finishing with `rangeShown`: a read-only buffer
+  `*vc-range-diff: <label>*`, or the first free name of that, given the
+  workspace, its first row `<label>: HEAD was rewritten since <c8>; its
+  commits against <branch>` and then what git printed, shown for the opener
+  `vc-review-since` and focused. A refusal is said. No merge-base request is
+  added: `changes`' base is that answer.
 
 ## Hunks and their excerpts
 
@@ -153,12 +206,16 @@ it gives none.
 ## The record
 
 The live record of a review (`ReviewRecord`: its hunks, their excerpts and
-decisions, its branch and base, its old buffers) is the review buffer's
-value `vc-review` (`ReviewRecord.localName`), which the commands and the
-segment read. Each workspace keeps a copy of each round in its store
-(`reviewStore`, `ReviewStore`): the buffer's number and, for each round,
-the branch, the base, and each hunk's path, header, decision and what was
-viewed of each of its excerpts (`Buffer.Viewed`). A round is added at
+decisions, its branch and base, its read-only buffers, its scope and the
+commit it was made at, `head`, the id the change's revision resolved to,
+`Changes.tip`) is the review buffer's value `vc-review`
+(`ReviewRecord.localName`), which the commands and the segment read. Each
+workspace keeps a copy of each round in its store (`reviewStore`,
+`ReviewStore`): the buffer's number and, for each round, the branch, the
+base, the commit `HEAD` was at (`head`), and each hunk's path, header,
+decision and what was viewed of each of its excerpts (`Buffer.Viewed`).
+The store is at version 2, and migrates a version-1 cell's rounds as
+recording no commit (`ReviewStore.migrateFirst`). A round is added at
 each build and refresh, and the last one rewritten at each keep and
 revert; the store keeps the last `Review.keptRounds`. It outlives the
 buffer and a config reload, not a restart: writing it to disk is task
@@ -166,7 +223,8 @@ buffer and a config reload, not a restart: writing it to disk is task
 
 Pinned by `ModelTest.reviewBufferChecks` on the loop's driver over the
 editor's models, the job model, the file model and the version-control
-interface's model, and `ContractTest.reviewBufferChecks` over real git.
+interface's model, and `ContractTest.reviewBufferChecks` and
+`ContractTest.historyBufferChecks` (`vc-review-since`) over real git.
 -/
 
 namespace Editor.VersionControl

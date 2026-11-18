@@ -761,6 +761,10 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
 - `versionControlPlumbingChecks`: the readers of git's plumbing
   (`Editor/VersionControl/Plumbing.lean`): the worktree list, the branches,
   a raw diff and a batch of blobs, and what each refuses;
+- `versionControlHistoryParserChecks`: the readers of git's history
+  (`Editor/VersionControl/HistoryRead.lean`): a log, a blame with two
+  authors and a commit named twice, and a range-diff of each relation, on
+  fixtures, and what each refuses;
 - `versionControlModelChecks`: the model of a repository: its status of
   each state, how it pairs renames, what its writes do, and that the real
   parser reads what its printer prints as its status;
@@ -768,11 +772,12 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   (`Editor/VersionControl/Contract.lean`) against the model, and the git
   implementation's status read of each of its repositories on the job
   model that prints it (`Repository.jobModel`);
-- `versionControlGitChecks`, `versionControlWorktreeGitChecks` and
-  `versionControlShowChecks`: the git implementation
-  (`Editor/VersionControl/Git.lean`) on the job model: the command lines it
-  runs for the status and its writes, for worktrees, branches and changes,
-  and for `show` and `watched`, their environments and limits, and how it
+- `versionControlGitChecks`, `versionControlWorktreeGitChecks`,
+  `versionControlHistoryGitChecks` and `versionControlShowChecks`: the git
+  implementation (`Editor/VersionControl/Git.lean`) on the job model: the
+  command lines it runs for the status and its writes, for worktrees,
+  branches and changes, for a log, a blame, a range-diff and a change
+  against no base, and for `show` and `watched`, their environments and limits, and how it
   reads what they answer;
 - `hunkChecks`: the pure core of staging a hunk
   (`Editor/VersionControl/Hunk.lean`) and the patch the git implementation
@@ -804,7 +809,15 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   the version-control interface's model (`Model.readHandler`): the four
   criteria of the excerpts roadmap's phase 4, its refusals, refresh, the
   old buffers a round that ends early removes, the rounds its store keeps,
-  and edits through its excerpts;
+  the commit each records and the store's migration, edits through its
+  excerpts, a commit's review, and `vc-review-since`, into a review buffer
+  and, past a rewritten branch, the range-diff buffer;
+- `logViewChecks` and `logBufferChecks`, `blameViewChecks` and
+  `blameBufferChecks`: the log buffer (`Editor/VersionControl/Log.lean`)
+  and the blame view (`Editor/VersionControl/Blame.lean`), their pure views
+  on values and their commands on that driver, their reads over the
+  interface's model: what each lists, with each commit's author, and the
+  review a row's visit opens;
 - `excerptViewedChecks`: what a view shows of a tracked excerpt
   (`Editor/ExcerptView.lean`) and the marking of what was viewed
   (`EditorState.markViewed`, `creditViewed`), on hand-built rows and
