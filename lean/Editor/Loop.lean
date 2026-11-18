@@ -1700,6 +1700,9 @@ pool thread, for a long one, so the editor thread never maps the
 candidates of a long list. -/
 def _root_.Editor.Candidates.listing (candidates : Candidates) (pattern : String)
     (style : Completion.Style) : FuzzyM (Array Completion.Listed) := do
+  -- As they answer the pattern: no other directory's answer, and no hidden
+  -- candidate the pattern does not reveal.
+  let candidates := candidates.answering pattern
   let matchable := candidates.matchable
   let hits ←
     if matchable.isEmpty then
@@ -1756,7 +1759,7 @@ def listed (state : EditorState) (matching : Completion.Matching := .standard)
         return (state.replaceCandidatesIn view { candidates with matching := none }, some pattern,
             none)
       return (state, some pattern, none)
-    if candidates.matchableSize ≤ inlineMatches then
+    if (candidates.current pattern).matchableSize ≤ inlineMatches then
       let listing ← candidates.listing pattern (matching.styleFor candidates.category)
       -- A match job that was running is overtaken by this listing.
       return (state.replaceCandidatesIn view
@@ -2803,7 +2806,7 @@ def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
       match loop.typed with
       | some typed =>
         if
-            candidates.matchableSize > keys.inlineMatches &&
+            (candidates.current typed).matchableSize > keys.inlineMatches &&
               (candidates.listedFor != some typed || candidates.listedAt != candidates.revision) &&
               candidates.matching.isNone &&
               candidates.unmatched != some (typed, candidates.revision) then

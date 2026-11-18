@@ -106,12 +106,13 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   listing has no request: the loop makes it, between a command and the
   scene, from what the prompt's style answers (`Editor/Loop.lean`), so no
   command can list what the style did not answer.
-- **What comes later is taken by four requests, none guarded**, so a
+- **What comes later is taken by five requests, none guarded**, so a
   delivery is not interrupted between them (`Editor/Completion/Later.lean`):
   `addCandidates`, a batch of a source's job, taken only for the open
   prompt's view, the source's index and its generation, and dropped
   otherwise (a stale job's), with a `Bool` reply; `sourceAnswered`, the
-  end of that job; `listMatched`, the listing a match job made, kept only
+  end of that job; `sourceFailed`, the end of a job that threw, which says
+  `<source>: <message>` in the echo area; `listMatched`, the listing a match job made, kept only
   for the match in flight; and `matchFailed`, a match job that could not
   list, which says why in the echo area. Each is the operation of the same
   name (`Editor/State.lean`, "Prompts"). A delivery is never wrong to
@@ -364,6 +365,9 @@ inductive StateRequest where
   /-- The job of the asking source `index` of the prompt open in `view`, at
   `generation`, has ended. -/
   | sourceAnswered (view : ViewId) (index generation : Nat)
+  /-- The job of the asking source `index` of the prompt open in `view`, at
+  `generation`, failed with `message`. -/
+  | sourceFailed (view : ViewId) (index generation : Nat) (message : String)
   /-- List `listed`, which a match job made for `pattern` at `revision`, in
   the prompt open in `view`, if that is the match in flight. -/
   |
@@ -522,6 +526,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .chooseCandidate _ => Except PromptRefusal Unit
   | .addCandidates .. => Bool
   | .sourceAnswered .. => Unit
+  | .sourceFailed .. => Unit
   | .listMatched .. => Unit
   | .matchFailed .. => Unit
   | .hasJob _ => Bool
@@ -642,6 +647,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .addCandidates view index generation batch, state =>
     state.addCandidates view index generation batch
   | .sourceAnswered view index generation, state => ((), state.sourceAnswered view index generation)
+  | .sourceFailed view index generation message, state =>
+    ((), state.sourceFailed view index generation message)
   | .listMatched view pattern revision listed, state =>
     ((), state.listMatched view pattern revision listed)
   | .matchFailed view pattern revision message, state =>

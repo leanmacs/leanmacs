@@ -20,6 +20,10 @@ server, answers from a job (`Editor/Job.lean`), in batches, as they come.
   `completion <view> <source>`, with an order (`Order`): the prompt's view,
   the source's index among the asking ones, the generation of the ask, the
   query and a pause.
+- **A job that throws says why** (`answering`): it finishes with the
+  command that marks its source done and says `<source>: <message>` in the
+  echo area (`StateRequest.sourceFailed`). A stale job's failure is
+  silent.
 - **The job posts its batches** (`answering`): each is a `post` of the
   command `minibuffer-candidates` (`candidatesCommand`) with the batch as
   plain arguments (`batchArguments`), so batches arrive in order, between
@@ -32,7 +36,10 @@ server, answers from a job (`Editor/Job.lean`), in batches, as they come.
   with is not the typed text: the previous job is cancelled, and a job of the
   next generation starts with the typed text, after the pause. A batch of
   an older generation is dropped. What the source answered stays listed
-  until the new generation's first batch, or its end.
+  until the new generation's first batch, or its end. A source asked again
+  by the part of the text before a separator (`Reask.beforeLast`, a
+  directory) is asked again at once when that part changes, and its answer
+  for another part is not listed (`Reask.answers`).
 - **Closing the prompt cancels its jobs**, by their keys, at the publish of
   the closing step.
 
@@ -49,7 +56,7 @@ any source's job does; it is pinned on the job model by
 
 | Addition | Where |
 |---|---|
-| A new way to ask again | A constructor of `Completion.Reask` and its case of `Reask.asksAgain` (`Editor/Completion/Candidate.lean`) |
+| A new way to ask again | A constructor of `Completion.Reask` and its cases of `Reask.asksAgain`, `pause`, `answers` and `after` (`Editor/Completion/Candidate.lean`) |
 | Something more a source's job is handed | A field of `Order`, or of its `Query`, and its argument in `Order.arguments` and `Order.ofArguments?` |
 | A source's job | A function given to `answering`, registered with `sourceJob` (`Editor/Setup.lean`) |
 
@@ -196,16 +203,26 @@ def answering (answer : Query → (Array Candidate → JobM Unit) → JobM Unit)
     Order.ofArguments? arguments | throw "a completion source's job was started with no order"
   if order.pause != 0 then
     sleep order.pause
-  answer order.query fun batch =>
-      post
-        { command := candidatesCommand
-          arguments := batchArguments order.view order.index order.generation batch }
+  try
+    answer order.query fun batch =>
+        post
+          { command := candidatesCommand
+            arguments := batchArguments order.view order.index order.generation batch }
+  catch message =>
+    -- A job that throws says why: its command marks the source done and
+    -- says the message in the echo area.
+    return EditorState.ask (.sourceFailed order.view order.index order.generation message)
   return EditorState.ask (.sourceAnswered order.view order.index order.generation)
 
 /-- The model of a source's job: answers each of `batches` in turn, whatever
 it is asked. -/
 def Later.batches (batches : Array (Array Candidate)) : List Argument → Work :=
   answering fun _ deliver => batches.forM deliver
+
+/-- The model of a source's job that fails: it answers nothing and throws
+`message`, so it finishes with the command that says its source failed. -/
+def Later.refusing (message : String) : List Argument → Work :=
+  answering fun _ _ => throw message
 
 /-- The model of a source's job that depends on the text: answers one batch,
 a candidate of the text it was asked with `!` after it. -/

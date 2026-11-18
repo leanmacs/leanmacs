@@ -52,6 +52,13 @@ structure Candidate where
   /-- The group it is listed under; `none` takes its source's name when a
   prompt asks (`Candidate.inGroup`). -/
   group : Option String := none
+  /-- What reveals it, when it is hidden: with `some p` it is listed only
+  while the typed text after its source's separator (`Reask.after`) starts
+  with `p`. The source decides, as data, as the file source hides a name
+  that starts with `.` until a `.` is typed (`Editor/Completion/Paths.lean`).
+  It is filtered where a listing is made (`Candidates.answering`,
+  `Editor/State.lean`), so a style is handed only what is shown. -/
+  hiddenUntil : Option String := none
   deriving DecidableEq, Repr
 
 /-- The candidate of `text`, with nothing beside it. -/
@@ -183,19 +190,49 @@ inductive Reask where
   on the text. The previous job is cancelled, and the new one waits `pause`
   milliseconds before it asks. -/
   | afterPause (pause : Nat)
+  /-- Whenever the text through its last `separator` changes: it answers for
+  that part of the text, as a file source answers a directory. It is asked
+  again at once, and an answer for another part is not listed
+  (`Reask.answers`). -/
+  | beforeLast (separator : Char)
   deriving DecidableEq, Repr
+
+/-- `text` through its last `separator`, or `""` when it has none. -/
+def Reask.before (separator : Char) (text : String) : String :=
+  let chars := text.toList
+  String.ofList (chars.take (chars.length - (chars.reverse.takeWhile (· != separator)).length))
 
 /-- Whether a source that answers so, asked with `asked`, is asked again now
 that `typed` is typed. -/
 def Reask.asksAgain : Reask → (asked typed : String) → Bool
   | .never, _, _ => false
   | .afterPause _, asked, typed => asked != typed
+  | .beforeLast separator, asked, typed => before separator asked != before separator typed
 
 /-- How long the job of a source that answers so waits before it asks, in
 milliseconds, when it is asked again. -/
 def Reask.pause : Reask → Nat
   | .never => 0
   | .afterPause pause => pause
+  | .beforeLast _ => 0
+
+/-- Whether what a source that answers so answered for `answeredFor` is
+listed while `typed` is typed: always, but for a source asked again by the
+part before its separator, whose answer is listed only for the same part.
+So a source that waits for a pause keeps its previous answer listed until
+its next one, and a directory's entries are never listed under another. -/
+def Reask.answers : Reask → (answeredFor typed : String) → Bool
+  | .beforeLast separator, answeredFor, typed =>
+    before separator answeredFor == before separator typed
+  | _, _, _ => true
+
+/-- The part of `typed` a source that answers so matches its hidden
+candidates against (`Candidate.hiddenUntil`): after the last separator for
+a source asked again by the part before it, and the whole text otherwise. -/
+def Reask.after : Reask → String → String
+  | .beforeLast separator, typed =>
+    String.ofList (typed.toList.drop (before separator typed).length)
+  | _, typed => typed
 
 /-- How a source answers later: the registered job that answers it, and when
 it is asked again. -/
@@ -228,6 +265,10 @@ structure Asking where
   /-- What is listed of it: the batches its current generation delivered,
   or, until that generation's first, the previous one's. -/
   answered : Array Candidate := #[]
+  /-- The text `answered` was asked for: set at a generation's first batch,
+  or at its end when it delivered none. It is not `askedFor`, which changes
+  at the re-ask while `answered` is still the previous answer. -/
+  answeredFor : Option String := none
   /-- Whether the current generation has delivered a batch or ended. -/
   fresh : Bool := false
   /-- Whether the current generation's job has ended. -/

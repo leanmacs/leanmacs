@@ -20902,6 +20902,12 @@ def driverJobs (name : String) : Option (List Argument → Work) :=
   | "later-pick" =>
     some (Completion.Later.batches #[offered #["wq", "edit"], offered #["rewrite", "w"]])
   | "later-echo" => some Completion.Later.echoing
+  | "later-dir" =>
+    some <|
+      Completion.answering fun query deliver =>
+        let (directory, _) := TypedPath.split query.text
+        deliver #[.ofText (directory ++ "x"), .ofText (directory ++ "y")]
+  | "later-refusing" => some (Completion.Later.refusing "no")
   | "load" =>
     some fun arguments =>
       Work.of
@@ -22122,6 +22128,9 @@ def candidateCommands : List (String × Dispatched) :=
     ("ask-later", asks "" [.given (.answeringLater "later" "pick" "later-pick")]),
     ("ask-echo-later",
       asks "" [.given (.answeringLater "echo" "pick" "later-echo" (.afterPause 30) true)]),
+    ("ask-dir", asks "" [.given (.answeringLater "dir" "pick" "later-dir" (.beforeLast '/'))]),
+    ("ask-dir-refusing",
+      asks "" [.given (.answeringLater "dir" "pick" "later-refusing" (.beforeLast '/'))]),
     (Minibuffer.candidatesName, fun call => do
       Minibuffer.candidatesCommandOf call
       return none),
@@ -22163,7 +22172,8 @@ def candidateKeys : Loop.Keys TestScheme.scheme :=
       ("C-c 7", invoke "ask-category"), ("C-c 6", invoke "ask-other"),
       ("C-c 8", invoke "ask-only-filtered"), ("C-c l", invoke "ask-later"),
       ("C-c t", invoke "ask-echo-later"), ("C-c b", invoke "delete-backward"),
-      ("C-c 9", invoke "ask-many")]
+      ("C-c 9", invoke "ask-many"), ("C-c d", invoke "ask-dir"),
+      ("C-c x", invoke "ask-dir-refusing")]
     candidateCommands
 
 /-- A driver over the initial state, with the commands of the candidate
@@ -23233,6 +23243,154 @@ def chosenText (driver : TestDriver) : Option String := do
   let candidates ← candidatesOf driver
   let index ← candidates.chosen
   return (← candidates.listed[index]?).text
+
+/-- The checks of a source asked again when the directory part of the text
+changes (`Reask.beforeLast`), of what is listed while its answer is another
+directory's or hidden (`Candidates.answering`), and of a source's job that
+fails (`StateRequest.sourceFailed`). -/
+def directoryChecks : List Check :=
+  let dirSource (answeredFor : Option String) (answered : Array Completion.Candidate) :
+    Completion.Asking :=
+    { source := "dir", later := { job := "later-pick", reask := .beforeLast '/' },
+      askedFor := "src/"
+      generation := 1, answered, answeredFor, fresh := true, done := true }
+  let hidden (text : String) : Completion.Candidate := { text, hiddenUntil := some "." }
+  [{  name :=
+        "a source asked again by its directory part: a text typed within the same directory starts nothing, and one that adds a / cancels its key and starts the next generation for the typed text with no pause"
+      run :=
+        pure <|
+          let asked := dirSource (some "src/") (offered #["src/x"])
+          let within :=
+            match promptLoop { asking := #[asked] } (some "src/ma") with
+            | none => false
+            | some (loop, view) =>
+              let key := Loop.sourceKey view "dir"
+              let (_, starts, cancels, _) :=
+                { loop with state := { loop.state with completionKeys := #[key] } }.completionJobs
+                  (jobKeys)
+              starts.isEmpty && cancels.isEmpty
+          let into :=
+            match promptLoop { asking := #[asked] } (some "src/main/") with
+            | none => false
+            | some (loop, view) =>
+              let key := Loop.sourceKey view "dir"
+              let (_, starts, cancels, _) :=
+                { loop with state := { loop.state with completionKeys := #[key] } }.completionJobs
+                  (jobKeys)
+              cancels == #[key] &&
+                (starts.map fun start =>
+                    (Completion.Order.ofArguments? start.arguments).map fun order =>
+                      (order.generation, order.query.text, order.pause)) ==
+                  #[some (2, "src/main/", 0)]
+          within && into },
+    { name :=
+        "the candidates as they answer a text leave a source that is asked again after a pause, or never, as it is, and empty a source asked again by directory whose answer is another directory's"
+      run :=
+        pure <|
+          let pausing : Completion.Asking :=
+            { source := "p", later := { job := "j", reask := .afterPause 30 }, askedFor := "a"
+              answeredFor := some "a", answered := offered #["a1"] }
+          let never : Completion.Asking :=
+            { source := "n", later := { job := "j" }, askedFor := "", answeredFor := some ""
+              answered := offered #["n1"] }
+          let candidates : Candidates :=
+            { asking := #[pausing, never, dirSource (some "src/") (offered #["src/x"])] }
+          let answered (typed : String) := (candidates.answering typed).asking.map (·.answered)
+          answered "src/m" == #[offered #["a1"], offered #["n1"], offered #["src/x"]] &&
+            answered "src/main/" == #[offered #["a1"], offered #["n1"], #[]] &&
+            answered "lib/" == #[offered #["a1"], offered #["n1"], #[]] &&
+            (candidates.current "lib/").matchableSize == 2 },
+    { name :=
+        "hidden candidates are listed only while the text after the source's separator starts with what reveals them, in their order, from the same answer; a given source with no separator reads the whole text; the size a listing is chosen by counts them all"
+      run :=
+        pure <|
+          let answered := #[.ofText "src/x", hidden "src/.env", hidden "src/.cache/"]
+          let candidates : Candidates :=
+            { all := #[hidden ".a", .ofText "b"], asking := #[dirSource (some "src/") answered] }
+          let listed (typed : String) :=
+            ((candidates.answering typed).asking.map (·.answered.map (·.text))).flatten
+          let given (typed : String) := (candidates.answering typed).all.map (·.text)
+          listed "src/" == #["src/x"] && listed "src/e" == #["src/x"] &&
+            listed "src/." == #["src/x", "src/.env", "src/.cache/"] &&
+            listed "src/.e" == #["src/x", "src/.env", "src/.cache/"] &&
+            given "." == #[".a", "b"] &&
+            given "a" == #["b"] &&
+            ["src/", "src/e", "src/.", "src/.e"].all fun typed =>
+              (candidates.current typed).matchableSize == 5 },
+    { name :=
+        "a source's batch records the text its generation was asked for on its first batch; a job's failure for the open prompt's source at its generation clears it, marks it done, records the text and says <source>: <message>; for another generation or view it changes nothing and says nothing"
+      run :=
+        pure <|
+          let asking : Completion.Asking :=
+            { source := "dir", later := { job := "j", reask := .beforeLast '/' }, askedFor := "src/"
+              generation := 2, answered := offered #["old/x"], answeredFor := some "old/" }
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            match prompted state with
+            | (.ok view, opened) =>
+              let (_, set) := opened.setCandidates { asking := #[asking] }
+              let (taken, added) := set.addCandidates view 0 2 (offered #["src/a"])
+              let failed := set.sourceFailed view 0 2 "cannot list src/"
+              let stale := set.sourceFailed view 0 1 "old"
+              let elsewhere := set.sourceFailed ⟨9⟩ 0 2 "other"
+              let source (state : EditorState) := state.prompt.bind (·.candidates.asking[0]?)
+              taken && (source added).map (·.answeredFor) == some (some "src/") &&
+                (source failed).map
+                    (fun source => (source.answered, source.done, source.answeredFor)) ==
+                  some (#[], true, some "src/") &&
+                failed.echo == "dir: cannot list src/" &&
+                stale == set &&
+                elsewhere == set
+            | _ => false },
+    { name :=
+        "a source's job that throws finishes with the command that says its source failed, and posts nothing; a malformed order still fails the job"
+      run :=
+        pure <|
+          let (outcome, model) :=
+            (Completion.Later.refusing "no" laterOrder.arguments ()).runModel {}
+          let (bad, _) := (Completion.Later.refusing "no" [] ()).runModel {}
+          let failedCommand :=
+            match outcome with
+            | .finished command =>
+              match onTextModel twoBuffers with
+              | none => false
+              | some state =>
+                let program : EditorM (Guarded Unit × EditorState) := command.dispatched {} state
+                match (program.runModel editorModel).1 with
+                | .ok (_, after) => after.echo == state.echo
+                | .error _ => false
+            | _ => false
+          failedCommand && model.posted.isEmpty && (bad matches .failed _) },
+    { name :=
+        "through the loop: after a source asked again by directory has answered, typing a / publishes a scene that lists nothing of the old directory before the next batch arrives, and the new directory's entries after it; a job that throws says why in the echo area and lists nothing"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-c d")
+            match asked.posting[0]? with
+            | none => false
+            | some first =>
+              let (one, _) := asked.posted first.id
+              let (done, _) := one.finish first.id
+              let (typed, _) := fedTo done (presses "a /")
+              let listedTexts (driver : TestDriver) :=
+                (candidatesOf driver).map (·.listed.map (·.text))
+              let afterBatch :=
+                match typed.posting[0]? with
+                | none => none
+                | some second => listedTexts (typed.posted second.id).1
+              let (refused, _) := fedTo driver (presses "C-c x")
+              let failed :=
+                match refused.pending[0]? with
+                | none => refused
+                | some job => (refused.finish job.id).1
+              listedTexts one == some #["x", "y"] && listedTexts typed == some #[] &&
+                afterBatch == some #["a/x", "a/y"] &&
+                failed.loop.state.echo == "dir: no" &&
+                listedTexts failed == some #[] }]
 
 /-- The checks of sources that answer later and of matching off the editor
 thread through the loop (`Editor/Loop.lean`, "Prompts"), on the loop's
@@ -40609,6 +40767,7 @@ def checks : List Check :=
     candidateChecks ++
     laterChecks ++
     completionJobChecks ++
+    directoryChecks ++
     laterLoopChecks ++
     sourceContractChecks ++
     atPointContractChecks ++

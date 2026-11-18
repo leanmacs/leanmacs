@@ -1434,6 +1434,39 @@ def matchableSize (candidates : Candidates) : Nat :=
     (fun size source => if source.filtered then size else size + source.answered.size)
     candidates.all.size
 
+/-- The candidates as they answer `typed`, for sizing a listing: each asking
+source whose answer is for another text than `typed` answers by its reask
+(`Completion.Reask.answers`) contributes nothing. It is per source, and
+reads no candidate. -/
+def current (candidates : Candidates) (typed : String) : Candidates :=
+  { candidates with
+    asking :=
+      candidates.asking.map fun source =>
+        match source.answeredFor with
+        | some answeredFor =>
+          if source.later.reask.answers answeredFor typed then source
+          else { source with answered := #[] }
+        | none => source }
+
+/-- The candidates as they answer `typed`, for making a listing: `current`,
+and each hidden candidate (`Completion.Candidate.hiddenUntil`) left out
+unless the typed text after its source's separator (`Reask.after`, the whole
+text for a given candidate) starts with what reveals it. It is pure: the
+state is never changed by it. -/
+def answering (candidates : Candidates) (typed : String) : Candidates :=
+  let shown (after : String) (candidate : Completion.Candidate) : Bool :=
+    match candidate.hiddenUntil with
+    | some reveal => after.startsWith reveal
+    | none => true
+  let current := candidates.current typed
+  { current with
+    all := current.all.filter (shown typed)
+    passed := current.passed.filter (shown typed)
+    asking :=
+      current.asking.map fun source =>
+        { source with
+          answered := source.answered.filter (shown (source.later.reask.after typed)) } }
+
 /-- A step of the choice through the listing. -/
 inductive Step where
   /-- To the candidate after the chosen one. -/
@@ -1501,8 +1534,9 @@ has ended, and either nothing can be listed at all, or the listing is for
 `typed` at the current revision and empty. A session at point closes then
 ("A session at point", in the module docs): the text stopped matching. -/
 def exhausted (candidates : Candidates) (typed : String) : Bool :=
+  let current := candidates.current typed
   candidates.matching.isNone && candidates.asking.all (·.done) &&
-    (candidates.matchableSize == 0 && candidates.passing.isEmpty ||
+    (current.matchableSize == 0 && current.passing.isEmpty ||
       candidates.listedFor == some typed && candidates.listedAt == candidates.revision &&
         candidates.listed.isEmpty)
 
@@ -3805,13 +3839,16 @@ def addCandidates (view : ViewId) (index generation : Nat) (batch : Array Comple
       else
         let batch := batch.map (·.inGroup source.source)
         let answered := if source.fresh then source.answered ++ batch else batch
+        -- A generation's first batch is what the source answered for the
+        -- text it was asked for.
+        let answeredFor := if source.fresh then source.answeredFor else some source.askedFor
         (true,
           state.replaceCandidatesIn view
             { candidates with
               asking :=
                 candidates.asking.set! index
                   { source with
-                    answered, fresh := true }
+                    answered, fresh := true, answeredFor }
               revision := candidates.revision + 1 })
 
 /-- Marks the asking source `index` of the prompt open in `view` done, when
@@ -3834,8 +3871,22 @@ def sourceAnswered (view : ViewId) (index generation : Nat) (state : EditorState
               candidates.asking.set! index
                 { source with
                   done := true, fresh := true
-                  answered := if source.fresh then source.answered else #[] }
+                  answered := if source.fresh then source.answered else #[]
+                  answeredFor := if source.fresh then source.answeredFor else some source.askedFor }
             revision := if cleared then candidates.revision + 1 else candidates.revision }
+
+/-- Marks the asking source `index` of the prompt open in `view` done, as
+`sourceAnswered` does, when its job at `generation` failed with `message`,
+and says `<source>: <message>` in the echo area, as `matchFailed` says why a
+match failed. A stale job's failure, of another generation or view, changes
+nothing and says nothing. -/
+def sourceFailed (view : ViewId) (index generation : Nat) (message : String) (state : EditorState) :
+    EditorState :=
+  match (state.candidatesIn? view).bind (·.asking[index]?) with
+  | some source =>
+    if source.generation != generation then state
+    else { state.sourceAnswered view index generation with echo := s!"{source.source}: {message}" }
+  | none => state
 
 /-- Lists `listed`, which a match job made for `pattern` at `revision`, in
 the prompt open in `view`, when that is the match in flight: the choice is
