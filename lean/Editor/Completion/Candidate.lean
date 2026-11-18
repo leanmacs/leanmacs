@@ -1,3 +1,4 @@
+import Editor.Invocation
 import Editor.Scene
 
 /-!
@@ -17,8 +18,10 @@ no program.
   sources").
 - **A query** is the text typed so far and the view the prompt was asked
   from, with the place names are read from (`Place`): the directory a
-  name that is not absolute is read under, and the home directory. What is
-  added to it is a field here, never a new type.
+  name that is not absolute is read under, and the home directory; and the
+  context the command that opened the prompt hands its sources
+  (`Query.context`), plain arguments. What is added to it is a field here,
+  never a new type.
 - **What matching answers** (`Editor/Completion/Style.lean`): a `Hit`, the
   index of a candidate a style matched and the ranges of its text that
   matched (`Span`, byte offsets), and a `Listed`, a candidate as a
@@ -109,8 +112,14 @@ structure Query where
   otherwise. -/
   texts : Array SnapshotId := #[]
   /-- Where a name that is not absolute is read from (`Place`), filled where
-  the query is made from the state. -/
+  the query is made from the state, or given by the command that opened the
+  prompt (`prompt`, `Editor/Api.lean`). -/
   place : Place := {}
+  /-- What the command that opened the prompt hands its sources: plain
+  arguments a source reads, such as the command that lists a workspace's
+  files (`Editor/Workspace/FindFile.lean`). Empty for every other prompt,
+  and for a session at point. -/
+  context : List Argument := []
   deriving DecidableEq, Repr
 
 /-- A source an at-point source names to complete its region from: by its
@@ -332,6 +341,9 @@ structure Collected where
   /-- The place the sources were asked with (`Query.place`), for the jobs of
   the sources that answer later. -/
   place : Place := {}
+  /-- The context the sources were asked with (`Query.context`), for the jobs
+  of the sources that answer later. -/
+  context : List Argument := []
   deriving DecidableEq, Repr
 
 end Editor.Completion

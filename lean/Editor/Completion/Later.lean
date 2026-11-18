@@ -19,7 +19,9 @@ server, answers from a job (`Editor/Job.lean`), in batches, as they come.
   step (`Loop.completionJobs`, `Editor/Loop.lean`, "Prompts"), under the key
   `completion <view> <source>`, with an order (`Order`): the prompt's view,
   the source's index among the asking ones, the generation of the ask, the
-  query and a pause.
+  query and a pause. The query carries the place and the context the
+  prompt was asked with (`Query.place`, `Query.context`), so a job can
+  read what the command that opened the prompt chose.
 - **A job that throws says why** (`answering`): it finishes with the
   command that marks its source done and says `<source>: <message>` in the
   echo area (`StateRequest.sourceFailed`). A stale job's failure is
@@ -89,8 +91,9 @@ def pathArgument : Option System.FilePath → Argument
 /-- `order` as the plain arguments a job is started with: the view, the
 index, the generation, the query's text and view and the pause, then the
 query's place, its directory and its home, each a string or `false` for
-none, then its region, its two ends or `false` for none, then each snapshot
-id of its texts. -/
+none, then its region, its two ends or `false` for none, then how many
+arguments its context holds and each of them (`Query.context`), then each
+snapshot id of its texts. -/
 def Order.arguments (order : Order) : List Argument :=
   let region :=
     match order.query.region with
@@ -100,6 +103,7 @@ def Order.arguments (order : Order) : List Argument :=
       .nat order.query.view.index, .nat order.pause, pathArgument order.query.place.directory,
       pathArgument order.query.place.home] ++
     region ++
+    .nat order.query.context.length :: order.query.context ++
     order.query.texts.toList.map fun snapshot => .nat snapshot.index
 
 /-- The snapshot ids `arguments` hold, each a number; `none` for arguments
@@ -116,9 +120,10 @@ def pathOfArgument? : Argument → Option (Option System.FilePath)
   | .bool false => some none
   | _ => none
 
-/-- The order `arguments` hold; `none` for arguments that are not one. The
-six arguments of an order with no place, no region and no texts are taken
-too. -/
+/-- The order `arguments` hold; `none` for arguments that are not one, a
+context with fewer arguments than its count says among them. The six
+arguments of an order with no place, no region, no context and no texts are
+taken too. -/
 def Order.ofArguments? : List Argument → Option Order
   | [.nat view, .nat index, .nat generation, .str text, .nat asker, .nat pause] =>
     some { view := ⟨view⟩, index, generation, query := { text, view := ⟨asker⟩ }, pause }
@@ -137,10 +142,14 @@ def Order.ofArguments? : List Argument → Option Order
         some (some { start, stop }, rest)
       | _ =>
         none
-    let texts ← snapshotsOfArguments? rest
+    let .nat count :: rest := rest | none
+    if rest.length < count then
+      none
+    let context := rest.take count
+    let texts ← snapshotsOfArguments? (rest.drop count)
     return {
-        view := ⟨view⟩, index, generation, query := { text, view := ⟨asker⟩, region, texts, place }
-        pause }
+        view := ⟨view⟩, index, generation
+        query := { text, view := ⟨asker⟩, region, texts, place, context }, pause }
   | _ => none
 
 /-- An optional field of a candidate as an argument: its text, or `false`

@@ -70,6 +70,27 @@ def laterChecks : List Check :=
                 (·.query.place) ==
               some {} },
     { name :=
+        "an order round-trips with the context its command handed its sources: none, and plain arguments of every kind, numbers among them, with a place, a region and texts beside them; the six arguments of an order still decode, with no context, and a context cut short decodes to none"
+      run :=
+        pure <|
+          let given (context : List Argument) : Completion.Order :=
+            { laterOrder with
+              query :=
+                { laterOrder.query with
+                  context, place := { directory := some "/w" }
+                  region := some { start := 1, stop := 2 }, texts := #[⟨5⟩, ⟨6⟩] } }
+          let contexts : List (List Argument) :=
+            [[], [.str "fd", .nat 7, .bool true, .int (-1)], [.nat 2], [.bool false]]
+          let whole := given [.str "fd", .nat 7]
+          contexts.all
+              (fun context =>
+                Completion.Order.ofArguments? (given context).arguments == some (given context)) &&
+            (Completion.Order.ofArguments? [.nat 3, .nat 1, .nat 2, .str "w", .nat 0, .nat 30]).map
+                (·.query.context) ==
+              some [] &&
+            Completion.Order.ofArguments? (whole.arguments.take (whole.arguments.length - 3)) ==
+              none },
+    { name :=
         "an order and a batch round-trip through their arguments: an order with a region and texts, one with texts alone, and the six arguments of one with neither; a candidate with nothing beside its text, one with each optional field, all of them, and empty strings among them; malformed lists decode to none"
       run :=
         pure <|

@@ -4209,6 +4209,42 @@ def completionJobChecks : List Check :=
                   (·.map (·.query.place)) ==
                 #[some place] },
     { name :=
+        "a prompt asked with a place and a context of its command's starts its source's job with both, in place of the asking view's place; the job started again for a typed key carries both too"
+      run :=
+        pure <|
+          let place : Completion.Place := { directory := some "/w", home := some "/home/me" }
+          let context : List Argument := [.str "fd", .nat 2, .bool true]
+          let asks : Dispatched := fun _ => do
+            discard <|
+                prompt pickLabel pickContinuation ""
+                  [.given (.answeringLater "echo" "pick" "later-echo" (.afterPause 30) true)]
+                  (place := some place) (context := context)
+            return none
+          let keys :=
+            dispatchKeys [("C-c t", invoke "ask-placed")]
+              (("ask-placed", asks) :: candidateCommands)
+          match
+            (Loop.Driver.over keys driverJobs (EditorState.initial ⟨640, 480⟩)
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let (asked, steps) := fedTo driver (presses "C-c t")
+            let ordered (steps : Array (Option (Loop.Stepped TestScheme.scheme))) :=
+              (steps.back?.join.bind (·.starts[0]?)).bind fun start =>
+                Completion.Order.ofArguments? start.arguments
+            match asked.posting[0]? with
+            | none => false
+            | some first =>
+              let (echoed, _) := asked.posted first.id
+              let (_, typed) := fedTo echoed (presses "w")
+              (ordered steps).map (fun order => (order.query.place, order.query.context)) ==
+                  some (place, context) &&
+                (candidatesOf asked).map (fun held => (held.place, held.context)) ==
+                  some (place, context) &&
+                (ordered typed).map
+                    (fun order => (order.query.text, order.query.place, order.query.context)) ==
+                  some ("w", place, context) },
+    { name :=
         "a source not yet asked has its job started once, under `completion <view> <source>`, with the order of the first generation for the text it was asked with and no pause, and its key recorded; asked again with the text unchanged, or by a source asked once with the text changed, nothing is started"
       run :=
         pure <|

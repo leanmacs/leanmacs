@@ -1111,7 +1111,7 @@ def collectSources (sources : List Completion.SourceRef) (query : Completion.Que
         match sources.head? with
         | some (.category category _) => some category
         | _ => none
-      region := query.region, place := query.place }
+      region := query.region, place := query.place, context := query.context }
   for source in resolved do
     let (name, answer) : String × Completion.Answer ←
       match source with
@@ -1188,15 +1188,23 @@ asked for the names of its registered sources once
 of its name is registered in the category and as itself otherwise, then
 each other name in the category, in registration order. A category with
 no source and no defaults asks nothing. If a source is refused, so is this
-command, with no prompt open. -/
+command, with no prompt open.
+
+The sources are asked with the asking view's place (`EditorState.placeOf`),
+or with `place` when the command gives one, and with `context`, plain
+arguments the command hands them (`Completion.Query.context`), none by
+default. The prompt keeps both, and the job of a source that answers later
+is handed both, each time it is asked (`Completion.Order`). -/
 def prompt (label : String) (continuation : Invocation) (initial : String := "")
-    (sources : List Completion.SourceRef := []) : EditorM (Except PromptRefusal ViewId) := do
+    (sources : List Completion.SourceRef := []) (place : Option Completion.Place := none)
+    (context : List Argument := []) : EditorM (Except PromptRefusal ViewId) := do
   let state ← editorState
   if let some asked := state.prompt then
     return .error (.alreadyOpen asked.view)
   let some asker := state.focusedTarget? | return .error .noWindow
   let query : Completion.Query :=
-    { text := initial, view := asker.window.id, place := state.placeOf asker.window.id }
+    { text := initial, view := asker.window.id
+      place := place.getD (state.placeOf asker.window.id), context }
   let collected ←
     match ← collectSources sources query with
     | .ok collected =>

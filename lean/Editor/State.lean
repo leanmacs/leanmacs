@@ -1647,6 +1647,10 @@ structure Candidates where
   /-- The place the sources were asked with (`Completion.Query.place`): what
   the orders of the sources that answer later carry. -/
   place : Completion.Place := {}
+  /-- The context the sources were asked with (`Completion.Query.context`):
+  what the command that opened the prompt handed them, which the orders of
+  the sources that answer later carry too. -/
+  context : List Argument := []
   deriving DecidableEq, Repr
 
 namespace Candidates
@@ -4315,7 +4319,7 @@ def setCandidates (collected : Completion.Collected) (state : EditorState) :
   state.changeCandidates fun _ =>
     { all := collected.all, passed := collected.passed, category := collected.category
       asking := collected.asking, region := collected.region, texts := collected.texts
-      place := collected.place }
+      place := collected.place, context := collected.context }
 
 /-- What is completing now ("A session at point", in the module docs): the
 open prompt's, else the open session's, else none. -/
@@ -4545,7 +4549,7 @@ def openAtPoint (session : AtPointSession) (collected : Completion.Collected)
                     { all := collected.all, passed := collected.passed
                       category := collected.category, asking := collected.asking
                       region := collected.region, texts := collected.texts
-                      place := collected.place }
+                      place := collected.place, context := collected.context }
                   sheet := {}, tallest := 0 } })
 
 /-- Closes the open session, and hands it back: its markers and its
