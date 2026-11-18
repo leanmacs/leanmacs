@@ -183,10 +183,13 @@ from the next command.
   for the loop to hand to its host once the command has run to its end
   (`Editor/Loop.lean`, "A theme switch from a command").
 - **Asking for the workspace settings** (`StateRequest.workspaceSettings`)
-  is answered config's workspace roots and the config generation the loop
-  was told of (`Loop.Registered.workspaceRoots`, `generation`), the state
-  not read and not changed. A file's open asks, for its directory's
-  workspace (`Editor/Workspace/Attach.lean`).
+  is answered the workspace settings the loop was told of
+  (`Loop.Registered.workspaceSettings`: config's workspace roots and the
+  git program) and the config generation (`generation`), the state not
+  read and not changed. A file's open asks, for its directory's workspace
+  (`Editor/Workspace/Attach.lean`), and the version-control commands ask,
+  for the git program; the gutter's reconciler is handed the same
+  (`Editor/Loop.lean`, `Stepped.published`).
 - **Asking for the display rules** (`StateRequest.displayRules`) is
   answered config's display rules the loop was told of
   (`Loop.Registered.displayRules`), in order, the state not read and not
@@ -426,6 +429,9 @@ structure Loop.Registered where
   /-- The workspace roots config declares (`workspace`, `Editor/Setup.lean`),
   which the finder is handed. -/
   workspaceRoots : Array Workspace.ConfigRoot := #[]
+  /-- The git program (`Workspace.Settings.git`): a bare name, looked up on
+  the `PATH`, or an absolute path. -/
+  git : String := ({} : Workspace.Settings).git
   /-- The config generation: how many configs have been installed. A
   directory's cached workspace is an answer only under the generation it
   was found under (`Editor/Workspace.lean`). -/
@@ -448,6 +454,15 @@ structure Loop.Registered where
   /-- The compile contributions, in registration order, and config's
   project commands (`Config.Registry.compileHook`). -/
   compile : Compile.Hook := {}
+
+/-- The workspace settings `registered` says: config's workspace roots, the
+git program, and the marker modes of the compile contributions. What the
+workspace settings are asked for answers (`StateRequest.workspaceSettings`),
+and what the loop hands the version-control gutter, so that every reader of
+the git program reads the one. -/
+def Loop.Registered.workspaceSettings (registered : Loop.Registered) : Workspace.Settings :=
+  { roots := registered.workspaceRoots, git := registered.git
+    markerModes := registered.compile.contributions.map (·.markerMode) }
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -560,11 +575,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     dispatched registered state
       (next ((registered.languages.find? (·.name == name)).map (·.indentUnit)))
   | state, .step (.state .workspaceSettings) next =>
-    dispatched registered state
-      (next
-        ({ roots := registered.workspaceRoots,
-           markerModes := registered.compile.contributions.map (·.markerMode) },
-          registered.generation))
+    dispatched registered state (next (registered.workspaceSettings, registered.generation))
   | state, .step (.state .compileHook) next => dispatched registered state (next registered.compile)
   | state, .step (.state .displayRules) next =>
     dispatched registered state (next registered.displayRules)

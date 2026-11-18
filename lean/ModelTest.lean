@@ -33460,12 +33460,13 @@ def workspaceKeys : Loop.Keys TestScheme.scheme :=
 
 /-- A driver with the keys `keys`, those of the workspace driver checks by
 default, and the jobs `registered`, whose jobs meet the processes and the
-files of `workspaceWorld` for its three directories, with the files the
-keys open, and two more in `/r/src` for the shell checks' filters; `none`
-if making the state was refused. -/
+files of `workspaceWorld` for its three directories, its git the program
+`git`, with the files the keys open, and two more in `/r/src` for the shell
+checks' filters; `none` if making the state was refused. -/
 def workspaceDriver (registered : String → Option (List Argument → Work) := workspaceJobs)
-    (keys : Loop.Keys TestScheme.scheme := workspaceKeys) : Option TestDriver :=
-  let model := workspaceWorld.jobModel "git" #["/r/src", "/w/src", "/x"]
+    (keys : Loop.Keys TestScheme.scheme := workspaceKeys) (git : String := "git") :
+    Option TestDriver :=
+  let model := workspaceWorld.jobModel git #["/r/src", "/w/src", "/x"]
   let files :=
     [("/r/src/a.lean", "a"), ("/r/src/b.lean", "b"), ("/r/src/c.lean", "c"), ("/w/src/b.lean", "w"),
           ("/x/a.txt", "x"), ("/r/src/s.txt", "b\nc\na\n"), ("/r/src/t.txt", "d\nb\nc\na")].foldl
@@ -38789,13 +38790,16 @@ def gutterKeys : Loop.Keys TestScheme.scheme :=
 /-- A driver of the gutter checks: the workspace driver's world, with the
 gutter's keys and jobs, whose git in `/r` meets `repository`, saying `HEAD`
 has no `src/b.lean`, whose watches may be made in `/r/.git`, and with each
-file of `repository`'s working tree on disk under `/r`; `none` if making the
-state was refused. -/
-def gutterDriverOf (repository : VersionControl.Model.Repository) : Option TestDriver :=
-  (workspaceDriver gutterJobs gutterKeys).map fun driver =>
+file of `repository`'s working tree on disk under `/r`; its git the program
+`git`, which the loop is told is config's (`Loop.Registered.git`); `none`
+if making the state was refused. -/
+def gutterDriverOf (repository : VersionControl.Model.Repository) (git : String := "git") :
+    Option TestDriver :=
+  (workspaceDriver gutterJobs gutterKeys git).map fun driver =>
     let scripts :=
-      (repository.jobModel "git" "/r" (missing := #[("HEAD", "src/b.lean")])).processes.scripts
+      (repository.jobModel git "/r" (missing := #[("HEAD", "src/b.lean")])).processes.scripts
     { driver with
+      keys := { driver.keys with registered := { driver.keys.registered with git } }
       jobs :=
         { driver.jobs with
           files :=
@@ -38879,6 +38883,24 @@ def gutterChecks : List Check :=
             ((trackedShown opened).map (·.head)) == some none &&
               ((showing opened).bind (·.buffer.gutter)).isNone &&
               (gutterView opened).map (·.padding.gutter) == some 0 },
+    { name :=
+        "the gutter runs the git program the workspace settings name: with /opt/git registered, its head fetch and its watch of the repository run /opt/git, as the finder does, and never git"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository "/opt/git" with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let started := opened.jobs.processes.started
+            started.contains
+                (VersionControl.Git.command "/opt/git" "/r"
+                  (VersionControl.Git.revisionArguments "HEAD" "src/a.lean")) &&
+              started.contains
+                (VersionControl.Git.command "/opt/git" "/r" VersionControl.Git.watchedArguments) &&
+              !started.any (·.program == "git") &&
+              (trackedShown opened).map (·.git) == some "/opt/git" &&
+              ((trackedShown opened).bind (·.head)).bind (snapshotText opened) == some gutterHead &&
+              opened.openWatches == 1 },
     { name :=
         "the marks of hunks: lines added are + in diff.added over them, lines changed ~ in diff.changed, and lines removed an empty - in diff.removed at the start of the line after them"
       run :=

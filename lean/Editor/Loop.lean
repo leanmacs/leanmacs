@@ -2352,16 +2352,18 @@ def keyedBy (keys : Keys scheme) (loop : Loop scheme) : Loop scheme :=
 and padded by its padding, its windows laid out by its layout
 (`Keys.modeLine`, `Keys.padding`, `Keys.layout`): its loop is
 the one the publish left, with the file jobs it starts and cancels
-(`fileJobs`) after the step's own, and it says stop when the editor then
+(`fileJobs`) after the step's own, then the version-control gutter's
+(`VersionControl.reconcile`), handed the git program of the workspace
+settings `keys` was told of (`Registered.workspaceSettings`, what the
+version-control commands ask for), and it says stop when the editor then
 leaves (`nextOf`) and to go on otherwise. The scene comes first, so the
 scene of the step that says stop is the last one. -/
 def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
   do
   let loop ← stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar
   let (loop, starts, cancels) := loop.fileJobs keys
-  let git := ({} : Workspace.Settings).git
   let (state, gutterStarts, gutterCancels) ←
-    VersionControl.reconcile keys.registered.jobs git loop.state
+    VersionControl.reconcile keys.registered.jobs keys.registered.workspaceSettings.git loop.state
   let loop := { loop with state }
   return { stepped with
       loop, next := nextOf loop, starts := stepped.starts ++ starts ++ gutterStarts

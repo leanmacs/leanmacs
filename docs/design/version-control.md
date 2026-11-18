@@ -300,7 +300,11 @@ editor with git integration does.
   keeps the tracked buffers and the watched repositories in step with what
   is wanted, starts the fetches, the diffs and the watches, and for a
   buffer no longer wanted (closed, its path changed) cancels its jobs,
-  releases its snapshots and takes its gutter away.
+  releases its snapshots and takes its gutter away. It runs the git
+  program of the workspace settings the loop is told of
+  (`Loop.Registered.workspaceSettings`), the one `vc-status`, `vc-show`
+  and the workspace finder ask for, so one repository is never read by
+  two gits.
 
 Pinned by `ModelTest.gutterChecks` on the models (`Repository.commit` and
 the driver's touch of the parked watch for a commit made outside the
