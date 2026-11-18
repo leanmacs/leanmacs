@@ -1049,10 +1049,10 @@ unsaved changes, at `path`, changed on disk: the two resolutions. -/
 def changedUnderEdits (path : System.FilePath) : String :=
   s!"{path} changed on disk; :e! takes the file's text, :w! writes yours over it"
 
-/-- Whether auto-reload is in effect: a command's choice, or else config's
-setting. -/
-def autoReloadOn : EditorM Bool :=
-  EditorState.ask .autoReloadMode
+/-- Whether auto-reload is in effect: a command's choice, read from the
+state, or else config's setting, asked of the registry. -/
+def autoReloadOn : EditorM Bool := do
+  return (← editorState).autoReload.getD (← RegistryRequest.ask .autoReload)
 
 /-- Starts the reload of the buffer `id` that a change on disk found by
 auto-reload asks for, unforced, when the buffer has a file and no unsaved

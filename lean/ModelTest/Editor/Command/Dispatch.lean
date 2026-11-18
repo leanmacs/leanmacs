@@ -15,6 +15,7 @@ import Editor.DisplayRules
 import Editor.Event
 import Editor.Ex.Line
 import Editor.File
+import Editor.Files
 import Editor.Fuzzy
 import Editor.Fuzzy.Model
 import Editor.InputScheme
@@ -386,6 +387,22 @@ def dispatchRegistryChecks : List Check :=
           match (program.runModel editorModel).1 with
           | .ok (.finished answer, _) =>
             answer == ([some .tab, some (.spaces 4), none], [.tab, .spaces 4, .spaces 4])
-          | _ => false }]
+          | _ => false },
+    { name :=
+        "whether auto-reload is in effect, asked of a dispatched command, is config's setting while no command has chosen, and the command's choice once one has, either way; the registry is asked config's setting alone"
+      run :=
+        let asks (choice : Option Bool) (config : Bool) : Option (Bool × Bool) :=
+          let asking : EditorM (Bool × Bool) := do
+            return (← Files.autoReloadOn, ← RegistryRequest.ask .autoReload)
+          let program : EditorM (Guarded (Bool × Bool) × EditorState) :=
+            asking.dispatched { autoReload := config }
+              { EditorState.none with autoReload := choice }
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) => some answer
+          | _ => none
+        pure
+          (asks none true == some (true, true) && asks none false == some (false, false) &&
+            asks (some false) true == some (false, true) &&
+            asks (some true) false == some (true, false)) }]
 
 end ModelTest

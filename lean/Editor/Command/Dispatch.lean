@@ -645,8 +645,6 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       let (reply, state) := state.handle (.loadTheme name)
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchTheme name)))
-  | state, .step (.state .autoReloadMode) next =>
-    dispatched registered state (next (state.autoReload.getD registered.autoReload))
   | state, .step (.state (.runCommand name call)) next =>
     match registered.command name with
     | none => dispatched registered state (next false)

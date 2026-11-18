@@ -349,9 +349,6 @@ inductive StateRequest where
   | gutter (change : GutterChange)
   /-- Choose auto-reload on or off, for as long as the editor runs. -/
   | setAutoReload (on : Bool)
-  /-- Whether auto-reload is in effect: a command's choice, or else config's
-  setting, which the loop that runs the command answers with. -/
-  | autoReloadMode
   /-- Stop following the buffer `id` for auto-reload: its follow job ended. -/
   | unfollow (id : BufferId)
   /-- Mark the following of the buffer `id` as refused: its watch could not
@@ -496,7 +493,6 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setGutter .. => Except BufferRefusal Unit
   | .gutter _ => Unit
   | .setAutoReload _ => Unit
-  | .autoReloadMode => Bool
   | .unfollow _ => Unit
   | .refuseFollow _ => Unit
   | .openPrompt .. => Except PromptRefusal ViewId
@@ -600,9 +596,6 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setGutter id gutter, state => state.setGutter id gutter
   | .gutter change, state => ((), state.changeGutter change)
   | .setAutoReload on, state => ((), { state with autoReload := some on })
-  -- Config's setting is the loop's to answer with (`Program.dispatched`):
-  -- here, with no loop, a choice no command made is off.
-  | .autoReloadMode, state => (state.autoReload.getD false, state)
   | .unfollow id, state => ((), { state with following := state.following.filter (·.buffer != id) })
   | .refuseFollow id, state =>
     ((),
