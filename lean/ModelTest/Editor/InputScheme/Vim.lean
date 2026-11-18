@@ -1,4 +1,5 @@
 import Editor.Command
+import Editor.Config.Registry
 import Editor.Event
 import Editor.InputScheme
 import Editor.InputScheme.Vim
@@ -1329,5 +1330,65 @@ def vimStateChecks : List Check :=
         pure
           (begun.current == [(⟨0⟩, "insert")] && begun.lastChange.isSome && !begun.typed.isEmpty &&
             told == { begun with current := [(⟨0⟩, "insert"), (⟨5⟩, "insert")] }) }]
+
+/-- The keys the Vim scheme over `states` lists as able to follow, for view
+0 after the keys `text` names, with `maps` the active keymaps
+(`Vim.State.continuations`). -/
+def vimHints (text : String) (maps : ViewId → List (Keymap Vim.Bound) := vimNoMaps)
+    (states : Vim.States := vimStates) : List (Keymap.Continuation Vim.Bound) :=
+  Vim.State.continuations states maps (fun _ => none) ⟨0⟩ (vimFed text maps ⟨0⟩ states).1
+
+/-- Active keymaps, for every view, from a registry with `C-w l` bound to a
+command: config's binding over insert state's `C-w`. -/
+def vimWindowRightMaps (_ : ViewId) : List (Keymap Vim.Bound) :=
+  let registry : Config.Registry :=
+    ({} : Config.Registry).replaceBindings .config
+      #[Config.KeyBinding.ofKeys (keys "C-w l") "t-right"]
+  [registry.keymap (Vim.scheme Vim.Default.states)]
+
+/-- The checks of what the Vim scheme lists as able to follow a pending
+keymap prefix (`Vim.State.continuations`): from the tiers its walk looks
+in, and nothing while no keymap prefix is pending. -/
+def vimHintChecks : List Check :=
+  [{  name :=
+        "with g g bound in the normal state's keymaps and g r in an active keymap, the keys after g are r and g"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("g r", .motion "reverse")]]
+        pure
+          ((vimHints "g" active).map (·.key) == [charKey "r", charKey "g"] &&
+            (vimHints "g").map (·.key) == [charKey "g"]) },
+    { name :=
+        "in insert state, with C-w l bound by config over the state's own C-w, the only key after C-w is l: none of normal state's keys under C-w"
+      run :=
+        pure
+          ((vimHints "i C-w" vimWindowRightMaps Vim.Default.states).map (·.key) == [charKey "l"] &&
+            (vimHints "C-w" vimNoMaps Vim.Default.states).length > 1) },
+    { name :=
+        "with an operator waiting, the keys after i come from normal state's pending keymaps, its text objects, and not from its own, where i is bound alone"
+      run :=
+        let listed := vimHints "d i" vimNoMaps Vim.Default.states
+        pure
+          (listed.any (·.key == charKey "w") &&
+            listed.all
+              (fun c =>
+                match c.next with
+                | .bound (.textObject _) _ => true
+                | _ => false) &&
+            (vimHints "i" vimNoMaps Vim.Default.states).isEmpty) },
+    { name := "an operator alone, a count alone and the register prefix alone list nothing"
+      run :=
+        pure
+          ((vimHints "d" vimNoMaps Vim.Default.states).isEmpty &&
+            (vimHints "2" vimNoMaps Vim.Default.states).isEmpty &&
+            (vimHints "\"" vimNoMaps Vim.Default.states).isEmpty &&
+            (vimHints "" vimNoMaps Vim.Default.states).isEmpty) },
+    { name := "the Vim scheme reports what can follow through its continuations field"
+      run :=
+        let scheme := Vim.scheme vimStates
+        let state := (vimFed "g").1
+        pure
+          ((scheme.continuations vimNoMaps (fun _ => none) ⟨0⟩ state).map (·.key) ==
+            [charKey "g"]) }]
 
 end ModelTest

@@ -613,10 +613,17 @@ with no model:
   the last change, and a mode's keys under the Vim scheme: a hand-tuned
   key is typed text in insert state, and `Mode.check` reads every state's
   keymaps;
+- `vimHintChecks`: what the Vim scheme lists as able to follow a keymap
+  prefix (`Vim.State.continuations`): keys of both tiers, an active prefix
+  over a state's binding, the pending keymaps while an operator waits, and
+  nothing after a count, an operator or the register prefix alone;
 - `vimDefaultChecks`: the default states and bindings
   (`Editor/InputScheme/Vim/Default.lean`), observed through the grammar:
   what each default key parses to, and what the scheme reports of the view
   after it. They restate no table and name no vocabulary or command name;
+- `vimDefaultHintChecks`: over every default state, every key the scheme
+  lists after a keymap prefix is what `Vim.parse` and the walk make of it,
+  and every chord of the defaults it leaves out walks to nothing;
 - `vimContractChecks`: the scheme contract holds of the Vim scheme, over
   the registry written here and over the default states.
 
@@ -886,7 +893,9 @@ def checks : List Check :=
     vimRegistryChecks ++
     vimGrammarChecks ++
     vimStateChecks ++
+    vimHintChecks ++
     vimDefaultChecks ++
+    vimDefaultHintChecks ++
     vimContractChecks ++
     modeRecordChecks ++
     languageMatchChecks ++

@@ -558,4 +558,72 @@ def vimDefaultChecks : List Check :=
           vimDefaultCommand "C-w F" == some { name := WindowCommands.floatName } &&
             (vimDefault "C-w F").2.head? == some .nothing }]
 
+/-- The strict prefixes of `keys` that are not empty, shortest first. -/
+def vimStrictPrefixes (keys : List Key) : List (List Key) :=
+  ((List.range keys.length).drop 1).map keys.take
+
+/-- Every keymap prefix of two tiers: each strict, non-empty prefix of a
+bound sequence of either that the walk over them leaves pending. -/
+def vimKeymapPrefixes (active own : List (Keymap Vim.Bound)) : List (List Key) :=
+  let sequences := (active ++ own).flatMap fun keymap => keymap.bindings.map (·.1)
+  (sequences.flatMap vimStrictPrefixes).eraseDups.filter fun typed =>
+    Keymap.resolveOver active own typed == .pending
+
+/-- Every chord a binding of the default states names, in any of their
+keymaps. -/
+def vimDefaultChords : List Key :=
+  let records := Vim.Default.states.initial :: Vim.Default.states.others
+  (records.flatMap fun record =>
+      (record.keymaps ++ record.pending).flatMap fun keymap =>
+        keymap.bindings.flatMap (·.1)).eraseDups
+
+/-- Whether what the Vim scheme lists as able to follow agrees with its walk
+for a view in the default state `record`, with `maps` the active keymaps,
+and an operator waiting when `operating`: after each keymap prefix of the
+tiers, every listed key parsed next leaves that prefix and the key walked
+and parses to nothing when it leads to a prefix, and leaves nothing walked
+when it leads to a binding; the walk over the tiers gives what each says;
+and every chord of the default bindings that is not listed walks to
+nothing. -/
+def vimHintsAgree (record : Vim.StateRecord) (maps : ViewId → List (Keymap Vim.Bound))
+    (operating : Bool) : Bool :=
+  let states := Vim.Default.states
+  let base : Vim.State :=
+    { current := [(⟨0⟩, record.name)]
+      operator := if operating then some { name := "operator" } else none }
+  let (active, own) := base.tiers states maps ⟨0⟩
+  (vimKeymapPrefixes active own).all fun typed =>
+    let state :=
+      { base with
+        walked := typed, typed }
+    let listed := Vim.State.continuations states maps (fun _ => none) ⟨0⟩ state
+    !listed.isEmpty &&
+        listed.all
+          (fun c =>
+            let (next, parsed) := Vim.parse states maps ⟨0⟩ state c.key
+            Keymap.walkOver active own typed c.key == c.walked typed &&
+              match c.next with
+              | .prefix .. => next.walked == typed ++ [c.key] && parsed == .nothing
+              | .bound .. => next.walked.isEmpty) &&
+      vimDefaultChords.all fun chord =>
+        listed.any (·.key == chord) || Keymap.walkOver active own typed chord == ([], none)
+
+/-- The checks that what the Vim scheme lists as able to follow a pending
+prefix agrees with its walk over the default states, with no active
+keymaps and with a mode's, with and without an operator waiting. -/
+def vimDefaultHintChecks : List Check :=
+  [{  name :=
+        "over every default state, with no active keymaps and with a mode's, and with and without an operator waiting, every key listed as able to follow a keymap prefix is what the walk and the grammar make of it, and every key left out walks to nothing"
+      run :=
+        let records := Vim.Default.states.initial :: Vim.Default.states.others
+        pure <|
+          records.all fun record =>
+            [vimNoMaps, vimListingMaps].all fun maps =>
+              [false, true].all fun operating =>
+                (operating && record.pending.isEmpty) || vimHintsAgree record maps operating },
+    { name := "the default states have keymap prefixes for the agreement check to hold of"
+      run :=
+        let (active, own) := ({} : Vim.State).tiers Vim.Default.states vimListingMaps ⟨0⟩
+        pure (!(vimKeymapPrefixes active own).isEmpty) }]
+
 end ModelTest
