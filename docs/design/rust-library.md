@@ -222,7 +222,9 @@ job reads as it comes and whose standard input it writes to (phase 2;
   waiter, two readers and a writer when its input is piped; the editor's
   expected streaming children are a handful (agent sessions, language
   servers). Cancel kills the group, wakes parked readers and the writer,
-  and drops the child's waits uncompleted; shutdown cancels every child as
+  and drops the child's waits uncompleted, its pending read with them in
+  the same step, so no reader or waiter completes it after the kill;
+  shutdown cancels every child as
   it does every run. The contract holds the port's input to three more
   properties (a write reaches `/bin/cat` byte for byte, a write to an input
   the child closed is `InputClosed`, a child spawned with no input has
