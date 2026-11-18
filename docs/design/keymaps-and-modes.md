@@ -853,7 +853,7 @@ here (`lean/Editor/Evil/Compiled.lean`), and all four are built.
   editor state, and built (`lean/Editor/State.lean`,
   `lean/Editor/Evil/Registers.lean`):
   - **A register is a text and whether it is line-wise** (`Register`),
-    kept by name in the editor state (`EditorState.registers`), set by one
+    kept by name in the editor state (`EditorState.Remembered.registers`), set by one
     state request (`setRegister`). So a command that sets one and then
     does not run to its end is rolled back to the register it had. The
     table is by name so that a named register is one more name and no new

@@ -280,6 +280,38 @@ of their own (`narrow-state-request-port`). The placement table is what
 keeps the structure from becoming a god struct, so the first follow-up
 adds a row for the outbox.
 
+**Done** (roadmap `structural-splits`, phase
+`phase-3-group-editor-state-fields`): the outbox and the Vim memory are
+grouped; the display readings and file following are not. `EditorState`
+had 34 fields at 816725d (seven were added after 37b1335) and has 28 now.
+The count needs `where`, `awk '/^structure EditorState where/,/^$/'`,
+since `structure EditorState.Remembered` now comes before it in the same
+file. `starts`, `cancels`, `answered`, `reload` and `theme` are the
+fields of `EditorState.Outbox`, the state's `outbox`, in the new module
+`lean/Editor/State/Outbox.lean` with `JobStart`; its docs hold the
+outbox's rules and "Where a new entry goes". `Loop.dispatch` empties it
+whole (`outbox := {}`) and hands it back through `Loop.Ran.outbox`;
+`Loop.Stepped`, the hosts' interface, keeps its five flat fields.
+`registers`, `lastFind` and `lastSearch` are the fields of
+`EditorState.Remembered`, the state's `remembered`, which stays in
+`lean/Editor/State.lean` beside the operations that keep it, under the
+section "What commands remember". `EditorState.lastFind` and
+`EditorState.lastSearch` are now read operations, so the commands that
+read them are unchanged, as are `lean/Editor/Api.lean` and the
+`StateRequest` constructors. `quitting`, which the finding listed with
+the outbox, stays a top-level field of `EditorState`: it is a standing
+request that outlives the command that set it, so that a quit can wait
+for a save, and emptying it with the outbox would drop such a quit.
+`retyped`, which the loop also empties after each command, stays a
+top-level field too: it goes to the input scheme, not the host, and a
+command that broke off does not hand it on. The display readings (`heights`, `padding`,
+`tabBarShown`, `tabBar`, and `candidateList` with them) stay flat because
+nothing reads or writes them as one unit, and file following
+(`autoReload`, `following`) because the two have different owners, a
+command's setting and a reconciler's bookkeeping. The placement table
+("Where a new field goes") gained rows for the outbox, the Vim memory, the
+display readings and the fields the loop's reconcilers keep.
+
 ### The bindings: `lean/Editor/Ffi.lean`
 
 **Cohesion**: The largest non-test file, 4,300 lines: about 450 lines of

@@ -967,7 +967,7 @@ transaction through. Where those come from is open.
     arguments (key := some key)` starts the job under a key, so it ends the
     running job of that key first, and `cancelJob key` asks for the job of
     a key to be ended. The cancels are kept in the state with the starts
-    (`EditorState.cancels`) and handed back in `Loop.Stepped.cancels`,
+    (`EditorState.Outbox.cancels`) and handed back in `Loop.Stepped.cancels`,
     ahead of the loop's own; a command that is refused or interrupted
     cancels nothing. `:!` runs its child under one key a workspace, and
     `C-g` cancels it by that key ([keymaps-and-modes.md](keymaps-and-modes.md),
@@ -1225,7 +1225,7 @@ runs meanwhile is one whole command.
 event.**
 
 - The answered invocation is kept in the editor state until the accepting
-  command ends (`EditorState.answered`), as the jobs a command asked for
+  command ends (`EditorState.Outbox.answered`), as the jobs a command asked for
   are. After a command that ran to its end the loop takes it out and hands
   it back with the step (`Loop.Stepped.answered`). A command that did not
   run to its end answers nothing.
@@ -1288,7 +1288,7 @@ prompt.** Built by the command loop's phase 12.
   - Pinned by `ModelTest.dispatchStateChecks` and
     `ModelTest.dispatchRunCommandChecks`.
 - **`invoke invocation` records the invocation** where a prompt's answer
-  is recorded (`EditorState.answered`), after what is there. So that
+  is recorded (`EditorState.Outbox.answered`), after what is there. So that
   field, and what a step hands back (`Loop.Stepped.answered`), is the
   invocations to run next: a prompt's continuation with its answer, and
   what a command asked for. The names stay: they were given for the

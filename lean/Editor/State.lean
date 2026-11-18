@@ -1032,14 +1032,19 @@ leaves them.
 | One buffer (its line ending, its modes) | A field of `Buffer` |
 | The file a buffer shows (what the next save expects on disk) | A field of `Buffer.File` |
 | One view (a goal column, a scroll offset) | A field of `Window` |
-| The whole editor (registers, the scroll margin, the pending key prefix, the order buffers were used in) | A field of `EditorState` |
+| Something a command asks the loop to hand its host once it has run to its end (a job to start or cancel, an invocation to run next, a reload, a theme) | A field of `EditorState.Outbox` (`Editor/State/Outbox.lean`, "Where a new entry goes"), which the loop empties whole after each command |
+| What commands remember for the whole editor from one command to the next, to put back or repeat (a register, the last find, the last search) | A field of `EditorState.Remembered` ("What commands remember"), set by an operation here and read through one |
+| The whole editor, set and read on its own (the scroll margin, the pending key prefix, a command's choice of auto-reload, asked to quit, the order buffers were used in) | A field of `EditorState` |
+| What the last publish was handed or measured, or drew itself (the row heights, the padding, when the tab bar shows, the tab bar's and the candidate list's views) | A field of `EditorState`, set by a publish (`Loop.publish`, `Editor/Loop.lean`) |
+| What a reconciler of the loop keeps in step after each publish (the files followed for auto-reload, the gutter's tracked files and watched repositories, the open prompt's job keys) | A field of `EditorState` beside `following`, `tracked`, `refWatches` and `completionKeys`, written by that reconciler |
 | One checkout or one codebase (compilation state, command history) | A value in a workspace's or a project's store (`Workspace.Table`) |
 | The open prompt (what completes it, what it has shown) | A field of `Prompt` |
 | What the user sees of it | A field of the scene (`Editor/Scene.lean`), filled in `Loop.scene`, or in `Loop.views` for a field of a view (`Editor/Loop.lean`) |
 
 Each is pinned by `ModelTest.stateChecks`, and what the scene shows of it by
 `ModelTest.loopChecks`. The operations a request reaches are pinned through
-the requests' handler, by `ModelTest.stateRequestChecks`.
+the requests' handler, by `ModelTest.stateRequestChecks`, and an outbox
+entry's hand-back by `ModelTest.dispatchQuitChecks`.
 -/
 
 namespace Editor
