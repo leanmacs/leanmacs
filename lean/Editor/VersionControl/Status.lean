@@ -413,9 +413,9 @@ structure ApplyOrder where
 def ApplyOrder.arguments (order : ApplyOrder) : List Argument :=
   let (kind, paths) :=
     match order.request with
-    | .status => ("status", #[])
     | .stage paths => ("stage", paths)
     | .unstage paths => ("unstage", paths)
+    | _ => ("status", #[])
   (order.read.arguments.take 4) ++ .str kind :: paths.toList.map .str
 
 /-- The order `arguments` are, if they are one (`ApplyOrder.arguments`). -/
@@ -436,13 +436,13 @@ def ApplyOrder.ofArguments? : List Argument → Option ApplyOrder
     return { read := { root, git, label, view := ⟨view⟩, shows := false }, request }
   | _ => none
 
-/-- A write as a program over the port: a stage or an unstage, and a status
-read, whose status is dropped. -/
+/-- A write as a program over the port: a stage or an unstage, and for any
+other request a status read, whose status is dropped. -/
 def write : Request → VersionControlM (Except Error Unit)
-  | .status => do
-    return (← status).map fun _ => ()
   | .stage paths => stage paths
   | .unstage paths => unstage paths
+  | _ => do
+    return (← status).map fun _ => ()
 
 /-! ## The buffer and the commands -/
 

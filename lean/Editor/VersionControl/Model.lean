@@ -41,6 +41,15 @@ implementation runs on the models too.
   request, as git does, with status 128 and nothing staged.
 - **`unstage paths`**: each path's `HEAD` content goes into the index, or
   the path is removed from the index when `HEAD` lacks it.
+- **`fileAt revision path`**: `HEAD`'s content of the path, or a named
+  revision's (`revisions`, the tags a test makes), or the index's for the
+  empty revision; `none` when the revision does not have it or is not
+  there.
+- **`watched`**: the common directory (`commonDir`), with `HEAD` and the
+  index of the git directory (`gitDir`), `packed-refs`, and `refs` as a
+  tree, as the git implementation answers.
+- **`commit`** (for tests, not a request) makes `HEAD`'s files the index's,
+  as a commit made outside the editor does.
 
 The contract (`Editor/VersionControl/Contract.lean`) is what says the model
 and the git implementation agree.
@@ -68,6 +77,13 @@ structure Repository where
   index : Array (String × Entry) := #[]
   /-- The working tree's files. -/
   worktree : Array (String × String) := #[]
+  /-- Named revisions besides `HEAD` (tags), each with its files. -/
+  revisions : Array (String × Array (String × String)) := #[]
+  /-- The repository's git directory. -/
+  gitDir : System.FilePath := "/r/.git"
+  /-- Its common git directory: the git directory, but for a linked
+  worktree's. -/
+  commonDir : System.FilePath := "/r/.git"
   deriving DecidableEq, Repr
 
 /-- The value `entries` holds for `path`. -/
@@ -248,19 +264,78 @@ def unstageOne (repository : Repository) (path : String) : Repository :=
 def ran (stdout : ByteArray) : Except ProcessError Process.Ran :=
   .ok { exit := .code 0, stdout, stderr := .empty }
 
+/-- The files of `revision` (`fileAt`'s): `HEAD`'s, a named revision's, and
+`none` for a revision that is not there. -/
+def filesOf (repository : Repository) (revision : String) : Option (Array (String × String)) :=
+  if revision == "HEAD" then some repository.committed else lookup repository.revisions revision
+
+/-- The content of `path` at `revision` ("How it answers", in the module
+docs): the index's for the empty revision. -/
+def fileAt (repository : Repository) (revision path : String) : Option String :=
+  if revision.isEmpty then repository.indexed? path
+  else (repository.filesOf revision).bind (lookup · path)
+
+/-- What `watched` answers of `repository`: its common directory, with
+`HEAD` and the index of its git directory, `packed-refs`, and `refs` as a
+tree. -/
+def watchedOf (repository : Repository) : Watched :=
+  { directory := repository.commonDir
+    paths :=
+      #[repository.gitDir / "HEAD", repository.gitDir / "index",
+        repository.commonDir / "packed-refs"]
+    trees := #[repository.commonDir / "refs"] }
+
+/-- `repository` with its index committed: `HEAD`'s files are the index's
+merged files, as `git commit` without `-a` makes them. -/
+def commit (repository : Repository) : Repository :=
+  { repository with
+    committed :=
+      repository.index.filterMap fun (path, entry) =>
+        match entry with
+        | .file content => some (path, content)
+        | .conflict .. => none }
+
+end Repository
+
+/-- The id the job model gives the blob of `content`: made of its content
+alone, so equal contents share it, as git's do. -/
+def blobId (content : String) : String :=
+  s!"blob{hash content}"
+
+namespace Repository
+
 /-- The job model in which the git implementation, running `git` in `root`,
-meets `repository`: its status read prints `porcelain`, and each of
-`writes` exits 0. A command no script names is refused as `notFound`, as a
+meets `repository`: its status read prints `porcelain`; each of `writes`
+exits 0; `fileAt`'s two runs answer each file of `HEAD` and of each named
+revision, its id and then its bytes; its first run exits 1 for each
+revision and path of `missing`; and `watched` prints the git and the common
+directories. A command no script names is refused as `notFound`, as a
 program that is not there is. -/
 def jobModel (repository : Repository) (git : String) (root : System.FilePath)
-    (writes : Array Request := #[]) : JobModel :=
+    (writes : Array Request := #[]) (missing : Array (String × String) := #[]) : JobModel :=
+  let script (arguments : Array String) (stdout : ByteArray) : Process.Script :=
+    { command := Git.command git root arguments, reply := ran stdout }
+  let files :=
+    (("HEAD", repository.committed) :: repository.revisions.toList).toArray.flatMap
+      fun (revision, files) => files.map fun (path, content) => (revision, path, content)
   {
     processes :=
       {
         scripts :=
-          #[{ command := Git.command git root .status, reply := ran repository.porcelain }] ++
-            writes.map fun write =>
-              { command := Git.command git root write, reply := ran .empty } } }
+          #[script Git.statusArguments repository.porcelain] ++
+                writes.filterMap (fun write =>
+                  match write with
+                  | .stage paths => some (script (Git.stageArguments paths) .empty)
+                  | .unstage paths => some (script (Git.unstageArguments paths) .empty)
+                  | _ => none) ++
+              files.flatMap (fun (revision, path, content) =>
+                #[script (Git.revisionArguments revision path) s!"{blobId content}\n".toUTF8,
+                  script (Git.blobArguments (blobId content)) (File.encodeText content)]) ++
+            missing.map (fun (revision, path) =>
+              { command := Git.command git root (Git.revisionArguments revision path)
+                reply := .ok { exit := .code 1, stdout := .empty, stderr := .empty } }) ++
+          #[script Git.watchedArguments
+              s!"{repository.gitDir}\n{repository.commonDir}\n".toUTF8] } }
 
 end Repository
 
@@ -277,5 +352,7 @@ def handle : (request : Request) → Repository → request.Reply × Repository
         repository)
     | none => (.ok (), paths.foldl Repository.stageOne repository)
   | .unstage paths, repository => (.ok (), paths.foldl Repository.unstageOne repository)
+  | .fileAt revision path, repository => (.ok (repository.fileAt revision path), repository)
+  | .watched, repository => (.ok repository.watchedOf, repository)
 
 end Editor.VersionControl.Model

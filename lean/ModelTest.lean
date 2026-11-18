@@ -38005,6 +38005,131 @@ def versionControlGitChecks : List Check :=
                   (VersionControl.Model.Repository.ran "x what\x00".toUTF8))).1 matches
             .finished (.error (.unparsable _)) }]
 
+/-- The git implementation's read of `path` at `revision` in `/r` on
+`model`. -/
+def gitShow (revision path : String) (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error (Option String)) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" (.fileAt revision path) :
+        JobM (Except VersionControl.Error (Option String))).runModel
+    model
+
+/-- The git implementation's question of what to watch in `/r` on
+`model`. -/
+def gitWatched (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error VersionControl.Watched) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" .watched :
+        JobM (Except VersionControl.Error VersionControl.Watched)).runModel
+    model
+
+/-- The job model in which `git rev-parse --git-dir --git-common-dir` in `/r`
+prints `stdout`. -/
+def watchedAnswering (stdout : String) : JobModel :=
+  {
+    processes :=
+      {
+        scripts :=
+          #[{ command := gitRun #["rev-parse", "--git-dir", "--git-common-dir"]
+              reply := VersionControl.Model.Repository.ran stdout.toUTF8 }] } }
+
+/-- The checks of the git implementation's `show` and `watched` on the job
+model: the command lines they run, and how they read what those answer. -/
+def versionControlShowChecks : List Check :=
+  let repository : VersionControl.Model.Repository :=
+    { VersionControlContract.clean #[("src/a.txt", "one\n")] with
+      revisions := #[("v1", #[("src/a.txt", "then\n")])] }
+  let blob := VersionControl.Model.blobId
+  [{  name :=
+        "fileAt runs git rev-parse --verify --quiet <revision>:<path> in the root, then git cat-file blob with the id it printed, and answers the blob's content"
+      run :=
+        pure <|
+          let (head, after) := gitShow "HEAD" "src/a.txt" (repository.jobModel "git" "/r")
+          let (named, _) := gitShow "v1" "src/a.txt" (repository.jobModel "git" "/r")
+          head == .finished (.ok (some "one\n")) && named == .finished (.ok (some "then\n")) &&
+            after.processes.started ==
+              #[gitRun #["rev-parse", "--verify", "--quiet", "HEAD:src/a.txt"],
+                gitRun #["cat-file", "blob", blob "one\n"]] },
+    { name :=
+        "fileAt of a path the revision lacks is none: rev-parse exits 1 and no cat-file runs"
+      run :=
+        pure <|
+          let model := repository.jobModel "git" "/r" (missing := #[("HEAD", "n.txt")])
+          let (missing, after) := gitShow "HEAD" "n.txt" model
+          missing == .finished (.ok none) &&
+            after.processes.started == #[gitRun #["rev-parse", "--verify", "--quiet", "HEAD:n.txt"]] },
+    { name := "fileAt whose rev-parse fails otherwise failed, with what git said"
+      run :=
+        pure <|
+          let model : JobModel :=
+            {
+              processes :=
+                {
+                  scripts :=
+                    #[{ command := gitRun #["rev-parse", "--verify", "--quiet", "HEAD:a.txt"]
+                        reply :=
+                          .ok {
+                              exit := .code 128, stdout := .empty
+                              stderr := "fatal: not a git repository\n".toUTF8 } }] } }
+          (gitShow "HEAD" "a.txt" model).1 ==
+            .finished (.error (.failed (.code 128) "fatal: not a git repository")) },
+    { name :=
+        "watched runs git rev-parse --git-dir --git-common-dir in the root, resolves what is relative against it, and names HEAD and the index of the git directory, the common directory's packed-refs, and its refs as a tree"
+      run :=
+        pure <|
+          let (main, after) := gitWatched (watchedAnswering ".git\n.git\n")
+          let (linked, _) := gitWatched (watchedAnswering "/m/.git/worktrees/w\n/m/.git\n")
+          main ==
+              .finished
+                (.ok
+                  { directory := "/r/.git", paths := #["/r/.git/HEAD", "/r/.git/index", "/r/.git/packed-refs"]
+                    trees := #["/r/.git/refs"] }) &&
+            linked ==
+              .finished
+                (.ok
+                  { directory := "/m/.git"
+                    paths :=
+                      #["/m/.git/worktrees/w/HEAD", "/m/.git/worktrees/w/index", "/m/.git/packed-refs"]
+                    trees := #["/m/.git/refs"] }) &&
+            after.processes.started == #[gitRun #["rev-parse", "--git-dir", "--git-common-dir"]] },
+    { name := "watched whose output is not two lines is unparsable"
+      run :=
+        pure <|
+          (gitWatched (watchedAnswering ".git\n")).1 matches .finished (.error (.unparsable _)) },
+    { name :=
+        "a change matters at HEAD, the index, packed-refs or under refs, and when changes were missed; not at a lock file, an object or a log"
+      run :=
+        pure <|
+          let watched : VersionControl.Watched :=
+            { directory := "/r/.git", paths := #["/r/.git/HEAD", "/r/.git/index", "/r/.git/packed-refs"]
+              trees := #["/r/.git/refs"] }
+          let at_ (path : System.FilePath) (kinds : FileWatch.Kinds := { written := true }) :=
+            watched.matters { path, kinds }
+          at_ "/r/.git/HEAD" && at_ "/r/.git/index" && at_ "/r/.git/packed-refs" &&
+            at_ "/r/.git/refs/heads/main" &&
+            at_ "/r/.git" { missed := true } &&
+            !at_ "/r/.git/index.lock" &&
+            !at_ "/r/.git/refs/heads/main.lock" &&
+            !at_ "/r/.git/objects/ab/cdef" &&
+            !at_ "/r/.git/logs/HEAD" &&
+            !at_ "/r/.git/refsx" },
+    { name :=
+        "the model answers fileAt from HEAD's files, a named revision's, and the index for the empty revision, and none otherwise; and watched from its git and common directories"
+      run :=
+        pure <|
+          let fileAt (repository : VersionControl.Model.Repository) (revision : String) :
+              Except VersionControl.Error (Option String) :=
+            (VersionControl.Model.handle (.fileAt revision "src/a.txt") repository).1
+          let watched : Except VersionControl.Error VersionControl.Watched :=
+            (VersionControl.Model.handle .watched repository).1
+          let staged := { repository with index := #[("src/a.txt", .file "staged\n")] }
+          fileAt repository "HEAD" == .ok (some "one\n") &&
+            fileAt repository "v1" == .ok (some "then\n") &&
+            fileAt staged "" == .ok (some "staged\n") &&
+            fileAt repository "v2" == .ok none &&
+            watched ==
+              .ok
+                { directory := "/r/.git", paths := #["/r/.git/HEAD", "/r/.git/index", "/r/.git/packed-refs"]
+                  trees := #["/r/.git/refs"] } }]
+
 /-- What the status buffer of `r@main` shows of the contract's first
 repository (`VersionControlContract.criterionStatus`): the head line, then
 one line per file naming its state. -/
@@ -38695,6 +38820,7 @@ def checks : List Check :=
     versionControlParserChecks ++
     versionControlModelChecks ++
     versionControlGitChecks ++
+    versionControlShowChecks ++
     statusViewChecks ++
     statusBufferChecks ++
     gutterCarryChecks

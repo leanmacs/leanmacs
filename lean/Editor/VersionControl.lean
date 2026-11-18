@@ -40,6 +40,18 @@ against it.
 - **`unstage paths`** makes the index hold each path as `HEAD` has it, or
   removes it from the index when `HEAD` lacks it, an unborn branch's
   included.
+- **`fileAt revision path`** is the content of `path` at `revision`, decoded
+  by the store's escape rule (`File.decodeBytes`), so a byte that is not
+  UTF-8 is kept as its escape: `none` when the revision does not have the
+  path, which is so of a revision that is not there and of `HEAD` on an
+  unborn branch. The empty revision is the index (git's `:<path>`). A path
+  that names a directory is refused.
+- **`watched`** is what to watch so as to see `HEAD` or the index move
+  (`Watched`): one directory, the files in it whose change matters, and
+  the trees in it under which any change matters (`Watched.matters`). It
+  is neutral data: git names its common directory, with `HEAD` and the
+  index of the checkout's own git directory, `packed-refs` and `refs`, and
+  jj would name its operation heads.
 - **Errors are values** (`Error`): a reply is an `Except`, and nothing is
   thrown. A command says `Error.describe` of a refusal.
 
@@ -50,7 +62,7 @@ both implementations behind it; none goes in ahead of them.
 
 | Addition | Where |
 |---|---|
-| Another question of the repository: a file at a revision (`show`, phase 2), the branches and the worktrees, and a diff between two revisions (phase 4) | A constructor of `Request`, its case in `Request.Reply`, an operation here, a clause of `Model.handle`, a clause of `Git.handler`, and a property of the contract |
+| Another question of the repository: the branches and the worktrees, and a diff between two revisions (phase 4). A file at a revision (`fileAt`) and what to watch (`watched`) are here (phase 2) | A constructor of `Request`, its case in `Request.Reply`, an operation here, a clause of `Model.handle`, a clause of `Git.handler`, and a property of the contract |
 | Another way a file differs | A constructor of `FileState` (or of `Change` or `Conflict`), its case in the parser (`Editor/VersionControl/Porcelain.lean`), in the model's status and printer, and in the status buffer's view (`Editor/VersionControl/Status.lean`) |
 | Another way a request fails | A constructor of `Error`, with its sentence in `Error.describe` |
 | Another system (jj) | A handler of these requests, held to the contract; nothing here |
@@ -197,6 +209,50 @@ instance : DecidableEq (Except Error Unit)
   | .ok _, .error _ => isFalse fun e => by cases e
   | .error _, .ok _ => isFalse fun e => by cases e
 
+/-- What to watch so as to see `HEAD` or the index move: a directory to watch
+whole, the files in it whose change matters, and the trees in it under which
+any change matters. -/
+structure Watched where
+  /-- The directory to watch, with everything under it. -/
+  directory : System.FilePath
+  /-- The files whose change matters. -/
+  paths : Array System.FilePath
+  /-- The directories under which a change of any file matters. -/
+  trees : Array System.FilePath
+  deriving DecidableEq, Repr
+
+/-- Whether `change`, a change a watch of `watched.directory` delivered,
+matters: one at one of its paths or under one of its trees, but never at a
+lock file (`*.lock`), which a system writes and renames away while it moves
+`HEAD` or the index; and changes that were missed, which may have been
+any. -/
+def Watched.matters (watched : Watched) (change : FileWatch.Change) : Bool :=
+  let path := change.path.toString
+  change.kinds.missed ||
+    !path.endsWith ".lock" &&
+      (watched.paths.any (·.toString == path) ||
+        watched.trees.any fun tree => path.startsWith (tree.toString ++ "/"))
+
+/-- Two replies of `fileAt` are equal when they are the same case with equal
+contents. -/
+instance : DecidableEq (Except Error (Option String))
+  | .ok a, .ok b =>
+    if h : a = b then isTrue (congrArg Except.ok h) else isFalse fun e => h (Except.ok.inj e)
+  | .error a, .error b =>
+    if h : a = b then isTrue (congrArg Except.error h) else isFalse fun e => h (Except.error.inj e)
+  | .ok _, .error _ => isFalse fun e => by cases e
+  | .error _, .ok _ => isFalse fun e => by cases e
+
+/-- Two replies of `watched` are equal when they are the same case with equal
+contents. -/
+instance : DecidableEq (Except Error Watched)
+  | .ok a, .ok b =>
+    if h : a = b then isTrue (congrArg Except.ok h) else isFalse fun e => h (Except.ok.inj e)
+  | .error a, .error b =>
+    if h : a = b then isTrue (congrArg Except.error h) else isFalse fun e => h (Except.error.inj e)
+  | .ok _, .error _ => isFalse fun e => by cases e
+  | .error _, .ok _ => isFalse fun e => by cases e
+
 /-- What may be asked of a repository. -/
 inductive Request where
   /-- What is checked out, and every file that differs from it. -/
@@ -205,14 +261,20 @@ inductive Request where
   | stage (paths : Array String)
   /-- Make the index hold each of `paths` as `HEAD` has it. -/
   | unstage (paths : Array String)
+  /-- The content of `path` at `revision`, if the revision has it. -/
+  | fileAt (revision path : String)
+  /-- What to watch so as to see `HEAD` or the index move. -/
+  | watched
   deriving DecidableEq, Repr
 
-/-- The type of the reply to each request: the status, or nothing for a
-write; each refused with an `Error`. -/
+/-- The type of the reply to each request: the status, nothing for a write,
+a file's content or none, or what to watch; each refused with an `Error`. -/
 def Request.Reply : Request → Type
   | .status => Except Error Status
   | .stage _ => Except Error Unit
   | .unstage _ => Except Error Unit
+  | .fileAt .. => Except Error (Option String)
+  | .watched => Except Error Watched
 
 /-- The version-control port: `Request` and the reply to each request. -/
 abbrev port : Port :=
@@ -238,5 +300,14 @@ def stage (paths : Array String) : VersionControlM (Except Error Unit) :=
 /-- Makes the index hold each of `paths` as `HEAD` has it. -/
 def unstage (paths : Array String) : VersionControlM (Except Error Unit) :=
   Program.request (port := port) (.unstage paths)
+
+/-- The content of `path` at `revision`: `none` when the revision does not
+have it, or is not there. -/
+def fileAt (revision path : String) : VersionControlM (Except Error (Option String)) :=
+  Program.request (port := port) (.fileAt revision path)
+
+/-- What to watch so as to see `HEAD` or the index move. -/
+def watched : VersionControlM (Except Error Watched) :=
+  Program.request (port := port) .watched
 
 end Editor.VersionControl

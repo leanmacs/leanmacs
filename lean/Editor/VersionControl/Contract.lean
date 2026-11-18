@@ -228,6 +228,47 @@ def properties : List Property :=
       holds := do
         let before ← statusOf
         let staged ← stage #["a.txt", "nope.txt"]
-        return !succeeded staged && before.isSome && (← statusOf) == before }]
+        return !succeeded staged && before.isSome && (← statusOf) == before },
+    { name := "fileAt of HEAD and a committed file is its content"
+      repository := writing (clean #[("a.txt", "one\n"), ("src/b.txt", "b\n")]) "a.txt" "two\n"
+      holds := do
+        return (← fileAt "HEAD" "a.txt") == .ok (some "one\n") &&
+            (← fileAt "HEAD" "src/b.txt") == .ok (some "b\n") },
+    { name := "fileAt of a path HEAD lacks, an untracked file's among them, is none"
+      repository := writing (clean #[("a.txt", "a\n")]) "n.txt" "new\n"
+      holds := do
+        return (← fileAt "HEAD" "n.txt") == .ok none && (← fileAt "HEAD" "gone.txt") == .ok none },
+    { name := "fileAt of a revision that is not there is none"
+      repository := clean #[("a.txt", "a\n")]
+      holds := return (← fileAt "nope" "a.txt") == .ok none },
+    { name := "fileAt of a named revision is the content that revision has, not HEAD's"
+      repository :=
+        { clean #[("src/a.txt", "now\n")] with
+          revisions := #[("v1", #[("src/a.txt", "then\n"), ("old.txt", "old\n")])] }
+      holds := do
+        return (← fileAt "v1" "src/a.txt") == .ok (some "then\n") &&
+            (← fileAt "v1" "old.txt") == .ok (some "old\n") &&
+            (← fileAt "HEAD" "old.txt") == .ok none },
+    { name := "fileAt keeps a byte that is not UTF-8 as the store's escape of it"
+      repository := clean #[("bin.txt", "a".push (Char.ofNat 0x10DC80) ++ "b\n")]
+      holds :=
+        return (← fileAt "HEAD" "bin.txt") == .ok (some ("a".push (Char.ofNat 0x10DC80) ++ "b\n")) },
+    { name := "fileAt on an unborn branch is none"
+      repository := { index := #[("a.txt", .file "a\n")], worktree := #[("a.txt", "a\n")] }
+      holds := return (← fileAt "HEAD" "a.txt") == .ok none },
+    { name :=
+        "watched names a directory, and HEAD and the index under it, and its refs as a tree under it"
+      repository := clean #[("a.txt", "a\n")]
+      holds := do
+        match ← watched with
+        | .error _ =>
+          return false
+        | .ok answer =>
+          let under (path : System.FilePath) :=
+            path.toString.startsWith (answer.directory.toString ++ "/")
+          return answer.directory.isAbsolute &&
+              answer.paths.any (fun path => under path && path.fileName == some "HEAD") &&
+              answer.paths.any (fun path => under path && path.fileName == some "index") &&
+              answer.trees == #[answer.directory / "refs"] }]
 
 end Editor.VersionControlContract
