@@ -5,6 +5,7 @@ import Editor.DisplayRules
 import Editor.Face
 import Editor.File
 import Editor.Floating
+import Editor.GeneratedView
 import Editor.Invocation
 import Editor.Layout
 import Editor.Scene
@@ -115,7 +116,7 @@ its own: `minibufferPlace` is the bottom row again at the closing step's
 publish.
 
 **The candidate list's view** (`EditorState.candidateList`,
-`Completion.Drawn`) is a text view over generated text, as the tab bar's
+`GeneratedView`) is a text view over generated text, as the tab bar's
 is: its text, anchor and view id are made the first time a publish draws
 it and kept for the editor's life. It is no window: it has no target, no
 key reaches it, it is never focused or followed; its rectangle and padding
@@ -1614,11 +1615,11 @@ structure EditorState where
   tabBarShown : TabBar.Shown := .several
   /-- The tab bar's view, text and line, once a publish has drawn it; kept
   for the editor's life (`Editor/TabBar.lean`, "What it is"). -/
-  tabBar : Option TabBar.Drawn := none
+  tabBar : Option GeneratedView := none
   /-- The candidate list's view, text and content, once a publish has drawn
   it; kept for the editor's life, as `tabBar` is ("The minibuffer's place",
   in the module docs). -/
-  candidateList : Option Completion.Drawn := none
+  candidateList : Option GeneratedView := none
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/

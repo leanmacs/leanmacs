@@ -158,18 +158,4 @@ def Display.plain (name : String) : Display :=
               text :=
                 (if showing.chosen == some index then "> " else "  ") ++ oneLine listed.text } } }
 
-/-- The candidate list as the state keeps it once drawn (as
-`TabBar.Drawn`): the view it is drawn in, the text it shows, that text's
-scroll anchor, and what the text holds. -/
-structure Drawn where
-  /-- Its view's id, taken once from the state's next one. -/
-  view : ViewId
-  /-- The text of the text store that holds its rows. -/
-  text : TextId
-  /-- An anchor marker of that text, at its start. -/
-  scroll : MarkerId
-  /-- What the text holds. -/
-  content : String
-  deriving DecidableEq, Repr
-
 end Editor.Completion

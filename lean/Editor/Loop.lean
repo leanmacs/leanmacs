@@ -804,7 +804,9 @@ changed the state or not (`Loop.publish`):
    draws views in scene order each over its own background, draws it
    above them.
 5. **The candidate list and the tab bar** (`Loop.candidateListView`,
-   `Loop.tabBarView`, `Editor/TabBar.lean`). While a prompt's list has
+   `Loop.tabBarView`, `Editor/TabBar.lean`), each a view over generated
+   text made, kept and drawn by one procedure (`Loop.generatedView`,
+   `Editor/GeneratedView.lean`). While a prompt's list has
    shown a row (`EditorState.candidateListRect?`), the candidate list's
    view is appended, in the top of the minibuffer's place directly above
    the minibuffer's view, as tall as the most rows shown since the prompt
@@ -1777,102 +1779,39 @@ def spots (state : EditorState) (views : Array View) :
                 anchor := scroll.offset, padding := area.padding, position := anchor.offset }
     return some (float.view, (answer : Except TextError (Option Display.Spot)).toOption.join)
 
-/-- The tab bar's view of `state` while the bar is shown
-(`EditorState.tabBarRect?`, `Editor/TabBar.lean`), what it shows, and the
-state with the bar drawn. The first time, the text, its anchor marker at 0
-and the view's id (`EditorState.freshView`, with `nextView` past it) are
-made and kept in `EditorState.tabBar`; when the line of the tabs' labels
-(`TabBar.line`) differs from the one the text holds, the text's content is
-replaced with it. The snapshot is one of `shown` while the text is at its
-revision, and a new one otherwise. The view has no selection, so no cursor
-is drawn, no status field, so its whole strip is its one text row, and the
-bar's padding (`EditorState.paddingOf`). It is not refused: a refusal of the
-store is handed back, with no view. -/
-def tabBarView (state : EditorState) (shown : Array Shown) :
+/-- A view over generated text (`GeneratedView`, `Editor/GeneratedView.lean`)
+in `rect`, holding `content` with `decorations`, what it shows, and `state`
+with it kept by `keep`. `drawn?` is what `state` keeps of it so far: the
+first time, with none, the text, its anchor marker at 0 and the view's id
+(`EditorState.freshView`, with `nextView` past it) are made and kept; when
+`content` differs from what the text holds, the text's content is replaced
+with it. The snapshot is one of `shown` while the text is at its revision,
+and a new one otherwise. The view has no selection, so no cursor is drawn,
+no status field, so its whole strip is text rows, and the padding
+`EditorState.paddingOf` gives its id. Its anchor stays at 0. It is not
+refused: a refusal of the store is handed back, with no view. The tab bar's
+view and the candidate list's are this (`tabBarView`, `candidateListView`). -/
+def generatedView (state : EditorState) (drawn? : Option GeneratedView)
+    (keep : EditorState → GeneratedView → EditorState) (rect : Rect) (content : String)
+    (decorations : Array Decoration) (shown : Array Shown) :
     TextM (EditorState × Option (View × Shown) × Option TextError) := do
-  let some rect := state.tabBarRect? | return (state, none, none)
   let made ←
     observing do
-        match state.tabBar with
+        match drawn? with
         | some drawn =>
           pure (state, drawn)
         | none =>
           let text ← createText ""
           let scroll ← text.mark (.anchor { offset := 0, bias := .before })
           let view := state.freshView
-          let drawn : TabBar.Drawn := { view, text, scroll, line := "" }
-          pure
-              ({ state with
-                  tabBar := some drawn, nextView := view.index + 1 },
-                drawn)
+          let drawn : GeneratedView := { view, text, scroll, content := "" }
+          pure (keep { state with nextView := view.index + 1 } drawn, drawn)
   let (state, drawn) ←
     match made with
     | .ok made =>
       pure made
     | .error error =>
       return (state, none, some error)
-  let labels := (Array.range state.frame.tabs.size).map state.tabLabel
-  let (line, decorations) := TabBar.line labels state.frame.tabIndex
-  let taken ←
-    observing do
-        if line != drawn.line then
-          drawn.text.replaceRange 0 (← drawn.text.byteLength) line
-        let revision ← drawn.text.revision
-        match shown.find? fun was => was.text == drawn.text && was.revision == revision with
-        | some was =>
-          pure was
-        | none =>
-          return { text := drawn.text, revision, snapshot := ← drawn.text.snapshot }
-  match taken with
-  | .error error =>
-    return (state, none, some error)
-  | .ok was =>
-    let drawn := { drawn with line }
-    let state := { state with tabBar := some drawn }
-    let view : View :=
-      { id := drawn.view, rect, snapshot := was.snapshot, scroll := drawn.scroll
-        selections := #[], cursor := { shape := .hollow, face := ⟨"cursor"⟩ }, decorations
-        status := #[], padding := state.paddingOf drawn.view }
-    return (state, some (view, was), none)
-
-/-- The candidate list's view of `state` while a prompt is open and its list
-has shown a row (`EditorState.candidateListRect?`), what it shows, and the
-state with the list drawn. The first time, the text, its anchor marker at 0
-and the view's id (`EditorState.freshView`, with `nextView` past it) are
-made and kept in `EditorState.candidateList`; when the text of the sheet
-the display answered at this publish (`Prompt.sheet`,
-`Completion.Sheet.text`) differs from the one the text holds, the text's
-content is replaced with it. The snapshot is one of `shown` while the text
-is at its revision, and a new one otherwise. The view has no selection, so
-no cursor is drawn, the sheet's decorations, no status field, so its whole
-strip is text rows, and the list's padding (`EditorState.paddingOf`). Its
-anchor stays at 0: the sheet holds only the rows shown. It is not refused:
-a refusal of the store is handed back, with no view. -/
-def candidateListView (state : EditorState) (shown : Array Shown) :
-    TextM (EditorState × Option (View × Shown) × Option TextError) := do
-  let some rect := state.candidateListRect? | return (state, none, none)
-  let some asked := state.prompt | return (state, none, none)
-  let made ←
-    observing do
-        match state.candidateList with
-        | some drawn =>
-          pure (state, drawn)
-        | none =>
-          let text ← createText ""
-          let scroll ← text.mark (.anchor { offset := 0, bias := .before })
-          let view := state.freshView
-          let drawn : Completion.Drawn := { view, text, scroll, content := "" }
-          pure
-              ({ state with
-                  candidateList := some drawn, nextView := view.index + 1 },
-                drawn)
-  let (state, drawn) ←
-    match made with
-    | .ok made =>
-      pure made
-    | .error error =>
-      return (state, none, some error)
-  let content := asked.sheet.text
   let taken ←
     observing do
         if content != drawn.content then
@@ -1888,13 +1827,40 @@ def candidateListView (state : EditorState) (shown : Array Shown) :
     return (state, none, some error)
   | .ok was =>
     let drawn := { drawn with content }
-    let state := { state with candidateList := some drawn }
+    let state := keep state drawn
     let view : View :=
       { id := drawn.view, rect, snapshot := was.snapshot, scroll := drawn.scroll
-        selections := #[], cursor := { shape := .hollow, face := ⟨"cursor"⟩ }
-        decorations := asked.sheet.decorations, status := #[]
-        padding := state.paddingOf drawn.view }
+        selections := #[], cursor := { shape := .hollow, face := ⟨"cursor"⟩ }, decorations
+        status := #[], padding := state.paddingOf drawn.view }
     return (state, some (view, was), none)
+
+/-- The tab bar's view of `state` while the bar is shown
+(`EditorState.tabBarRect?`, `Editor/TabBar.lean`), what it shows, and the
+state with the bar drawn: a view over generated text (`generatedView`) kept
+in `EditorState.tabBar`, whose content is the line of the tabs' labels
+(`TabBar.line`) with its chips' faces, and the bar's padding. -/
+def tabBarView (state : EditorState) (shown : Array Shown) :
+    TextM (EditorState × Option (View × Shown) × Option TextError) := do
+  let some rect := state.tabBarRect? | return (state, none, none)
+  let labels := (Array.range state.frame.tabs.size).map state.tabLabel
+  let (line, decorations) := TabBar.line labels state.frame.tabIndex
+  generatedView state state.tabBar (fun state drawn => { state with tabBar := some drawn }) rect
+      line decorations shown
+
+/-- The candidate list's view of `state` while a prompt is open and its list
+has shown a row (`EditorState.candidateListRect?`), what it shows, and the
+state with the list drawn: a view over generated text (`generatedView`)
+kept in `EditorState.candidateList`, whose content is the text of the sheet
+the display answered at this publish (`Prompt.sheet`,
+`Completion.Sheet.text`) with the sheet's decorations, and the list's
+padding. Its anchor stays at 0: the sheet holds only the rows shown. -/
+def candidateListView (state : EditorState) (shown : Array Shown) :
+    TextM (EditorState × Option (View × Shown) × Option TextError) := do
+  let some rect := state.candidateListRect? | return (state, none, none)
+  let some asked := state.prompt | return (state, none, none)
+  generatedView state state.candidateList
+      (fun state drawn => { state with candidateList := some drawn }) rect asked.sheet.text
+      asked.sheet.decorations shown
 
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead

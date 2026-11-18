@@ -2324,7 +2324,10 @@ decided 2026-11-13 by its phase 2):
     `minibuffer.group` (`Completion.Displays`). The minibuffer's status
     line is the label alone (`Loop.promptStatus`).
     - It needs no buffer and no window: its text, anchor and view id are
-      the state's, made once, as the tab bar's are. Nothing of the Rust
+      the state's, made once, as the tab bar's are. Both are kept in one
+      record (`GeneratedView`, `lean/Editor/GeneratedView.lean`) and drawn
+      by one procedure (`Loop.generatedView`), each handing it only its
+      rectangle, content and decorations. Nothing of the Rust
       scene, its wire form or the display's binding changed: a view over
       generated text with decorations, no selection and no status field is
       what the tab bar already is.

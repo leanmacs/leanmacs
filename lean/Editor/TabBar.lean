@@ -1,4 +1,4 @@
-import Editor.Scene
+import Editor.GeneratedView
 
 /-!
 # The tab bar
@@ -24,10 +24,10 @@ candidate list are, and neither a buffer nor a window.
   are in `face` (`tab-bar`), and the tab in view's in `selectedFace`
   (`tab-bar.selected`); the joining spaces are in neither. A line wider
   than the frame is clipped by the view's rectangle.
-- **What it is** (`Drawn`): a text of the text store, an anchor marker at
-  its start and a view id taken once from the state's next one, so never a
-  window's. The publish makes them the first time the bar is drawn and
-  keeps them for the editor's life (`Loop.publish`, `Editor/Loop.lean`),
+- **What it is**: a view over generated text (`GeneratedView`,
+  `Editor/GeneratedView.lean`), kept in `EditorState.tabBar`, whose content
+  is the line. The publish makes it the first time the bar is drawn and
+  keeps it for the editor's life (`Loop.tabBarView`, `Editor/Loop.lean`),
   replacing the text's content when the line changes. It is in no buffer
   list and is not focusable: no window, no key and no follow.
 
@@ -64,19 +64,6 @@ def Shown.shows (shown : Shown) (count : Nat) : Bool :=
   | .never => false
   | .several => 2 ≤ count
   | .always => true
-
-/-- The tab bar once it has been drawn: the view it is drawn in, the text it
-shows, that text's scroll anchor, and the line the text holds. -/
-structure Drawn where
-  /-- Its view's id, taken once from the state's next one. -/
-  view : ViewId
-  /-- The text of the text store that holds its line. -/
-  text : TextId
-  /-- An anchor marker of that text, at its start. -/
-  scroll : MarkerId
-  /-- The line the text holds. -/
-  line : String
-  deriving DecidableEq, Repr
 
 /-- The bar's line over the tabs' `labels`, the tab at `selected` in view,
 and its decorations: each chip `" {n} {label} "`, numbered from 1, joined by

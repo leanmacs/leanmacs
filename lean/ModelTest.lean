@@ -9068,7 +9068,8 @@ def spoilings : List (String × (EditorState → EditorState)) :=
               #[{ windows := #[⟨1⟩], floats := #[{ view := ⟨2⟩, anchor := .window ⟨0⟩ }]
                   focused := ⟨1⟩ }] } }),
     ("with a tab bar whose view is a window's", fun state =>
-      { state with tabBar := some { view := ⟨2⟩, text := ⟨9⟩, scroll := ⟨⟨9⟩, 0⟩, line := "" } })]
+      { state with
+        tabBar := some { view := ⟨2⟩, text := ⟨9⟩, scroll := ⟨⟨9⟩, 0⟩, content := "" } })]
 
 /-- `threeWindows` as three tabs: view 0 alone in the first, view 1 in the
 second, which is in view, and view 2 in the third, each focused on its one
@@ -9130,7 +9131,7 @@ the minibuffer view's, and the list's view's rectangle and padding. -/
 def displayStateChecks : List Check :=
   let rect (x y width height : Nat) : Rect := { x, y, width, height }
   let texts := (Array.range 15).map (s!"c{·}")
-  let drawn : Completion.Drawn := { view := ⟨90⟩, text := ⟨90⟩, scroll := ⟨⟨90⟩, 0⟩, content := "" }
+  let drawn : GeneratedView := { view := ⟨90⟩, text := ⟨90⟩, scroll := ⟨⟨90⟩, 0⟩, content := "" }
   [{  name :=
         "moving the choice past the last row shown scrolls the list so the chosen candidate stays shown"
       run :=
