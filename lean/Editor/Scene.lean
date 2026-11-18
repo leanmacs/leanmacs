@@ -46,8 +46,9 @@ the last scene published, on its own thread, so painting never waits on Lean
   prefix is rendered by Lean into a string.
 - **The key hints are a Lean-only readout.** The keys that can follow the
   pending prefix (`Scene.keyHints`, from `InputScheme.continuations`) are
-  data the command loop fills, but they do not cross to the Rust scene:
-  hints are drawn by the completion display, a view Lean makes, as the
+  data the command loop fills, but they do not cross to the Rust scene,
+  and they are not drawn yet: the leader-and-key-hints roadmap's phase 4
+  draws them through the completion display, a view Lean makes, as the
   candidate list is, so no Rust code reads them.
 - **A block is text only.** A view's blocks (`View.blocks`) are rows of
   text of their own between its rows, each in its own faces: which ones,
