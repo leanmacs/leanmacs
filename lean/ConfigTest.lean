@@ -529,7 +529,8 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           commands := compiled.commands, compiledJobs := compiled.jobs,
           bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
           themes := compiled.themes, languages := compiled.languages, sources := compiled.sources,
-          log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter,
+          log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter
+          clock := some clock,
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
             match compiled.major with
@@ -1431,7 +1432,7 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
       { shipped with
         elaborator := context.elaborator, source, requests := staged.requests
         wakeups := staged.wakeups, jobs := staged.jobs, environment := staged.environment
-        log := staged.log, syntaxTree }
+        log := staged.log, syntaxTree, clock := staged.clock }
     let host ← Headless.start collaborators
     try
       let held ←
@@ -1740,7 +1741,47 @@ def agreementChecks (_ : Unit) : List Check :=
 one run of the real executable on the fixture under `tests/headless`, in the
 `ffi-test` task. -/
 def scriptChecks (context : Context) : List Check :=
-  [{
+  [{  name :=
+        "an advance directive is a number of milliseconds, with its line's number; one with no number, two or a part that is no number is refused with its line, and the error message of a line that is no directive lists it"
+      run :=
+        pure <|
+          (Headless.script "scene\nadvance 240\n  advance  1  \n").toOption ==
+              some #[⟨1, .request .scene⟩, ⟨2, .advance 240⟩, ⟨3, .advance 1⟩] &&
+            (["advance", "advance 1 2", "advance soon", "advance -1"].all fun line =>
+              match Headless.script ("scene\n" ++ line) with
+              | .error message => message.startsWith "line 2: "
+              | .ok _ => false) &&
+            match Headless.script "scene\nwait 2" with
+            | .error message => (message.splitOn "advance <milliseconds>").length == 2
+            | .ok _ => false },
+    { name :=
+        "on a stage host, spawn count, advance by its sleep and join end with the job's line, ok; an advance with nothing due runs out as stalled, with its line and its milliseconds, and an advance on a host with no fake clock fails with its sentence"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let joined ←
+            Headless.run stage.collaborators
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
+                  ⟨4, .advance 10⟩, ⟨5, .join⟩]
+                patience
+          let output ← stage.output.get
+          let stalled ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let ranOut ←
+            Headless.run stalled.collaborators
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .advance 5⟩] 200
+          let real ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let refused ←
+            Headless.run { real.collaborators with clock := none } #[⟨1, .settle⟩, ⟨2, .advance 1⟩]
+                200
+          return joined.isNone && output.contains "job 1 count: ok" &&
+              ranOut == some (.stalled 3 5) &&
+              (Headless.Failure.stalled 3 5).describe 200 ==
+                "the advance on line 3 found no wait due within 5 ms on the clock within 200 ms" &&
+              refused == some (.noClock 2) &&
+              (Headless.Failure.noClock 2).describe 200 ==
+                s!"the advance on line 2: {Headless.advanceNeedsClock}" },
+    {
       name :=
         "a script is one directive a line, each with its line number, and blank lines and comments are skipped",
       run :=

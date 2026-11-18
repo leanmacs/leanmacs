@@ -16,6 +16,7 @@ import Editor.Files.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Headless.CommandLine
 import Editor.InputScheme.Vim.Default
+import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Pool
 import Editor.Job.Real
@@ -917,6 +918,11 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   `idle` and `journal`; none when nothing draws, as in the headless mode
   without `--render`. -/
   render : Option Render := none
+  /-- The fake clock the host's jobs wait on, for the driver's `advance`,
+  when they wait on one ("Headless time", in the module docs): the headless
+  mode's, and a test stage's. None for a host on the real clock, the window
+  mode's. -/
+  clock : Option Job.FakeClock := none
 
 /-- What the driver posts to the editor queue: a request, a marker to wait
 for, or the end of the loop. -/
@@ -2037,6 +2043,10 @@ inductive Directive where
   frames it presented since the last `journal`, with their latencies. The
   driver's own. -/
   | journal
+  /-- Wait until the host's fake clock holds a wait due within this many
+  milliseconds, then move the clock on by them, completing every wait then
+  due. The driver's own; it sends nothing to the editor thread. -/
+  | advance (milliseconds : Nat)
   deriving DecidableEq, Repr
 
 /-- The name a directive gives after its keyword, which is the first
@@ -2143,8 +2153,15 @@ def directive? (line : String) : Except String (Option Directive) :=
                                 .error
                                   s!"`{line}` is not an idle: expected idle <milliseconds>, one number"
                             else
-                              .error
-                                s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, agree, settle, join, idle <milliseconds>, journal, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
+                              if line == "advance" || line.startsWith "advance " then
+                                match (named line 7).bind String.toNat? with
+                                | some milliseconds => .ok (some (.advance milliseconds))
+                                | none =>
+                                  .error
+                                    s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
+                              else
+                                .error
+                                  s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, agree, settle, join, idle <milliseconds>, advance <milliseconds>, journal, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -2182,7 +2199,16 @@ inductive Failure where
   /-- The editor thread did not answer: a wait ran out before it had handled
   everything sent to it, or, with no line, it did not stop. -/
   | unanswered (line : Option Nat)
+  /-- The `advance` on `line` of `milliseconds` found no wait due within
+  them on the clock. -/
+  | stalled (line : Nat) (milliseconds : Nat)
+  /-- The `advance` on `line` ran on a host whose clock is real. -/
+  | noClock (line : Nat)
   deriving DecidableEq, Repr
+
+/-- What an `advance` on a host whose clock is real says. -/
+def advanceNeedsClock : String :=
+  "advance needs the headless mode's fake clock"
 
 /-- What went wrong, for the user: `patience` is how long each wait was, in
 milliseconds. -/
@@ -2199,6 +2225,9 @@ def Failure.describe (patience : Nat) : Failure → String
     s!"the settle or join on line {line} of the script did not finish within {patience} ms: the editor thread had not handled everything sent to it. It is still inside a command or another event, or it has ended"
   | .unanswered none =>
     s!"the script ended, and the editor thread did not stop within {patience} ms"
+  | .stalled line milliseconds =>
+    s!"the advance on line {line} found no wait due within {milliseconds} ms on the clock within {patience} ms"
+  | .noClock line => s!"the advance on line {line}: {advanceNeedsClock}"
 
 /-- The failure a wait that did not settle is, at `line` of the script. -/
 def Wait.failure (line : Option Nat) : Wait → Option Failure
@@ -2317,6 +2346,17 @@ def run {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ sch
           journaled := last
           collaborators.emit said
         pure wait
+      | .advance milliseconds =>
+        let some clock := collaborators.clock |
+          discard <| host.halt patience
+          return some (.noClock line.number)
+        -- Only once a wait is due within the move: so a job that is about
+        -- to sleep is in its sleep before the clock moves past it.
+        unless ← within patience (clock.dueWithin milliseconds) do
+          discard <| host.halt patience
+          return some (.stalled line.number milliseconds)
+        clock.advance milliseconds
+        continue
     if wait == .ended then
       break
     if let some failure := wait.failure (some line.number) then
@@ -2416,8 +2456,8 @@ and the environments they share for the mode `host` (`reportedEnvironments`).
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
 queues ends. -/
-def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (host : Process.Host) :
-    IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
+def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (host : Process.Host)
+    (fakeClock : Bool := false) : IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
@@ -2429,9 +2469,16 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (h
   let timed ← Job.TimedRuns.new
   let watches ← Job.RealWatches.new
   let refusedDiffs ← Job.RefusedDiffs.new
-  let timers := Job.realTimers completions
+  -- The headless mode's clock is fake: a script moves it (`advance`).
+  let clock ←
+    if fakeClock then
+      some <$> Job.FakeClock.new completions
+    else
+      pure none
+  let timers := (clock.map (·.timers)).getD (Job.realTimers completions)
   let environments ← IO.mkRef ({ host } : Process.Environments)
-  return shippedOver sysroot oleanDir configDir emit
+  let collaborators :=
+    shippedOver sysroot oleanDir configDir emit
       { completions, timers
         files := Job.realFiles completions published.reader held
         processes := Job.realProcesses completions refused timers timed
@@ -2439,6 +2486,7 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (h
         diffs := Job.realDiffs completions published.reader held refusedDiffs
         environments := reportedEnvironments environments 4, fuzzy := Fuzzy.real
         snapshots := Job.realSnapshots published.reader } published held
+  return { collaborators with clock }
 
 /-- The headless mode of the executable, handed the command line after
 `headless`: `editor headless [--render] [<sysroot> <olean dir>] <config dir>
@@ -2496,7 +2544,7 @@ def main (arguments : List String) : IO UInt32 := do
     if let .error reason← Ffi.renderHeadless then
       IO.eprintln s!"editor: the headless render session could not be started: {reason}"
       return 1
-  let shipped ← shipped sysroot oleanDir configDir IO.println .headless
+  let shipped ← shipped sysroot oleanDir configDir IO.println .headless (fakeClock := true)
   let workingDirectory ← IO.currentDir
   let failure ←
     run

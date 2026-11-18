@@ -14,9 +14,11 @@ scene
 # installs and a job's command among them: the count of scenes published
 # says so. Between the two scene requests there are seven events: the first
 # scene request, the reload and its wake-up, the spawn and the job's
-# wake-up, and the markers of the settle and the join.
+# wake-up, and the markers of the settle and the join. `count` sleeps on the
+# headless mode's clock, which the script advances: `advance` sends no event.
 reload
 settle
 spawn count
+advance 1
 join
 scene

@@ -20,10 +20,12 @@ key c KeyC control
 key m KeyM -
 scene
 
-# `C-c d` runs `ask`, which starts the job `double` with 21. `join` waits
-# for the job: its result comes back as a command, which says it in the echo
-# area of the next scene.
+# `C-c d` runs `ask`, which starts the job `double` with 21. It sleeps on the
+# headless mode's clock, which the script advances. `join` waits for the
+# job: its result comes back as a command, which says it in the echo area of
+# the next scene.
 key c KeyC control
 key d KeyD -
+advance 1
 join
 scene

@@ -176,6 +176,12 @@ def now (clock : FakeClock) : BaseIO Nat :=
 def waiting (clock : FakeClock) : BaseIO Nat :=
   return (← clock.state.get).waiting.size
 
+/-- Whether a wait is waiting that a move of the clock by `duration`
+milliseconds would complete. -/
+def dueWithin (clock : FakeClock) (duration : Nat) : BaseIO Bool := do
+  let state ← clock.state.get
+  return state.waiting.any (·.2 ≤ state.now + duration)
+
 /-- The earliest deadline a wait is waiting for, if any is. -/
 def nextDeadline (clock : FakeClock) : BaseIO (Option Nat) :=
   return (← clock.state.get).waiting.foldl
