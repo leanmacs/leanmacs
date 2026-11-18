@@ -3971,6 +3971,67 @@ def statusBufferChecks (services : Job.Services) : List Check :=
                 (text.splitOn "the hook says no on its output").length > 1 &&
                   (text.splitOn "the hook says no on its error").length > 1 }]
 
+/-- The lines `1` to `20`, each ended by a line feed. -/
+def twentyLines : String :=
+  String.join ((List.range 20).map fun row => s!"{row + 1}\n")
+
+/-- The keys of the review buffer check: the status buffer check's, and
+`to-excerpt`, which puts the window's cursor at the start of the excerpt of
+its text its argument names. -/
+def reviewKeys : Loop.Keys TestScheme.scheme :=
+  let toExcerpt : Call → EditorM (Option Config.Write) := fun call => do
+    if let .nat index :: _ := call.arguments then
+      if let some excerpt := (← call.target.buffer.text.excerpts)[index]? then
+        discard <| call.target.window.id.select { ranges := #[⟨excerpt.start, excerpt.start⟩] }
+    return none
+  { statusKeys with
+    command? := fun name =>
+      if name == "to-excerpt" then some toExcerpt else statusKeys.command? name }
+
+/-- The checks of the review buffer (`Editor/VersionControl/Review.lean`) over
+real git, wiring only: its jobs run over the library's process, file and
+diff services and the real text store in a temporary repository, every
+child's git under `pinnedAwayConfig` and kept from the system's config. -/
+def reviewBufferChecks (services : Job.Services) : List Check :=
+  [{  name :=
+        "criteria 1 and 2 over real git: in a linked worktree on feature, whose commit changes a.txt in two hunks and b.txt, vc-review with no text reviews against the main worktree's branch, both files' hunks under their headers; vc-review-revert on a.txt's first hunk makes a.txt's buffer hold the base's lines for it and the branch's for the other, and leaves b.txt"
+      run :=
+        withConfiguredRepository
+          (VersionControlContract.clean #[("a.txt", twentyLines), ("b.txt", "b\n")])
+          fun home config directory => do
+          let linked := directory.parent.getD directory / "feature"
+          discard <|
+              gitIn home directory #["worktree", "add", "-q", "-b", "feature", linked.toString]
+          let changed :=
+            VersionControlContract.lineSet (VersionControlContract.lineSet twentyLines 1 "two\n") 15
+              "sixteen\n"
+          writeMaking (linked / "a.txt") changed
+          writeMaking (linked / "b.txt") "bee\n"
+          discard <| gitIn home linked #["add", "-A"]
+          discard <|
+              gitIn home linked #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "feature"]
+          let rig ← ProjectRig.over (onIsolatedGit services home config)
+          let some (reviewed, texts) ←
+            runSettled rig linked
+                [openFile (linked / "a.txt"), { command := VersionControl.reviewName }] reviewKeys
+                statusJobs | return false
+          let headers :=
+            ((reviewed.state.focusedTarget?.bind (·.buffer.excerpts)).map fun excerpts =>
+                  (excerpts.entries.map (·.header)).filter (!·.isEmpty)).getD
+              #[]
+          let some (reverted, texts) ←
+            runSettledFrom rig reviewed texts
+                [{ command := "to-excerpt", arguments := [.nat 1] },
+                  { command := VersionControl.reviewRevertName }]
+                reviewKeys statusJobs | return false
+          let first ← bufferText rig texts reverted "a.txt"
+          let other ← bufferText rig texts reverted "b.txt"
+          return headers ==
+                #["a.txt @@ -1,5 +1,5 @@", "a.txt @@ -13,7 +13,7 @@", "b.txt @@ -1 +1 @@"] &&
+              first == some (VersionControlContract.lineSet twentyLines 15 "sixteen\n") &&
+              other == some "bee\n" &&
+              reverted.state.echo == "reverted a hunk of a.txt" }]
+
 end ContractTest
 
 /-- Runs the text port's contract against its real binding, then the job
@@ -4059,6 +4120,8 @@ def main (arguments : List String) : IO UInt32 := do
   let versionControlCheckFailed ← ContractTest.checkFailures versionControlChecks
   let statusBufferChecks := ContractTest.statusBufferChecks services
   let statusBufferCheckFailed ← ContractTest.checkFailures statusBufferChecks
+  let reviewBufferChecks := ContractTest.reviewBufferChecks services
+  let reviewBufferCheckFailed ← ContractTest.checkFailures reviewBufferChecks
   let fileWatchFailed ← ContractTest.fileWatchFailures services
   let fileWatchChecks := ContractTest.fileWatchChecks services
   let fileWatchCheckFailed ← ContractTest.checkFailures fileWatchChecks
@@ -4108,6 +4171,7 @@ def main (arguments : List String) : IO UInt32 := do
       versionControlFailed ++
       versionControlCheckFailed ++
       statusBufferCheckFailed ++
+      reviewBufferCheckFailed ++
       fileWatchFailed ++
       fileWatchCheckFailed ++
       checkFailed ++
@@ -4133,6 +4197,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties over the library's matcher, and {Editor.JobContract.snapshotProperties.length} snapshot properties over a published table, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, under a user config asking for what its command line pins away, with {versionControlChecks.length} checks of what only git makes (a branch's change asked from two worktrees, a status read of files added with intent to add, what to watch in a linked worktree, and a commit's message under a config that strips one) and {statusBufferChecks.length} checks of the status buffer, of the worktree list, of vc-show, of staging a hunk and of the message buffer over it, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, {Editor.Completion.StyleContract.properties.length} properties of the completion styles hold of the fuzzy style and of the path style over it, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties over the library's matcher, and {Editor.JobContract.snapshotProperties.length} snapshot properties over a published table, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, under a user config asking for what its command line pins away, with {versionControlChecks.length} checks of what only git makes (a branch's change asked from two worktrees, a status read of files added with intent to add, what to watch in a linked worktree, and a commit's message under a config that strips one) and {statusBufferChecks.length} checks of the status buffer, of the worktree list, of vc-show, of staging a hunk and of the message buffer over it, and {reviewBufferChecks.length} of the review buffer, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, {Editor.Completion.StyleContract.properties.length} properties of the completion styles hold of the fuzzy style and of the path style over it, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0
