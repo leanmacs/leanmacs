@@ -52,7 +52,12 @@ the loop's state holds, so a mode set by one key holds from the next.
 - **The scene shows the pending keys** (`Loop.pending`): what the scheme
   reports as pending, as a key string. It is empty once a sequence
   completes and after a key that goes on with no binding, since the scheme
-  then reports none.
+  then reports none. **And the keys that can follow them** (`Loop.keyHints`,
+  `Scene.keyHints`): what the scheme lists after its keymap prefix for the
+  focused view (`InputScheme.continuations`), over the active keymaps and
+  with the prefix names the host hands (`Keys.prefixNames`), each with its
+  description or its name and count. None while no keymap prefix is
+  pending.
 - **The scheme is told of a view that is closed** (`Loop.forgetViews`,
   `InputScheme.closeView`). After a command that ran to its end, each view
   the state before it had a window of and the state it left has none of is
@@ -1338,6 +1343,10 @@ structure Loop.Keys (scheme : InputScheme) where
   /-- The active keymaps of each view in an editor state, in precedence
   order. The loop applies it to its own state. -/
   maps : EditorState → ViewId → List (Keymap scheme.Binding) := fun _ _ => []
+  /-- The name of a prefix, given its keys as chords, for the key hints
+  (`Loop.keyHints`): the registry's (`Config.Registry.prefixName?`), which
+  the host hands; none for a loop handed none. -/
+  prefixNames : List Key → Option String := fun _ => none
   /-- What an invocation of the command of a name runs: given what it is
   called with, the program, whose value is what the command asks to be
   written; `none` for a name no command is registered under. -/
@@ -1750,15 +1759,16 @@ def dividerFace : FaceName :=
 dividers between its tiled windows (`EditorState.dividers`) in
 `dividerFace`, the echo area, inset by the bottom row's inset
 (`EditorState.bottomInset`), and the preedit, around the views made of its
-windows, with `pending` as the keys typed of a sequence not yet completed
-and `menu` as the menu bar. -/
-def scene (state : EditorState) (views : Array View) (pending : String)
-    (menu : Option Menu := none) : Scene :=
+windows, with `pending` as the keys typed of a sequence not yet completed,
+`menu` as the menu bar and `keyHints` as the keys that can follow. -/
+def scene (state : EditorState) (views : Array View) (pending : String) (menu : Option Menu := none)
+    (keyHints : Array KeyHint := #[]) : Scene :=
   let frame := state.frame
   { size := frame.size, views
     dividers := state.dividers.map ({ rect := ·, face := dividerFace })
     focused := if frame.hasFocus then some frame.focused else none
-    echo := state.echo, echoPadding := state.bottomInset, pending, preedit := state.preedit
+    echo := state.echo, echoPadding := state.bottomInset, pending, keyHints
+    preedit := state.preedit
     title := state.title, menu }
 
 /-- The keys the scheme reports as pending in the loop's state, as a key
@@ -1766,6 +1776,15 @@ string (`Key.notations`): what the scene shows of a sequence begun and not
 completed, and empty when none is. -/
 def pending (loop : Loop scheme) : String :=
   Key.notations (scheme.pending loop.input)
+
+/-- The keys that can follow the keymap prefix pending for the focused view,
+as key hints (`InputScheme.continuations`, `Keymap.Continuation.hint`), over
+the active keymaps and with the prefix names `keys` hands: what the scene
+shows beside the pending keys, and none when no keymap prefix is pending. -/
+def keyHints (keys : Keys scheme) (loop : Loop scheme) : Array KeyHint :=
+  (scheme.continuations (keys.maps loop.state) keys.prefixNames loop.state.frame.focused
+        loop.input).toArray.map
+    (·.hint)
 
 /-- The buffers in an insert session: the buffer of each window whose view
 the scheme reports as in one (`InputScheme.Report.session`), in the scheme's
@@ -2166,7 +2185,7 @@ one whose anchor is not drawn (`spots`, `EditorState.located`), has the
 floats follow their cursors, appends the candidate list's view while a
 prompt's list has shown a row (`candidateListView`) and the tab bar's view
 while the bar is shown (`tabBarView`), publishes a scene
-of the state, releases each
+of the state, with `keyHints` as its key hints (`keyHints`), releases each
 snapshot the last scene named that this one does not, and gives up what
 the floats it closed held, telling the scheme they closed. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
@@ -2175,7 +2194,8 @@ the echo area of the state it returns. -/
 def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0)
     (layout : Option Layout := none) (tabBar : Option TabBar.Shown := none)
     (matching : Completion.Matching := .standard) (inlineMatches : Nat := Loop.inlineMatches)
-    (displaying : Completion.Displaying := .standard) : EditorM (Loop scheme) := do
+    (displaying : Completion.Displaying := .standard) (keyHints : Array KeyHint := #[]) :
+    EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
@@ -2249,7 +2269,7 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   let state :=
     placed.refusedBy
       (unrecorded <|> unlisted <|> unclosed <|> unshown <|> unlistedView <|> unbarred)
-  Display.publish (scene state views loop.pending loop.menu)
+  Display.publish (scene state views loop.pending loop.menu keyHints)
   -- A snapshot is kept while a view of the scene names it: one taken for a
   -- float that closed above is released with the last scene's others.
   let named := shown.filter fun was => views.any (·.snapshot == was.snapshot)
@@ -2994,7 +3014,7 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
   do
   let loop ←
     stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
-        keys.inlineMatches keys.displaying
+        keys.inlineMatches keys.displaying (keyHints := stepped.loop.keyHints keys)
   let (loop, starts, cancels) := loop.fileJobs keys
   let (loop, sourceStarts, sourceCancels, spawns) := loop.completionJobs keys
   let (state, gutterStarts, gutterCancels) ←

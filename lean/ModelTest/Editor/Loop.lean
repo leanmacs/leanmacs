@@ -868,6 +868,36 @@ def pendingShown (keys : Loop.Keys TestScheme.scheme) (events : List Event)
   | some (_, scenes, _) => scenes.map (·.pending)
   | none => #[]
 
+/-- The key hints each scene of a run showed; none of them when the run was
+refused. -/
+def hintsShown (keys : Loop.Keys TestScheme.scheme) (events : List Event)
+    (start : TextM EditorState := EditorState.initial ⟨640, 480⟩) : Array (Array KeyHint) :=
+  match dispatched keys events start with
+  | some (_, scenes, _) => scenes.map (·.keyHints)
+  | none => #[]
+
+/-- The checks of the key hints the scene shows (`Loop.keyHints`): the keys
+that can follow the pending prefix, with their descriptions and the names
+of prefixes the keys are handed, and none at rest. -/
+def dispatchHintChecks : List Check :=
+  let hinted : Loop.Keys TestScheme.scheme :=
+    { maps := fun _ _ =>
+        [Keymap.ofDescribed
+            [(keys "C-x C-s", invoke "save", some "Save"),
+              (keys "C-x r t", invoke "rectangle", some "Rectangle")]]
+      prefixNames := fun typed => if typed == keys "C-x r" then some "rect" else none }
+  let afterPrefix : Array KeyHint :=
+    #[{ key := "C-s", leads := .binding (some "Save") },
+      { key := "r", leads := .prefix (some "rect") 1 }]
+  [{  name :=
+        "after a prefix the scene lists the keys that can follow it, with a binding's description and a prefix's name and count; after a further prefix the keys under it; and none once the sequence completes"
+      run :=
+        pure
+          (hintsShown hinted (presses "C-x r t") ==
+            #[afterPrefix, #[{ key := "t", leads := .binding (some "Rectangle") }], #[]]) },
+    { name := "after a key that goes on with no binding the scene lists no key hints"
+      run := pure (hintsShown hinted (presses "C-x" ++ [pressF5]) == #[afterPrefix, #[]]) }]
+
 /-- What the last scene of a run showed: its echo, its pending keys, and the
 text of each of its views. `none` when the run was refused or published
 nothing. -/
@@ -3242,7 +3272,8 @@ def dispatchChecks : List Check :=
     dispatchReportChecks ++
     dispatchCommandGivesUpChecks ++
     dispatchCommandBreaksOffChecks ++
-    dispatchRunCommandChecks
+    dispatchRunCommandChecks ++
+    dispatchHintChecks
 
 /-- What a step of the mode dispatch checks is handed: the active keymaps
 `registry` makes for the test scheme from the loop's state, and, for every

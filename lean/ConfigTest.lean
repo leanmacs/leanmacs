@@ -116,6 +116,11 @@ show:
   leader, on `\ f f` once a reload sets the leader to `\` (and `SPC f f`
   then does not run it), and `SPC` typed in insert state is a space while
   `SPC f f` after `<Escape>` runs the binding;
+- `hintChecks`: the key hints through a host of the Vim scheme that ships:
+  after a reload, a config's prefix name and a binding's description are
+  in the scene's `hint` lines after `SPC` and after `SPC f`, none are after
+  the binding runs, and a reload that drops the prefix name lists the
+  prefix unnamed;
 - `indentChecks`: `=` and the indented new lines through a host of the Vim
   scheme that ships, over the library's Rust grammar: `gg=G` on the
   mangled Rust indent fixture (`tests/syntax/rust/indent.rs`, read from the
@@ -6616,6 +6621,60 @@ def leaderChecks (context : Context) : List Check :=
               before != "leader find".quote &&
               after == "leader find".quote }]
 
+/-- A chunk whose `setup` registers `leader-find`, which says `leader find`
+in the echo area, binds `<leader> f f` to it described as `Find file`, and,
+when `named`, names the prefix `<leader> f` `file`. -/
+def hintChunk (named : Bool) : String :=
+  "def setup : SetupM Unit := do
+  command \"leader-find\" (message \"leader find\")
+  bindKey \"<leader> f f\" \"leader-find\" (desc := \"Find file\")
+" ++
+    if named then "  prefixName \"<leader> f\" \"file\"\n" else ""
+
+/-- Asks the host for the scene, and returns its key hint lines: the lines
+that start with `hint `. -/
+def Session.hints (session : Session) : IO (Array String) := do
+  return (← session.sceneLines).filter (·.startsWith "hint ")
+
+/-- The checks of the key hints through a host of the Vim scheme that ships
+(`withVimHost`), with the real elaborator: a config's description of a
+binding and its name of a prefix are in the scene's hints once it is
+reloaded, and a reload that drops the name drops it from them. What the
+hints list, and in which order, is pinned by `ModelTest`'s checks of the
+keymap, the Vim scheme and the loop. -/
+def hintChecks (context : Context) : List Check :=
+  [{  name :=
+        "criterion 4: after a reload, SPC lists f as the prefix config named, SPC f lists f as the binding config described, and SPC f f runs it and lists nothing"
+      run :=
+        withVimHost context [("10-hint.lean", hintChunk true)] fun session => do
+          session.ask [.reload]
+          session.typed "SPC"
+          let afterLeader ← session.hints
+          session.typed "<Escape>"
+          session.typed "SPC f"
+          let afterPrefix ← session.hints
+          session.typed "f"
+          let afterBinding ← session.hints
+          return afterLeader.contains "hint f: prefix \"file\" 1" &&
+              afterPrefix == #["hint f: binding \"Find file\""] &&
+              afterBinding.isEmpty &&
+              (← session.echo) == "leader find".quote },
+    { name :=
+        "criterion 5: a reload that drops a config's prefix name drops it from the hints, and the prefix is listed unnamed"
+      run :=
+        withVimHost context [("10-hint.lean", hintChunk true)] fun session => do
+          session.ask [.reload]
+          session.typed "SPC"
+          let named ← session.hints
+          session.typed "<Escape>"
+          session.write "10-hint.lean" (hintChunk false)
+          session.ask [.reload]
+          session.typed "SPC"
+          let unnamed ← session.hints
+          return named.contains "hint f: prefix \"file\" 1" &&
+              unnamed.contains "hint f: prefix - 1" &&
+              !unnamed.any (·.startsWith "hint f: prefix \"file\"") }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
@@ -6645,7 +6704,8 @@ def checks (context : Context) : List Check :=
     autoReloadChecks context ++
     gutterChecks context ++
     exScriptChecks context ++
-    leaderChecks context
+    leaderChecks context ++
+    hintChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

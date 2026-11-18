@@ -397,6 +397,9 @@ store <name> v<version>: <value>
 scene <w>x<h>, focused <id or ->, echo <quoted>, echo padding <n>, preedit <quoted or ->, published <n>, theme <quoted name>
 view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …, padding <across> <down>
 status <view id>: <face> <quoted text>, …   (or "-" for no field)
+hint <key>: binding <quoted description or ->
+hint <key>: prefix <quoted name or -> <count>
+                          (a key that can follow the pending keymap prefix)
 scene: none               (no scene has been published)
 loop: refused: <error>    (a program of the editor loop was refused)
 agree view <id>: <n> rows asked from <anchor>, <m> in the frame: agrees
@@ -448,7 +451,13 @@ state, its buffer's name, whether the buffer is modified and where the
 cursor is. After the views comes one `divider` line for each divider
 between the tiled windows (`Scene.dividers`), in the scene's order: its
 top left, its size and its face, `divider 318,0 2x464 in window-divider`.
-A scene with no divider, one window's, prints none.
+A scene with no divider, one window's, prints none. Last comes one `hint`
+line for each key that can follow the pending keymap prefix
+(`Scene.keyHints`), in the scheme's order: the key, and the binding it
+completes, with its description, or the prefix it leads to, with its name
+and how many bindings lie under it, `-` for one it has none of
+(`hint f: prefix "file" 1`). A scene with no keymap prefix pending prints
+none.
 
 A command a key runs prints nothing: what became of it is in the echo area
 of the scene, `<name>: no such command`, `<name>: refused: <error>`,
@@ -1384,7 +1393,8 @@ from the registry's bindings (`Config.Registry.menuOf`); and the
 completion styles config chose by category over the registry's styles, or
 the fuzzy style (`Config.Registry.matching`); and the completion displays
 config chose by category over the registry's displays, or the minibuffer
-display (`Config.Registry.displaying`). It is made for
+display (`Config.Registry.displaying`); and the registry's prefix names,
+for the key hints (`Config.Registry.prefixName?`). It is made for
 each window event, so a reload changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
@@ -1395,7 +1405,8 @@ def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     tabBar := some (running.config.tabBar.getD .several)
     menu := collaborators.menu.map running.config.registry.menuOf
     matching := running.config.registry.matching, inlineMatches := collaborators.inlineMatches
-    displaying := running.config.registry.displaying }
+    displaying := running.config.registry.displaying
+    prefixNames := running.config.registry.prefixName? scheme }
 
 /-- Publishes a scene of the frame's state, if there is a frame, its status
 lines drawn by the mode line the registry and config make (`keys`): what
@@ -1416,7 +1427,7 @@ def publish (collaborators : Collaborators σ scheme) (running : Running σ sche
   let (published, running) ←
     running.attempt collaborators
         (frame.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
-          keys.inlineMatches keys.displaying)
+          keys.inlineMatches keys.displaying (keyHints := frame.keyHints keys))
   let (frame, starts, cancels, spawns) := (published.getD frame).completionJobs keys
   { running with frame := some frame }.launch collaborators starts cancels spawns
 
@@ -1675,13 +1686,23 @@ def posted (collaborators : Collaborators σ scheme) (running : Running σ schem
   collaborators.emit s!"{label}: {describeEnding ((stepped.ended).getD .finished)}"
   running.took collaborators stepped
 
+/-- A key hint as `scene` prints it: its key, then `binding` and its
+description, quoted, or `prefix`, its name, quoted, and its count; `-` for
+a description or a name it has none of. -/
+def hintLine (hint : KeyHint) : String :=
+  let label (text : Option String) : String := (text.map (·.quote)).getD "-"
+  match hint.leads with
+  | .binding desc => s!"hint {hint.key}: binding {label desc}"
+  | .prefix name count => s!"hint {hint.key}: prefix {label name} {count}"
+
 /-- A scene as `scene` prints it, read from the text store as it is now: its
 frame, then each view, its snapshot's text and its markers' offsets, and
 its gutter's width when it has a gutter column, then, for a view that has
 any, its decorations, each its face and its range (`decorations <view>:
 <face> <start>..<stop> ...`), and its gutter marks, each its text, its face
 and its range (`marks <view>: <text> <face> <start>..<stop> ...`), and its
-status line (`statusLine`). `published` is how many scenes have been published, and
+status line (`statusLine`), then each divider, then each key hint
+(`hintLine`). `published` is how many scenes have been published, and
 `theme` the name of the theme the scene was drawn in. -/
 def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array String) := do
   let focused :=
@@ -1724,7 +1745,9 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
     let rect := divider.rect
     lines :=
       lines.push s!"divider {rect.x},{rect.y} {rect.width}x{rect.height} in {divider.face.name}"
-  return lines
+  -- Only a scene with a keymap prefix pending has key hints, so a scene at
+  -- rest prints as it did before there were any.
+  return lines ++ scene.keyHints.map hintLine
 
 /-- Prints the last scene published, or that there is none. -/
 def scene (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
