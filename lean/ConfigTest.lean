@@ -9,6 +9,8 @@ import Editor.InputScheme.Test
 import Editor.Job.Fake
 import Editor.Minibuffer.Compiled
 import Editor.Themes.Compiled
+import Editor.VersionControl.Compiled
+import Editor.Workspace.Compiled
 
 /-!
 # Checks of the config session against the real elaborator
@@ -22,8 +24,9 @@ indent fixture the indent checks read. It reads nothing from the
 environment or the working directory. It runs every check in `checks`, names
 the ones that failed, and exits non-zero if any did.
 
-The model tests (`ModelTest.lean`) pin the decisions of the config session on
-fakes. The checks here pin what only real collaborators can show:
+The model tests (`ModelTest.lean` and `ModelTest/`) pin the decisions of the
+config session on fakes. The checks here pin what only real collaborators can
+show:
 
 - `elaboratorChecks`: the real elaborator behaves as the fake of its port
   assumes, and compiled code and config share state;
@@ -1694,7 +1697,8 @@ which the test scheme reports nothing, with its cursor at `cursor` (a row
 and a column in cells) in a text of `lines` rows, and with its file found
 changed on disk by a check when `changed`: what the host prints
 (`Headless.statusLine`) of the fields the shipped mode line gives such a
-view (`ModeLine.standard`). So a check that compares a host's whole output
+view (`ModeLine.standard`), its row in `mode-line.active`
+(`Loop.statusOf`). So a check that compares a host's whole output
 repeats neither the mode line's faces and texts nor the host's form. Each
 call site passes the cursor its printed `selections` imply and the rows its
 text has, since the line:col and the position segments read them. The
@@ -1714,6 +1718,7 @@ def statusOf (view : Nat := 0) (name : String := "scratch") (modified : Bool := 
           { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 }
             changed := if changed then some { found := none, told := true } else none } }
   Headless.statusLine ⟨view⟩ (ModeLine.standard.fields { buffer, cursor := some cursor, lines })
+    (some ModeLine.activeFace)
 
 /-- Whether `output` has a line that says a job registered under `name`
 ended ok, whatever its id: the loop's own checks of files shift the ids of
@@ -1921,7 +1926,7 @@ def scriptChecks (context : Context) : List Check :=
               output.filter (fun line => !line.startsWith "scene " && !line.startsWith "view ") ==
                 #["reload 1: installed, 1 chunks, 0 commands",
                   "segment: no segment is registered as `nope`",
-                  "status 0: mode-line.buffer \"scratch\" +4 | mode-line.secondary \"hi\" +4, mode-line.secondary \"1:3\" +4"] &&
+                  "status 0 in mode-line.active: mode-line.buffer \"scratch\" +4 | mode-line.secondary \"hi\" +4, mode-line.secondary \"1:3\" +4"] &&
               output.any fun line =>
                 line.startsWith "scene " &&
                   (line.splitOn
@@ -5106,6 +5111,116 @@ def autoReloadChecks (context : Context) : List Check :=
                 throw (IO.userError s!"the edited buffer was not marked within a second: {last}")
               return (← IO.FS.readBinFile path) == again.toUTF8 }]
 
+/-- The variables every git a gutter check runs is given: git kept from the
+system's config and from the user's, whose home is `home`, and a fixed
+author, so a commit needs nothing of the machine's. -/
+def isolatedGit (home : System.FilePath) : Array (String × String) :=
+  #[("GIT_CONFIG_NOSYSTEM", "1"), ("GIT_CONFIG_GLOBAL", "/dev/null"), ("HOME", home.toString),
+    ("XDG_CONFIG_HOME", home.toString), ("GIT_AUTHOR_NAME", "a"),
+    ("GIT_AUTHOR_EMAIL", "a@example.com"), ("GIT_COMMITTER_NAME", "a"),
+    ("GIT_COMMITTER_EMAIL", "a@example.com")]
+
+/-- Runs git with `arguments` in `directory`, as another program would, with
+`isolatedGit home` and none of `GIT_DIR`, `GIT_WORK_TREE` and
+`GIT_INDEX_FILE`: what it printed, or a throw when it did not exit 0. The
+test process's own environment is never touched. -/
+def gitOutside (home directory : System.FilePath) (arguments : Array String) : IO String :=
+  IO.Process.run
+    { cmd := "git", args := arguments, cwd := directory
+      env :=
+        (isolatedGit home).map (fun (name, value) => (name, some value)) ++
+          #[("GIT_DIR", none), ("GIT_WORK_TREE", none), ("GIT_INDEX_FILE", none)] }
+
+/-- The library's process service, each child it starts given
+`isolatedGit home` over the variables its command sets; each request that
+starts a child is matched constructor by constructor, so the replies' types
+line up. -/
+def isolatedProcesses (processes : Job.Processes) (home : System.FilePath) : Job.Processes :=
+  let change (command : Process.Command) : Process.Command :=
+    let names := (isolatedGit home).map (·.1)
+    { command with
+      environment :=
+        { command.environment with
+          set := (command.environment.set.filter (!names.contains ·.1)) ++ isolatedGit home } }
+  let changed : ProcessRequest → ProcessRequest
+    | .run command limit => .run (change command) limit
+    | .runWithin command limit time => .runWithin (change command) limit time
+    | .runInput command input limit time => .runInput (change command) input limit time
+    | .start command streaming => .start (change command) streaming
+    | other => other
+  { processes with
+    start := fun id request => processes.start id (changed request)
+    take := fun id request =>
+      match request with
+      | .run command limit => processes.take id (.run (change command) limit)
+      | .runWithin command limit time => processes.take id (.runWithin (change command) limit time)
+      | .runInput command input limit time =>
+        processes.take id (.runInput (change command) input limit time)
+      | .start command streaming => processes.take id (.start (change command) streaming)
+      | other => processes.take id other }
+
+/-- The checks of the version-control gutter through the headless host
+(`Editor/VersionControl/Gutter.lean`), wiring only: real git over the
+library's process service, the library's watch service and its diff
+engine, in a repository the check writes in a temporary directory of its
+own, every git kept from the user's and the system's config. Every wait is
+polled, never a fixed sleep. -/
+def gutterChecks (context : Context) : List Check :=
+  [{  name :=
+        "criterion 6 through the host over real git: a tracked file with a line changed shows a changed mark, and after git commit -a run by another process its gutter has no mark"
+      run :=
+        IO.FS.withTempDir fun base => do
+          let base ← IO.FS.realPath base
+          let (home, repo, configDir) := (base / "home", base / "repo", base / "config")
+          for directory in [home, repo, configDir] do
+            IO.FS.createDirAll directory
+          let file := repo / "a.txt"
+          discard <| gitOutside home repo #["-c", "init.defaultBranch=main", "init", "-q"]
+          IO.FS.writeFile file "a\nb\nc\n"
+          discard <| gitOutside home repo #["add", "a.txt"]
+          discard <|
+              gitOutside home repo #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "one"]
+          IO.FS.writeFile file "a\nB\nc\n"
+          let stage ←
+            Stage.overFiles context (Config.Directory.source configDir)
+                { commands :=
+                    Files.commands ++ Minibuffer.commands ++ Workspace.commands ++
+                      VersionControl.gutterCommands ++
+                      #[opening "open-a" file]
+                  jobs := Files.jobs ++ Workspace.jobs ++ VersionControl.gutterJobs
+                  modes := Minibuffer.modes }
+          let collaborators := stage.collaborators
+          let services := collaborators.services
+          let processes :=
+            Job.realProcesses services.completions (← Job.RefusedRuns.new) services.timers
+              (← Job.TimedRuns.new)
+          let stage :=
+            { stage with
+              collaborators :=
+                { collaborators with
+                  services := { services with processes := isolatedProcesses processes home } } }
+          onStage stage fun host stage => do
+              let session : Session :=
+                { host, directory := configDir, output := stage.output, threads := stage.threads
+                  clock := stage.clock, watches := stage.watches, log := stage.log }
+              -- The watch job never ends, so the host's jobs never settle: the
+              -- open is asked for, and its outcome polled.
+              session.ask [.run "open-a"]
+              let changed := "marks 0: ~ diff.changed 2..4"
+              let (marked, saw) ← session.within 5000 (·.contains changed)
+              unless marked.isSome do
+                throw (IO.userError s!"the changed mark was not shown: {saw}")
+              discard <|
+                  gitOutside home repo
+                    #["-c", "commit.gpgsign=false", "commit", "-q", "-a", "-m", "two"]
+              let (cleared, last) ←
+                session.within 5000 fun lines =>
+                    !lines.any (·.startsWith "marks 0:") &&
+                      lines.any fun line => line.startsWith "view 0" && line.endsWith " gutter 12"
+              unless cleared.isSome do
+                throw (IO.userError s!"the mark was not cleared after the commit: {last}")
+              return true }]
+
 /-- The directives of one ex line of a script: the ex command run by its
 name, which asks, `line` committed into the minibuffer, and the accept
 key. -/
@@ -6468,6 +6583,7 @@ def checks (context : Context) : List Check :=
     languageChecks context ++
     reloadChecks context ++
     autoReloadChecks context ++
+    gutterChecks context ++
     exScriptChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that

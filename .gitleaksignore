@@ -1,0 +1,16 @@
+# Reviewed gitleaks findings that are not secrets, one fingerprint a line
+# (docs/dev-practices/publishing.md, "The secret scan"). gitleaks skips
+# blank lines and lines starting with `#`.
+#
+# The review before going public, 2026-11-17: gitleaks 8.30.1, default
+# rules (`.gitleaks.toml`), over `main` at a479a133 (1092 commits, 10 of
+# them merges): every commit (`--log-opts=main`), every first-parent commit
+# with merges diffed against their first parent
+# (`--log-opts="-m --first-parent main"`), and the working tree's staged and
+# unstaged changes. Zero findings, so zero fingerprints below.
+#
+# To add one, only after reading the finding and showing it is not a
+# credential: a line with the fingerprint gitleaks printed
+# (`<commit>:<file>:<rule>:<line>`), preceded by a `#` line saying what the
+# matched text is and why it is not a secret. A real or possible credential
+# never goes here.

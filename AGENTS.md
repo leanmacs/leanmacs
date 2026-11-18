@@ -84,6 +84,12 @@ when no library fits or a measured problem requires it, and record why.
 - A port with a pure model gets one contract check: the same properties run
   against the model and against the real implementation, so the model cannot
   drift. Test the logic above the port against the model alone.
+- Keep a module's tests beside it. In Rust, put them in the module's
+  `#[cfg(test)] mod tests`, or in `<module>/tests.rs` once that outgrows the
+  file. In Lean, which has no test-only code, put a module's tests in a test
+  module that mirrors its path under the test executable's root (the tests of
+  `Editor/State.lean` in `ModelTest/Editor/State.lean`), and have that root
+  only import its test modules and run their checks.
 
 ## Crate coupling
 

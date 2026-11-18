@@ -8,17 +8,38 @@
 //! geometry of its cursors and of its selections. Geometry is in pixels
 //! from the view's top left.
 //!
+//! **The dividers.** Each of the scene's dividers ([`Scene::dividers`]) is a
+//! [`Fill`] of its rectangle in its face's foreground over the default
+//! face, as Emacs colours `window-divider` and `vertical-border` with
+//! `:foreground`: a face nothing defines is the default face's ink, which
+//! is seen on the paper. Layout reads no face name of its own for them:
+//! which strips are dividers, and their face, are Lean's. The frame keeps
+//! them apart from the views ([`Frame::dividers`]), and the renderer fills
+//! them first.
+//!
 //! The rows that fit are the rows query's ([`query`](crate::query), "The
 //! rows that fit"): each counts as at least one pixel, so a frame holds at
 //! most a row for each pixel of its view's height, whatever height a font
 //! gives its lines. A row is as tall as the shaper made it, so a row of no
 //! height has a height of 0 and the row after it has its `y`.
 //!
+//! **Block rows.** A view's blocks ([`View::blocks`]) are rows of
+//! [`ViewFrame::rows`] too, in top-to-bottom order among its text rows,
+//! each with [`FrameRow::block`] naming its block, its bytes those of the
+//! block's text and its runs its block's decorations' paint over the
+//! default face. Where each goes and which fit are the rows query's rule
+//! ([`query`](crate::query), "Blocks"), and the frame walks the same
+//! walk. A renderer draws a block row as any row. Cursors and selection
+//! areas are on text rows only, at their `y`, which counts the block rows
+//! above them; a row's hash is computed as a text row's, so an unchanged
+//! header keeps its hash.
+//!
 //! **The mode line.** A view with at least one status field has a status
 //! row ([`StatusRow`]) at the bottom of its rectangle. Each field is
 //! shaped through the `Shaper` port as a line of its own, in its face over
-//! the view's status face ([`View::status_face`], an unselected window's
-//! `mode-line.inactive`) over the face `mode-line` over the default face.
+//! the view's status face ([`View::status_face`], Lean's
+//! `mode-line.active` for the selected window and `mode-line.inactive` for
+//! the others) over the face `mode-line` over the default face.
 //! A tab, a carriage return or a line feed in a field is shaped as a
 //! space. There is no separator glyph: fields are told apart by their
 //! padding and their background.
@@ -92,6 +113,32 @@
 //!   takes no `down`: it is at the view's foot.
 //! - **The view's background** (the default face's) fills its rectangle,
 //!   so the padding round the text is paper, not a border.
+//!
+//! **The gutter.** A view whose [`Padding::gutter`](crate::scene::Padding::gutter)
+//! is not 0 has a column that many points wide (`gutter` pixels below)
+//! between `across` and its text:
+//!
+//! - **The text** wraps at the width less twice `across` and once
+//!   `gutter`, and its rows, cursors and selection areas are `across` and
+//!   `gutter` in from the view's left. The rows, spot and move queries
+//!   take the column off by the same functions.
+//! - **A mark** ([`View::marks`](crate::scene::View::marks)) is a row of
+//!   [`ViewFrame::rows`] with [`FrameRow::mark`] naming it, pushed after
+//!   each text row it is drawn beside: on every visual line of each buffer
+//!   row its range has a byte in, or of the row that holds its start when
+//!   the range is empty. Its `x` is `across`, it sits on its text row's
+//!   baseline, and only its text's first visual line is drawn. Its text is
+//!   laid out through the block store in its face over `gutter` over the
+//!   default face, so a mark's hash is a row's hash of its text and paint,
+//!   and an unchanged mark keeps it. Marks beside rows not shown draw
+//!   nothing.
+//! - **The column's paper** is `gutter`'s only behind a mark's glyphs; the
+//!   rest of it is the view's background.
+//! - **Text rows** are told from block and mark rows by
+//!   [`FrameRow::is_text`]: what reads a frame's text rows picks them by
+//!   it.
+//!
+//! A gutter of 0 and no mark lay out as before there was a gutter.
 //!
 //! The echo's view, [`ECHO_VIEW`], has no padding of its own: its fields
 //! are inset [`Scene::echo_padding`] points from the frame's left and
@@ -191,16 +238,20 @@ use std::sync::Arc;
 use editor_text::{Selection, SelectionRange, Snapshot};
 
 use crate::Layout;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+use crate::blocks::{BlockKey, BlockLayout, ViewBlocks, ViewMarks, mark_block};
 
 use crate::cache::{FieldKept, StatusKept, state};
 use crate::decoration::{
-    DecorationSource, FaceSpanSource, SelectionSource, Span, TextSpansSource, fonts_of, merge,
+    DecorationSource, FaceSpanSource, SelectionSource, Span, Styles, TextSpansSource, fonts_of,
+    merge,
 };
 use crate::face::{
     Color, ECHO_AREA_FACE, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle,
 };
-use crate::query::{Visual, Walker};
+use crate::line::LineEntry;
+use crate::query::{Shown, Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, Side, Size, StatusField, TextKey, View, ViewId};
 use crate::shaper::{
     FontId, FontRun, Glyph, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper,
@@ -222,6 +273,16 @@ pub struct Area {
     pub height: f32,
 }
 
+/// A rectangle of the frame filled in one colour: a divider between two
+/// views (module docs, "The dividers").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fill {
+    /// Where it is, in the frame's physical pixels from its top left.
+    pub rect: Rect,
+    /// Its colour.
+    pub color: Color,
+}
+
 /// One visual row of a view's frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrameRow {
@@ -234,7 +295,8 @@ pub struct FrameRow {
     pub height: f32,
     /// Its baseline, from its top.
     pub baseline: f32,
-    /// Its bytes in the view's snapshot, without its line break. A tab
+    /// Its bytes, without its line break: in the view's snapshot for a row
+    /// of the view's text, and in the block's text for a block row. A tab
     /// whose spaces it starts inside is not among them: the tab is the
     /// earlier row's.
     pub bytes: Range<usize>,
@@ -248,6 +310,55 @@ pub struct FrameRow {
     pub runs: Vec<(Range<usize>, Paint)>,
     /// The content hash.
     pub hash: u64,
+    /// Which text it is a row of: `None` for the view's text, and
+    /// `Some(i)` for a line of the view's `blocks[i]` ([`View::blocks`];
+    /// [`query`](crate::query), "Blocks"). A block row is drawn like any
+    /// row: the renderer needs to tell it from no other.
+    pub block: Option<usize>,
+    /// Which gutter mark it draws: `Some(i)` for the view's `marks[i]`
+    /// ([`View::marks`](crate::scene::View::marks); module docs, "The
+    /// gutter"), whose bytes are those of the mark's text, and `None`
+    /// otherwise. A mark row is drawn like any row too.
+    pub mark: Option<usize>,
+}
+
+impl FrameRow {
+    /// A row of the view's text at `x` and `y`, of `bytes` of its
+    /// snapshot, drawing `line` with `runs`, as tall as `line` and on its
+    /// baseline, with the content hash `hash`.
+    ///
+    /// It is how the frame builds a text row, and it is published for the
+    /// tests of other crates: a renderer's test builds the rows it draws
+    /// through it, or from one it returns with `..`, so a field added to a
+    /// row breaks no test outside this crate.
+    pub fn text_row(
+        x: f32,
+        y: f32,
+        bytes: Range<usize>,
+        line: Arc<VisualLine>,
+        runs: Vec<(Range<usize>, Paint)>,
+        hash: u64,
+    ) -> Self {
+        Self {
+            x,
+            y,
+            height: line.height,
+            baseline: line.baseline,
+            bytes,
+            line,
+            runs,
+            hash,
+            block: None,
+            mark: None,
+        }
+    }
+
+    /// Whether it is a row of the view's text: neither a block's nor a
+    /// gutter mark's. What reads the text rows of a frame picks them by
+    /// this, so a kind of row added later is not taken for one.
+    pub fn is_text(&self) -> bool {
+        self.block.is_none() && self.mark.is_none()
+    }
 }
 
 /// One cursor of a view.
@@ -350,16 +461,19 @@ pub struct ViewFrame {
     pub selection: Color,
 }
 
-/// What to draw: every view, in drawing order, and the fonts their glyphs
-/// are drawn in.
+/// What to draw: the dividers, every view, in drawing order, and the fonts
+/// their glyphs are drawn in.
 ///
-/// Two frames are equal when their views, their generations and their
-/// tables of fonts are: a font is compared by what it names and never by
-/// its bytes ([`ResolvedFont`]).
+/// Two frames are equal when their views, their dividers, their
+/// generations and their tables of fonts are: a font is compared by what
+/// it names and never by its bytes ([`ResolvedFont`]).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Frame {
     /// The views.
     pub views: Vec<ViewFrame>,
+    /// The dividers between the views, each a fill of its rectangle,
+    /// drawn before every view (module docs, "The dividers").
+    pub dividers: Vec<Fill>,
     /// The shaper's generation the frame was laid out under
     /// ([`Shaper::generation`]). A glyph's font id means one font for one
     /// generation, so whatever is kept by font id and glyph id from the
@@ -382,7 +496,9 @@ impl Frame {
     /// fonts.
     ///
     /// - A row is `row`, then ` x <x>` when its `x` is not 0 (a padded
-    ///   view's), then its `y`, its height, its baseline and its bytes.
+    ///   view's), then its `y`, its height, its baseline and its bytes. A
+    ///   block row has `block <i> ` before it, and a gutter mark's row
+    ///   `mark <i> `.
     /// - A colour is its eight hexadecimal digits, `rrggbbaa`.
     /// - A glyph is `id@x`, with `^dx,dy` after it when its outline is
     ///   drawn off its pen position, and then `#font` when it is drawn in
@@ -415,7 +531,14 @@ impl Frame {
                 view.selection.0
             );
             for row in &view.rows {
-                out.push_str("  row");
+                out.push_str("  ");
+                if let Some(block) = row.block {
+                    let _ = write!(out, "block {block} ");
+                }
+                if let Some(mark) = row.mark {
+                    let _ = write!(out, "mark {mark} ");
+                }
+                out.push_str("row");
                 if row.x != 0.0 {
                     let _ = write!(out, " x {}", row.x);
                 }
@@ -601,8 +724,20 @@ impl<S: Shaper> Layout<S> {
         views.extend(echo);
         // Read once the views are laid out, so the table holds every font
         // a glyph of theirs names.
+        let dividers = scene
+            .dividers
+            .iter()
+            .map(|divider| {
+                let face = self.styles.intern(&divider.face);
+                Fill {
+                    rect: divider.rect,
+                    color: self.styles.style(&self.shaper, &[face]).paint.foreground,
+                }
+            })
+            .collect();
         let frame = Frame {
             views,
+            dividers,
             generation: self.shaper.generation(),
             fonts: self.shaper.resolved(),
         };
@@ -616,13 +751,29 @@ impl<S: Shaper> Layout<S> {
                     .offset_to_point(offset)
                     .map_or(0, |point| point.row)
             };
-            if let (Some(first), Some(last)) = (laid.rows.first(), laid.rows.last()) {
+            let text_row = |row: &&FrameRow| row.is_text();
+            let first = laid.rows.iter().find(text_row);
+            let last = laid.rows.iter().rev().find(text_row);
+            if let (Some(first), Some(last)) = (first, last) {
                 let (first, last) = (row_of(first.bytes.start), row_of(last.bytes.end));
                 let reach = KEPT_VIEW_HEIGHTS * (last - first + 1);
                 rows.push(first.saturating_sub(reach)..last + reach + 1);
             }
         }
         self.texts.retain(|key, _| shown.contains_key(key));
+        // The blocks and the marks no view names are dropped.
+        let named: HashSet<BlockKey> = scene
+            .views
+            .iter()
+            .flat_map(|view| {
+                let marks = view
+                    .marks
+                    .iter()
+                    .map(|mark| BlockKey::of(&mark_block(mark)));
+                view.blocks.iter().map(BlockKey::of).chain(marks)
+            })
+            .collect();
+        self.blocks.retain(|key, _| named.contains(key));
         for (key, state) in &mut self.texts {
             let near = &shown[key];
             state
@@ -932,6 +1083,7 @@ impl<S: Shaper> Layout<S> {
             heights.status
         };
         let across = self.padding_pixels(view.padding.across);
+        let text_left = self.text_left(view.padding);
         let first_row = self.first_row(view.padding);
         let status = self.status_row(view, MODE_LINE_FACE, bottom, across);
         // What is left for the text above the status row, in whole pixels,
@@ -941,7 +1093,7 @@ impl<S: Shaper> Layout<S> {
             None => view.rect.height,
         } as f32;
         let text_height = self.text_height(text_height, view.padding);
-        let text_width = self.inset(view.rect.width as f32, view.padding.across);
+        let text_width = self.text_width(view.rect.width as f32, view.padding);
         let cursor_face = self.styles.intern(&view.cursor.face);
         let selection_face = self.styles.intern(SELECTION_FACE);
         let paint_of = |stack: &[FaceId]| self.styles.style(&self.shaper, stack).paint;
@@ -971,6 +1123,8 @@ impl<S: Shaper> Layout<S> {
                 }
             })
             .collect();
+        let mut view_blocks = ViewBlocks::new(&view.blocks, snapshot, &mut self.styles);
+        let mut view_marks = ViewMarks::new(&view.marks, snapshot, &mut self.styles);
         let selections: Vec<Selection> = view
             .selections
             .iter()
@@ -988,17 +1142,6 @@ impl<S: Shaper> Layout<S> {
         sources.extend_from_slice(extra);
         sources.push(&face_source);
         sources.push(&selection_source);
-        // Every source's spans of `bytes`, lowest layer first, and how
-        // many of them are below the selections', which are last.
-        let spans_of = |bytes: Range<usize>| {
-            let mut spans = Vec::new();
-            let mut below = 0;
-            for source in &sources {
-                below = spans.len();
-                source.spans(snapshot, bytes.clone(), &mut spans);
-            }
-            (spans, below)
-        };
         let (styles, shaper, base) = (&self.styles, &self.shaper, self.base);
         let fonts = |bytes: Range<usize>| fonts_of(&sources, snapshot, bytes, styles, shaper, base);
         let mut held = state(&mut self.texts, text, self.tab_width, Some(text_width));
@@ -1014,9 +1157,44 @@ impl<S: Shaper> Layout<S> {
             },
         };
         let anchor = boundary_at_or_before(snapshot, view.scroll);
-        let shown = walker.rows_shown(text_height, anchor).unwrap_or_default();
+        let mut block_layout = BlockLayout {
+            store: &mut self.blocks,
+            shaper,
+            styles,
+            base,
+            tab_width: self.tab_width,
+            width: text_width,
+            counters: &mut self.counters,
+        };
+        let walked = walker
+            .shown(text_height, anchor, &mut |row| {
+                view_blocks.above(row, &mut block_layout)
+            })
+            .unwrap_or_default();
+        // The text lines shown, each with its index among the frame's rows.
+        let mut shown: Vec<(Visual, usize)> = Vec::new();
         let mut y = first_row;
-        for &visual in &shown {
+        for item in walked {
+            let visual = match item {
+                Shown::Text(visual) => visual,
+                Shown::Block { block, line, .. } => {
+                    if let Some(laid) = view_blocks.line(block, line) {
+                        frame.rows.push(FrameRow {
+                            block: Some(block),
+                            ..FrameRow::text_row(
+                                text_left,
+                                y,
+                                laid.bytes.clone(),
+                                Arc::clone(&laid.line),
+                                laid.runs.clone(),
+                                laid.hash,
+                            )
+                        });
+                        y += laid.line.height;
+                    }
+                    continue;
+                }
+            };
             let Some(entry) = walker.entry(visual.row, visual.segment) else {
                 continue;
             };
@@ -1026,72 +1204,73 @@ impl<S: Shaper> Layout<S> {
             let range = walker.range(visual);
             let bytes = range.start..range.stop;
             let row_start = snapshot.row_range(visual.row).map_or(0, |row| row.start);
-            // The spans of the characters the row draws any of, which is
-            // more than its bytes when it starts inside a tab's spaces.
-            let drawn = entry.drawn_bytes(visual.line).unwrap_or(0..0);
-            let (spans, below) = spans_of(row_start + drawn.start..row_start + drawn.end);
-            // Each span as the columns of the row it covers, from the row's
-            // start: a tab's span is cut to the spaces of it the row holds.
-            let columns = line.bytes.clone();
-            let column = |offset: usize| {
-                entry
-                    .column(offset - row_start)
-                    .clamp(columns.start, columns.end)
-                    - columns.start
-            };
-            let on_row = |span: &Span| {
-                let covered = column(span.bytes.start)..column(span.bytes.end);
-                (!covered.is_empty()).then_some(Span {
-                    bytes: covered,
-                    face: span.face,
-                })
-            };
+            let painted = paint_line(
+                &entry,
+                visual.line,
+                &line,
+                row_start,
+                snapshot,
+                &sources,
+                styles,
+                shaper,
+            );
             // What each selected span covers of the row: an area for each
             // run of cells next to each other that it holds, so one area
             // in text of one direction, and several where it crosses a
-            // change of direction.
-            for span in spans[below..].iter().filter_map(on_row) {
+            // change of direction. The selections are the last source.
+            let columns = &line.bytes;
+            for span in &painted.spans[painted.last..] {
                 let held = columns.start + span.bytes.start..columns.start + span.bytes.end;
                 let covered = entry.cells(visual.line).map(|cells| cells.covered(held));
                 for (left, right) in covered.unwrap_or_default() {
                     frame.selections.push(Area {
-                        x: across + left,
+                        x: text_left + left,
                         y,
                         width: right - left,
                         height: line.height,
                     });
                 }
             }
-            let spans: Vec<Span> = spans.iter().filter_map(on_row).collect();
-            // Each run with what its faces come to, neighbours of one
-            // paint made one run.
-            let mut runs: Vec<(Range<usize>, Paint)> = Vec::new();
-            for run in merge(0..columns.len(), &spans) {
-                let paint = styles.style(shaper, &run.faces).paint;
-                match runs.last_mut() {
-                    Some((bytes, last)) if *last == paint => bytes.end = run.bytes.end,
-                    _ => runs.push((run.bytes, paint)),
+            shown.push((visual, frame.rows.len()));
+            frame.rows.push(FrameRow::text_row(
+                text_left,
+                y,
+                bytes,
+                Arc::clone(&line),
+                painted.runs,
+                painted.hash,
+            ));
+            // The marks beside this row, in the gutter column, each on the
+            // row's baseline.
+            for mark in view_marks.on(visual.row) {
+                if let Some(laid) = view_marks.line(mark, &mut block_layout) {
+                    frame.rows.push(FrameRow {
+                        mark: Some(mark),
+                        ..FrameRow::text_row(
+                            across,
+                            y + line.baseline - laid.line.baseline,
+                            laid.bytes.clone(),
+                            Arc::clone(&laid.line),
+                            laid.runs.clone(),
+                            laid.hash,
+                        )
+                    });
                 }
             }
-            frame.rows.push(FrameRow {
-                x: across,
-                y,
-                height: line.height,
-                baseline: line.baseline,
-                bytes,
-                hash: hash(&line, &runs),
-                line: Arc::clone(&line),
-                runs,
-            });
             y += line.height;
         }
         // The cursors on the rows shown.
-        let last = shown.last().copied().unwrap_or(Visual {
-            row: 0,
-            segment: 0,
-            line: 0,
-        });
-        let from = frame.rows.first().map_or(0, |row| row.bytes.start);
+        let last = shown.last().map_or(
+            Visual {
+                row: 0,
+                segment: 0,
+                line: 0,
+            },
+            |(visual, _)| *visual,
+        );
+        let from = shown
+            .first()
+            .map_or(0, |(_, index)| frame.rows[*index].bytes.start);
         let to = snapshot
             .row_range(last.row)
             .map_or(snapshot.len(), |row| row.end);
@@ -1104,7 +1283,7 @@ impl<S: Shaper> Layout<S> {
             let Ok((visual, x)) = walker.locate(head) else {
                 continue;
             };
-            let Some(index) = shown.iter().position(|shown| *shown == visual) else {
+            let Some(&(_, index)) = shown.iter().find(|(shown, _)| *shown == visual) else {
                 continue;
             };
             let row = &frame.rows[index];
@@ -1151,6 +1330,82 @@ fn moved_back(snapshot: &Snapshot, selection: &Selection) -> Option<Selection> {
     Selection::shaped(selection.shape(), ranges, selection.primary())
 }
 
+/// A visual line painted ([`paint_line`]).
+pub(crate) struct PaintedLine {
+    /// Each span of the line's sources as the columns of the line it
+    /// covers, from the line's start, lowest layer first; a span that
+    /// covers none of them is left out.
+    pub spans: Vec<Span>,
+    /// Where the last source's spans start in `spans`.
+    pub last: usize,
+    /// Its runs, each with what its faces come to, neighbours of one paint
+    /// made one run.
+    pub runs: Vec<(Range<usize>, Paint)>,
+    /// Its content hash ([`hash`]).
+    pub hash: u64,
+}
+
+/// Visual line `index` of `entry`, which is `line`, painted: the entry is
+/// of a buffer row of `snapshot` that starts at `row_start`, its spans are
+/// what `sources` give, lowest layer first, and their faces come to paints
+/// in `styles`. A view's text rows and its blocks' rows are painted so.
+///
+/// The spans asked for are those of the characters the line draws any of,
+/// which is more than its bytes when it starts inside a tab's spaces, and
+/// each is cut to the columns of the line it covers: a tab's span to the
+/// spaces of it the line holds.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_line<L, S: Shaper>(
+    entry: &LineEntry<L>,
+    index: usize,
+    line: &VisualLine,
+    row_start: usize,
+    snapshot: &Snapshot,
+    sources: &[&dyn DecorationSource],
+    styles: &Styles,
+    shaper: &S,
+) -> PaintedLine {
+    let drawn = entry.drawn_bytes(index).unwrap_or(0..0);
+    let bytes = row_start + drawn.start..row_start + drawn.end;
+    let mut found = Vec::new();
+    let mut below = 0;
+    for source in sources {
+        below = found.len();
+        source.spans(snapshot, bytes.clone(), &mut found);
+    }
+    let columns = line.bytes.clone();
+    let column = |offset: usize| {
+        entry
+            .column(offset - row_start)
+            .clamp(columns.start, columns.end)
+            - columns.start
+    };
+    let on_line = |span: &Span| {
+        let covered = column(span.bytes.start)..column(span.bytes.end);
+        (!covered.is_empty()).then_some(Span {
+            bytes: covered,
+            face: span.face,
+        })
+    };
+    let mut spans: Vec<Span> = found[..below].iter().filter_map(on_line).collect();
+    let last = spans.len();
+    spans.extend(found[below..].iter().filter_map(on_line));
+    let mut runs: Vec<(Range<usize>, Paint)> = Vec::new();
+    for run in merge(0..columns.len(), &spans) {
+        let paint = styles.style(shaper, &run.faces).paint;
+        match runs.last_mut() {
+            Some((bytes, last)) if *last == paint => bytes.end = run.bytes.end,
+            _ => runs.push((run.bytes, paint)),
+        }
+    }
+    PaintedLine {
+        hash: hash(line, &runs),
+        spans,
+        last,
+        runs,
+    }
+}
+
 /// The content hash of a row of `line` with `runs`: its glyphs and runs
 /// relative to its start, and its height.
 fn hash(line: &VisualLine, runs: &[(Range<usize>, Paint)]) -> u64 {
@@ -1175,15 +1430,15 @@ mod tests {
 
     use editor_text::{Selection, SelectionRange, Shape, Snapshot, Text};
 
-    use super::{Area, Frame, FrameRow, StatusRow, ViewFrame};
+    use super::{Area, Fill, Frame, FrameRow, StatusRow, ViewFrame};
     use crate::Layout;
     use crate::decoration::{DecorationSource, Span};
     use crate::face::{
         BASE_BACKGROUND, BASE_FOREGROUND, Color, Face, FaceDef, Paint, Underline, UnderlineStyle,
     };
     use crate::scene::{
-        Cursor, CursorShape, Decoration, FixedSpans, Padding, Rect, Scene, Side, SpansAt,
-        StatusField, TextKey, TextRef, TextSpans, View, ViewId,
+        Block, Cursor, CursorShape, Decoration, Divider, FixedSpans, Padding, Rect, Scene, Side,
+        SpansAt, StatusField, TextKey, TextRef, TextSpans, View, ViewId,
     };
     use crate::shaper::fake::CellShaper;
     use crate::shaper::scripted::{ScriptedShaper, glyph, line};
@@ -1318,6 +1573,8 @@ mod tests {
             status: vec![],
             status_face: None,
             padding: Padding::default(),
+            blocks: vec![],
+            marks: vec![],
         }
     }
 
@@ -1333,6 +1590,26 @@ mod tests {
     /// The tops of `rows`.
     fn tops(rows: &[FrameRow]) -> Vec<f32> {
         rows.iter().map(|row| row.y).collect()
+    }
+
+    #[test]
+    fn a_text_row_built_by_hand_is_as_tall_as_its_line_and_equals_the_frames() {
+        let mut layout = layout();
+        let laid = frame(&mut layout, view("ab\ncd", 4, 64, 0, &[])).rows;
+        let second = &laid[1];
+        let built = FrameRow::text_row(
+            second.x,
+            second.y,
+            second.bytes.clone(),
+            Arc::clone(&second.line),
+            second.runs.clone(),
+            second.hash,
+        );
+        assert_eq!(&built, second);
+        assert_eq!(
+            (built.height, built.baseline),
+            (second.line.height, second.line.baseline)
+        );
     }
 
     #[test]
@@ -2655,6 +2932,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_frame_is_described_with_its_block_rows() {
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        let mut shown = view("ab\ncd", 4, 48, 0, &[]);
+        shown.blocks = vec![Block {
+            before: 3,
+            text: "h".to_owned(),
+            decorations: vec![],
+        }];
+        let scene = Scene {
+            views: vec![shown],
+            ..Scene::default()
+        };
+        assert_eq!(
+            layout.frame(&scene).describe(),
+            "view 1 rect 0 0 40 48 background ffffffff selection ffffffff\n  \
+             row y 0 height 16 baseline 12 bytes 0..2 glyphs 97@0 98@10 \
+             runs 0..2:000000ff/ffffffff\n  \
+             block 0 row y 16 height 16 baseline 12 bytes 0..1 glyphs 104@0 \
+             runs 0..1:000000ff/ffffffff\n  \
+             row y 32 height 16 baseline 12 bytes 3..5 glyphs 99@0 100@10 \
+             runs 0..2:000000ff/ffffffff\n"
+        );
+    }
+
     /// A status field: `text` in the face `face`, on `side`, padded
     /// `padding` points each side.
     fn field(text: &str, face: &str, side: Side, padding: u32) -> StatusField {
@@ -3408,5 +3710,74 @@ mod tests {
     fn a_frame_is_shared_between_threads_as_it_is() {
         fn shared<T: Send + Sync>() {}
         shared::<Frame>();
+    }
+
+    /// A scene of no view whose dividers are `dividers`, each a rectangle
+    /// and a face's name.
+    fn divided(dividers: &[(Rect, &str)]) -> Scene {
+        Scene {
+            dividers: dividers
+                .iter()
+                .map(|(rect, face)| Divider {
+                    rect: *rect,
+                    face: (*face).to_owned(),
+                })
+                .collect(),
+            ..Scene::default()
+        }
+    }
+
+    #[test]
+    fn a_divider_is_a_fill_of_its_rectangle_in_its_faces_foreground() {
+        let rect = Rect {
+            x: 318,
+            y: 0,
+            width: 2,
+            height: 464,
+        };
+        let frame = layout().frame(&divided(&[(rect, "tab")]));
+        assert_eq!(frame.dividers, vec![Fill { rect, color: RED }]);
+    }
+
+    #[test]
+    fn a_divider_in_a_face_nothing_defines_is_filled_in_the_default_faces_foreground() {
+        let rect = Rect {
+            x: 0,
+            y: 230,
+            width: 318,
+            height: 2,
+        };
+        let mut layout = layout();
+        let base = layout.frame(&divided(&[(rect, "nothing")]));
+        assert_eq!(
+            base.dividers,
+            vec![Fill {
+                rect,
+                color: BASE_FOREGROUND
+            }]
+        );
+        layout.define(&[def("default", fg(GREY)), def("default", bg(GREEN))]);
+        let defaulted = layout.frame(&divided(&[(rect, "nothing")]));
+        assert_eq!(defaulted.dividers, vec![Fill { rect, color: GREY }]);
+        // A divider's face's background is not its colour.
+        layout.define(&[def("default", fg(GREY)), def("ground", bg(RED))]);
+        let grounded = layout.frame(&divided(&[(rect, "ground")]));
+        assert_eq!(grounded.dividers, vec![Fill { rect, color: GREY }]);
+    }
+
+    #[test]
+    fn a_scene_with_no_divider_gives_no_fill_and_frames_differ_by_their_fills() {
+        let rect = Rect {
+            x: 318,
+            y: 0,
+            width: 2,
+            height: 464,
+        };
+        let mut layout = layout();
+        let plain = layout.frame(&Scene::default());
+        assert!(plain.dividers.is_empty());
+        let filled = layout.frame(&divided(&[(rect, "tab")]));
+        assert_eq!(filled.views, plain.views);
+        assert_ne!(filled, plain);
     }
 }

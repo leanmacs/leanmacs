@@ -40,6 +40,12 @@
 //! ([`Snapshot::loaded`]). Keys are given out once in the process, to
 //! documents and to such snapshots alike.
 //!
+//! **A snapshot of an excerpt document carries its list** as it was when the
+//! snapshot was taken ([`Snapshot::placed`]), read under the same locks as
+//! its text ([`crate::excerpts`], "A snapshot carries its list"): so the
+//! display places the headers and translates the sources' highlights by the
+//! list of the text it draws, whatever the sources did since.
+//!
 //! What a row, a point, a position, a cell and a word are is the text's
 //! rule, pinned by `editor-text`'s own tests. This module converts numbers
 //! and forwards.
@@ -73,10 +79,11 @@
 //! module docs of [`crate::marker`] give both layouts.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use std::ops::Range;
 
+use editor_text::excerpt::Placed;
 use editor_text::{
     Bracket, Marker, MarkerId, Motion, Patch, Point, PointCells, PointUtf16, Quote, Revision, Text,
 };
@@ -97,6 +104,11 @@ pub struct Snapshot {
     key: u64,
     /// Where it came from.
     source: Source,
+    /// For a snapshot of an excerpt document, its list as it was when the
+    /// snapshot was taken, read under the same locks as the text
+    /// ([`crate::excerpts`], "A snapshot carries its list"); `None` for any
+    /// other.
+    placed: Option<Arc<[Placed]>>,
 }
 
 /// Where a snapshot's text came from: the text of the document it was taken
@@ -176,10 +188,15 @@ impl Snapshot {
     /// A snapshot of `document`'s text as it is now, with the document as
     /// its source.
     pub fn of(document: &Document) -> Self {
+        let (text, placed) = match document.snapshot_placed() {
+            Some((text, placed)) => (text, Some(placed)),
+            None => (document.snapshot(), None),
+        };
         Self {
-            text: document.snapshot(),
+            text,
             key: document.key(),
             source: Source(Some(document.shared())),
+            placed,
         }
     }
 
@@ -190,7 +207,16 @@ impl Snapshot {
             text,
             key: next_key(),
             source: Source::default(),
+            placed: None,
         }
+    }
+
+    /// For a snapshot of an excerpt document, its list as it was when the
+    /// snapshot was taken: each excerpt's source, the source's snapshot it
+    /// read, its range there and its range of this text. `None` for a
+    /// snapshot of any other document and one no document holds.
+    pub fn placed(&self) -> Option<&[Placed]> {
+        self.placed.as_deref()
     }
 
     /// The key of its text: its document's, or its own when no document

@@ -53,7 +53,7 @@ theorem UndoTree.undo_pending (tree : UndoTree) (node : UndoTree.Node) (origin :
   have notNew : tree.current.index ≠ tree.nodes.size := Nat.ne_of_lt inNodes
   simp [UndoTree.undo, UndoTree.close, UndoTree.pending, pending, UndoTree.crossEdge,
     UndoTree.node?, Array.getElem?_push, Array.getElem_push, Array.size_modify, inNodes, inverse,
-    TextModel.dropInverses, TextModel.lookup, liveAfter, notPast, notNew]
+    TextModel.dropInverses, TextModel.onText, TextModel.lookup, liveAfter, notPast, notNew]
   exact ⟨_, _, ⟨rfl, rfl⟩, rfl, rfl⟩
 
 /-- A transaction the model accepts, and then one undo by a tree that knew
@@ -108,8 +108,9 @@ theorem UndoTree.apply_undo (model : TextModel) (id : TextId) (content : TextCon
     UndoTree.undo_pending synced node Origin.user _ undone _ _ pending hereSynced inverse liveAfter
       (by simp [synced])
   refine ⟨moved, final, ?_, ?_, ?_⟩
-  · simp [applied, UndoTree.sync, UndoTree.record, TextModel.handle, TextModel.lookup,
-      TextModel.changed, TextModel.answer, inTexts, over, told]
+  · simp [TextModel.applyText_plain _ _ _ _ _ live, applied, UndoTree.sync, UndoTree.record,
+      TextModel.handle, TextModel.onSource, TextModel.onText, TextModel.lookup, TextModel.changed,
+      TextModel.answer, inTexts, over, told]
     simpa [synced, TextModel.changed, over] using ran
   · rw [texts]
     exact restored

@@ -429,11 +429,7 @@ fn a_padded_views_text_rows_are_the_rows_query_at_its_height_less_its_bottom_row
             } else {
                 heights.status
             };
-            let padding = Padding {
-                across: 8,
-                down: 3,
-                top: 0,
-            };
+            let padding = Padding::new(8, 3, 0);
             let mut padded = scene(frame_height, rect, 240);
             padded.views[0].padding = padding;
             let frame = layout.frame(&padded);

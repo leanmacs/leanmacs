@@ -4,9 +4,10 @@ import Editor.File
 /-!
 # A line diff, as a job asks for one
 
-The data of the one diff request a job can make: the line diff of two
+The data of the diff requests a job can make: the line diff of two
 snapshots, answered with an edit script (`Diff.Script`,
-`Editor/Diff/Script.lean`). It is a request of the job port
+`Editor/Diff/Script.lean`), or with the hunks of whole lines that differ
+(`Diff.Hunks`), which a gutter marks (`Editor/VersionControl/Gutter.lean`). It is a request of the job port
 (`Editor/Job.lean`, `JobRequest.diff`), not of the text port, because a diff
 is long computation and the editor thread never does that
 (`docs/design/concurrency.md`, the threads table): the library's diff service
@@ -33,6 +34,10 @@ file's as one edit that keeps the cursor and the markers.
     inside a character (an escape a load kept is one character);
   - matched lines are retained, and the rest is deleted or inserted. Equal
     texts give one retain.
+- **The hunks** are the same line hunks, before the trim, as byte ranges of
+  whole lines of both texts (`DiffRequest.hunks`): each starts at a line's
+  start and stops at the next line's start or its text's end, none is empty
+  on both sides, and equal texts have none.
 - **The limit** is the editor's policy, as a load's is, and there is no
   default.
 - **Which hunks an engine picks may differ** between the model
@@ -73,14 +78,25 @@ inductive DiffRequest where
   /-- The line diff of what `old` and `new` hold, with the engine asked about
   at most `limit` lines a side. -/
   | lines (old new : File.Source) (limit : Nat)
+  /-- The hunks of whole lines that turn what `old` holds into what `new`
+  holds, with the engine asked about at most `limit` lines a side. -/
+  | hunks (old new : File.Source) (limit : Nat)
   deriving DecidableEq, Repr
 
-/-- The type of the reply to each diff request: a refusal or the script. -/
+/-- The type of the reply to each diff request: a refusal, or the script or
+the hunks. -/
 def DiffRequest.Reply : DiffRequest → Type
   | .lines .. => Except DiffError Diff.Script
+  | .hunks .. => Except DiffError Diff.Hunks
 
 /-- The reply of a refused request. -/
 def DiffRequest.refused : (request : DiffRequest) → DiffError → request.Reply
   | .lines .., error => .error error
+  | .hunks .., error => .error error
+
+/-- The two snapshots `request` names, the old one first. -/
+def DiffRequest.sources : DiffRequest → File.Source × File.Source
+  | .lines old new _ => (old, new)
+  | .hunks old new _ => (old, new)
 
 end Editor

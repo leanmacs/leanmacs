@@ -10,8 +10,9 @@ take a snapshot of it, ask a text or a snapshot a question, ask a text's
 edit log what changed and who wrote a range, forget the start of that log,
 mark a text with anchors and selections that every edit moves, apply the
 inverse of a run of its edits, drop the inverses it keeps, make a text of
-what a text or a snapshot holds, take in a snapshot a job made, and release
-a text or a snapshot. It is deliberately small. The point is the
+what a text or a snapshot holds, make a text of ranges of other texts and
+replace those ranges, take in a snapshot a job made, and release a text or a
+snapshot. It is deliberately small. The point is the
 pattern every later interface follows:
 
 - the port, here: the requests, the reply to each, and the operations a
@@ -32,9 +33,9 @@ operations as they are: they are lifted into it.
 
 ## The rules of the port
 
-- A text is named by a `TextId`, which is plain data. Only `createText` and
-  `TextSource.copy` make one that names a text; any other is refused with
-  `noSuchText`.
+- A text is named by a `TextId`, which is plain data. Only `createText`,
+  `TextSource.copy` and `createExcerpts` make one that names a text; any
+  other is refused with `noSuchText`.
 - A *copy* is a new text holding what a text or a snapshot holds
   (`TextSource.copy`). It takes the source's string and nothing else: it is
   at revision 0, its edit log starts there and is empty, and it has no
@@ -492,6 +493,106 @@ The library keeps a byte of a file that is not valid UTF-8 as one character
 in `U+10DC80..U+10DCFF` (`crates/editor-text`). To this port it is a
 character like any other: four bytes long, and two UTF-16 code units.
 
+## Excerpt texts
+
+An *excerpt text* is a text made of ranges of other texts, its *sources*
+(`createExcerpts`). Each range is an *excerpt* (`Excerpt`).
+
+- **What it holds**: the excerpts' bytes, in list order, joined by one line
+  feed, the *separator*: none before the first and none after the last, and
+  the empty string for an empty list. When an excerpt ends in a line feed,
+  the separator is an empty row of its own. So the end of one excerpt and the
+  start of the next are two positions, and every position is in one excerpt,
+  both its ends included.
+- **It follows its sources.** Each excerpt is held by two anchors its source
+  holds as markers: its start with the bias `before` and its end with
+  `after`, so text inserted at either end is inside the excerpt. They take
+  the next two marker ids of the source, start then end, in list order, and
+  any edit of the source moves them. An excerpt whose anchors are given up
+  or placed as a selection is kept as it was.
+- **It is caught up at every request that names it**: every request whose
+  text, or whose source of a question, a snapshot, a copy or an edit script,
+  is the excerpt text, before the request is answered or refused, but for
+  the requests refused with `excerpted` below. When a source has an edit since the excerpt text last read
+  it, what changed in each excerpt of it is applied as one edit: one revision
+  more and one entry of its log, however many sources moved and however many
+  edits each made, with every marker of the excerpt text moved. What changed
+  is the source's patch since the revision last read, each edit cut to the
+  excerpt (its old range to where the excerpt was, its new range to where its
+  anchors are now, an edit left with both empty passed over); when the cut
+  edits do not line up with the excerpt, or the source's log no longer
+  reaches that revision, the excerpt is replaced whole. An edit of a source
+  outside every excerpt is still one revision, with no edit in the patch.
+- **Replacing the list** (`TextId.setExcerpts`) is one more revision, after
+  the catch-up. The excerpts the two lists start and end with alike (one
+  source and one range) are kept with their anchors; the anchors of the
+  others are given up, and new ones are marked for the new excerpts. The
+  one edit replaces the bytes from the end of the last excerpt kept at the
+  start to the start of the first kept at the end. An identical list is a
+  revision with no edit; a new excerpt text is at revision 1.
+- **The refusals**: `createExcerpts` is refused with `noSuchText` when a
+  source names no text, then with `excerpted` when a source is an excerpt
+  text, then with `badRange` when a range is not two positions of its source
+  in order, and makes no text. `setExcerpts` is refused with `noSuchText`,
+  then with `notExcerpted` for a text that is not an excerpt text, and then
+  as `createExcerpts` is, and catches nothing up.
+- **What it is to the rest of the port**: a text. Its snapshots, its
+  questions, `log .since`, `forget`, `dropInverses`, its markers and `copy`
+  work as on any text; a copy is a plain text of its contents.
+  `applyInverse`, `applyScript` and `log .trace` of it are refused with
+  `excerpted`, first of all, and catch nothing up.
+- **Its edits are its sources' edits.** An insert, a delete or an `apply` of
+  an excerpt text is, after the catch-up, one transaction on each source it
+  changes, with the caller's origin (`unattributed` for an insert or a
+  delete, as for any text) and no selection, and then one catch-up of the
+  excerpt text. Each range it changes is mapped to the excerpt that holds
+  it: an offset in an excerpt is the offset that far into its source range.
+  It is refused, changing no text, in this order: as any text refuses it
+  (`badRange` for an insert or a delete; for `apply`, `badSelection` for a
+  selection that is none, `badChange`, then `badSelection` for the selection
+  before and then the one after); then with `outsideExcerpt` when a range it
+  changes is not inside one excerpt, both ends included (every edit of a
+  separator byte, and every edit of an empty list), or its range in the
+  source also meets another excerpt of that source, both ends included,
+  since it would then show twice; then with `noSuchText` when it reaches an
+  excerpt of a released source.
+- **What an accepted edit is**: one revision of each source it changes and
+  one of the excerpt text, which then reads exactly what the transaction
+  asked for, with its markers moved as the transaction moves them. A
+  transaction that changes no range is one revision of the excerpt text and
+  of no source. Undo is the sources': each keeps the inverse of the
+  transaction it was given.
+- **The edges.** An offset at an excerpt's start is its source range's
+  start, and one at its end its source range's end; the anchors' biases keep
+  text inserted at either inside the excerpt. When an excerpt ends in a line
+  feed, the only position on the separator row is the end of that excerpt,
+  so text typed there goes to the start of the source row after it, and the
+  excerpt grows to hold it. An excerpt whose whole range is deleted stays,
+  empty, until the list is replaced, and an insert at it lands in its
+  source.
+- **Where an offset is** (`TextId.locate`): which excerpt holds a position
+  of the excerpt text, both its ends included, its source, and the offset in
+  the source as the source is now; `none` for an empty list. It is asked of
+  a text, after the catch-up: a plain text and any snapshot refuse it with
+  `notExcerpted`, and an offset that is not a position is `badPosition`.
+- **Where each excerpt is** (`TextId.excerpts`, `SnapshotId.excerpts`):
+  each excerpt's range of the excerpt text and of its source, in list
+  order. Asked of a snapshot, it answers the list as it was when the
+  snapshot was taken, whatever its sources did since; asked of a text, it
+  answers after the catch-up. A plain text and a snapshot of one refuse it
+  with `notExcerpted`. It is how the editor places what it draws over an
+  excerpt text: a header above each excerpt, and a source's spans at every
+  excerpt of it (`Editor/ExcerptView.lean`).
+- **A source** is any text of the store that is not an excerpt text, a
+  `copy` of a job's snapshot included; never a snapshot. Whether a source
+  may be edited through an excerpt text is the editor's buffer policy, not
+  the store's: the command dispatcher refuses an edit that reaches a
+  read-only buffer's text, or a text no buffer holds, before the edit is
+  made (`Editor/Command/Dispatch.lean`, "Read-only buffers and excerpt
+  sources"). A source that is released is read by its excerpt texts as it
+  was when it was released, and refuses an edit through them. Releasing an
+  excerpt text gives up its anchors in its sources.
+
 ## Adding to the port
 
 A new question about a text is a constructor of `TextQuery` with its case in
@@ -592,6 +693,17 @@ inductive TextError where
   | notInState
   /-- An edit script was made for a revision the text has moved past. -/
   | moved
+  /-- The text is an excerpt text, and the request is one of a text's own:
+  an inverse, an edit script or a trace. An excerpt text named as the source
+  of an excerpt is refused with it too. -/
+  | excerpted
+  /-- The text is not an excerpt text, and the request is one only an
+  excerpt text answers. -/
+  | notExcerpted
+  /-- An edit of an excerpt text changes bytes outside one excerpt: a
+  separator, or the list is empty, or the range it changes in its source also
+  meets another excerpt of that source. -/
+  | outsideExcerpt
   deriving DecidableEq, Repr
 
 /-- A refusal in a few words, for the user: what the headless host prints
@@ -609,6 +721,9 @@ def TextError.describe : TextError → String
   | .noInverse => "no inverse"
   | .notInState => "not in state"
   | .moved => "the text has moved"
+  | .excerpted => "an excerpt text"
+  | .notExcerpted => "not an excerpt text"
+  | .outsideExcerpt => "outside an excerpt"
 
 /-- The unit a point's column is counted in. -/
 inductive ColumnUnit where
@@ -636,6 +751,41 @@ inductive TextSource where
   | text (id : TextId)
   /-- The snapshot `id`. -/
   | snapshot (id : SnapshotId)
+  deriving DecidableEq, Repr
+
+/-- One excerpt of an excerpt text, as it is asked for: the bytes of the text
+`source` from `start` up to, not including, `stop`, as the source is now. -/
+structure Excerpt where
+  /-- The source: a text of the store that is not an excerpt text. -/
+  source : TextId
+  /-- Where the range starts in the source. -/
+  start : Nat
+  /-- Where it stops, not included. -/
+  stop : Nat
+  deriving DecidableEq, Repr
+
+/-- One excerpt of an excerpt text as it is placed (`TextId.excerpts`): its
+range of the excerpt text, and its range of its source as the excerpt last
+read it. -/
+structure Excerpt.Placed where
+  /-- Where its bytes start in the excerpt text. -/
+  start : Nat
+  /-- Where they stop, not included. -/
+  stop : Nat
+  /-- Where its range starts in its source. -/
+  sourceStart : Nat
+  /-- Where it stops there, not included. -/
+  sourceStop : Nat
+  deriving DecidableEq, Repr
+
+/-- Where a position of an excerpt text is (`TextId.locate`). -/
+structure Located where
+  /-- Which excerpt holds it: its index in the list. -/
+  excerpt : Nat
+  /-- The excerpt's source. -/
+  source : TextId
+  /-- The offset in the source, as the source is now. -/
+  offset : Nat
   deriving DecidableEq, Repr
 
 /-- One range of a selection: two byte offsets, in either order. -/
@@ -835,6 +985,14 @@ inductive TextQuery where
   /-- The quoted string of the quote `quote` round the byte offset `offset`,
   in its row, with its two quotes. -/
   | quoted (quote : Quote) (offset : Nat)
+  /-- Which excerpt of an excerpt text holds the byte offset `offset`, and
+  where in its source ("Excerpt texts", in the rules of the port). Only a
+  text answers it, and only an excerpt text. -/
+  | locate (offset : Nat)
+  /-- Each excerpt of an excerpt text, as it is placed: its range of the
+  excerpt text and of its source ("Excerpt texts", in the rules of the
+  port). A text and a snapshot of an excerpt text answer it. -/
+  | excerpts
 
 /-- The type of the answer to each question. It is an `abbrev` so that an
 answer's type unfolds where an instance is looked for: with a `def`,
@@ -854,6 +1012,8 @@ abbrev TextQuery.Answer : TextQuery → Type
   | .matches .. => Matched
   | .unmatched .. => Option Nat
   | .quoted .. => Option Extent
+  | .locate _ => Option Located
+  | .excerpts => Array Excerpt.Placed
 
 /-- Who made an edit: a number the editor chooses and the text store keeps
 with the edit and never reads. What a number stands for is the editor's
@@ -954,6 +1114,31 @@ structure Transaction where
 text. -/
 def Transaction.replacing (length start stop : Nat) (s : String) : Transaction where
   changes := #[.retain start, .insert s, .delete (stop - start), .retain (length - stop)]
+
+/-- The ranges `changes` change, in the text before them, in order: one range
+for each stretch of deletes and inserts between two retains, an insert's
+empty. Changes that do nothing are passed over, so they neither start a range
+nor end one. It is what an edit of a text reaches, which the command
+dispatcher asks of an excerpt text before it makes the edit
+(`Editor/Command/Dispatch.lean`). -/
+def Change.ranges (changes : Array Change) : Array (Nat × Nat) :=
+  (changes.foldl step (#[], 0, false)).1
+where
+  /-- One change more: the ranges so far, how far into the text before the
+  walk is, and whether the last range is still being added to. -/
+  step : Array (Nat × Nat) × Nat × Bool → Change → Array (Nat × Nat) × Nat × Bool
+    | (ranges, offset, inRun), .retain count => (ranges, offset + count, inRun && count == 0)
+    | (ranges, offset, inRun), .delete count => grow ranges offset inRun count (count != 0)
+    | (ranges, offset, inRun), .insert text => grow ranges offset inRun 0 !text.isEmpty
+  /-- The ranges with `length` more bytes of the text before changed at
+  `offset`, when `changes` says the change changes anything. -/
+  grow (ranges : Array (Nat × Nat)) (offset : Nat) (inRun : Bool) (length : Nat) (changes : Bool) :
+    Array (Nat × Nat) × Nat × Bool :=
+    if !changes then (ranges, offset, inRun)
+    else
+      match inRun, ranges.back? with
+      | true, some (start, _) => (ranges.pop.push (start, offset + length), offset + length, true)
+      | _, _ => (ranges.push (offset, offset + length), offset + length, true)
 
 /-- What applying the inverse of a run of revisions did
 (`TextId.applyInverse`). -/
@@ -1087,6 +1272,10 @@ inductive TextRequest where
   |
   applyScript (text : TextId) (base : Nat) (source : TextSource) (script : Diff.Script)
     (origin : Origin)
+  /-- Make a new excerpt text of `list`. -/
+  | excerpts (list : Array Excerpt)
+  /-- Replace the list of the excerpt text `text` with `list`. -/
+  | setExcerpts (text : TextId) (list : Array Excerpt)
 
 /-- The type of the reply to each request: the new text's id for `create`,
 and for the others a refusal or the result. -/
@@ -1110,6 +1299,8 @@ def TextRequest.Reply : TextRequest → Type
   | .copy _ => Except TextError TextId
   | .adopt _ => Except TextError SnapshotId
   | .applyScript .. => Except TextError Nat
+  | .excerpts _ => Except TextError TextId
+  | .setExcerpts .. => Except TextError Unit
 
 /-- The text port: `TextRequest` and the reply to each request. -/
 abbrev textPort : Port :=
@@ -1297,6 +1488,52 @@ source, at positions of both. -/
 def TextId.applyScript (text : TextId) (base : Nat) (source : TextSource) (script : Diff.Script)
     (origin : Origin) : TextM Nat :=
   ExceptT.mk (Program.request (port := textPort) (.applyScript text base source script origin))
+
+/-- Makes a new excerpt text of `list` and returns its id: a text that reads,
+as one text, the ranges of `list` joined by one line feed, and follows its
+sources ("Excerpt texts", in the rules of the port). It takes the next id, as
+`createText` does.
+
+Refused, making no text, in this order: with `noSuchText` when a source names
+no text; with `excerpted` when a source is an excerpt text; and with
+`badRange` when a range is not two positions of its source in order. -/
+def createExcerpts (list : Array Excerpt) : TextM TextId :=
+  ExceptT.mk (Program.request (port := textPort) (.excerpts list))
+
+/-- Which excerpt of the excerpt text `text` holds the position `offset`, its
+source, and the offset in the source as the source is now; `none` for an
+empty list. An excerpt holds both its ends. The excerpt text is caught up
+first.
+
+Refused with `noSuchText`; with `notExcerpted` for a plain text; and with
+`badPosition` when `offset` is not a position of the text. -/
+def TextId.locate (text : TextId) (offset : Nat) : TextM (Option Located) :=
+  (TextSource.text text).ask (.locate offset)
+
+/-- Each excerpt of the excerpt text `text`, as it is placed after the
+catch-up: its range of the text and of its source, in list order.
+
+Refused with `noSuchText`, and with `notExcerpted` for a plain text. -/
+def TextId.excerpts (text : TextId) : TextM (Array Excerpt.Placed) :=
+  (TextSource.text text).ask .excerpts
+
+/-- Each excerpt of the excerpt text `snapshot` was taken of, as it was
+placed when the snapshot was taken.
+
+Refused with `noSuchSnapshot`, and with `notExcerpted` for a snapshot of a
+plain text. -/
+def SnapshotId.excerpts (snapshot : SnapshotId) : TextM (Array Excerpt.Placed) :=
+  (TextSource.snapshot snapshot).ask .excerpts
+
+/-- Replaces the list of the excerpt text `text` with `list`: one revision
+more, after the excerpt text has caught up with its sources, and the text
+reads the new ranges joined by one line feed.
+
+Refused, changing nothing, in this order: with `noSuchText`; with
+`notExcerpted` when `text` is not an excerpt text; and then as
+`createExcerpts` refuses a list. -/
+def TextId.setExcerpts (text : TextId) (list : Array Excerpt) : TextM Unit :=
+  ExceptT.mk (Program.request (port := textPort) (.setExcerpts text list))
 
 /-- A new text holding what the job's snapshot `snapshot` holds: how a file a
 job loaded becomes a text. It adopts the snapshot, copies it, and releases

@@ -90,10 +90,10 @@ theorem Evil.deleteChar_undo (model : TextModel) (id : TextId) (content : TextCo
   refine ⟨moved, final, ?_, restored, selection⟩
   simp only [TextM.runModel_bind, TextM.runModel_apply] at ran
   simp only [TextId.replaceCarrying, TextM.runModel_bind, TextM.runModel_byteLength,
-    TextM.runModel_apply, TextM.runModel_pure, TextModel.handle, TextModel.lookup, live,
-    TextModel.answer]
+    TextM.runModel_apply, TextM.runModel_pure, TextModel.handle, TextModel.onSource,
+    TextModel.onText, TextModel.lookup, live, TextModel.answer]
   generalize
-    model.apply id
+    model.applyText id
       { Transaction.replacing content.contents.utf8ByteSize extent.start extent.stop "" with
         before := some before, after := some after }
       Origin.user =

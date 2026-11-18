@@ -26,6 +26,7 @@ use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use editor_text::excerpt::{Excerpts, SourceKey, Wanted};
 use editor_text::fs::{
     Entry, FakeFs, Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Pieces, Stat,
 };
@@ -672,4 +673,37 @@ fn saving_a_megabyte_with_escapes_copies_a_piece_at_a_time_and_never_the_text() 
     // megabyte more: seen once by hand as 2,103,766. The bound is a
     // megabyte and a half.
     assert!(counted < LENGTH * 3 / 2, "{counted} bytes allocated");
+}
+
+#[test]
+fn catching_an_excerpt_up_after_a_one_byte_insert_allocates_nothing_sized_by_its_source() {
+    let string = megabyte();
+    let mut source = Text::from(string.as_str());
+    // A kilobyte from the start of the line in the middle of the text.
+    let middle = LINE.len() * (string.len() / LINE.len() / 2);
+    let wanted = [Wanted {
+        source: SourceKey(0),
+        range: middle..middle + 1024,
+    }];
+    let mut excerpts = Excerpts::new();
+    let mut assembled = Text::new();
+    excerpts
+        .set(&mut assembled, &wanted, &mut [(SourceKey(0), &mut source)])
+        .expect("the range is two positions");
+    source
+        .replace(middle + 10..middle + 10, "x")
+        .expect("a position");
+
+    let (caught_up, counted) =
+        allocated_by(|| excerpts.refresh(&mut assembled, &mut [(SourceKey(0), &mut source)]));
+
+    assert!(matches!(caught_up, Ok(Some(_))));
+    assert_eq!(assembled.current().len(), 1025);
+    // Measured: 3,665 bytes: the source's one-edit patch, the change set of
+    // the catch-up and the byte it inserts, the excerpt's new entry, and the
+    // transaction on the kilobyte of the assembled text, its log entry and
+    // the inverse kept and dropped. Copying the source would be a megabyte,
+    // and copying the excerpt a kilobyte. The bound is a sixty-fourth of the
+    // source.
+    assert!(counted < LENGTH / 64, "{counted} bytes allocated");
 }

@@ -26,7 +26,7 @@
 use std::fmt::Debug;
 use std::ops::Range;
 
-use editor_text::{Change, ChangeSet, Point, PointCells, PointUtf16, Snapshot, Text};
+use editor_text::{Change, ChangeSet, Edit, Point, PointCells, PointUtf16, Snapshot, Text};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -34,6 +34,7 @@ use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRu
 
 mod anchors;
 mod changes;
+mod excerpts;
 mod files;
 mod inverses;
 mod log;
@@ -322,6 +323,20 @@ fn walks(walks: usize) -> impl Strategy<Value = Vec<Walk>> {
 /// Up to `walks` change sets, each fitted to its text.
 fn fitted_walks(walks: usize) -> impl Strategy<Value = Vec<Walk>> {
     vec(fitted_walk(), 0..=walks)
+}
+
+/// `old` with each edit's old range replaced by the bytes of its new range
+/// in `new`.
+fn patched(old: &str, new: &str, edits: &[Edit]) -> String {
+    let mut made = String::new();
+    let mut kept_from = 0;
+    for edit in edits {
+        made.push_str(&old[kept_from..edit.old.start]);
+        made.push_str(&new[edit.new.start..edit.new.end]);
+        kept_from = edit.old.end;
+    }
+    made.push_str(&old[kept_from..]);
+    made
 }
 
 /// What `changes` makes of `reference`, applied naively: `None` unless the

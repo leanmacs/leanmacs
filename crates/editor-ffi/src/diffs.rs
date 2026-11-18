@@ -6,7 +6,8 @@
 //! Lean asks for the diff of two snapshots with an id: the snapshot a
 //! reload's command took of a buffer, and the one the job's load holds.
 //! [`Diffs::start`] returns at once; the service's thread works the oldest
-//! request with no lock held, keeps the edit script under the request's id
+//! request with no lock held, keeps the edit script (or, for a request
+//! [`Diffs::start_hunks`] made, the hunks) under the request's id
 //! and completes the request: for the process's instance, by queueing an
 //! [`EventKind::Completion`](crate::events::EventKind::Completion) whose
 //! code is the id. The caller then takes the script ([`Diffs::take`]),
@@ -49,21 +50,31 @@
 //! and a delete's count and 0, or an insert's start in the new text and
 //! its count.
 //!
+//! # How hunks cross
+//!
+//! [`editor_ffi_diffs_take_hunks`] fills a [`RawWords`] whose status is 0
+//! and whose words are the count of hunks, then four for each: its old
+//! range's start and stop, and its new range's start and stop, in bytes.
+//! A take of the other kind's answer takes nothing, returns false, and
+//! leaves the answer kept: a request is taken by the take of its kind.
+//!
 //! # The C functions
 //!
 //! | Function | Does |
 //! |---|---|
 //! | [`editor_ffi_diffs_start`] | Starts the diff of two snapshot handles under a line limit. False, starting nothing, for an id in use, or when the service has no thread |
 //! | [`editor_ffi_diffs_take`] | Fills a [`RawWords`] and returns true, or returns false when the service keeps no script for the id |
+//! | [`editor_ffi_diffs_start_hunks`] | As `start`, for the hunks of the two texts |
+//! | [`editor_ffi_diffs_take_hunks`] | Fills a [`RawWords`] with the hunks and returns true, or returns false when the service keeps no hunks for the id |
 //! | [`editor_ffi_diffs_cancel`] | Cancels, and says whether there was anything to cancel |
-//! | [`editor_ffi_diffs_pending`] | Requests waiting or being worked, and scripts not taken |
+//! | [`editor_ffi_diffs_pending`] | Requests waiting or being worked, and answers (scripts or hunks) not yet taken |
 
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::{Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 
-use editor_diff::{LineDiff, Step};
+use editor_diff::{ByteHunk, LineDiff, Step};
 use editor_diff_imara::ImaraDiff;
 
 use crate::events;
@@ -72,8 +83,28 @@ use crate::log::RawWords;
 use crate::snapshot::Snapshot;
 use crate::words::Writer;
 
+/// Which answer a request asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// An edit script ([`editor_diff::script`]).
+    Script,
+    /// Hunks of whole lines ([`editor_diff::hunks`]).
+    Hunks,
+}
+
+/// A worked request's answer, of the kind it asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    /// An edit script.
+    Script(Vec<Step>),
+    /// Hunks of whole lines.
+    Hunks(Vec<ByteHunk>),
+}
+
 /// What is asked of the diff service.
 pub struct Request {
+    /// Which answer is asked for.
+    kind: Kind,
     /// The old text.
     old: editor_text::Snapshot,
     /// The new text.
@@ -101,8 +132,8 @@ struct State {
     /// The id of the request being worked, if one is, and whether it has
     /// been cancelled since it was taken up.
     working: Option<(u64, bool)>,
-    /// The scripts not yet taken, by request id.
-    scripts: BTreeMap<u64, Vec<Step>>,
+    /// The answers not yet taken, by request id.
+    answers: BTreeMap<u64, Answer>,
     /// Whether [`Diffs::stop`] has been called.
     stopped: bool,
 }
@@ -114,7 +145,7 @@ impl<E: LineDiff + Default> Diffs<E> {
             state: Mutex::new(State {
                 requests: Requests::new(),
                 working: None,
-                scripts: BTreeMap::new(),
+                answers: BTreeMap::new(),
                 stopped: false,
             }),
             changed: Condvar::new(),
@@ -132,19 +163,71 @@ impl<E: LineDiff + Default> Diffs<E> {
         new: editor_text::Snapshot,
         limit: usize,
     ) -> bool {
+        self.start_kind(id, Kind::Script, old, new, limit)
+    }
+
+    /// As [`start`](Self::start), for the hunks of `old` and `new` in
+    /// place of a script.
+    pub fn start_hunks(
+        &self,
+        id: u64,
+        old: editor_text::Snapshot,
+        new: editor_text::Snapshot,
+        limit: usize,
+    ) -> bool {
+        self.start_kind(id, Kind::Hunks, old, new, limit)
+    }
+
+    /// Asks for the answer `kind` of `old` and `new` as the request `id`.
+    fn start_kind(
+        &self,
+        id: u64,
+        kind: Kind,
+        old: editor_text::Snapshot,
+        new: editor_text::Snapshot,
+        limit: usize,
+    ) -> bool {
         let mut state = self.state();
-        let in_use = state.scripts.contains_key(&id)
+        let in_use = state.answers.contains_key(&id)
             || state.working.is_some_and(|(working, _)| working == id);
-        let started = !in_use && state.requests.start(id, Request { old, new, limit });
+        let request = Request {
+            kind,
+            old,
+            new,
+            limit,
+        };
+        let started = !in_use && state.requests.start(id, request);
         drop(state);
         self.changed.notify_all();
         started
     }
 
     /// Hands over the script of the request `id`, once. `None` when the
-    /// service keeps none for it.
+    /// service keeps no script for it: a request for hunks keeps its
+    /// answer.
     pub fn take(&self, id: u64) -> Option<Vec<Step>> {
-        self.state().scripts.remove(&id)
+        let mut state = self.state();
+        match state.answers.remove(&id)? {
+            Answer::Script(steps) => Some(steps),
+            other => {
+                state.answers.insert(id, other);
+                None
+            }
+        }
+    }
+
+    /// Hands over the hunks of the request `id`, once. `None` when the
+    /// service keeps no hunks for it: a request for a script keeps its
+    /// answer.
+    pub fn take_hunks(&self, id: u64) -> Option<Vec<ByteHunk>> {
+        let mut state = self.state();
+        match state.answers.remove(&id)? {
+            Answer::Hunks(hunks) => Some(hunks),
+            other => {
+                state.answers.insert(id, other);
+                None
+            }
+        }
     }
 
     /// Cancels the request `id`, and returns whether there was anything to
@@ -159,14 +242,14 @@ impl<E: LineDiff + Default> Diffs<E> {
         {
             return !std::mem::replace(cancelled, true);
         }
-        state.scripts.remove(&id).is_some()
+        state.answers.remove(&id).is_some()
     }
 
-    /// How many requests are waiting or being worked, and how many scripts
-    /// have not been taken, together.
+    /// How many requests are waiting or being worked, and how many answers
+    /// (scripts or hunks) have not yet been taken, together.
     pub fn pending(&self) -> usize {
         let state = self.state();
-        state.requests.pending() + usize::from(state.working.is_some()) + state.scripts.len()
+        state.requests.pending() + usize::from(state.working.is_some()) + state.answers.len()
     }
 
     /// Ends [`run`](Self::run), for good, once the request it is working is
@@ -196,13 +279,13 @@ impl<E: LineDiff + Default> Diffs<E> {
             };
             state.working = Some((id, false));
             drop(state);
-            let steps = work(&mut E::default(), &request);
+            let answer = work(&mut E::default(), &request);
             state = self.state();
             let cancelled = state.working.take().is_some_and(|(_, cancelled)| cancelled);
             if cancelled {
                 continue;
             }
-            state.scripts.insert(id, steps);
+            state.answers.insert(id, answer);
             drop(state);
             complete(id);
             state = self.state();
@@ -231,14 +314,13 @@ fn whole(snapshot: &editor_text::Snapshot) -> String {
     text
 }
 
-/// The script of `request`, over `engine`.
-fn work(engine: &mut impl LineDiff, request: &Request) -> Vec<Step> {
-    editor_diff::script(
-        engine,
-        &whole(&request.old),
-        &whole(&request.new),
-        request.limit,
-    )
+/// The answer `request` asks for, over `engine`.
+fn work(engine: &mut impl LineDiff, request: &Request) -> Answer {
+    let (old, new) = (whole(&request.old), whole(&request.new));
+    match request.kind {
+        Kind::Script => Answer::Script(editor_diff::script(engine, &old, &new, request.limit)),
+        Kind::Hunks => Answer::Hunks(editor_diff::hunks(engine, &old, &new, request.limit)),
+    }
 }
 
 /// The words of `steps`, in the layout the module docs give.
@@ -254,6 +336,19 @@ pub fn script_words(steps: &[Step]) -> Vec<u8> {
         writer.word(kind);
         writer.size(first);
         writer.size(second);
+    }
+    writer.finish()
+}
+
+/// The words of `hunks`, in the layout the module docs give.
+pub fn hunk_words(hunks: &[ByteHunk]) -> Vec<u8> {
+    let mut writer = Writer::with_capacity(1 + 4 * hunks.len());
+    writer.size(hunks.len());
+    for hunk in hunks {
+        writer.size(hunk.old.start);
+        writer.size(hunk.old.end);
+        writer.size(hunk.new.start);
+        writer.size(hunk.new.end);
     }
     writer.finish()
 }
@@ -330,6 +425,44 @@ pub unsafe extern "C" fn editor_ffi_diffs_take(id: u64, out: *mut RawWords) -> b
     true
 }
 
+/// As [`editor_ffi_diffs_start`], for the hunks of the two texts in place
+/// of a script, which are taken with [`editor_ffi_diffs_take_hunks`].
+///
+/// # Safety
+///
+/// `old` and `new` are snapshot handles this library handed out and has
+/// not taken back.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_diffs_start_hunks(
+    id: u64,
+    old: *const Snapshot,
+    new: *const Snapshot,
+    limit: u64,
+) -> bool {
+    // SAFETY: the caller guarantees both point to live snapshots.
+    let (old, new) = unsafe { ((*old).text().clone(), (*new).text().clone()) };
+    let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+    service_started() && DIFFS.start_hunks(id, old, new, limit)
+}
+
+/// Hands over the hunks of the diff request `id`, once: fills `out` and
+/// returns true, or returns false, with `out` untouched, when the service
+/// keeps no hunks for `id`.
+///
+/// # Safety
+///
+/// `out` points to a writable [`RawWords`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_diffs_take_hunks(id: u64, out: *mut RawWords) -> bool {
+    let Some(hunks) = DIFFS.take_hunks(id) else {
+        return false;
+    };
+    let raw = RawWords::with_status(0, hunk_words(&hunks));
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+    true
+}
+
 /// Cancels the diff request `id`, and returns whether there was anything
 /// to cancel. It is safe for an id that is unknown.
 #[unsafe(no_mangle)]
@@ -338,7 +471,8 @@ pub extern "C" fn editor_ffi_diffs_cancel(id: u64) -> bool {
 }
 
 /// How many diff requests are waiting or being worked, and how many
-/// scripts have not been taken, together. A readout for tests.
+/// answers (scripts or hunks) have not yet been taken, together. A readout
+/// for tests.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_diffs_pending() -> u64 {
     DIFFS.pending() as u64
@@ -398,7 +532,12 @@ mod tests {
         assert_eq!(id, 1);
         assert_eq!(
             work(&mut Lcs, &request),
-            editor_diff::script(&mut Lcs, "h\na\nk\nb\nt\n", "h\nA\nk\nB\nt\n", 2)
+            Answer::Script(editor_diff::script(
+                &mut Lcs,
+                "h\na\nk\nb\nt\n",
+                "h\nA\nk\nB\nt\n",
+                2
+            ))
         );
     }
 
@@ -424,6 +563,53 @@ mod tests {
         assert_eq!(diffs.take(3), None);
         diffs.stop();
         thread.join().unwrap();
+    }
+
+    #[test]
+    fn a_hunks_request_is_answered_as_words_of_four() {
+        let diffs = Arc::new(Diffs::<Lcs>::new());
+        assert!(diffs.start_hunks(4, snapshot("a\nb\nc\n"), snapshot("a\nB\nc\nd\n"), 100));
+        let (sent, completed) = mpsc::channel();
+        let service = Arc::clone(&diffs);
+        let thread = thread::spawn(move || service.run(move |id| sent.send(id).unwrap()));
+        assert_eq!(completed.recv().unwrap(), 4);
+        let found = diffs.take_hunks(4).unwrap();
+        assert_eq!(
+            found,
+            editor_diff::hunks(&mut Lcs, "a\nb\nc\n", "a\nB\nc\nd\n", 100)
+        );
+        assert_eq!(diffs.take_hunks(4), None);
+        assert_eq!(words_of(&hunk_words(&found)), [2, 2, 4, 2, 4, 6, 6, 6, 8]);
+        diffs.stop();
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn a_take_of_the_other_kind_takes_nothing() {
+        let diffs = Arc::new(Diffs::<Lcs>::new());
+        diffs.start_hunks(1, snapshot("a\n"), snapshot("b\n"), 10);
+        diffs.start(2, snapshot("a\n"), snapshot("b\n"), 10);
+        let (sent, completed) = mpsc::channel();
+        let service = Arc::clone(&diffs);
+        let thread = thread::spawn(move || service.run(move |id| sent.send(id).unwrap()));
+        assert_eq!(completed.recv().unwrap(), 1);
+        assert_eq!(completed.recv().unwrap(), 2);
+        assert_eq!(diffs.take(1), None);
+        assert_eq!(diffs.take_hunks(2), None);
+        assert_eq!(diffs.pending(), 2);
+        assert!(diffs.take_hunks(1).is_some());
+        assert!(diffs.take(2).is_some());
+        diffs.stop();
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn cancelling_a_hunks_request_drops_it() {
+        let diffs = Diffs::<Lcs>::new();
+        assert!(diffs.start_hunks(9, snapshot("a"), snapshot("b"), 1));
+        assert!(!diffs.start(9, snapshot("a"), snapshot("b"), 1));
+        assert!(diffs.cancel(9));
+        assert_eq!(diffs.pending(), 0);
     }
 
     #[test]

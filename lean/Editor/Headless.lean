@@ -28,6 +28,7 @@ import Editor.SyntaxTree.Real
 import Editor.TabCommands.Compiled
 import Editor.Text.Real
 import Editor.Themes.Compiled
+import Editor.VersionControl.Compiled
 import Editor.Watch.Real
 import Editor.Window
 import Editor.WindowCommands.Compiled
@@ -203,6 +204,16 @@ as before, so reload and job completion work as they did.
   `find-mode-markers`, which gives a buffer the minor modes the compile
   contributions' markers turn on, and which every file's open starts once
   its workspace is known, since contributions ship. And it is handed the
+  status buffer's commands, jobs and mode (`VersionControl.commands`,
+  `VersionControl.jobs`, `VersionControl.modes`,
+  `Editor/VersionControl/Compiled.lean`): `vc-status` and the commands of
+  its buffer, the jobs `vc-status-read` and `vc-status-apply`, which run
+  git, and the mode `vc-status`; the ex name `vc-status` runs the first.
+  It is handed `vc-show` and its job too, and the version-control gutter's
+  command and jobs (`VersionControl.gutterCommands`,
+  `VersionControl.gutterJobs`): a tracked file's buffer shows its lines
+  added, removed and changed against `HEAD` in a column before its text.
+  And it is handed the
   `code` mode and the languages that ship (`Language.modes`,
   `Language.shipped`, `Editor/Language.lean`): `rust`, `json` and
   `markdown`, so a file of one of them opens in `code`, highlighted. The ex
@@ -429,11 +440,15 @@ with its padding: the mode line's (`Loop.statusOf`, `Editor/ModeLine.lean`),
 which under the Vim scheme and the default order is the badge of the
 view's Vim state (`NORMAL` in `mode-line.state.normal`), the buffer's name,
 the modified mark while the buffer is modified and the directory its file
-was opened in, then its major mode, line:col and position; a window that
-is not selected prints `in mode-line.inactive` after its id, and has no
-badge. It is a line of its own, so the view's line keeps its form. It is
-how a script sees a view's state, its buffer's name, whether the buffer is
-modified and where the cursor is.
+was opened in, then its major mode, line:col and position; the selected
+window prints `in mode-line.active` after its id, and a window that is not
+selected `in mode-line.inactive`, and has no badge. It is a line of its
+own, so the view's line keeps its form. It is how a script sees a view's
+state, its buffer's name, whether the buffer is modified and where the
+cursor is. After the views comes one `divider` line for each divider
+between the tiled windows (`Scene.dividers`), in the scene's order: its
+top left, its size and its face, `divider 318,0 2x464 in window-divider`.
+A scene with no divider, one window's, prints none.
 
 A command a key runs prints nothing: what became of it is in the echo area
 of the scene, `<name>: no such command`, `<name>: refused: <error>`,
@@ -1660,10 +1675,12 @@ def posted (collaborators : Collaborators σ scheme) (running : Running σ schem
   running.took collaborators stepped
 
 /-- A scene as `scene` prints it, read from the text store as it is now: its
-frame, then each view, its snapshot's text and its markers' offsets, then,
-for a view that has any, its decorations, each its face and its range
-(`decorations <view>: <face> <start>..<stop> ...`), and its status line
-(`statusLine`). `published` is how many scenes have been published, and
+frame, then each view, its snapshot's text and its markers' offsets, and
+its gutter's width when it has a gutter column, then, for a view that has
+any, its decorations, each its face and its range (`decorations <view>:
+<face> <start>..<stop> ...`), and its gutter marks, each its text, its face
+and its range (`marks <view>: <text> <face> <start>..<stop> ...`), and its
+status line (`statusLine`). `published` is how many scenes have been published, and
 `theme` the name of the theme the scene was drawn in. -/
 def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array String) := do
   let focused :=
@@ -1686,7 +1703,7 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
     let rect := view.rect
     lines :=
       lines.push
-        s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}, padding {view.padding.across} {view.padding.down}{if view.padding.top == 0 then "" else s!" top {view.padding.top}"}"
+        s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}, padding {view.padding.across} {view.padding.down}{if view.padding.top == 0 then "" else s!" top {view.padding.top}"}{if view.padding.gutter == 0 then "" else s!" gutter {view.padding.gutter}"}"
     -- Only a view that has decorations has the line, so a scene with none
     -- prints as it did before there were any.
     unless view.decorations.isEmpty do
@@ -1694,7 +1711,18 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
         view.decorations.map fun decoration =>
           s!"{decoration.face.name} {decoration.start}..{decoration.stop}"
       lines := lines.push s!"decorations {view.id.index}: {" ".intercalate spans.toList}"
+    -- Likewise for its gutter marks, each its text, its face and its range.
+    unless view.marks.isEmpty do
+      let marks :=
+        view.marks.map fun mark => s!"{mark.text} {mark.face.name} {mark.start}..{mark.stop}"
+      lines := lines.push s!"marks {view.id.index}: {" ".intercalate marks.toList}"
     lines := lines.push (statusLine view.id view.status view.statusFace)
+  -- Only a scene that has dividers has their lines, so a scene of one
+  -- window prints as it did before there were any.
+  for divider in scene.dividers do
+    let rect := divider.rect
+    lines :=
+      lines.push s!"divider {rect.x},{rect.y} {rect.width}x{rect.height} in {divider.face.name}"
   return lines
 
 /-- Prints the last scene published, or that there is none. -/
@@ -2505,7 +2533,8 @@ with the themes that ship, the workspace command with the job that finds a
 file's workspace, the shell's command with the job that runs `:!`, the
 compile mode's commands, its jobs, its mode and the contributions that ship,
 `cargo-mode`, `lake-mode` and `mise-mode` (`Editor/Compile.lean`,
-`Editor/Compile/Shipped.lean`), the `code` mode with the languages that ship
+`Editor/Compile/Shipped.lean`), the status buffer's commands, its jobs and
+its mode (`Editor/VersionControl/Compiled.lean`), the `code` mode with the languages that ship
 (`Editor/Language.lean`), and the menu bar (`Menu.standard`) with its
 items' bindings (`Menu.bindings`). Its display is the recorder and its
 clipboard its own, as a host's are by default.
@@ -2528,11 +2557,16 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         Workspace.commands ++
         Shell.commands ++
         Compile.commands ++
-        AtPoint.commands
+        AtPoint.commands ++
+        VersionControl.commands ++
+        VersionControl.gutterCommands
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
     compiledJobs :=
-      Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs ++ Completion.Words.jobs
-    modes := Minibuffer.modes ++ Compile.modes ++ Language.modes, ex := Ex.bindings
+      Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs ++ Completion.Words.jobs ++
+        VersionControl.jobs ++
+        VersionControl.gutterJobs
+    modes := Minibuffer.modes ++ Compile.modes ++ VersionControl.modes ++ Language.modes
+    ex := Ex.bindings
     themes := Themes.shipped, languages := Language.shipped
     segments := ModeLine.shipped, contributions := Compile.shipped
     sources :=

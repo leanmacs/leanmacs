@@ -5,3 +5,12 @@
 /.claude/worktrees
 /lean/.lean-fmt-cache
 /.linux-ci
+# infra/github's OpenTofu working files. The state is encrypted but still
+# never committed; .terraform.lock.hcl is committed.
+/infra/github/.terraform/
+/infra/github/*.tfstate
+/infra/github/*.tfstate.*
+/infra/github/*.tfplan
+/infra/github/.terraform.tfstate.lock.info
+/infra/github/crash*.log
+/dist

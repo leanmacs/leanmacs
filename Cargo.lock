@@ -500,6 +500,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-release"
+version = "0.1.0"
+
+[[package]]
+name = "editor-release-std"
+version = "0.1.0"
+dependencies = [
+ "editor-release",
+ "tempfile",
+]
+
+[[package]]
 name = "editor-render"
 version = "0.1.0"
 dependencies = [

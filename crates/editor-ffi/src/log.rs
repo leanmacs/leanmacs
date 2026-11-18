@@ -135,8 +135,13 @@ impl Document {
     }
 
     /// Where the bytes of `range` came from ([`editor_text::Text::trace`]).
-    /// `None` unless the range is two positions of the text in order.
+    /// `None` unless the range is two positions of the text in order, and
+    /// for an excerpt document, before it is locked: where its bytes came
+    /// from is its sources' question ([`crate::excerpts`]).
     pub fn trace(&self, range: Range<usize>) -> Option<Vec<Attribution>> {
+        if self.is_excerpts() {
+            return None;
+        }
         self.lock().trace(range)
     }
 
@@ -335,7 +340,10 @@ mod tests {
             let transaction = Transaction::new(changes);
             let applied = text.apply(&transaction, origin);
             assert!(applied.is_ok(), "a transaction the text accepts");
-            assert_eq!(document.apply(&transaction, origin), applied);
+            assert_eq!(
+                document.apply(&transaction, origin),
+                applied.map_err(crate::transaction::ApplyStatus::of)
+            );
         }
         (document, text)
     }

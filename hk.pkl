@@ -6,10 +6,19 @@ local c_sources = List("**/*.c", "**/*.h", "**/*.cc", "**/*.cpp", "**/*.hpp")
 // What the Rust static library is built from.
 local rust_sources = List("**/*.rs", "**/Cargo.toml", "Cargo.lock")
 
+// What the workflow lint reads (mise.toml's `workflow-lint` task): the
+// workflows and zizmor's config (.github), the structural check and its
+// probe (tools/workflow-*.sh), the probe's fixtures (tests/workflow-lint),
+// and the files tools/workflow-check.sh compares the workflows with:
+// tools/linux/Dockerfile (MISE_VERSION, ELAN_VERSION), mise.toml ([tools]),
+// infra/github/actions.tf (patterns_allowed) and tools/ci/install-elan.sh
+// (ELAN_VERSION).
+local workflow_sources = List(".github/**", "tools/workflow-*.sh", "tests/workflow-lint/**", "tools/linux/Dockerfile", "mise.toml", "infra/github/actions.tf", "tools/ci/**")
+
 // The full gate, defined once in mise.toml's `ci` task.
 local ci = new Mapping<String, Step> {
     ["mise_ci"] {
-        glob = rust_sources + c_sources + List("mise.toml", "deny.toml", "**/clippy.toml", ".clang-format", "lean/**", "tests/**", "tools/stage-bundle.sh")
+        glob = rust_sources + c_sources + workflow_sources + List("deny.toml", "**/clippy.toml", ".clang-format", "lean/**", "tests/**", "tools/stage-bundle.sh")
         check = "mise run ci"
         exclusive = true
     }
@@ -44,6 +53,11 @@ local changed = new Mapping<String, Step> {
     ["lean"] {
         glob = rust_sources + c_sources + List("lean/**", "tests/**", "mise.toml")
         check = "mise run lean-fmt && mise run ffi-test"
+        exclusive = true
+    }
+    ["workflows"] {
+        glob = workflow_sources
+        check = "mise run workflow-lint"
         exclusive = true
     }
 }

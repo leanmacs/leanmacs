@@ -80,8 +80,15 @@ mise run app-check
 
 This builds `Leanmacs.app` (`mise run app`;
 [`building.md`](building.md), "The app bundle") and checks it, on macOS on
-arm64 only (`tools/app-check.sh`). In a temporary directory removed by a
-trap it copies the bundle with `ditto`, so what follows runs on a relocated
+arm64 only (`tools/app-check.sh`). First it works out the stamp it expects
+with the tool `mise run app` stamps with (`leanmacs-release build-id` and
+`commit`), and exports it, so its own builds see the same values. When
+neither `LEANMACS_BUILD_ID` nor `LEANMACS_COMMIT` was set, it also requires
+the two to be HEAD's committer time in UTC and HEAD's SHA as git itself
+prints them (`TZ=UTC git log -1 --date=format-local:%Y%m%d%H%M%S
+--format=%cd`, `git rev-parse HEAD`), so the stamping tool is not its own
+judge; when either was set, as in CI, it takes the values given. In a
+temporary directory removed by a trap it copies the bundle with `ditto`, so what follows runs on a relocated
 copy; verifies the copy's signature with `codesign --verify --strict
 --deep`; reads its `Info.plist` with `plutil` (it lints,
 `CFBundleExecutable` is an executable file under `Contents/MacOS`,
@@ -96,16 +103,20 @@ that must each fail naming the key: a rank of `Default` on the first entry,
 a role of `Viewer` on the second, a second content type, a third entry, and
 for the walk a `Default`, an `Owner`, an inserted
 `UTExportedTypeDeclarations` and an `Owner` under a dotted key it cannot
-address (which fails as `cannot read` that path); `CFBundleShortVersionString` and `CFBundleVersion`
-are each the line of `lean/app/version`, read from the file the build
-reads; `LSApplicationCategoryType` is `public.app-category.developer-tools`
+address (which fails as `cannot read` that path); `CFBundleShortVersionString`
+is the line of `lean/app/version`, read from the file the build reads,
+`CFBundleVersion` the expected build ID and `LeanmacsCommit` the expected
+commit; `LSApplicationCategoryType` is `public.app-category.developer-tools`
 and `NSHumanReadableCopyright` is not empty) and the executable with `lipo`
 (arm64 alone); converts the icon back to an iconset with `iconutil -c
 iconset`, which must hold exactly the ten standard images, each read by
 ImageIO (`sips`) at its nominal size, 16 to 1024 pixels; and runs the
 copy's `Contents/MacOS/editor headless` on `tests/headless/bundle` with no
 directory argument, an empty environment (`env -i`) and `/` as the working
-directory, which must exit 0 and print exactly `expected`. Last, it builds
+directory, which must exit 0 and print exactly `expected`; and runs the
+copy's `editor --version` the same way, which must print exactly the
+version, `build <ID>` and `commit <SHA>` lines, so the Lean plist reader
+reads the keys the build writes. Last, it builds
 `editorApp` again and checks that the bundle's executable, its
 `CodeResources` and the build's trace file keep their modification times
 and inodes: the second build copied and signed nothing. Lake's output is
@@ -117,21 +128,38 @@ puts the script back so the inputs hash to the old trace again, and builds
 once more: the bundle must still verify and be the old one, so a failed or
 interrupted rebuild leaves no half-built bundle taken as up to date. In the
 same clone it writes another version, 9.8.7, into `lean/app/version` and
-builds: the bundle must be rebuilt, verify, and name 9.8.7 as both version
-keys. It turns the artwork, `lean/app/Leanmacs.png`, a quarter
+builds: the bundle must be rebuilt, verify, and name 9.8.7 as
+`CFBundleShortVersionString`, with `CFBundleVersion` still the build ID. It turns the artwork, `lean/app/Leanmacs.png`, a quarter
 (`sips -r 90`) and builds: the bundle must be rebuilt and verify, and its
 icon must hold the ten images with a 1024-pixel one that differs from
 before, so the artwork must not look the same turned a quarter. It
 writes malformed versions (a trailing space, an empty file, `1.x`, a second
 line, four parts) and builds each: each build must fail on the version file
 and leave the old bundle. It writes `0.1.0` with no newline after it and
-builds: the build must succeed and the bundle name 0.1.0, and the check
+builds: the build must succeed and the bundle name 0.1.0, with
+`CFBundleVersion` still the build ID, and the check
 must read 0.1.0 from that file as it reads `lean/app/version`, so the two
 take the same files. Last, it replaces the artwork with a 512×300 PNG, a
 256×256 PNG and a 1024×1024 JPEG and builds each: each build must fail
 with an error that `app/Leanmacs.png` must be a 1024x1024 PNG and leave
-the old bundle; then it puts the artwork back. It ends `app-check: ok` with the bundle's size,
-and takes under a minute.
+the old bundle; then it puts the artwork back. It builds with
+`LEANMACS_BUILD_ID=20010203040506` and `LEANMACS_COMMIT` forty `a`s
+(20010203040507 and forty `b`s when it was given that stamp itself): the
+bundle must be rebuilt and verify, name both, and its `editor --version`
+must print them. Last, it builds with `LEANMACS_BUILD_ID` unset, `2026` and
+`2001020304050x`, and with `LEANMACS_COMMIT` unset, in upper case and 39
+digits long: each build must fail naming the variable and leave the old
+bundle, which must still verify. It ends `app-check: ok` with the bundle's
+size, and takes under a minute (37 s on 2026-11-17).
+
+To see the stamp taken from the environment, as CI gives it, run it once
+with both variables set, then rebuild from HEAD:
+
+```sh
+LEANMACS_BUILD_ID=20010203040506 LEANMACS_COMMIT=$(printf 'a%.0s' $(seq 40)) mise run app-check
+plutil -extract CFBundleVersion raw -o - lean/.lake/build/Leanmacs.app/Contents/Info.plist   # 20010203040506
+mise run app
+```
 
 It writes nothing outside its temporary directory but that second build,
 which is shown to write nothing, opens no window and needs no person. It is
@@ -139,7 +167,67 @@ not part of the gate because the gate does not build the bundle, which is
 about 600 MB and must be signed, and runs on Linux too. It is the check for
 any change to `editorApp`, to `tools/stage-bundle.sh` or to module lookup
 (`lean/Editor/ModuleLookup.lean`): such a change is not done until this
-ends `app-check: ok`.
+ends `app-check: ok`. CI's build job runs it on every push to main, before
+it packs the disk image ([`ci.md`](ci.md)).
+
+## The disk image, on demand
+
+```sh
+mise run dmg && mise run dmg-check
+```
+
+`mise run dmg` packs `dist/Leanmacs-<build-id>.dmg`
+([`building.md`](building.md), "The disk image"). `mise run dmg-check`,
+macOS only, checks it: it fails, saying to run `mise run dmg`, when this
+build's image is not in `dist/`, and otherwise runs the ignored test
+`crates/editor-release-std/tests/dmg_mount.rs` with `LEANMACS_DMG` naming
+the image (the test panics when that is unset). The test mounts the image
+read-only, with no Finder window, on a mount point in a temporary directory
+it owns, and detaches it however it ends. Then:
+
+- the volume's root, read without following links, must be exactly
+  `Leanmacs.app` (a directory), `Applications` (a link to `/Applications`),
+  `LICENSE` and `README.txt` (files), compared by
+  `editor_release::dmg::check_volume`, whose unit tests in the gate pin
+  every way it can differ. Names that start with `.` are left out:
+  `hdiutil` may add `.fseventsd`, which Finder hides;
+- `LICENSE` and `README.txt` must hold the bytes of the repository's
+  `LICENSE` and `packaging/macos/README.txt`;
+- the app's signature must verify (`codesign --verify --strict --deep`);
+- its `CFBundleVersion` must be the build the file name names and this
+  build's ID, its `LeanmacsCommit` this build's commit, and its
+  `CFBundleShortVersionString` the line of `lean/app/version`;
+- its `editor --version`, run with an empty environment, must print those
+  three.
+
+It writes nothing but the mount point and takes a few seconds. It does not
+depend on `dmg`, so CI's build job, which runs `dmg` then `dmg-check`,
+packs once. It is not part of the gate, which builds no bundle.
+
+## The nightly's preparation, on demand
+
+```sh
+mise run nightly-check
+```
+
+macOS only. The ignored test `crates/editor-release-std/tests/nightly_mount.rs`
+stages a tiny `Leanmacs.app/Contents/Info.plist` stamped with a build ID
+and a commit, packs it with `hdiutil create` as `Leanmacs-<id>.dmg` in a
+temporary directory it owns, and runs the nightly's preparation
+(`editor_release::nightly::prepare`, as `mise run nightly` does) on it
+through the real process adapter, with real `hdiutil`, `plutil` and
+`shasum`:
+
+- for the stamp's own build and commit, the output holds exactly the two
+  images, `Leanmacs.dmg.sha256`, `build.json` and `notes.md`;
+  `shasum -a 256 -c Leanmacs.dmg.sha256` passes; `build.json` and the
+  checksum read back as the build; and the image is detached;
+- for another commit, the preparation refuses with the mismatch, copies
+  nothing, and the image is detached all the same.
+
+It writes nothing outside its temporary directory and takes a few seconds.
+`mise run nightly`, after `mise run dmg`, prepares the real assets in
+`target/nightly` ([`building.md`](building.md), "The nightly's assets").
 
 ## Installing the app
 
@@ -235,20 +323,20 @@ mise run syntax-bench
 ```
 
 This times the syntax rounds on the largest Lean file in the repository,
-`lean/ModelTest.lean`, through the real tree-sitter adapter in a release
-build, and asserts nothing, so it is not part of the gate, which only
-builds it. It is the example of `crates/editor-syntax-treesitter`
-(`examples/round.rs`), which takes any path and grammar name. It prints the
-file's bytes and lines, the grammar's reparse policy and its tree's error
-nodes, the time of the first parse, and the median, minimum and maximum of
-20 rounds after an edit (`Session::parse_once`) and of 20 idle refreshes (a
-whole parse and its compare, `Session::refresh_once`).
+which the task finds on every run, through the real tree-sitter adapter in
+a release build, and asserts nothing, so it is not part of the gate, which
+only builds it. It is the example of `crates/editor-syntax-treesitter`
+(`examples/round.rs`), which takes any path and grammar name. It prints
+the file's bytes and lines, the grammar's reparse policy and its tree's
+error nodes, the time of the first parse, and the median, minimum and
+maximum of 20 rounds after an edit (`Session::parse_once`) and of 20 idle
+refreshes (a whole parse and its compare, `Session::refresh_once`).
 
 Run it on a quiet machine when the Lean grammar is updated
 (`vendor/README.md`) or the round changes, and record its figures, dated, in
-`docs/design/rust-library.md` ("Lean, measured"). The largest Lean file is
-found again with `find lean tests -name '*.lean' -not -path '*/.lake/*' |
-xargs ls -S | head -1`.
+`docs/design/rust-library.md` ("Lean, measured"), naming the file it
+timed. The task finds the largest Lean file with `find lean tests -name
+'*.lean' -not -path '*/.lake/*' | xargs ls -S | head -1`.
 
 ## The keyboard check, on demand
 

@@ -1,0 +1,14 @@
+# gitleaks' configuration for `mise run secrets-scan`
+# (docs/dev-practices/publishing.md, "The secret scan").
+#
+# The default rule set, used unmodified: no rule is removed, weakened or
+# allowlisted here. A finding that review shows is not a credential (a test
+# fixture, a hash, generated data) goes in `.gitleaksignore`, by its
+# fingerprint, with a comment saying what it is. Never add a path- or
+# regex-wide allowlist to this file: it would hide every future finding
+# that matches, not just the one reviewed.
+#
+# A finding that is, or might be, a real credential is not allowlisted at
+# all: the scan stays red and the owner is told (publishing.md).
+[extend]
+useDefault = true

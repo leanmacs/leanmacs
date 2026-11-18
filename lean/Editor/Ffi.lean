@@ -522,7 +522,8 @@ This exists for `FfiTest`, which uses it to see a counter's finaliser run. -/
 opaque Counter.live : IO UInt64
 
 /-- The type behind `Document`. It is opaque, so the only ways to get a
-document are `Document.new` and `Document.ofSnapshot`. -/
+document are `Document.new`, `Document.ofSnapshot` and
+`Document.excerptsNew`. -/
 opaque DocumentPointed : NonemptyType
 
 /-- Text held by the Rust library, edited in place: a second handle, and the
@@ -540,14 +541,48 @@ instance : Nonempty Document :=
 @[extern "editor_glue_document_new"]
 opaque Document.new (text : @& String) : IO Document
 
-/-- Replaces the bytes of the document from `start` up to, not including,
-`stop` with `text`, and returns whether the library did. An empty range
-inserts, and an empty `text` deletes.
+/-- How the library ended a replace (`Document.replace`). Anything but `done`
+changed nothing. -/
+inductive ReplaceStatus where
+  /-- Replaced. -/
+  | done
+  /-- An offset is not a character boundary of the text within it, or the
+  start is after the stop. -/
+  | badRange
+  /-- The document is an excerpt document, and the range is not inside one
+  excerpt, or meets two excerpts of one source. -/
+  | outsideExcerpt
+  /-- The document is an excerpt document, and the range is in an excerpt of
+  a source that was freed. -/
+  | noSuchSource
+  deriving DecidableEq, Repr
 
-`false`, with nothing changed, unless both offsets are character boundaries
-of the document's text, within it, and `start ≤ stop`. -/
+/-- `Document.replace` as it crosses: the status as its number. -/
 @[extern "editor_glue_document_replace"]
-opaque Document.replace (document : @& Document) (start stop : USize) (text : @& String) : IO Bool
+private opaque Document.replaceRaw (document : @& Document) (start stop : USize)
+    (text : @& String) : IO UInt64
+
+/-- Replaces the bytes of the document from `start` up to, not including,
+`stop` with `text`, and says how it ended. An empty range inserts, and an
+empty `text` deletes.
+
+`badRange`, with nothing changed, unless both offsets are character
+boundaries of the document's text, within it, and `start ≤ stop`. An excerpt
+document's replace is its sources' edit (`crates/editor-ffi/src/excerpts.rs`),
+refused after that with `outsideExcerpt` or `noSuchSource`. -/
+def Document.replace (document : Document) (start stop : USize) (text : String) :
+    IO ReplaceStatus := do
+  match ← document.replaceRaw start stop text with
+  | 0 =>
+    return .done
+  | 1 =>
+    return .badRange
+  | 2 =>
+    return .outsideExcerpt
+  | 3 =>
+    return .noSuchSource
+  | status =>
+    throw (IO.userError s!"the library answered a replace with an unknown status {status}")
 
 /-- A copy of the whole text of the document. -/
 @[extern "editor_glue_document_read"]
@@ -799,6 +834,14 @@ inductive ApplyRefusal where
   /-- A selection has no range, its primary names none, or an end of one of
   its ranges is not a position of its text. -/
   | badSelection
+  /-- The document is an excerpt document, whose edit scripts are refused. -/
+  | excerpted
+  /-- The document is an excerpt document, and a range the transaction changes
+  is not inside one excerpt, or meets two excerpts of one source. -/
+  | outsideExcerpt
+  /-- The document is an excerpt document, and the transaction reaches an
+  excerpt of a source that was freed. -/
+  | noSuchSource
   deriving DecidableEq, Repr
 
 /-- `words` with `word` added: its eight bytes, least significant first. -/
@@ -860,7 +903,9 @@ private def Transaction.inserted (transaction : Transaction) : String :=
 `UInt64` fields only, so the order here is the layout the glue writes. -/
 private structure RawApplied where
   /-- 0 applied, 1 the changes do not fit, 2 a selection does not fit, 3 the
-  words could not be read. -/
+  words could not be read, 4 the text moved past an edit script's revision,
+  5 an excerpt document's edit script, 6 an edit outside one excerpt, 7 an
+  edit of a freed source. -/
   status : UInt64
   /-- The revision the transaction produced, when it was applied. -/
   revision : UInt64
@@ -876,10 +921,15 @@ edit, and returns the revision it produced: one more than before, however
 many changes it has. `origin` is a number the library stores and gives back
 (`Document.trace`) and never reads.
 
-A refused transaction changes nothing. A selection that is none (no range,
-or a primary that names none) is refused first, then changes that do not
-fit, then a selection with an end that is not a position of its text. A
-length or an offset given as the largest `UInt64` is one no text accepts. -/
+A refused transaction changes nothing. A selection that is none (no range, or
+a primary that names none) is refused first, then changes that do not fit,
+then a selection with an end that is not a position of its text. A length or
+an offset given as the largest `UInt64` is one no text accepts.
+
+An excerpt document's transaction is its sources' edit, and the revision is
+the excerpt document's (`crates/editor-ffi/src/excerpts.rs`): after those
+refusals, an edit outside one excerpt is `outsideExcerpt`, and one that
+reaches a freed source `noSuchSource`. -/
 def Document.apply (document : Document) (transaction : Transaction) (origin : UInt64) :
     IO (Except ApplyRefusal UInt64) := do
   let raw ← document.applyRaw transaction.words transaction.inserted origin
@@ -890,6 +940,12 @@ def Document.apply (document : Document) (transaction : Transaction) (origin : U
     return .error .badChange
   | 2 =>
     return .error .badSelection
+  | 5 =>
+    return .error .excerpted
+  | 6 =>
+    return .error .outsideExcerpt
+  | 7 =>
+    return .error .noSuchSource
   | status =>
     throw (IO.userError s!"the library could not read a transaction's words (status {status})")
 
@@ -904,6 +960,20 @@ inductive ScriptStep where
   | insert (start count : UInt64)
   deriving DecidableEq, Repr
 
+/-- A hunk of a diff's answer, as the library gives it back
+(`crates/editor-ffi/src/diffs.rs`, "How hunks cross"): byte ranges of whole
+lines of the old text and the new. -/
+structure HunkWords where
+  /-- Where the old lines start. -/
+  oldStart : UInt64
+  /-- Where they stop. -/
+  oldStop : UInt64
+  /-- Where the new lines start. -/
+  newStart : UInt64
+  /-- Where they stop. -/
+  newStop : UInt64
+  deriving DecidableEq, Repr
+
 /-- Why the library refused an edit script. -/
 inductive ScriptRefusal where
   /-- The text has moved past the revision the script was made for. -/
@@ -911,6 +981,8 @@ inductive ScriptRefusal where
   /-- The steps do not walk the whole of the text and of the source, or one
   starts or stops inside a character of either. -/
   | badChange
+  /-- The document is an excerpt document, whose edit scripts are refused. -/
+  | excerpted
   deriving DecidableEq, Repr
 
 /-- An edit script as it crosses: the count of steps, then a kind (0 a
@@ -932,8 +1004,9 @@ private opaque Document.applyScriptRaw (document : @& Document) (base : UInt64)
 /-- Applies the edit script `script` to the document as one transaction,
 taking what it puts in from `source` and recording `origin` as who made the
 edit, unless the document's revision is not `base`; and returns the revision
-it produced. A refused script changes nothing: the revision is looked at
-first, under the document's lock, then whether the steps fit. -/
+it produced. A refused script changes nothing: an excerpt document is
+refused first, then the revision is looked at, under the document's lock,
+then whether the steps fit. -/
 def Document.applyScript (document : Document) (base : UInt64) (source : Snapshot)
     (script : Array ScriptStep) (origin : UInt64) : IO (Except ScriptRefusal UInt64) := do
   let raw ← document.applyScriptRaw base source (scriptWords script) origin
@@ -944,6 +1017,8 @@ def Document.applyScript (document : Document) (base : UInt64) (source : Snapsho
     return .error .badChange
   | 4 =>
     return .error .moved
+  | 5 =>
+    return .error .excerpted
   | status =>
     throw (IO.userError s!"the library could not apply an edit script (status {status})")
 
@@ -1380,6 +1455,9 @@ inductive InverseRefusal where
   | noInverse
   /-- The document's text is not in the state the run ended in. -/
   | notInState
+  /-- The document is an excerpt document, whose inverses are refused: the
+  undo of an edit through it is its sources'. -/
+  | excerpted
   deriving DecidableEq, Repr
 
 /-- The inverted result `words` spell: the revision, a presence word, and for
@@ -1410,8 +1488,8 @@ produced `first`. It is one more revision and one entry of the log, like any
 transaction, and its own inverse is kept, so the inverse of the revision this
 returns takes it back.
 
-A refused inverse changes nothing. A run that names a revision the document
-has not reached is refused first, then a run the document keeps no inverse
+A refused inverse changes nothing. An excerpt document is refused first,
+then a run that names a revision the document has not reached, then a run the document keeps no inverse
 for, then a run the text is not in the state at the end of: the text is there
 just after the run, and again whenever inverses have brought it back, and
 not when it merely reads the same. A revision given as the largest `UInt64`
@@ -1432,6 +1510,8 @@ def Document.applyInverse (document : Document) (first last origin : UInt64) :
     return .error .noInverse
   | 3 =>
     return .error .notInState
+  | 4 =>
+    return .error .excerpted
   | status =>
     throw (IO.userError s!"the library reported an unknown inverse status ({status})")
 
@@ -1675,6 +1755,131 @@ neither the snapshot nor the document the snapshot was taken from, and it
 outlives both. -/
 @[extern "editor_glue_document_from_snapshot"]
 opaque Document.ofSnapshot (snapshot : @& Snapshot) : IO Document
+
+/-- A new excerpt document with no excerpts: a document whose text is made of
+ranges of other documents, its sources, joined by one line feed
+(`crates/editor-ffi/src/excerpts.rs`). Its text is caught up with its
+sources whenever it is read, so a snapshot of it, its edit log and its
+markers follow them; its edits are its sources' edits, and its inverse, edit
+script and trace are refused. It holds its sources' texts, so a source freed
+is read as it was, and no longer edited through it. -/
+@[extern "editor_glue_excerpts_new"]
+opaque Document.excerptsNew : IO Document
+
+/-- Why the library refused an excerpt document's list. -/
+inductive ExcerptRefusal where
+  /-- The document is not an excerpt document. -/
+  | notExcerpts
+  /-- A source is an excerpt document. -/
+  | excerpted
+  /-- A range is not two positions of its source in order. -/
+  | badRange
+  deriving DecidableEq, Repr
+
+/-- `Document.excerptsSet` as it crosses: the sources as an array of
+handles, and the list as words, the count of excerpts and then the index of
+each one's source in the array, its start and its end. -/
+@[extern "editor_glue_excerpts_set"]
+private opaque Document.excerptsSetRaw (document : @& Document) (sources : @& Array Document)
+    (words : @& ByteArray) : IO UInt64
+
+/-- Replaces the list of the excerpt document with `list`: for each excerpt,
+the index in `sources` of its source, and its range there, as byte offsets.
+A refused list changes nothing: a document that is not an excerpt document
+is refused first, then a source that is one, then a range that is not two
+positions of its source in order. An index into `sources` that names none
+is a fault of the caller's, thrown. -/
+def Document.excerptsSet (document : Document) (sources : Array Document)
+    (list : Array (Nat × UInt64 × UInt64)) : IO (Except ExcerptRefusal Unit) := do
+  let words :=
+    list.foldl
+      (fun words (index, start, stop) =>
+        pushWord (pushWord (pushWord words index.toUInt64) start) stop)
+      (pushWord ByteArray.empty list.size.toUInt64)
+  match ← document.excerptsSetRaw sources words with
+  | 0 =>
+    return .ok ()
+  | 1 =>
+    return .error .notExcerpts
+  | 2 =>
+    return .error .excerpted
+  | 4 =>
+    return .error .badRange
+  | status =>
+    throw (IO.userError s!"the library could not read an excerpt list (status {status})")
+
+/-- Whether the document is an excerpt document. -/
+@[extern "editor_glue_document_is_excerpts"]
+opaque Document.isExcerpts (document : @& Document) : IO Bool
+
+/-- Where an offset of an excerpt document is, as the glue builds it in one
+call: `UInt64` fields only, so the order here is the layout the glue
+writes. -/
+private structure RawLocated where
+  /-- 0 found, 1 not an excerpt document, 2 not a position, 3 an empty
+  list. -/
+  status : UInt64
+  /-- The index of the excerpt, when found. -/
+  excerpt : UInt64
+  /-- The offset in its source, when found. -/
+  offset : UInt64
+
+/-- `Document.excerptsLocate` as it crosses. -/
+@[extern "editor_glue_excerpts_locate"]
+private opaque Document.excerptsLocateRaw (document : @& Document) (offset : USize) : IO RawLocated
+
+/-- Why the library did not locate an offset of an excerpt document. -/
+inductive LocateRefusal where
+  /-- The document is not an excerpt document. -/
+  | notExcerpts
+  /-- The offset is not a position of the document's text. -/
+  | badPosition
+  deriving DecidableEq, Repr
+
+/-- Which excerpt of the excerpt document holds the position `offset` of its
+text, caught up first, and the offset in that excerpt's source as the source
+is now: `none` for an empty list. An excerpt holds both its ends. -/
+def Document.excerptsLocate (document : Document) (offset : USize) :
+    IO (Except LocateRefusal (Option (Nat × Nat))) := do
+  let raw ← document.excerptsLocateRaw offset
+  match raw.status with
+  | 0 =>
+    return .ok (some (raw.excerpt.toNat, raw.offset.toNat))
+  | 1 =>
+    return .error .notExcerpts
+  | 2 =>
+    return .error .badPosition
+  | 3 =>
+    return .ok none
+  | status =>
+    throw (IO.userError s!"the library answered a locate with an unknown status {status}")
+
+/-- `Snapshot.excerpts` as it crosses: the list as words, and its status. -/
+@[extern "editor_glue_snapshot_excerpts"]
+private opaque Snapshot.excerptsRaw (snapshot : @& Snapshot) : IO RawWords
+
+/-- The list a snapshot of an excerpt document carries, as it was when the
+snapshot was taken: for each excerpt, its start and its end in the
+snapshot's text and its start and its end in its source. `none` for a
+snapshot of any other document. Words that do not spell a list are an
+error. -/
+def Snapshot.excerpts (snapshot : Snapshot) : IO (Option (Array (Nat × Nat × Nat × Nat))) := do
+  let raw ← snapshot.excerptsRaw
+  match raw.status with
+  | 0 =>
+    let some words := wordsOf? raw.words
+      | throw (IO.userError "the library's excerpt list is not whole words")
+    let count := (words[0]?.getD 0).toNat
+    unless words.size == 1 + 4 * count do
+      throw (IO.userError "the library's excerpt list does not spell its count")
+    return some <|
+        (Array.range count).map fun index =>
+          let word (field : Nat) := words[1 + 4 * index + field]!.toNat
+          (word 0, word 1, word 2, word 3)
+  | 1 =>
+    return none
+  | status =>
+    throw (IO.userError s!"the library answered an excerpt list with an unknown status {status}")
 
 /-- What the file service compares to tell whether a file changed: when it
 was last modified and how long it is. Two stamps are compared for equality
@@ -1971,13 +2176,45 @@ def diffsTake (id : UInt64) : IO (Option (Array ScriptStep)) := do
   | .error reason =>
     throw (IO.userError s!"the library's edit script could not be read: {reason}")
 
+/-- As `diffsStart`, for the hunks of whole lines of the two texts in place of
+a script, which are taken with `diffsTakeHunks`. -/
+@[extern "editor_glue_diffs_start_hunks"]
+opaque diffsStartHunks (id : UInt64) (old new : @& Snapshot) (limit : UInt64) : IO Bool
+
+/-- `diffsTakeHunks` before its words are decoded. -/
+@[extern "editor_glue_diffs_take_hunks"]
+private opaque diffsTakeHunksRaw (id : UInt64) : IO (Option ByteArray)
+
+/-- The hunks `bytes` spell: the count of hunks, then four numbers for each
+(`crates/editor-ffi/src/diffs.rs`, "How hunks cross"). An error, with what was
+wrong, for words that spell none. -/
+def HunkWords.decode (bytes : ByteArray) : Except String (Array HunkWords) := do
+  let some words := wordsOf? bytes | throw "its words are not whole words"
+  let some count := words[0]? | throw "it has no count"
+  unless words.size == 1 + 4 * count.toNat do
+    throw s!"{count} hunks are not {words.size - 1} words"
+  return (Array.range count.toNat).map fun index =>
+      { oldStart := words[1 + 4 * index]!, oldStop := words[2 + 4 * index]!
+        newStart := words[3 + 4 * index]!, newStop := words[4 + 4 * index]! }
+
+/-- Hands over the hunks of the diff request `id`, once. `none` when the
+service keeps no hunks for `id`, a script among them. It throws if the library
+sends words these bindings cannot read. -/
+def diffsTakeHunks (id : UInt64) : IO (Option (Array HunkWords)) := do
+  let some bytes ← diffsTakeHunksRaw id | return none
+  match HunkWords.decode bytes with
+  | .ok hunks =>
+    return some hunks
+  | .error reason =>
+    throw (IO.userError s!"the library's hunks could not be read: {reason}")
+
 /-- Cancels the diff request `id`, and returns whether there was anything to
 cancel. Safe for an id that is unknown. -/
 @[extern "editor_glue_diffs_cancel"]
 opaque diffsCancel (id : UInt64) : IO Bool
 
-/-- How many diff requests are waiting or being worked, and how many scripts
-have not been taken, together. A readout for tests. -/
+/-- How many diff requests are waiting or being worked, and how many answers
+(scripts or hunks) have not yet been taken, together. A readout for tests. -/
 @[extern "editor_glue_diffs_pending"]
 opaque diffsPending : IO UInt64
 
@@ -2507,10 +2744,12 @@ private def rowsOf? (raw : RawWords) : IO (Option (Array DisplayRow)) := do
       (Array.range count).map fun row =>
         { start := words[1 + 2 * row]!, stop := words[2 + 2 * row]! }
 
-/-- `Display.rows` as it crosses: the answer as words, and its status. -/
+/-- `Display.rows` as it crosses: the view's blocks as words and a string,
+and the answer as words, and its status. -/
 @[extern "editor_glue_display_rows"]
 private opaque Display.rowsRaw (display : @& Display) (snapshot : @& Snapshot)
-    (width height across down top : UInt64) (anchor : USize) : IO RawWords
+    (width height across down top gutter : UInt64) (anchor : USize) (blockWords : @& ByteArray)
+    (blockText : @& String) : IO RawWords
 
 /-- The rows a view `width` pixels wide and `height` tall, its content inset
 `across` and `down` points from its edges and its rows a further `top`
@@ -2518,16 +2757,26 @@ points from its top, shows of `snapshot`, from the visual row that holds
 `anchor`: as many as fit whole, fewer at the end of the text. The library
 takes the padding off at the scale it lays out at, as its frames take it
 off; a padding no `u32` holds is the largest. `none` when `anchor` is not a
-position of the text. -/
+position of the text. `blockWords` and `blockText` are the view's blocks,
+in the layout a view's blocks take in a scene after its padding
+(`crates/editor-ffi/src/display/wire.rs`): the rows are those that fit
+with the blocks drawn between them. Words that spell no blocks are
+answered as a bad anchor is, `none`. None by default. `gutter` is the width of
+the view's gutter column, in points, a further inset of its text from its
+left; none by default. -/
 def Display.rows (display : Display) (snapshot : Snapshot) (width height : UInt64) (anchor : USize)
-    (across down top : UInt64 := 0) : IO (Option (Array DisplayRow)) := do
-  rowsOf? (← display.rowsRaw snapshot width height across down top anchor)
+    (across down top : UInt64 := 0) (blockWords : Array UInt64 := #[0]) (blockText : String := "")
+    (gutter : UInt64 := 0) : IO (Option (Array DisplayRow)) := do
+  rowsOf?
+      (←
+        display.rowsRaw snapshot width height across down top gutter anchor
+            (blockWords.foldl pushWord ByteArray.empty) blockText)
 
 /-- `Display.move` as it crosses: the lines as a 64-bit two's complement
 number, the goal as a presence flag and a value, and the answer as words. -/
 @[extern "editor_glue_display_move"]
 private opaque Display.moveRaw (display : @& Display) (snapshot : @& Snapshot)
-    (width across : UInt64) (position : USize) (lines : UInt64) (goalPresent : Bool)
+    (width across gutter : UInt64) (position : USize) (lines : UInt64) (goalPresent : Bool)
     (goal : UInt64) : IO RawWords
 
 /-- The position of `snapshot` `lines` visual rows below `position` (above
@@ -2535,13 +2784,15 @@ when negative) in a view `width` pixels wide whose text is inset `across`
 points each side, aiming for `goal`, or for the position's own x when there
 is none; and the goal to pass on. A count of lines past what 64 bits hold
 is cut to the largest, which is past every text's first and last row
-anyway. `none` when `position` is not a position of the text. -/
+anyway. `none` when `position` is not a position of the text. `gutter` is the
+width of the view's gutter column, in points, taken off the width once. -/
 def Display.move (display : Display) (snapshot : Snapshot) (width : UInt64) (position : USize)
-    (lines : Int) (goal : Option UInt64) (across : UInt64 := 0) : IO (Option DisplayMoved) := do
+    (lines : Int) (goal : Option UInt64) (across : UInt64 := 0) (gutter : UInt64 := 0) :
+    IO (Option DisplayMoved) := do
   let bound : Int := 2 ^ 63
   let clamped := max (-bound) (min lines (bound - 1))
   let word := if clamped < 0 then (2 ^ 64 + clamped).toNat.toUInt64 else clamped.toNat.toUInt64
-  let raw ← display.moveRaw snapshot width across position word goal.isSome (goal.getD 0)
+  let raw ← display.moveRaw snapshot width across gutter position word goal.isSome (goal.getD 0)
   if raw.status != 0 then
     return none
   match wordsOf? raw.words with
@@ -2562,20 +2813,25 @@ structure DisplaySpot where
   height : UInt64
   deriving DecidableEq, Repr
 
-/-- `Display.spot` as it crosses: the answer as words, and its status. -/
+/-- `Display.spot` as it crosses: the view's blocks as words and a string,
+and the answer as words, and its status. -/
 @[extern "editor_glue_display_spot"]
 private opaque Display.spotRaw (display : @& Display) (snapshot : @& Snapshot)
-    (width height across down top : UInt64) (anchor position : USize) : IO RawWords
+    (width height across down top gutter : UInt64) (anchor position : USize)
+    (blockWords : @& ByteArray) (blockText : @& String) : IO RawWords
 
 /-- Where `position` of `snapshot` is drawn in a view `width` pixels wide
 and `height` tall, padded as for `Display.rows`, that shows from the visual
 row that holds `anchor`: `some none` when the view does not show it, and
 `none` when `anchor` or `position` is not a position of the text. Words
-that do not spell a spot are an error. -/
+that do not spell a spot are an error. The blocks are as for
+`Display.rows`: a position below a block is lower by the block's rows. -/
 def Display.spot (display : Display) (snapshot : Snapshot) (width height : UInt64)
-    (anchor position : USize) (across down top : UInt64 := 0) : IO (Option (Option DisplaySpot)) :=
-  do
-  let raw ← display.spotRaw snapshot width height across down top anchor position
+    (anchor position : USize) (across down top : UInt64 := 0) (blockWords : Array UInt64 := #[0])
+    (blockText : String := "") (gutter : UInt64 := 0) : IO (Option (Option DisplaySpot)) := do
+  let raw ←
+    display.spotRaw snapshot width height across down top gutter anchor position
+        (blockWords.foldl pushWord ByteArray.empty) blockText
   if raw.status != 0 then
     return none
   match wordsOf? raw.words with

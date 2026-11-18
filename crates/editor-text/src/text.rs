@@ -174,31 +174,9 @@ impl Text {
         origin: Origin,
     ) -> Result<Transaction, ApplyError> {
         let changes = transaction.changes();
-        if !changes.fits(&current.rope) {
-            return Err(ApplyError::BadChange);
-        }
-        if transaction
-            .before()
-            .is_some_and(|selection| !selection.fits(current))
-        {
-            return Err(ApplyError::BadSelection);
-        }
-        // The changes are made to a clone, which shares the text's nodes and
-        // copies only those it changes. It takes the text's place once
-        // everything is accepted, so a refusal has nothing to undo.
-        let mut next = Snapshot {
-            rope: current.rope.clone(),
-            revision: current.revision.next(),
-        };
-        if !changes.apply_to(&mut next.rope) {
-            return Err(ApplyError::BadChange);
-        }
-        if transaction
-            .after()
-            .is_some_and(|selection| !selection.fits(&next))
-        {
-            return Err(ApplyError::BadSelection);
-        }
+        // The clone takes the text's place once everything is accepted, so
+        // a refusal has nothing to undo.
+        let next = checked(current, transaction)?;
         // The old points are read from the text as it is and the new ones
         // from the clone. Every end is a boundary between two changes, which
         // the fit made a position, so no span is expected to be missing.
@@ -227,7 +205,49 @@ impl Text {
         *current = next;
         Ok(inverse)
     }
+}
 
+/// The checks [`Text::apply`] makes of `transaction` against `current`, in
+/// its order, and the text the changes make, at the next revision, when
+/// they pass: the change set fits, the selection before fits `current`, the
+/// changes apply, and the selection after fits what they make. Nothing is
+/// changed either way.
+///
+/// The changes are made to a clone, which shares the text's nodes and
+/// copies only those it changes. The one writer path checks through it,
+/// and so may any other path that must refuse what it would refuse, in the
+/// same order.
+pub(crate) fn checked(
+    current: &Snapshot,
+    transaction: &Transaction,
+) -> Result<Snapshot, ApplyError> {
+    let changes = transaction.changes();
+    if !changes.fits(&current.rope) {
+        return Err(ApplyError::BadChange);
+    }
+    if transaction
+        .before()
+        .is_some_and(|selection| !selection.fits(current))
+    {
+        return Err(ApplyError::BadSelection);
+    }
+    let mut next = Snapshot {
+        rope: current.rope.clone(),
+        revision: current.revision.next(),
+    };
+    if !changes.apply_to(&mut next.rope) {
+        return Err(ApplyError::BadChange);
+    }
+    if transaction
+        .after()
+        .is_some_and(|selection| !selection.fits(&next))
+    {
+        return Err(ApplyError::BadSelection);
+    }
+    Ok(next)
+}
+
+impl Text {
     /// Applies the inverse of the run of revisions from `first` to `last`,
     /// both included, as one transaction, recording `origin` as who made
     /// the edit: the text holds again what it held before the transaction

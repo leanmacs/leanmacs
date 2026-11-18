@@ -11,10 +11,12 @@ import Editor.Config.Stores
 import Editor.Event
 import Editor.Ex
 import Editor.Files
+import Editor.Gutter
 import Editor.InputScheme
 import Editor.Key.Notation
 import Editor.ModeLine
 import Editor.State
+import Editor.VersionControl.Gutter
 
 /-!
 # The command loop
@@ -623,6 +625,13 @@ they were before it (`docs/design/concurrency.md`, "Foreground: commands").
   buffer the loop closes the group after every event (`Loop.publish`), so
   the kept state is a node's, and the revert leaves nothing pending, no
   node and nothing to redo.
+- **An excerpt buffer's own tree is neither kept nor reverted**: its text
+  keeps no inverse, and the store would refuse to revert it. Its sources
+  are buffers, kept and reverted as every buffer is, so a command that
+  edited several sources through one excerpt buffer is rolled back in each,
+  and the excerpt text catches up from them. The steps it keeps are state,
+  and come back with the state from before the command. Pinned by
+  `ModelTest.excerptBufferChecks`.
 - **What is not undone**: the texts, snapshots and markers the command
   made, the scenes it published, what it wrote to the clipboard, and what
   it asked of the syntax tree port: a text attached, highlighted or
@@ -726,7 +735,7 @@ is queued, and marks that event. What the loop does with the flag is here
 
 | Event | What it does to the state |
 |---|---|
-| `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped, and so is a commit into a read-only buffer (`Buffer.readOnly`), the echo area saying `<name> is read-only`, and the first commit into a buffer whose file changed on disk unbeknown to the user ("Files that changed on disk"). Either way it clears the preedit |
+| `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped, and so is a commit into a read-only buffer (`Buffer.readOnly`), the echo area saying `<name> is read-only`, and the first commit into a buffer whose file changed on disk unbeknown to the user ("Files that changed on disk"). In an excerpt buffer the sources what the selection covers reaches are looked at as a command's edit's are (`Loop.commitExcerpts`): a read-only source drops it, saying `<source> is read-only`, a text no buffer holds drops it, saying `<buffer> reads a text no buffer holds`, and a source whose file changed unbeknown drops it as above; an inserted one touches the sources. Either way it clears the preedit |
 | `preedit text` | Sets the preedit to `text`; an empty one clears it |
 | `compositionDisabled` | Clears the preedit |
 | `resize` | Sets the frame's size, whether the window is in fullscreen (`Frame.fullscreen`), its corner clearance in points (`Frame.corner`), which the bottom row is inset by (`EditorState.bottomInset`), and its top inset in points (`Frame.top`), which the views along the frame's top edge start their text below (`EditorState.topInset`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: Lean handles no scale, and the display lays out at its own |
@@ -750,7 +759,7 @@ state does not let one rest, so there it is dropped
 an insert session joins the session's step of the history.
 
 **The scheme is told of a commit that was inserted**
-(`InputScheme.committed`, `Loop.inserts`), for the focused view, in both
+(`InputScheme.committed`, what `Loop.handle` hands back), for the focused view, in both
 states of it the loop keeps, the one it is in and the one it was last at
 rest in: no key printed the text, so the scheme's `step` never saw it, and
 a scheme that keeps what is typed would miss it. A commit that is dropped,
@@ -771,6 +780,9 @@ changed the state or not (`Loop.publish`):
    is at, and its group is closed (`EditorState.recordHistories`): what an
    event edited is one step of the history. **But for a buffer in an
    insert session**, whose group is left open ("Insert sessions", below).
+   Then each excerpt buffer that is not held makes the source buffers its
+   edits touched one step of its own (`EditorState.closeExcerptGroup`,
+   `Editor/State.lean`, "Excerpt buffers"), over their trees just closed.
    Then a quit that cannot go ahead is withdrawn ("Quit", above).
 2. **The scene** (`Loop.views`, `Loop.scene`). Each window the layout
    places, in drawing order, is a view in the rectangle `EditorState.rects`
@@ -816,7 +828,8 @@ changed the state or not (`Loop.publish`):
    rows, and whether it is the selected window
    (`EditorState.selectedView`). A window that is not selected has no
    badge, every field in `mode-line.inactive`, and that face as its row's
-   (`View.statusFace`); the selected one has none. "Modified" is the
+   (`View.statusFace`); the selected one's row is in `mode-line.active`
+   (`ModeLine.activeFace`), whose background marks it. "Modified" is the
    `modified` segment's mark (`Buffer.isModified`): a buffer that is not
    has no such field. The answer is right because the histories were told
    their texts' revisions in step 1. A selection marker the text does not
@@ -929,7 +942,7 @@ loop asks for at three moments, and a save's own check.
   so it survives the rollback, and the echo area reads
   `Files.changedOnDisk`, which names `:e`, or for a file that is gone
   `Files.goneFromDisk`, which names `:w!`, with no command name before it.
-  A committed text is dropped the same way (`handle`, `inserts`).
+  A committed text is dropped the same way (`handle`).
 - **The next edit lands**, since the user was told, as Emacs's supersession
   check lets the next modification through. The mark stays, and a save is
   still refused until `:w!` or `:e!`.
@@ -993,13 +1006,29 @@ service.
 
 ## Decorations
 
-A view's decorations come from two sources, in this order: its buffer's
-spans (`Buffer.spans`, `Editor/State.lean`, "Buffers"), each in the face
-its owner gave it, such as the compile mode's locations
-(`Editor/Compile.lean`, "Locations"); then the matches of the last search
-(`EditorState.lastSearch`), each in the face `search-match`
-(`searchMatchFace`, defined in the built-in theme, `Editor/Face.lean`). A
-later decoration is drawn over an earlier one, so a match is over a span.
+A view's decorations come from these sources, in this order: for an
+excerpt buffer, its sources' buffers' spans, each translated to every
+excerpt of its source (`ExcerptView.sourceSpansOf`,
+`Editor/ExcerptView.lean`); its buffer's spans (`Buffer.spans`,
+`Editor/State.lean`, "Buffers"), each in the face its owner gave it, such
+as the compile mode's locations (`Editor/Compile.lean`, "Locations"); then
+the matches of the last search (`EditorState.lastSearch`), each in the face
+`search-match` (`searchMatchFace`, defined in the built-in theme,
+`Editor/Face.lean`). A later decoration is drawn over an earlier one, so a
+match is over a span, and an excerpt buffer's own span (a review's mark,
+later) is over its sources'.
+
+A view of an excerpt buffer also has its headers as blocks
+(`View.blocks`, `ExcerptView.blocksOf`), read of the snapshot it shows when
+the view is made (`views`), so the follow and a float's spot ask with them
+(`follow`, `spots`).
+
+A view of a buffer with a gutter (`Buffer.gutter`) has its marks
+(`View.marks`, `marksOf`), carried from the gutter's revision to the one
+its snapshot shows through the text's log and clipped to the same range as
+its decorations (`Gutter.marksOf`, `Editor/Gutter.lean`), and its window's
+padding has the gutter's column (`EditorState.paddingOf`), so the follow
+asks the display with it.
 
 - **Every view but the minibuffer's** covers the range from the start of
   its scroll anchor's row to the start of the row `rows + 1` text rows
@@ -1116,6 +1145,10 @@ session is one step of the history
   more than one step.
 - **A session with nothing edited makes no node**: closing a group with
   nothing pending makes none.
+- **An excerpt buffer that is held holds the source buffers it touched**
+  (`Editor/State.lean`, "Excerpt buffers"), so a session typed in it is one
+  step in each source buffer, and one step of the excerpt buffer's once the
+  session ends.
 - **A buffer shown in two windows is held while either view is in a
   session**, whichever window an edit is made through. A buffer no such
   view shows is not held: an edit a command makes to it is a step at the
@@ -1476,6 +1509,10 @@ a buffer whose text refuses, because it was released, keeps its history as
 it was, and the first such refusal is handed back. -/
 def recordHistories (state : EditorState) (held : Array BufferId := #[]) :
     TextM (EditorState × Option TextError) := do
+  -- An excerpt buffer that is held holds the source buffers it touched, so
+  -- a session typed in it is one step in each.
+  let held :=
+    held ++ held.flatMap fun id => (((state.buffer? id).bind (·.excerpts)).map (·.touched)).getD #[]
   let mut buffers := #[]
   let mut refusal := none
   for index in [0:state.buffers.size] do
@@ -1489,7 +1526,13 @@ def recordHistories (state : EditorState) (held : Array BufferId := #[]) :
     | .error error =>
       buffers := buffers.push (some buffer)
       refusal := refusal <|> some error
-  return ({ state with buffers }, refusal)
+  -- Each excerpt buffer that is not held makes what it touched one step,
+  -- over the source trees just closed.
+  let state :=
+    (List.range state.buffers.size).foldl
+      (fun state index => if held.contains ⟨index⟩ then state else state.closeExcerptGroup ⟨index⟩)
+      { state with buffers }
+  return (state, refusal)
 
 /-- `state` with the group of the buffer `id`'s history closed, its undo tree
 told the revision its text is at first, as `recordHistories` closes every
@@ -1533,12 +1576,15 @@ def promptStatus (asked : Prompt) : Array StatusField :=
 /-- The status line of the view `id` of `state`, whose window `context`
 describes, and the face of its row: for the minibuffer's view the prompt's
 label (`promptStatus`) and no face; for
-any other the fields of `modeLine` (`ModeLine.fields`), and no face for the
-selected window or `mode-line.inactive` for one that is not. -/
+any other the fields of `modeLine` (`ModeLine.fields`), and
+`mode-line.active` for the selected window (`EditorState.selectedView`, the
+asker while a prompt is open) or `mode-line.inactive` for one that is
+not. -/
 def statusOf (modeLine : ModeLine) (state : EditorState) (id : ViewId)
     (context : ModeLine.Context) : Array StatusField × Option FaceName :=
   let lined :=
-    (modeLine.fields context, if context.selected then none else some ModeLine.inactiveFace)
+    (modeLine.fields context,
+      some (if context.selected then ModeLine.activeFace else ModeLine.inactiveFace))
   match state.prompt with
   | some asked => if asked.view == id then (promptStatus asked, none) else lined
   | none => lined
@@ -1602,12 +1648,15 @@ def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
       let report := scheme.report loop.input id
       let context ← contextOf state id target snapshot report.status
       let (status, statusFace) := statusOf modeLine state id context
+      -- An excerpt buffer's headers, placed by the snapshot shown, so the
+      -- follow asks with them (`ExcerptView.blocksOf`).
+      let blocks ← ExcerptView.blocksOf target.buffer snapshot
       views :=
         views.push
           { id, rect, snapshot, scroll := target.window.scroll,
             selections := #[target.window.selection]
             cursor := report.cursor, decorations := #[], status, statusFace
-            padding := state.paddingOf id }
+            padding := state.paddingOf id, blocks }
   return (views, shown, refusal)
 
 /-- The face the matches of the last search are drawn in. -/
@@ -1623,6 +1672,40 @@ def spansIn (spans : Array Decoration) (start stop : Nat) : Array Decoration :=
           start := max span.start start, stop := min span.stop stop }).filter
     fun span => span.start < span.stop
 
+/-- The range of `view`'s snapshot its decorations and its gutter marks are
+read over ("Decorations", in the module docs): from the row of its scroll
+anchor through `rect.height / heights.text + 1` rows below, or the text's
+end; `none` when its anchor is not a marker of its text. -/
+def rangeOf (state : EditorState) (view : View) : TextM (Option (Nat × Nat)) := do
+  let some target := state.target? view.id | return none
+  let .anchor anchor ← target.buffer.text.marker view.scroll | return none
+  let snapshot := view.snapshot
+  let row := (← snapshot.pointOf anchor.offset).row
+  -- A view of `n` display rows shows at most `n` text rows from its
+  -- anchor's, however its rows wrap; one more is drawn, which nothing sees.
+  let rows := view.rect.height / max 1 state.heights.text + 1
+  let start ← snapshot.offsetOf ⟨row, 0⟩
+  let stop ←
+    if row + rows + 1 < (← snapshot.rowCount) then
+      snapshot.offsetOf ⟨row + rows + 1, 0⟩
+    else
+      snapshot.byteLength
+  return some (start, stop)
+
+/-- The gutter marks of `view` in `state` ("Decorations", in the module docs):
+its buffer's gutter's marks carried to the revision its snapshot shows and
+clipped to its range (`Gutter.marksOf`); none for the minibuffer's view, a
+buffer with no gutter, and a text that refuses. -/
+def marksOf (state : EditorState) (view : View) : TextM (Array GutterMark) := do
+  if state.prompt.map (·.view) == some view.id then
+    return #[]
+  let some target := state.target? view.id | return #[]
+  try
+    let some (start, stop) ← rangeOf state view | return #[]
+    Gutter.marksOf target.buffer.text target.buffer.gutter view.snapshot start stop
+  catch _ =>
+    return #[]
+
 /-- The decorations of `view` in `state` ("Decorations", in the module docs),
 for a view that is not the minibuffer's, over the range from the row of the
 view's scroll anchor through `rect.height / heights.text + 1` rows below:
@@ -1635,19 +1718,11 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
     return #[]
   let some target := state.target? view.id | return #[]
   try
-    let .anchor anchor ← target.buffer.text.marker view.scroll | return #[]
+    let some (start, stop) ← rangeOf state view | return #[]
     let snapshot := view.snapshot
-    let row := (← snapshot.pointOf anchor.offset).row
-    -- A view of `n` display rows shows at most `n` text rows from its
-    -- anchor's, however its rows wrap; one more is drawn, which nothing sees.
-    let rows := view.rect.height / max 1 state.heights.text + 1
-    let start ← snapshot.offsetOf ⟨row, 0⟩
-    let stop ←
-      if row + rows + 1 < (← snapshot.rowCount) then
-        snapshot.offsetOf ⟨row + rows + 1, 0⟩
-      else
-        snapshot.byteLength
-    let spans := spansIn target.buffer.spans start stop
+    -- An excerpt buffer's sources' spans come first, under its own.
+    let sources := spansIn (← ExcerptView.sourceSpansOf state target.buffer snapshot) start stop
+    let spans := sources ++ spansIn target.buffer.spans start stop
     let some search := state.lastSearch | return spans
     match ← snapshot.matches search.pattern start stop with
     | .ranges all =>
@@ -1659,19 +1734,30 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
   catch _ =>
     return #[]
 
-/-- `views` with their decorations (`decorationsOf`), each read with its
-scroll anchor where the follow left it. -/
+/-- `views` with their decorations (`decorationsOf`) and their gutter marks
+(`marksOf`), each read with its scroll anchor where the follow left it. -/
 def decorated (state : EditorState) (views : Array View) : TextM (Array View) :=
-  views.mapM fun view => return { view with decorations := ← decorationsOf state view }
+  views.mapM fun view =>
+    return { view with
+        decorations := ← decorationsOf state view, marks := ← marksOf state view }
+
+/-- The face the dividers between tiled windows are drawn in, Emacs's
+`window-divider`: the divider is filled in its foreground. -/
+def dividerFace : FaceName :=
+  ⟨"window-divider"⟩
 
 /-- The scene of `state` over `views`: what the state says of the frame, the
-echo area, inset by the bottom row's inset (`EditorState.bottomInset`), and
-the preedit, around the views made of its windows, with `pending` as the
-keys typed of a sequence not yet completed and `menu` as the menu bar. -/
+dividers between its tiled windows (`EditorState.dividers`) in
+`dividerFace`, the echo area, inset by the bottom row's inset
+(`EditorState.bottomInset`), and the preedit, around the views made of its
+windows, with `pending` as the keys typed of a sequence not yet completed
+and `menu` as the menu bar. -/
 def scene (state : EditorState) (views : Array View) (pending : String)
     (menu : Option Menu := none) : Scene :=
   let frame := state.frame
-  { size := frame.size, views, focused := if frame.hasFocus then some frame.focused else none
+  { size := frame.size, views
+    dividers := state.dividers.map ({ rect := ·, face := dividerFace })
+    focused := if frame.hasFocus then some frame.focused else none
     echo := state.echo, echoPadding := state.bottomInset, pending, preedit := state.preedit
     title := state.title, menu }
 
@@ -1871,7 +1957,7 @@ def follow (margin : Nat) (bottom : Nat) (view : View) : EditorM Unit := do
     return
   let text := view.scroll.text
   let .anchor anchor ← text.marker view.scroll | throw .noSuchMarker
-  let area := Scroll.Area.ofRect view.snapshot view.rect bottom view.padding
+  let area := Scroll.Area.ofRect view.snapshot view.rect bottom view.padding view.blocks
   let shown ← area.rows anchor.offset
   if shown.isEmpty then
     return
@@ -1979,9 +2065,8 @@ def spots (state : EditorState) (views : Array View) :
           let .anchor scroll ← shown.scroll.text.marker shown.scroll | throw .noSuchMarker
           let area :=
             Scroll.Area.ofRect shown.snapshot shown.rect (state.bottomRow view) shown.padding
-          Display.spotOf
-              { snapshot := area.snapshot, width := area.width, height := area.height
-                anchor := scroll.offset, padding := area.padding, position := anchor.offset }
+              shown.blocks
+          area.spot scroll.offset anchor.offset
     return some (float.view, (answer : Except TextError (Option Display.Spot)).toOption.join)
 
 /-- A view over generated text (`GeneratedView`, `Editor/GeneratedView.lean`)
@@ -2201,54 +2286,73 @@ def supersededSays (path : System.FilePath) : Option File.Stamp → String
   | some _ => Files.changedOnDisk path
   | none => Files.goneFromDisk path
 
-/-- What `event` does to `state` ("What each event does", in the module
-docs), `report` being what the scheme says of the focused view: a committed
-text is inserted only where the report says the view takes text. -/
-def handle (state : EditorState) (report : InputScheme.Report := {}) : Event → EditorM EditorState
-  | .preedit text => return { state with preedit := if text.isEmpty then none else some text }
-  | .compositionDisabled => return { state with preedit := none }
-  | .resize resize =>
-    return { state with
-        frame :=
-          { state.frame with
-            size := ⟨resize.width, resize.height⟩, fullscreen := resize.fullscreen
-            corner := resize.corner, top := resize.top } }
-  | .focus gained => return { state with frame := { state.frame with hasFocus := gained } }
-  | .commit text => do
-    let some target := state.focusedTarget? | return { state with preedit := none }
-    if report.takesText then
-      -- A commit into a read-only buffer is dropped and said, as a
-      -- command's edit gives up, with no command to name.
-      if let some (_, name) := state.readOnly? target.buffer.text then
-        return { state with
-            echo := EditorState.readOnlyReason name, preedit := none }
-      -- The first edit after a change on disk the user was not told of is
-      -- dropped and said, as a command's is refused ("Files that changed on
-      -- disk", in the module docs).
-      if let some (buffer, path, found) := state.untold? target.buffer.text then
-        let (_, told) := state.tellChanged buffer
-        return { told with
-            echo := supersededSays path found, preedit := none }
-      insert target text
-    return { state with preedit := none }
-  | _ => return state
+/-- `state` once the commit of `text` into an excerpt buffer, `excerpt`,
+shown by `target`, is dropped or inserted ("What each event does", in the
+module docs): the sources what each range of the selection covers reaches
+are looked for as the command dispatcher looks for them
+(`excerptSources`, `Editor/Command/Dispatch.lean`). A read-only source
+drops it, saying `<source> is read-only`; a text no buffer holds drops it,
+saying `<buffer> reads a text no buffer holds`; a source buffer whose file
+changed on disk unbeknown to the user drops it and says so, and the change
+is then told. Otherwise it is inserted and the sources are touched. The
+text inserted, if it was. -/
+def commitExcerpts (state : EditorState) (target : Target) (excerpt : BufferId) (text : String) :
+    EditorM (EditorState × Option String) := do
+  let extents ← target.buffer.text.extents (← target.selection)
+  let ranges := extents.map fun extent => (extent.start, extent.stop)
+  match ← excerptSources state target.buffer.text ranges with
+  | .error (.readOnly name) =>
+    return ({ state with echo := EditorState.readOnlyReason name }, none)
+  | .error .unheld =>
+    return ({ state with echo := EditorState.unheldReason target.buffer.name }, none)
+  | .error (.untold buffer path found) =>
+    let (_, told) := state.tellChanged buffer
+    return ({ told with echo := supersededSays path found }, none)
+  | .ok sources =>
+    insert target text
+    return (state.touch excerpt sources, some text)
 
-/-- The text `handle` inserts for `event` from `state`, `report` being what
-the scheme says of the focused view: a committed text, where there is a
-focused window, the report says its view takes text, its buffer is not
-read-only, and its buffer's file did not change on disk unbeknown to the
-user. None for any other event, and for a commit that is dropped. -/
-def inserts (state : EditorState) (report : InputScheme.Report) : Event → Option String
-  | .commit text =>
-    match state.focusedTarget? with
-    | some target =>
-      if
-          report.takesText && (state.readOnly? target.buffer.text).isNone &&
-            (state.untold? target.buffer.text).isNone then
-        some text
-      else none
-    | none => none
-  | _ => none
+/-- What `event` does to `state` ("What each event does", in the module
+docs), `report` being what the scheme says of the focused view, and the text
+it inserted: a committed text is inserted only where the report says the
+view takes text, its buffer is not read-only, its buffer's file did not
+change on disk unbeknown to the user, and, for an excerpt buffer, no source
+it reaches says otherwise (`commitExcerpts`). None for any other event, and
+for a commit that is dropped. -/
+def handle (state : EditorState) (report : InputScheme.Report := {}) :
+    Event → EditorM (EditorState × Option String)
+  | .preedit text => return ({ state with preedit := if text.isEmpty then none else some text }, none)
+  | .compositionDisabled => return ({ state with preedit := none }, none)
+  | .resize resize =>
+    return ({ state with
+          frame :=
+            { state.frame with
+              size := ⟨resize.width, resize.height⟩, fullscreen := resize.fullscreen
+              corner := resize.corner, top := resize.top } },
+        none)
+  | .focus gained => return ({ state with frame := { state.frame with hasFocus := gained } }, none)
+  | .commit text => do
+    let some target := state.focusedTarget? | return ({ state with preedit := none }, none)
+    unless report.takesText do
+      return ({ state with preedit := none }, none)
+    -- A commit into a read-only buffer is dropped and said, as a command's
+    -- edit gives up, with no command to name.
+    if let some (_, name) := state.readOnly? target.buffer.text then
+      return ({ state with echo := EditorState.readOnlyReason name, preedit := none }, none)
+    -- The first edit after a change on disk the user was not told of is
+    -- dropped and said, as a command's is refused ("Files that changed on
+    -- disk", in the module docs).
+    if let some (buffer, path, found) := state.untold? target.buffer.text then
+      let (_, told) := state.tellChanged buffer
+      return ({ told with echo := supersededSays path found, preedit := none }, none)
+    match state.excerptBufferOver? target.buffer.text with
+    | some excerpt =>
+      let (state, typed) ← commitExcerpts state target excerpt text
+      return ({ state with preedit := none }, typed)
+    | none =>
+      insert target text
+      return ({ state with preedit := none }, some text)
+  | _ => return (state, none)
 
 /-- Whether the loop steps `event` through its scheme: a key press, a
 repeat among them, whose key is not a modifier by itself
@@ -2276,6 +2380,10 @@ def keep (state : EditorState) : TextM Kept := do
   let mut histories := #[]
   for index in [0:state.buffers.size] do
     let some buffer := state.buffer? ⟨index⟩ | continue
+    -- An excerpt buffer's own tree is not kept: its text keeps no inverse
+    -- to revert it by, and its sources are buffers of their own.
+    if buffer.excerpts.isSome then
+      continue
     if let .ok history← observing buffer.history.sync then
       histories := histories.push (index, history.state)
   let mut markers := #[]
@@ -2876,7 +2984,10 @@ prompt's candidates listed by its matching (`Keys.modeLine`,
 job (`Keys.inlineMatches`): its loop is
 the one the publish left, with the file jobs it starts and cancels
 (`fileJobs`) after the step's own, then the open prompt's jobs it starts,
-cancels and spawns (`completionJobs`), and it says stop when the editor then
+cancels and spawns (`completionJobs`), then the version-control gutter's
+(`VersionControl.reconcile`), handed the git program of the workspace
+settings `keys` was told of (`Registered.workspaceSettings`, what the
+version-control commands ask for), and it says stop when the editor then
 leaves (`nextOf`) and to go on otherwise. The scene comes first, so the
 scene of the step that says stop is the last one. -/
 def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
@@ -2886,6 +2997,9 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
         keys.inlineMatches keys.displaying
   let (loop, starts, cancels) := loop.fileJobs keys
   let (loop, sourceStarts, sourceCancels, spawns) := loop.completionJobs keys
+  let (state, gutterStarts, gutterCancels) ←
+    VersionControl.reconcile keys.registered.jobs keys.registered.workspaceSettings.git loop.state
+  let loop := { loop with state }
   -- What the key asks of completion at point, from the state the scene
   -- shows: a trigger's command to run next, and the pause.
   let (asked, pause) := loop.atPointAsks keys stepped.key
@@ -2896,9 +3010,10 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
     | .disarm => none
   let loop := { loop with pausing }
   return { stepped with
-      loop, next := nextOf loop, starts := stepped.starts ++ starts ++ sourceStarts
-      cancels := stepped.cancels ++ cancels ++ sourceCancels, spawns := stepped.spawns ++ spawns
-      answered := stepped.answered ++ asked, pause }
+      loop, next := nextOf loop
+      starts := stepped.starts ++ starts ++ sourceStarts ++ gutterStarts
+      cancels := stepped.cancels ++ cancels ++ sourceCancels ++ gutterCancels
+      spawns := stepped.spawns ++ spawns, answered := stepped.answered ++ asked, pause }
 
 /-- Hands the answer `invocation` carries, its first argument, to the input
 scheme, for the focused view (`InputScheme.answered`), and runs the
@@ -3012,8 +3127,7 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
     let report := scheme.report loop.input focused
     let (state, typed) ←
       try
-        let state ← handle loop.state report event
-        pure (state, inserts loop.state report event)
+        handle loop.state report event
       catch refusal =>
         pure (loop.state.refused refusal, none)
     -- A committed text that was inserted is typed text the scheme saw no

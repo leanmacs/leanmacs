@@ -54,8 +54,9 @@ theorem replaceRange_spec (model : TextModel) (id : TextId) (content : TextConte
     (Transaction.replacing content.contents.utf8ByteSize start stop s).before = none := rfl
   have noAfter : (Transaction.replacing content.contents.utf8ByteSize start stop s).after = none :=
     rfl
-  simp [TextId.replaceRange, TextModel.handle, noBefore, noAfter, TextModel.apply, TextModel.answer,
-    TextModel.changed, TextModel.lookup, live, TextModel.isSelection, TextModel.selectionFits,
+  simp [TextId.replaceRange, TextModel.handle, TextModel.onSource, TextModel.onText, noBefore,
+    noAfter, TextModel.apply, TextModel.answer, TextModel.changed, TextModel.lookup, live,
+    TextModel.isSelection, TextModel.selectionFits,
     TextModel.applyChanges_replacing _ _ _ _ startValid ordered within, spliced]
 
 /-- Inserting `s` into a text at a character boundary and then deleting the

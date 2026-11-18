@@ -17,8 +17,9 @@ use std::ops::Range;
 use std::slice;
 use std::time::Duration;
 
-use editor_ffi::display::{Display, WireFace, WireScene, WireView};
+use editor_ffi::display::{Display, WireFace, WireScene, WireView, text_ref};
 use editor_ffi::document::{Document, RawText};
+use editor_ffi::excerpts::ExcerptStatus;
 use editor_ffi::snapshot::Snapshot;
 use editor_ffi::syntax::{
     AttachStatus, HighlightStatus, InjectLanguageStatus, InjectStatus, QueryStatus, RawQuery,
@@ -28,7 +29,7 @@ use editor_ffi::syntax::{
 };
 use editor_ffi::text::editor_ffi_text_free;
 use editor_layout::face::{Color, Face};
-use editor_layout::scene::{Padding, spans_contract};
+use editor_layout::scene::{Padding, TextSpans, spans_contract};
 use editor_syntax::highlight::{self, Highlighter};
 use editor_syntax::inject::{Injections, Language};
 use editor_syntax::{GrammarName, QueryKind, Syntax};
@@ -516,6 +517,8 @@ fn a_published_scene_draws_the_highlights() {
             status: vec![],
             status_face: None,
             padding: Padding::default(),
+            blocks: vec![],
+            marks: vec![],
         }],
         faces: Some(vec![WireFace {
             name: "syntax.keyword".to_owned(),
@@ -541,6 +544,126 @@ fn a_published_scene_draws_the_highlights() {
     assert_eq!(paint.foreground, RED);
     // The name after it is not a keyword.
     assert_ne!(row.runs[1].1.foreground, RED);
+}
+
+/// An excerpt document over `source` of two whole-line excerpts that
+/// overlap: the row of `fn count` alone, and that row and the two after
+/// it. So the row of `fn count` is shown twice.
+fn overlapping_excerpts(source: &Document) -> Document {
+    let text = source.read();
+    let start = find(source, "fn count");
+    let line_end = |from: usize| from + text[from..].find('\n').expect("a line feed") + 1;
+    let first = line_end(start);
+    let third = line_end(line_end(first));
+    let words: Vec<u8> = [2, 0, start, first, 0, start, third]
+        .iter()
+        .flat_map(|word| (*word as u64).to_le_bytes())
+        .collect();
+    let excerpts = Document::excerpts();
+    assert_eq!(
+        excerpts.set_excerpts(&[source], &words),
+        ExcerptStatus::Done
+    );
+    excerpts
+}
+
+/// What `spans` draws over `bytes` of `snapshot`, each span with its
+/// face's name.
+fn named(
+    spans: &dyn TextSpans,
+    snapshot: &editor_text::Snapshot,
+    bytes: Range<usize>,
+) -> Vec<(Range<usize>, String)> {
+    let at = spans.at(snapshot).expect("spans over the snapshot");
+    let mut out = Vec::new();
+    at.spans(bytes, &mut out);
+    out.into_iter()
+        .map(|(bytes, face)| (bytes, at.faces()[face].clone()))
+        .collect()
+}
+
+#[test]
+fn an_excerpt_document_over_a_highlighted_source_draws_its_highlights_at_every_excerpt_of_it() {
+    let (document, _, _) = highlighted_items();
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    let excerpts = overlapping_excerpts(&document);
+    let snapshot = Snapshot::of(&excerpts);
+    let text = text_ref(&snapshot);
+    let spans = text.spans.clone().expect("the source's highlights");
+    let own = syntaxes().spans(document.key()).unwrap();
+    let placed = snapshot.placed().expect("an excerpt list");
+    assert_eq!(placed.len(), 2);
+    let mut keywords = 0;
+    for excerpt in placed {
+        let source = &excerpt.source_range;
+        let moved: Vec<(Range<usize>, String)> = named(&*own, &excerpt.snapshot, source.clone())
+            .into_iter()
+            .map(|(bytes, face)| {
+                (
+                    bytes.start - source.start + excerpt.range.start
+                        ..bytes.end - source.start + excerpt.range.start,
+                    face,
+                )
+            })
+            .collect();
+        let drawn = named(&*spans, &text.snapshot, excerpt.range.clone());
+        assert_eq!(drawn, moved);
+        keywords += usize::from(drawn.iter().any(|(_, face)| face == "syntax.keyword"));
+    }
+    // And there is something to draw in both.
+    assert_eq!(keywords, 2);
+}
+
+#[test]
+fn the_translated_spans_keep_the_layout_spans_contract() {
+    let (document, _, _) = highlighted_items();
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    let excerpts = overlapping_excerpts(&document);
+    let text = text_ref(&Snapshot::of(&excerpts));
+    let spans = text.spans.clone().expect("the source's highlights");
+    assert_eq!(spans_contract::check(&*spans, &text.snapshot), [""; 0]);
+}
+
+#[test]
+fn a_published_scene_of_an_excerpt_document_paints_a_keyword_in_its_face_in_both_excerpts() {
+    const RED: Color = Color::rgb(0xcc, 0, 0);
+    let (document, _, _) = highlighted_items();
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    let excerpts = overlapping_excerpts(&document);
+    let snapshot = Snapshot::of(&excerpts);
+    let display = Display::cells(8, 16);
+    let wire = WireScene {
+        size: [960, 640],
+        views: vec![WireView {
+            id: 1,
+            rect: [0, 0, 960, 640],
+            snapshot: Some(0),
+            cursor_face: "cursor".to_owned(),
+            ..WireView::default()
+        }],
+        faces: Some(vec![WireFace {
+            name: "syntax.keyword".to_owned(),
+            face: Face {
+                foreground: Some(RED),
+                ..Face::default()
+            },
+        }]),
+        ..WireScene::default()
+    };
+    let (words, strings) = wire.encode();
+    assert!(display.publish(&words, &strings, &[&snapshot]));
+    let frame = display.latest();
+    let placed = snapshot.placed().unwrap();
+    for excerpt in placed {
+        let row = frame.views[0]
+            .rows
+            .iter()
+            .find(|row| row.bytes.start == excerpt.range.start)
+            .expect("the row of `fn count`");
+        let (bytes, paint) = &row.runs[0];
+        assert_eq!(*bytes, 0..2);
+        assert_eq!(paint.foreground, RED);
+    }
 }
 
 /// The Markdown fixture of fences.
@@ -833,6 +956,8 @@ fn a_published_scene_draws_a_fenced_rust_keyword() {
             status: vec![],
             status_face: None,
             padding: Padding::default(),
+            blocks: vec![],
+            marks: vec![],
         }],
         faces: Some(vec![WireFace {
             name: "syntax.keyword".to_owned(),

@@ -33,6 +33,8 @@ import Editor.Text.Contract
 import Editor.Text.Model
 import Editor.Text.Real
 import Editor.UndoTree.Cases
+import Editor.VersionControl.Compiled
+import Editor.VersionControl.Contract
 import Editor.Watch.Contract
 import Editor.Watch.Real
 import Editor.Workspace.Compiled
@@ -2028,7 +2030,7 @@ def syntaxTreeChecks : List Check :=
         onRealSyntaxTree #["fn one() {}\n"] fun documents table ids handler => do
           let some document := documents[0]? | return false
           let attached ← (SyntaxTree.attach (SyntaxTreeContract.nth ids 0) "rust").runWith handler
-          unless ← document.replace 0 0 "fn zero() {}\n" do
+          unless (← document.replace 0 0 "fn zero() {}\n") == .done do
             return false
           -- The snapshot of the edited text enters the table, as the
           -- editor's would after the edit.
@@ -2777,7 +2779,7 @@ def withBase {α : Type} (check : System.FilePath → IO α) : IO α := do
 def writeMaking (path : System.FilePath) (content : String) : IO Unit := do
   if let some parent := path.parent then
     IO.FS.createDirAll parent
-  IO.FS.writeFile path content
+  IO.FS.writeBinFile path (File.encodeText content)
 
 /-- Writes the git fixture's file for `repository` in its top level: the
 three lines rev-parse prints there (`tests/workspaces/README`), and its
@@ -2927,33 +2929,62 @@ def withPath (path : String) (command : Process.Command) : Process.Command :=
       { command.environment with
         set := (command.environment.set.filter (·.1 != "PATH")).push ("PATH", path) } }
 
-/-- `services` whose process service starts every child with `PATH` set to
-`path`, after the environment its directory's lookup gives it: each request
-that starts a child is matched constructor by constructor, so the replies'
-types line up. The test process's own environment is never touched. -/
-def onFixturePath (services : Job.Services) (path : String) : Job.Services :=
+/-- `services` whose process service starts every child with its command
+changed by `change`, after the environment its directory's lookup gives it:
+each request that starts a child is matched constructor by constructor, so
+the replies' types line up. The test process's own environment is never
+touched. -/
+def onChanged (services : Job.Services) (change : Process.Command → Process.Command) :
+    Job.Services :=
   let processes := services.processes
-  let pathed : ProcessRequest → ProcessRequest
-    | .run command limit => .run (withPath path command) limit
-    | .runWithin command limit time => .runWithin (withPath path command) limit time
-    | .runInput command input limit time => .runInput (withPath path command) input limit time
-    | .start command streaming => .start (withPath path command) streaming
+  let changed : ProcessRequest → ProcessRequest
+    | .run command limit => .run (change command) limit
+    | .runWithin command limit time => .runWithin (change command) limit time
+    | .runInput command input limit time => .runInput (change command) input limit time
+    | .start command streaming => .start (change command) streaming
     | other => other
   { services with
     processes :=
-      { start := fun id request => processes.start id (pathed request)
+      { start := fun id request => processes.start id (changed request)
         take := fun id request =>
           match request with
-          | .run command limit => processes.take id (.run (withPath path command) limit)
+          | .run command limit => processes.take id (.run (change command) limit)
           | .runWithin command limit time =>
-            processes.take id (.runWithin (withPath path command) limit time)
+            processes.take id (.runWithin (change command) limit time)
           | .runInput command input limit time =>
-            processes.take id (.runInput (withPath path command) input limit time)
-          | .start command streaming => processes.take id (.start (withPath path command) streaming)
+            processes.take id (.runInput (change command) input limit time)
+          | .start command streaming => processes.take id (.start (change command) streaming)
           | .read process => processes.take id (.read process)
           | .write process bytes => processes.take id (.write process bytes)
           | .closeInput process => processes.take id (.closeInput process)
         cancel := processes.cancel } }
+
+/-- `services` whose process service starts every child with `PATH` set to
+`path`, after the environment its directory's lookup gives it
+(`onChanged`). -/
+def onFixturePath (services : Job.Services) (path : String) : Job.Services :=
+  onChanged services (withPath path)
+
+/-- The variables that keep a git run from reading the user's or the
+system's config: no system config, `global` as the global one, `/dev/null`
+unless it is given, and `home` as its home. -/
+def isolatedGit (home : System.FilePath) (global : System.FilePath := "/dev/null") :
+    Array (String × String) :=
+  #[("GIT_CONFIG_NOSYSTEM", "1"), ("GIT_CONFIG_GLOBAL", global.toString), ("HOME", home.toString),
+    ("XDG_CONFIG_HOME", home.toString)]
+
+/-- `services` whose process service starts every child with the variables
+of `isolatedGit home global` set, over any of theirs its command sets
+(`onChanged`). -/
+def onIsolatedGit (services : Job.Services) (home : System.FilePath)
+    (global : System.FilePath := "/dev/null") : Job.Services :=
+  onChanged services fun command =>
+    let names := (isolatedGit home global).map (·.1)
+    { command with
+      environment :=
+        { command.environment with
+          set :=
+            (command.environment.set.filter (!names.contains ·.1)) ++ isolatedGit home global } }
 
 /-- The jobs of the project mode checks: the file commands', the workspace
 finder's and the compile mode's, as a host registers them. -/
@@ -2990,41 +3021,50 @@ structure ProjectRig where
   /-- The services the jobs run on. -/
   services : Job.Services
 
-/-- A rig over `services`, whose children get `path` as their `PATH`
-(`onFixturePath`), with a file service of its own. -/
-def ProjectRig.new (services : Job.Services) (path : String) : IO ProjectRig := do
+/-- A rig over `services`, with a file service and a diff service of its own,
+each reading the snapshots its texts publish. -/
+def ProjectRig.over (services : Job.Services) : IO ProjectRig := do
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
   let recorder ← DisplayRecorder.new { advance := 8, lineHeight := 16 } published.reader
   return {
       published, held, display := recorder.handle
       services :=
-        { onFixturePath services path with
-          files := Job.realFiles services.completions published.reader held } }
+        { services with
+          files := Job.realFiles services.completions published.reader held
+          diffs :=
+            Job.realDiffs services.completions published.reader held (← Job.RefusedDiffs.new) } }
+
+/-- A rig over `services`, whose children get `path` as their `PATH`
+(`onFixturePath`), with a file service of its own. -/
+def ProjectRig.new (services : Job.Services) (path : String) : IO ProjectRig :=
+  ProjectRig.over (onFixturePath services path)
 
 /-- `stepped`'s loop once what the step asked for is done, as a host does
-it: each invocation it answered run as a step of its own; each job it
+it, with `keys` and the jobs `jobs`, the project mode checks' by default:
+each invocation it answered run as a step of its own; each job it
 started spawned on the rig's services with its posts collected, waited for,
 then each post delivered in order (`runPosted`) and then its command, handed
 what the job held (`Job.finishWith`); each taken in the same way, at most
 `depth` deep. Only a job's end is waited for. `none` when a job did not end
 in time or ended otherwise than finished, or a step was refused. -/
 partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
-    (stepped : Loop.Stepped TestScheme.scheme) (depth : Nat := 8) :
+    (stepped : Loop.Stepped TestScheme.scheme) (depth : Nat := 8)
+    (keys : Loop.Keys TestScheme.scheme := projectKeys)
+    (jobs : Array Config.JobRegistration := projectJobs) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   if depth == 0 then
     return none
   let mut loop := stepped.loop
   let mut texts := texts
   for invocation in stepped.answered do
-    let (next, after) ← (loop.invoke projectKeys invocation).runReal texts rig.display
+    let (next, after) ← (loop.invoke keys invocation).runReal texts rig.display
     let .ok next := next | return none
-    let some (settled, after) ← settleProjects rig after next (depth - 1) | return none
+    let some (settled, after) ← settleProjects rig after next (depth - 1) keys jobs | return none
     loop := settled
     texts := after
   for start in stepped.starts do
-    let some work :=
-      (projectJobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
+    let some work := (jobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
     let posts ← IO.mkRef (#[] : Array Invocation)
     let handle ←
       Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
@@ -3033,39 +3073,96 @@ partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
       return none
     let label := s!"job {start.name}"
     for invocation in ← posts.get do
-      let (next, after) ←
-        (loop.deliver projectKeys label (runPosted invocation)).runReal texts rig.display
+      let (next, after) ← (loop.deliver keys label (runPosted invocation)).runReal texts rig.display
       let .ok next := next | return none
-      let some (settled, after) ← settleProjects rig after next (depth - 1) | return none
+      let some (settled, after) ← settleProjects rig after next (depth - 1) keys jobs | return none
       loop := settled
       texts := after
     let some (.finished command) ← handle.outcome? | return none
     let (next, after) ←
-      Job.finishWith rig.held handle (loop.deliver projectKeys label command) texts rig.display
+      Job.finishWith rig.held handle (loop.deliver keys label command) texts rig.display
     let .ok next := next | return none
-    let some (settled, after) ← settleProjects rig after next (depth - 1) | return none
+    let some (settled, after) ← settleProjects rig after next (depth - 1) keys jobs | return none
+    loop := settled
+    texts := after
+  return some (loop, texts)
+
+/-- `loop`, over `texts`, once each job of `queue` has run, and every job
+their commands start, oldest first, as the model's driver settles
+(`ModelTest.settledOn`): each spawned on the rig's services with its posts
+collected, waited for, then each post delivered and then its command, with
+`keys`, and the jobs those start queued behind the rest. So two commands'
+pipelines run interleaved, a step of each in turn, where `settleProjects`
+runs each to its end. `none` when a job did not end in time or ended
+otherwise than finished, a delivery answered a prompt or was refused, or
+more than `depth` jobs ran. -/
+partial def settleQueued (rig : ProjectRig) (texts : RealTexts) (loop : Loop TestScheme.scheme)
+    (queue : List JobStart) (keys : Loop.Keys TestScheme.scheme)
+    (jobs : Array Config.JobRegistration) (depth : Nat := 32) :
+    IO (Option (Loop TestScheme.scheme × RealTexts)) := do
+  match queue with
+  | [] =>
+    return some (loop, texts)
+  | start :: rest =>
+    if depth == 0 then
+      return none
+    let some work := (jobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
+    let posts ← IO.mkRef (#[] : Array Invocation)
+    let handle ←
+      Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
+    unless ← eventually handle.ended do
+      handle.cancel
+      return none
+    let label := s!"job {start.name}"
+    let mut loop := loop
+    let mut texts := texts
+    let mut queued := rest
+    for invocation in ← posts.get do
+      let (next, after) ← (loop.deliver keys label (runPosted invocation)).runReal texts rig.display
+      let .ok next := next | return none
+      unless next.answered.isEmpty do
+        return none
+      loop := next.loop
+      texts := after
+      queued := queued ++ next.starts.toList
+    let some (.finished command) ← handle.outcome? | return none
+    let (next, after) ←
+      Job.finishWith rig.held handle (loop.deliver keys label command) texts rig.display
+    let .ok next := next | return none
+    unless next.answered.isEmpty do
+      return none
+    settleQueued rig after next.loop (queued ++ next.starts.toList) keys jobs (depth - 1)
+
+/-- `loop`, over `texts`, once each of `invocations` has run with `keys` and
+settled with `jobs` (`settleProjects`), in order. -/
+def runSettledFrom (rig : ProjectRig) (loop : Loop TestScheme.scheme) (texts : RealTexts)
+    (invocations : List Invocation) (keys : Loop.Keys TestScheme.scheme := projectKeys)
+    (jobs : Array Config.JobRegistration := projectJobs) :
+    IO (Option (Loop TestScheme.scheme × RealTexts)) := do
+  let mut loop := loop
+  let mut texts := texts
+  for invocation in invocations do
+    let (stepped, after) ← (loop.invoke keys invocation).runReal texts rig.display
+    let .ok stepped := stepped | return none
+    let some (settled, after) ←
+      settleProjects rig after stepped (keys := keys) (jobs := jobs) | return none
     loop := settled
     texts := after
   return some (loop, texts)
 
 /-- The loop, with its working directory `base`, once each of
-`invocations` has run and settled (`settleProjects`), in order. -/
-def runSettled (rig : ProjectRig) (base : System.FilePath) (invocations : List Invocation) :
+`invocations` has run with `keys` and settled with `jobs`
+(`settleProjects`), in order. -/
+def runSettled (rig : ProjectRig) (base : System.FilePath) (invocations : List Invocation)
+    (keys : Loop.Keys TestScheme.scheme := projectKeys)
+    (jobs : Array Config.JobRegistration := projectJobs) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   let begin : EditorM (Loop TestScheme.scheme) := do
     let loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
     return { loop with state := { loop.state with workingDirectory := base } }
   let (started, texts) ← begin.runReal (RealTexts.over rig.published) rig.display
   let .ok loop := started | return none
-  let mut loop := loop
-  let mut texts := texts
-  for invocation in invocations do
-    let (stepped, after) ← (loop.invoke projectKeys invocation).runReal texts rig.display
-    let .ok stepped := stepped | return none
-    let some (settled, after) ← settleProjects rig after stepped | return none
-    loop := settled
-    texts := after
-  return some (loop, texts)
+  runSettledFrom rig loop texts invocations keys jobs
 
 /-- The invocation that opens `path`. -/
 def openFile (path : System.FilePath) : Invocation :=
@@ -3277,6 +3374,603 @@ def projectModeChecks (services : Job.Services) (compile workspaces : System.Fil
               (← focusedAt rig mainTexts inMain) == some (main.toString, 3, 17) &&
               history == #["cargo build"] }]
 
+/-! ## The version-control interface over real git -/
+
+/-- The environment of the git runs that write a repository out: the
+variables of `isolatedGit home`, a fixed author and committer, and
+`GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` removed. Applied to each
+child only; the test process's environment is never touched. -/
+def writerEnvironment (home : System.FilePath) : Array (String × Option String) :=
+  (isolatedGit home).map (fun (name, value) => (name, some value)) ++
+    #[("GIT_AUTHOR_NAME", some "a"), ("GIT_AUTHOR_EMAIL", some "a@example.com"),
+      ("GIT_COMMITTER_NAME", some "a"), ("GIT_COMMITTER_EMAIL", some "a@example.com"),
+      ("GIT_AUTHOR_DATE", some "2026-01-01T00:00:00Z"),
+      ("GIT_COMMITTER_DATE", some "2026-01-01T00:00:00Z"), ("GIT_DIR", none),
+      ("GIT_WORK_TREE", none), ("GIT_INDEX_FILE", none)]
+
+/-- Runs `git` with `arguments` in `directory`, fed `input` if it is given,
+with the writer's environment: what it printed, or a throw when it did not
+exit 0. -/
+def gitIn (home directory : System.FilePath) (arguments : Array String)
+    (input : Option String := none) : IO String :=
+  IO.Process.run
+    { cmd := "git", args := arguments, cwd := directory, env := writerEnvironment home } input
+
+/-- `gitIn`, with the index git reads and writes the file `index` in place of
+the repository's own. -/
+def gitInIndex (home directory index : System.FilePath) (arguments : Array String) : IO String :=
+  IO.Process.run
+    { cmd := "git", args := arguments, cwd := directory
+      env :=
+        ((writerEnvironment home).filter (·.1 != "GIT_INDEX_FILE")).push
+          ("GIT_INDEX_FILE", some index.toString) }
+
+/-- Writes each named revision of `repository` into the repository at
+`directory` as a commit of its files alone, tagged with its name: its files'
+blobs written, an index of them made in a file of its own under `home`, so
+the repository's index and working tree are left as they are, its tree
+written and committed with `commit-tree`, and the tag pointed at it with
+`update-ref`. -/
+def writeRevisions (home directory : System.FilePath)
+    (repository : VersionControl.Model.Repository) : IO Unit := do
+  for (name, files) in repository.revisions do
+    let index := home / s!"index-{name}"
+    for (path, content) in files do
+      let id := (← gitIn home directory #["hash-object", "-w", "--stdin"] (some content)).trimAscii
+      discard <|
+          gitInIndex home directory index
+            #["update-index", "--add", "--cacheinfo", s!"100644,{id},{path}"]
+    let tree := (← gitInIndex home directory index #["write-tree"]).trimAscii.toString
+    let commit := (← gitIn home directory #["commit-tree", tree, "-m", name]).trimAscii.toString
+    discard <| gitIn home directory #["update-ref", s!"refs/tags/{name}", commit]
+
+/-- Writes `content` as a blob into the repository at `directory`, the store's
+escapes turned back into their bytes (`File.encodeText`), through a file of
+its own under `home`: its id. -/
+def hashBlob (home directory : System.FilePath) (content : String) : IO String := do
+  let file := home / "blob"
+  writeMaking file content
+  return (← gitIn home directory #["hash-object", "-w", file.toString]).trimAscii.toString
+
+/-- Writes a commit of `files` with the parents `parents`, real ids, into the
+repository at `directory`, made with an index file of its own named after
+`name` under `home`, `write-tree` and `commit-tree`: its id. -/
+def writeCommit (home directory : System.FilePath) (name : String) (files : Array (String × String))
+    (parents : Array String) : IO String := do
+  let index := home / s!"index-commit-{name}"
+  for (path, content) in files do
+    discard <|
+        gitInIndex home directory index
+          #["update-index", "--add", "--cacheinfo",
+            s!"100644,{← hashBlob home directory content},{path}"]
+  let tree := (← gitInIndex home directory index #["write-tree"]).trimAscii.toString
+  let arguments := #["commit-tree", tree, "-m", name] ++ parents.flatMap (#["-p", ·])
+  return (← gitIn home directory arguments).trimAscii.toString
+
+/-- The real id of the model's commit `id` among `written`, the model's ids
+with the real ones, or none. -/
+def realId (written : Array (String × String)) (id : String) : Option String :=
+  VersionControl.Model.lookup written id
+
+/-- `text` as one word of `/bin/sh`: in single quotes, each of its own made
+`'\\''`. -/
+def shellQuoted (text : String) : String :=
+  "'" ++ "'\\''".intercalate (text.splitOn "'") ++ "'"
+
+/-- Writes the pre-commit hook of the repository at `directory` that refuses
+every commit, printing `printed`: its first line on its standard output and
+the rest on its standard error (`Repository.hook`). -/
+def writeHook (directory : System.FilePath) (printed : String) : IO Unit := do
+  let lines := VersionControl.linesOf printed |>.map (·.trimAsciiEnd.toString)
+  let say (line : String) (stream : String) := s!"printf '%s\\n' {shellQuoted line}{stream}\n"
+  let script :=
+    "#!/bin/sh\n" ++ String.join ((lines.toList.take 1).map (say · "")) ++
+      String.join ((lines.toList.drop 1).map (say · " >&2")) ++
+      "exit 1\n"
+  let hook := directory / ".git" / "hooks" / "pre-commit"
+  writeMaking hook script
+  IO.setAccessRights hook { user := { read := true, write := true, execution := true } }
+
+/-- Writes `repository` out as a git repository in `directory`, with git's
+own commands: initialised on its branch; each of its `commits` written in
+order (`writeCommit`), its parents mapped to the real ids; `HEAD`'s files
+committed, over its `parents` with `commit-tree` and its branch pointed at
+it when it has some, then the index read from it, and checked out detached
+if it is; each of its other `branches` pointed at its commit with
+`update-ref`; each index entry that differs from `HEAD` written
+with `update-index` (a conflict as its stages, through `--index-info`), each
+named revision committed and tagged (`writeRevisions`), the working tree
+made exactly `repository.worktree`, each `linked` worktree made with `git
+worktree add` beside `directory` under its path's last component, on its
+branch or detached at `HEAD`, a `dirty` one given an untracked file, each
+`occupied` directory made beside `directory` the same way with a file in it, and a
+`hook` written as an executable `.git/hooks/pre-commit` (`writeHook`). A file is written with the store's
+escapes turned back into their bytes (`File.encodeText`), so a content may
+hold a byte that is not UTF-8. -/
+def writeGitRepository (home directory : System.FilePath)
+    (repository : VersionControl.Model.Repository) : IO Unit := do
+  let branch :=
+    match repository.head with
+    | .branch name => name
+    | .detached => "main"
+  discard <| gitIn home directory #["-c", s!"init.defaultBranch={branch}", "init", "-q"]
+  let mut written : Array (String × String) := #[]
+  for (id, commit) in repository.commits do
+    let parents := commit.parents.filterMap (realId written)
+    written := written.push (id, ← writeCommit home directory id commit.files parents)
+  unless repository.committed.isEmpty do
+    for (path, content) in repository.committed do
+      writeMaking (directory / path) content
+    if repository.parents.isEmpty then
+      discard <| gitIn home directory #["add", "-A"]
+      discard <| gitIn home directory #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "head"]
+    else
+      let head ←
+        writeCommit home directory "head" repository.committed
+            (repository.parents.filterMap (realId written))
+      discard <| gitIn home directory #["update-ref", s!"refs/heads/{branch}", head]
+      discard <| gitIn home directory #["read-tree", "HEAD"]
+    if repository.head == .detached then
+      discard <| gitIn home directory #["checkout", "-q", "--detach"]
+    written :=
+      written.push
+        (repository.headId, (← gitIn home directory #["rev-parse", "HEAD"]).trimAscii.toString)
+  for (name, id) in repository.branches do
+    if let some real := realId written id then
+      discard <| gitIn home directory #["update-ref", s!"refs/heads/{name}", real]
+  let hash (content : String) : IO String := do
+    return (←
+          gitIn home directory #["hash-object", "-w", "--stdin"] (some content)).trimAscii.toString
+  let paths := repository.committed.map (·.1) ++ repository.index.map (·.1)
+  for path in paths.toList.eraseDups do
+    let committed := VersionControl.Model.lookup repository.committed path
+    match VersionControl.Model.lookup repository.index path with
+    | some (.file content) =>
+      if committed != some content then
+        discard <|
+            gitIn home directory
+              #["update-index", "--add", "--cacheinfo", s!"100644,{← hash content},{path}"]
+    | some (.conflict base ours theirs) =>
+      if committed.isSome then
+        discard <| gitIn home directory #["update-index", "--force-remove", "--", path]
+      let mut lines := ""
+      for (stage, content) in [(1, base), (2, ours), (3, theirs)] do
+        if let some content := content then
+          lines := lines ++ s!"100644 {← hash content} {stage}\t{path}\n"
+      discard <| gitIn home directory #["update-index", "--index-info"] (some lines)
+    | none =>
+      if committed.isSome then
+        discard <| gitIn home directory #["update-index", "--force-remove", "--", path]
+  writeRevisions home directory repository
+  for (path, _) in repository.committed do
+    if (VersionControl.Model.lookup repository.worktree path).isNone then
+      IO.FS.removeFile (directory / path)
+  for (path, content) in repository.worktree do
+    writeMaking (directory / path) content
+  for linked in repository.linked do
+    let target := (directory.parent.getD directory) / (linked.path.fileName.getD "linked")
+    match linked.branch with
+    | some name =>
+      discard <| gitIn home directory #["worktree", "add", "-q", target.toString, name]
+    | none =>
+      discard <|
+          gitIn home directory #["worktree", "add", "-q", "--detach", target.toString, "HEAD"]
+    if linked.dirty then
+      writeMaking (target / "untracked.txt") "untracked\n"
+  for occupied in repository.occupied do
+    let target := (directory.parent.getD directory) / (occupied.fileName.getD "occupied")
+    writeMaking (target / "kept.txt") "kept\n"
+  if let some printed := repository.hook then
+    writeHook directory printed
+
+/-- `check` handed a home and a repository directory of its own, under a
+temporary directory removed afterwards (`withBase`). -/
+def withRepository {α : Type} (check : System.FilePath → System.FilePath → IO α) : IO α :=
+  withBase fun base => do
+    IO.FS.createDirAll (base / "home")
+    IO.FS.createDirAll (base / "repo")
+    check (base / "home") (base / "repo")
+
+/-- A user's global git config asking for what the git implementation's
+command line pins away (`Editor/VersionControl/Git.lean`, "The command
+lines"): copies found as well as renames, by `status.renames` and by
+`diff.renames`, and no untracked files listed; a commit's message
+stripped of lines that start with `#`; and a patch's whitespace fixed and
+its context matched loosely; and remote branches guessed for a new worktree
+and every new branch tracking its start, neither of which may change what
+is made. It names a user, since no commit runs without
+one and the writer's own does not reach the editor's runs, and turns
+signing off. The editor runs git under the user's config, so the contract
+runs it under this one. -/
+def pinnedAwayConfig : String :=
+  "[status]\n\trenames = copies\n\tshowUntrackedFiles = no\n[diff]\n\trenames = copies\n" ++
+    "[worktree]\n\tguessRemote = true\n[branch]\n\tautoSetupMerge = always\n" ++
+    "[user]\n\tname = a\n\temail = a@example.com\n" ++
+    "[commit]\n\tgpgSign = false\n\tcleanup = strip\n" ++
+    "[apply]\n\twhitespace = fix\n\tignoreWhitespace = change\n"
+
+/-- The names of the version-control contract's properties
+(`Editor/VersionControl/Contract.lean`) that do not hold of the git
+implementation over the library's process service, each property's
+repository written out with real git in a temporary directory of its own
+(`writeGitRepository`), every child's git kept from the system's config and
+given `pinnedAwayConfig` as the user's (`onIsolatedGit`); and that every
+child it ran is reaped. Property 1 is the phase's adapter test of git
+against the model. -/
+def versionControlFailures (services : Job.Services) : IO (List String) := do
+  let before ← Ffi.processesPending
+  let failed ←
+    VersionControlContract.properties.filterMapM fun property =>
+        withRepository fun home directory => do
+          try
+            writeGitRepository home directory property.repository
+            let config := home / "gitconfig"
+            IO.FS.writeFile config pinnedAwayConfig
+            let outcome ←
+              runOnTimers (onIsolatedGit services home config)
+                  (property.holds.runM (VersionControl.Git.handler "git" directory))
+            return if outcome == .finished true then none
+              else some s!"{property.name} ({repr outcome})"
+          catch error =>
+            return some s!"{property.name} (writing its repository: {error})"
+  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  return failed.map (s!"the version-control interface over git: {·}") ++
+      if reaped then [] else ["every child the git implementation ran is reaped"]
+
+/-- The jobs of the status buffer check: the file commands', the workspace
+finder's and the status buffer's, as a host registers them. -/
+def statusJobs : Array Config.JobRegistration :=
+  Files.jobs ++ Workspace.jobs ++ VersionControl.jobs
+
+/-- The keys of the status buffer check: none bound; the file commands',
+the workspace's and the version-control commands by name, `to-row`, which
+puts the window's cursor at the start of the row its argument names, and
+`set-text`, which makes the window's text its argument; their jobs
+registered; and the version-control modes known to the loop. -/
+def statusKeys : Loop.Keys TestScheme.scheme :=
+  let toRow : Call → EditorM (Option Config.Write) := fun call => do
+    if let .nat row :: _ := call.arguments then
+      let offset ← call.target.buffer.text.offsetOf ⟨row, 0⟩
+      discard <| call.target.window.id.select { ranges := #[⟨offset, offset⟩] }
+    return none
+  let setText : Call → EditorM (Option Config.Write) := fun call => do
+    if let .str text :: _ := call.arguments then
+      let target := call.target.buffer.text
+      target.replaceRange 0 (← target.byteLength) text
+    return none
+  { command? := fun name =>
+      if name == "to-row" then some toRow
+      else
+        if name == "set-text" then some setText
+        else
+          ((Files.commands ++ Workspace.commands ++ VersionControl.commands).find?
+                (·.name == name)).bind
+            fun registration =>
+            match registration.action with
+            | .call run =>
+              some fun call => do
+                run call
+                return none
+            | _ => none
+    registered :=
+      { jobs := fun name => statusJobs.any (·.name == name)
+        entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) } }
+
+/-- The invocation that puts the window's cursor at the start of `row`. -/
+def toRow (row : Nat) : Invocation :=
+  { command := "to-row", arguments := [.nat row] }
+
+/-- The invocation that makes the window's text `text`. -/
+def setText (text : String) : Invocation :=
+  { command := "set-text", arguments := [.str text] }
+
+/-- `check` handed a home holding `pinnedAwayConfig` as the file `gitconfig`,
+whose path it is also handed, and a repository directory, both its own
+(`withRepository`), with `repository` written out in the directory. A
+commit needs the config's user: git run without one would guess an address
+from the host's name, and fails where that has no domain. -/
+def withConfiguredRepository {α : Type} (repository : VersionControl.Model.Repository)
+    (check : System.FilePath → System.FilePath → System.FilePath → IO α) : IO α :=
+  withRepository fun home directory => do
+    writeGitRepository home directory repository
+    let config := home / "gitconfig"
+    IO.FS.writeFile config pinnedAwayConfig
+    check home config directory
+
+/-- Whether the git implementation reads the status of the repository at
+`directory` as `expected`, over `services`. -/
+def gitStatusIs (services : Job.Services) (directory : System.FilePath)
+    (expected : VersionControl.Status) : IO Bool := do
+  let read : JobM Bool := do
+    return (← Program.runM (VersionControl.Git.handler "git" directory) VersionControl.status) ==
+        .ok expected
+  return (← runOnTimers services read) == .finished true
+
+/-- The checks of the git implementation over real git of what the model has
+no value for: a branch's change asked from each of two worktrees made with
+git itself, files added with intent to add, which git alone makes, what to
+watch in a linked worktree, and a commit's message, which the model does
+not keep. -/
+def versionControlChecks (services : Job.Services) : List Check :=
+  [{  name :=
+        "criterion 4: in a temporary repository whose linked worktree on feature committed a.txt modified, c.txt added and d.txt deleted, while main committed m.txt after they forked, changes asked from the linked worktree (HEAD against main) and from the main one (feature against main) each answer those three files with their old and new content, and fileAt of the base reads a.txt's old content"
+      run :=
+        withRepository fun home directory => do
+          writeGitRepository home directory
+              (VersionControlContract.clean #[("a.txt", "1\n"), ("b.txt", "b\n"), ("d.txt", "d\n")])
+          let linked := directory.parent.getD directory / "feature"
+          discard <|
+              gitIn home directory #["worktree", "add", "-q", "-b", "feature", linked.toString]
+          writeMaking (linked / "a.txt") "2\n"
+          writeMaking (linked / "c.txt") "new\n"
+          IO.FS.removeFile (linked / "d.txt")
+          discard <| gitIn home linked #["add", "-A"]
+          discard <|
+              gitIn home linked #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "feature"]
+          writeMaking (directory / "m.txt") "m\n"
+          discard <| gitIn home directory #["add", "-A"]
+          discard <|
+              gitIn home directory #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "main"]
+          let expected : Array VersionControl.FileChange :=
+            #[{ path := "a.txt", old := some "1\n", new := some "2\n" },
+              { path := "c.txt", old := none, new := some "new\n" },
+              { path := "d.txt", old := some "d\n", new := none }]
+          let asked (root : System.FilePath) (revision : String) : JobM Bool := do
+            let handler := VersionControl.Git.handler "git" root
+            match ← Program.runM handler (VersionControl.changes revision "main") with
+            | .ok change =>
+              return change.files == expected &&
+                  (← Program.runM handler (VersionControl.fileAt change.base "a.txt")) ==
+                    .ok (some "1\n")
+            | .error _ =>
+              return false
+          let fromLinked ← runOnTimers (onIsolatedGit services home) (asked linked "HEAD")
+          let fromMain ← runOnTimers (onIsolatedGit services home) (asked directory "feature")
+          return fromLinked == .finished true && fromMain == .finished true },
+    { name :=
+        "in a linked worktree, watched names the main repository's git directory to watch, and HEAD and the index of the worktree's own git directory under it"
+      run :=
+        withRepository fun home directory => do
+          writeGitRepository home directory (VersionControlContract.clean #[("a.txt", "a\n")])
+          let linked := directory.parent.getD directory / "linked"
+          discard <| gitIn home directory #["worktree", "add", "-q", "--detach", linked.toString]
+          -- git spells the common directory as it found it, which may be
+          -- through a link (a temporary directory's on macOS), so the
+          -- answer is held to the names of what it names.
+          let asked : JobM Bool := do
+            match
+              ← Program.runM (VersionControl.Git.handler "git" linked) VersionControl.watched with
+            | .ok answer =>
+              let common := answer.directory
+              let own := common / "worktrees" / "linked"
+              return common.toString.endsWith "/repo/.git" &&
+                  answer.paths == #[own / "HEAD", own / "index", common / "packed-refs"] &&
+                  answer.trees == #[common / "refs"]
+            | .error _ =>
+              return false
+          return (← runOnTimers (onIsolatedGit services home) asked) == .finished true },
+    { name :=
+        "files moved in the working tree and added with intent to add, which git reads as renames in the working tree, read as each origin's unstaged deletion, joined with its staged change, and each new path's unstaged addition"
+      run :=
+        withRepository fun home directory => do
+          writeGitRepository home directory
+              { committed := #[("a.txt", "a\n"), ("b.txt", "b\n")]
+                index := #[("a.txt", .file "a\n"), ("b.txt", .file "staged\n")]
+                worktree := #[("a.txt", "a\n"), ("b.txt", "staged\n")] }
+          IO.FS.rename (directory / "a.txt") (directory / "c.txt")
+          IO.FS.rename (directory / "b.txt") (directory / "d.txt")
+          discard <| gitIn home directory #["add", "-N", "--", "c.txt", "d.txt"]
+          gitStatusIs (onIsolatedGit services home) directory
+              { head := .branch "main"
+                files :=
+                  #[{ path := "a.txt", state := .changed none (some .deleted) },
+                    { path := "b.txt", state := .changed (some .modified) (some .deleted) },
+                    { path := "c.txt", state := .changed none (some .added) },
+                    { path := "d.txt", state := .changed none (some .added) }] } },
+    { name :=
+        "a commit's message is the message given, a line that starts with # kept, under a user config whose commit.cleanup is strip"
+      run :=
+        withConfiguredRepository
+          { committed := #[("a.txt", "one\n")], index := #[("a.txt", .file "two\n")]
+            worktree := #[("a.txt", "two\n")] } fun home config directory => do
+          let message := "Subject\n\n# kept\nbody\n"
+          let committed : JobM Bool := do
+            return (←
+                  Program.runM (VersionControl.Git.handler "git" directory)
+                      (VersionControl.commit message)) matches
+                .ok ()
+          let ran ← runOnTimers (onIsolatedGit services home config) committed
+          let object ← gitIn home directory #["cat-file", "commit", "HEAD"]
+          return ran == .finished true && object.endsWith s!"\n\n{message}" }]
+
+/-- The checks of the status buffer (`Editor/VersionControl/Status.lean`),
+of the worktree list (`Editor/VersionControl/Worktrees.lean`), of `vc-show`, of staging a hunk (`Editor/VersionControl/Stage.lean`) and of
+the message buffer (`Editor/VersionControl/Commit.lean`) over real git: their
+jobs run over the library's process, file and diff services in a temporary
+repository, the real finder recording the workspace, every child's git kept
+from the user's and the system's config. A check that commits runs git
+under `pinnedAwayConfig` (`withConfiguredRepository`), whose user a commit
+needs. -/
+def statusBufferChecks (services : Job.Services) : List Check :=
+  [{  name :=
+        "criteria 1 and 2 over real git: in a repository with a worktree on feature holding a changed file, vc-worktrees lists both with their branches, and visiting feature's row opens *vc-status: repo@feature* naming that file"
+      run :=
+        withRepository fun home directory => do
+          writeGitRepository home directory (VersionControlContract.clean #[("a.txt", "one\n")])
+          let linked := directory.parent.getD directory / "feature"
+          discard <|
+              gitIn home directory #["worktree", "add", "-q", "-b", "feature", linked.toString]
+          writeMaking (linked / "a.txt") "two\n"
+          let rig ← ProjectRig.over (onIsolatedGit services home)
+          let some (listed, texts) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"), { command := VersionControl.worktreesName }]
+                statusKeys statusJobs | return false
+          let list ← bufferText rig texts listed "*vc-worktrees: repo@main*"
+          let some (visited, texts) ←
+            runSettledFrom rig listed texts
+                [toRow 2, { command := VersionControl.worktreesVisitName }] statusKeys
+                statusJobs | return false
+          let status ← bufferText rig texts visited "*vc-status: repo@feature*"
+          return list ==
+                some s!"repo@main: worktrees\nmain: {directory} (this one)\nfeature: {linked}\n" &&
+              status == some "repo@feature: on feature\nunstaged: a.txt (modified)\n" },
+    { name :=
+        "criteria 2 to 4 over real git: vc-status in a file of a repository with a.txt changed and b.txt staged shows one line for each naming its state; toggling on a.txt's line stages it in git and its line then says so, and toggling on b.txt's line unstages it in git"
+      run :=
+        withRepository fun home directory => do
+          writeGitRepository home directory
+              { committed := #[("a.txt", "one\n"), ("b.txt", "one\n")]
+                index := #[("a.txt", .file "one\n"), ("b.txt", .file "two\n")]
+                worktree := #[("a.txt", "two\n"), ("b.txt", "two\n")] }
+          let isolated := onIsolatedGit services home
+          let rig ← ProjectRig.over isolated
+          let name := "*vc-status: repo@main*"
+          let some (shown, texts) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"), { command := VersionControl.statusName }]
+                statusKeys statusJobs | return false
+          let first ← bufferText rig texts shown name
+          let some (staged, texts) ←
+            runSettledFrom rig shown texts [toRow 1, { command := VersionControl.toggleName }]
+                statusKeys statusJobs | return false
+          let afterStage ←
+            gitStatusIs isolated directory
+                { head := .branch "main"
+                  files :=
+                    #[{ path := "a.txt", state := .changed (some .modified) none },
+                      { path := "b.txt", state := .changed (some .modified) none }] }
+          let second ← bufferText rig texts staged name
+          let some (_, _) ←
+            runSettledFrom rig staged texts [toRow 2, { command := VersionControl.toggleName }]
+                statusKeys statusJobs | return false
+          let afterUnstage ←
+            gitStatusIs isolated directory
+                { head := .branch "main"
+                  files :=
+                    #[{ path := "a.txt", state := .changed (some .modified) none },
+                      { path := "b.txt", state := .changed none (some .modified) }] }
+          return first ==
+                some "repo@main: on main\nunstaged: a.txt (modified)\nstaged: b.txt (modified)\n" &&
+              afterStage &&
+              second ==
+                some "repo@main: on main\nstaged: a.txt (modified)\nstaged: b.txt (modified)\n" &&
+              afterUnstage },
+    { name :=
+        "criterion 2 over real git: vc-show v1 a.txt, in a.txt of a repository with the tag v1, opens a read-only buffer a.txt@v1 holding what v1 holds, with no file; and with no text the file at HEAD"
+      run :=
+        withRepository fun home directory => do
+          writeGitRepository home directory
+              { VersionControlContract.clean #[("a.txt", "now\n")] with
+                revisions := #[("v1", #[("a.txt", "then\n")])] }
+          let rig ← ProjectRig.over (onIsolatedGit services home)
+          let some (shown, texts) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"),
+                  { command := VersionControl.showName, arguments := [.str "v1 a.txt"] },
+                  openFile (directory / "a.txt"), { command := VersionControl.showName }]
+                statusKeys statusJobs | return false
+          let some old := shown.state.findBuffer "a.txt@v1" | return false
+          let some head := shown.state.findBuffer "a.txt@HEAD" | return false
+          return (← bufferText rig texts shown "a.txt@v1") == some "then\n" &&
+              (← bufferText rig texts shown "a.txt@HEAD") == some "now\n" &&
+              (shown.state.buffer? old).map (·.readOnly) == some true &&
+              ((shown.state.buffer? old).bind (·.file)).isNone &&
+              ((shown.state.buffer? head).bind (·.file)).isNone },
+    { name :=
+        "criterion 1 through vc-stage-hunk over real git: on a line of the second of two changed hunks, in a buffer with unsaved changes, the buffer is saved and that hunk alone is staged"
+      run :=
+        withConfiguredRepository
+          (VersionControlContract.writing
+            (VersionControlContract.clean #[("a.txt", VersionControlContract.tenLines)]) "a.txt"
+            VersionControlContract.secondChanged)
+          fun home config directory => do
+          let isolated := onIsolatedGit services home config
+          let rig ← ProjectRig.over isolated
+          let some (_, _) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"), setText VersionControlContract.twoChanged, toRow 8,
+                  { command := VersionControl.stageHunkName }]
+                statusKeys statusJobs | return false
+          let index ← gitIn home directory #["show", ":a.txt"]
+          let written ← IO.FS.readFile (directory / "a.txt")
+          let state ←
+            gitStatusIs isolated directory
+                { head := .branch "main"
+                  files :=
+                    #[{ path := "a.txt", state := .changed (some .modified) (some .modified) }] }
+          return index ==
+                VersionControlContract.lineSet VersionControlContract.tenLines 8 "nine\n" &&
+              written == VersionControlContract.twoChanged &&
+              state },
+    { name :=
+        "vc-stage-hunk pressed twice on a line before the first has staged, over real git: both take the same hunk, the first stages it, git refuses the second, which is said, and the index holds the hunk once"
+      run :=
+        withConfiguredRepository
+          (VersionControlContract.writing
+            (VersionControlContract.clean #[("a.txt", VersionControlContract.tenLines)]) "a.txt"
+            VersionControlContract.twoChanged)
+          fun home config directory => do
+          let rig ← ProjectRig.over (onIsolatedGit services home config)
+          let some (opened, texts) ←
+            runSettled rig directory [openFile (directory / "a.txt"), toRow 8] statusKeys
+                statusJobs | return false
+          let press : Invocation := { command := VersionControl.stageHunkName }
+          let (first, texts) ← (opened.invoke statusKeys press).runReal texts rig.display
+          let .ok first := first | return false
+          let (second, texts) ← (first.loop.invoke statusKeys press).runReal texts rig.display
+          let .ok second := second | return false
+          let some (settled, _) ←
+            settleQueued rig texts second.loop (first.starts.toList ++ second.starts.toList)
+                statusKeys statusJobs | return false
+          let index ← gitIn home directory #["show", ":a.txt"]
+          return first.starts.size == 1 && second.starts.size == 1 &&
+              index == VersionControlContract.lineSet VersionControlContract.tenLines 8 "nine\n" &&
+              settled.state.echo.startsWith
+                "vc-stage-hunk: exited with status 1: error: patch failed: a.txt" },
+    { name :=
+        "criterion 2 over real git: vc-commit, the message typed, vc-commit-accept makes a commit whose message is the buffer's text, and the message buffer is gone"
+      run :=
+        withConfiguredRepository
+          { committed := #[("a.txt", "one\n")], index := #[("a.txt", .file "two\n")]
+            worktree := #[("a.txt", "two\n")] } fun home config directory => do
+          let message := "Commit from the message buffer\n\n# kept, as typed\n"
+          let rig ← ProjectRig.over (onIsolatedGit services home config)
+          let some (committed, _) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"), { command := VersionControl.commitName },
+                  setText message, { command := VersionControl.acceptName }]
+                statusKeys statusJobs | return false
+          let object ← gitIn home directory #["cat-file", "commit", "HEAD"]
+          return object.endsWith s!"\n\n{message}" &&
+              (committed.state.findBuffer "*vc-commit: repo@main*").isNone },
+    { name :=
+        "criterion 3 over real git: a pre-commit hook printing a line on each stream and exiting 1 leaves HEAD as it was, *vc-commit-output: repo@main* shown holding both lines, and the message buffer kept with its text"
+      run :=
+        withConfiguredRepository
+          { committed := #[("a.txt", "one\n")], index := #[("a.txt", .file "two\n")]
+            worktree := #[("a.txt", "two\n")]
+            hook := some "the hook says no on its output\nthe hook says no on its error\n" }
+          fun home config directory => do
+          let before ← gitIn home directory #["rev-parse", "HEAD"]
+          let rig ← ProjectRig.over (onIsolatedGit services home config)
+          let some (refused, texts) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"), { command := VersionControl.commitName },
+                  setText "refused\n", { command := VersionControl.acceptName }]
+                statusKeys statusJobs | return false
+          let after ← gitIn home directory #["rev-parse", "HEAD"]
+          let output ← bufferText rig texts refused "*vc-commit-output: repo@main*"
+          let kept ← bufferText rig texts refused "*vc-commit: repo@main*"
+          let shown :=
+            match refused.state.findBuffer "*vc-commit-output: repo@main*" with
+            | some id => refused.state.windows.any (·.buffer == id)
+            | none => false
+          return before == after && kept == some "refused\n" && shown &&
+              output.any fun text =>
+                (text.splitOn "the hook says no on its output").length > 1 &&
+                  (text.splitOn "the hook says no on its error").length > 1 }]
+
 end ContractTest
 
 /-- Runs the text port's contract against its real binding, then the job
@@ -3360,6 +4054,11 @@ def main (arguments : List String) : IO UInt32 := do
   let compileCheckFailed ← ContractTest.checkFailures compileChecks
   let projectModeChecks := ContractTest.projectModeChecks services compileFixtures workspaceFixtures
   let projectModeCheckFailed ← ContractTest.checkFailures projectModeChecks
+  let versionControlFailed ← ContractTest.versionControlFailures services
+  let versionControlChecks := ContractTest.versionControlChecks services
+  let versionControlCheckFailed ← ContractTest.checkFailures versionControlChecks
+  let statusBufferChecks := ContractTest.statusBufferChecks services
+  let statusBufferCheckFailed ← ContractTest.checkFailures statusBufferChecks
   let fileWatchFailed ← ContractTest.fileWatchFailures services
   let fileWatchChecks := ContractTest.fileWatchChecks services
   let fileWatchCheckFailed ← ContractTest.checkFailures fileWatchChecks
@@ -3406,6 +4105,9 @@ def main (arguments : List String) : IO UInt32 := do
       shellCheckFailed ++
       compileCheckFailed ++
       projectModeCheckFailed ++
+      versionControlFailed ++
+      versionControlCheckFailed ++
+      statusBufferCheckFailed ++
       fileWatchFailed ++
       fileWatchCheckFailed ++
       checkFailed ++
@@ -3431,6 +4133,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties over the library's matcher, and {Editor.JobContract.snapshotProperties.length} snapshot properties over a published table, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, {Editor.Completion.StyleContract.properties.length} properties of the completion styles hold of the fuzzy style and of the path style over it, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties over the library's matcher, and {Editor.JobContract.snapshotProperties.length} snapshot properties over a published table, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, under a user config asking for what its command line pins away, with {versionControlChecks.length} checks of what only git makes (a branch's change asked from two worktrees, a status read of files added with intent to add, what to watch in a linked worktree, and a commit's message under a config that strips one) and {statusBufferChecks.length} checks of the status buffer, of the worktree list, of vc-show, of staging a hunk and of the message buffer over it, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, {Editor.Completion.StyleContract.properties.length} properties of the completion styles hold of the fuzzy style and of the path style over it, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

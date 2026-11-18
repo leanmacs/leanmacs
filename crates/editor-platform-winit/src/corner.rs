@@ -14,7 +14,7 @@
 //! - **elsewhere, 0**: the other systems winit runs on draw no rounded
 //!   corners over the content, or say nothing of them.
 //!
-//! The reading is [`system`], on macOS only: one call into AppKit with no
+//! The reading is `system`, on macOS only: one call into AppKit with no
 //! decision in it. It asks the window's content view for its insets in the
 //! safe-area layout region adapted to the corners horizontally
 //! (`-[NSView edgeInsetsForLayoutRegion:]` with
@@ -68,7 +68,7 @@ pub(crate) struct Shape {
 /// Measured, not chosen: the system's own reading of winit's window
 /// (titlebar only, no toolbar), taken on 2026-11-16 on a Mac17,7 (arm64)
 /// running macOS 27.2 (26B123) by `mise run window-contract` with this
-/// constant set to 0 for the run. [`system`] read the insets left 16,
+/// constant set to 0 for the run. `system` read the insets left 16,
 /// right 16, top 0 and bottom 0, and every resize the run printed said
 /// `fullscreen false corner 16`. A window with a toolbar has larger
 /// corners (WWDC25 session 310); winit's has none. Measured again the same

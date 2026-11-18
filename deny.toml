@@ -352,6 +352,20 @@
 # `-D unused-wrapper` rejects it; with no wrappers the entry is a plain ban
 # and fires on the workspace member itself. It is kept by review, and tracked
 # as the rdm task `deny-editor-ffi-leaf-rule`.
+#
+# For release tooling (2026-11-17, the release pipeline's phase 3), whose
+# entries came in the commit that added its two crates. `editor-release`,
+# the core of the build ID, the commit and the .dmg's plan, has one
+# wrapper, its adapters' crate `editor-release-std`, which holds the
+# `leanmacs-release` binary: with `editor-release` added to `editor-ffi`'s
+# dependencies, it fails ("crate 'editor-release = 0.1.0' is explicitly
+# banned"). `editor-release-std` itself has no entry, for the reason
+# `editor-ffi` has none: nothing depends on it, so a wrapper would match
+# nothing, and a plain ban fires on the workspace member. That no crate of
+# the editor depends on it is kept by review. It joined the wrappers of
+# `tempfile`'s entry, for its two wiring tests' temporary directories: with
+# it taken out, it fails on that edge ("crate 'tempfile = 3.27.0' is
+# explicitly banned").
 
 [graph]
 all-features = false
@@ -383,7 +397,7 @@ deny = [
   { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },
   { crate = "fontique", wrappers = ["editor-shape-parley", "parley", "parley_engine"], reason = "fontique is Parley's font library and stays behind the Shaper port with it: beside Parley's own crates, only the adapter may name its types" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
-  { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi", "editor-process-std", "editor-watch-notify"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test, the process adapter's contract test, whose children run and write there, the watch adapter's contract test, which watches and writes there, and editor-ffi's wiring tests; editor-text's, editor-process's and editor-watch's tests run on their fakes and make no file" },
+  { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi", "editor-process-std", "editor-watch-notify", "editor-release-std"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test, the process adapter's contract test, whose children run and write there, the watch adapter's contract test, which watches and writes there, editor-ffi's wiring tests, and release tooling's wiring tests, a git repository made for the resolvers and the mount point of the .dmg's check; editor-text's, editor-process's, editor-watch's and editor-release's tests run on their fakes and make no file" },
   { crate = "editor-process", wrappers = ["editor-process-std", "editor-ffi"], reason = "the Processes port and the process service have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-process-std", wrappers = ["editor-ffi"], reason = "the process adapter is linked only by the crate that wires the library together, for the process's process service; everything else reaches a process through the port, and editor-process's tests through its fake" },
   { crate = "editor-watch", wrappers = ["editor-watch-notify", "editor-ffi"], reason = "the Watch port and the watch service have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
@@ -413,5 +427,6 @@ deny = [
   { crate = "editor-search-regex", wrappers = ["editor-ffi"], reason = "the search engine's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
   { crate = "imara-diff", wrappers = ["editor-diff-imara"], reason = "the diff library stays behind the line diff port: only its adapter crate may name its types" },
   { crate = "editor-diff", wrappers = ["editor-diff-imara", "editor-ffi"], reason = "the line diff port and the core that makes a script have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose diff service makes a script over the adapter and whose text binding applies one; a third is a decision, so it is made here" },
+  { crate = "editor-release", wrappers = ["editor-release-std"], reason = "release tooling: the build ID, the commit and the .dmg's plan are reached only by their adapters' crate and its `leanmacs-release` binary; the editor never links it" },
   { crate = "editor-diff-imara", wrappers = ["editor-ffi"], reason = "the line diff's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
 ]

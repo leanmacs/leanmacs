@@ -10,8 +10,11 @@ tests (`mise run lean-test`); the Lean build, lean-fmt's format and lint
 checks; the checks of the Lean/Rust boundary, the contract checks against
 the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); the headless mode run from a staged app
-bundle (`mise run bundle-test`); and the C format check. `hk check` runs the
-same task.
+bundle (`mise run bundle-test`); the C format check; and the workflow lint
+(`mise run workflow-lint`: actionlint, zizmor and the structural check of
+the CI workflow). `hk check` runs the same task, and CI runs it, unchanged,
+on `macos-26` and on `ubuntu-24.04` for every push and pull request
+([`ci.md`](ci.md)).
 
 The gate opens no window, makes no surface on one, reads and writes no
 clipboard, and needs neither a display nor Docker. Every window it runs is
@@ -28,6 +31,13 @@ a scene and input given to it arrives on the queue, and that text written
 through the clipboard adapter is the text read back. A change that
 touches the window, the surface or the clipboard is done when both this
 gate and that task exit 0.
+
+Two checks of the repository rather than the editor are outside the gate
+too: `mise run secrets-scan`, gitleaks over `main`'s history (the copy
+`linux-ci` runs the gate in has no history), and `mise run infra-check`,
+the offline checks of the repository's GitHub settings in `infra/github`.
+Neither runs in `ci` or the hk hooks; both are in
+[`publishing.md`](publishing.md).
 
 What the gate does check of the window, with none open:
 
@@ -355,7 +365,8 @@ copied from.
 The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and
 `mise run lean-test` runs `lake test`: the model tests
-(`lean/ModelTest.lean`), which run editor commands, the text interface's
+(`lean/ModelTest.lean` and its modules under `lean/ModelTest/`), which run
+editor commands, the text interface's
 contract and the cases of the undo tree, which is Lean over that interface,
 against the model, and the config session's decisions (what a
 reload elaborates, what it installs, how reloads are serialised) on
@@ -454,6 +465,24 @@ the repeat, a trigger and a pause moved by `Loop.Driver.pass`
 save in flight, the snapshot the loop releases once a save has ended and
 the saved mark a rollback takes back are checked with the state requests
 and the loop's dispatch.
+
+The model tests are split into test modules that mirror the module they
+test, under `lean/ModelTest/Editor/` (the checks of `lean/Editor/State.lean`
+are in `lean/ModelTest/Editor/State.lean`), with the helpers several of them
+share in small support modules under `lean/ModelTest/Support/`. Each imports
+only what it uses, and the root `lean/ModelTest.lean` keeps its imports, the
+`checks` aggregator and `main`. Splitting keeps lean-fmt's exact-frontend
+child, one per file with a 600 s bound by default
+(`LEAN_FMT_CHILD_TIMEOUT_MS`), from meeting one huge file. As a single file
+of 38,031 lines it took 221 to 318 s under `lake exe lean-fmt format
+--check --no-cache` on the owner's machine (2026-11-17) and once ran past
+the bound on the `macos-26` runner; mirrored, the largest module
+(`lean/ModelTest/Editor/Loop.lean`, about 5,500 lines) took 9.4 s on the
+same machine, and the whole tree 23 s. Put a new check in the test module
+of the module it tests, creating that module if it is the first, and a
+helper that a second test module comes to need in a support module; don't
+raise the bound. Every list stays in the namespace `ModelTest`, so
+`ModelTest.<name>Checks` names it wherever it lives.
 
 The ex command line (`lean/Editor/Ex.lean`) is checked there in layers,
 so that a change to one breaks no other's checks:
@@ -1001,7 +1030,15 @@ exit 0 and print exactly `expected`, whose command calls compiled code of
 import and run config: outside a bundle the same command line is refused,
 and the build tree's `.olean` directory is not beside the copy. It has a
 time limit of its own, 120 seconds, for copying the executable and the
-module files.
+module files. Then it checks `editor --version` through `IO.appPath` and
+the real file read (`lean/Editor/Version.lean`): `tests/headless/bundle/
+Info.plist`, which holds only the version, build ID and commit keys with a
+fake stamp, is copied into the staged `Contents/`, and the copy, with an
+empty environment, must print exactly `version-expected`; and the build
+tree's `editor --version`, outside a bundle, must say it is a development
+build. The model tests pin the plist reader and the three outputs against a
+fake file read (`ModelTest.versionChecks`), and `mise run app-check` runs
+the real bundle's `--version` against the real plist.
 
 What the gate checks of drawing, then: frames a bound display publishes
 reach a render loop with the input they answer (`editor-ffi`'s tests,

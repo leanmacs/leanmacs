@@ -747,6 +747,53 @@ candidates, sheet and high-water mark.
   are for a buffer its owner alone writes, such as a compilation buffer,
   which is read-only and whose spans the compile mode resets with its text
   (`Editor/Compile.lean`, "Locations").
+- A buffer may have a **gutter** (`Buffer.gutter`, set by `setGutter`,
+  which refuses `noSuchBuffer`): marks, each a byte range of its text at
+  the gutter's revision with a short text and a face, which every window
+  of it draws in a column `Buffer.Gutter.width` points wide before its text
+  (`paddingOf`). Unlike spans they follow the edits made since: a view
+  carries them to the revision it shows through the text's log
+  (`Gutter.marksOf`). The version-control gutter is their owner
+  (`Editor/VersionControl/Gutter.lean`).
+
+### Excerpt buffers
+
+An *excerpt buffer* is a buffer over an excerpt text (`createExcerpts`,
+`Editor/Text.lean`), whose edits are its sources' edits. It is added by
+`addExcerptBuffer`, which refuses as `addBuffer` does, and it keeps
+`Buffer.excerpts`, the history of what it edited and an entry for each of
+its excerpts, which `setExcerptHistory` replaces whole (refused with
+`noSuchBuffer`, and with `notExcerpts` for a buffer that is not one).
+
+- **Each excerpt's entry** (`Buffer.ExcerptEntry`) is its source's text
+  and the header drawn above it, in list order. They are the editor's
+  display data, kept here and not in the store's list: a window over the
+  buffer draws each header as a block above its excerpt, and each source
+  buffer's spans at its excerpts (`Editor/ExcerptView.lean`).
+
+- **Its own `history`** is an undo tree over its text like any buffer's,
+  told and closed by the loop and never moved: its text keeps no inverse, so
+  an undo in it is not its tree's. Its "modified" mark is left to a later
+  phase.
+- **What it edited is a list of steps** (`Buffer.Excerpts`): each step
+  (`Buffer.ExcerptStep`) names the source buffers an edit through the
+  excerpt buffer reached, each with its name and the state its undo tree
+  was left in once the step was closed (`Buffer.ExcerptSource`). The source
+  buffers an edit reaches since the last step are `touched` (`touch`), and
+  `closeExcerptGroup` makes them a step: pure, over trees already told and
+  closed, it pushes one with each touched buffer's name and
+  `history.state`, clears `touched` and empties `redos`.
+- **An undo in it undoes one step in each source buffer**, and only when
+  each is still in the state the step recorded: otherwise it is refused
+  with `sourceMoved` and the first source that moved. A source buffer that
+  was removed since is dropped from the step, the step with it once none is
+  left, and the undo is refused with `sourceRemoved` and the name the step
+  recorded (`Editor/Api.lean`, "Undo").
+- `excerptBufferOver?` finds the excerpt buffer over a text, and
+  `bufferOver?` the plain buffer over a source text, which the command
+  dispatcher asks before an edit through an excerpt buffer
+  (`Editor/Command/Dispatch.lean`, "Read-only buffers and excerpt
+  sources").
 
 ### Most recently used
 
@@ -1035,6 +1082,66 @@ structure Buffer.File where
   changed : Option Buffer.Changed := none
   deriving DecidableEq, Repr
 
+/-- A source buffer an excerpt buffer's step reached, as the step recorded
+it. -/
+structure Buffer.ExcerptSource where
+  /-- Which buffer. -/
+  buffer : BufferId
+  /-- Its name when the step was recorded: what is said of it once it is
+  removed. -/
+  name : String
+  /-- The state its undo tree was in when the step was recorded. -/
+  state : UndoTree.State
+  deriving DecidableEq, Repr
+
+/-- One step of an excerpt buffer's history: the source buffers an edit
+through it reached, each with the state its undo tree was in when the step
+was closed. -/
+structure Buffer.ExcerptStep where
+  /-- The source buffers, their names and their trees' states. -/
+  sources : Array Buffer.ExcerptSource := #[]
+  deriving DecidableEq, Repr
+
+/-- One excerpt of an excerpt buffer as the editor keeps it beside the
+store's list: its source's text, and the header drawn above it ("Excerpt
+buffers", in the module docs). -/
+structure Buffer.ExcerptEntry where
+  /-- The text of its source. -/
+  source : TextId
+  /-- The header drawn above it; none when empty. -/
+  header : String := ""
+  deriving DecidableEq, Repr
+
+/-- What an excerpt buffer keeps of what its edits reached, and of each of
+its excerpts ("Excerpt buffers", in the module docs). -/
+structure Buffer.Excerpts where
+  /-- The source buffers an edit reached since the last step was closed. -/
+  touched : Array BufferId := #[]
+  /-- The steps to undo, the last one last. -/
+  undos : Array Buffer.ExcerptStep := #[]
+  /-- The steps to redo, the next one last. -/
+  redos : Array Buffer.ExcerptStep := #[]
+  /-- One entry for each excerpt of its text, in list order: its source and
+  its header. -/
+  entries : Array Buffer.ExcerptEntry := #[]
+  deriving DecidableEq, Repr
+
+/-- A buffer's gutter: the marks its views draw in a gutter column, as byte
+ranges of its text at `revision` ("Buffers", in the module docs). Its owner
+sets it; a view carries the marks to the revision it shows through the
+text's log (`Gutter.marksOf`, `Editor/Gutter.lean`). -/
+structure Buffer.Gutter where
+  /-- The revision of the text the marks are ranges of. -/
+  revision : Nat
+  /-- The marks. -/
+  marks : Array GutterMark := #[]
+  deriving DecidableEq, Repr
+
+/-- The width of a gutter column, in points: a named constant of policy, the
+padding of a window whose buffer has a gutter (`EditorState.paddingOf`). -/
+def Buffer.Gutter.width : Nat :=
+  12
+
 /-- A buffer: a text and what the editor keeps about it. -/
 structure Buffer where
   /-- Its name, as the user sees it. -/
@@ -1065,6 +1172,12 @@ structure Buffer where
   /-- Byte ranges of its text, each with a face, set by its owner and drawn
   under the last search's matches ("Buffers", in the module docs). -/
   spans : Array Decoration := #[]
+  /-- For an excerpt buffer, what its edits reached ("Excerpt buffers", in
+  the module docs); `none` for any other buffer. -/
+  excerpts : Option Buffer.Excerpts := none
+  /-- Its gutter, which every window of it draws in a column before its text
+  ("Buffers", in the module docs); `none`, no column, by default. -/
+  gutter : Option Buffer.Gutter := none
   deriving BEq, Repr
 
 /-- Whether the buffer's text is in another state than the one last saved,
@@ -1375,6 +1488,59 @@ structure Following where
 /-- The key a host keeps the follow job of `buffer` under. -/
 def Following.keyOf (buffer : BufferId) : String :=
   s!"follow {buffer.index}"
+
+/-- A buffer of a tracked file the version-control gutter keeps marks for
+(`Editor/VersionControl/Gutter.lean`): which file, its content at `HEAD`,
+and the head fetch and the diff in flight for it. Plain data, beside
+`Following`; the gutter's reconciler keeps it in step after each publish. -/
+structure Tracked where
+  /-- The buffer. -/
+  buffer : BufferId
+  /-- The root of its workspace, the repository's. -/
+  root : System.FilePath
+  /-- Its file's path, relative to the root. -/
+  path : String
+  /-- The git program. -/
+  git : String
+  /-- A snapshot of its file's content at `HEAD`, once one has arrived;
+  `none` before, and when `HEAD` lacks the file. -/
+  head : Option SnapshotId := none
+  /-- Whether a head fetch is in flight. -/
+  fetching : Bool := true
+  /-- The revision of the buffer's text a diff in flight was taken at, and
+  the snapshot taken of it. -/
+  diffing : Option (Nat × SnapshotId) := none
+  /-- The revision of the buffer's text last diffed against `head`. -/
+  diffed : Option Nat := none
+  /-- Whether `HEAD` or the index may have moved since `head` was fetched. -/
+  stale : Bool := false
+  /-- Which head fetch is the latest: a reply of another is stale. -/
+  epoch : Nat := 0
+  deriving DecidableEq, Repr
+
+/-- A repository the version-control gutter watches for `HEAD` or the index
+moving: its root, and whether the watch was refused, which is not tried
+again while a buffer of it is tracked. -/
+structure RefWatch where
+  /-- The root. -/
+  root : System.FilePath
+  /-- Whether its watch was refused. -/
+  refused : Bool := false
+  deriving DecidableEq, Repr
+
+/-- What a command of the version-control gutter tells the state of what
+arrived (`StateRequest.gutter`). -/
+inductive GutterChange where
+  /-- The head fetch `epoch` of the buffer arrived: its content at `HEAD`, or
+  `none` when `HEAD` lacks the file or the fetch failed. -/
+  | held (buffer : BufferId) (epoch : Nat) (head : Option SnapshotId)
+  /-- The diff of the buffer, taken at `revision`, arrived or failed. -/
+  | diffed (buffer : BufferId) (epoch revision : Nat)
+  /-- `HEAD` or the index of the repository at `root` may have moved. -/
+  | moved (root : System.FilePath)
+  /-- The watch of the repository at `root` was refused. -/
+  | refused (root : System.FilePath)
+  deriving DecidableEq, Repr
 
 /-- The candidates of an open prompt, and what the prompt has shown of
 them ("Prompts", in the module docs). It is plain data. -/
@@ -1806,6 +1972,12 @@ structure EditorState where
   sources' jobs and its match (`Editor/Loop.lean`, "Prompts"), cancelled
   once the prompt no longer wants them. -/
   completionKeys : Array String := #[]
+  /-- The buffers of tracked files the version-control gutter keeps marks
+  for (`Editor/VersionControl/Gutter.lean`). -/
+  tracked : Array Tracked := #[]
+  /-- The repositories whose `HEAD` and index the version-control gutter
+  watches. -/
+  refWatches : Array RefWatch := #[]
   /-- The workspaces and projects of the session, with their stores, and
   each directory's cached answer ("Workspaces", in the module docs). -/
   workspaces : Workspace.Table := {}
@@ -2066,6 +2238,15 @@ inductive BufferRefusal where
   /-- No save of the buffer is in flight, or the one that is writes another
   snapshot. -/
   | notBeingSaved
+  /-- The buffer is not an excerpt buffer. -/
+  | notExcerpts
+  /-- The source buffer `source` of an excerpt buffer's step is no longer in
+  the state the step left it in: it was edited, or moved in its history,
+  since. -/
+  | sourceMoved (source : BufferId)
+  /-- A source buffer of an excerpt buffer's step, called `name` when the
+  step was recorded, has been removed since. -/
+  | sourceRemoved (name : String)
   deriving DecidableEq, Repr
 
 /-- Why a job was not started. -/
@@ -2244,20 +2425,43 @@ def monocleView (state : EditorState) : ViewId :=
   | some float => (float.anchor.view? <|> frame.lastFocused).getD selected
   | none => selected
 
+/-- How wide the divider between two tiled windows is, in physical pixels:
+one point on a display of scale 2. Lean handles no scale, and a scene's
+rectangles are physical pixels, so it is a width in pixels
+(`Layout.carve`). -/
+def dividerWidth : Nat :=
+  2
+
+/-- The frame's tiled windows laid out by its layout in the tiled area
+(`tiled`), monocle showing `monocleView`, with the dividers between them
+taken out (`Layout.carve`): the carved tiles, and the dividers. -/
+private def carved (state : EditorState) : Array (ViewId × Rect) × Array Rect :=
+  let frame := state.frame
+  Layout.carve state.tiled dividerWidth
+    (frame.layout.place frame.windows state.monocleView state.tiled frame.docked)
+
 /-- The rectangle of each view of the state in its frame, in drawing order:
 the frame's windows laid out by its layout in the tiled area (`tiled`),
 monocle showing the selected view, or a float's anchor window
-(`monocleView`); then each float
-in stacking order, placed in the tiled area against its anchor
-(`Floating.placed`); and then, while a prompt is open, the minibuffer's view
-in the lower part of the strip below it (`cutStrip`). A window the
+(`monocleView`), each with the divider beyond it taken out (`carved`); then
+each float in stacking order, placed in the tiled area against its anchor's
+carved rectangle (`Floating.placed`) and not carved itself; and then, while
+a prompt is open, the minibuffer's view in the lower part of the strip below
+it (`cutStrip`). A window the
 layout does not show has none. It is what a scene's views are laid out in
 (`Loop.views`, `Editor/Loop.lean`). -/
 def rects (state : EditorState) : Array (ViewId × Rect) :=
   let frame := state.frame
-  let laid := frame.layout.place frame.windows state.monocleView state.tiled frame.docked
+  let laid := state.carved.1
   laid ++ frame.floats.map (fun float => (float.view, float.placed state.tiled laid)) ++
     (state.minibufferView?.map (·, state.cutStrip.2)).toArray
+
+/-- The dividers between the frame's tiled windows (`carved`), in the
+frame's physical pixels: a strip `dividerWidth` wide beyond each tile whose
+right edge or foot is short of the tiled area's. Floats and the
+minibuffer's view have none. -/
+def dividers (state : EditorState) : Array Rect :=
+  state.carved.2
 
 /-- How far the frame's bottom row, where the echo and a prompt are drawn,
 is inset from the frame's left and right edges, in points: the frame
@@ -2328,7 +2532,13 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
     if state.isTabBar id then { across := state.padding, down := 0 }
     else
       let top := if (state.rect? id).any (·.y == 0) then state.topInset else 0
-      { across := state.padding, down := state.padding, top }
+      let gutter :=
+        if
+            ((state.window? id).bind fun window =>
+                (state.buffer? window.buffer).bind (·.gutter)).isSome then
+          Buffer.Gutter.width
+        else 0
+      { across := state.padding, down := state.padding, top, gutter }
 
 /-- Whether the state keeps the layout invariants ("The window list, the
 layout and their invariants" and "Tabs", in the module docs). For every tab
@@ -2951,6 +3161,49 @@ def setSpans (id : BufferId) (spans : Array Decoration) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with spans })) state
 
+/-- The state once `change` is told ("The version-control gutter",
+`Editor/VersionControl/Gutter.lean`): a head that arrived for the latest
+fetch is held and the next publish diffs against it; a diff that arrived
+for the latest head clears the one in flight and records its revision; a
+repository that moved makes its tracked buffers stale; and a refused watch
+is recorded. A change of another epoch changes nothing. -/
+def changeGutter (change : GutterChange) (state : EditorState) : EditorState :=
+  match change with
+  | .held buffer epoch head =>
+    { state with
+      tracked :=
+        state.tracked.map fun entry =>
+          if entry.buffer == buffer && entry.epoch == epoch then
+            { entry with
+              head, fetching := false, diffed := none }
+          else entry }
+  | .diffed buffer epoch revision =>
+    { state with
+      tracked :=
+        state.tracked.map fun entry =>
+          if entry.buffer == buffer then
+            { entry with
+              diffing := none
+              diffed := if entry.epoch == epoch then some revision else entry.diffed }
+          else entry }
+  | .moved root =>
+    { state with
+      tracked :=
+        state.tracked.map fun entry =>
+          if entry.root == root then { entry with stale := true } else entry }
+  | .refused root =>
+    { state with
+      refWatches :=
+        state.refWatches.map fun watch =>
+          if watch.root == root then { watch with refused := true } else watch }
+
+/-- Sets the gutter of the buffer `id`, or takes it away with `none`
+("Buffers", in the module docs). Refused with `noSuchBuffer` for a buffer
+there is none of. -/
+def setGutter (id : BufferId) (gutter : Option Buffer.Gutter) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with gutter })) state
+
 /-- The buffer over the text `text` that is read-only, with its name: what
 refuses an edit of that text ("Buffers", in the module docs). -/
 def readOnly? (state : EditorState) (text : TextId) : Option (BufferId × String) :=
@@ -2964,6 +3217,76 @@ def readOnly? (state : EditorState) (text : TextId) : Option (BufferId × String
 read-only. -/
 def readOnlyReason (name : String) : String :=
   s!"{name} is read-only"
+
+/-- What is said of an edit through the excerpt buffer called `name` refused
+because it reaches a text no buffer holds. -/
+def unheldReason (name : String) : String :=
+  s!"{name} reads a text no buffer holds"
+
+/-- The excerpt buffer over the text `text`, if there is one ("Excerpt
+buffers", in the module docs). -/
+def excerptBufferOver? (state : EditorState) (text : TextId) : Option BufferId :=
+  (List.range state.buffers.size).findSome? fun index =>
+    match state.buffer? ⟨index⟩ with
+    | some buffer => if buffer.text == text && buffer.excerpts.isSome then some ⟨index⟩ else none
+    | none => none
+
+/-- The buffer over the text `text` that is not an excerpt buffer, if there
+is one: the buffer of a source of an excerpt text. -/
+def bufferOver? (state : EditorState) (text : TextId) : Option BufferId :=
+  (List.range state.buffers.size).findSome? fun index =>
+    match state.buffer? ⟨index⟩ with
+    | some buffer => if buffer.text == text && buffer.excerpts.isNone then some ⟨index⟩ else none
+    | none => none
+
+/-- `state` with each of `sources` among the source buffers the excerpt
+buffer `id` has touched since its last step, each once. Nothing changes for
+a buffer that is not an excerpt buffer. -/
+def touch (id : BufferId) (sources : Array BufferId) (state : EditorState) : EditorState :=
+  match state.buffer? id with
+  | some buffer@{ excerpts := some excerpts, .. } =>
+    let touched :=
+      sources.foldl
+        (fun touched source => if touched.contains source then touched else touched.push source)
+        excerpts.touched
+    { state with
+      buffers :=
+        state.buffers.set! id.index
+          (some { buffer with excerpts := some { excerpts with touched } }) }
+  | _ => state
+
+/-- `state` with the excerpt buffer `id`'s touched sources made one step:
+when it touched any, a step of each touched buffer's name and undo tree's
+state is pushed, `touched` is cleared and the steps to redo are emptied. It
+is pure: the source buffers' trees were told and closed already. Nothing
+changes for a buffer that is not an excerpt buffer, nor for one that
+touched nothing. -/
+def closeExcerptGroup (id : BufferId) (state : EditorState) : EditorState :=
+  match state.buffer? id with
+  | some buffer@{ excerpts := some excerpts, .. } =>
+    if excerpts.touched.isEmpty then state
+    else
+      let sources :=
+        excerpts.touched.filterMap fun source =>
+          (state.buffer? source).map fun touched =>
+            { buffer := source, name := touched.name, state := touched.history.state }
+      let excerpts :=
+        { excerpts with
+          touched := #[], undos := excerpts.undos.push ⟨sources⟩, redos := #[] }
+      { state with
+        buffers := state.buffers.set! id.index (some { buffer with excerpts := some excerpts }) }
+  | _ => state
+
+/-- Makes `excerpts` what the excerpt buffer `id` keeps of its edits.
+Refused, with the state unchanged, with `noSuchBuffer` for a buffer there
+is none of, and with `notExcerpts` for one that is not an excerpt buffer. -/
+def setExcerptHistory (id : BufferId) (excerpts : Buffer.Excerpts) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id with
+  | none => (.error (.noSuchBuffer id), state)
+  | some buffer =>
+    if buffer.excerpts.isNone then (.error .notExcerpts, state)
+    else changeBuffer id (fun buffer => ((), { buffer with excerpts := some excerpts })) state
 
 /-- The register kept under `name`, if one was set under it. -/
 def register? (state : EditorState) (name : String) : Option Register :=
@@ -3078,6 +3401,21 @@ def addBuffer (name : String) (text : TextId) (history : UndoTree) (state : Edit
         { state with
           buffers := state.buffers.push (some { name, text, history })
           recent := state.recent.push ⟨state.buffers.size⟩ })
+
+/-- Adds an excerpt buffer called `name` over the excerpt text `text`, whose
+history is `history`, whose excerpts are `entries`, with nothing edited
+through it yet ("Excerpt buffers", in the module docs). Refused as
+`addBuffer` refuses. -/
+def addExcerptBuffer (name : String) (text : TextId) (history : UndoTree)
+    (entries : Array Buffer.ExcerptEntry) (state : EditorState) :
+    Except BufferRefusal BufferId × EditorState :=
+  match state.addBuffer name text history with
+  | (.ok id, added) =>
+    (.ok id,
+      { added with
+        buffers :=
+          added.buffers.modify id.index (·.map ({ · with excerpts := some { entries } })) })
+  | refused => refused
 
 /-- Removes the buffer `id`: its slot is empty from then on, its id is never
 used again, and it leaves the order buffers were used in (`recent`). Its

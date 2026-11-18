@@ -271,13 +271,17 @@ def handle : (request : FileRequest) → FileModel → request.Reply × FileMode
   | .list path, model => model.list path
 
 /-- The model's answer to a diff request (`Editor/Diff.lean`), over the
-snapshots it holds: the script of the model of a line diff
-(`DiffModel.script`), or `noSuchSnapshot` for a source that names nothing. It
+snapshots it holds: the script or the hunks of the model of a line diff
+(`DiffModel.script`, `DiffModel.hunks`), or `noSuchSnapshot` for a source that names nothing. It
 changes nothing, so it hands back no model. -/
 def diff (model : FileModel) : (request : DiffRequest) → request.Reply
   | .lines old new limit =>
     match model.source? old, model.source? new with
     | some old, some new => .ok (DiffModel.script old.contents new.contents limit)
+    | _, _ => .error .noSuchSnapshot
+  | .hunks old new limit =>
+    match model.source? old, model.source? new with
+    | some old, some new => .ok (DiffModel.hunks old.contents new.contents limit)
     | _, _ => .error .noSuchSnapshot
 
 end FileModel

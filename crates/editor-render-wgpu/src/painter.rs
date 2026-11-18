@@ -8,7 +8,10 @@
 //!
 //! # What is drawn, in order
 //!
-//! For each view, clipped to its rectangle and to the target:
+//! First the frame's dividers ([`Frame::dividers`]), each its rectangle
+//! filled in its colour, clipped to the target, so a view drawn over one,
+//! a float's, covers it. Then for each view, clipped to its rectangle and
+//! to the target:
 //!
 //! 1. its background;
 //! 2. the background of each run of each text row, where it is not the
@@ -22,7 +25,8 @@
 //!    row's, under its runs' backgrounds;
 //! 7. its cursors.
 //!
-//! Nothing is drawn outside a view: the device clears the target first.
+//! Nothing is drawn outside a view or a divider: the device clears the
+//! target first.
 //!
 //! # Where a glyph goes
 //!
@@ -288,6 +292,19 @@ impl<Z: Rasterize> Painter<Z> {
 
         self.quads.clear();
         let whole = Clip::of(0, 0, target.width, target.height);
+        for fill in &frame.dividers {
+            let rect = fill.rect;
+            self.quads.extend(
+                Quad::fill(
+                    rect.x as i32,
+                    rect.y as i32,
+                    rect.width,
+                    rect.height,
+                    fill.color,
+                )
+                .clipped(whole),
+            );
+        }
         for view in &frame.views {
             place_view(view, &self.rows, whole, line, &mut self.quads);
         }

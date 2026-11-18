@@ -175,10 +175,15 @@ def appName : String :=
 def appIdentifier : String :=
   "io.github.leanmacs.Leanmacs"
 
-/-- The lowest macOS the bundle has been run on (27.2, 2026-11-15); lower it
-only after running it there. -/
+/-- The lowest macOS the bundle has been run on; lower it only after running
+it there. The window was run by hand on 27.2 (2026-11-15). The owner chose
+26.0 on 2026-11-17: CI's `mise run app-check` runs the shipped bundle's
+headless mode on the `macos-26` runner on every main build, and the owner
+checks once that the nightly opens its window on a macOS 26 Mac
+(docs/dev-practices/ci.md, "Deployment target"). It must equal
+`MACOSX_DEPLOYMENT_TARGET` in mise.toml. -/
 def appMinimumSystemVersion : String :=
-  "27.2"
+  "26.0"
 
 /-- The app's version file, relative to the package's directory: one line,
 the version, which `editorApp` writes into `Info.plist`. -/
@@ -193,7 +198,7 @@ def appIconFile : FilePath :=
 /-- The version in the contents of the version file (`appVersionFile`): its
 one line, less one trailing newline, which must be one to three
 dot-separated runs of ASCII digits, the form `CFBundleShortVersionString`
-and `CFBundleVersion` both take. Anything else, a second line, whitespace or
+takes. Anything else, a second line, whitespace or
 an empty file among it, is an error naming the file and what it holds, so a
 malformed version fails the build instead of making a bundle LaunchServices
 misreads (`mise run app-check`, step 10). -/
@@ -205,6 +210,55 @@ def parseAppVersion (contents : String) : Except String String :=
   else
     .error
       s!"{appVersionFile} must be one line of one to three dot-separated runs of digits, such as 0.1.0, but holds {repr contents}"
+
+/-- The variable `editorApp` takes the build ID from, which it writes as
+`CFBundleVersion`. `mise run app` sets it from `leanmacs-release build-id`
+(crates/editor-release), and CI from its run's `build-id` job. -/
+def appBuildIdVar : String :=
+  "LEANMACS_BUILD_ID"
+
+/-- The variable `editorApp` takes the commit from, which it writes as
+`LeanmacsCommit`. `mise run app` sets it from `leanmacs-release commit`, and
+CI from `github.sha`. -/
+def appCommitVar : String :=
+  "LEANMACS_COMMIT"
+
+/-- The build ID and the commit, from the values of `appBuildIdVar` and
+`appCommitVar`: each must be set, the build ID to 14 ASCII digits and the
+commit to 40 lowercase hex digits. Anything else is an error naming the
+variable and what it holds, so a build without its stamp fails instead of
+making a bundle that names no build. Only the shape is checked here, which
+keeps the plist well-formed; whether the digits name a valid time is
+`editor-release`'s to check, and `leanmacs-release` checks it before it
+sets the variable (`mise run app-check`, step 14). -/
+def parseAppStamp (buildId commit : Option String) : Except String (String × String) := do
+  let hint := "`mise run app` sets both from HEAD, and CI from its run"
+  let shown : Option String → String
+    | some value => s!"holds {repr value}"
+    | none => "is unset"
+  let isHex (c : Char) : Bool := c.isDigit || ('a' ≤ c && c ≤ 'f')
+  let build ←
+    match buildId with
+    | some id =>
+      if id.length == 14 && id.all Char.isDigit then
+        pure id
+      else
+        throw
+            s!"{appBuildIdVar} must be the build ID, 14 digits (YYYYMMDDHHMMSS, UTC), but {shown buildId}; {hint}"
+    | none =>
+      throw
+          s!"{appBuildIdVar} must be the build ID, 14 digits (YYYYMMDDHHMMSS, UTC), but is unset; {hint}"
+  let sha ←
+    match commit with
+    | some sha =>
+      if sha.length == 40 && sha.all isHex then
+        pure sha
+      else
+        throw
+            s!"{appCommitVar} must be the commit, 40 lowercase hex digits, but {shown commit}; {hint}"
+    | none =>
+      throw s!"{appCommitVar} must be the commit, 40 lowercase hex digits, but is unset; {hint}"
+  return (build, sha)
 
 /-- Whether the artwork (`appIconFile`) is a 1024×1024 PNG, from what
 `/usr/bin/sips -g pixelWidth -g pixelHeight -g format` prints for it: a
@@ -224,9 +278,11 @@ def checkAppArtwork (sipsOutput : String) : Except String Unit :=
     .error s!"{appIconFile} must be a 1024x1024 PNG, but sips reads it as {width}x{height} {format}"
 
 /-- The bundle's `Contents/Info.plist`, for the app at `version`, the line
-of the version file (`appVersionFile`). The version is both
-`CFBundleShortVersionString` and `CFBundleVersion`, the same string until a
-release needs a build number of its own. `NSHumanReadableCopyright` names
+of the version file (`appVersionFile`), built as `build` from `commit`
+(`parseAppStamp`). The version is `CFBundleShortVersionString`, the build ID
+`CFBundleVersion`, and the commit `LeanmacsCommit`, a key of the app's own
+with no dot in it, so `plutil -extract` can address it. `editor --version`
+reads the three (`Editor/Version.lean`, `plistKeys`). `NSHumanReadableCopyright` names
 the licence, as `Cargo.toml` gives it, and `LSApplicationCategoryType` files
 the app under developer tools.
 
@@ -249,7 +305,7 @@ ranks that let LaunchServices make an app the default for a type.
 
 The app declares no type of its own and none on another's behalf (no
 `UTExportedTypeDeclarations` or `UTImportedTypeDeclarations`). -/
-def appInfoPlist (version : String) : String :=
+def appInfoPlist (version build commit : String) : String :=
   s!"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
 <plist version=\"1.0\">
@@ -296,7 +352,7 @@ def appInfoPlist (version : String) : String :=
 \t<key>CFBundleShortVersionString</key>
 \t<string>{version}</string>
 \t<key>CFBundleVersion</key>
-\t<string>{version}</string>
+\t<string>{build}</string>
 \t<key>LSApplicationCategoryType</key>
 \t<string>public.app-category.developer-tools</string>
 \t<key>LSArchitecturePriority</key>
@@ -305,6 +361,8 @@ def appInfoPlist (version : String) : String :=
 \t</array>
 \t<key>LSMinimumSystemVersion</key>
 \t<string>{appMinimumSystemVersion}</string>
+\t<key>LeanmacsCommit</key>
+\t<string>{commit}</string>
 \t<key>NSHighResolutionCapable</key>
 \t<true/>
 \t<key>NSHumanReadableCopyright</key>
@@ -336,7 +394,10 @@ It holds `Contents/MacOS/editor`, a copy of the `editor` executable; under
 is the pinned one, and from this package, laid out by
 `tools/stage-bundle.sh` as `bundle-test` lays them out; `Contents/Info.plist`
 (`appInfoPlist`), with the version from `app/version` (`appVersionFile`,
-`parseAppVersion`, which fails the build on a malformed line); and
+`parseAppVersion`, which fails the build on a malformed line) and the build
+ID and the commit from `LEANMACS_BUILD_ID` and `LEANMACS_COMMIT`
+(`parseAppStamp`, which fails the build when either is unset or
+malformed; `mise run app` sets both); and
 `Contents/Resources/Leanmacs.icns`, made from the artwork `app/Leanmacs.png`
 (`appIconFile`, which `checkAppArtwork` requires to be a 1024×1024 PNG) by
 `sips` into the ten images of `appIconSizes` and then
@@ -351,7 +412,9 @@ refuses them.
 The trace mixes the executable's, `config-test`'s, the library's, the stage
 script's, this lakefile's, the version file's and the artwork's traces with
 the toolchain's, the platform's and the property list's, so the bundle is rebuilt, from nothing,
-only when one of them changed, or when the bundle is gone. The lakefile is
+only when one of them changed, or when the bundle is gone. The property
+list's trace is a hash of its text, which holds the build ID and the
+commit, so a new commit rebuilds and re-signs the bundle. The lakefile is
 in it because it is the recipe: without it, a change to how the bundle is
 made would leave the old bundle standing. A rebuild assembles and signs the
 bundle in `Leanmacs.app.staging` and only then renames it into place, since
@@ -383,6 +446,13 @@ target editorApp pkg : FilePath := do
           pure version
         | .error message =>
           error message
+      -- The stamp, checked before anything is built, as the version is.
+      let (build, commit) ←
+        match parseAppStamp (← IO.getEnv appBuildIdVar) (← IO.getEnv appCommitVar) with
+        | .ok stamp =>
+          pure stamp
+        | .error message =>
+          error message
       -- Checked before anything is built, as the version is: `sips -z`
       -- below would stretch artwork of any other size without a word.
       let artInfo ←
@@ -394,7 +464,8 @@ target editorApp pkg : FilePath := do
         pure ()
       | .error message =>
         error message
-      addTrace (.ofHash (pureHash (appInfoPlist version)) "Info.plist")
+      let plist := appInfoPlist version build commit
+      addTrace (.ofHash (pureHash plist) "Info.plist")
       let bundle := pkg.buildDir / s!"{appName}.app"
       let traceFile := pkg.buildDir / s!"{appName}.app.trace"
       buildUnlessUpToDate bundle (← getTrace) traceFile do
@@ -420,7 +491,7 @@ target editorApp pkg : FilePath := do
                 args :=
                   #["--closure", closure.toString, staged.toString, exe.toString, sysroot.toString,
                     pkg.leanLibDir.toString, "olean", "olean.server", "olean.private"] }
-          IO.FS.writeFile (staged / "Contents" / "Info.plist") (appInfoPlist version)
+          IO.FS.writeFile (staged / "Contents" / "Info.plist") plist
           -- The system's tools, by absolute path: mise's PATH may hold others of
           -- the same name (a Python package installs an `xattr` with no `-r`).
           -- The iconset is in the staging directory but outside the bundle, so
@@ -454,13 +525,25 @@ target editorApp pkg : FilePath := do
             IO.FS.removeDirAll old
       return bundle
 
-/-- The model tests (`ModelTest.lean`): `lake test` builds and runs this
-(`mise run lean-test`). It is not a default target and links no glue and no
-Rust archive, so nothing it needs reaches `rustlib`. `-L`: as in `linkArgs`,
-so it links under either compiler. It starts at Lean's `main`. -/
+/-- The model tests (`ModelTest.lean`, which imports its modules under
+`ModelTest/`): `lake test` builds and runs this (`mise run lean-test`). It
+is not a default target and links no glue and no Rust archive, so nothing it
+needs reaches `rustlib`. `-L`: as in `linkArgs`, so it links under either
+compiler. It starts at Lean's `main`. -/
 @[test_driver] lean_exe «model-test» where
   root := `ModelTest
   moreLinkArgs := #["-L", leanSystemLibDir.toString]
+
+/-- The model tests' modules (`ModelTest/**/*.lean`: the test modules under
+`ModelTest/Editor/`, the support modules under `ModelTest/Support/` and
+`ModelTest/Check.lean`), which the `model-test` executable's root
+`ModelTest.lean` imports. Lake resolves an import only to a module of a
+library, never to one of an executable's, so these need a library of their
+own. It is not a default target: `lake test` builds it for the test driver.
+`.submodules` takes every module under `ModelTest`, at any depth
+(`ModelTest.Editor.Job.Contract`), and not `ModelTest` itself, so the
+executable's root belongs to no library. -/
+lean_lib ModelTests where globs := #[.submodules `ModelTest]
 
 /-- The contract checks of the text port and of the job port against their
 real bindings (`ContractTest.lean`), linked like `editor` with the glue and

@@ -215,7 +215,13 @@ open when the table has it: found or registered this session.
   workspace root.
 - `version-control`: worktree lifecycle makes workspaces; a jj adapter is a
   new step of the finder (a step of `Workspace.find`, a clause of
-  `World.find` and a contract property).
+  `World.find` and a contract property). Phase 1 (built): the status
+  buffer's repository is the stored root of the workspace of the buffer it
+  is opened from, read from the table; it defines no finder, and a buffer
+  with no workspace opens no status buffer. Its record (the status
+  buffer's number and the files last shown) is the workspace's
+  (`VersionControl.statusStore`), and its read job is keyed by the
+  workspace ([version-control.md](version-control.md)).
 - `acp-agents`: a session's workspace, registered when it is not local.
 - `shell-and-compile` phase 2 (built): `:!` runs in the workspace's root,
   or the file's directory, or the editor's working directory, and refuses

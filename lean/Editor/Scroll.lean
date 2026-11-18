@@ -140,6 +140,25 @@ on: that a move aiming for x 0 answers the row's first byte. The model
 does, so on the model a placed anchor is a row's start. Where a display
 answers another position of that row, the rows shown from it are the same.
 
+## Blocks
+
+A view with blocks (`Area.blocks`, an excerpt buffer's headers) has rows of
+differing heights: a row with blocks above it takes their rows too. The
+rows and a spot are asked with the blocks, so the rows shown, the cursor's
+row and the rows a view fits count them. A move is not: a block holds no
+position (`Editor/Display.lean`, "Blocks").
+
+The follow counts text rows, so the anchor it places in such a view may
+show too few rows to hold the cursor's row. **It then settles**: it asks
+the rows from that anchor, and while they do not hold the cursor's row
+with the margin below it, and the anchor is not the cursor's row, it steps
+the anchor down one row, to the second row of that answer (or, where it is
+one row, to the row a move of one goes to). So the cursor's
+row is always shown, though not always as the last row: where the old view
+held more block rows than the new one, the cursor's row may end short of
+the bottom. "Least movement" is kept exactly only where the rows are one
+height. A view with no block asks nothing more.
+
 ## What it costs
 
 In requests of the display, for one view, after the rows shown from its
@@ -153,6 +172,7 @@ anchor, which the caller asked:
 | Cursor below, no margin | 2: and one move; 1 in a view of one row |
 | A margin set that does not hold as set | 2: and the rows the view fits; 3 where the anchor moves |
 | The same, in a view scrolled from the text's start that shows fewer rows than it fits | 2 more: whether it shows its whole text |
+| A view with blocks whose anchor is placed | 1 more: the rows from the anchor placed, and 1 more per row the settle steps (2 where only one row is shown) |
 
 A scroll by rows is one move going up and two going down, after the rows
 the view fits, which its caller asks. A scroll to the cursor's row is one
@@ -217,6 +237,10 @@ structure Area where
   /-- The view's padding, in points (`EditorState.paddingOf`): asked with,
   and taken off by the display. -/
   padding : Padding := {}
+  /-- The view's blocks (`View.blocks`): asked with by the questions that
+  count heights, the rows and a spot, and never by a move (the module docs,
+  "Blocks"). None by default. -/
+  blocks : Array Block := #[]
   deriving DecidableEq, Repr
 
 namespace Area
@@ -228,14 +252,22 @@ is the one definition that says which height a view's rows are asked with
 (the module docs, "What is the display's"); the bottom row's height is the
 state's (`EditorState.bottomRow`), and so is the padding
 (`EditorState.paddingOf`). -/
-def ofRect (snapshot : SnapshotId) (rect : Rect) (bottom : Nat) (padding : Padding := {}) : Area :=
-  { snapshot, width := rect.width, height := rect.height - bottom, padding }
+def ofRect (snapshot : SnapshotId) (rect : Rect) (bottom : Nat) (padding : Padding := {})
+    (blocks : Array Block := #[]) : Area :=
+  { snapshot, width := rect.width, height := rect.height - bottom, padding, blocks }
 
-/-- The rows the view shows from `anchor`. -/
+/-- The rows the view shows from `anchor`, its blocks counted among them. -/
 def rows (area : Area) (anchor : Nat) : DisplayM (Array Display.Row) :=
   Display.rowsShown
     { snapshot := area.snapshot, width := area.width, height := area.height, anchor
-      padding := area.padding }
+      padding := area.padding, blocks := area.blocks }
+
+/-- Where `position` is drawn in the view when it shows from `anchor`
+(`Display.spotOf`), its blocks counted above it. -/
+def spot (area : Area) (anchor position : Nat) : DisplayM (Option Display.Spot) :=
+  Display.spotOf
+    { snapshot := area.snapshot, width := area.width, height := area.height, anchor
+      padding := area.padding, position, blocks := area.blocks }
 
 /-- Where the row that holds `position` starts; `position` itself in a view
 that shows no row. -/
@@ -251,7 +283,8 @@ def away (area : Area) (position : Nat) (lines : Int) : DisplayM Nat := do
     return ← area.rowStart position
   return (←
         Display.linesFrom
-            { snapshot := area.snapshot, width := area.width, across := area.padding.across
+            { snapshot := area.snapshot, width := area.width, across := area.padding.across,
+              gutter := area.padding.gutter
               position, lines, goal := some 0 }).position
 
 /-- A position of the row `lines` rows above the one that holds `position`,
@@ -345,7 +378,42 @@ def follow (area : Area) (margin : Nat) (shown : Array Display.Row) (head : Nat)
       pure row.start
     else
       area.above row.start up
+  -- In a view with blocks the rows are of differing heights, and the
+  -- anchor counted by rows may show too few: it settles (the module docs,
+  -- "Blocks").
+  let target ←
+    if area.blocks.isEmpty then
+      pure target
+    else
+      settle area (min margin below) row.start up target
   return if target == first.start then none else some target
+where
+  /-- From `anchor`, steps the anchor down a row at a time until the rows
+  shown from it hold the row that starts at `cursor` with `after` rows after
+  it, or the anchor is that row: at most `fuel` steps, the rows between the
+  two, so it ends. Each step is one request, the rows from the anchor, and
+  the next anchor is the second of them; where they are one row, it is the
+  row a move of one goes to, one request more. -/
+  settle (area : Area) (after cursor : Nat) : Nat → Nat → DisplayM Nat
+    | 0, anchor => pure anchor
+    | fuel + 1, anchor => do
+      if anchor == cursor then
+        return anchor
+      let shown ← area.rows anchor
+      let index := (shown.findIdx? (·.start == cursor)).getD shown.size
+      if index < shown.size && shown.size - 1 - index ≥ after then
+        return anchor
+      -- The next row: the second shown, or, where only one row is shown,
+      -- the row a move of one goes to.
+      let next ←
+        match shown[1]? with
+        | some next =>
+          pure next.start
+        | none =>
+          area.below anchor 1
+      if next == anchor then
+        return anchor
+      settle area after cursor fuel next
 
 /-- How far a scroll by rows goes. -/
 inductive Amount where

@@ -20,10 +20,39 @@
 //! the bottom of its `rect`, above which its text has what is left, with
 //! each field on its side and padded, the row in the view's
 //! `status_face` over the mode line's; each inset from the view's edges
-//! by its `padding`, and the echo by the scene's `echo_padding`. What
+//! by its `padding`, and the echo by the scene's `echo_padding`; and each
+//! of the scene's `dividers` as a fill of its rect in its face's
+//! foreground. What
 //! it carries and lays out nothing of: the scene's `echo`, `pending`,
 //! `preedit` and `focused`, which no phase of the display pipeline draws
 //! yet.
+//!
+//! # Blocks
+//!
+//! A view's [`Block`]s are rows of text of their own drawn between the
+//! rows of its text: an excerpt's header, and later a hunk's controls and
+//! a comment thread. A block is the view's, not its text's, as a
+//! decoration is, and Lean chooses each one. It is text only, laid out as
+//! a small text of its own in its own faces, and it holds no position: a
+//! position of the view's text is drawn and moved to as it is without
+//! blocks, and only the height a view's rows take counts a block's lines
+//! ([`query`](crate::query), "Blocks"). Several blocks before one row are
+//! drawn in the order the view lists them.
+//!
+//! # Gutter marks
+//!
+//! A view's [`GutterMark`]s are short texts drawn in a column of their own
+//! before its text: a version-control gutter's added, removed and changed
+//! lines. The column is [`Padding::gutter`] points wide, after `across` at
+//! the view's left, and the text rows are that much further right and
+//! narrower; every query takes it off as the frame does. A mark is drawn
+//! beside every visual line of each row of the view's text that its range
+//! has a byte in, or of the row that holds its start when the range is
+//! empty, in its face over `gutter` over the default face. Like a block it
+//! is the view's, Lean chooses it, and it holds no position of the text:
+//! a mark moves only when Lean publishes it moved. Its offsets are moved
+//! back to a character boundary, and past the text's end to the end, as a
+//! block's are. Marks beside rows the view does not show draw nothing.
 //!
 //! # Where an addition goes
 //!
@@ -112,6 +141,35 @@ pub struct Decoration {
     pub face: String,
 }
 
+/// A block: rows of text of its own, drawn between two rows of a view
+/// (module docs, "Blocks").
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Block {
+    /// A byte offset of the view's snapshot: the block is drawn above the
+    /// first visual line of the row that holds it.
+    pub before: usize,
+    /// What it says.
+    pub text: String,
+    /// Spans of `text` drawn in a face: the block's own faces, over the
+    /// default face. `start` and `stop` are bytes of `text`.
+    pub decorations: Vec<Decoration>,
+}
+
+/// A gutter mark: a short text drawn in a view's gutter column beside the
+/// rows its range covers (module docs, "Gutter marks").
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GutterMark {
+    /// A byte offset of the view's snapshot where its range starts.
+    pub start: usize,
+    /// Where it stops, not included. A range of no byte marks the row that
+    /// holds `start`.
+    pub stop: usize,
+    /// What it says.
+    pub text: String,
+    /// The name of the face it takes, over `gutter` over the default face.
+    pub face: String,
+}
+
 /// Which end of a view's status row a field is drawn from
 /// ([`frame`](crate::frame), "The mode line").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -154,6 +212,28 @@ pub struct Padding {
     /// `down`: what a window's title bar covers of a view along the
     /// frame's top edge. 0 by default.
     pub top: u32,
+    /// The width of the gutter column (module docs, "Gutter marks"): a
+    /// further inset of the text rows from the view's left, beyond
+    /// `across`, which the view's marks are drawn in. 0 by default: no
+    /// column.
+    pub gutter: u32,
+}
+
+impl Padding {
+    /// A padding of `across`, `down` and `top` points, and nothing else.
+    ///
+    /// It is published for the tests and the decoders of other crates: a
+    /// padding built through it, or from one it returns with `..`, takes a
+    /// field added to it at its default, so the field breaks nothing
+    /// outside this crate.
+    pub const fn new(across: u32, down: u32, top: u32) -> Self {
+        Self {
+            across,
+            down,
+            top,
+            gutter: 0,
+        }
+    }
 }
 
 /// Which text: a key the binding gives each text, unique in the process.
@@ -476,12 +556,30 @@ pub struct View {
     /// Its status line, field by field.
     pub status: Vec<StatusField>,
     /// The face of its status row, over the mode line's and under every
-    /// field's, which gives the row its background: an unselected
-    /// window's `mode-line.inactive`, and `None` for a selected one.
+    /// field's, which gives the row its background: Lean's choice, which
+    /// marks the selected window apart from the others; `None` draws the
+    /// row in the mode line's alone.
     pub status_face: Option<String>,
     /// How far its text and its status fields are inset from its edges, in
     /// points; none by default.
     pub padding: Padding,
+    /// Its blocks, drawn between the rows of its text (module docs,
+    /// "Blocks"); none by default.
+    pub blocks: Vec<Block>,
+    /// Its gutter marks, drawn in its gutter column (module docs, "Gutter
+    /// marks"); none by default.
+    pub marks: Vec<GutterMark>,
+}
+
+/// A divider: a strip of the frame between two tiled views, filled in the
+/// foreground of its face. Which strips are dividers, and their face, are
+/// Lean's.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Divider {
+    /// Where it is in the frame.
+    pub rect: Rect,
+    /// The name of the face whose foreground it is filled in.
+    pub face: String,
 }
 
 /// Everything the display shows, as published after a command.
@@ -491,6 +589,9 @@ pub struct Scene {
     pub size: Size,
     /// The views, in drawing order.
     pub views: Vec<View>,
+    /// The dividers between the tiled views, drawn before every view;
+    /// none by default.
+    pub dividers: Vec<Divider>,
     /// The view with the keyboard focus, if one has.
     pub focused: Option<ViewId>,
     /// The echo area's text.

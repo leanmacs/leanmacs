@@ -1353,8 +1353,10 @@ mod tests {
     fn a_platform_that_reports_nothing_is_refused_at_the_bound() {
         let platform = Reports::new(Vec::new());
 
+        // The bound only ends the run; a generous one keeps scheduling delays
+        // off the verdict.
         assert_eq!(
-            check(platform, WindowOptions::default(), SHORT),
+            check(platform, WindowOptions::default(), GENEROUS),
             Err(Violation::NothingReported)
         );
     }

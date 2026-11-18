@@ -10,7 +10,7 @@ use std::mem::MaybeUninit;
 use std::{ptr, slice};
 
 use editor_ffi::document::{
-    Document, RawText, editor_ffi_document_free, editor_ffi_document_new,
+    Document, RawText, ReplaceStatus, editor_ffi_document_free, editor_ffi_document_new,
     editor_ffi_document_replace,
 };
 use editor_ffi::motion;
@@ -57,7 +57,9 @@ unsafe fn document_replace(
 ) -> bool {
     // SAFETY: the caller guarantees `document`; the pointer and length are
     // those of `text`, alive for the call.
-    unsafe { editor_ffi_document_replace(document, start, end, text.as_ptr(), text.len()) }
+    let status =
+        unsafe { editor_ffi_document_replace(document, start, end, text.as_ptr(), text.len()) };
+    status == ReplaceStatus::Done as u64
 }
 
 /// The text of `snapshot`, read as the glue reads it: fill the record, copy

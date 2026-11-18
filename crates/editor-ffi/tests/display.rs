@@ -16,16 +16,16 @@ use std::slice;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_ffi::display::{
-    DisplayStatus, RawPicture, WireFace, WireField, WireScene, WireView, editor_ffi_display_define,
-    editor_ffi_display_frame_rows, editor_ffi_display_frame_text, editor_ffi_display_free,
-    editor_ffi_display_heights, editor_ffi_display_live, editor_ffi_display_move,
-    editor_ffi_display_new_cells, editor_ffi_display_new_font, editor_ffi_display_picture,
-    editor_ffi_display_publish, editor_ffi_display_rows, editor_ffi_display_scene,
-    editor_ffi_display_spot, editor_ffi_picture_from_png, editor_ffi_picture_to_png,
-    encode_definitions,
+    DisplayStatus, RawPicture, WireBlock, WireFace, WireField, WireMark, WireScene, WireView,
+    editor_ffi_display_define, editor_ffi_display_frame_rows, editor_ffi_display_frame_text,
+    editor_ffi_display_free, editor_ffi_display_heights, editor_ffi_display_live,
+    editor_ffi_display_move, editor_ffi_display_new_cells, editor_ffi_display_new_font,
+    editor_ffi_display_picture, editor_ffi_display_publish, editor_ffi_display_rows,
+    editor_ffi_display_scene, editor_ffi_display_spot, editor_ffi_picture_from_png,
+    editor_ffi_picture_to_png, encode_blocks, encode_definitions,
 };
 use editor_ffi::document::{
-    Document, RawText, editor_ffi_document_free, editor_ffi_document_new,
+    Document, RawText, ReplaceStatus, editor_ffi_document_free, editor_ffi_document_new,
     editor_ffi_document_replace,
 };
 use editor_ffi::log::{RawWords, editor_ffi_document_forget};
@@ -37,8 +37,8 @@ use editor_ffi::text::editor_ffi_text_free;
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
-    Cursor, CursorShape, Decoration, Padding, Rect, Scene, Size, StatusField, TextKey, TextRef,
-    View, ViewId,
+    Block, Cursor, CursorShape, Decoration, Padding, Rect, Scene, Size, StatusField, TextKey,
+    TextRef, View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -102,8 +102,46 @@ fn rows_padded(
     padding: (u64, u64, u64),
     anchor: usize,
 ) -> Result<Vec<(usize, usize)>, u64> {
+    rows_blocked(
+        display,
+        snapshot,
+        width,
+        height,
+        padding,
+        anchor,
+        &encode_blocks(&[]),
+    )
+}
+
+/// [`rows_padded`] of a view with the blocks `blocks` spell, as words and
+/// a string.
+fn rows_blocked(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    height: u64,
+    padding: (u64, u64, u64),
+    anchor: usize,
+    blocks: &(Vec<u8>, String),
+) -> Result<Vec<(usize, usize)>, u64> {
+    rows_guttered(display, snapshot, width, height, padding, 0, anchor, blocks)
+}
+
+/// [`rows_blocked`] of a view with a gutter `gutter` points wide.
+#[allow(clippy::too_many_arguments)]
+fn rows_guttered(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    height: u64,
+    padding: (u64, u64, u64),
+    gutter: u64,
+    anchor: usize,
+    blocks: &(Vec<u8>, String),
+) -> Result<Vec<(usize, usize)>, u64> {
     let mut raw = MaybeUninit::<RawWords>::uninit();
-    // SAFETY: both handles are live, and `raw` is writable.
+    // SAFETY: both handles are live, the blocks' buffers are alive for the
+    // call, and `raw` is writable.
     let (status, words) = unsafe {
         editor_ffi_display_rows(
             display,
@@ -113,7 +151,12 @@ fn rows_padded(
             padding.0,
             padding.1,
             padding.2,
+            gutter,
             anchor,
+            blocks.0.as_ptr(),
+            blocks.0.len(),
+            blocks.1.as_ptr(),
+            blocks.1.len(),
             raw.as_mut_ptr(),
         );
         take(raw.assume_init())
@@ -152,6 +195,20 @@ fn moved_padded(
     lines: i64,
     goal: Option<u64>,
 ) -> Result<(usize, u64), u64> {
+    moved_guttered(display, snapshot, width, (across, 0), position, lines, goal)
+}
+
+/// [`moved`] in a view padded `across` points across, with a gutter
+/// `gutter` points wide: `padding` is the two.
+fn moved_guttered(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    (across, gutter): (u64, u64),
+    position: usize,
+    lines: i64,
+    goal: Option<u64>,
+) -> Result<(usize, u64), u64> {
     let mut raw = MaybeUninit::<RawWords>::uninit();
     // SAFETY: both handles are live, and `raw` is writable.
     let (status, words) = unsafe {
@@ -160,6 +217,7 @@ fn moved_padded(
             snapshot,
             width,
             across,
+            gutter,
             position,
             lines,
             goal.is_some(),
@@ -186,8 +244,52 @@ fn spot(
     anchor: usize,
     position: usize,
 ) -> Result<Option<(u64, u64, u64)>, u64> {
+    spot_blocked(
+        display,
+        snapshot,
+        width,
+        height,
+        padding,
+        anchor,
+        position,
+        &encode_blocks(&[]),
+    )
+}
+
+/// [`spot`] in a view with the blocks `blocks` spell.
+#[allow(clippy::too_many_arguments)]
+fn spot_blocked(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    height: u64,
+    padding: (u64, u64, u64),
+    anchor: usize,
+    position: usize,
+    blocks: &(Vec<u8>, String),
+) -> Result<Option<(u64, u64, u64)>, u64> {
+    let padding = (padding.0, padding.1, padding.2, 0);
+    spot_guttered(
+        display, snapshot, width, height, padding, anchor, position, blocks,
+    )
+}
+
+/// [`spot_blocked`] of a view whose padding is across, down, top and a
+/// gutter's width.
+#[allow(clippy::too_many_arguments)]
+fn spot_guttered(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    width: u64,
+    height: u64,
+    padding: (u64, u64, u64, u64),
+    anchor: usize,
+    position: usize,
+    blocks: &(Vec<u8>, String),
+) -> Result<Option<(u64, u64, u64)>, u64> {
     let mut raw = MaybeUninit::<RawWords>::uninit();
-    // SAFETY: both handles are live, and `raw` is writable.
+    // SAFETY: both handles are live, the blocks' buffers are alive for the
+    // call, and `raw` is writable.
     let (status, words) = unsafe {
         editor_ffi_display_spot(
             display,
@@ -197,8 +299,13 @@ fn spot(
             padding.0,
             padding.1,
             padding.2,
+            padding.3,
             anchor,
             position,
+            blocks.0.as_ptr(),
+            blocks.0.len(),
+            blocks.1.as_ptr(),
+            blocks.1.len(),
             raw.as_mut_ptr(),
         );
         take(raw.assume_init())
@@ -271,6 +378,226 @@ fn a_display_is_live_from_new_until_free_and_answers_the_queries_as_layout_does(
     assert_eq!(editor_ffi_display_live(), before);
 }
 
+/// The headers of the two excerpts of `two\n\nalpha\n`, before 0 and 5,
+/// as they cross and as layout takes them.
+fn headers() -> (Vec<WireBlock>, Vec<Block>) {
+    let wire: Vec<WireBlock> = [(0, "one.txt"), (5, "two.txt")]
+        .iter()
+        .map(|(before, text)| WireBlock {
+            before: *before,
+            text: (*text).to_owned(),
+            decorations: vec![(0, 7, "block-header".to_owned())],
+        })
+        .collect();
+    let layout = wire
+        .iter()
+        .map(|block| Block {
+            before: block.before as usize,
+            text: block.text.clone(),
+            decorations: vec![Decoration {
+                start: 0,
+                stop: 7,
+                face: "block-header".to_owned(),
+            }],
+        })
+        .collect();
+    (wire, layout)
+}
+
+#[test]
+fn the_rows_and_a_spot_with_blocks_answer_as_layout_does_through_c() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let text = "two\n\nalpha\n";
+    let document = document_new(text);
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let (wire, blocks) = headers();
+    let crossed = encode_blocks(&wire);
+    let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
+    let direct = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
+    for (height, anchor) in [(64, 0), (32, 5), (16, 5), (128, 0)] {
+        let expected: Vec<(usize, usize)> = layout
+            .rows_shown_with_blocks(
+                &direct,
+                320.0,
+                height as f32,
+                Padding::default(),
+                anchor,
+                &blocks,
+            )
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.start, row.stop))
+            .collect();
+        assert_eq!(
+            rows_blocked(display, snapshot, 320, height, (0, 0, 0), anchor, &crossed),
+            Ok(expected),
+            "{height} tall from {anchor}"
+        );
+    }
+    // `alpha` is below two block rows and two text rows.
+    let expected = layout
+        .spot_with_blocks(&direct, 320.0, 128.0, Padding::default(), 0, 6, &blocks)
+        .unwrap()
+        .unwrap();
+    assert_eq!(expected.y, 64.0);
+    assert_eq!(
+        spot_blocked(display, snapshot, 320, 128, (0, 0, 0), 0, 6, &crossed),
+        Ok(Some((expected.x as u64, 64, 16)))
+    );
+    // Words that spell no blocks are refused as a bad position.
+    let broken = (crossed.0.clone(), String::from("one"));
+    assert_eq!(
+        rows_blocked(display, snapshot, 320, 64, (0, 0, 0), 0, &broken),
+        Err(DisplayStatus::BadPosition as u64)
+    );
+    assert_eq!(
+        spot_blocked(display, snapshot, 320, 64, (0, 0, 0), 0, 6, &broken),
+        Err(DisplayStatus::BadPosition as u64)
+    );
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
+#[test]
+fn a_published_views_frame_rows_through_c_are_its_text_rows_only() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let document = document_new("two\n\nalpha\n");
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let wire = WireScene {
+        size: [320, 160],
+        views: vec![WireView {
+            id: 3,
+            rect: [0, 0, 320, 160],
+            snapshot: Some(0),
+            blocks: headers().0,
+            ..WireView::default()
+        }],
+        ..WireScene::default()
+    };
+    let (words, strings) = wire.encode();
+    assert!(publish(display, &words, &strings, &[snapshot]));
+    // The frame has the two block rows.
+    assert_eq!(frame_text(display).matches("block ").count(), 2);
+    let mut raw = MaybeUninit::uninit();
+    // SAFETY: `display` is live, and `raw` filled before it is read.
+    let (status, rows) = unsafe {
+        editor_ffi_display_frame_rows(display, 3, raw.as_mut_ptr());
+        take(raw.assume_init())
+    };
+    assert_eq!((status, rows), (0, vec![4, 0, 3, 4, 4, 5, 10, 11, 11]));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
+#[test]
+fn a_views_gutter_marks_are_left_out_of_its_frame_rows_through_c() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let document = document_new("a\nb\n");
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let mark = |start, stop, text: &str| WireMark {
+        start,
+        stop,
+        text: text.to_owned(),
+        face: "diff.added".to_owned(),
+    };
+    let wire = WireScene {
+        size: [320, 160],
+        views: vec![WireView {
+            id: 3,
+            rect: [0, 0, 320, 160],
+            snapshot: Some(0),
+            padding: Padding {
+                gutter: 8,
+                ..Padding::default()
+            },
+            marks: vec![mark(0, 2, "+"), mark(2, 4, "+")],
+            ..WireView::default()
+        }],
+        ..WireScene::default()
+    };
+    let (words, strings) = wire.encode();
+    assert!(publish(display, &words, &strings, &[snapshot]));
+    // The frame has the two mark rows, and the text is past the gutter.
+    assert_eq!(frame_text(display).matches("mark ").count(), 2);
+    assert!(frame_text(display).contains("row x 8 "));
+    let mut raw = MaybeUninit::uninit();
+    // SAFETY: `display` is live, and `raw` filled before it is read.
+    let (status, rows) = unsafe {
+        editor_ffi_display_frame_rows(display, 3, raw.as_mut_ptr());
+        take(raw.assume_init())
+    };
+    // Its three text rows, and no mark row among them.
+    assert_eq!((status, rows), (0, vec![3, 0, 1, 2, 3, 4, 4]));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
+#[test]
+fn the_rows_a_spot_and_a_move_take_a_views_gutter_off_through_c() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let text = "abcdefghij\nk\n";
+    let document = document_new(text);
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let direct = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
+    let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
+    let padding = Padding {
+        gutter: 16,
+        ..Padding::new(4, 0, 0)
+    };
+    let expected: Vec<(usize, usize)> = layout
+        .rows_shown(&direct, 64.0, 160.0, padding, 0)
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.start, row.stop))
+        .collect();
+    let none = encode_blocks(&[]);
+    assert_eq!(
+        rows_guttered(display, snapshot, 64, 160, (4, 0, 0), 16, 0, &none),
+        Ok(expected)
+    );
+    let spot = layout
+        .spot(&direct, 64.0, 160.0, padding, 0, 5)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        spot_guttered(display, snapshot, 64, 160, (4, 0, 0, 16), 0, 5, &none),
+        Ok(Some((spot.x as u64, spot.y as u64, 16)))
+    );
+    let moved = layout
+        .lines_from_padded(&direct, 64.0, padding, 1, 1, None)
+        .unwrap();
+    assert_eq!(
+        moved_guttered(display, snapshot, 64, (4, 16), 1, 1, None),
+        Ok((moved.position, moved.goal as u64))
+    );
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
 #[test]
 fn a_spot_crosses_as_whole_pixels_x_and_y_rounded_down_and_its_height_up() {
     let _alone = alone();
@@ -280,11 +607,7 @@ fn a_spot_crosses_as_whole_pixels_x_and_y_rounded_down_and_its_height_up() {
     // SAFETY: `document` is live.
     let snapshot = unsafe { editor_ffi_document_snapshot(document) };
     let direct = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
-    let padding = Padding {
-        across: 3,
-        down: 1,
-        top: 2,
-    };
+    let padding = Padding::new(3, 1, 2);
     // At scale 1.1 every length is a fraction of a pixel.
     let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
     layout.set_scale(1.1);
@@ -329,13 +652,10 @@ fn a_document_whose_log_was_forgotten_is_laid_out_again_from_its_snapshot() {
     let inserted = "0123\n";
     // SAFETY: `document` is live, and `inserted` alive for the call.
     let second = unsafe {
-        assert!(editor_ffi_document_replace(
-            document,
-            0,
-            0,
-            inserted.as_ptr(),
-            inserted.len()
-        ));
+        assert_eq!(
+            editor_ffi_document_replace(document, 0, 0, inserted.as_ptr(), inserted.len()),
+            ReplaceStatus::Done as u64
+        );
         let mut info = MaybeUninit::uninit();
         let latest = editor_ffi_document_snapshot(document);
         editor_ffi_snapshot_info(latest, info.as_mut_ptr());
@@ -458,8 +778,7 @@ fn scene_directly() -> Scene {
                 face: "mode".to_owned(),
                 ..StatusField::default()
             }],
-            status_face: None,
-            padding: Padding::default(),
+            ..View::default()
         }],
         focused: Some(ViewId(3)),
         echo: "hello".to_owned(),
@@ -467,6 +786,7 @@ fn scene_directly() -> Scene {
         pending: String::new(),
         preedit: None,
         faces: None,
+        dividers: Vec::new(),
     }
 }
 
@@ -512,9 +832,12 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
             }],
             status_face: None,
             padding: Padding::default(),
+            blocks: vec![],
+            marks: vec![],
         }],
         echo_padding: 0,
         faces: None,
+        dividers: Vec::new(),
     };
     let (words, strings) = wire.encode();
     assert!(publish(display, &words, &strings, &[snapshot]));
@@ -691,17 +1014,7 @@ fn a_display_answers_the_heights_of_its_rows_at_the_scale_it_was_told() {
     // A key of its own: layout keeps what it laid out per key.
     let direct = TextRef::fixed(TextKey(1), Text::from(long).snapshot());
     let expected: Vec<(usize, usize)> = layout
-        .rows_shown(
-            &direct,
-            160.0,
-            96.0,
-            Padding {
-                across: 8,
-                down: 8,
-                top: 0,
-            },
-            0,
-        )
+        .rows_shown(&direct, 160.0, 96.0, Padding::new(8, 8, 0), 0)
         .unwrap()
         .into_iter()
         .map(|row| (row.start, row.stop))
@@ -727,17 +1040,7 @@ fn a_display_answers_the_heights_of_its_rows_at_the_scale_it_was_told() {
     // A top inset of 8 points takes 16 pixels more off the height, once:
     // 48 holds one row of 32.
     let under = layout
-        .rows_shown(
-            &direct,
-            160.0,
-            96.0,
-            Padding {
-                across: 8,
-                down: 8,
-                top: 8,
-            },
-            0,
-        )
+        .rows_shown(&direct, 160.0, 96.0, Padding::new(8, 8, 8), 0)
         .unwrap()
         .into_iter()
         .map(|row| (row.start, row.stop))
@@ -1049,6 +1352,8 @@ fn published_scene() -> (
             }],
             status_face: None,
             padding: Padding::default(),
+            blocks: vec![],
+            marks: vec![],
         }],
         ..WireScene::default()
     };
@@ -1192,21 +1497,13 @@ fn a_scene_published_with_faces_comes_back_with_them() {
 fn a_views_padding_and_the_echos_cross_reach_layout_and_come_back() {
     let _alone = alone();
     let (display, document, snapshot, mut wire) = published_scene();
-    wire.views[0].padding = Padding {
-        across: 8,
-        down: 4,
-        top: 0,
-    };
+    wire.views[0].padding = Padding::new(8, 4, 0);
     wire.echo_padding = 14;
     let (words, strings) = wire.encode();
     assert!(publish(display, &words, &strings, &[snapshot]));
     // Layout's frame of the same scene padded the same way.
     let mut direct_scene = scene_directly();
-    direct_scene.views[0].padding = Padding {
-        across: 8,
-        down: 4,
-        top: 0,
-    };
+    direct_scene.views[0].padding = Padding::new(8, 4, 0);
     direct_scene.echo_padding = 14;
     let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
     let direct = layout.frame(&direct_scene).describe();

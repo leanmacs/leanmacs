@@ -272,6 +272,13 @@ inductive StateRequest where
   | renameBuffer (id : BufferId) (name : String)
   /-- Make `history` the undo tree of the buffer `id`. -/
   | setHistory (id : BufferId) (history : UndoTree)
+  /-- Add an excerpt buffer called `name` over the excerpt text `text`, whose
+  history is `history` and whose excerpts are `entries`. -/
+  |
+  addExcerptBuffer (name : String) (text : TextId) (history : UndoTree)
+    (entries : Array Buffer.ExcerptEntry := #[])
+  /-- Make `excerpts` what the excerpt buffer `id` keeps of its edits. -/
+  | setExcerptHistory (id : BufferId) (excerpts : Buffer.Excerpts)
   /-- Have the buffer `id` keep `value` under `name`. -/
   | setValue (id : BufferId) (name : String) (value : Value)
   /-- Make the mode called `name` the major mode of the buffer `view`
@@ -334,6 +341,10 @@ inductive StateRequest where
   | setReadOnly (id : BufferId) (on : Bool)
   /-- Set the spans of the buffer `id`, in place of those it had. -/
   | setSpans (id : BufferId) (spans : Array Decoration)
+  /-- Set the gutter of the buffer `id`, or take it away. -/
+  | setGutter (id : BufferId) (gutter : Option Buffer.Gutter)
+  /-- Tell the version-control gutter's state what arrived. -/
+  | gutter (change : GutterChange)
   /-- Choose auto-reload on or off, for as long as the editor runs. -/
   | setAutoReload (on : Bool)
   /-- Whether auto-reload is in effect: a command's choice, or else config's
@@ -494,6 +505,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .removeBuffer _ => Except BufferRefusal Unit
   | .renameBuffer .. => Except BufferRefusal Unit
   | .setHistory .. => Except BufferRefusal Unit
+  | .addExcerptBuffer .. => Except BufferRefusal BufferId
+  | .setExcerptHistory .. => Except BufferRefusal Unit
   | .setValue .. => Except BufferRefusal Unit
   | .setMajorMode .. => Except ModeRefusal Bool
   | .setBufferMajorMode .. => Except ModeRefusal Bool
@@ -516,6 +529,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .tellChanged _ => Except BufferRefusal Unit
   | .setReadOnly .. => Except BufferRefusal Unit
   | .setSpans .. => Except BufferRefusal Unit
+  | .setGutter .. => Except BufferRefusal Unit
+  | .gutter _ => Unit
   | .setAutoReload _ => Unit
   | .autoReloadMode => Bool
   | .unfollow _ => Unit
@@ -604,6 +619,9 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .removeBuffer id, state => state.removeBuffer id
   | .renameBuffer id name, state => state.renameBuffer id name
   | .setHistory id history, state => state.setHistory id history
+  | .addExcerptBuffer name text history entries, state =>
+    state.addExcerptBuffer name text history entries
+  | .setExcerptHistory id excerpts, state => state.setExcerptHistory id excerpts
   | .setValue id name value, state => state.setValue id name value
   | .setMajorMode view name, state => state.setMajorModeOf view name
   | .setBufferMajorMode id name, state => state.setMajorModeOfBuffer id name
@@ -628,6 +646,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .tellChanged id, state => state.tellChanged id
   | .setReadOnly id on, state => state.setReadOnly id on
   | .setSpans id spans, state => state.setSpans id spans
+  | .setGutter id gutter, state => state.setGutter id gutter
+  | .gutter change, state => ((), state.changeGutter change)
   | .setAutoReload on, state => ((), { state with autoReload := some on })
   -- Config's setting is the loop's to answer with (`Program.dispatched`):
   -- here, with no loop, a choice no command made is off.

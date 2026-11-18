@@ -3,6 +3,10 @@ import Editor.Compile
 import Editor.Config.Registry
 import Editor.Ex
 import Editor.Files
+import Editor.VersionControl.Commit
+import Editor.VersionControl.Show
+import Editor.VersionControl.Stage
+import Editor.VersionControl.Status
 
 /-!
 # The ex line's commands and the ex names that ship, as compiled code registers them
@@ -78,6 +82,24 @@ drops it.
     `previous-error` and take nothing: they step through the locations of
     the focused buffer's workspace's compilation. No global key binds
     them.
+  - `vc-status` runs `vc-status` (`Editor/VersionControl/Status.lean`)
+    and takes nothing: it opens the status buffer of the workspace of the
+    buffer the line was asked from. A host must be handed the status
+    buffer's commands, jobs and mode
+    (`Editor/VersionControl/Compiled.lean`).
+  - `vc-show` runs `vc-show` (`Editor/VersionControl/Show.lean`) and takes
+    text, a revision and a path: it opens that file at that revision as a
+    read-only buffer.
+  - `vc-stage-hunk` and `vc-unstage-hunk` run the commands of those names
+    (`Editor/VersionControl/Stage.lean`) and take nothing: they stage, or
+    unstage, the hunk on the cursor's line of the focused file buffer. No
+    key binds them; binding one is config's.
+  - `vc-commit`, `vc-commit-accept` and `vc-commit-abort` run the commands
+    of those names (`Editor/VersionControl/Commit.lean`) and take nothing:
+    they open the message buffer, commit with its text, and give it up.
+  - `vc-worktrees` runs `vc-worktrees`
+    (`Editor/VersionControl/Worktrees.lean`) and takes nothing: it opens
+    the worktree list of the focused buffer's workspace's repository.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -117,7 +139,15 @@ def bindings : Array Binding :=
     { name := "recompile", command := Compile.recompileName },
     { name := "kill-compilation", command := Compile.killName },
     { name := "next-error", command := Compile.nextName },
-    { name := "previous-error", command := Compile.previousName }]
+    { name := "previous-error", command := Compile.previousName },
+    { name := "vc-status", command := VersionControl.statusName },
+    { name := "vc-show", command := VersionControl.showName, takes := .text },
+    { name := "vc-stage-hunk", command := VersionControl.stageHunkName },
+    { name := "vc-unstage-hunk", command := VersionControl.unstageHunkName },
+    { name := "vc-commit", command := VersionControl.commitName },
+    { name := "vc-worktrees", command := VersionControl.worktreesName },
+    { name := "vc-commit-accept", command := VersionControl.acceptName },
+    { name := "vc-commit-abort", command := VersionControl.abortName }]
 
 /-- The ex line's completion sources, as a host registers them for the owner
 `compiled`, so config can ask for them by name: the `:!` history, then the

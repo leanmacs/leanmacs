@@ -799,6 +799,13 @@ def useDocument (text : String) : IO String := do
   discard <| document.replace text.utf8ByteSize.toUSize text.utf8ByteSize.toUSize "!"
   document.read
 
+/-- Makes an excerpt document of the first two bytes of `source`, reads it
+and drops it. Only plain data leaves: the text it read. -/
+def useExcerpts (source : Editor.Ffi.Document) : IO String := do
+  let excerpts ← Editor.Ffi.Document.excerptsNew
+  discard <| excerpts.excerptsSet #[source] #[(0, 0, 2)]
+  excerpts.read
+
 /-- The checks of a document (`Editor.Ffi.Document`): a handle whose bindings
 take a string and hand one back. "é" and "ö" are two bytes each, so in
 `"héllo"` the byte offset 2 is inside a character. -/
@@ -810,7 +817,7 @@ def documentChecks (_ : Unit) : List Check :=
         let document ← Editor.Ffi.Document.new "héllo\x00wörld"
         let empty ← Editor.Ffi.Document.new ""
         return (← document.read) == "héllo\x00wörld" && (← empty.read) == "" },
-    { name := "a replace changes a document's text at its byte offsets and returns true"
+    { name := "a replace changes a document's text at its byte offsets and says it is done"
       run := do
         let document ← Editor.Ffi.Document.new "héllo wörld"
         -- The start and the stop differ, so swapping them is seen, and so
@@ -819,15 +826,17 @@ def documentChecks (_ : Unit) : List Check :=
         let afterReplace ← document.read
         let inserted ← document.replace 3 3 "XY"
         let deleted ← document.replace 0 1 ""
-        return replaced && afterReplace == "héllo there!" && inserted && deleted &&
+        return replaced == .done && afterReplace == "héllo there!" && inserted == .done &&
+            deleted == .done &&
             (← document.read) == "éXYllo there!" },
-    { name := "a refused replace returns false and leaves a document's text as it was"
+    { name := "a refused replace says badRange and leaves a document's text as it was"
       run := do
         let document ← Editor.Ffi.Document.new "héllo"
         let insideCharacter ← document.replace 2 2 "x"
         let backwards ← document.replace 3 1 "x"
         let pastEnd ← document.replace 7 7 "x"
-        return !insideCharacter && !backwards && !pastEnd && (← document.read) == "héllo" },
+        return [insideCharacter, backwards, pastEnd].all (· == .badRange) &&
+            (← document.read) == "héllo" },
     { name := "a document is freed when Lean drops the last reference"
       run := do
         let before ← Editor.Ffi.Document.live
@@ -836,7 +845,23 @@ def documentChecks (_ : Unit) : List Check :=
         discard <| useDocument "dropped"
         let afterDrop ← Editor.Ffi.Document.live
         -- `held` is used here, so it is alive until now.
-        return whileHeld == before + 1 && afterDrop == before + 1 && (← held.read) == "held" }]
+        return whileHeld == before + 1 && afterDrop == before + 1 && (← held.read) == "held" },
+    { name :=
+        "an excerpt document is one more live document, reads its source's range, and is freed when Lean drops the last reference"
+      run := do
+        let source ← Editor.Ffi.Document.new "held"
+        let before ← Editor.Ffi.Document.live
+        let excerpts ← Editor.Ffi.Document.excerptsNew
+        let whileHeld ← Editor.Ffi.Document.live
+        let set ← excerpts.excerptsSet #[source] #[(0, 1, 3)]
+        let read ← useExcerpts source
+        let afterDrop ← Editor.Ffi.Document.live
+        -- `excerpts` is used here, so it is alive until now.
+        return whileHeld == before + 1 && afterDrop == before + 1 && set matches .ok () &&
+            read == "he" &&
+            (← excerpts.read) == "el" &&
+            (← excerpts.isExcerpts) &&
+            !(← source.isExcerpts) }]
 
 /-- Text of three rows. "é" and "ö" are two bytes and one UTF-16 unit each,
 and "😀" is four bytes and two units. The first row ends in a carriage return
@@ -898,7 +923,7 @@ def snapshotChecks (_ : Unit) : List Check :=
         let document ← Editor.Ffi.Document.new rows
         let snapshot ← document.snapshot
         let edited ← document.replace 0 1 "J"
-        return edited && (← snapshot.read) == rows && (← document.read) == "Jéllo\r\nwörld\n😀x" },
+        return edited == .done && (← snapshot.read) == rows && (← document.read) == "Jéllo\r\nwörld\n😀x" },
     { name := "a snapshot's info is its revision, its length in bytes and its row count"
       run := do
         let document ← Editor.Ffi.Document.new rows
@@ -2457,7 +2482,8 @@ bar; view 1, of a snapshot the table does not hold and padded, before view
 2, of the one it holds, scrolled to its second row with a selection, a
 right status field with a padding and a status face; and view 3, of the
 same snapshot, whose scroll marker is `scroll` and whose selection markers
-are `selections`. Each view is 4 columns by 3 rows. -/
+are `selections`. Each view is 4 columns by 3 rows. Between views 1 and 2
+is one divider, in a face of its own. -/
 def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
     (selections : Array Editor.MarkerId) : Editor.Scene :=
   let rect (y : Nat) : Editor.Rect := { x := 0, y, width := 32, height := 48 }
@@ -2478,6 +2504,7 @@ def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
           statusFace := some ⟨"dim"⟩ },
         { id := ⟨3⟩, rect := rect 96, snapshot := fixture.snapshot, scroll, selections
           cursor := { shape := .underline, face := ⟨"c3"⟩ }, decorations := #[], status := #[] }]
+    dividers := #[{ rect := { x := 0, y := 46, width := 32, height := 2 }, face := ⟨"rule"⟩ }]
     focused := some ⟨2⟩, echo := "fixture", echoPadding := 14, pending := "g"
     preedit := some "é", title := "notes.txt", menu := some fixtureMenu }
 
@@ -2542,7 +2569,7 @@ and a frame with another frame, never with a colour or a size written
 here. -/
 def sceneChecks (_ : Unit) : List Check :=
   [{  name :=
-        "a scene with a pending prefix, a preedit, a title, a menu bar with each kind of item, a view of a snapshot the table does not hold and a view whose markers are of two texts is the words and the string of the library's layout"
+        "a scene with a pending prefix, a preedit, a title, a menu bar with each kind of item, a view of a snapshot the table does not hold, a view whose markers are of two texts and a divider is the words and the string of the library's layout"
       run := do
         let fixture ← sceneFixture
         let encoded ← fixture.real.encode fixture.mixed none
@@ -2560,23 +2587,93 @@ def sceneChecks (_ : Unit) : List Check :=
             0, 0, 0, 3]
         -- No snapshot; its scroll marker; no selection; a block cursor; no
         -- status field and no status face; padded 8 across, 4 down and 28
-        -- at the top.
+        -- at the top, with no gutter; no block and no mark.
         let first : Array UInt64 :=
-          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28]
+          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28, 0, 0, 0]
         -- The first handle; its scroll marker and its selection; a bar
         -- cursor; a decoration; a left status field with no padding and a
-        -- right one padded 4; and a status face.
+        -- right one padded 4; a status face; and no block and no mark.
         let second : Array UInt64 :=
           #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 2, 6, 4, 0, 0, 3, 3,
-            1, 4, 1, 3, 0, 0, 0]
+            1, 4, 1, 3, 0, 0, 0, 0, 0, 0]
         -- The second handle; no scroll marker and no selection; an
-        -- underline cursor.
-        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0]
+        -- underline cursor; no block and no mark.
+        let third : Array UInt64 :=
+          #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        -- One divider: its rectangle and its face's length.
+        let dividers : Array UInt64 := #[1, 0, 46, 32, 2, 4]
         -- No faces: as last published.
         let faces : Array UInt64 := #[0]
-        return encoded.words == scene ++ menu ++ first ++ second ++ third ++ faces &&
-            encoded.strings == "fixturegénotes.txtApQSéUundoc1c2kwNORMALmode1:1posdimc3" &&
+        return encoded.words == scene ++ menu ++ first ++ second ++ third ++ dividers ++ faces &&
+            encoded.strings == "fixturegénotes.txtApQSéUundoc1c2kwNORMALmode1:1posdimc3rule" &&
             encoded.snapshots.size == 2 },
+    { name :=
+        "a view's blocks cross after its padding, each its offset, its text and its decorations, come back as sent, and are drawn as block rows above their rows, which the rows query, asked with them, leaves out"
+      run := do
+        let fixture ← sceneFixture
+        let real := fixture.real
+        let blocks : Array Editor.Block :=
+          #[{ before := 3, text := "hé",
+              decorations := #[{ start := 0, stop := 3, face := ⟨"h"⟩ }] }]
+        let scene := fixture.mixed
+        let scene :=
+          { scene with
+            views :=
+              scene.views.modify 2 fun view =>
+                { view with
+                  scroll := SceneFixture.own fixture.top, blocks } }
+        let encoded ← real.encode scene none
+        real.publish scene
+        let back ← real.display.scene
+        let frame ← real.display.frameText
+        let shown ← fixture.shown 3
+        -- From the start, three rows tall: `ab`, the block and `cd`.
+        let asked ←
+          real.rows { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0, blocks }
+        let wordsBlocks : Array UInt64 := #[1, 3, 3, 1, 0, 3, 1]
+        let held ← fixture.document.read
+        -- The blocks, then no mark, the divider and no faces, end the words.
+        let tail := encoded.words.extract (encoded.words.size - 15) encoded.words.size
+        return tail == wordsBlocks ++ #[0, 1, 0, 46, 32, 2, 4, 0] &&
+            encoded.strings.endsWith "héhrule" &&
+            back.map (·.1) == some ((← real.encode scene (some #[])).words) &&
+            (frame.splitOn "  block 0 row").length == 2 &&
+            shown == some #[(0, 2), (3, 5)] &&
+            asked.toOption.map (·.map fun row => (row.start, row.stop)) == some #[(0, 2), (3, 5)] &&
+            held == "ab\ncd\nef" },
+    { name :=
+        "a view's gutter crosses with its padding and its marks after its blocks, each its range, its text and its face, come back as sent, and are drawn as mark rows beside their rows, which the frame's rows leave out and the rows query, asked with the gutter, agrees with"
+      run := do
+        let fixture ← sceneFixture
+        let real := fixture.real
+        let marks : Array Editor.GutterMark :=
+          #[{ start := 0, stop := 3, text := "+", face := ⟨"diff.added"⟩ },
+            { start := 6, stop := 6, text := "-", face := ⟨"diff.removed"⟩ }]
+        let scene := fixture.mixed
+        let scene :=
+          { scene with
+            views :=
+              scene.views.modify 2 fun view =>
+                { view with
+                  scroll := SceneFixture.own fixture.top, padding := { gutter := 8 }, marks } }
+        let encoded ← real.encode scene none
+        real.publish scene
+        let back ← real.display.scene
+        let frame ← real.display.frameText
+        let shown ← fixture.shown 3
+        let asked ←
+          real.rows
+              { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0
+                padding := { gutter := 8 } }
+        -- The marks, then the divider and no faces, end the words.
+        let tail := encoded.words.extract (encoded.words.size - 16) encoded.words.size
+        let wordsMarks : Array UInt64 := #[2, 0, 3, 1, 10, 6, 6, 1, 12]
+        return tail == wordsMarks ++ #[1, 0, 46, 32, 2, 4, 0] &&
+            encoded.strings.endsWith "+diff.added-diff.removedrule" &&
+            back.map (·.1) == some ((← real.encode scene (some #[])).words) &&
+            (frame.splitOn "  mark ").length == 3 &&
+            shown == asked.toOption.map (·.map fun row => (row.start, row.stop)) &&
+            shown.isSome },
     { name :=
         "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
       run := do
@@ -2621,7 +2718,8 @@ def sceneChecks (_ : Unit) : List Check :=
         let fixture ← sceneFixture everyTheme
         let real := fixture.real
         let encoded ← real.encode emptyScene (some everyTheme)
-        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        -- The scene, no view and no divider.
+        let scene : Array UInt64 := #[8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- Present, and seven definitions.
         let faces : Array UInt64 := #[1, 7]
         -- Its name; a family; 20 pixels; weight 700; italic; a foreground
@@ -3071,6 +3169,8 @@ def themePicture (font : ByteArray) (theme : Editor.Theme) (text selectedIn : St
             cursor := { shape := .block, face := selected.getD unthemedFace }
             decorations := #[]
             status := themeStatus selectedIn (head + 3)
+            -- A selected window's row, as the loop gives it (`Loop.statusOf`).
+            statusFace := some Editor.ModeLine.activeFace
             -- The editor's frame padding at scale 1 (`Loop.padding`).
             padding := { across := Editor.Loop.padding, down := Editor.Loop.padding } }]
       focused := some ⟨1⟩, echo := "", pending := "", preedit := none }
@@ -3253,6 +3353,146 @@ def themePicturesScenario (dir font : String) (write : Bool)
       s!"ffi-test theme-pictures: {proseList (variants.map (·.name))} match their reference images; in each the paper, the cursor and the text carry the palette's colours; the light picture is not the dark reference"
   return 0
 
+/-- The size of the excerpt picture, a theme picture's. -/
+def excerptPictureSize : Editor.Size :=
+  themePictureSize
+
+/-- The headers of the excerpt picture's two excerpts. -/
+def excerptHeaders : Array Editor.Buffer.ExcerptEntry :=
+  #[{ source := ⟨0⟩, header := "a.txt" }, { source := ⟨1⟩, header := "b.txt" }]
+
+/-- One picture of the excerpt-picture scene, drawn through the real
+binding over a display of the one font `font`, in `theme`: an excerpt
+document of `beta` of `a.txt` (`alpha\nbeta\ngamma\n`, 6 to 11) and of
+`b.txt` (`one\ntwo\n`, 0 to 8), in one view the size of
+`excerptPictureSize`, padded as the editor pads a window, with a block
+cursor on `two` in `cursor`. With `headed`, the view has the excerpts'
+headers as blocks, placed by the list its snapshot carries
+(`Ffi.Snapshot.excerpts`, `ExcerptView.headers`); without, it has none. -/
+def excerptPicture (font : ByteArray) (theme : Editor.Theme) (headed : Bool)
+    (cursor : Editor.FaceName) : IO Editor.Ffi.Picture := do
+  let a ← Editor.Ffi.Document.new "alpha\nbeta\ngamma\n"
+  let b ← Editor.Ffi.Document.new "one\ntwo\n"
+  let excerpts ← Editor.Ffi.Document.excerptsNew
+  if let .error refusal← excerpts.excerptsSet #[a, b] #[(0, 6, 11), (1, 0, 8)] then
+    throw (IO.userError s!"the excerpt list was refused: {repr refusal}")
+  let library ← excerpts.snapshot
+  let some list ← library.excerpts | throw (IO.userError "the snapshot carries no list")
+  let placed : Array Editor.Excerpt.Placed :=
+    list.map fun (start, stop, sourceStart, sourceStop) => { start, stop, sourceStart, sourceStop }
+  let blocks := if headed then Editor.ExcerptView.headers placed excerptHeaders else #[]
+  -- `beta\n\none\ntwo\n`: `two` is at 10.
+  let scroll ← markIn excerpts (.anchor { offset := 0, bias := .before })
+  let selection ← markIn excerpts (rangeMarker 10 10)
+  let table ← Editor.Snapshots.new
+  let snapshot ← table.add library
+  let display ← Editor.Ffi.Display.newFont font "Noto Sans Mono"
+  let real ← Editor.RealDisplay.over display table.reader theme
+  let marker (index : Nat) : Editor.MarkerId := { text := ⟨0⟩, index }
+  let size := excerptPictureSize
+  let scene : Editor.Scene :=
+    { size
+      views :=
+        #[{ id := ⟨1⟩, rect := { x := 0, y := 0, width := size.width, height := size.height }
+            snapshot, scroll := marker scroll, selections := #[marker selection]
+            cursor := { shape := .block, face := cursor }, decorations := #[], status := #[]
+            padding := { across := Editor.Loop.padding, down := Editor.Loop.padding }, blocks }]
+      focused := some ⟨1⟩, echo := "", pending := "", preedit := none }
+  if let .error refusal← (Editor.Display.publish scene).runReal real then
+    throw (IO.userError s!"publishing was refused: {repr refusal}")
+  let picture ← display.picture
+  -- The documents are held until here, past the publish: the library reads
+  -- their markers and their texts.
+  discard <| excerpts.read
+  discard <| a.read
+  discard <| b.read
+  return picture
+
+/-- The topmost row of pixels among `indices` of `picture`; `none` when
+there are none. -/
+def topOf (picture : Editor.Ffi.Picture) (indices : Array Nat) : Option Nat :=
+  let row (index : Nat) := index / max 1 picture.width
+  indices.foldl (fun top index => some (min (top.getD (row index)) (row index))) none
+
+/-- The excerpt-picture scenario over the reference image
+`dir/excerpts.png` and the font file `font`, in `solarized-dark`: it draws
+the scene (`excerptPicture`) and, with `write`, writes it to that file
+(`mise run excerpt-reference`); without, it compares it with the file
+within `pictureTolerance`, guards that the file is the scene's size and at
+most `largestReference` bytes, and checks, by pictures it draws itself and
+naming no layout constant, that the scene with no blocks differs from it,
+that the pixels the header's background changes are mostly the theme's
+`block-header` background, and that the cursor's cell is lower than in the
+scene with no blocks. Exits 0 after a line naming what held, or 1 after
+`FAILED:` lines. -/
+def excerptPictureScenario (dir font : String) (write : Bool) : IO UInt8 := do
+  let fontBytes ← IO.FS.readBinFile font
+  let some named := Editor.Themes.shipped.find? (·.name == "solarized-dark")
+    |
+    IO.eprintln "FAILED: no shipped theme is named solarized-dark"
+    return 1
+  let theme := named.theme
+  let cursor := Editor.Vim.cursorFace "normal"
+  let scene ← excerptPicture fontBytes theme true cursor
+  let path := System.FilePath.mk dir / "excerpts.png"
+  if write then
+    let bytes ← scene.toPng
+    IO.FS.writeBinFile path bytes
+    IO.println
+        s!"ffi-test excerpt-picture: wrote {path}: {scene.width} by {scene.height} pixels, {bytes.size} bytes"
+    return 0
+  let mut failed : List String := []
+  let file ← IO.FS.readBinFile path
+  let reference ← Editor.Ffi.Picture.ofPng file
+  let size := excerptPictureSize
+  unless
+    (reference.width, reference.height) == (size.width, size.height) &&
+      file.size ≤ largestReference do
+    failed :=
+      failed ++
+        [s!"{path} is {reference.width} by {reference.height} and {file.size} bytes, not {size.width} by {size.height} and at most {largestReference}"]
+  match difference scene reference with
+  | some (worst, count) =>
+    unless worst ≤ pictureTolerance do
+      failed :=
+        failed ++
+          [s!"{count} pixels of the excerpt picture differ from {path}, one by {worst} of 255; the tolerance is {pictureTolerance}"]
+  | none =>
+    failed := failed ++ [s!"the excerpt picture is not the size of {path}"]
+  let bare ← excerptPicture fontBytes theme false cursor
+  if (differing scene bare).isEmpty then
+    failed := failed ++ ["the scene with no blocks is the scene with them"]
+  -- The header's face with the paper behind it: what differs is where its
+  -- background is.
+  let paper := Editor.Themes.Solarized.published.base03
+  let papered :=
+    theme.push { name := Editor.ExcerptView.headerFace, face := { background := some paper } }
+  let plainHeaders ← excerptPicture fontBytes papered true cursor
+  let behind := differing scene plainHeaders
+  unless commonest scene behind == some Editor.Themes.Solarized.published.base02 do
+    failed :=
+      failed ++
+        ["the pixels the header's background changes are not mostly block-header's background"]
+  -- The cursor's cell: where the scene differs from it with the cursor in a
+  -- face nothing defines.
+  let cell (headed : Bool) : IO (Option Nat) := do
+    let shown ← excerptPicture fontBytes theme headed cursor
+    let unthemed ← excerptPicture fontBytes theme headed unthemedFace
+    return topOf shown (differing shown unthemed)
+  match ← cell true, ← cell false with
+  | some headed, some bare =>
+    unless headed > bare do
+      failed := failed ++ [s!"the cursor's cell is at {headed} with the headers and {bare} without"]
+  | _, _ =>
+    failed := failed ++ ["the cursor's face changes no pixel"]
+  for name in failed do
+    IO.eprintln s!"FAILED: {name}"
+  unless failed.isEmpty do
+    return 1
+  IO.println
+      "ffi-test excerpt-picture: the excerpt picture matches its reference image; its headers are drawn in block-header's background, the scene differs without them, and the cursor's cell is lower with them"
+  return 0
+
 /-- The checks of the theme-pictures scenario's own reporting, over a
 directory of its own and a theme no shipped theme is named, so that
 nothing is drawn or written. -/
@@ -3407,7 +3647,7 @@ def syntaxChecks (_ : Unit) : List Check :=
         let pastTheEnd ← Editor.Ffi.syntaxCaptures snapshot rust 0 100
         -- An edit the snapshot taken before it is not of: once the tree of
         -- the edit is delivered, the earlier snapshot has none.
-        unless ← document.replace 0 0 "fn zero() {}\n" do
+        unless (← document.replace 0 0 "fn zero() {}\n") == .done do
           return false
         unless ← Editor.Ffi.syntaxSettle (← document.snapshot) 5000 do
           return false
@@ -3505,7 +3745,7 @@ def syntaxChecks (_ : Unit) : List Check :=
             pure false
           catch _ =>
             pure true
-        unless ← document.replace 0 0 "fn zero() {}\n" do
+        unless (← document.replace 0 0 "fn zero() {}\n") == .done do
           return false
         unless ← Editor.Ffi.syntaxSettle (← document.snapshot) 5000 do
           return false
@@ -4139,6 +4379,10 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit (← FfiTest.themePicturesScenario dir font false)
   | ["theme-pictures", dir, font, "--write"] =>
     IO.Process.exit (← FfiTest.themePicturesScenario dir font true)
+  | ["excerpt-picture", dir, font] =>
+    IO.Process.exit (← FfiTest.excerptPictureScenario dir font false)
+  | ["excerpt-picture", dir, font, "--write"] =>
+    IO.Process.exit (← FfiTest.excerptPictureScenario dir font true)
   | ["window-host", file] =>
     let status ← FfiTest.windowHostScenario (some file)
     Editor.Ffi.quit

@@ -98,6 +98,21 @@ and main is left alone.
 The layouts cut in whole pixels and do not snap to text rows. `place` is
 total and knows nothing of the editor state, so that layouts compose, as an
 edge composes with the layout inside it. Pinned by `ModelTest.layoutChecks`.
+
+## The dividers
+
+`place` tiles its rectangle edge to edge. The gap drawn between two tiles
+is taken out afterwards, by `carve`, so every layout and its operations
+keep the rule that their rectangles tile the area. Each tile whose right
+edge is short of the area's gives up the divider's width at its right, and
+each whose foot is short of the area's gives up the width at its foot,
+both no more than the tile has. Every layout tiles its area, so a tile
+short of an edge always has a tile beyond it: a divider lies between two
+tiles, on the left or upper one's side, and never along the area's edges.
+Monocle's one rectangle gives none. The carved tiles and the dividers still
+tile the area together. The editor state carves its tiled windows and
+nothing else: a float and the minibuffer's view get no divider
+(`EditorState.rects`, `EditorState.dividers`).
 -/
 
 namespace Editor
@@ -518,6 +533,32 @@ def place (layout : Layout) (windows : Array ViewId) (selected : ViewId) (rect :
           let (before, after) := cut axis rect (extent axis rect - size)
           (after, before)
       inner.place windows selected remaining rest ++ mine.zip (divide axis.across strip mine.size)
+
+/-- The tiles laid out in `area` (`place`) with the dividers between them
+taken out ("The dividers", in the module docs): each tile whose right edge
+is short of the area's gives up `min width` its width at its right, and
+each whose foot is short of the area's gives up `min width` its height at
+its foot. The second array is the strips given up, each tile's right strip,
+its full height, then its bottom strip, short of the right one, in the
+tiles' order, and none empty. The carved tiles and the dividers tile the
+area together. -/
+def carve (area : Rect) (width : Nat) (laid : Array (ViewId × Rect)) :
+    Array (ViewId × Rect) × Array Rect :=
+  laid.foldl
+    (fun (tiles, dividers) (view, rect) =>
+      let cw := if rect.x + rect.width < area.x + area.width then min width rect.width else 0
+      let ch := if rect.y + rect.height < area.y + area.height then min width rect.height else 0
+      let right : Rect :=
+        { x := rect.x + rect.width - cw, y := rect.y, width := cw, height := rect.height }
+      let bottom : Rect :=
+        { x := rect.x, y := rect.y + rect.height - ch, width := rect.width - cw, height := ch }
+      let gaps := #[right, bottom].filter fun gap => 0 < gap.width && 0 < gap.height
+      (tiles.push
+          (view,
+            { rect with
+              width := rect.width - cw, height := rect.height - ch }),
+        dividers ++ gaps))
+    (#[], #[])
 
 /-- The layout once tile `index`, the source window's index in a list of
 windows the layout fits, was split by `placement`: under manual splits the

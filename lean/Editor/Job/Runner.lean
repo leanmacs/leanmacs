@@ -669,16 +669,17 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.fileWatches.start id (.next watch)
     return .later id wait (handle.services.fileWatches.take id (.next watch))
-  | .diff (.lines old new limit) => do
+  | .diff request => do
     -- A snapshot a job holds is named for that job and for no other, as a
     -- save's source is.
+    let (old, new) := request.sources
     for source in [old, new] do
       if let .held snapshot := source then
         unless (← handle.held.get).contains snapshot do
-          return .now (.error .noSuchSnapshot)
+          return .now (request.refused .noSuchSnapshot)
     let (id, wait) ← handle.services.completions.register
-    handle.services.diffs.start id (.lines old new limit)
-    return .later id wait (handle.services.diffs.take id (.lines old new limit))
+    handle.services.diffs.start id request
+    return .later id wait (handle.services.diffs.take id request)
 
 /-- Runs `program` to its end, a request at a time. A request that is
 answered at once is a direct call, and the loop goes on on the same thread.

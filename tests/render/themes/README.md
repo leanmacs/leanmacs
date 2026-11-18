@@ -13,7 +13,7 @@ what the editor sends, not a theme written again in Rust.
 |---|---|---|---|
 | `solarized-dark.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15495 | `efa5fb8bb590520c13310a3182c840534328c0dae8f5ddf10d247bfd31cfe715` |
 | `solarized-light.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15464 | `fe37d976ac452e208cd19eed0ac85696e066f76731f61c23e00f6cf40840abea` |
-| `fairy-floss.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16062 | `6b4c2e7ee07a2005d72ba69f8284088b72a3599e2db17716ca69d26eacd32a95` |
+| `fairy-floss.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16054 | `6048381627cfee308b70a1eb3ff54167343f5d48e9755d75353a683d448fcd6f` |
 
 Each is kept small on purpose: the scene's size, 320 by 160, and at most
 20 KB, which the scenario checks.
@@ -40,7 +40,9 @@ while its background runs to both edges:
   then `source.lean` in `mode-line.buffer`; on the right, ending at the
   row's end less the padding, the cursor's line:col `2:13` and its
   position `50%` in
-  `mode-line.secondary`; over `mode-line`, in a row made taller by
+  `mode-line.secondary`; over the row's face `mode-line.active`, the
+  selected window's, which gives the row its background (the theme's
+  selection colour), over `mode-line`, in a row made taller by
   `mode-line`'s and `echo-area`'s padding of 3 points above and below (the
   font's 22-pixel line and 6, 28 pixels, the view's bottom row).
 
@@ -61,7 +63,13 @@ its text 8 pixels further in; the buffer's name follows in bold; line:col
 and the position end 8 short of the row's right edge, their last ink at x
 305 and their box at 312; the mode line's background reaches x 0 and x
 319; and the status row is 28 pixels tall, from row 132, as before.
-Measured too, by decoding the files' pixels. Looking at them
+Measured too, by decoding the files' pixels. They were made again when the
+selected window's row took the face `mode-line.active` (2026-11-17), by the
+agent that implemented it: Solarized's two came out the same bytes, since
+Solarized's selection colour is its `mode-line`'s, base02; Fairy Floss's
+changed in the status row alone, rows 132 to 159, whose background went
+from the theme's line highlight, 62, 61, 50, to its selection, 73, 72, 62,
+found by decoding the old and the new file. Looking at them
 checks that they show text, a selection and a cursor; it does not judge
 how the theme looks, which is left to the owner's day-to-day use.
 

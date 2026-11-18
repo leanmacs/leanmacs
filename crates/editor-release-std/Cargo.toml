@@ -1,0 +1,20 @@
+[package]
+name = "editor-release-std"
+version = "0.1.0"
+description = "Release tooling's real adapters, over std::env and std::process, and the leanmacs-release binary"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The ports, their fakes and contract, and the core this crate wires: the
+# build ID, the commit, the .dmg's plan and the nightly. Only release
+# tooling depends on this crate, and the editor links neither (deny.toml).
+editor-release = { path = "../editor-release" }
+
+[dev-dependencies]
+# The temporary directories of the wiring tests: a git repository made for
+# the resolve test, and the mount point of `tests/dmg_mount.rs`. Pinned
+# exactly, as in `editor-fs-std`, whose manifest says why this library and
+# no other; `deny.toml` lists the crates that may depend on it.
+tempfile = { version = "=3.27.0", default-features = false }

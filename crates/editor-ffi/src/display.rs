@@ -48,7 +48,7 @@
 //! text ([`crate::snapshot`]): a document's snapshots share their
 //! document's key, and layout pulls the document's patches through the
 //! snapshot's source, which is its changes port
-//! ([`Source`](crate::snapshot::Source)), to move what it kept. A snapshot
+//! ([`Source`]), to move what it kept. A snapshot
 //! with no source is never moved, only laid out again.
 //!
 //! **The queries** answer in words ([`crate::log::RawWords`]), with a status
@@ -103,12 +103,14 @@ use editor_layout::Layout;
 use editor_layout::face::FaceDef;
 use editor_layout::frame::{Frame, Heights};
 use editor_layout::query::{Moved, QueryError, RowRange, Spot};
-use editor_layout::scene::{Changes, Padding, Scene, TextKey, TextRef};
+use editor_layout::scene::{Block, Changes, Padding, Scene, TextKey, TextRef, TextSpans};
 use editor_layout::shaper::Shaper;
 use editor_layout::shaper::fake::CellShaper;
+use editor_layout::translated::{Piece, TranslatedSpans};
 use editor_render::port::{DrawRequest, Renderer, Target};
 use editor_render_wgpu::{Antialiasing, HeadlessRenderer, Image, Settings};
 use editor_shape_parley::{FontSet, ParleyShaper};
+use editor_text::excerpt::Placed;
 use editor_text::{Patch, Revision};
 
 use crate::document::RawText;
@@ -121,7 +123,10 @@ use crate::words::Writer;
 
 mod wire;
 
-pub use wire::{WireFace, WireField, WireScene, WireView, decode_definitions, encode_definitions};
+pub use wire::{
+    WireBlock, WireFace, WireField, WireMark, WireScene, WireView, decode_blocks,
+    decode_definitions, encode_blocks, encode_definitions,
+};
 
 /// How a display call ended, as it crosses the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,18 +146,62 @@ impl Changes for Source {
 }
 
 /// The text a snapshot handle stands for, as layout takes it: its key, its
-/// text, its document's changes, and, when its document is attached to the
-/// syntax service, its highlights as its own spans
-/// ([`crate::syntax::Syntaxes::spans`]). A scene's views and the rows and
-/// move queries all make their text here, so a frame and a query of one
-/// snapshot see the same spans.
+/// text, its document's changes, and its own spans. A scene's views and the
+/// rows and move queries all make their text here, so a frame and a query
+/// of one snapshot see the same spans.
+///
+/// - A snapshot of a document attached to the syntax service has the
+///   document's highlights ([`crate::syntax::Syntaxes::spans`]).
+/// - A snapshot of an excerpt document, which is never itself attached,
+///   has its sources' highlights translated ([`TranslatedSpans`]): one
+///   piece for each excerpt whose source is attached, read at the source
+///   snapshot the excerpt was assembled from, so a highlight computed once
+///   on a source is drawn in every excerpt of it. It has none when no
+///   excerpt's source is attached. A source whose session cannot answer
+///   for the snapshot the excerpt read draws nothing there until a later
+///   frame, as a document between two deliveries does.
 pub fn text_ref(snapshot: &Snapshot) -> TextRef {
     let text = TextRef::fixed(TextKey(snapshot.key()), snapshot.text().clone())
         .with_changes(Arc::new(snapshot.source().clone()));
-    match syntaxes().spans(snapshot.key()) {
+    let spans = match snapshot.placed() {
+        Some(placed) => translated(snapshot, placed),
+        None => syntaxes().spans(snapshot.key()),
+    };
+    match spans {
         Some(spans) => text.with_spans(spans),
         None => text,
     }
+}
+
+/// The spans of an excerpt snapshot whose list is `placed`: each excerpt's
+/// source's highlights, translated ([`text_ref`]). Each source's spans are
+/// asked of the service once, so two excerpts of one source are one
+/// source to resolve.
+fn translated(snapshot: &Snapshot, placed: &[Placed]) -> Option<Arc<dyn TextSpans>> {
+    let mut sources: Vec<(u64, Option<Arc<dyn TextSpans>>)> = Vec::new();
+    let mut pieces = Vec::new();
+    for excerpt in placed {
+        let key = excerpt.source.0;
+        let spans = match sources.iter().find(|(known, _)| *known == key) {
+            Some((_, spans)) => spans.clone(),
+            None => {
+                let spans = syntaxes().spans(key);
+                sources.push((key, spans.clone()));
+                spans
+            }
+        };
+        if let Some(spans) = spans {
+            pieces.push(Piece {
+                range: excerpt.range.clone(),
+                source_start: excerpt.source_range.start,
+                source: excerpt.snapshot.clone(),
+                spans,
+            });
+        }
+    }
+    (!pieces.is_empty()).then(|| {
+        Arc::new(TranslatedSpans::new(snapshot.text().revision(), pieces)) as Arc<dyn TextSpans>
+    })
 }
 
 /// What a display asks of its layout, whatever shaper it measures with:
@@ -161,7 +210,7 @@ pub fn text_ref(snapshot: &Snapshot) -> TextRef {
 trait Lays: Send {
     /// [`Layout::frame`].
     fn frame(&mut self, scene: &Scene) -> Frame;
-    /// [`Layout::rows_shown`].
+    /// [`Layout::rows_shown_with_blocks`].
     fn rows_shown(
         &mut self,
         text: &TextRef,
@@ -169,18 +218,20 @@ trait Lays: Send {
         height: f32,
         padding: Padding,
         anchor: usize,
+        blocks: &[Block],
     ) -> Result<Vec<RowRange>, QueryError>;
-    /// [`Layout::lines_from`].
+    /// [`Layout::lines_from_padded`].
     fn lines_from(
         &mut self,
         text: &TextRef,
         width: f32,
-        across: u32,
+        padding: Padding,
         position: usize,
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError>;
-    /// [`Layout::spot`].
+    /// [`Layout::spot_with_blocks`].
+    #[allow(clippy::too_many_arguments)]
     fn spot(
         &mut self,
         text: &TextRef,
@@ -189,6 +240,7 @@ trait Lays: Send {
         padding: Padding,
         anchor: usize,
         position: usize,
+        blocks: &[Block],
     ) -> Result<Option<Spot>, QueryError>;
     /// [`Layout::heights`].
     fn heights(&mut self) -> Heights;
@@ -215,20 +267,21 @@ where
         height: f32,
         padding: Padding,
         anchor: usize,
+        blocks: &[Block],
     ) -> Result<Vec<RowRange>, QueryError> {
-        Layout::rows_shown(self, text, width, height, padding, anchor)
+        Layout::rows_shown_with_blocks(self, text, width, height, padding, anchor, blocks)
     }
 
     fn lines_from(
         &mut self,
         text: &TextRef,
         width: f32,
-        across: u32,
+        padding: Padding,
         position: usize,
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError> {
-        Layout::lines_from(self, text, width, across, position, lines, goal)
+        Layout::lines_from_padded(self, text, width, padding, position, lines, goal)
     }
 
     fn spot(
@@ -239,8 +292,9 @@ where
         padding: Padding,
         anchor: usize,
         position: usize,
+        blocks: &[Block],
     ) -> Result<Option<Spot>, QueryError> {
-        Layout::spot(self, text, width, height, padding, anchor, position)
+        Layout::spot_with_blocks(self, text, width, height, padding, anchor, position, blocks)
     }
 
     fn heights(&mut self) -> Heights {
@@ -441,9 +495,9 @@ impl Display {
     }
 
     /// The rows of `snapshot` a view `width` pixels wide and `height` tall,
-    /// padded `padding` points, shows from `anchor`
-    /// ([`Layout::rows_shown`]): the padding is taken off at the scale the
-    /// display lays out at, as its frames take it off.
+    /// padded `padding` points, with `blocks` between its rows, shows from
+    /// `anchor` ([`Layout::rows_shown_with_blocks`]): the padding is taken
+    /// off at the scale the display lays out at, as its frames take it off.
     pub fn rows(
         &self,
         snapshot: &Snapshot,
@@ -451,6 +505,7 @@ impl Display {
         height: u64,
         padding: Padding,
         anchor: usize,
+        blocks: &[Block],
     ) -> Result<Vec<RowRange>, QueryError> {
         self.layout().rows_shown(
             &text_ref(snapshot),
@@ -458,17 +513,19 @@ impl Display {
             height as f32,
             padding,
             anchor,
+            blocks,
         )
     }
 
     /// Where `position` of `snapshot` goes `lines` visual lines away in a
-    /// view `width` pixels wide padded `across` points each side, aiming
-    /// for `goal` ([`Layout::lines_from`]).
+    /// view `width` pixels wide padded `across` points each side and with a
+    /// gutter `gutter` points wide, aiming for `goal`
+    /// ([`Layout::lines_from_padded`]).
     pub fn lines_from(
         &self,
         snapshot: &Snapshot,
         width: u64,
-        across: u32,
+        padding: Padding,
         position: usize,
         lines: i64,
         goal: Option<u64>,
@@ -476,7 +533,7 @@ impl Display {
         self.layout().lines_from(
             &text_ref(snapshot),
             width as f32,
-            across,
+            padding,
             position,
             lines,
             goal.map(|goal| goal as f32),
@@ -484,8 +541,10 @@ impl Display {
     }
 
     /// Where `position` of `snapshot` is drawn in a view `width` pixels
-    /// wide and `height` tall, padded `padding` points, that shows from
-    /// `anchor` ([`Layout::spot`]): none when it does not show it.
+    /// wide and `height` tall, padded `padding` points, with `blocks`
+    /// between its rows, that shows from `anchor`
+    /// ([`Layout::spot_with_blocks`]): none when it does not show it.
+    #[allow(clippy::too_many_arguments)]
     pub fn spot(
         &self,
         snapshot: &Snapshot,
@@ -494,6 +553,7 @@ impl Display {
         padding: Padding,
         anchor: usize,
         position: usize,
+        blocks: &[Block],
     ) -> Result<Option<Spot>, QueryError> {
         self.layout().spot(
             &text_ref(snapshot),
@@ -502,6 +562,7 @@ impl Display {
             padding,
             anchor,
             position,
+            blocks,
         )
     }
 }
@@ -509,6 +570,31 @@ impl Display {
 /// The `u32` of a padding in points, the largest for one no `u32` holds.
 fn points(count: u64) -> u32 {
     u32::try_from(count).unwrap_or(u32::MAX)
+}
+
+/// The blocks the `words_len` bytes at `words` and the `text_len` bytes
+/// at `text` spell ([`decode_blocks`]); words that spell none are refused
+/// as [`QueryError::BadPosition`], as a bad anchor is, with nothing laid
+/// out.
+///
+/// # Safety
+///
+/// `words` points to `words_len` readable bytes and `text` to `text_len`,
+/// each alive for the call.
+unsafe fn blocks_of(
+    words: *const u8,
+    words_len: usize,
+    text: *const u8,
+    text_len: usize,
+) -> Result<Vec<Block>, QueryError> {
+    // SAFETY: the caller guarantees both buffers.
+    let (words, text) = unsafe {
+        (
+            crate::words::borrow(words, words_len),
+            text::borrow(text, text_len),
+        )
+    };
+    decode_blocks(words, &text).ok_or(QueryError::BadPosition)
 }
 
 /// The record for `answer`: its words, or the status of its refusal.
@@ -796,18 +882,22 @@ pub unsafe extern "C" fn editor_ffi_display_define(
 }
 
 /// Fills `out` with the rows of `snapshot` a view `width` pixels wide and
-/// `height` tall, its content inset `across` and `down` points and its
-/// rows a further `top` points from its top (taken off at the display's
-/// scale; [`Display::rows`]), shows from `anchor`: their
-/// count, then a start and a stop for each; or with
-/// [`DisplayStatus::BadPosition`]. A padding no `u32` holds is the
-/// largest.
+/// `height` tall, its content inset `across` and `down` points, its rows a
+/// further `top` points from its top and its text a further `gutter`
+/// points from its left (taken off at the display's scale;
+/// [`Display::rows`]), shows from `anchor`, with the blocks that
+/// `block_words` and `block_text` spell ([`decode_blocks`]) drawn between
+/// its rows: their count, then a start and a stop for each; or with
+/// [`DisplayStatus::BadPosition`], which also refuses block words that
+/// spell no blocks. A padding no `u32` holds is the largest.
 ///
 /// # Safety
 ///
 /// `display` is a display handle this library handed out and has not taken
-/// back, `snapshot` a snapshot handle likewise ([`crate::snapshot`]), and
-/// `out` points to a writable [`RawWords`].
+/// back, `snapshot` a snapshot handle likewise ([`crate::snapshot`]),
+/// `block_words` points to `block_words_len` readable bytes and
+/// `block_text` to `block_text_len`, each alive for the call, and `out`
+/// points to a writable [`RawWords`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_display_rows(
     display: *const Display,
@@ -817,18 +907,24 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
     across: u64,
     down: u64,
     top: u64,
+    gutter: u64,
     anchor: usize,
+    block_words: *const u8,
+    block_words_len: usize,
+    block_text: *const u8,
+    block_text_len: usize,
     out: *mut RawWords,
 ) {
     // SAFETY: the caller guarantees both handles are live.
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
     let padding = Padding {
-        across: points(across),
-        down: points(down),
-        top: points(top),
+        gutter: points(gutter),
+        ..Padding::new(points(across), points(down), points(top))
     };
+    // SAFETY: the caller guarantees the blocks' buffers.
+    let blocks = unsafe { blocks_of(block_words, block_words_len, block_text, block_text_len) };
     let raw = answered(
-        display.rows(snapshot, width, height, padding, anchor),
+        blocks.and_then(|blocks| display.rows(snapshot, width, height, padding, anchor, &blocks)),
         |rows, writer| {
             writer.size(rows.len());
             for row in rows {
@@ -843,10 +939,10 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
 
 /// Fills `out` with where `position` of `snapshot` goes `lines` visual
 /// lines down (up when negative) in a view `width` pixels wide whose text
-/// is inset `across` points each side, aiming for `goal` when
-/// `goal_present`: the position reached and the goal to pass on; or with
-/// [`DisplayStatus::BadPosition`]. A move only wraps, so it takes no
-/// padding down.
+/// is inset `across` points each side and a further `gutter` points from
+/// its left, aiming for `goal` when `goal_present`: the position reached
+/// and the goal to pass on; or with [`DisplayStatus::BadPosition`]. A move
+/// only wraps, so it takes no padding down.
 ///
 /// # Safety
 ///
@@ -857,6 +953,7 @@ pub unsafe extern "C" fn editor_ffi_display_move(
     snapshot: *const Snapshot,
     width: u64,
     across: u64,
+    gutter: u64,
     position: usize,
     lines: i64,
     goal_present: bool,
@@ -866,8 +963,12 @@ pub unsafe extern "C" fn editor_ffi_display_move(
     // SAFETY: the caller guarantees both handles are live.
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
     let goal = goal_present.then_some(goal);
+    let padding = Padding {
+        gutter: points(gutter),
+        ..Padding::new(points(across), 0, 0)
+    };
     let raw = answered(
-        display.lines_from(snapshot, width, points(across), position, lines, goal),
+        display.lines_from(snapshot, width, padding, position, lines, goal),
         |moved, writer| {
             writer.size(moved.position);
             writer.word(moved.goal.max(0.0) as u64);
@@ -879,15 +980,21 @@ pub unsafe extern "C" fn editor_ffi_display_move(
 
 /// Fills `out` with where `position` of `snapshot` is drawn in a view
 /// `width` pixels wide and `height` tall, padded as for
-/// [`editor_ffi_display_rows`], that shows from `anchor`
-/// ([`Display::spot`]): four words, whether the view shows it (1 or 0),
-/// then the x and the y of it from the view's top left, rounded down, and
-/// its row's height, rounded up (all 0 when it is not shown); or with
-/// [`DisplayStatus::BadPosition`].
+/// [`editor_ffi_display_rows`], that shows from `anchor`, with the blocks
+/// that `block_words` and `block_text` spell ([`decode_blocks`]) drawn
+/// between its rows ([`Display::spot`]): four words, whether the view
+/// shows it (1 or 0), then the x and the y of it from the view's top left,
+/// rounded down, and its row's height, rounded up (all 0 when it is not
+/// shown); or with [`DisplayStatus::BadPosition`], which also refuses
+/// block words that spell no blocks.
 ///
 /// # Safety
 ///
-/// As [`editor_ffi_display_rows`].
+/// `display` is a display handle this library handed out and has not taken
+/// back, `snapshot` a snapshot handle likewise ([`crate::snapshot`]),
+/// `block_words` points to `block_words_len` readable bytes and
+/// `block_text` to `block_text_len`, each alive for the call, and `out`
+/// points to a writable [`RawWords`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_display_spot(
     display: *const Display,
@@ -897,19 +1004,27 @@ pub unsafe extern "C" fn editor_ffi_display_spot(
     across: u64,
     down: u64,
     top: u64,
+    gutter: u64,
     anchor: usize,
     position: usize,
+    block_words: *const u8,
+    block_words_len: usize,
+    block_text: *const u8,
+    block_text_len: usize,
     out: *mut RawWords,
 ) {
     // SAFETY: the caller guarantees both handles are live.
     let (display, snapshot) = unsafe { (&*display, &*snapshot) };
     let padding = Padding {
-        across: points(across),
-        down: points(down),
-        top: points(top),
+        gutter: points(gutter),
+        ..Padding::new(points(across), points(down), points(top))
     };
+    // SAFETY: the caller guarantees the blocks' buffers.
+    let blocks = unsafe { blocks_of(block_words, block_words_len, block_text, block_text_len) };
     let raw = answered(
-        display.spot(snapshot, width, height, padding, anchor, position),
+        blocks.and_then(|blocks| {
+            display.spot(snapshot, width, height, padding, anchor, position, &blocks)
+        }),
         |spot, writer| match spot {
             Some(spot) => {
                 writer.word(1);
@@ -981,9 +1096,11 @@ pub unsafe extern "C" fn editor_ffi_display_frame_text(display: *const Display, 
     unsafe { out.write(RawText { text, text_len }) };
 }
 
-/// Fills `out` with the rows the view with the id `view` shows in the
-/// latest frame: their count, then a start and a stop for each; or with the
-/// status 1 when the frame has no such view.
+/// Fills `out` with the rows of its text the view with the id `view` shows
+/// in the latest frame, its block and gutter mark rows left out
+/// ([`FrameRow::is_text`](editor_layout::frame::FrameRow::is_text)): their
+/// count, then a start and a stop for each; or with the status 1 when the
+/// frame has no such view.
 ///
 /// # Safety
 ///
@@ -999,9 +1116,10 @@ pub unsafe extern "C" fn editor_ffi_display_frame_rows(
     let frame = unsafe { &*display }.latest();
     let raw = match frame.views.iter().find(|shown| shown.id.0 == view) {
         Some(shown) => {
-            let mut writer = Writer::with_capacity(1 + 2 * shown.rows.len());
-            writer.size(shown.rows.len());
-            for row in &shown.rows {
+            let rows: Vec<_> = shown.rows.iter().filter(|row| row.is_text()).collect();
+            let mut writer = Writer::with_capacity(1 + 2 * rows.len());
+            writer.size(rows.len());
+            for row in rows {
                 writer.size(row.bytes.start);
                 writer.size(row.bytes.end);
             }

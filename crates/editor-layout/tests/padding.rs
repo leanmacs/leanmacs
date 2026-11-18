@@ -59,16 +59,12 @@ fn rect(width: u32, height: u32) -> Rect {
 
 /// The padding `across` and `down`, with no top inset.
 fn padding(across: u32, down: u32) -> Padding {
-    Padding {
-        across,
-        down,
-        top: 0,
-    }
+    Padding::new(across, down, 0)
 }
 
 /// The padding `across` and `down`, with the top inset `top`.
 fn padding_under(across: u32, down: u32, top: u32) -> Padding {
-    Padding { across, down, top }
+    Padding::new(across, down, top)
 }
 
 /// A view of `text` in `rect` with `padding`, and no status field.

@@ -115,6 +115,10 @@ checks compare the echo area with that function, never with a sentence.
   cannot be removed and a name that is taken cannot be given, so the new
   buffer is made under a free name first. Vim calls its equivalent
   `[No Name]`.
+- **The rule of what takes a closed buffer's place is `close`'s**, which
+  checks nothing else; the close command calls it once its own checks
+  pass, and a feature that removes a buffer of its own, such as the commit
+  message buffer (`Editor/VersionControl/Commit.lean`), calls it too.
 - **Not built**: a buffer's last cursor, which Vim gives back when a window
   shows it again.
 
@@ -324,14 +328,34 @@ def closeInto (id fallback : BufferId) : EditorM Unit := do
       unrefused "showing the buffer left" (← view.show fallback)
   unrefused "removing the buffer" (← id.remove)
 
+/-- Closes the buffer `id` whatever it holds ("Close", in the module docs):
+every window that showed it shows the most recently used buffer left
+(`closeInto`), and when none is left, a new empty buffer with no file
+called `EditorState.scratchName`, made under a free name and renamed once
+the closed one has given its name up. It checks nothing: the close command
+refuses a buffer with unsaved changes or a save in flight before it calls
+this, and a feature closing a buffer of its own calls it directly. -/
+def close (id : BufferId) : EditorM Unit := do
+  let state ← editorState
+  match state.mostRecent id with
+  | some fallback =>
+    closeInto id fallback
+  | none =>
+    -- The last buffer: an empty one takes its place, made under a free name
+    -- and renamed once the closed one has given its name up.
+    let .ok made ←
+      createBuffer
+          (state.freeName EditorState.scratchName) | giveUp "making the empty buffer was refused"
+    closeInto id made
+    unrefused "naming the empty buffer" (← made.rename EditorState.scratchName)
+
 /-- The close command as it is called ("Close", in the module docs): closes
 the buffer its first argument, a string, names exactly, and otherwise the
 buffer of the window it was called with. A name no buffer has is said
 (`noBuffer`), and so is the minibuffer's buffer (`ofMinibuffer`). A buffer
 with a save in flight is not closed (`beingSaved`), and nor is one with
-unsaved changes (`notClosing`); the echo area says which. Otherwise every window that showed it shows the most
-recently used buffer left, and when none is left, a new empty buffer with
-no file called `EditorState.scratchName`. -/
+unsaved changes (`notClosing`); the echo area says which. Otherwise it is
+closed (`close`). -/
 def closeCommand (call : Call) : EditorM Unit := do
   let state ← editorState
   let named? : Option BufferId :=
@@ -354,16 +378,6 @@ def closeCommand (call : Call) : EditorM Unit := do
   if let .ok true← id.hasUnsavedChanges then
     message (notClosing name)
     return
-  match state.mostRecent id with
-  | some fallback =>
-    closeInto id fallback
-  | none =>
-    -- The last buffer: an empty one takes its place, made under a free name
-    -- and renamed once the closed one has given its name up.
-    let .ok made ←
-      createBuffer
-          (state.freeName EditorState.scratchName) | giveUp "making the empty buffer was refused"
-    closeInto id made
-    unrefused "naming the empty buffer" (← made.rename EditorState.scratchName)
+  close id
 
 end Editor.Buffers

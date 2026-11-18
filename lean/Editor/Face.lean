@@ -70,7 +70,10 @@ first, which sets every attribute. Among them is `search-match`, which the
 matches of the last search are drawn in (`Editor/Loop.lean`,
 "Decorations"), and `compilation.error`, `compilation.warning` and
 `compilation.note`, which the compile mode's locations are drawn in
-(`Editor/Compile.lean`, "Locations"). Layout reads four names by itself:
+(`Editor/Compile.lean`, "Locations"), and `mode-line.active` and
+`window-divider`, the selected window's status row and the divider between
+tiled windows, which the loop names (`Loop.statusOf`, `Loop.dividerFace`).
+Layout reads four names by itself:
 `default`, under every other face; `selection`, which the selections are
 drawn in; `mode-line`, under each field of a view's status line; and
 `echo-area`, the echo in the frame's bottom row. Any other name is whatever
@@ -303,7 +306,11 @@ mode line and the echo area are padded 3 points above and below, the owner's
 picked look, so the bottom row is the same height whether it holds a
 window's mode line, a prompt or the echo. Each Vim state's badge
 (`mode-line.state.<state>`) is the paper on an accent, bold: normal blue,
-insert green, visual and visual-line magenta, the minibuffer's cyan. The tab
+insert green, visual and visual-line magenta, the minibuffer's cyan. The
+selected window's status row (`mode-line.active`) is strong on selected, and
+every other window's (`mode-line.inactive`) faint on the paper, so the
+selected bar is lit and the others recede into the paper; the divider
+between windows (`window-divider`) is a faint line. The tab
 bar's chips are faint on raised, and the selected one strong on selected,
 bold. The candidate list's matched ranges are blue and bold, as orderless's
 first match face and `completions-common-part`; its annotations faint and
@@ -340,7 +347,10 @@ def Palette.theme (palette : Palette) : Theme :=
     badges.map (fun (state, accent) => badge state accent) ++
     #[defined "mode-line.buffer" { foreground := some palette.strong, weight := some 700 },
       ink "mode-line.modified" palette.orange, ink "mode-line.changed" palette.red,
-      ink "mode-line.secondary" palette.faint, on "mode-line.inactive" palette.faint palette.raised,
+      ink "mode-line.secondary" palette.faint,
+      defined "mode-line.active"
+        { foreground := some palette.strong, background := some palette.selected },
+      on "mode-line.inactive" palette.faint palette.paper, ink "window-divider" palette.faint,
       defined "minibuffer.prompt" { foreground := some palette.cyan, weight := some 700 },
       ink "minibuffer.candidate" palette.faint, on "minibuffer.chosen" palette.paper palette.cyan,
       bold "minibuffer.match" palette.blue,

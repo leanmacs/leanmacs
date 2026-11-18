@@ -72,11 +72,27 @@
 //!   for each pixel of the view, not the text; moved through patches or
 //!   rebuilt when none can be had (`tests/patches.rs`), and the bound on a
 //!   very long row (`tests/long_line.rs`);
-//! - the round trip of a position through the layers (`tests/layers.rs`).
+//! - the round trip of a position through the layers (`tests/layers.rs`);
+//! - blocks: where a view's blocks are drawn, that each of their lines
+//!   counts among the lines that fit, the first-row rule, that the rows
+//!   query and the spot count them as the frame draws them and a move
+//!   does not, and that cursors and selections are on text rows only
+//!   ([`query`], "Blocks"; `tests/blocks.rs`); and that a frame that shows
+//!   the same blocks again shapes none of them (`tests/counters.rs`);
+//! - gutter marks: a column before the text, each mark beside every visual
+//!   line of the rows its range covers in its face over `gutter`, the rows,
+//!   spot and move queries taking the column off as the frame does, and
+//!   mark rows kept apart from text rows ([`frame`], "The gutter";
+//!   `tests/gutter.rs`);
+//! - translated spans: a text made of pieces of other texts draws each
+//!   source's own spans at every piece of it, cut at the pieces' edges,
+//!   each source resolved once, and keeps the contract of
+//!   [`scene::TextSpans`] ([`translated`]).
 //!
 //! The adapter-neutral rules of shaping are [`shaper::contract`]'s, which
 //! every real adapter runs. No crate downstream pins the fake's geometry.
 
+mod blocks;
 pub mod cache;
 pub mod decoration;
 pub mod face;
@@ -87,15 +103,17 @@ pub mod query;
 pub mod scene;
 pub mod shaper;
 pub mod tabs;
+pub mod translated;
 pub mod wrap;
 
 use std::collections::HashMap;
 
+use crate::blocks::{BlockLayout, Blocks, ViewBlocks};
 use crate::cache::{Counters, StatusKept, Texts, state};
 use crate::decoration::{DecorationSource, Styles, TextSpansSource, fonts_of};
 use crate::face::{FaceDef, SELECTION_FACE};
-use crate::query::{Moved, QueryError, RowRange, Spot, Walker};
-use crate::scene::{Padding, TextKey, TextRef, ViewId};
+use crate::query::{Moved, QueryError, RowRange, Shown, Spot, Walker};
+use crate::scene::{Block, Padding, TextKey, TextRef, ViewId};
 use crate::shaper::{FontId, Shaper};
 use crate::tabs::{DEFAULT_TAB_WIDTH, row_content, segment_count};
 use crate::wrap::Outcome;
@@ -118,6 +136,8 @@ pub struct Layout<S: Shaper> {
     texts: Texts<S::Shaped>,
     /// What is kept of each view's status row.
     status: HashMap<ViewId, StatusKept>,
+    /// What is kept of each block, apart from the texts (`blocks`).
+    blocks: Blocks<S::Shaped>,
 }
 
 impl<S: Shaper> Layout<S> {
@@ -135,6 +155,7 @@ impl<S: Shaper> Layout<S> {
             counters: Counters::default(),
             texts: HashMap::new(),
             status: HashMap::new(),
+            blocks: HashMap::new(),
         }
     }
 
@@ -237,8 +258,9 @@ impl<S: Shaper> Layout<S> {
     /// its content inset by `padding` (in points), shows from the visual
     /// line that holds `anchor`, as many as fit whole, fewer at the end of
     /// the text. The padding is taken off as the frame takes it off: twice
-    /// [`Layout::padding_pixels`] of `across` from the width, and twice of
-    /// `down` and once of `top` from the height, at 0 at least.
+    /// [`Layout::padding_pixels`] of `across` and once of `gutter` from the
+    /// width, and twice of `down` and once of `top` from the height, at 0
+    /// at least.
     pub fn rows_shown(
         &mut self,
         text: &TextRef,
@@ -247,13 +269,32 @@ impl<S: Shaper> Layout<S> {
         padding: Padding,
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError> {
-        let width = self.inset(width, padding.across);
+        self.rows_shown_with_blocks(text, width, height, padding, anchor, &[])
+    }
+
+    /// [`Layout::rows_shown`] in a view with `blocks` between its rows:
+    /// the text rows it shows, each block line counted among the lines
+    /// that fit by the rule the frame shows them by ([`query`], "Blocks").
+    /// With no block it is [`Layout::rows_shown`].
+    pub fn rows_shown_with_blocks(
+        &mut self,
+        text: &TextRef,
+        width: f32,
+        height: f32,
+        padding: Padding,
+        anchor: usize,
+        blocks: &[Block],
+    ) -> Result<Vec<RowRange>, QueryError> {
+        let width = self.text_width(width, padding);
         let height = self.text_height(height, padding);
-        self.query(text, width, |walker| {
-            let rows = walker.rows_shown(height, anchor)?;
-            Ok(rows
+        self.query(text, width, blocks, |walker, above| {
+            let shown = walker.shown(height, anchor, above)?;
+            Ok(shown
                 .into_iter()
-                .map(|visual| walker.range(visual))
+                .filter_map(|shown| match shown {
+                    Shown::Text(visual) => Some(walker.range(visual)),
+                    Shown::Block { .. } => None,
+                })
                 .collect())
         })
     }
@@ -275,8 +316,28 @@ impl<S: Shaper> Layout<S> {
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError> {
-        let width = self.inset(width, across);
-        self.query(text, width, |walker| {
+        let padding = Padding {
+            across,
+            ..Padding::default()
+        };
+        self.lines_from_padded(text, width, padding, position, lines, goal)
+    }
+
+    /// [`Layout::lines_from`] in a view whose content is inset by
+    /// `padding`: the width it wraps at is `width` less twice
+    /// [`Layout::padding_pixels`] of `across` and once of `gutter`, as the
+    /// frame's. The padding down is not looked at: a move takes no height.
+    pub fn lines_from_padded(
+        &mut self,
+        text: &TextRef,
+        width: f32,
+        padding: Padding,
+        position: usize,
+        lines: i64,
+        goal: Option<f32>,
+    ) -> Result<Moved, QueryError> {
+        let width = self.text_width(width, padding);
+        self.query(text, width, &[], |walker, _| {
             walker.lines_from(position, lines, goal)
         })
     }
@@ -301,16 +362,36 @@ impl<S: Shaper> Layout<S> {
         anchor: usize,
         position: usize,
     ) -> Result<Option<Spot>, QueryError> {
-        let across = self.padding_pixels(padding.across);
+        self.spot_with_blocks(text, width, height, padding, anchor, position, &[])
+    }
+
+    /// [`Layout::spot`] in a view with `blocks` between its rows: a
+    /// position below a block is lower by the block's lines, each at the
+    /// height the frame draws it at ([`query`], "Blocks"). With no block
+    /// it is [`Layout::spot`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn spot_with_blocks(
+        &mut self,
+        text: &TextRef,
+        width: f32,
+        height: f32,
+        padding: Padding,
+        anchor: usize,
+        position: usize,
+        blocks: &[Block],
+    ) -> Result<Option<Spot>, QueryError> {
+        let left = self.text_left(padding);
         let down = self.first_row(padding);
-        let width = self.inset(width, padding.across);
+        let width = self.text_width(width, padding);
         let height = self.text_height(height, padding);
-        self.query(text, width, |walker| {
-            Ok(walker.spot(height, anchor, position)?.map(|spot| Spot {
-                x: across + spot.x,
-                y: down + spot.y,
-                height: spot.height,
-            }))
+        self.query(text, width, blocks, |walker, above| {
+            Ok(walker
+                .spot(height, anchor, position, above)?
+                .map(|spot| Spot {
+                    x: left + spot.x,
+                    y: down + spot.y,
+                    height: spot.height,
+                }))
         })
     }
 
@@ -318,6 +399,20 @@ impl<S: Shaper> Layout<S> {
     /// layout's scale, and 0 at least.
     pub(crate) fn inset(&self, extent: f32, points: u32) -> f32 {
         (extent - 2.0 * self.padding_pixels(points)).max(0.0)
+    }
+
+    /// The width a view's text rows wrap at of `width`, with `padding`:
+    /// `width` less `across` at each side and `gutter` at the left, in
+    /// pixels at the layout's scale, and 0 at least ([`frame`], "The
+    /// gutter").
+    pub(crate) fn text_width(&self, width: f32, padding: Padding) -> f32 {
+        (self.inset(width, padding.across) - self.padding_pixels(padding.gutter)).max(0.0)
+    }
+
+    /// How far right from a view's left its text rows start, with
+    /// `padding`: `across` and `gutter`, in pixels at the layout's scale.
+    pub(crate) fn text_left(&self, padding: Padding) -> f32 {
+        self.padding_pixels(padding.across) + self.padding_pixels(padding.gutter)
     }
 
     /// The height a view's text rows fill of `height`, with `padding`:
@@ -336,15 +431,18 @@ impl<S: Shaper> Layout<S> {
     /// Runs `ask` on a walker over what is kept of `text` at `width`, with
     /// the text's own spans resolved for its snapshot, as the frame of that
     /// snapshot resolves them, under the selections and decorations of the
-    /// last frame that showed it, in the faces as they are now, and counts
-    /// the work.
+    /// last frame that showed it, in the faces as they are now, and with
+    /// the lines of `blocks` before each row (the walk's `above`), and
+    /// counts the work.
     fn query<T>(
         &mut self,
         text: &TextRef,
         width: f32,
-        ask: impl FnOnce(&mut Walker<'_, S>) -> T,
+        blocks: &[Block],
+        ask: impl FnOnce(&mut Walker<'_, S>, &mut dyn FnMut(usize) -> Vec<Shown>) -> T,
     ) -> T {
         let own = TextSpansSource::of(&mut self.styles, text);
+        let mut view_blocks = ViewBlocks::new(blocks, &text.snapshot, &mut self.styles);
         let mut state = state(&mut self.texts, text, self.tab_width, Some(width));
         let state = &mut *state;
         // Lowest layer first: the text's own spans, the decorations, then
@@ -360,16 +458,29 @@ impl<S: Shaper> Layout<S> {
         let (styles, shaper, base) = (&self.styles, &self.shaper, self.base);
         let snapshot = &text.snapshot;
         let fonts = |bytes| fonts_of(&sources, snapshot, bytes, styles, shaper, base);
-        let mut seen: HashMap<(usize, usize), Outcome> = HashMap::new();
-        let answer = ask(&mut Walker {
-            shaper: &self.shaper,
-            wrap: &mut state.wrap,
+        let mut block_layout = BlockLayout {
+            store: &mut self.blocks,
+            shaper,
+            styles,
             base,
-            fonts: &fonts,
-            outcome: &mut |row, segment, outcome| {
-                seen.entry((row, segment)).or_insert(outcome);
+            tab_width: self.tab_width,
+            width,
+            counters: &mut self.counters,
+        };
+        let mut above = |row| view_blocks.above(row, &mut block_layout);
+        let mut seen: HashMap<(usize, usize), Outcome> = HashMap::new();
+        let answer = ask(
+            &mut Walker {
+                shaper,
+                wrap: &mut state.wrap,
+                base,
+                fonts: &fonts,
+                outcome: &mut |row, segment, outcome| {
+                    seen.entry((row, segment)).or_insert(outcome);
+                },
             },
-        });
+            &mut above,
+        );
         self.counters.add(&seen);
         answer
     }

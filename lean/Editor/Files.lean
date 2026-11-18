@@ -190,6 +190,14 @@ are in `Editor/Files/Compiled.lean`.
   job's name, the command releases the snapshot it took and says so in
   the echo area (`notSaving`): the buffer is never left "being saved" with
   no job to end the save, and a later save is not refused for it.
+- **A save with a follow-up** (`Files.save id (after := some start)`) starts
+  the job `start` once the file is written, from the job's command
+  (`saved`), after the save is ended; a refused save starts nothing, and
+  its refusal is said as any save's is. `vc-stage-hunk` saves this way,
+  so the hunk it stages is of the file as written
+  (`Editor/VersionControl/Stage.lean`). Starting a job is a state request,
+  so the command still makes no request of the text store. A refused
+  start is said in place of `wrote <path>`.
 - **A forced save** (`Files.save id true`) expects whatever is there
   (`File.Expect.whatever`), the port's override: the ex name `w!`, which
   writes the buffer over a file another program changed ("Reload" below
@@ -622,8 +630,8 @@ def saveJob : String :=
   "save-file"
 
 /-- What the save job is started with: the buffer that is saved, the
-snapshot of its text to write, the file's path, and what the save expects
-to find there. -/
+snapshot of its text to write, the file's path, what the save expects
+to find there, and the job to start once the file is written, if any. -/
 structure SaveOrder where
   /-- The buffer that is saved. -/
   buffer : BufferId
@@ -633,6 +641,8 @@ structure SaveOrder where
   path : System.FilePath
   /-- What the save expects to find at the path. -/
   expect : File.Expect
+  /-- The job started once the file is written. -/
+  after : Option JobStart := none
   deriving DecidableEq, Repr
 
 /-- What a save expects, as arguments: a word, and after `unchanged` the
@@ -643,26 +653,48 @@ def expectArguments : File.Expect → List Argument
   | .absent => [.str "absent"]
   | .whatever => [.str "whatever"]
 
-/-- What a save expects, read back from its arguments (`expectArguments`). -/
-def expectOfArguments? : List Argument → Option File.Expect
-  | [.str "unchanged", .int seconds, .nat nanoseconds, .nat size] =>
-    some (.unchanged { seconds, nanoseconds, size })
-  | [.str "absent"] => some .absent
-  | [.str "whatever"] => some .whatever
+/-- What a save expects, read back from the start of its arguments
+(`expectArguments`), and the arguments after it. -/
+def expectOfArguments? : List Argument → Option (File.Expect × List Argument)
+  | .str "unchanged" :: .int seconds :: .nat nanoseconds :: .nat size :: rest =>
+    some (.unchanged { seconds, nanoseconds, size }, rest)
+  | .str "absent" :: rest => some (.absent, rest)
+  | .str "whatever" :: rest => some (.whatever, rest)
+  | _ => none
+
+/-- A job to start after a save, as arguments: none for none, and otherwise
+its name, its key or `false`, and its own arguments. -/
+def afterArguments : Option JobStart → List Argument
+  | none => []
+  | some start =>
+    .str start.name ::
+      (match start.key with
+      | some key => Argument.str key
+      | none => .bool false) ::
+      start.arguments
+
+/-- The job to start after a save, read back from its arguments
+(`afterArguments`). -/
+def afterOfArguments? : List Argument → Option (Option JobStart)
+  | [] => some none
+  | .str name :: .str key :: arguments => some (some { name, key := some key, arguments })
+  | .str name :: .bool false :: arguments => some (some { name, arguments })
   | _ => none
 
 /-- The order as the arguments a job is started with: the buffer's number,
-the snapshot's, the path, and then what the save expects
-(`expectArguments`). -/
+the snapshot's, the path, then what the save expects (`expectArguments`),
+then the job to start after it (`afterArguments`). -/
 def SaveOrder.arguments (order : SaveOrder) : List Argument :=
   [.nat order.buffer.index, .nat order.snapshot.index, .str order.path.toString] ++
-    expectArguments order.expect
+    expectArguments order.expect ++
+    afterArguments order.after
 
 /-- The order `arguments` are, if they are one (`SaveOrder.arguments`). -/
 def SaveOrder.ofArguments? : List Argument → Option SaveOrder
-  | .nat buffer :: .nat snapshot :: .str path :: expect =>
-    (expectOfArguments? expect).map fun expect =>
-      { buffer := ⟨buffer⟩, snapshot := ⟨snapshot⟩, path, expect }
+  | .nat buffer :: .nat snapshot :: .str path :: rest => do
+    let (expect, rest) ← expectOfArguments? rest
+    let after ← afterOfArguments? rest
+    return { buffer := ⟨buffer⟩, snapshot := ⟨snapshot⟩, path, expect, after }
   | _ => none
 
 /-- What the echo area says when the buffer's file at `path` could not be
@@ -698,8 +730,10 @@ def notSaving (path : System.FilePath) (refusal : JobRefusal) : String :=
 save of `order.buffer` becomes ("Save", in the module docs). It ends the
 save in flight with one state request (`BufferId.endSave`), which records
 the new stamp and marks the state the save wrote as saved, or neither for a
-save that was refused, and then says what became of the file. It makes no
-request of the text store, so it cannot be interrupted or refused. -/
+save that was refused, and then says what became of the file; a file
+written starts the order's follow-up, if it has one, and a refused start is
+said. It makes no request of the text store, so it cannot be interrupted or
+refused. -/
 def saved (order : SaveOrder) (reply : Except FileError File.Stamp) : EditorM Unit := do
   -- Refused only when the buffer was removed while its save ran: what
   -- became of the file is said all the same.
@@ -707,6 +741,9 @@ def saved (order : SaveOrder) (reply : Except FileError File.Stamp) : EditorM Un
   match reply with
   | .ok _ =>
     message (wrote order.path)
+    if let some start := order.after then
+      if let .error refusal← startJob start.name start.arguments start.key then
+        message s!"{start.name}: {refusal.describe}"
   | .error error =>
     message (notSaved order.path error)
 
@@ -725,8 +762,10 @@ module docs). The save expects the stamp the buffer holds, or, with
 `force`, whatever is there. It starts nothing, and says why in the echo
 area, for a buffer there is none of, for one with no file and while a save
 of the buffer is in flight. Where no save job is registered it says so,
-releases the snapshot it took, and records no save. -/
-def save (id : BufferId) (force : Bool := false) : EditorM Unit := do
+releases the snapshot it took, and records no save. Once the file is
+written the job `after` is started, if it is given. -/
+def save (id : BufferId) (force : Bool := false) (after : Option JobStart := none) : EditorM Unit :=
+  do
   let some buffer := (← editorState).buffer? id | message noBuffer
   let some file := buffer.file | message (noFile buffer.name)
   if file.saving.isSome then
@@ -738,7 +777,7 @@ def save (id : BufferId) (force : Bool := false) : EditorM Unit := do
   let snapshot ← buffer.text.snapshot
   let order : SaveOrder :=
     { buffer := id, snapshot, path := file.path
-      expect := if force then .whatever else .unchanged file.stamp }
+      expect := if force then .whatever else .unchanged file.stamp, after }
   -- The job is asked for before the save is recorded, and the save is
   -- recorded only when the job will be started: a buffer is never left
   -- "being saved" with no job to end the save.

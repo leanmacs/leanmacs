@@ -175,9 +175,9 @@ typedef struct {
   size_t text_len;
 } editor_ffi_raw_text;
 editor_ffi_document *editor_ffi_document_new(const uint8_t *text, size_t len);
-bool editor_ffi_document_replace(const editor_ffi_document *document,
-                                 size_t start, size_t end, const uint8_t *text,
-                                 size_t len);
+uint64_t editor_ffi_document_replace(const editor_ffi_document *document,
+                                     size_t start, size_t end,
+                                     const uint8_t *text, size_t len);
 void editor_ffi_document_read(const editor_ffi_document *document,
                               editor_ffi_raw_text *out);
 void editor_ffi_document_free(editor_ffi_document *document);
@@ -211,11 +211,11 @@ lean_obj_res editor_glue_document_new(b_lean_obj_arg text) {
       editor_ffi_document_new(string_bytes(text), string_len(text))));
 }
 
-// `Editor.Ffi.Document.replace : @& Document → USize → USize → @& String →
-// IO Bool`
+// `Editor.Ffi.Document.replaceRaw : @& Document → USize → USize → @& String →
+// IO UInt64`: the library's `ReplaceStatus`, as its number.
 lean_obj_res editor_glue_document_replace(b_lean_obj_arg document, size_t start,
                                           size_t stop, b_lean_obj_arg text) {
-  return lean_io_result_mk_ok(lean_box(
+  return lean_io_result_mk_ok(lean_box_uint64(
       editor_ffi_document_replace(lean_get_external_data(document), start, stop,
                                   string_bytes(text), string_len(text))));
 }
@@ -424,6 +424,84 @@ lean_obj_res editor_glue_document_from_snapshot(b_lean_obj_arg snapshot) {
       editor_ffi_document_from_snapshot(lean_get_external_data(snapshot))));
 }
 
+// ---- Excerpt documents ----
+//
+// A document whose text is made of ranges of other documents
+// (`crates/editor-ffi/src/excerpts.rs`). It is a document handle like any
+// other, freed by the same finaliser. Its list crosses as a C array of the
+// source documents, built here from a Lean `Array`, and words that name a
+// source by its index in it.
+
+editor_ffi_document *editor_ffi_excerpts_new(void);
+uint64_t editor_ffi_excerpts_set(const editor_ffi_document *document,
+                                 const editor_ffi_document *const *sources,
+                                 size_t source_count, const uint8_t *words,
+                                 size_t words_len);
+bool editor_ffi_document_is_excerpts(const editor_ffi_document *document);
+// The library's `RawLocated`.
+typedef struct {
+  size_t excerpt;
+  size_t offset;
+} editor_ffi_raw_located;
+uint64_t editor_ffi_excerpts_locate(const editor_ffi_document *document,
+                                    size_t offset, editor_ffi_raw_located *out);
+uint64_t editor_ffi_snapshot_excerpts(const editor_ffi_snapshot *snapshot,
+                                      editor_ffi_raw_words *out);
+
+// `Editor.Ffi.Document.excerptsNew : IO Document`. The third way a document
+// is made.
+lean_obj_res editor_glue_excerpts_new(void) {
+  pthread_once(&document_class_once, document_class_register);
+  return lean_io_result_mk_ok(
+      lean_alloc_external(document_class, editor_ffi_excerpts_new()));
+}
+
+// `Editor.Ffi.Document.excerptsSetRaw : @& Document → @& Array Document →
+// @& ByteArray → IO UInt64`
+lean_obj_res editor_glue_excerpts_set(b_lean_obj_arg document,
+                                      b_lean_obj_arg sources,
+                                      b_lean_obj_arg words) {
+  size_t count = lean_array_size(sources);
+  const editor_ffi_document **handles = NULL;
+  if (count != 0) {
+    handles = malloc(count * sizeof *handles);
+    if (handles == NULL) {
+      return lean_io_result_mk_error(lean_mk_io_user_error(
+          lean_mk_string("no memory for the sources of an excerpt list")));
+    }
+    for (size_t index = 0; index < count; index++) {
+      handles[index] =
+          lean_get_external_data(lean_array_get_core(sources, index));
+    }
+  }
+  uint64_t status =
+      editor_ffi_excerpts_set(lean_get_external_data(document), handles, count,
+                              byte_array_bytes(words), byte_array_len(words));
+  free(handles);
+  return lean_io_result_mk_ok(lean_box_uint64(status));
+}
+
+// `Editor.Ffi.Document.isExcerpts : @& Document → IO Bool`
+lean_obj_res editor_glue_document_is_excerpts(b_lean_obj_arg document) {
+  return lean_io_result_mk_ok(lean_box(
+      editor_ffi_document_is_excerpts(lean_get_external_data(document))));
+}
+
+// `Editor.Ffi.Document.excerptsLocateRaw : @& Document → USize →
+// IO RawLocated`
+lean_obj_res editor_glue_excerpts_locate(b_lean_obj_arg document,
+                                         size_t offset) {
+  editor_ffi_raw_located raw = {0, 0};
+  uint64_t status = editor_ffi_excerpts_locate(lean_get_external_data(document),
+                                               offset, &raw);
+  // `RawLocated`: no object fields, then `status`, `excerpt` and `offset`.
+  lean_object *located = lean_alloc_ctor(0, 0, 3 * sizeof(uint64_t));
+  lean_ctor_set_uint64(located, uint64_field(0, 0), status);
+  lean_ctor_set_uint64(located, uint64_field(0, 1), raw.excerpt);
+  lean_ctor_set_uint64(located, uint64_field(0, 2), raw.offset);
+  return lean_io_result_mk_ok(located);
+}
+
 // `Editor.Ffi.Snapshot.info : @& Snapshot → IO SnapshotInfo`
 lean_obj_res editor_glue_snapshot_info(b_lean_obj_arg snapshot) {
   editor_ffi_raw_snapshot_info raw;
@@ -616,6 +694,14 @@ static lean_object *raw_words_take(editor_ffi_raw_words raw) {
   lean_ctor_set_uint64(words, uint64_field(1, 0), raw.status);
   editor_ffi_text_free(raw.words, raw.len);
   return words;
+}
+
+// `Editor.Ffi.Snapshot.excerptsRaw : @& Snapshot → IO RawWords`: the list a
+// snapshot of an excerpt document carries, as words.
+lean_obj_res editor_glue_snapshot_excerpts(b_lean_obj_arg snapshot) {
+  editor_ffi_raw_words raw;
+  editor_ffi_snapshot_excerpts(lean_get_external_data(snapshot), &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
 // `Editor.Ffi.Document.markRaw : @& Document → @& ByteArray → IO RawMarked`
@@ -1267,6 +1353,10 @@ lean_obj_res editor_glue_files_pending(void) {
 bool editor_ffi_diffs_start(uint64_t id, const editor_ffi_snapshot *old,
                             const editor_ffi_snapshot *new_, uint64_t limit);
 bool editor_ffi_diffs_take(uint64_t id, editor_ffi_raw_words *out);
+bool editor_ffi_diffs_start_hunks(uint64_t id, const editor_ffi_snapshot *old,
+                                  const editor_ffi_snapshot *new_,
+                                  uint64_t limit);
+bool editor_ffi_diffs_take_hunks(uint64_t id, editor_ffi_raw_words *out);
 bool editor_ffi_diffs_cancel(uint64_t id);
 uint64_t editor_ffi_diffs_pending(void);
 void editor_ffi_document_apply_script(const editor_ffi_document *document,
@@ -1289,6 +1379,27 @@ lean_obj_res editor_glue_diffs_start(uint64_t id, b_lean_obj_arg old,
 lean_obj_res editor_glue_diffs_take(uint64_t id) {
   editor_ffi_raw_words raw;
   if (!editor_ffi_diffs_take(id, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *words = byte_array_copy(raw.words, raw.len);
+  editor_ffi_text_free(raw.words, raw.len);
+  return lean_io_result_mk_ok(option_some(words));
+}
+
+// `Editor.Ffi.diffsStartHunks : UInt64 → @& Snapshot → @& Snapshot → UInt64 →
+// IO Bool`
+lean_obj_res editor_glue_diffs_start_hunks(uint64_t id, b_lean_obj_arg old,
+                                           b_lean_obj_arg new_,
+                                           uint64_t limit) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_diffs_start_hunks(
+      id, lean_get_external_data(old), lean_get_external_data(new_), limit)));
+}
+
+// `Editor.Ffi.diffsTakeHunksRaw : UInt64 → IO (Option ByteArray)`. `none` when
+// the service keeps no hunks for the id.
+lean_obj_res editor_glue_diffs_take_hunks(uint64_t id) {
+  editor_ffi_raw_words raw;
+  if (!editor_ffi_diffs_take_hunks(id, &raw)) {
     return lean_io_result_mk_ok(lean_box(0)); // `none`
   }
   lean_object *words = byte_array_copy(raw.words, raw.len);
@@ -1691,18 +1802,23 @@ editor_ffi_display *editor_ffi_display_new_cells(uint64_t advance,
 void editor_ffi_display_rows(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
                              uint64_t width, uint64_t height, uint64_t across,
-                             uint64_t down, uint64_t top, size_t anchor,
-                             editor_ffi_raw_words *out);
+                             uint64_t down, uint64_t top, uint64_t gutter,
+                             size_t anchor, const uint8_t *block_words,
+                             size_t block_words_len, const uint8_t *block_text,
+                             size_t block_text_len, editor_ffi_raw_words *out);
 void editor_ffi_display_move(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
-                             uint64_t width, uint64_t across, size_t position,
-                             int64_t lines, bool goal_present, uint64_t goal,
-                             editor_ffi_raw_words *out);
+                             uint64_t width, uint64_t across, uint64_t gutter,
+                             size_t position, int64_t lines, bool goal_present,
+                             uint64_t goal, editor_ffi_raw_words *out);
 void editor_ffi_display_spot(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
                              uint64_t width, uint64_t height, uint64_t across,
-                             uint64_t down, uint64_t top, size_t anchor,
-                             size_t position, editor_ffi_raw_words *out);
+                             uint64_t down, uint64_t top, uint64_t gutter,
+                             size_t anchor, size_t position,
+                             const uint8_t *block_words, size_t block_words_len,
+                             const uint8_t *block_text, size_t block_text_len,
+                             editor_ffi_raw_words *out);
 bool editor_ffi_display_publish(const editor_ffi_display *display,
                                 const uint8_t *words, size_t words_len,
                                 const uint8_t *strings, size_t strings_len,
@@ -1755,45 +1871,54 @@ lean_obj_res editor_glue_display_live(void) {
 }
 
 // `Editor.Ffi.Display.rowsRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
-// UInt64 → UInt64 → UInt64 → USize → IO RawWords`
+// UInt64 → UInt64 → UInt64 → UInt64 → USize → @& ByteArray → @& String → IO
+// RawWords`. The last two are the view's blocks, borrowed for the call.
 lean_obj_res editor_glue_display_rows(b_lean_obj_arg display,
                                       b_lean_obj_arg snapshot, uint64_t width,
                                       uint64_t height, uint64_t across,
                                       uint64_t down, uint64_t top,
-                                      size_t anchor) {
+                                      uint64_t gutter, size_t anchor,
+                                      b_lean_obj_arg block_words,
+                                      b_lean_obj_arg block_text) {
   editor_ffi_raw_words raw;
-  editor_ffi_display_rows(lean_get_external_data(display),
-                          lean_get_external_data(snapshot), width, height,
-                          across, down, top, anchor, &raw);
+  editor_ffi_display_rows(
+      lean_get_external_data(display), lean_get_external_data(snapshot), width,
+      height, across, down, top, gutter, anchor, byte_array_bytes(block_words),
+      byte_array_len(block_words), string_bytes(block_text),
+      string_len(block_text), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
 // `Editor.Ffi.Display.moveRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
-// USize → UInt64 → Bool → UInt64 → IO RawWords`. The lines are a two's
-// complement number in a `UInt64`.
+// UInt64 → USize → UInt64 → Bool → UInt64 → IO RawWords`. The lines are a
+// two's complement number in a `UInt64`.
 lean_obj_res editor_glue_display_move(b_lean_obj_arg display,
                                       b_lean_obj_arg snapshot, uint64_t width,
-                                      uint64_t across, size_t position,
-                                      uint64_t lines, uint8_t goal_present,
-                                      uint64_t goal) {
+                                      uint64_t across, uint64_t gutter,
+                                      size_t position, uint64_t lines,
+                                      uint8_t goal_present, uint64_t goal) {
   editor_ffi_raw_words raw;
-  editor_ffi_display_move(lean_get_external_data(display),
-                          lean_get_external_data(snapshot), width, across,
-                          position, (int64_t)lines, goal_present, goal, &raw);
+  editor_ffi_display_move(
+      lean_get_external_data(display), lean_get_external_data(snapshot), width,
+      across, gutter, position, (int64_t)lines, goal_present, goal, &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
 // `Editor.Ffi.Display.spotRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
-// UInt64 → UInt64 → UInt64 → USize → USize → IO RawWords`
-lean_obj_res editor_glue_display_spot(b_lean_obj_arg display,
-                                      b_lean_obj_arg snapshot, uint64_t width,
-                                      uint64_t height, uint64_t across,
-                                      uint64_t down, uint64_t top,
-                                      size_t anchor, size_t position) {
+// UInt64 → UInt64 → UInt64 → UInt64 → USize → USize → @& ByteArray → @&
+// String → IO RawWords`. The last two are the view's blocks, borrowed for the
+// call.
+lean_obj_res editor_glue_display_spot(
+    b_lean_obj_arg display, b_lean_obj_arg snapshot, uint64_t width,
+    uint64_t height, uint64_t across, uint64_t down, uint64_t top,
+    uint64_t gutter, size_t anchor, size_t position, b_lean_obj_arg block_words,
+    b_lean_obj_arg block_text) {
   editor_ffi_raw_words raw;
-  editor_ffi_display_spot(lean_get_external_data(display),
-                          lean_get_external_data(snapshot), width, height,
-                          across, down, top, anchor, position, &raw);
+  editor_ffi_display_spot(
+      lean_get_external_data(display), lean_get_external_data(snapshot), width,
+      height, across, down, top, gutter, anchor, position,
+      byte_array_bytes(block_words), byte_array_len(block_words),
+      string_bytes(block_text), string_len(block_text), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 

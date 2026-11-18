@@ -33,11 +33,18 @@ command loop fills from the text model when it runs both ports together.
   tab or a wide character does at a wrap is this model's own: the contract
   says nothing of it.
 - A view `height` pixels tall shows `height / lineHeight` rows.
+- A block (`Editor/Display.lean`, "Blocks") takes the rows its text is
+  laid out in by this rule at the view's width, above the first row of the
+  line that holds its `before` (`lineOf`), and its rows count among the
+  rows a view shows: a line's blocks are shown with its first row or not at
+  all, and the first row shown has its blocks only when they fit with it.
+  A spot's `k` counts the block rows shown above its row.
 - A query's padding is in points, and the model lays out at scale 1, where
-  a point is a pixel: a view `width` wide with the padding `across` lays out
-  as one `width - 2 * across` wide, and one `height` tall with the padding
-  `down` and `top` as one `height - 2 * down - top` tall, each at 0 at
-  least.
+  a point is a pixel: a view `width` wide with the padding `across` and a
+  gutter `gutter` wide lays out as one `width - 2 * across - gutter` wide,
+  and one `height` tall with the padding `down` and `top` as one
+  `height - 2 * down - top` tall, each at 0 at least. A spot's x has
+  `across + gutter` added back.
 - A position at a wrap is the start of the later row. Only a line's last row
   holds the position at the line's end, before its break.
 - The x of a position is its character's first cell in its row times
@@ -127,6 +134,11 @@ structure Laid where
   /-- Whether it is the last row of its line, the one row of a line that
   holds the position at the line's end. -/
   lastOfLine : Bool
+  /-- The index of its line in the text: the line feeds before it. -/
+  line : Nat := 0
+  /-- Whether it is the first row of its line, the one row of a line that
+  the line's blocks are drawn above. -/
+  firstOfLine : Bool := true
   deriving Inhabited
 
 /-- The lines of a text whose characters, from the byte offset `offset`, are
@@ -184,6 +196,7 @@ def layout (text : String) (columns : Nat) : Array Laid :=
     for index in [0:lines.size] do
       let (chars, stop, after) := lines[index]!
       let lineUpTo := if index + 1 == lines.size then text.utf8ByteSize + 1 else after
+      let first := laid.size
       if chars.isEmpty then
         laid :=
           laid.push
@@ -191,6 +204,11 @@ def layout (text : String) (columns : Nat) : Array Laid :=
               lastOfLine := true }
       else
         laid := layoutLine chars columns stop lineUpTo 0 laid
+      for place in [first:laid.size] do
+        laid :=
+          laid.modify place
+            ({ · with
+              line := index, firstOfLine := place == first })
     return laid
 
 /-- Whether `offset` is a position of `text`: a character boundary within
@@ -213,16 +231,69 @@ def laidOut (model : DisplayModel) (snapshot : SnapshotId) (width offset : Nat) 
     throw .badPosition
   return layout text (columns model.cells width)
 
+/-- The line of `text` that holds the byte offset `offset`: the line feeds
+before it, an offset past the end being the end. An offset inside a
+character is on that character's line, as the boundary before it is. -/
+def lineOf (text : String) (offset : Nat) : Nat :=
+  (text.toUTF8.extract 0 (min offset text.utf8ByteSize)).foldl
+    (fun lines byte => if byte == 10 then lines + 1 else lines) 0
+
+/-- How many rows of a view `columns` cells wide the blocks of `blocks`
+before the row `row` of a text laid out as `text` take: none unless it is
+its line's first row, and otherwise, for each block whose `before` is on
+its line, the rows its text wraps to. -/
+def blockRows (text : String) (columns : Nat) (blocks : Array Block) (row : Laid) : Nat :=
+  if !row.firstOfLine then 0
+  else
+    blocks.foldl
+      (fun rows block =>
+        if lineOf text block.before == row.line then rows + (layout block.text columns).size
+        else rows)
+      0
+
+/-- The rows of `laid` a view `capacity` rows tall shows from the row
+`first`, each with the block rows shown above it (`above` gives a row's
+blocks' rows): a row's blocks with it or not at all, the walk stopping at
+the first that does not fit, but the first row's left out when they do not
+fit with it (`Editor/Display.lean`, "Blocks"). -/
+def shownFrom (laid : Array Laid) (first capacity : Nat) (above : Laid → Nat) : Array (Nat × Nat) :=
+  Id.run do
+    let mut shown := #[]
+    let mut used := 0
+    for index in [first:laid.size] do
+      let blocks := above laid[index]!
+      if used + 1 + blocks ≤ capacity then
+        shown := shown.push (index, blocks)
+        used := used + 1 + blocks
+      else if index == first && 1 ≤ capacity then
+        shown := shown.push (index, 0)
+        used := 1
+      else
+        break
+    return shown
+
+/-- The rows a view shows, each with the block rows above it: from the row
+that holds the anchor, as many as fit its height with its blocks, fewer at
+the end of the text; the view less its padding, as points at scale 1. -/
+def shownRows (model : DisplayModel) (snapshot : SnapshotId) (width height anchor : Nat)
+    (blocks : Array Block) : Except DisplayError (Array Laid × Array (Nat × Nat)) := do
+  let laid ← model.laidOut snapshot width anchor
+  let text := (model.text? snapshot).getD ""
+  let columns := columns model.cells width
+  let shown :=
+    shownFrom laid (rowOf laid anchor) (height / model.cells.lineHeight)
+      (blockRows text columns blocks)
+  return (laid, shown)
+
 /-- The rows a view shows: from the row that holds the anchor, as many as
-whole rows fit its height, fewer at the end of the text; the view less its
-padding, as points at scale 1. -/
+whole rows fit its height, its blocks' rows counted among them, fewer at the
+end of the text; the view less its padding, as points at scale 1. -/
 def rows (model : DisplayModel) (query : Display.RowsQuery) :
     Except DisplayError (Array Display.Row) := do
-  let width := query.width - 2 * query.padding.across
+  let width := query.width - 2 * query.padding.across - query.padding.gutter
   let height := query.height - 2 * query.padding.down - query.padding.top
-  let laid ← model.laidOut query.snapshot width query.anchor
-  let first := rowOf laid query.anchor
-  return (laid.extract first (first + height / model.cells.lineHeight)).map (·.row)
+  let (laid, shown) ← model.shownRows query.snapshot width height query.anchor query.blocks
+  return shown.map fun (index, _) => laid[index]!.row
 
 /-- Where a position goes: to the row `query.lines` from the one that holds
 it, kept within the first and the last row, at the cell the goal aims for
@@ -232,7 +303,8 @@ row's end on a line's last row and the row's last character on any other.
 The goal passed back is the one aimed for. -/
 def move (model : DisplayModel) (query : Display.MoveQuery) : Except DisplayError Display.Moved :=
   do
-  let laid ← model.laidOut query.snapshot (query.width - 2 * query.across) query.position
+  let laid ←
+    model.laidOut query.snapshot (query.width - 2 * query.across - query.gutter) query.position
   let here := rowOf laid query.position
   let held := laid[here]!
   let own := held.firsts[(held.chars.filter (· < query.position)).size]?.getD held.reach
@@ -245,26 +317,26 @@ def move (model : DisplayModel) (query : Display.MoveQuery) : Except DisplayErro
     else if row.lastOfLine then row.row.stop else row.chars.back?.getD row.row.stop
   return { position, goal }
 
-/-- Where a position is drawn in a view: on the row `k` rows below the one
-that holds the anchor, when that is among the rows `rows` shows, at `y = down
-+ top + k * lineHeight`, `lineHeight` tall, and at `x = across + cell *
-advance`, where `cell` is the position's first cell in its row as a move
-counts it; none when the rows shown do not hold it. -/
+/-- Where a position is drawn in a view: on its row, when that is among the
+rows `rows` shows, at `y = down + top + k * lineHeight`, where `k` is the
+rows shown above it, block rows included, `lineHeight` tall, and at `x =
+across + gutter + cell * advance`, where `cell` is the position's first cell in its
+row as a move counts it; none when the rows shown do not hold it. -/
 def spot (model : DisplayModel) (query : Display.SpotQuery) :
     Except DisplayError (Option Display.Spot) := do
-  let width := query.width - 2 * query.padding.across
+  let width := query.width - 2 * query.padding.across - query.padding.gutter
   let height := query.height - 2 * query.padding.down - query.padding.top
-  let laid ← model.laidOut query.snapshot width query.anchor
+  let (laid, shown) ← model.shownRows query.snapshot width height query.anchor query.blocks
   discard <| model.laidOut query.snapshot width query.position
-  let first := rowOf laid query.anchor
   let here := rowOf laid query.position
-  unless first ≤ here && here < first + height / model.cells.lineHeight do
-    return none
+  let some place := shown.findIdx? (·.1 == here) | return none
+  let above := (shown.extract 0 place).foldl (fun rows (_, blocks) => rows + 1 + blocks) 0
+  let rowsDown := above + shown[place]!.2
   let held := laid[here]!
   let cell := held.firsts[(held.chars.filter (· < query.position)).size]?.getD held.reach
   return some
-      { x := query.padding.across + cell * model.cells.advance
-        y := query.padding.down + query.padding.top + (here - first) * model.cells.lineHeight
+      { x := query.padding.across + query.padding.gutter + cell * model.cells.advance
+        y := query.padding.down + query.padding.top + rowsDown * model.cells.lineHeight
         height := model.cells.lineHeight }
 
 /-- Answers `request`: a scene is recorded, a request of the window is

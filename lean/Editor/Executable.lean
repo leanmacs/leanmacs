@@ -7,6 +7,10 @@ is pure, so `model-test` pins it (`ModelTest.executableModeChecks`), and
 
 - `editor demo` alone is the demonstration: it calls the Rust library and
   prints what comes back.
+- `editor --version` alone says the version, the build ID and the commit
+  of the running build (`Editor/Version.lean`). `--version` with anything
+  else is the window mode's, which refuses it as an option it does not
+  know.
 - `editor headless …` is the headless mode, handed the rest of the command
   line (`Editor/Headless.lean`).
 - `editor window-check …` is the keyboard check, handed its options
@@ -27,6 +31,8 @@ namespace Editor.Executable
 inductive Mode where
   /-- The demonstration. -/
   | demo
+  /-- The version, the build ID and the commit. -/
+  | version
   /-- The headless mode, with the command line after `headless`. -/
   | headless (arguments : List String)
   /-- The keyboard check, with the options after `window-check`. -/
@@ -38,6 +44,7 @@ inductive Mode where
 /-- The mode the command line `arguments` selects. -/
 def mode : List String → Mode
   | ["demo"] => .demo
+  | ["--version"] => .version
   | "headless" :: rest => .headless rest
   | "window-check" :: options => .windowCheck options
   | arguments => .window arguments

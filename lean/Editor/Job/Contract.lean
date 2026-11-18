@@ -557,6 +557,42 @@ def diffed (root : System.FilePath) (index : Nat) (limit : Nat := roomy) : JobM 
   | .error error =>
     throw s!"the diff of pair {index} was refused: {error.describe}"
 
+/-- The hunks of the diff of the files `o{index}` and `n{index}` in `root`,
+under `limit`; a refusal fails the job, saying which. -/
+def hunked (root : System.FilePath) (index : Nat) (limit : Nat := roomy) : JobM Diff.Hunks := do
+  let old ← loaded (root / s!"o{index}")
+  let new ← loaded (root / s!"n{index}")
+  match ← Diff.hunks (.held old.snapshot) (.held new.snapshot) limit with
+  | .ok hunks =>
+    return hunks
+  | .error error =>
+    throw s!"the hunks of pair {index} were refused: {error.describe}"
+
+/-- Whether every hunk of `hunks` starts and stops at a line's start or its
+text's end in both texts, and none is empty on both sides. -/
+def onLines (old new : String) (hunks : Diff.Hunks) : Bool :=
+  let (oldBytes, newBytes) := (old.toUTF8, new.toUTF8)
+  hunks.all fun hunk =>
+    !(hunk.oldStart == hunk.oldStop && hunk.newStart == hunk.newStop) &&
+      Diff.onLine oldBytes hunk.oldStart &&
+      Diff.onLine oldBytes hunk.oldStop &&
+      Diff.onLine newBytes hunk.newStart &&
+      Diff.onLine newBytes hunk.newStop
+
+/-- The diff property that `check` holds of the hunks of every pair of
+`pairs`. -/
+def everyPairHunks (name : String) (pairs : List (String × String))
+    (check : String → String → Diff.Hunks → Bool) : FileProperty
+    where
+  name
+  files := pairFiles pairs
+  holds root := do
+    let mut every := true
+    for ((old, new), index) in pairs.zipIdx do
+      every := every && check old new (← hunked root index)
+    return every
+  after := pairFiles pairs
+
 /-- Whether every step of `script` starts and stops at a character boundary of
 both texts. -/
 def onBoundaries (old new : String) (script : Diff.Script) : Bool :=
@@ -649,7 +685,22 @@ def diffProperties : List FileProperty :=
         let published ← Diff.lines (.snapshot ⟨1000⟩) (.held old.snapshot) roomy
         let notHeld ← Diff.lines (.held old.snapshot) (.held ⟨1000000⟩) roomy
         return noSnapshot published && noSnapshot notHeld
-      after := pairFiles [("a\n", "b\n")] }]
+      after := pairFiles [("a\n", "b\n")] },
+    everyPairHunks "a diff's hunks applied to the old text give the new text" diffPairs
+      fun old new hunks => Diff.Hunks.apply old new hunks == some new,
+    everyPairHunks "a diff's hunks of equal texts are none"
+      [("", ""), ("a", "a"), ("a\n", "a\n"), ("a\nb\nc\n", "a\nb\nc\n"), ("é\n日\n", "é\n日\n")]
+      fun _ _ hunks => hunks.isEmpty,
+    everyPairHunks
+      "a diff's hunks are whole lines of both texts, in order, and none is empty on both sides"
+      diffPairs fun old new hunks =>
+      onLines old new hunks && (Diff.Hunks.apply old new hunks).isSome,
+    { name := "over the line limit a diff's middle is one hunk of whole lines"
+      files := pairFiles [("h\na\nk\nb\nt\n", "h\nA\nk\nB\nt\n")]
+      holds := fun root => do
+        let over ← hunked root 0 2
+        return over == #[{ oldStart := 2, oldStop := 8, newStart := 2, newStop := 8 }]
+      after := pairFiles [("h\na\nk\nb\nt\n", "h\nA\nk\nB\nt\n")] }]
 where
   /-- Whether `reply` is the refusal `noSuchSnapshot`. -/
   noSnapshot : Except DiffError Diff.Script → Bool

@@ -96,6 +96,10 @@ operation is a git command and its parsed output.
 If process-per-query is too slow for status in large repositories, an
 in-process library can sit behind the same interface.
 
+The interface, its git implementation, the status buffer, a file at a
+revision (`vc-show`), the gutter marks, staging a hunk and committing from
+a message buffer as built are in [version-control.md](version-control.md).
+
 ## rdm
 
 rdm is a git-backed tool for roadmaps, phases, tasks, plans and reviews,

@@ -11,7 +11,7 @@ use editor_text::{
 use proptest::collection::vec;
 use proptest::prelude::*;
 
-use crate::{applied, check, floor, initial_text_to_walk, walks};
+use crate::{applied, check, floor, initial_text_to_walk, patched, walks};
 
 /// The point of the position `offset` of `text`, by counting its line
 /// feeds.
@@ -70,20 +70,6 @@ fn edits_of(changes: &ChangeSet, old: &str, new: &str) -> Vec<Edit> {
     }
     close(&mut run, old_at, new_at);
     edits
-}
-
-/// `old` with each edit's old range replaced by the bytes of its new range
-/// in `new`.
-fn patched(old: &str, new: &str, edits: &[Edit]) -> String {
-    let mut made = String::new();
-    let mut kept_from = 0;
-    for edit in edits {
-        made.push_str(&old[kept_from..edit.old.start]);
-        made.push_str(&new[edit.new.start..edit.new.end]);
-        kept_from = edit.old.end;
-    }
-    made.push_str(&old[kept_from..]);
-    made
 }
 
 /// Checks the parser form of each of `edits`, which make `new` of `old`,

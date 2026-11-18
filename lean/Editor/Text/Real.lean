@@ -44,6 +44,24 @@ so the library refuses it in its own order (`RealTexts.word`); everywhere
 else it is refused here, as what the library would have said of a number
 that large.
 
+An excerpt text is a document the library makes with no excerpts
+(`Ffi.Document.excerptsNew`) and then gives its list, the sources as an array
+of their documents, one for each excerpt (`Ffi.Document.excerptsSet`). It is
+added to the table only once the library accepts the list, so a refused list
+makes no text, and the sources of its list are kept beside it
+(`RealTexts.excerptSources`), so the library's index of an excerpt names its
+source's text (`RealTexts.locate`). The library catches it up whenever it is
+read, and makes its edits of its sources: an insert, a delete and a
+transaction go to the library as they would for any text, and its refusals
+`outsideExcerpt` and `noSuchSource` come back as the port's `outsideExcerpt`
+and `noSuchText`. A refused trace of it is told from a bad range by asking
+the library whether it is an excerpt document (`RealTexts.badRangeOf`), and
+an edit script is refused for one before the source is read. Any request the
+binding or the glue refuses before the library locks the document (a marker
+id with no number for the text's document, a revision or an offset no word
+holds, a selection that is none) catches an excerpt text up as well
+(`RealTexts.catchUp`), as the port says every request that names one does.
+
 A text's markers are the library's: the binding keeps no table of them,
 because a marker's id is its text and the library's number for it within
 that text's document. The library numbers each document's markers on their
@@ -165,6 +183,11 @@ structure RealTexts where
   empties it after, so it is never part of the tables a later command
   finds. -/
   arrived : Array (JobSnapshotId × Ffi.Snapshot) := #[]
+  /-- The sources of each excerpt text's list, one for each excerpt, by text
+  id: `none` for a text that is not one. The library names an excerpt by its
+  index in the list (`Ffi.Document.excerptsLocate`), and this names the
+  excerpt's source. -/
+  excerptSources : Array (Option (Array TextId)) := #[]
 
 namespace RealTexts
 
@@ -187,20 +210,45 @@ snapshot, or one that was released. -/
 def snapshot? (id : SnapshotId) : StateT RealTexts IO (Option Ffi.Snapshot) := do
   (← get).snapshots.find? id
 
+/-- The refusal of a range the library refused of `document`'s trace:
+`excerpted` for an excerpt document, whose traces are all refused, and
+`badRange` for any other. -/
+def badRangeOf (document : Ffi.Document) : IO TextError :=
+  return if ← document.isExcerpts then .excerpted else .badRange
+
+/-- Catches `document` up with its sources when it is an excerpt document, by
+taking a snapshot of it, which locks it, and nothing otherwise. A request
+that names an excerpt text catches it up before it is answered, refused
+inverses, edit scripts and traces aside, so a request refused before the
+library locks the document calls this. -/
+def catchUp (document : Ffi.Document) : IO Unit := do
+  if ← document.isExcerpts then
+    discard document.snapshot
+
 /-- The library's answer to an edit of the text `id`, replacing its bytes
-from `start` up to `stop` by `s`.
+from `start` up to `stop` by `s`. An excerpt text's is its sources' edit,
+refused after the catch-up as the library refuses it: `outsideExcerpt`, and
+`noSuchText` for an excerpt of a source that was released.
 
 The port's offsets are `Nat` and the library's are machine words. An offset
-no word holds is past the end of any text, so it is refused here: converted,
-it would wrap round to an offset the library might accept. -/
+no word holds is past the end of any text, so it is refused here, after an
+excerpt text is caught up (`catchUp`): converted, it would wrap round to an
+offset the library might accept. -/
 def edit (id : TextId) (start stop : Nat) (s : String) :
     StateT RealTexts IO (Except TextError Unit) := do
   let some document ← document? id | return .error .noSuchText
   unless start < USize.size ∧ stop < USize.size do
+    catchUp document
     return .error .badRange
-  if ← document.replace start.toUSize stop.toUSize s then
+  match ← document.replace start.toUSize stop.toUSize s with
+  | .done =>
     return .ok ()
-  return .error .badRange
+  | .badRange =>
+    return .error .badRange
+  | .outsideExcerpt =>
+    return .error .outsideExcerpt
+  | .noSuchSource =>
+    return .error .noSuchText
 
 /-- The library's word for a count, an offset or an index of the port.
 
@@ -291,10 +339,15 @@ def markerWord? (id : TextId) (held : MarkerId) : Option UInt64 :=
   | none => none
 
 /-- The library's answer to reading the marker `held` of the text `id`. An
-id with no number for that text's document names no marker. -/
+id with no number for that text's document names no marker; an excerpt text
+is caught up first (`catchUp`). -/
 def markerAt (id : TextId) (held : MarkerId) : StateT RealTexts IO (Except TextError Marker) := do
   let some document ← document? id | return .error .noSuchText
-  let some number := markerWord? id held | return .error .noSuchMarker
+  let some number := markerWord? id held
+    |
+    do
+      catchUp document
+      return .error .noSuchMarker
   let some found ← document.marker number | return .error .noSuchMarker
   return .ok (markerOf found)
 
@@ -302,27 +355,35 @@ def markerAt (id : TextId) (held : MarkerId) : StateT RealTexts IO (Except TextE
 the text `id`. The order of the refusals is the library's. An id with no
 number for that text's document names no marker; the library refuses a
 selection that is none before it looks an id up, so that is said here first
-for such an id. -/
+for such an id, after an excerpt text is caught up (`catchUp`). -/
 def place (id : TextId) (held : MarkerId) (next : Marker) :
     StateT RealTexts IO (Except TextError Unit) := do
   let some document ← document? id | return .error .noSuchText
   let some number := markerWord? id held
     |
-    match next with
-    | .selection ranges =>
-      return .error (if ranges.primary < ranges.ranges.size then .noSuchMarker else .badSelection)
-    | .anchor _ =>
-      return .error .noSuchMarker
+    do
+      catchUp document
+      match next with
+      | .selection ranges =>
+        return .error (if ranges.primary < ranges.ranges.size then .noSuchMarker else .badSelection)
+      | .anchor _ =>
+        return .error .noSuchMarker
   match ← document.place number (marker next) with
   | .ok () =>
     return .ok ()
   | .error refusal =>
     return .error (markRefusal refusal)
 
-/-- The library's answer to giving up the marker `held` of the text `id`. -/
+/-- The library's answer to giving up the marker `held` of the text `id`. An
+id with no number for that text's document names no marker; an excerpt text
+is caught up first (`catchUp`). -/
 def unmark (id : TextId) (held : MarkerId) : StateT RealTexts IO (Except TextError Unit) := do
   let some document ← document? id | return .error .noSuchText
-  let some number := markerWord? id held | return .error .noSuchMarker
+  let some number := markerWord? id held
+    |
+    do
+      catchUp document
+      return .error .noSuchMarker
   if ← document.unmark number then
     return .ok ()
   return .error .noSuchMarker
@@ -335,17 +396,32 @@ def transaction (transaction : Transaction) : Ffi.Transaction where
 
 /-- The library's answer to applying `changes` to the text `id`, with
 `origin` as who made the edit. When a transaction fits and in what order it
-is refused are the library's decisions. -/
+is refused are the library's decisions. An excerpt text's is its sources'
+edit, and the revision the excerpt text's: `outsideExcerpt`, and
+`noSuchText` for an excerpt of a source that was released. The glue refuses
+a selection that is none before the library locks the document, so a
+refusal catches an excerpt text up here (`catchUp`), as every other request
+of it is. -/
 def apply (id : TextId) (changes : Transaction) (origin : Origin) :
     StateT RealTexts IO (Except TextError Nat) := do
   let some document ← document? id | return .error .noSuchText
+  let refused (refusal : TextError) : IO (Except TextError Nat) := do
+    catchUp document
+    return .error refusal
   match ← document.apply (transaction changes) origin.id with
   | .ok revision =>
     return .ok revision.toNat
   | .error .badChange =>
-    return .error .badChange
+    refused .badChange
   | .error .badSelection =>
-    return .error .badSelection
+    refused .badSelection
+  | .error .outsideExcerpt =>
+    refused .outsideExcerpt
+  | .error .noSuchSource =>
+    refused .noSuchText
+  | .error .excerpted =>
+    -- Only an edit script is refused so.
+    refused .excerpted
 
 /-- The port's form of a span of the library. -/
 def span (span : Ffi.Span) : Span where
@@ -368,10 +444,13 @@ def attribution (piece : Ffi.Attribution) : Attribution where
 The port's revisions and offsets are `Nat` and the library's are machine
 words. A revision no word holds is one no text has reached, and an offset no
 word holds is past the end of any text, so each is refused here as that:
-converted, it would wrap round to one the library might answer. -/
+converted, it would wrap round to one the library might answer. Such a
+revision is refused after an excerpt text is caught up (`catchUp`); a trace
+of one catches nothing up. -/
 def answerLog (document : Ffi.Document) : (query : LogQuery) → IO (Except TextError query.Answer)
   | .since revision => do
     unless revision < UInt64.size do
+      catchUp document
       return .error .unknownRevision
     match ← document.changesSince revision.toUInt64 with
     | .ok patch =>
@@ -385,15 +464,18 @@ def answerLog (document : Ffi.Document) : (query : LogQuery) → IO (Except Text
       return .error .forgotten
   | .trace start stop => do
     unless start < USize.size ∧ stop < USize.size do
-      return .error .badRange
-    let some trace ← document.trace start.toUSize stop.toUSize | return .error .badRange
+      return .error (← badRangeOf document)
+    let some trace ←
+      document.trace start.toUSize stop.toUSize | return .error (← badRangeOf document)
     return .ok (trace.map attribution)
 
 /-- The library's answer to forgetting the log of the text `id` up to
-`revision`. A revision no word holds is one no text has reached. -/
+`revision`. A revision no word holds is one no text has reached, refused
+after an excerpt text is caught up (`catchUp`). -/
 def forget (id : TextId) (revision : Nat) : StateT RealTexts IO (Except TextError Unit) := do
   let some document ← document? id | return .error .noSuchText
   unless revision < UInt64.size do
+    catchUp document
     return .error .unknownRevision
   if ← document.forget revision.toUInt64 then
     return .ok ()
@@ -408,7 +490,7 @@ def applyInverse (id : TextId) (first last : Nat) (origin : Origin) :
     StateT RealTexts IO (Except TextError Inverted) := do
   let some document ← document? id | return .error .noSuchText
   unless first < UInt64.size ∧ last < UInt64.size do
-    return .error .unknownRevision
+    return .error (if ← document.isExcerpts then .excerpted else .unknownRevision)
   match ← document.applyInverse first.toUInt64 last.toUInt64 origin.id with
   | .ok inverted =>
     return .ok ⟨inverted.revision.toNat, inverted.selection.map selectionOf⟩
@@ -418,16 +500,20 @@ def applyInverse (id : TextId) (first last : Nat) (origin : Origin) :
     return .error .noInverse
   | .error .notInState =>
     return .error .notInState
+  | .error .excerpted =>
+    return .error .excerpted
 
 /-- The library's answer to dropping the inverses the text `id` keeps for
 its revisions from `first` to `last`. A last revision no word holds is one
-no text has reached. A first one no word holds is sent as the largest word
-(`word`), which is after any last the library accepts, so nothing is
-dropped: what a run whose first is after its last drops. -/
+no text has reached, refused after an excerpt text is caught up (`catchUp`).
+A first one no word holds is sent as the largest word (`word`), which is
+after any last the library accepts, so nothing is dropped: what a run whose
+first is after its last drops. -/
 def dropInverses (id : TextId) (first last : Nat) : StateT RealTexts IO (Except TextError Unit) :=
   do
   let some document ← document? id | return .error .noSuchText
   unless last < UInt64.size do
+    catchUp document
     return .error .unknownRevision
   if ← document.dropInverses (word first) last.toUInt64 then
     return .ok ()
@@ -556,6 +642,42 @@ def answer (snapshot : Ffi.Snapshot) : (query : TextQuery) → IO (Except TextEr
       return .ok (.invalid reason)
     | .badRange =>
       return .error .badRange
+  -- A snapshot carries no source by text id, and an excerpt text is
+  -- answered before a snapshot is taken (`locate`).
+  | .locate _ => return .error .notExcerpted
+  -- A snapshot of an excerpt document carries its list as it was taken; a
+  -- text's question goes through the snapshot it takes, caught up.
+  | .excerpts => do
+    let some list ← snapshot.excerpts | return .error .notExcerpted
+    return .ok
+        (list.map fun (start, stop, sourceStart, sourceStop) =>
+          { start, stop, sourceStart, sourceStop })
+
+/-- The library's answer to where the position `offset` of the excerpt text
+`id` is: the excerpt the library names by its index, whose source is read off
+`excerptSources`, and the offset in that source. An offset no word holds is
+not a position of any text, refused here after the text is caught up
+(`catchUp`). -/
+def locate (id : TextId) (offset : Nat) : StateT RealTexts IO (Except TextError (Option Located)) :=
+  do
+  let some document ← document? id | return .error .noSuchText
+  unless ← document.isExcerpts do
+    return .error .notExcerpted
+  unless offset < USize.size do
+    catchUp document
+    return .error .badPosition
+  match ← document.excerptsLocate offset.toUSize with
+  | .ok none =>
+    return .ok none
+  | .ok (some (index, inSource)) =>
+    let sources := ((← get).excerptSources[id.index]?).join.getD #[]
+    let some source := sources[index]?
+      | throw (IO.userError s!"the library located an excerpt {index} the list does not have")
+    return .ok (some ⟨index, source, inSource⟩)
+  | .error .notExcerpts =>
+    return .error .notExcerpted
+  | .error .badPosition =>
+    return .error .badPosition
 
 /-- The library's snapshot of `source`: the snapshot it names, or a new one
 of the text it names, as the text is now. The refusal when it names nothing,
@@ -574,7 +696,10 @@ nothing, or something that was released. -/
 def release : TextSource → StateT RealTexts IO (Except TextError Unit)
   | .text id => do
     let some _ ← document? id | return .error .noSuchText
-    modify fun table => { table with documents := table.documents.setIfInBounds id.index none }
+    modify fun table =>
+        { table with
+          documents := table.documents.setIfInBounds id.index none
+          excerptSources := table.excerptSources.setIfInBounds id.index none }
     return .ok ()
   | .snapshot id => do
     if ← (← get).snapshots.release id then
@@ -594,10 +719,14 @@ puts in from `source`, unless the text has moved past `base`. The refusals
 come in the port's order: the text, then its revision, read from a snapshot
 of it, then the source, then the library's own, which looks at the revision
 again under the document's lock, so a script is never applied to a text that
-moved in between. A base no word holds is one no text has reached. -/
+moved in between. A base no word holds is one no text has reached. An excerpt
+text is refused after the text is found and before anything else, so neither
+it nor the source is caught up. -/
 def applyScript (id : TextId) (base : Nat) (source : TextSource) (script : Diff.Script)
     (origin : Origin) : StateT RealTexts IO (Except TextError Nat) := do
   let some document ← document? id | return .error .noSuchText
+  if ← document.isExcerpts then
+    return .error .excerpted
   unless base < UInt64.size ∧ (← (← document.snapshot).info).revision.toNat == base do
     return .error .moved
   match ← snapshotOf source with
@@ -611,6 +740,71 @@ def applyScript (id : TextId) (base : Nat) (source : TextSource) (script : Diff.
       return .error .moved
     | .error .badChange =>
       return .error .badChange
+    | .error .excerpted =>
+      return .error .excerpted
+
+/-- The library's documents for the sources of `list`, one for each excerpt
+in its order; `none` when a source names no text. -/
+def sourcesOf? (list : Array Excerpt) : StateT RealTexts IO (Option (Array Ffi.Document)) := do
+  let mut sources := #[]
+  for excerpt in list do
+    let some document ← document? excerpt.source | return none
+    sources := sources.push document
+  return some sources
+
+/-- The library's answer to giving the excerpt document `document` the list
+`list`, whose sources are `sources`, one for each excerpt. An offset no word
+holds goes as the largest word (`word`), which no text is long enough to
+accept, so the library refuses it as a range that is not two positions. -/
+def setList (document : Ffi.Document) (sources : Array Ffi.Document) (list : Array Excerpt) :
+    IO (Except TextError Unit) := do
+  let words := list.mapIdx fun index excerpt => (index, word excerpt.start, word excerpt.stop)
+  match ← document.excerptsSet sources words with
+  | .ok () =>
+    return .ok ()
+  | .error .notExcerpts =>
+    return .error .notExcerpted
+  | .error .excerpted =>
+    return .error .excerpted
+  | .error .badRange =>
+    return .error .badRange
+
+/-- `slots` with the sources of `list` at the text `index`, padded with
+`none` up to it. -/
+def listed (slots : Array (Option (Array TextId))) (index : Nat) (list : Array Excerpt) :
+    Array (Option (Array TextId)) :=
+  (slots ++ Array.replicate (index + 1 - slots.size) none).setIfInBounds index
+    (some (list.map Excerpt.source))
+
+/-- The library's answer to making an excerpt text of `list`: a new excerpt
+document given the list, added to the table only when the library accepts
+it, so a refused list makes no text and takes no id. -/
+def createExcerpts (list : Array Excerpt) : StateT RealTexts IO (Except TextError TextId) := do
+  let some sources ← sourcesOf? list | return .error .noSuchText
+  let document ← Ffi.Document.excerptsNew
+  match ← setList document sources list with
+  | .error refusal =>
+    return .error refusal
+  | .ok () =>
+    modifyGet fun table =>
+        (.ok ⟨table.documents.size⟩,
+          { table with
+            documents := table.documents.push (some document)
+            excerptSources := listed table.excerptSources table.documents.size list })
+
+/-- The library's answer to replacing the list of the text `id` with `list`.
+The text and whether it is an excerpt text are looked at here first, so the
+refusals come in the port's order. -/
+def setExcerpts (id : TextId) (list : Array Excerpt) :
+    StateT RealTexts IO (Except TextError Unit) := do
+  let some document ← document? id | return .error .noSuchText
+  unless ← document.isExcerpts do
+    return .error .notExcerpted
+  let some sources ← sourcesOf? list | return .error .noSuchText
+  let set ← setList document sources list
+  if set matches .ok () then
+    modify fun table => { table with excerptSources := listed table.excerptSources id.index list }
+  return set
 
 /-- The library's answer to each request. -/
 def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
@@ -626,6 +820,7 @@ def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
   | .snapshot id => do
     let some document ← document? id | return .error .noSuchText
     return .ok (← (← get).snapshots.add (← document.snapshot))
+  | .ask (.text id) (.locate offset) => locate id offset
   | .ask source query => do
     match ← snapshotOf source with
     | .error refusal =>
@@ -657,6 +852,8 @@ def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
     let some (_, snapshot) := (← get).arrived.find? (·.1 == held) | return .error .noSuchSnapshot
     return .ok (← (← get).snapshots.add snapshot)
   | .applyScript id base source script origin => applyScript id base source script origin
+  | .excerpts list => createExcerpts list
+  | .setExcerpts id list => setExcerpts id list
 
 end RealTexts
 

@@ -186,10 +186,13 @@ from the next command.
   for the loop to hand to its host once the command has run to its end
   (`Editor/Loop.lean`, "A theme switch from a command").
 - **Asking for the workspace settings** (`StateRequest.workspaceSettings`)
-  is answered config's workspace roots and the config generation the loop
-  was told of (`Loop.Registered.workspaceRoots`, `generation`), the state
-  not read and not changed. A file's open asks, for its directory's
-  workspace (`Editor/Workspace/Attach.lean`).
+  is answered the workspace settings the loop was told of
+  (`Loop.Registered.workspaceSettings`: config's workspace roots and the
+  git program) and the config generation (`generation`), the state not
+  read and not changed. A file's open asks, for its directory's workspace
+  (`Editor/Workspace/Attach.lean`), and the version-control commands ask,
+  for the git program; the gutter's reconciler is handed the same
+  (`Editor/Loop.lean`, `Stepped.published`).
 - **Asking for the display rules** (`StateRequest.displayRules`) is
   answered config's display rules the loop was told of
   (`Loop.Registered.displayRules`), in order, the state not read and not
@@ -302,7 +305,7 @@ changed on disk"), so the next edit lands. An edit script
 (`TextId.applyScript`) is not looked at: a reload is never refused by it.
 Undo is an edit here too; the loop's own rollback is not dispatched.
 
-## Read-only buffers
+## Read-only buffers and excerpt sources
 
 Before the first-edit check, the same requests (`TextRequest.edited?`) are
 looked at for a read-only buffer over the text (`EditorState.readOnly?`,
@@ -315,11 +318,39 @@ owns the buffer writes it inside `BufferId.writing` (`Editor/Api.lean`),
 which clears the flag for the edit, as a state request this transformation
 answers in place.
 
+An edit of an excerpt buffer's text (`Editor/State.lean`, "Excerpt
+buffers") is its sources' edit, and what may edit a source is the editor's
+buffer policy, not the store's. So after those two checks, an insert, a
+delete or a transaction of the text of an excerpt buffer
+(`EditorState.excerptBufferOver?`) is looked at for the sources it
+reaches (`excerptSources`): the store is asked where the start of each
+range it changes is (`TextId.locate`, `Change.ranges`), and each source is
+mapped to its buffer (`EditorState.bufferOver?`).
+
+- **A source no buffer holds** ends the program as a command that gives
+  up, with `<excerpt buffer> reads a text no buffer holds`
+  (`EditorState.unheldReason`): neither the rollback nor an undo could
+  reach the edit.
+- **A read-only source buffer** ends it the same way, with `<source> is
+  read-only`.
+- **A source buffer whose file changed on disk unbeknown to the user** ends
+  it with `Guarded.superseded`, as the first edit of that buffer would.
+- Each is decided before the edit is made. A refusal of `locate`, or an
+  offset it finds no excerpt for, lets the edit through: the store then
+  refuses it itself.
+- **An accepted edit is noted** in the excerpt buffer: the source buffers
+  it reached are touched (`EditorState.touch`), so the loop makes them one
+  step of the excerpt buffer's history at the end of the event.
+- An inverse applied to a source is guarded by the source's own buffer, as
+  today: `u` in an excerpt buffer over a read-only source gives up as `u`
+  in that buffer does.
+
 Pinned by `ModelTest.guardChecks` (the guard, on commands that make no
 state request), `ModelTest.dispatchStateChecks`,
 `ModelTest.modeEnterChecks`, for the first edit after a change on disk,
-`ModelTest.stalenessChecks`, and, for read-only buffers,
-`ModelTest.readOnlyChecks`.
+`ModelTest.stalenessChecks`, for read-only buffers,
+`ModelTest.readOnlyChecks`, and for excerpt sources,
+`ModelTest.excerptBufferChecks`.
 -/
 
 namespace Editor
@@ -351,6 +382,59 @@ script is not among them, so a reload is never refused by it. -/
 def TextRequest.edited? : TextRequest → Option TextId
   | .insert text .. | .delete text .. | .apply text .. | .applyInverse text .. => some text
   | _ => none
+
+/-- Why an edit through an excerpt buffer is not made ("Read-only buffers
+and excerpt sources", in the module docs). -/
+inductive ExcerptGuard where
+  /-- A source buffer, called `name`, is read-only. -/
+  | readOnly (name : String)
+  /-- A source is a text no buffer holds. -/
+  | unheld
+  /-- The file of the source buffer `buffer`, at `path`, changed on disk and
+  the user was not told; `found` is its stamp now, `none` for a file that is
+  gone. -/
+  | untold (buffer : BufferId) (path : System.FilePath) (found : Option File.Stamp)
+  deriving BEq, Repr
+
+/-- The source buffers an edit of the excerpt text `text` that changes
+`ranges` reaches, each once, or why the edit is not made: for each range,
+the store is asked where its start is (`TextId.locate`), and the source
+found is mapped to its buffer in `state`. A refusal of the question, or an
+offset no excerpt holds, lets the edit through: the store then refuses it
+itself. It is not refused. -/
+def excerptSources (state : EditorState) (text : TextId) (ranges : Array (Nat × Nat)) :
+    TextM (Except ExcerptGuard (Array BufferId)) := do
+  let mut sources := #[]
+  for (start, _) in ranges do
+    let .ok (some found) ← observing (text.locate start) | continue
+    let some buffer := state.bufferOver? found.source | return .error .unheld
+    if let some (_, name) := state.readOnly? found.source then
+      return .error (.readOnly name)
+    if let some (untold, path, stamp) := state.untold? found.source then
+      return .error (.untold untold path stamp)
+    unless sources.contains buffer do
+      sources := sources.push buffer
+  return .ok sources
+
+/-- The excerpt buffer an edit request reaches through, its text and the
+ranges the edit changes ("Read-only buffers and excerpt sources", in the
+module docs): an insert, a delete or a transaction of the text of an
+excerpt buffer of `state`. -/
+def excerptEdit? (state : EditorState) :
+    TextRequest → Option (BufferId × TextId × Array (Nat × Nat))
+  | .insert text offset _ => (state.excerptBufferOver? text).map (·, text, #[(offset, offset)])
+  | .delete text start stop => (state.excerptBufferOver? text).map (·, text, #[(start, stop)])
+  | .apply text transaction _ =>
+    (state.excerptBufferOver? text).map (·, text, Change.ranges transaction.changes)
+  | _ => none
+
+/-- Whether `reply` says the store accepted `request`, for the requests
+`excerptEdit?` looks at. -/
+def TextRequest.accepted : (request : TextRequest) → request.Reply → Bool
+  | .insert .., reply => ((reply : Except TextError Unit) matches .ok _)
+  | .delete .., reply => ((reply : Except TextError Unit) matches .ok _)
+  | .apply .., reply => ((reply : Except TextError Nat) matches .ok _)
+  | _, _ => false
 
 /-- What the loop is told of the registry for the state requests that name
 something registered. A step is handed one, made from the registry as it
@@ -384,6 +468,9 @@ structure Loop.Registered where
   /-- The workspace roots config declares (`workspace`, `Editor/Setup.lean`),
   which the finder is handed. -/
   workspaceRoots : Array Workspace.ConfigRoot := #[]
+  /-- The git program (`Workspace.Settings.git`): a bare name, looked up on
+  the `PATH`, or an absolute path. -/
+  git : String := ({} : Workspace.Settings).git
   /-- The config generation: how many configs have been installed. A
   directory's cached workspace is an answer only under the generation it
   was found under (`Editor/Workspace.lean`). -/
@@ -430,6 +517,15 @@ structure Loop.Registered where
   (`Config.Registry.atPointNames`), for a command that asks
   (`StateRequest.atPointSources`). -/
   atPointNames : Option String → Array String → Array String := fun _ _ => #[]
+
+/-- The workspace settings `registered` says: config's workspace roots, the
+git program, and the marker modes of the compile contributions. What the
+workspace settings are asked for answers (`StateRequest.workspaceSettings`),
+and what the loop hands the version-control gutter, so that every reader of
+the git program reads the one. -/
+def Loop.Registered.workspaceSettings (registered : Loop.Registered) : Workspace.Settings :=
+  { roots := registered.workspaceRoots, git := registered.git
+    markerModes := registered.compile.contributions.map (·.markerMode) }
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -543,11 +639,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     dispatched registered state
       (next ((registered.languages.find? (·.name == name)).map (·.indentUnit)))
   | state, .step (.state .workspaceSettings) next =>
-    dispatched registered state
-      (next
-        ({ roots := registered.workspaceRoots,
-           markerModes := registered.compile.contributions.map (·.markerMode) },
-          registered.generation))
+    dispatched registered state (next (registered.workspaceSettings, registered.generation))
   | state, .step (.state .compileHook) next => dispatched registered state (next registered.compile)
   | state, .step (.state .displayRules) next =>
     dispatched registered state (next registered.displayRules)
@@ -625,7 +717,34 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
         match readOnly, untold with
         | some (_, name), _ => .done (.gaveUp (EditorState.readOnlyReason name), state)
         | none, some (buffer, path, found) => .done (.superseded buffer path found, state)
-        | none, none => .step request fun reply => dispatched registered state (next reply)
+        | none, none =>
+          match request, next with
+          | .text text, next =>
+            -- An edit through an excerpt buffer is looked at for the
+            -- sources it reaches ("Read-only buffers and excerpt sources",
+            -- in the module docs).
+            match excerptEdit? state text with
+            | none => .step (.text text) fun reply => dispatched registered state (next reply)
+            | some (excerpt, edited, ranges) =>
+              Program.bind (excerptSources state edited ranges).run.embedText fun guarded =>
+                match guarded with
+                | .ok (.ok sources) =>
+                  .step (.text text) fun reply =>
+                    let state :=
+                      if TextRequest.accepted text reply then state.touch excerpt sources else state
+                    dispatched registered state (next reply)
+                | .ok (.error (.readOnly name)) =>
+                  .done (.gaveUp (EditorState.readOnlyReason name), state)
+                | .ok (.error .unheld) =>
+                  .done
+                    (.gaveUp
+                        (EditorState.unheldReason (((state.buffer? excerpt).map (·.name)).getD "")),
+                      state)
+                | .ok (.error (.untold buffer path found)) =>
+                  .done (.superseded buffer path found, state)
+                -- `excerptSources` observes every refusal of its own.
+                | .error error => .done (.refused error, state)
+          | request, next => .step request fun reply => dispatched registered state (next reply)
 
 /-- `command` as the loop runs it from the editor state `state`: its state
 requests answered in place, and stopped at its next other request once the

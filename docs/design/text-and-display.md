@@ -822,6 +822,13 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
 | The file requests as data, and the model of the files a job reaches | `lean/Editor/File.lean`, `lean/Editor/File/Model.lean` |
 | The file requests in the job port, the runner's file port, its fake and its real implementation, and the file properties | `lean/Editor/Job.lean`, `lean/Editor/Job/` ([lean-runtime.md](lean-runtime.md)) |
 | The cases that cross the text port and the job port | `lean/Editor/File/Cases.lean` |
+| An excerpt text: the list, its anchors, catching up, replacing the list, and locating a position | `crates/editor-text/src/excerpt.rs` |
+| The properties of excerpt texts, against the ranges' strings and anchors mapped by hand | `crates/editor-text/tests/properties/excerpts.rs` |
+| An edit through an excerpt text: the split into its sources' transactions, its refusals and the edges | `Excerpts::edit` in `crates/editor-text/src/excerpt.rs`, and its property in `tests/properties/excerpts.rs` |
+| An excerpt document as a handle: catching up on lock, the lock order, its edits, locate, and the refused inverse, script and trace | `crates/editor-ffi/src/excerpts.rs` |
+| Excerpt texts in the Lean port, the model's lending, and the contract over them | "Excerpt texts" in `lean/Editor/Text.lean`, `TextModel.onText` and `TextModel.excerptApply` in `lean/Editor/Text/Model.lean`, `excerptOf`, `excerptProperties` and `excerptEditProperties` in `lean/Editor/Text/Contract.lean` |
+| The dispatcher's guard of an edit through an excerpt buffer | "Read-only buffers and excerpt sources" in `lean/Editor/Command/Dispatch.lean`, and `Loop.commitExcerpts` in `lean/Editor/Loop.lean` |
+| An excerpt buffer's steps and its undo | "Excerpt buffers" in `lean/Editor/State.lean`, and "Undo" in `lean/Editor/Api.lean`; pinned by `ModelTest.excerptBufferChecks` |
 
 ## The edit log
 
@@ -1002,6 +1009,204 @@ Excerpts are held by anchors into their source buffers, so they stay
 correct as the sources change. A source can be a file at a past revision
 (read-only), which is how a review shows code as it was when reviewed.
 
+### As built: the excerpt text
+
+Phase 1 of the excerpts roadmap built the text an excerpt buffer shows
+(`crates/editor-text/src/excerpt.rs`, the module docs of which have the
+rules; `crates/editor-ffi/src/excerpts.rs`; the text port's "Excerpt texts").
+Phase 2 built edits through it ("As built: editing through excerpts",
+below), and phase 3 its headers and its sources' decorations ("As built:
+showing excerpts", below).
+
+- **An assembled text, not a snapshot of pieces.** An excerpt text is a list
+  of excerpts and one plain `Text` only the list writes, holding the
+  excerpts' bytes. Every reader of a text takes one concrete snapshot, one
+  rope: layout's `TextRef`, the syntax service's `Latest`, search, the FFI's
+  snapshot handle, every motion, pair and extent walk, and the Lean model. A
+  snapshot made of the sources' snapshots would need a read trait over all of
+  them and a second walk for every motion across pieces, in the library and
+  in the model. The assembled rope copies only the excerpts' bytes (for a
+  review, hunks with their context: kilobytes), and after the first assembly
+  a catch-up costs what changed, not the sources' size. The list keeps, with
+  each excerpt, its source's snapshot at the revision it last read
+  (`Placed::snapshot`), so the assembled snapshot and the list are the
+  sources' snapshots plus the list, which is what the later phases map
+  positions and decorations against.
+- **The anchors.** Each excerpt is two markers its source holds: its start
+  with `Bias::Before` and its end with `Bias::After`, so text typed at
+  either end of an excerpt is in it. The source moves them at every
+  transaction, as it moves a cursor. They take the source's next marker ids.
+- **Catching up.** At every request that names the excerpt text (in the FFI,
+  whenever the document is locked), each source whose revision moved gives
+  its patch since the revision last read; each edit's old range is cut to
+  where the excerpt was, its new range to where the anchors are now, and the
+  cut edits of every excerpt are applied to the assembled text as one
+  transaction: one revision, one log entry, and its markers moved. When the
+  cut edits do not line up with the anchors, or the source's log was
+  forgotten past the revision read, the excerpt is replaced whole. The
+  assembled text keeps no inverse, and a list refuses an assembled text that
+  something else wrote.
+- **The separator** is one line feed between two excerpts, none at either
+  end. It is the least that keeps the end of one excerpt and the start of
+  the next two positions, which the next phase needs to send an insert at
+  either to the right source. When an excerpt is whole lines, as a review
+  hunk is, the separator is an empty row.
+- **Motions cross excerpt edges.** A motion is a question of a snapshot, and
+  stopping at hidden edges would make every walk consult them, in the
+  library and the model; a review buffer must be navigable with `j`, `k`,
+  `gg`, `G` and `n`, as Zed's multibuffer cursor is; and the separator's
+  empty row already stops `w`, `b`, `ge` and `}` as a paragraph break does.
+  Whether an operator may act across two excerpts is an edit question, for
+  the next phase.
+- **Replacing the list** is one transaction that keeps the excerpts the two
+  lists start and end with alike, with their anchors, and gives up the
+  anchors of those dropped. The FFI locks the sources of the list as it is
+  and as it will be, so a source dropped from the list gives its anchors up
+  even when the caller does not name it, and the document then holds only
+  the sources the new list names.
+- **Refused for now**: an inverse, an edit script and a trace of an excerpt
+  text, before it is caught up, so a refusal changes nothing; an excerpt
+  text as a source.
+- **The lock order** is the excerpt document's list, its text, then its
+  sources in ascending key order. An edit to a source takes only the
+  source's own lock, so two excerpt documents over the same sources never
+  wait for each other. An excerpt document holds its sources' texts
+  strongly: a source document that is freed is read as it was.
+- **The cost**: catching up after a one-byte insert in a megabyte source with
+  a kilobyte excerpt allocates a few kilobytes, nothing sized by the source
+  (`tests/snapshot_cost.rs`).
+- **In the Lean model** an excerpt text's slot among the texts is empty
+  between requests; a request that names it lends it its content, caught up
+  first, and takes it back, so a text's own requests are refused with
+  `excerpted` by the lookup alone and every theorem about plain texts stands
+  (`lean/Editor/Text/Model.lean`). The contract runs every read-only
+  property over plain texts and over excerpt texts of the same contents.
+
+### As built: editing through excerpts
+
+Phase 2 of the excerpts roadmap made an edit typed in an excerpt buffer an
+edit of the file (`Excerpts::edit` in `crates/editor-text/src/excerpt.rs`,
+whose module docs have the rules under "Edits"; `Document::edit_excerpts`
+in `crates/editor-ffi/src/excerpts.rs`; the text port's "Excerpt texts";
+"Excerpt buffers" in `lean/Editor/State.lean`).
+
+- **The split, all or nothing by order.** The excerpt text is caught up;
+  the transaction is checked as a plain text's would be, through the one
+  function `Text::apply` checks with (`text::checked`), so the order of the
+  checks cannot drift; each changed range is mapped into the excerpt that
+  holds it, both ends included; the mapped ranges are grouped by source,
+  and each source's change set is checked against it. Only then is each
+  source given one transaction with the caller's origin and no selection,
+  in ascending key order, and the excerpt text catches up once: one
+  revision. Every check comes before any write, so a refusal changes no
+  source and needs no compensating undo.
+- **`outsideExcerpt`, and why.** A byte of a separator belongs to no source,
+  so an edit that would change one is refused, as is any edit of an empty
+  list. So is an edit whose range in its source also meets another excerpt
+  of that source, both ends included: the edit would show twice, and the
+  excerpt text would not read what was asked for, which the selection
+  placed after an edit relies on.
+- **The edges.** An offset at an excerpt's start maps to its source range's
+  start and one at its end to its source range's end; the start anchor is
+  `Before` and the end `After`, so text inserted at either is inside the
+  excerpt. On the separator row of an excerpt that ends in a line feed, the
+  only position is that excerpt's end, so text typed there starts the
+  source's next row and the excerpt grows to hold it.
+- **An emptied excerpt** stays, empty, until Lean replaces the list
+  (`BufferId.setExcerpts`), and an insert at it lands in its source.
+- **Read-only, unheld and changed-on-disk sources** are Lean's policy, not
+  the store's. The command dispatcher (`lean/Editor/Command/Dispatch.lean`,
+  "Read-only buffers and excerpt sources") asks the store where each
+  changed range starts (`TextId.locate`) and maps each source to its
+  buffer before the edit is made: a read-only source gives the command up
+  with `<source> is read-only`, a text no buffer holds with `<buffer> reads
+  a text no buffer holds` (neither the rollback nor an undo could reach
+  it), and a source whose file changed unbeknown is the first edit after a
+  change on disk. A committed text goes through the same lookup
+  (`Loop.commitExcerpts`). The library refuses an edit that reaches a
+  freed source document, which a released source is.
+- **Undo is the sources'.** The excerpt text keeps no inverse; each source
+  keeps the inverse of the transaction it was given, and its buffer's tree
+  is told of it by the loop as of any edit, so `u` in the source buffer
+  takes it back. The excerpt buffer keeps steps of its own: the source
+  buffers an edit through it touched, each with its name and the state its
+  tree was left in. `u` in it undoes one step in each, refused with
+  `<source> changed since` when one moved on. A source buffer closed since
+  cannot be undone through any more, and a step kept waiting on it would
+  hide every step under it for good: so `u` or `C-r` drops each closed
+  source from the step it reaches, and the step once none is left, and
+  says `<source> was closed; its edits cannot be undone or redone here`,
+  under the name the step recorded; the next one takes the step's live
+  sources, or the step under it. It hands no selection back: the sources'
+  transactions carried none, and a source's selection is in source
+  offsets, so the cursor rests where the window's marker moved.
+- **The rollback check.** The loop's rollback reverts every buffer a
+  command touched, and the sources are ordinary buffers. Checking it found
+  one gap: it also kept the excerpt buffer's own tree, and reverting that
+  would apply an inverse to the excerpt text, which the store refuses. So
+  `Loop.keep` skips excerpt buffers, and a failed command that edited two
+  sources through one is rolled back in both, with nothing more said.
+- **The lock order is unchanged.** An edit through an excerpt document takes
+  the list's lock, the text's, then the sources' in ascending key order, as
+  a catch-up does, and builds the transaction of a replace under them, so
+  the deadlock argument of phase 1 still holds; each source it changed tells
+  the syntax service once the locks are let go.
+- **Not built**: a trace through an excerpt text to its sources' origins,
+  an edit script of an excerpt text, and mapping a source selection an undo
+  hands back into excerpt offsets. `locate` of a snapshot is still refused
+  (phase 3 carried the list across a snapshot, below).
+
+### As built: showing excerpts
+
+Phase 3 of the excerpts roadmap made an excerpt buffer's view show a header
+above each excerpt and its sources' decorations at every excerpt of them
+(`lean/Editor/ExcerptView.lean`; the blocks rule in
+`crates/editor-layout/src/query.rs`, "Blocks"; `crates/editor-layout/src/translated.rs`;
+`crates/editor-ffi/src/excerpts.rs`, "A snapshot carries its list").
+
+- **A header is a block**, the "block between lines" kind of decoration
+  ("Decorations", as built): text of its own, in the face `block-header`,
+  before the excerpt's start. That offset is always a row's start, so the
+  header is drawn between the separator row above and the excerpt's first
+  row. **The separator row stays**: it holds the end of the excerpt above
+  (phase 2's edge rule), so `w`, `}` and an insert there behave as pinned,
+  and hiding it would leave that position nowhere to be drawn.
+- **The headers are Lean's**, kept beside the store's list in the buffer's
+  entries (`Buffer.ExcerptEntry`, `lean/Editor/State.lean`, "Excerpt
+  buffers"), one for each excerpt, its source's text and its header. Lean
+  builds an excerpt buffer from (buffer, range, header text)
+  (`createExcerptBuffer`, `BufferExcerpt`); `createExcerptBufferOf` keeps
+  phase 2's form over texts, for a text no buffer holds.
+- **The snapshot carries the list.** A snapshot of an excerpt document
+  takes the list under the same locks as its text, in a catch-up's order,
+  so phase 1's deadlock argument stands; the text port answers it
+  (`SnapshotId.excerpts`, `TextId.excerpts`). The blocks of a view are read
+  from the list of the snapshot it shows, so an edit that moves an excerpt
+  moves its header, with nothing kept by layout.
+- **The sources' decorations are translated in two halves, each where its
+  source lives.** A source's syntax highlights are a text's own spans, so
+  Rust translates them: an excerpt snapshot's `TextRef` carries a
+  `TranslatedSpans` that asks each attached source's spans at the source
+  snapshot the excerpt read and moves them back by the excerpt's offset, one
+  resolution for each source however many excerpts it has. A source
+  buffer's own spans (`Buffer.spans`) are Lean's, so the loop translates
+  them through the same list (`ExcerptView.translated`) and draws them
+  under the excerpt buffer's own spans and the search's matches. The
+  selection and the search matches are the excerpt view's own, asked of
+  its own text: translating a source's would draw them twice.
+- **Deferred**: `locate` of a snapshot, whose answer names a source by
+  `TextId` while the snapshot's list names sources by document key; the
+  excerpt buffer's mode-line "modified" field, which the review buffer of
+  phase 4 owns.
+
+| Piece | Where |
+|---|---|
+| Laying blocks out, and their rule | `crates/editor-layout/src/blocks.rs`, `crates/editor-layout/src/query.rs` ("Blocks"), pinned by `crates/editor-layout/tests/blocks.rs` |
+| Other texts' spans drawn in a text of pieces of them | `crates/editor-layout/src/translated.rs` |
+| The snapshot's list, and the highlights translated | `crates/editor-ffi/src/excerpts.rs`, `text_ref` in `crates/editor-ffi/src/display.rs` |
+| The headers and the sources' spans of a view | `lean/Editor/ExcerptView.lean` |
+| The reference image | `tests/render/excerpts/excerpts.png` and its README |
+
 ## Decorations
 
 Lean describes how text should look; the library merges and draws it.
@@ -1024,10 +1229,85 @@ order. Faces are named and defined in Lean.
 
 ### As built
 
-Of the kinds above, span faces are built, from three sources: the
-selections, the decorations a scene carries, and a text's own spans, a
-syntax's highlights, which the text carries through a port of layout's
-(`TextSpans`, on a `TextRef`; "The scene", as built). The rest are not.
+Of the kinds above, span faces, blocks between lines and gutter marks are
+built. Span faces come from three sources: the selections, the decorations
+a scene carries, and a text's own spans, a syntax's highlights, which the
+text carries through a port of layout's (`TextSpans`, on a `TextRef`; "The
+scene", as built). The rest are not.
+
+**Gutter marks** (built by the version-control roadmap's phase 2;
+`crates/editor-layout/src/frame.rs`, "The gutter"; `lean/Editor/Gutter.lean`):
+a view's marks are short texts drawn in a column of their own before its
+text, which Lean chooses per buffer (the version-control gutter's `+`, `~`
+and `-`, [version-control.md](version-control.md), "Gutter marks").
+
+- **The column** is `Padding.gutter` points wide, a left-only inset after
+  `across`, in Lean's scene and in Rust's. Every query already takes a
+  padding, so the text wraps at the width less twice `across` and once
+  `gutter`, a spot is `across` and `gutter` further right, and a move wraps
+  at the same width, in the frame and the rows, spot and move queries
+  alike: they cannot disagree. The column's paper is the face `gutter`'s
+  only behind a mark's glyphs, the rest of it the view's background: a
+  fill of the whole column would need a fill a view, and frame fills are
+  drawn before views. A window has the column while its buffer has a
+  gutter (`EditorState.paddingOf`), `Buffer.Gutter.width` points.
+- **A mark is a row.** It is a row of the frame, `FrameRow::mark` naming
+  it, pushed after each text row it is drawn beside: on every visual line
+  of each buffer row its range has a byte in, or of the row that holds its
+  start when its range is empty. Its `x` is `across`, it sits on its text
+  row's baseline, and only its text's first visual line is drawn. So no
+  renderer changes: the painters place rows by `x` and `y` and cache them
+  by hash. What reads a frame's text rows picks them by
+  `FrameRow::is_text`, so a block row and a mark row are never taken for
+  one (the frame's kept rows, and the frame's rows through C).
+- **Its faces.** Its text is laid out through the block store, in its face
+  over `gutter` over the default face, keyed by its text and its face, so
+  two marks of one text and face share an entry and a row hash, and an
+  unchanged mark keeps its hash. Its paint is only its own: it joins no
+  span stack, so the precedence below gains no layer.
+- **It holds no position.** Its offsets are moved back to a character
+  boundary, and past the end to the end, as a block's are; marks beside
+  rows not shown draw nothing.
+- **Carried through edits.** A buffer's gutter is marks at one revision of
+  its text (`Buffer.gutter`). A view carries them to the revision it shows
+  through the text's log (`Gutter.marksOf`): a start maps after an
+  insertion at it and a stop before, so a mark grows only by what is put
+  inside it; a mark whose bytes were all deleted is dropped; an empty one
+  maps its offset after; and a forgotten log draws none until the owner
+  sets them again. They are clipped to the view's range as its
+  decorations are.
+
+**Blocks** (built by the excerpts roadmap's phase 3;
+`crates/editor-layout/src/query.rs`, "Blocks"; `lean/Editor/Display.lean`,
+"Blocks"): a view's blocks are rows of text of their own between the rows
+of its text, each a text and its own decorations, which Lean chooses per
+view as it chooses decorations (an excerpt buffer's headers).
+
+- **Placement.** A block is drawn above the first visual line of the row
+  that holds its offset, which is moved back to a character boundary, and
+  to the text's end from past it. Several before one row are drawn in the
+  order listed.
+- **The rows that fit count it.** Each block line counts like a text line,
+  its own height and at least a pixel. A row's blocks are shown with it or
+  not at all; the anchor's are shown only when they fit with it, so a view
+  a row tall always shows its anchor's row. The rows query and the spot
+  are asked with the view's blocks and walk the same walk as the frame,
+  so they answer the frame's text rows, and a spot below a block is lower
+  by its lines. The move query takes none: **a block holds no position**.
+- **Its faces.** It is laid out as a small text of its own, through the
+  same wrap layer, line store and styles, at the view's text width, with
+  its decorations as its only source over the default face, so a face that
+  sets a font shapes it in that font. It has no selection, no cursor and
+  no text spans. A frame row says which block it draws
+  (`FrameRow::block`); cursors and selections are on text rows only.
+- **The block store** is a map of its own, keyed by a hash of a block's
+  text and decorations, so two views showing one header share an entry. A
+  frame keeps the blocks some view names and drops the rest; a block's
+  shaping is counted as a row's, and a frame that shows the same blocks
+  again shapes none.
+- **A text made of pieces of others** draws their own spans in its pieces
+  (`TranslatedSpans`, `crates/editor-layout/src/translated.rs`): layout's
+  combinator of other texts' spans, which knows nothing of excerpts.
 
 **A text's own spans** are asked through `TextSpans::at`, which resolves
 what a text draws over one snapshot, fixed for one frame or one query
@@ -1108,8 +1388,9 @@ of a run is that of the highest layer over the run that sets it:
 The same rule orders definitions: where what is sent defines a name more
 than once, a later definition's set attributes are over an earlier one's.
 So a theme is overridden by appending to it. A status field's face is over
-the view's status face (`mode-line.inactive` for a window that is not
-selected), over `mode-line`, over `default`, and a cursor's face is over
+the view's status face (`mode-line.active` for the selected window,
+`mode-line.inactive` for a window that is not), over `mode-line`, over
+`default`, and a cursor's face is over
 `default`. A face's vertical padding is neither font nor paint: layout
 reads it only from `mode-line` and `echo-area`, to size the status rows,
 and it is a length in points like a size. A name
@@ -1179,8 +1460,10 @@ state of the shipped Vim scheme; the mode line's (theming phase 5):
 `mode-line.state.<state>`, the badge, for each state of the shipped Vim
 scheme, `mode-line.buffer`, `mode-line.modified`, `mode-line.changed` for
 a file changed on disk, `mode-line.secondary` for the directory, the major
-mode, line:col and the position, and `mode-line.inactive` for every field
-and the row of a window that is not selected; the minibuffer's
+mode, line:col and the position, `mode-line.inactive` for every field
+and the row of a window that is not selected, and `mode-line.active` for
+the row of the selected one; `window-divider`, the divider between tiled
+windows; the minibuffer's
 (`minibuffer.prompt`) and its candidate list's (`minibuffer.candidate`,
 `minibuffer.chosen`, `minibuffer.match`, `minibuffer.annotation`,
 `minibuffer.group`, completion's phase 4); the
@@ -1312,7 +1595,8 @@ text layout places:
 
 - **A block is text**: a small piece of text with faces and clickable
   spans, each span naming a command. It has no rows, columns or buttons of
-  its own.
+  its own. Built as text with faces ("Decorations", as built); clickable
+  spans are not built.
 - **Tables, lists and pickers** are text views over generated text.
 - **Columns are aligned with align-to stops** in text layout, the one
   primitive this adds. Tab stops are the same mechanism. Not built yet:
@@ -1416,6 +1700,16 @@ The display pipeline's phase 1 built the contract and two layers, in
 The round trip of every position through both layers is a property test
 (`tests/layers.rs`).
 
+**Blocks are not a layer** (a departure, the excerpts roadmap's phase 3).
+The contract above says blocks would be a layer after the wrap layer, with
+coordinates of its own. But Lean asks layout by byte offsets and by rows'
+byte ranges, never by display-row numbers, and a block holds no position.
+So a layer would add a coordinate type no question uses and convert every
+position through it for nothing. Layout's walk counts a block's lines as
+heights instead ("Decorations", as built), and blocks never enter a text's
+wrap layer: they are matched to rows afresh in each frame and query. The
+layer contract stays for folds and inline text.
+
 ## Views
 
 A view shows something in a window. There is more than one kind:
@@ -1501,6 +1795,14 @@ echo area, the preedit, and the prompt that is open, if one is.
     keeps the margin as set (below, "How many rows a view has room for").
     Config cannot set it when it loads:
     `setup` registers and runs no command, and there are no settings yet.
+  - **In a view with blocks the follow settles** (`lean/Editor/Scroll.lean`,
+    "Blocks"; the excerpts roadmap's phase 3). The rows are asked with the
+    view's blocks, so a row with a header above it takes more height; the
+    policy counts text rows, so after it places an anchor it asks the rows
+    from it and steps the anchor down a row at a time until they hold the
+    cursor's row with the margin below it. The cursor's row is always
+    shown, though not always as the last row: least movement is exact only
+    where rows are one height. A view with no block asks what it asked.
   - **Whether the cursor is shown is decided by comparing rows the display
     answered**, never offsets: a position at a wrap is the start of the
     later row, and only a line's last row holds the position at its end.
@@ -1744,9 +2046,52 @@ echo area, the preedit, and the prompt that is open, if one is.
   open), then the input row and the bottom row, which the minibuffer's
   view fills; a frame too short for it cuts the list first. While the tab
   bar is shown its strip is cut off the tiled area's bottom too.
-  `EditorState.rects` is the layout's rectangles in the tiled area, then
-  the floats' in stacking order, then the minibuffer's view in the lower
-  part of the strip while a prompt is open.
+  `EditorState.rects` is the layout's rectangles in the tiled area with the
+  dividers taken out, then the floats' in stacking order, then the
+  minibuffer's view in the lower part of the strip while a prompt is open.
+- **A divider separates two tiled windows** (decided 2026-11-17, task
+  `window-divider-and-selected-window`). It is 2 physical pixels wide
+  (`EditorState.dividerWidth`), one point on the owner's display of scale
+  2: Lean handles no scale and a scene's rectangles are physical pixels,
+  so the width is in pixels, a constant and not config for now. It is
+  taken out of the layout, not drawn over it: `Layout.carve`
+  (`lean/Editor/Layout.lean`, "The dividers") runs after `Layout.place`,
+  whose rule that the rectangles tile the area is kept, so every layout
+  and its operations stay as they were. Each tile whose right edge is
+  short of the tiled area's gives up the width at its right, the full
+  height of the tile, and each whose foot is short of the area's gives up
+  the width at its foot, short of the right strip; the strips given up are
+  the dividers (`EditorState.dividers`), and the carved tiles and the
+  dividers tile the area together. Every layout tiles its area, so a
+  divider always lies between two tiles, on the left or upper one's side:
+  none is along the frame's edges, monocle's one tile has none, and a
+  docked strip's outer edge, which is the area's, has none. Floats are
+  placed against the carved rectangles and are not carved, so a float has
+  no divider, and the minibuffer's view is outside the tiled area. The
+  loop puts them in the scene (`Scene.dividers`) in the face
+  `window-divider` (`Loop.dividerFace`), Emacs's name; layout fills each
+  in its face's **foreground** over the default face, as Emacs colours
+  `window-divider` and `vertical-border` with `:foreground`, so a face
+  nothing defines is the ink and stays visible. The palette mapping makes
+  it the faint colour, a thin faint line, and the theme check refuses a
+  divider drawn in the paper (`dividerOnPaper`). The renderer fills the
+  dividers before every view. Direction focus reads the carved rectangles:
+  every neighbour is the same divider's width away, so it picks as
+  before.
+- **The selected window's mode line is lit** (the same task). Its row is
+  in `mode-line.active`, Emacs 29's `mode-line-active`, and every other
+  window's in `mode-line.inactive` (`Loop.statusOf`); the minibuffer's view
+  has no status face. The selected window is `EditorState.selectedView`,
+  so the mark follows every focus change, `C-w C-w` and the rest, and
+  stays on the asker while a prompt is open. The palette mapping draws the
+  active row strong on `selected` and the inactive rows faint on the
+  paper, so the selected bar is lit and the others recede, and the divider
+  does the separating the inactive bar's raised background did. Solarized,
+  whose `selected` is its `raised`, puts its inactive row on its paper,
+  base03. The theme check holds every shipped theme to rows whose
+  backgrounds differ (`modeLinesAlike`), so no test names a colour. No
+  accent edge is drawn on the selected window's divider: the owner's
+  preference.
 - **Tabs** (window management's phase 5, decided 2026-11-17;
   `lean/Editor/State.lean`, "Tabs"; `lean/Editor/TabBar.lean`).
   - **A tab is a whole arrangement** (`Tab`): its tiled list, its docked
@@ -2068,6 +2413,7 @@ The scene is plain Lean data (`lean/Editor/Scene.lean`, `Scene`):
 |---|---|
 | `size` | The frame's size, in physical pixels |
 | `views` | The views, in drawing order: the windows', then the candidate list's while a prompt's list has shown a row (completion's phase 4), then the tab bar's while it is shown (window management's phase 5): the two views that are no window's |
+| `dividers` | The dividers between the tiled views (`EditorState.dividers`), each a rectangle in physical pixels and a face, `window-divider`; drawn before every view. Empty by default, as for one window |
 | `focused` | The view with the keyboard focus, if any |
 | `echo` | The echo area's text |
 | `echoPadding` | How far the echo is inset from the frame's left and right edges, in whole points, when layout draws it in the bottom row: the bottom row's inset (`EditorState.bottomInset`), the frame padding and at least the window's corner clearance outside fullscreen. 0 by default |
@@ -2088,7 +2434,7 @@ Each view (`View`):
 | `decorations` | Byte ranges of its snapshot, each naming a face |
 | (its text's own spans) | Not a field of Lean's scene: the binding hands layout the highlights of the snapshot's document as the text's own spans (`TextRef::spans`), which never pass through Lean |
 | `status` | Its status line: text fields, each naming a face, with a side (left, the default, or right) and a horizontal padding in whole points, which its face's background fills |
-| `statusFace` | The face of its status row, over `mode-line` and under every field's, which gives the row its background: `mode-line.inactive` for a window that is not selected, none for the selected one and the minibuffer's view. It neither makes the row taller nor moves its line |
+| `statusFace` | The face of its status row, over `mode-line` and under every field's, which gives the row its background: `mode-line.inactive` for a window that is not selected, `mode-line.active` for the selected one, none for the minibuffer's view. It neither makes the row taller nor moves its line |
 | `padding` | How far its content is inset from its edges, in whole points, across and down, and how far further its text rows start from its top (`top`) (`EditorState.paddingOf`): the frame padding both ways for a window, with the window's top inset (`EditorState.topInset`: what the title bar covers, none in fullscreen) at the top of a window along the frame's top edge; and for the minibuffer's view the bottom row's inset across and none down. 0 by default, which lays out as before there was one |
 
 A field's side and padding and a view's status face cross the wire as
@@ -2098,7 +2444,11 @@ a face definition is 24 words with its vertical padding last
 (`crates/editor-ffi/src/display/wire.rs`). A view's padding ends its words
 (across, down, then top) and the echo's follows the echo's length, in whole
 points like a field's padding: no scale crosses with any of them. Their
-defaults keep every scene that names none as it was.
+defaults keep every scene that names none as it was. The dividers cross
+after the views and before the faces' presence: their count, then each
+one's x, y, width and height and its face's length, the face's text after
+the views' texts (`WireScene::dividers`, which `WireScene::resolve` maps
+into layout's `Scene::dividers`).
 
 Content is named only by handles, never by copied text, so an unchanged
 view is sent as the same handles. Faces are names; what they look like is
@@ -2305,7 +2655,8 @@ decided 2026-11-13 by its phase 2):
   (the prompt's asker while one is open), whether or not the frame has the
   keyboard focus; a window that is not has no badge and every field in
   `mode-line.inactive`, and the view carries that face for its row
-  (`View.statusFace`). Whether a buffer is modified is its undo tree's
+  (`View.statusFace`); the selected one carries `mode-line.active`, whose
+  background marks it. Whether a buffer is modified is its undo tree's
   answer, and it is right in a scene because every tree is told its
   text's revision before the scene is made; a buffer is modified while its
   group is open, so during an insert session. A status field carries a
@@ -2677,6 +3028,13 @@ part are in the module docs; these are the decisions.
   id and no rasterised glyph, and `Frame::describe` prints neither the
   generation nor the table. The `Renderer` port that takes these frames
   was made later, in a crate of its own ("The renderer, as built").
+- **The dividers.** Each of the scene's dividers is a fill of its
+  rectangle (`Frame::dividers`, `Fill`) in its face's foreground over the
+  default face, kept apart from the views; layout reads no face name of
+  its own for them. The painter fills them first, clipped to the target,
+  so a view drawn over one, a float's, covers it
+  (`crates/editor-render-wgpu/src/painter.rs`, "What is drawn, in
+  order").
 - **The mode line.** A view with at least one status field has a status
   row at the bottom of its rectangle. Each field is shaped through the
   `Shaper` port as a line of its own, in its face over the view's status

@@ -82,7 +82,7 @@
 //! for tests with [`editor_ffi_window_asked`] ([`asked_words`]).
 //!
 //! What draws in the process's window is a render session over the
-//! process's presenter ([`run_on_this_thread`], [`crate::render`]): while
+//! process's presenter (`run_on_this_thread`, [`crate::render`]): while
 //! the window is open the session's loop is the presenter's target, so a
 //! display Lean bound to it is drawn in the window, at the scale the window
 //! last said. On the real platform the renderer is the wgpu renderer on
@@ -919,7 +919,7 @@ fn offered_words(offered: &Offered) -> Vec<u64> {
 }
 
 /// What the process's window's surface offered, what its run asked for and
-/// what it was configured with, as words ([`offered_words`]), from the
+/// what it was configured with, as words (`offered_words`), from the
 /// latest window that drew with the wgpu renderer, read after it has
 /// closed too. The status is 1, with no words, when none has.
 ///
@@ -1242,7 +1242,7 @@ pub extern "C" fn editor_ffi_window_request(platform: u8, request: u8) -> bool {
 /// The words of what a window was asked, oldest first: for each request its
 /// tag, for a title the tag 3 followed by the count and the scalar values
 /// of its characters, and for a menu bar the tag 5 followed by its layout
-/// ([`crate::menu`]), each text in it written as a title's is.
+/// (`crate::menu`), each text in it written as a title's is.
 ///
 /// The match on [`WindowRequest`] is exhaustive on purpose: this crate must
 /// give every variant its words, since a request with none could not be
