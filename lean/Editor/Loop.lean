@@ -1,4 +1,5 @@
 import Editor.Api
+import Editor.AtPoint
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
@@ -1409,6 +1410,22 @@ def recordHistories (state : EditorState) (held : Array BufferId := #[]) :
       refusal := refusal <|> some error
   return ({ state with buffers }, refusal)
 
+/-- `state` with the group of the buffer `id`'s history closed, its undo tree
+told the revision its text is at first, as `recordHistories` closes every
+group: what was edited in it becomes one step. A buffer there is none of is
+left alone; a refusal of its text is handed back, with its history as it
+was. -/
+def closeGroupOf (state : EditorState) (id : BufferId) : TextM (EditorState × Option TextError) :=
+  do
+  let some buffer := state.buffer? id | return (state, none)
+  match ← observing buffer.history.sync with
+  | .ok history =>
+    return ({ state with
+          buffers := state.buffers.set! id.index (some { buffer with history := history.close }) },
+        none)
+  | .error error =>
+    return (state, some error)
+
 end EditorState
 
 namespace Loop
@@ -1634,13 +1651,24 @@ handed back, with the state as it was. -/
 def listed (state : EditorState) (matching : Completion.Matching := .standard)
     (inlineMatches : Nat := Loop.inlineMatches) :
     EditorM (EditorState × Option String × Option TextError) := do
-  let some asked := state.prompt | return (state, none, none)
-  let candidates := asked.candidates
+  let some completing := state.completing? | return (state, none, none)
+  let view := completing.view
+  let candidates := completing.candidates
   if candidates.all.isEmpty && candidates.passed.isEmpty && candidates.asking.isEmpty then
     return (state, none, none)
-  let some minibuffer := state.target? asked.view | return (state, none, none)
-  match ← (observing minibuffer.buffer.text.read : TextM (Except TextError String)) with
+  -- A session matches the text the user typed, never its region's text, so
+  -- a preview is not matched against itself; a prompt its minibuffer's.
+  let read : EditorM (Except TextError String) :=
+    match completing.typed with
+    | some typed => pure (.ok typed)
+    | none =>
+      match state.target? view with
+      | some minibuffer => (observing minibuffer.buffer.text.read : TextM (Except TextError String))
+      | none => pure (.error .noSuchMarker)
+  match ← read with
   | .error error =>
+    if completing.typed.isNone && (state.target? view).isNone then
+      return (state, none, none)
     return (state, none, some error)
   | .ok pattern =>
     if candidates.listedFor == some pattern && candidates.listedAt == candidates.revision then
@@ -1649,19 +1677,95 @@ def listed (state : EditorState) (matching : Completion.Matching := .standard)
       -- longer in flight, so the reconciler cancels its job and its
       -- delivery, if it was already on its way, lists nothing.
       if candidates.matching.isSome then
-        return (state.replaceCandidates { candidates with matching := none }, some pattern, none)
+        return (state.replaceCandidatesIn view { candidates with matching := none }, some pattern,
+            none)
       return (state, some pattern, none)
     if candidates.matchableSize ≤ inlineMatches then
       let listing ← candidates.listing pattern (matching.styleFor candidates.category)
       -- A match job that was running is overtaken by this listing.
-      return (state.replaceCandidates
+      return (state.replaceCandidatesIn view
             { candidates.relist pattern candidates.revision listing with matching := none },
           some pattern, none)
     -- A long list is matched by a job: the choice was made in a listing for
     -- another text, and is forgotten.
     if candidates.listedFor == some pattern then
       return (state, some pattern, none)
-    return (state.replaceCandidates { candidates with chosen := none }, some pattern, none)
+    return (state.replaceCandidatesIn view { candidates with chosen := none }, some pattern, none)
+
+/-- What the loop does to a session at point it closes ("Completion at
+point", in the module docs): its markers are given up, its snapshots
+released, and, when it made a preview, its buffer's group is closed, so the
+previews and what was typed after them are one step. The first refusal is
+handed back, and the rest is still done. -/
+def closedAtPoint (state : EditorState) (session : AtPointSession) :
+    TextM (EditorState × Option TextError) := do
+  let mut refusal := none
+  for id in [session.start, session.stop] do
+    if let .error error← observing (id.text.unmark id) then
+      refusal := refusal <|> some error
+  for snapshot in session.candidates.texts do
+    if let .error error← (observing snapshot.release : TextM (Except TextError Unit)) then
+      refusal := refusal <|> some error
+  if session.previewed then
+    let (closed, unclosed) ← state.closeGroupOf session.buffer
+    return (closed, refusal <|> unclosed)
+  return (state, refusal)
+
+/-- `state` with its session at point kept or closed ("Completion at point",
+in the module docs), `report` being what the scheme says of a view. It is
+closed, and handed back, when its view is not focused, is no window or
+shows another buffer, when a prompt is open, when the view does not take
+text (insert state was left), when its markers cannot be read, and when the
+cursor is before its region's start or after its end. Otherwise, when the
+region does not hold what the session last left there, the user edited it,
+and its text is taken as what is typed (`retakeAtPoint`). With no session
+it is as it was, and nothing is read. -/
+def atPointKept (state : EditorState) (report : ViewId → InputScheme.Report) :
+    TextM (EditorState × Option AtPointSession) := do
+  let some session := state.atPoint | return (state, none)
+  let close : TextM (EditorState × Option AtPointSession) :=
+    pure ({ state with atPoint := none }, some session)
+  let some target := state.target? session.view | return ← close
+  if
+      state.frame.focused != session.view || target.window.buffer != session.buffer ||
+        state.prompt.isSome ||
+        !(report session.view).takesText then
+    return ← close
+  match
+    ←
+      observing
+          (do
+            let (start, stop, text) ← session.region
+            let selection ← target.selection
+            let head := (selection.ranges[selection.primary]?).map (·.head)
+            return (start, stop, text, head)) with
+  | .error _ =>
+    close
+  | .ok (start, stop, text, head) =>
+    match head with
+    | none =>
+      close
+    | some head =>
+      if head < start || stop < head then
+        return ← close
+      if text != session.shown then
+        return ((state.retakeAtPoint text).2, none)
+      return (state, none)
+
+/-- `state` with its session at point closed, and handed back, when nothing
+more is to come of its candidates and nothing is listed for what is typed
+(`Candidates.exhausted`): the text stopped matching. When it never showed a
+row, the echo area says `no completions`. -/
+def atPointExhausted (state : EditorState) : EditorState × Option AtPointSession :=
+  match state.prompt, state.atPoint with
+  | none, some session =>
+    if session.candidates.exhausted session.typed then
+      ({ state with
+          atPoint := none
+          echo := if session.tallest == 0 then AtPoint.noCompletions else state.echo },
+        some session)
+    else (state, none)
+  | _, _ => (state, none)
 
 /-- Has `view`, a view of the scene about to be published, follow its cursor
 ("Following the cursor", in the module docs): where the row of the cursor,
@@ -1728,6 +1832,21 @@ def gaveUp (before after : EditorState) : TextM (Option TextError) := do
       unless anchored.contains id do
         if let .error error← observing (id.text.unmark id) then
           refusal := refusal <|> some error
+  -- A session at point the state after does not hold gives up its
+  -- markers, and a prompt or a session it does not hold its snapshots.
+  if let some session := before.atPoint then
+    unless after.atPoint.any (·.start == session.start) do
+      for id in [session.start, session.stop] do
+        if let .error error← observing (id.text.unmark id) then
+          refusal := refusal <|> some error
+  let texts (state : EditorState) : Array SnapshotId :=
+    (state.prompt.map (·.candidates.texts)).getD #[] ++
+      (state.atPoint.map (·.candidates.texts)).getD #[]
+  let kept := texts after
+  for snapshot in texts before do
+    unless kept.contains snapshot do
+      if let .error error← (observing snapshot.release : TextM (Except TextError Unit)) then
+        refusal := refusal <|> some error
   let saving := savesInFlight after
   for snapshot in savesInFlight before do
     unless saving.contains snapshot do
@@ -1857,10 +1976,10 @@ padding. Its anchor stays at 0: the sheet holds only the rows shown. -/
 def candidateListView (state : EditorState) (shown : Array Shown) :
     TextM (EditorState × Option (View × Shown) × Option TextError) := do
   let some rect := state.candidateListRect? | return (state, none, none)
-  let some asked := state.prompt | return (state, none, none)
+  let some completing := state.completing? | return (state, none, none)
   generatedView state state.candidateList
-      (fun state drawn => { state with candidateList := some drawn }) rect asked.sheet.text
-      asked.sheet.decorations shown
+      (fun state drawn => { state with candidateList := some drawn }) rect completing.sheet.text
+      completing.sheet.decorations shown
 
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
@@ -1894,10 +2013,21 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   let (state, keepRunning) := state.answerSystemQuit
   if keepRunning then
     Display.askFrame .keepRunning
+  -- A session at point is kept or closed before it is listed: the cursor
+  -- left its region, or insert state was left.
+  let (state, unkept) ← atPointKept state (scheme.report loop.input)
   let (state, typed, unlisted) ← listed state matching inlineMatches
+  -- One whose text stopped matching closes once it is listed.
+  let (state, exhausted) := atPointExhausted state
+  let mut closing := state
+  let mut unclosed := none
+  for session in unkept.toArray ++ exhausted.toArray do
+    let (closed, refusal) ← closedAtPoint closing session
+    closing := closed
+    unclosed := unclosed <|> refusal
   -- The listing is shown before the views are laid out, so the rectangles
   -- of this scene are for the rows this scene shows.
-  let state := state.displayed displaying
+  let state := closing.displayed displaying
   -- The heights of the rows, as the display answers them now, before the
   -- views are laid out: they size the views and the minibuffer's place.
   -- The padding the views are laid out with is the one handed in, and so
@@ -1945,7 +2075,9 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   let (views, shown) := add views shown listedView
   let (placed, barred, unbarred) ← tabBarView placed (shown ++ loop.shown)
   let (views, shown) := add views shown barred
-  let state := placed.refusedBy (unrecorded <|> unlisted <|> unshown <|> unlistedView <|> unbarred)
+  let state :=
+    placed.refusedBy
+      (unrecorded <|> unlisted <|> unclosed <|> unshown <|> unlistedView <|> unbarred)
   Display.publish (scene state views loop.pending loop.menu)
   -- A snapshot is kept while a view of the scene names it: one taken for a
   -- float that closed above is released with the last scene's others.
@@ -2195,6 +2327,10 @@ structure Ran where
   reload : Bool := false
   /-- The theme the command asked to be loaded, when it ran to its end. -/
   theme : Option String := none
+  /-- What the command typed in place of typed text, each with its view,
+  when it ran to its end (`EditorState.retyped`): the input scheme is told
+  it as committed text (`ranInto`). -/
+  retyped : Array (ViewId × String) := #[]
 
 /-- Whether the command ran to its end: one that broke off did not, though
 what it did was kept. -/
@@ -2268,7 +2404,8 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     return {
         state :=
           { left.refusedBy ungiven with
-            starts := #[], cancels := #[], answered := #[], reload := false, theme := none }
+            starts := #[], cancels := #[], answered := #[], reload := false, theme := none
+            retyped := #[] }
         ending
         closed := closedViews state left
         opened := openedMinibuffer state left
@@ -2278,7 +2415,8 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
         cancels := left.cancels
         answered := left.answered
         reload := left.reload
-        theme := left.theme }
+        theme := left.theme
+        retyped := if ending == .finished then left.retyped else #[] }
   match outcome with
   | .finished write =>
     stays left .finished write
@@ -2323,11 +2461,15 @@ published: `loop` with the state the command left, and the scheme's two
 states told of each view the command closed and of the minibuffer's view it
 opened (`toldViews`). -/
 def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
+  -- What the command typed in place of typed text is committed text the
+  -- scheme saw no key of: both states are told, as for a commit.
+  let told (state : scheme.State) : scheme.State :=
+    ran.retyped.foldl (fun state (view, text) => scheme.committed view text state) state
   { loop :=
       { loop with
         state := ran.state
-        input := toldViews ran.closed ran.opened loop.input
-        atRest := toldViews ran.closed ran.opened loop.atRest }
+        input := told (toldViews ran.closed ran.opened loop.input)
+        atRest := told (toldViews ran.closed ran.opened loop.atRest) }
     next := .continue
     write := ran.write
     log := ran.log
@@ -2520,12 +2662,12 @@ spawn.
 def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
     Loop scheme × Array JobStart × Array String × Array Spawn :=
   let state := loop.state
-  match state.prompt with
+  match state.completing? with
   | none =>
     ({ loop with state := { state with completionKeys := #[] } }, #[], state.completionKeys, #[])
-  | some asked =>
-    let view := asked.view
-    let candidates := asked.candidates
+  | some completing =>
+    let view := completing.view
+    let candidates := completing.candidates
     -- The sources' jobs.
     let (asking, starts, cancels, wanted) :=
       (List.range candidates.asking.size).foldl (init :=
@@ -2539,7 +2681,10 @@ def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
             { name := source.later.job
               arguments :=
                 Completion.Order.arguments
-                  { view, index, generation, query := { text, view := asked.asker }, pause }
+                  { view, index, generation, pause
+                    query :=
+                      { text, view := completing.asker, region := candidates.region
+                        texts := candidates.texts } }
               key := some key }
             if !keys.registered.jobs source.later.job then (asking, starts, cancels, wanted)
           else
@@ -2583,7 +2728,8 @@ def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
       | none => (candidates, #[])
     let wanted := if candidates.matching.isSome then wanted.push (matchKey view) else wanted
     let unwanted := state.completionKeys.filter (!wanted.contains ·)
-    ({ loop with state := { state.replaceCandidates candidates with completionKeys := wanted } },
+    ({ loop with
+        state := { state.replaceCandidatesIn view candidates with completionKeys := wanted } },
       starts, cancels ++ unwanted.filter (!cancels.contains ·), spawns)
 
 /-- `loop` with the menu bar `keys` names (`Keys.menu`) as the one its

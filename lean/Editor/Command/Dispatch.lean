@@ -1,5 +1,6 @@
 import Editor.Command
 import Editor.Completion
+import Editor.Completion.AtPoint
 import Editor.Completion.Styles
 import Editor.Highlight
 import Editor.Language
@@ -419,6 +420,16 @@ structure Loop.Registered where
   (`StateRequest.matchCandidates`). The loop fills it from the styles it
   lists prompts with (`Loop.Keys.matching`). -/
   matching : Completion.Matching := Completion.Matching.standard
+  /-- The at-point source registered under a name
+  (`Editor/Completion/AtPoint.lean`), for a command that asks it
+  (`StateRequest.askAtPoint`). `none` for a name none is registered
+  under. -/
+  atPoint : String → Option Completion.AtPoint := fun _ => none
+  /-- The names of a buffer's chain of at-point sources, given its major
+  mode and its minor modes in the order they were added
+  (`Config.Registry.atPointNames`), for a command that asks
+  (`StateRequest.atPointSources`). -/
+  atPointNames : Option String → Array String → Array String := fun _ _ => #[]
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -562,6 +573,24 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
         match ← (source.candidates query).run with
         | .ok candidates =>
           next (some { category := source.category, filtered := source.filtered, candidates })
+        | .error error =>
+          pure (.error error)
+  | state, .step (.state (.atPointSources view occasion)) next =>
+    let names :=
+      match state.target? view with
+      | some target =>
+        (registered.atPointNames target.buffer.major target.buffer.minors).filter fun name =>
+          (registered.atPoint name).any (·.asksOn occasion)
+      | none => #[]
+    dispatched registered state (next names)
+  | state, .step (.state (.askAtPoint name spot)) next =>
+    match registered.atPoint name with
+    | none => dispatched registered state (next none)
+    | some atPoint =>
+      dispatched registered state do
+        match ← (atPoint.ask spot).run with
+        | .ok region =>
+          next region
         | .error error =>
           pure (.error error)
   | state, .step (.state (.categorySources category)) next =>

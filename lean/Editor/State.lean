@@ -1353,6 +1353,13 @@ structure Candidates where
   /-- Whether the listing holds two groups or more (`Completion.grouped`),
   computed when it was made. -/
   grouped : Bool := false
+  /-- The region the sources were asked to complete, for a session at point
+  ("A session at point", in the module docs); none for a prompt. -/
+  region : Option Completion.Span := none
+  /-- The snapshots taken for the sources that read the open buffers'
+  texts (`Completion.Later.readsTexts`), the asking view's first: released
+  when the prompt or the session closes. -/
+  texts : Array SnapshotId := #[]
   deriving DecidableEq, Repr
 
 namespace Candidates
@@ -1439,6 +1446,17 @@ def choose (candidates : Candidates) (step : Step) : Candidates :=
     | .previous, some (index + 1) => some index
   { candidates with chosen }
 
+/-- Whether nothing more is to come of these candidates for `typed`, and
+nothing is listed for it: no match is in flight, every asking source's job
+has ended, and either nothing can be listed at all, or the listing is for
+`typed` at the current revision and empty. A session at point closes then
+("A session at point", in the module docs): the text stopped matching. -/
+def exhausted (candidates : Candidates) (typed : String) : Bool :=
+  candidates.matching.isNone && candidates.asking.all (·.done) &&
+    (candidates.matchableSize == 0 && candidates.passing.isEmpty ||
+      candidates.listedFor == some typed && candidates.listedAt == candidates.revision &&
+        candidates.listed.isEmpty)
+
 /-- What a prompt with these candidates answers with when the minibuffer
 holds `text`: the chosen candidate's text, when one is chosen and the
 listing is for `text`, and otherwise `text`. -/
@@ -1490,6 +1508,60 @@ def Prompt.mode : String :=
 name (`EditorState.freeName`). -/
 def Prompt.bufferName : String :=
   "minibuffer"
+
+/-- A session of completion at point ("A session at point", in the module
+docs): the region of a buffer being completed, held by markers, what the
+user typed in it and what the session last left there, and the prompt's own
+candidates, sheet and high-water mark. It is plain data. -/
+structure AtPointSession where
+  /-- The window it completes in, focused while it is open. -/
+  view : ViewId
+  /-- The buffer that window shows. -/
+  buffer : BufferId
+  /-- The name of the at-point source that answered. -/
+  source : String
+  /-- The marker of the region's start, an anchor of bias `before`. -/
+  start : MarkerId
+  /-- The marker of the region's end, an anchor of bias `after`: text typed
+  at the end grows the region. -/
+  stop : MarkerId
+  /-- The text the user typed in the region: what is matched. -/
+  typed : String
+  /-- What the session last left in the region: `typed`, or the previewed
+  candidate's text. -/
+  shown : String
+  /-- Whether a preview was made: the buffer's group was closed before the
+  first, and is closed again when the session ends, so the previews and the
+  accept are one step of the history. -/
+  previewed : Bool := false
+  /-- The candidates, their listing and the choice, as a prompt holds
+  them. -/
+  candidates : Candidates := {}
+  /-- What the display answered at the last publish. -/
+  sheet : Completion.Sheet := {}
+  /-- The most rows any sheet has shown since the session opened. -/
+  tallest : Nat := 0
+  deriving DecidableEq, Repr
+
+/-- What is completing now, a prompt or a session at point, as the loop's
+listing, display and jobs read it (`EditorState.completing?`). -/
+structure Completing where
+  /-- The view its candidates are keyed by: the minibuffer's for a prompt,
+  the window's for a session. -/
+  view : ViewId
+  /-- The view its sources are asked from: the prompt's asker, or the
+  session's window. -/
+  asker : ViewId
+  /-- Its candidates. -/
+  candidates : Candidates
+  /-- What the display answered at the last publish. -/
+  sheet : Completion.Sheet
+  /-- Its high-water mark of rows. -/
+  tallest : Nat
+  /-- The text it matches, for a session (`AtPointSession.typed`); none for
+  a prompt, whose minibuffer's text is read. -/
+  typed : Option String
+  deriving DecidableEq, Repr
 
 /-- A register: a text a command set aside ("Registers", in the module
 docs). -/
@@ -1546,6 +1618,14 @@ structure EditorState where
   /-- The prompt that is open, if one is: its view is a window of `windows`
   that is not in the frame's list. -/
   prompt : Option Prompt := none
+  /-- The session of completion at point that is open, if one is ("A session
+  at point", in the module docs). -/
+  atPoint : Option AtPointSession := none
+  /-- What commands typed in place of typed text, each with its view, in
+  order, which the loop has not yet told the input scheme: backspace
+  characters for the cells a command removed, then what it inserted, as the
+  scheme records typed text ("A session at point", in the module docs). -/
+  retyped : Array (ViewId × String) := #[]
   /-- The invocations to run next, in order, which the loop has not yet
   handed to its host: the continuations of the prompts commands accepted,
   each with its answer as its first argument, and the invocations commands
@@ -1796,6 +1876,49 @@ def PromptRefusal.describe : PromptRefusal → String
   | .noSuchSource name => s!"no completion source is registered under `{name}`"
   | .noSuchJob name => s!"no job is registered under `{name}` to answer a completion source"
 
+/-- Why the sources of a prompt or a session at point could not be
+asked. -/
+inductive SourceRefusal where
+  /-- No completion source is registered under `name`. -/
+  | noSuchSource (name : String)
+  /-- No job is registered under `name` to answer a source that answers
+  later. -/
+  | noSuchJob (name : String)
+  deriving DecidableEq, Repr
+
+/-- Why a source could not be asked, as a sentence for the echo area: what
+`PromptRefusal.describe` says of the same refusal. -/
+def SourceRefusal.describe : SourceRefusal → String
+  | .noSuchSource name => s!"no completion source is registered under `{name}`"
+  | .noSuchJob name => s!"no job is registered under `{name}` to answer a completion source"
+
+/-- Why an operation on a session at point was refused. -/
+inductive AtPointRefusal where
+  /-- A prompt is open: a session opens only while none is. -/
+  | promptOpen
+  /-- A session is open already: there is one at a time. -/
+  | alreadyOpen
+  /-- The session's view has no window. -/
+  | noWindow
+  /-- No session is open. -/
+  | notOpen
+  /-- The at-point source `source` answered a region that does not hold the
+  cursor, or whose ends are not positions of the text. -/
+  | outside (source : String)
+  /-- The sources the region is completed from could not be asked. -/
+  | source (refusal : SourceRefusal)
+  deriving DecidableEq, Repr
+
+/-- Why an operation on a session at point was refused, as a sentence for
+the echo area. -/
+def AtPointRefusal.describe : AtPointRefusal → String
+  | .promptOpen => "a prompt is open"
+  | .alreadyOpen => "a completion at point is open already"
+  | .noWindow => "no window is focused to complete in"
+  | .notOpen => "no completion at point is open"
+  | .outside name => s!"the at-point source `{name}` answered a region away from the cursor"
+  | .source refusal => refusal.describe
+
 /-- Why an operation on a buffer was refused. -/
 inductive BufferRefusal where
   /-- The state has no buffer of this id. -/
@@ -1919,7 +2042,10 @@ is: the open prompt's high-water mark (`Prompt.tallest`), the most rows any
 sheet has shown since it opened, so it grows and never shrinks while the
 prompt is open; 0 with no prompt. -/
 def listRows (state : EditorState) : Nat :=
-  (state.prompt.map (·.tallest)).getD 0
+  match state.prompt, state.atPoint with
+  | some asked, _ => asked.tallest
+  | none, some session => session.tallest
+  | none, none => 0
 
 /-- How tall the minibuffer's strip at the frame's bottom is: the frame's
 bottom row while no prompt is open, where the echo is drawn; and while one
@@ -1928,7 +2054,7 @@ then the bottom row, which holds the prompt (`heights`). -/
 def minibufferPlace (state : EditorState) : Nat :=
   if state.prompt.isSome then
     state.listRows * state.heights.text + state.heights.text + state.heights.message
-  else state.heights.message
+  else state.listRows * state.heights.text + state.heights.message
 
 /-- How tall the tab bar's strip is: a text row while the bar is shown over
 the frame's tabs (`TabBar.Shown.shows`), clamped to what the minibuffer's
@@ -1959,7 +2085,8 @@ shorter. So a frame too short for the strip cuts the list before the
 input. -/
 def cutStrip (state : EditorState) : Rect × Rect :=
   let strip := state.cutFrame.2
-  let below := min (state.heights.text + state.heights.message) strip.height
+  let input := if state.prompt.isSome then state.heights.text else 0
+  let below := min (input + state.heights.message) strip.height
   Layout.cut .rows strip (strip.height - below)
 
 /-- The area of the frame a layout tiles: the frame above the tab bar's
@@ -2032,7 +2159,8 @@ directly above the minibuffer's view, while a prompt is open and its list
 has shown a row (even when the current sheet has fewer rows, or none, and
 when it is 0 pixels tall); none otherwise. -/
 def candidateListRect? (state : EditorState) : Option Rect :=
-  if state.prompt.isSome && 0 < state.listRows then some state.cutStrip.1 else none
+  if (state.prompt.isSome || state.atPoint.isSome) && 0 < state.listRows then some state.cutStrip.1
+  else none
 
 /-- Whether `id` is the tab bar's view (`tabBar`). -/
 def isTabBar (state : EditorState) (id : ViewId) : Bool :=
@@ -2110,6 +2238,9 @@ def wellFormed (state : EditorState) : Bool :=
     (state.windows.all fun window => (state.buffer? window.buffer).isSome) &&
     (state.prompt.all fun asked =>
       asked.candidates.chosen.all (· < asked.candidates.listed.size)) &&
+    (state.atPoint.all fun session =>
+      (state.window? session.view).isSome &&
+        session.candidates.chosen.all (· < session.candidates.listed.size)) &&
     state.recent.all (fun id => (state.buffer? id).isSome) &&
     state.recent.toList.eraseDups.length == state.recent.size &&
     state.tabBar.all (fun drawn => (state.window? drawn.view).isNone) &&
@@ -3522,15 +3653,61 @@ def setCandidates (collected : Completion.Collected) (state : EditorState) :
     Except PromptRefusal Unit × EditorState :=
   state.changeCandidates fun _ =>
     { all := collected.all, passed := collected.passed, category := collected.category
-      asking := collected.asking }
+      asking := collected.asking, region := collected.region, texts := collected.texts }
 
-/-- The open prompt's candidates, when it is open in `view`. -/
+/-- What is completing now ("A session at point", in the module docs): the
+open prompt's, else the open session's, else none. -/
+def completing? (state : EditorState) : Option Completing :=
+  match state.prompt, state.atPoint with
+  | some asked, _ =>
+    some
+      { view := asked.view, asker := asked.asker, candidates := asked.candidates
+        sheet := asked.sheet, tallest := asked.tallest, typed := none }
+  | none, some session =>
+    some
+      { view := session.view, asker := session.view, candidates := session.candidates
+        sheet := session.sheet, tallest := session.tallest, typed := some session.typed }
+  | none, none => none
+
+/-- `state` with what is completing in `view` changed by `change`: its
+candidates, sheet and high-water mark written back to the open prompt, when
+it is open in `view`, or to the open session, when it is open in `view`.
+Otherwise it is as it was. -/
+def withCompleting (view : ViewId) (change : Completing → Completing) (state : EditorState) :
+    EditorState :=
+  match state.completing? with
+  | none => state
+  | some completing =>
+    if completing.view != view then state
+    else
+      let changed := change completing
+      match state.prompt with
+      | some asked =>
+        { state with
+          prompt :=
+            some
+              { asked with
+                candidates := changed.candidates, sheet := changed.sheet
+                tallest := changed.tallest } }
+      | none =>
+        { state with
+          atPoint :=
+            state.atPoint.map fun session =>
+              { session with
+                candidates := changed.candidates, sheet := changed.sheet
+                tallest := changed.tallest } }
+
+/-- The candidates of what is completing in `view`: the open prompt's, when
+it is open in `view`, or the open session's, when it is open in `view`. -/
 def candidatesIn? (state : EditorState) (view : ViewId) : Option Candidates :=
-  state.prompt.bind fun asked => if asked.view == view then some asked.candidates else none
+  state.completing?.bind fun completing =>
+    if completing.view == view then some completing.candidates else none
 
-/-- `state` with the open prompt's candidates `candidates`. -/
-def replaceCandidates (state : EditorState) (candidates : Candidates) : EditorState :=
-  { state with prompt := state.prompt.map ({ · with candidates }) }
+/-- `state` with `candidates` as the candidates of what is completing in
+`view` (`withCompleting`). -/
+def replaceCandidatesIn (view : ViewId) (state : EditorState) (candidates : Candidates) :
+    EditorState :=
+  state.withCompleting view fun completing => { completing with candidates }
 
 /-- Takes `batch`, a batch of the job of the asking source `index` of the
 prompt open in `view`, at the source's `generation`: the first of a
@@ -3552,7 +3729,7 @@ def addCandidates (view : ViewId) (index generation : Nat) (batch : Array Comple
         let batch := batch.map (·.inGroup source.source)
         let answered := if source.fresh then source.answered ++ batch else batch
         (true,
-          state.replaceCandidates
+          state.replaceCandidatesIn view
             { candidates with
               asking :=
                 candidates.asking.set! index
@@ -3574,7 +3751,7 @@ def sourceAnswered (view : ViewId) (index generation : Nat) (state : EditorState
       if source.generation != generation then state
       else
         let cleared := !source.fresh && !source.answered.isEmpty
-        state.replaceCandidates
+        state.replaceCandidatesIn view
           { candidates with
             asking :=
               candidates.asking.set! index
@@ -3592,7 +3769,8 @@ def listMatched (view : ViewId) (pattern : String) (revision : Nat)
   match state.candidatesIn? view with
   | some candidates =>
     if candidates.matchingFor pattern revision then
-      state.replaceCandidates { candidates.relist pattern revision listed with matching := none }
+      state.replaceCandidatesIn view
+        { candidates.relist pattern revision listed with matching := none }
     else state
   | none => state
 
@@ -3607,7 +3785,7 @@ def matchFailed (view : ViewId) (pattern : String) (revision : Nat) (message : S
   | some candidates =>
     if candidates.matchingFor pattern revision then
       {
-        state.replaceCandidates
+        state.replaceCandidatesIn view
           { candidates with
             matching := none, unmatched := some (pattern, revision) } with
         echo := s!"completion-match: {message}" }
@@ -3631,20 +3809,18 @@ candidates' `first`, and the high-water mark raised to its rows
 (`Prompt.tallest`). With no prompt open it is as it was. It is pure: a
 display reads no state and asks no port. -/
 def displayed (state : EditorState) (displaying : Completion.Displaying) : EditorState :=
-  match state.prompt with
+  match state.completing? with
   | none => state
-  | some asked =>
-    let candidates := asked.candidates
-    let sheet :=
-      (displaying.displayFor candidates.category).sheet
-        { listed := candidates.listed, chosen := candidates.chosen, first := candidates.first
-          grouped := candidates.grouped, category := candidates.category }
-    { state with
-      prompt :=
-        some
-          { asked with
-            sheet, tallest := max asked.tallest sheet.rows.size
-            candidates := { candidates with first := sheet.first } } }
+  | some completing =>
+    state.withCompleting completing.view fun completing =>
+      let candidates := completing.candidates
+      let sheet :=
+        (displaying.displayFor candidates.category).sheet
+          { listed := candidates.listed, chosen := candidates.chosen, first := candidates.first
+            grouped := candidates.grouped, category := candidates.category }
+      { completing with
+        sheet, tallest := max completing.tallest sheet.rows.size
+        candidates := { candidates with first := sheet.first } }
 
 /-- Moves the open prompt's choice by `step` through its listing
 (`Candidates.choose`). Refused, with the state unchanged, with `notOpen`
@@ -3652,6 +3828,75 @@ when no prompt is open. -/
 def chooseCandidate (step : Candidates.Step) (state : EditorState) :
     Except PromptRefusal Unit × EditorState :=
   state.changeCandidates (·.choose step)
+
+/-- Opens a session at point, `session`, with what its sources answered,
+`collected`, as its candidates, with nothing chosen ("A session at point",
+in the module docs). Refused, with the state unchanged, with `promptOpen`
+while a prompt is open, `alreadyOpen` while a session is, and `noWindow`
+when the session's view has no window. -/
+def openAtPoint (session : AtPointSession) (collected : Completion.Collected)
+    (state : EditorState) : Except AtPointRefusal Unit × EditorState :=
+  if state.prompt.isSome then (.error .promptOpen, state)
+  else
+    if state.atPoint.isSome then (.error .alreadyOpen, state)
+    else
+      if (state.window? session.view).isNone then (.error .noWindow, state)
+      else
+        (.ok (),
+          { state with
+            atPoint :=
+              some
+                { session with
+                  candidates :=
+                    { all := collected.all, passed := collected.passed
+                      category := collected.category, asking := collected.asking
+                      region := collected.region, texts := collected.texts }
+                  sheet := {}, tallest := 0 } })
+
+/-- Closes the open session, and hands it back: its markers and its
+snapshots are the caller's to give up. Refused, with the state unchanged,
+with `notOpen` when no session is open. -/
+def closeAtPoint (state : EditorState) : Except AtPointRefusal AtPointSession × EditorState :=
+  match state.atPoint with
+  | none => (.error .notOpen, state)
+  | some session => (.ok session, { state with atPoint := none })
+
+/-- The state with the open session changed by `change`. Refused, with the
+state unchanged, with `notOpen` when no session is open. -/
+def changeAtPoint (change : AtPointSession → AtPointSession) (state : EditorState) :
+    Except AtPointRefusal Unit × EditorState :=
+  match state.atPoint with
+  | none => (.error .notOpen, state)
+  | some session => (.ok (), { state with atPoint := some (change session) })
+
+/-- Moves the open session's choice by `step` through its listing
+(`Candidates.choose`). Refused with `notOpen` when no session is open. -/
+def chooseAtPoint (step : Candidates.Step) (state : EditorState) :
+    Except AtPointRefusal Unit × EditorState :=
+  state.changeAtPoint fun session => { session with candidates := session.candidates.choose step }
+
+/-- Records what a preview left in the open session's region, `shown`, and
+whether a preview was made. Refused with `notOpen` when no session is
+open. -/
+def retypeAtPoint (shown : String) (previewed : Bool) (state : EditorState) :
+    Except AtPointRefusal Unit × EditorState :=
+  state.changeAtPoint fun session =>
+    { session with
+      shown, previewed := session.previewed || previewed }
+
+/-- Records an edit the user made in the open session's region, which now
+holds `text`: it is what is typed and what is shown, and nothing is chosen.
+Refused with `notOpen` when no session is open. -/
+def retakeAtPoint (text : String) (state : EditorState) :
+    Except AtPointRefusal Unit × EditorState :=
+  state.changeAtPoint fun session =>
+    { session with
+      typed := text, shown := text, candidates := { session.candidates with chosen := none } }
+
+/-- Records that a command typed `text` in `view` in place of typed text
+(`retyped`). -/
+def retype (view : ViewId) (text : String) (state : EditorState) : EditorState :=
+  { state with retyped := state.retyped.push (view, text) }
 
 end EditorState
 

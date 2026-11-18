@@ -1,4 +1,5 @@
 import Editor.Api.Cases
+import Editor.AtPoint.Compiled
 import Editor.Buffers.Compiled
 import Editor.Clipboard.Contract
 import Editor.Clipboard.Model
@@ -2662,7 +2663,31 @@ def refusal (setup : SetupM Unit) : Option String :=
 run against the handler that collects what it registers
 (`Editor/Config/Registry.lean`). -/
 def setupChecks : List Check :=
-  [{
+  [{  name :=
+        "a setup's at-point sources and uses are collected in order, a mode's or every buffer's; one that defines an at-point source name twice is refused, after the display checks"
+      run :=
+        pure <|
+          let setup : SetupM Unit := do
+            defineAtPoint (Completion.AtPoint.silent "one")
+            useAtPoint "one"
+            useAtPointIn "lean" "two"
+            defineAtPoint (Completion.AtPoint.silent "two")
+          let twice : SetupM Unit := do
+            defineAtPoint (Completion.AtPoint.silent "one")
+            defineAtPoint (Completion.AtPoint.silent "one")
+          let both : SetupM Unit := do
+            defineAtPoint (Completion.AtPoint.silent "one")
+            defineAtPoint (Completion.AtPoint.silent "one")
+            defineDisplay (Completion.Display.plain "plain")
+            defineDisplay (Completion.Display.plain "plain")
+          match Config.Registrations.ofSetup setup with
+          | .ok collected =>
+            collected.atPoints.map (·.name) == #["one", "two"] &&
+              collected.atPointUses == #[(none, "one"), (some "lean", "two")] &&
+              refusal twice == some (Config.Registrations.atPointTwice "one") &&
+              refusal both == some (Config.Registrations.displayTwice "plain")
+          | .error _ => false },
+    {
       name :=
         "running a setup against the collecting handler returns its commands and store declarations, in order",
       run :=
@@ -3437,6 +3462,43 @@ def boundTo (registry : Config.Registry) (text : String) : Option Invocation :=
 /-- The checks of the registry (`Editor/Config/Registry.lean`). -/
 def registryChecks : List Check :=
   [{  name :=
+        "a buffer's at-point chain is its minor modes', then its major mode's lineage, then every buffer's, config's before what ships, each once"
+      run :=
+        pure <|
+          let modes : Array Mode :=
+            #[{ name := "n", atPoint := ["c"] }, { name := "p", atPoint := ["b"] },
+              { name := "m", parent := some "p", atPoint := ["a"] }]
+          let registry :=
+            ((({} : Config.Registry).replaceModes .compiled modes).replaceAtPointUses .config
+                  #[(some "m", "d"), (none, "e")]).replaceAtPointUses
+              .compiled #[(none, "words")]
+          let repeated :=
+            registry.replaceAtPointUses .compiled
+              #[(none, "words"), (some "p", "a"), (some "m", "x")]
+          registry.atPointNames (some "m") #["n"] == #["c", "d", "a", "b", "e", "words"] &&
+            repeated.atPointNames (some "m") #["n"] == #["c", "d", "x", "a", "b", "e", "words"] &&
+            registry.atPointNames none #[] == #["e", "words"] &&
+            registry.atPointNames (some "nobody") #[] == #["e", "words"] },
+    { name :=
+        "the latest at-point entry of a name is the one found, config's over compiled's until a reload drops it; a name a use or a mode lists that nobody registered is unknown; the loop is told the lookup and the chain"
+      run :=
+        pure <|
+          let compiled :=
+            (({} : Config.Registry).replaceAtPoints .compiled
+                  #[Completion.AtPoint.words]).replaceModes
+              .compiled #[{ name := "m", atPoint := ["lost"] }]
+          let tuned :=
+            (compiled.replaceAtPoints .config
+                  #[Completion.AtPoint.words (pause := 100)]).replaceAtPointUses
+              .config #[(none, "words"), (none, "gone")]
+          let dropped := tuned.replaceAtPoints .config #[]
+          (tuned.atPoint? "words").bind (·.pause) == some 100 &&
+            (dropped.atPoint? "words").bind (·.pause) == some 240 &&
+            (compiled.atPoint? "other").isNone &&
+            tuned.unknownAtPoints == #["gone", "lost"] &&
+            ((tuned.registered.atPoint "words").bind (·.pause)) == some 100 &&
+            tuned.registered.atPointNames (some "m") #[] == #["lost", "words", "gone"] },
+    { name :=
         "the registry's compile contributions are config's in config's order, then the compiled ones config does not register; config's a-mode replaces the compiled a-mode whole, and replacing config's with none brings the compiled one back"
       run :=
         let compiledA : Compile.Contribution :=
@@ -4349,6 +4411,32 @@ def reportFrom (state : Config.State Elaborated) (outcome : Config.Outcome Elabo
 outcomes built by hand. -/
 def reloadChecks : List Check :=
   [{  name :=
+        "an install replaces config's at-point sources and uses; its report names each at-point source a use names that nobody registered, which the echo area says after the displays' sentences; a later install that makes none clears them"
+      run :=
+        let shown : Config.State Elaborated :=
+          { themed with
+            registry := themed.registry.replaceAtPoints .compiled Completion.AtPoint.shipped }
+        let uses : SetupM Unit := do
+          defineAtPoint (Completion.AtPoint.silent "mine")
+          useAtPoint "mine"
+          useAtPointIn "lean" "nope"
+          useDisplay "gone"
+        let (state, _) := reduceFrom shown [.requested, .finished (accepted ["a"] uses)]
+        let report := reportFrom shown (accepted ["a"] uses)
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        pure
+          (state.registry.atPointUses.map (fun use => (use.mode, use.source)) ==
+              #[(none, "mine"), (some "lean", "nope")] &&
+            (state.registry.atPoint? "mine").isSome &&
+            report.unknownAtPoints == #["nope"] &&
+            report.echo ==
+              some
+                "reload: no completion display is registered under `gone`; no at-point completion source is registered under `nope`" &&
+            dropped.registry.atPointUses.isEmpty &&
+            (dropped.registry.atPoint? "mine").isNone &&
+            (dropped.registry.atPoint? "words").isSome &&
+            (reportFrom state (accepted ["a"] (pure ()))).unknownAtPoints == #[]) },
+    { name :=
         "an install sets the title bar config chooses, a later install that chooses none goes back to none, the themed one, and a rejected one changes nothing"
       run :=
         let (state, _) :=
@@ -11852,6 +11940,39 @@ asks the text store nothing, so a marker's id is written out by hand. -/
 def stateRequestChecks : List Check :=
   let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
   [{  name :=
+        "the at-point requests are their operations: open, choose, retype, retake and close a session, and retype pushes onto what commands typed; with no registry the chain asks nothing and an at-point source answers none"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let session : AtPointSession :=
+              { view := ⟨0⟩, buffer := ⟨0⟩, source := "line", start := marker 0 90
+                stop := marker 0 91, typed := "a", shown := "a" }
+            let collected : Completion.Collected := { all := offered #["a1", "a2"] }
+            let (opened, open1) := state.handle (.openAtPoint session collected)
+            let open1 :=
+              open1.replaceCandidatesIn ⟨0⟩
+                (((open1.candidatesIn? ⟨0⟩).getD {}).list "a" #[.ofIndex 0, .ofIndex 1])
+            let (chose, chosen) := open1.handle (.chooseAtPoint .next)
+            let (retyped, shown) := chosen.handle (.retypeAtPoint "a1" true)
+            let (retaken, taken) := shown.handle (.retakeAtPoint "a1z")
+            let (closed, gone) := taken.handle .closeAtPoint
+            let ((), told) := state.handle (.retype ⟨0⟩ "\x08b")
+            let (names, _) := state.handle (.atPointSources ⟨0⟩ .key)
+            let (region, _) := state.handle (.askAtPoint "line" { view := ⟨0⟩, offset := 0 })
+            opened matches .ok () && chose matches .ok () && retyped matches .ok () &&
+              retaken matches .ok () &&
+              (chosen.atPoint.bind (·.candidates.chosen)) == some 0 &&
+              shown.atPoint.map (·.shown) == some "a1" &&
+              taken.atPoint.map (·.typed) == some "a1z" &&
+              closed.toOption.map (·.source) == some "line" &&
+              gone.atPoint.isNone &&
+              told.retyped == #[(⟨0⟩, "\x08b")] &&
+              names.isEmpty &&
+              region.isNone &&
+              (state.handle .closeAtPoint).1.toOption.isNone },
+    { name :=
         "setLanguage records a buffer's language by name and clears it, and refuses a buffer there is none of with the state unchanged; a buffer has no language until one is set"
       run :=
         pure <|
@@ -15003,6 +15124,50 @@ def dispatchStateChecks : List Check :=
       [("split", split), ("fail", failingAfter fun call => discard <| splitting call),
         ("moving", moving)]
   [{  name :=
+        "an at-point source is asked inside the asking command, its requests answered there, and a name nobody registered answers none; a buffer's chain is asked filtered by the occasion"
+      run :=
+        pure <|
+          let reading : Completion.AtPoint :=
+            { name := "reading"
+              ask := fun spot => do
+                let state ← editorState
+                return some { start := spot.offset, stop := state.windows.size, sources := [] } }
+          let dots : Completion.AtPoint :=
+            { Completion.AtPoint.silent "dots" with triggers := ['.'] }
+          let registered : Loop.Registered :=
+            { atPoint := fun name => [reading, dots].find? (·.name == name)
+              atPointNames := fun _ _ => #["reading", "dots", "nobody"] }
+          let asking :
+            EditorM
+              (Option Completion.Region ×
+                Option Completion.Region ×
+                Array String × Array String × Array String × Array String) :=
+            do
+            let asked ← EditorState.ask (.askAtPoint "reading" { view := ⟨0⟩, offset := 0 })
+            let nobody ← EditorState.ask (.askAtPoint "nobody" { view := ⟨0⟩, offset := 0 })
+            let onKey ← EditorState.ask (.atPointSources ⟨0⟩ .key)
+            let onDot ← EditorState.ask (.atPointSources ⟨0⟩ (.trigger '.'))
+            let onPause ← EditorState.ask (.atPointSources ⟨0⟩ (.pause 240))
+            let elsewhere ← EditorState.ask (.atPointSources ⟨9⟩ .key)
+            return (asked, nobody, onKey, onDot, onPause, elsewhere)
+          let program :
+            EditorM
+              (Guarded
+                  (Option Completion.Region ×
+                    Option Completion.Region ×
+                    Array String × Array String × Array String × Array String) ×
+                EditorState) :=
+            do
+            asking.dispatched registered (← twoBuffers)
+          match (program.runModel editorModel).1 with
+          | .ok (.finished (asked, nobody, onKey, onDot, onPause, elsewhere), _) =>
+            asked == some { start := 0, stop := 2, sources := [] } && nobody.isNone &&
+              onKey == #["reading", "dots"] &&
+              onDot == #["dots"] &&
+              onPause == #[] &&
+              elsewhere == #[]
+          | _ => false },
+    { name :=
         "a dispatched command that asks for the display rules is answered the rules the loop was told of, and the state is as it was"
       run :=
         let rules : Array DisplayRule :=
@@ -18506,12 +18671,13 @@ def vimDefaultChecks : List Check :=
               (vimDefault s!"i {text}").1.current == (vimDefault "i").1.current &&
                 (vimDefault s!"i {text}").1.lastChange == (vimDefault "i").1.lastChange) },
     { name :=
-        "<Backspace>, RET and TAB in a session are kept with its typed text, in the order typed, for a repeat: <Backspace> as the backspace character, RET as a line feed and TAB as a tab"
+        "<Backspace> in a session is kept with its typed text, in the order typed, for a repeat, as the backspace character; RET and TAB add nothing by their keys: what their commands type reaches the recording as committed text (`EditorState.retyped`)"
       run :=
         pure
           ((vimDefault "i x <Backspace> y").1.inserted == some "x\x08y" &&
-            (vimDefault "i x RET y").1.inserted == some "x\ny" &&
-            (vimDefault "i x TAB y").1.inserted == some "x\ty" &&
+            (vimDefault "i x RET y").1.inserted == some "xy" &&
+            (vimDefault "i x TAB y").1.inserted == some "xy" &&
+            (Vim.Default.scheme.committed ⟨0⟩ "\n" (vimDefault "i x").1).inserted == some "x\n" &&
             (vimDefault "c w <Backspace> <Backspace> y").1.inserted == some "\x08\x08y" &&
             (vimDefault "c w <Backspace>").1.lastChange == (vimDefault "c w").1.lastChange) },
     { name :=
@@ -18524,15 +18690,44 @@ def vimDefaultChecks : List Check :=
               (vimDefault s!"A x {arrow} y").1.lastChange == (vimDefault "i").1.lastChange &&
               (vimDefault s!"c w x {arrow} y z").1.inserted == some "yz" &&
               (vimDefault s!"c w x {arrow} <Backspace>").1.inserted == some "\x08" &&
-              (vimDefault s!"c w x {arrow} RET").1.lastChange == (vimDefault "i").1.lastChange &&
+              (vimDefault s!"c w x {arrow} C-w").1.lastChange == (vimDefault "i").1.lastChange &&
               (vimDefault s!"c w x {arrow}").1.inserted == some "x" &&
               (vimDefault s!"c w x {arrow} <Escape>").1.lastChange ==
                 (vimDefault "c w").1.lastChange &&
               (vimDefault s!"c w x {arrow} <Escape> y").1.inserted == some "x") },
     { name :=
-        "every command a key of insert state's table or of the minibuffer's state's table runs is registered under its name by evil's commands or the minibuffer's"
+        "insert state binds C-SPC, C-n, C-p, TAB, S-TAB, RET and C-g to the at-point commands, each changing no text for the grammar; the minibuffer state's keys are unchanged"
       run :=
-        let registered := (Evil.commands ++ Minibuffer.commands).map (·.name)
+        pure <|
+          let bound :=
+            [("C-SPC", AtPoint.completeName), ("C-n", AtPoint.nextName),
+              ("C-p", AtPoint.previousName), ("TAB", AtPoint.tabName),
+              ("S-TAB", AtPoint.backtabName), ("RET", AtPoint.returnName),
+              ("C-g", AtPoint.quitName)]
+          (bound.all fun (key, name) =>
+              (vimDefaultCommand s!"i {key}").any fun command =>
+                command.name == name && !command.changes && command.enters.isNone &&
+                  command.typed.isNone &&
+                  command.restarts.isNone) &&
+            (bound.all fun (key, name) =>
+              Vim.Default.insertCommands.any fun
+                | (text, .command command) => text == key && command.name == name
+                | _ => false) &&
+            Vim.Default.minibufferCommands.map
+                (fun (key, bound) =>
+                  (key,
+                    match bound with
+                    | .command command => command.name
+                    | _ => "")) ==
+              [("RET", "minibuffer-accept"), ("<Escape>", "minibuffer-cancel"),
+                ("TAB", "minibuffer-next"), ("C-n", "minibuffer-next"),
+                ("S-TAB", "minibuffer-previous"), ("C-p", "minibuffer-previous"),
+                ("<Backspace>", "minibuffer-delete-backward"), ("<ArrowLeft>", ""),
+                ("<ArrowRight>", ""), ("C-u", "minibuffer-delete-to-start")] },
+    { name :=
+        "every command a key of insert state's table or of the minibuffer's state's table runs is registered under its name by evil's commands, the minibuffer's or completion at point's"
+      run :=
+        let registered := (Evil.commands ++ Minibuffer.commands ++ AtPoint.commands).map (·.name)
         pure
           ((Vim.Default.insertCommands ++ Vim.Default.minibufferCommands).all fun
             | (_, .command command) => registered.contains command.name
@@ -27186,7 +27381,9 @@ def evilHanded (more : Array Config.Registration := #[])
     (commands : List (String × Dispatched) := []) : Loop.Keys Vim.Default.scheme :=
   {
     command? := fun name =>
-      match (Evil.commands ++ Minibuffer.commands ++ more).findRev? (·.name == name) with
+      match
+        (Evil.commands ++ Minibuffer.commands ++ AtPoint.commands ++ more).findRev?
+          (·.name == name) with
       | some { action := .call run, .. } =>
         some fun call => do
           run call
@@ -39436,6 +39633,526 @@ def wordsChecks : List Check :=
             Completion.Words.source.later ==
               some { job := Completion.Words.job, reask := .never, readsTexts := true } }]
 
+/-- A session at point of the state checks, in the window 0 over the buffer
+0, with made-up markers of the text 0: nothing typed. -/
+def stateSession (typed : String := "a") : AtPointSession :=
+  { view := ⟨0⟩, buffer := ⟨0⟩, source := "line", start := ⟨⟨0⟩, 90⟩, stop := ⟨⟨0⟩, 91⟩
+    typed, shown := typed }
+
+/-- The state the at-point state checks start from: the initial one at 640
+by 480. -/
+def atPointBase : Option EditorState :=
+  onTextModel (EditorState.initial ⟨640, 480⟩)
+
+/-- `state` with a session open (`stateSession`) whose candidates are each
+of `texts`, listed for `typed` at the indices `indices`. -/
+def sessionListing (state : EditorState) (texts : Array String) (indices : Array Nat)
+    (typed : String := "a") : EditorState :=
+  let (_, opened) := state.openAtPoint (stateSession typed) { all := offered texts }
+  match opened.candidatesIn? ⟨0⟩ with
+  | some candidates =>
+    opened.replaceCandidatesIn ⟨0⟩ (candidates.list typed (indices.map Completion.Hit.ofIndex))
+  | none => opened
+
+/-- The checks of a session at point in the state (`Editor/State.lean`, "A
+session at point"): opening, closing, the choice, what a preview and an edit
+record, when nothing more is to come, batches and matches reaching it by
+its view, the place it takes and the invariants. -/
+def atPointStateChecks : List Check :=
+  [{  name :=
+        "a session opens with the candidates its sources answered, its region and texts, and nothing chosen; it is refused while a prompt is open, while a session is, and for a view with no window"
+      run :=
+        pure <|
+          match atPointBase with
+          | none => false
+          | some state =>
+            let collected : Completion.Collected :=
+              { all := offered #["a1", "a2"], category := some "word"
+                region := some { start := 0, stop := 1 }, texts := #[⟨3⟩] }
+            let (opened, made) := state.openAtPoint (stateSession) collected
+            let (again, _) := made.openAtPoint (stateSession) collected
+            let (_, asking) := prompted state
+            let (prompting, _) := asking.openAtPoint (stateSession) collected
+            let (nowhere, _) := state.openAtPoint { stateSession with view := ⟨9⟩ } collected
+            opened matches .ok () &&
+              made.atPoint.map (·.candidates) ==
+                some
+                  { all := offered #["a1", "a2"], category := some "word"
+                    region := some { start := 0, stop := 1 }, texts := #[⟨3⟩] } &&
+              made.atPoint.bind (·.candidates.chosen) == none &&
+              made.wellFormed &&
+              again matches .error .alreadyOpen &&
+              prompting matches .error .promptOpen &&
+              nowhere matches .error .noWindow &&
+              (EditorState.openAtPoint stateSession collected
+                    { state with atPoint := some stateSession }).2 ==
+                { state with atPoint := some stateSession } },
+    { name :=
+        "closing hands the session back and leaves none; the choice moves through the listing with nothing chosen as one stop; a preview records what it left and that it was made; an edit takes the region's text as typed and shown and forgets the choice; each is refused with no session"
+      run :=
+        pure <|
+          match atPointBase with
+          | none => false
+          | some state =>
+            let listing := sessionListing state #["a1", "a2", "a3"] #[0, 1, 2]
+            let chosen (state : EditorState) := state.atPoint.bind (·.candidates.chosen)
+            let (_, one) := listing.chooseAtPoint .next
+            let (_, two) := one.chooseAtPoint .next
+            let (_, back) := listing.chooseAtPoint .previous
+            let (_, previewed) := two.retypeAtPoint "a2" true
+            let (_, retaken) := previewed.retakeAtPoint "a2x"
+            let (closed, after) := retaken.closeAtPoint
+            chosen one == some 0 && chosen two == some 1 && chosen back == some 2 &&
+              previewed.atPoint.map (fun s => (s.shown, s.typed, s.previewed)) ==
+                some ("a2", "a", true) &&
+              retaken.atPoint.map (fun s => (s.shown, s.typed, s.previewed, s.candidates.chosen)) ==
+                some ("a2x", "a2x", true, none) &&
+              closed.toOption.map (·.typed) == some "a2x" &&
+              after.atPoint.isNone &&
+              (state.closeAtPoint).1.toOption.isNone &&
+              (state.chooseAtPoint .next).1 matches .error .notOpen &&
+              (state.retypeAtPoint "x" true).1 matches .error .notOpen &&
+              (state.retakeAtPoint "x").1 matches .error .notOpen &&
+              (state.retype ⟨0⟩ "x").retyped == #[(⟨0⟩, "x")] },
+    { name :=
+        "nothing more is to come once no match is in flight and every asking source is done, and either nothing can be listed or the listing for the typed text at the revision is empty"
+      run :=
+        pure <|
+          let asking : Completion.Asking :=
+            { source := "words", later := { job := "words" }, askedFor := "a" }
+          let empty : Candidates := {}
+          let waiting : Candidates := { asking := #[asking] }
+          let done : Candidates := { asking := #[{ asking with done := true }] }
+          let other : Candidates := (({ all := offered #["b"] } : Candidates).list "a" #[])
+          let listed : Candidates :=
+            (({ all := offered #["ab"] } : Candidates).list "a" #[.ofIndex 0])
+          let matching : Candidates :=
+            { other with matching := some { pattern := "a", revision := 0, generation := 0 } }
+          empty.exhausted "a" && !waiting.exhausted "a" && done.exhausted "a" &&
+            other.exhausted "a" &&
+            !other.exhausted "b" &&
+            !listed.exhausted "a" &&
+            !matching.exhausted "a" },
+    { name :=
+        "a batch, a source's end, a match's delivery and its failure reach a session by its view, and another view's are dropped"
+      run :=
+        pure <|
+          match atPointBase with
+          | none => false
+          | some state =>
+            let asking : Completion.Asking :=
+              { source := "words", later := { job := "words" }, askedFor := "a", generation := 1 }
+            let (_, opened) := state.openAtPoint stateSession { asking := #[asking] }
+            let (taken, batched) := opened.addCandidates ⟨0⟩ 0 1 (offered #["ab", "ac"])
+            let (other, _) := opened.addCandidates ⟨5⟩ 0 1 (offered #["ab"])
+            let ended := batched.sourceAnswered ⟨0⟩ 0 1
+            let inFlight :=
+              ended.replaceCandidatesIn ⟨0⟩
+                { (ended.candidatesIn? ⟨0⟩).getD {} with
+                  matching := some { pattern := "a", revision := 1, generation := 0 } }
+            let listedIn := inFlight.listMatched ⟨0⟩ "a" 1 #[.of (.ofText "ab")]
+            let failed := inFlight.matchFailed ⟨0⟩ "a" 1 "broken"
+            taken && !other &&
+              (batched.candidatesIn? ⟨0⟩).map (·.matchable.map (·.text)) == some #["ab", "ac"] &&
+              (ended.candidatesIn? ⟨0⟩).map (·.asking.all (·.done)) == some true &&
+              (listedIn.candidatesIn? ⟨0⟩).map (·.listed.map (·.text)) == some #["ab"] &&
+              (failed.candidatesIn? ⟨0⟩).bind (·.unmatched) == some ("a", 1) &&
+              (state.candidatesIn? ⟨0⟩).isNone },
+    { name :=
+        "while a session is open and no prompt is, the place is the list's rows and the bottom row, with no input row; it grows and never shrinks, and closing the session gives the bottom row back"
+      run :=
+        pure <|
+          match atPointBase with
+          | none => false
+          | some state =>
+            let texts := (Array.range 8).map (s!"a{·}")
+            let five := (sessionListing state texts (Array.range 5)).displayed .standard
+            let two :=
+              (five.replaceCandidatesIn ⟨0⟩
+                    (((five.candidatesIn? ⟨0⟩).getD {}).list "a1"
+                      #[.ofIndex 1, .ofIndex 2])).displayed
+                .standard
+            let (_, closed) := two.closeAtPoint
+            let heights := five.heights
+            let rows (state : EditorState) := state.atPoint.map (·.sheet.rows.size)
+            five.listRows == 5 && five.minibufferPlace == 5 * heights.text + heights.message &&
+              rows two == some 2 &&
+              two.listRows == 5 &&
+              two.minibufferPlace == five.minibufferPlace &&
+              five.candidateListRect? ==
+                some
+                  { x := 0, y := 480 - (5 * heights.text + heights.message), width := 640
+                    height := 5 * heights.text } &&
+              five.tiled.height == 480 - (5 * heights.text + heights.message) &&
+              closed.minibufferPlace == heights.message &&
+              closed.candidateListRect? == none &&
+              (sessionListing state texts #[]).candidateListRect? == none },
+    { name :=
+        "the state is not well formed with a session whose view is no window, or whose choice is past its listing"
+      run :=
+        pure <|
+          match atPointBase with
+          | none => false
+          | some state =>
+            let listing := sessionListing state #["a1"] #[0]
+            !{ state with atPoint := some { stateSession with view := ⟨9⟩ } }.wellFormed &&
+              listing.wellFormed &&
+              !(listing.withCompleting ⟨0⟩ fun completing =>
+                    { completing with
+                      candidates := { completing.candidates with chosen := some 4 } }).wellFormed }]
+
+/-- The at-point source `line` of the loop checks: the region from the start
+of the cursor's line to the cursor, read from the text, completed from the
+source `say`. -/
+def lineAtPoint (sources : List Completion.Named := [.source "say"]) : Completion.AtPoint :=
+  { name := "line"
+    ask := fun spot => do
+      let .ok target ← spot.view.target | return none
+      let start ← target.buffer.text.motion .lineStart spot.offset
+      return some { start, stop := spot.offset, sources } }
+
+/-- The at-point source `last2` of the loop checks: the two bytes before the
+cursor, or from the text's start, completed from the source `alphas`. -/
+def lastTwoAtPoint : Completion.AtPoint :=
+  .fixed "last2" fun spot =>
+    some { start := spot.offset - 2, stop := spot.offset, sources := [.source "alphas"] }
+
+/-- The completion sources the loop checks complete from, by name. -/
+def atPointSources : List Completion.Source :=
+  [.ofTexts "say" "say" #["say hello", "say hi"], .ofTexts "pick" "pick" #["wq", "w"],
+    .ofTexts "alphas" "alpha" #["alpha", "alpine"], .ofTexts "threes" "three" #["a1", "a2", "a3"],
+    Completion.Words.source]
+
+/-- What a step of the at-point loop checks is handed: `evilHanded`, told
+that a buffer's chain is `chain`, that the at-point sources are `atPoints`
+and the shipped `words`, and that the sources are `atPointSources`, by name
+and by category. -/
+def atPointHanded (chain : Array String) (atPoints : List Completion.AtPoint)
+    (more : Array Config.Registration := #[]) : Loop.Keys Vim.Default.scheme :=
+  let handed := evilHanded more
+  { handed with
+    registered :=
+      { handed.registered with
+        atPoint := fun name => (atPoints ++ [Completion.AtPoint.words]).find? (·.name == name)
+        atPointNames := fun _ _ => chain
+        sources := fun name => atPointSources.find? (·.name == name)
+        categorySources := fun category =>
+          (atPointSources.filter (·.category == category)).toArray.map (·.name) } }
+
+/-- A driver of the at-point loop checks over the fixture `fixture`
+(`evilState`), handed `atPointHanded chain atPoints`, with the job `words`
+registered. -/
+def atPointDriver (fixture : String) (chain : Array String) (atPoints : List Completion.AtPoint)
+    (more : Array Config.Registration := #[]) : Option EvilDriver :=
+  let (contents, head) := barred fixture
+  let jobs (name : String) : Option (List Argument → Work) :=
+    if name == Completion.Words.job then some (Completion.answering Completion.Words.gather)
+    else none
+  (Loop.Driver.over (atPointHanded chain atPoints more) jobs (evilState contents head)
+      editorModel).toOption
+
+/-- Whether the last scene `driver` published shows the candidate list's
+view. -/
+def listShown (driver : EvilDriver) : Bool :=
+  match driver.loop.state.candidateList, driver.model.display.scenes.back? with
+  | some drawn, some scene => scene.views.any (·.id == drawn.view)
+  | _, _ => false
+
+/-- The texts the candidate list's last sheet shows, of the open session. -/
+def sessionRows (driver : EvilDriver) : Array String :=
+  (driver.loop.state.atPoint.map fun session => session.sheet.rows.map (·.text)).getD #[]
+
+/-- The open session's choice in `driver`. -/
+def sessionChosen (driver : EvilDriver) : Option Nat :=
+  driver.loop.state.atPoint.bind (·.candidates.chosen)
+
+/-- Whether the text model refuses the marker `id`: given up. -/
+def markerGone (driver : EvilDriver) (id : MarkerId) : Bool :=
+  match ((id.text.marker id).runModel driver.model.texts).1 with
+  | .error .noSuchMarker => true
+  | _ => false
+
+/-- `driver` fed a press of each key `text` names, and the steps the feeds
+handed back, in order. -/
+def evilSteps (driver : EvilDriver) (text : String) :
+    EvilDriver × Array (Loop.Stepped Vim.Default.scheme) :=
+  (keys text).foldl
+    (fun (driver, steps) key =>
+      let (driver, stepped) := driver.feed { event := press key, stamp := 0 }
+      (driver, steps ++ stepped.toOption.toArray))
+    (driver, #[])
+
+/-- `driver` once every post is delivered and every pending job finished,
+oldest first, a post before a job's end; bounded. -/
+def evilDrained (driver : EvilDriver) : EvilDriver :=
+  (List.range 64).foldl
+    (fun driver _ =>
+      match driver.posting[0]? with
+      | some job => (driver.posted job.id).1
+      | none =>
+        match driver.pending[0]? with
+        | some job => (driver.finish job.id).1
+        | none => driver)
+    driver
+
+/-- The checks of asking for completion at point (`Editor/Api.lean`,
+"Completion at point", `Editor/AtPoint.lean`), on the evil driver over the
+models. -/
+def atPointChecks : List Check :=
+  let second : Completion.AtPoint :=
+    .fixed "second" fun spot =>
+      some { start := spot.offset, stop := spot.offset, sources := [.source "pick"] }
+  let atPoints :=
+    [Completion.AtPoint.silent "silent", second, Completion.Fake.AtPoint.refusing "refusing"]
+  [{  name :=
+        "the first at-point source of the chain that answers is used, and the later ones are not asked"
+      run :=
+        pure <|
+          match atPointDriver "|" #["silent", "second", "refusing"] atPoints,
+            atPointDriver "|" #["silent", "refusing"] atPoints with
+          | some first, some refused =>
+            let opened := evilFed first "i C-n"
+            let failed := evilFed refused "i C-n"
+            opened.loop.state.atPoint.map (·.source) == some "second" &&
+              (opened.loop.state.atPoint.map (·.candidates.all.map (·.text))) ==
+                some #["wq", "w"] &&
+              sessionChosen opened == none &&
+              !opened.loop.state.echo.startsWith "at-point-next" &&
+              failed.loop.state.atPoint.isNone &&
+              failed.loop.state.echo == "at-point-next: refused: bad range"
+          | _, _ => false },
+    { name :=
+        "with no at-point source answering a key says nothing to complete at point; one whose region is away from the cursor is refused outside; one naming a source nobody registered is refused with it; S-TAB with no session does nothing; C-g with no session runs keyboard-quit"
+      run :=
+        pure <|
+          let away : Completion.AtPoint :=
+            .fixed "away" fun spot =>
+              some { start := spot.offset + 1, stop := spot.offset + 1, sources := [] }
+          let missing : Completion.AtPoint :=
+            .fixed "missing" fun spot =>
+              some { start := spot.offset, stop := spot.offset, sources := [.source "nobody"] }
+          let quitting : Config.Registration :=
+            { name := "keyboard-quit", action := .call fun _ => message "quit ran" }
+          match atPointDriver "ab|c" #["silent"] atPoints #[quitting],
+            atPointDriver "ab|c" #["away"] [away], atPointDriver "ab|c" #["missing"] [missing] with
+          | some silent, some outside, some unknown =>
+            (evilFed silent "i C-SPC").loop.state.echo == AtPoint.nothing &&
+              (evilFed outside "i C-SPC").loop.state.echo ==
+                (AtPointRefusal.outside "away").describe &&
+              (evilFed unknown "i C-SPC").loop.state.echo ==
+                (AtPointRefusal.source (.noSuchSource "nobody")).describe &&
+              evilShown (evilFed silent "i S-TAB") == "ab|c" &&
+              (evilFed silent "i S-TAB").loop.state.echo == "" &&
+              (evilFed silent "i C-g").loop.state.echo == "quit ran" &&
+              (evilFed silent "i C-g").loop.state.atPoint.isNone
+          | _, _, _ => false },
+    { name :=
+        "a session is refused while a prompt is open, and asking again while one is open does nothing; C-g closes it and the loop gives its markers up"
+      run :=
+        pure <|
+          match atPointDriver "|" #["second"] atPoints with
+          | none => false
+          | some driver =>
+            let opened := evilFed driver "i C-n"
+            let again := evilFed opened "C-SPC"
+            match opened.loop.state.atPoint with
+            | none => false
+            | some session =>
+              let quit := evilFed opened "C-g"
+              let state := opened.loop.state
+              let (_, prompting) := prompted state
+              again.loop.state.atPoint == opened.loop.state.atPoint &&
+                quit.loop.state.atPoint.isNone &&
+                markerGone quit session.start &&
+                markerGone quit session.stop &&
+                ((completeAtPoint .key).runModel opened.model |>.1 |> fun
+                  | .ok _ => true
+                  | _ => false) &&
+                (EditorState.openAtPoint session {} prompting).1 matches .error .promptOpen },
+    { name :=
+        "a source that reads the open buffers' texts has a snapshot taken of each, the asking view's buffer's first; a source that does not has none"
+      run :=
+        pure <|
+          let registered : Loop.Registered :=
+            { sources := fun name => atPointSources.find? (·.name == name), jobs := fun _ => true }
+          let asking (refs : List Completion.SourceRef) (view : ViewId) :
+            EditorM (Guarded (Except SourceRefusal Completion.Collected) × EditorState) := do
+            let state ← twoBuffers
+            (collectSources refs { text := "", view }).dispatched registered
+                { state with frame := { state.frame with focused := view } }
+          match (asking [.named "words"] ⟨1⟩).runModel editorModel,
+            (asking [.named "say"] ⟨1⟩).runModel editorModel with
+          | (.ok (.finished (.ok words), _), model), (.ok (.finished (.ok plain), _), _) =>
+            let contents (id : SnapshotId) : Option String :=
+              (model.texts.snapshots[id.index]?).join.map (·.contents)
+            words.texts.size == 2 && words.texts.toList.map contents == [some "other", some ""] &&
+              plain.texts.isEmpty
+          | _, _ => false }]
+
+/-- The checks of what a repeat replays after completion at point
+(`EditorState.retyped`, `Loop.ranInto`): what a command typed in place of
+typed text reaches the last change's recording, only when the command ran to
+its end; and `.` after an insert that accepted a preview inserts what that
+insert left. -/
+def atPointRepeatChecks : List Check :=
+  let retyping : Config.Registration :=
+    { name := "retyping", action := .call fun call => retype call.target.window.id "zz" }
+  let refusing : Config.Registration :=
+    { name := "refusing"
+      action :=
+        .call fun call => do
+          retype call.target.window.id "yy"
+          throw .badRange }
+  [{  name :=
+        "what a command says it typed reaches the insert session's recording once it has run to its end, and a command that is refused tells the scheme nothing"
+      run :=
+        pure <|
+          match evilDriver "ab|c" (evilHanded #[retyping, refusing]) with
+          | none => false
+          | some driver =>
+            let inserting := evilFed driver "i x"
+            let told :=
+              (inserting.stepped
+                  (inserting.loop.invoke inserting.handed { command := "retyping" })).1
+            let refused := (told.stepped (told.loop.invoke told.handed { command := "refusing" })).1
+            told.loop.input.inserted == some "xzz" && told.loop.atRest.inserted == some "xzz" &&
+              refused.loop.input.inserted == some "xzz" &&
+              told.loop.state.retyped.isEmpty },
+    { name :=
+        "after a C-n C-n RET <Escape>, a move and . insert at the new bar what the insert left, the previewed text included"
+      run :=
+        pure <|
+          match atPointDriver "say he\nsay h|e" #["line"] [lineAtPoint] with
+          | none => false
+          | some driver =>
+            let done := evilFed driver "a C-n C-n RET <Escape>"
+            let repeated := evilFed done "k ."
+            evilText done == some "say he\nsay hello" &&
+              evilText repeated == some "say hello\nsay hello" }]
+
+/-- The checks of completion at point through the loop (`Editor/Loop.lean`,
+"Completion at point"), on the evil driver over the models. -/
+def atPointLoopChecks : List Check :=
+  [{  name :=
+        "a previewed candidate accepted with RET is what the region the source named now holds, and one undo restores the text from before the first preview"
+      run :=
+        pure <|
+          match atPointDriver "say h|e" #["line"] [lineAtPoint] with
+          | none => false
+          | some driver =>
+            let opened := evilFed driver "a C-n"
+            let previewed := evilFed opened "C-n"
+            let accepted := evilFed previewed "RET"
+            let undone := evilUndone (evilFed accepted "<Escape>")
+            let typedOn := evilFed driver "a C-n C-n x <Escape>"
+            opened.loop.state.atPoint.isSome && sessionChosen opened == none &&
+              evilText opened == some "say he" &&
+              sessionRows opened == #["say hello"] &&
+              evilText previewed == some "say hello" &&
+              sessionChosen previewed == some 0 &&
+              evilText accepted == some "say hello" &&
+              accepted.loop.state.atPoint.isNone &&
+              evilText undone == some "say he" &&
+              evilText typedOn == some "say hellox" },
+    { name :=
+        "moving the cursor out of the region closes the session and gives the windows back their rows; moving inside it keeps it; <Escape> closes it with the preview left, and so does typing on to a text nothing matches"
+      run :=
+        pure <|
+          match atPointDriver "alpha a|l" #["last2"] [lastTwoAtPoint] with
+          | none => false
+          | some driver =>
+            let opened := evilFed driver "a C-n"
+            let inside := evilFed opened "<ArrowLeft> <ArrowLeft>"
+            let outside := evilFed inside "<ArrowLeft>"
+            let escaped := evilFed opened "C-n <Escape>"
+            let unmatched := evilFed opened "z"
+            let heights := outside.loop.state.heights
+            match opened.loop.state.atPoint with
+            | none => false
+            | some session =>
+              listShown opened && inside.loop.state.atPoint.isSome && listShown inside &&
+                outside.loop.state.atPoint.isNone &&
+                !listShown outside &&
+                outside.loop.state.minibufferPlace == heights.message &&
+                (outside.loop.state.rects.find? (·.1 == ⟨0⟩)).map (·.2.height) ==
+                  some (480 - heights.message) &&
+                opened.loop.state.minibufferPlace == 2 * heights.text + heights.message &&
+                markerGone outside session.start &&
+                markerGone outside session.stop &&
+                escaped.loop.state.atPoint.isNone &&
+                evilText escaped == some "alpha alpha" &&
+                markerGone escaped session.start &&
+                unmatched.loop.state.atPoint.isNone &&
+                evilText unmatched == some "alpha alz" &&
+                markerGone unmatched session.stop },
+    { name :=
+        "with a session open, C-n/TAB and C-p/S-TAB move the choice down and up, previewing it in the region, and RET accepts only a chosen candidate"
+      run :=
+        pure <|
+          let threes : Completion.AtPoint :=
+            { lineAtPoint [.source "threes"] with name := "threes" }
+          match atPointDriver "|a" #["threes"] [threes] with
+          | none => false
+          | some driver =>
+            let opened := evilFed driver "a C-SPC"
+            let one := evilFed opened "C-n"
+            let two := evilFed one "TAB"
+            let back := evilFed two "C-p"
+            let none' := evilFed back "S-TAB"
+            let wrapped := evilFed none' "S-TAB"
+            let accepted := evilFed wrapped "RET"
+            let broken := evilFed driver "a C-n RET"
+            sessionChosen opened == none && evilText opened == some "a" &&
+              evilText one == some "a1" &&
+              evilText two == some "a2" &&
+              evilText back == some "a1" &&
+              evilText none' == some "a" &&
+              sessionChosen none' == none &&
+              evilText wrapped == some "a3" &&
+              evilText accepted == some "a3" &&
+              accepted.loop.state.atPoint.isNone &&
+              broken.loop.state.atPoint.isNone &&
+              evilText broken == some "a\n" },
+    { name :=
+        "a previewed session closed because its text stopped matching closes its buffer's group: what is typed after it is a step of its own, and one more undo restores the text from before the preview"
+      run :=
+        pure <|
+          match atPointDriver "say h|e" #["line"] [lineAtPoint] with
+          | none => false
+          | some driver =>
+            let typed := evilFed driver "a C-n C-n x"
+            let after := evilFed typed "y <Escape>"
+            let once := evilUndone after
+            let twice := evilUndone once
+            typed.loop.state.atPoint.isNone && evilText after == some "say helloxy" &&
+              evilText once == some "say hellox" &&
+              evilText twice == some "say he" },
+    { name :=
+        "C-n with words starts its job under completion 0 words, with an order whose texts are snapshots of the open buffers; its batches list the words that match, and closing the session cancels the key and releases the snapshots"
+      run :=
+        pure <|
+          match atPointDriver "alpha alpine al|p" #["words"] [] with
+          | none => false
+          | some driver =>
+            let (asked, steps) := evilSteps driver "a C-n"
+            let started : Array JobStart := steps.flatMap (·.starts)
+            let order :=
+              (started.find? (·.name == Completion.Words.job)).bind fun start =>
+                Completion.Order.ofArguments? start.arguments
+            let listed := evilDrained asked
+            let closed := evilFed listed "<Escape>"
+            let texts := (order.map (·.query.texts)).getD #[]
+            let contents (driver : EvilDriver) (id : SnapshotId) : Option String :=
+              (driver.model.texts.snapshots[id.index]?).join.map (·.contents)
+            (started.find? (·.name == Completion.Words.job)).bind (·.key) ==
+                some (Loop.sourceKey ⟨0⟩ "words") &&
+              texts.toList.map (contents asked) == [some "alpha alpine alp"] &&
+              (order.bind (·.query.region)) == some { start := 13, stop := 16 } &&
+              sessionRows listed == #["alpha", "alpine"] &&
+              closed.loop.state.atPoint.isNone &&
+              texts.all (contents closed · |>.isNone) &&
+              !closed.loop.state.completionKeys.contains (Loop.sourceKey ⟨0⟩ "words") }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -39534,6 +40251,10 @@ def checks : List Check :=
     sourceContractChecks ++
     atPointContractChecks ++
     wordsChecks ++
+    atPointStateChecks ++
+    atPointChecks ++
+    atPointRepeatChecks ++
+    atPointLoopChecks ++
     fileCommandChecks ++
     openFilesChecks ++
     languageOpenChecks ++

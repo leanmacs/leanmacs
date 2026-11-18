@@ -274,6 +274,27 @@ A `setup` that defines a display name twice is refused
 (`Registrations.displayTwice`), and so is one that chooses the display of
 one category, or the default, twice (`Registrations.displayChosenTwice`).
 
+## At-point sources
+
+An at-point source (`Completion.AtPoint`, `Editor/Completion/AtPoint.lean`)
+is held by owner like a display, in an `AtPointEntry`, and replaced as a set
+(`replaceAtPoints`); the latest entry of a name is the one found
+(`atPoint?`), so config tunes a shipped one by defining it again under its
+name. Which a buffer asks is its chain (`atPointNames`): each of its minor
+modes, the one added last first, and then its major mode, each mode with its
+lineage, nearest first; for each mode, config's uses of it (`useAtPointIn`,
+`Editor/Setup.lean`) in setup order, then compiled code's, then the mode's
+own list (`Mode.atPoint`); and last the uses for every buffer (`useAtPoint`),
+config's then compiled code's. Each name is kept once, at its first place.
+Uses are held by owner too, in an `AtPointUse` (`replaceAtPointUses`). The
+compiled use of the shipped `words` for every buffer comes from the host
+(`Headless.Collaborators.atPointUses`), so no core code names it. A name in
+a chain no at-point source is registered under is reported at install
+(`unknownAtPoints`, `Report.unknownAtPoints`), and never asked.
+
+A `setup` that defines an at-point source name twice is refused
+(`Registrations.atPointTwice`).
+
 ## Compiled commands
 
 Compiled code is an owner too (`Owner.compiled`). A host registers its
@@ -426,6 +447,25 @@ structure DisplayEntry where
   /-- The display. -/
   display : Completion.Display
 
+/-- An at-point entry of the registry: an at-point source and who registered
+it. -/
+structure AtPointEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The at-point source. -/
+  atPoint : Completion.AtPoint
+
+/-- A use of an at-point source: who made it, the mode it is for, or `none`
+for every buffer, and the source's name. -/
+structure AtPointUse where
+  /-- Who made it. -/
+  owner : Owner
+  /-- The mode whose buffers ask it, or `none` for every buffer. -/
+  mode : Option String := none
+  /-- The at-point source's name. -/
+  source : String
+  deriving DecidableEq, Repr
+
 /-- A face entry of the registry: a definition of a face and who made it. -/
 structure FaceEntry where
   /-- Who set it. -/
@@ -502,6 +542,12 @@ it did not, which a host reads as `auto`. -/
   default, and a display's name, in the order it made them: set at every
   install. -/
   displayChoices : Array (Option String × String) := #[]
+  /-- The at-point source entries ("At-point sources", in the module
+  docs). -/
+  atPoints : Array AtPointEntry := #[]
+  /-- The uses of at-point sources, by mode or for every buffer ("At-point
+  sources", in the module docs). -/
+  atPointUses : Array AtPointUse := #[]
 
 namespace Registry
 
@@ -606,6 +652,30 @@ order chosen, each once. -/
 def unknownDisplays (registry : Registry) : Array String :=
   ((registry.displayChoices.map (·.2)).filter fun name =>
       (registry.display? name).isNone).toList.eraseDups.toArray
+
+/-- `registry` with every at-point entry of `owner` removed and `atPoints`
+added as its entries, in their order. -/
+def replaceAtPoints (registry : Registry) (owner : Owner) (atPoints : Array Completion.AtPoint) :
+    Registry :=
+  { registry with
+    atPoints :=
+      registry.atPoints.filter (·.owner != owner) ++
+        atPoints.map fun atPoint => { owner, atPoint } }
+
+/-- The at-point source registered under `name`: the latest entry of that
+name. -/
+def atPoint? (registry : Registry) (name : String) : Option Completion.AtPoint :=
+  (registry.atPoints.findRev? (·.atPoint.name == name)).map (·.atPoint)
+
+/-- `registry` with every use of an at-point source `owner` made removed and
+`uses`, each a mode or `none` for every buffer and a source's name, added
+as its uses, in their order. -/
+def replaceAtPointUses (registry : Registry) (owner : Owner)
+    (uses : Array (Option String × String)) : Registry :=
+  { registry with
+    atPointUses :=
+      registry.atPointUses.filter (·.owner != owner) ++
+        uses.map fun (mode, source) => { owner, mode, source } }
 
 /-- The names of the completion sources registered in `category`: each name
 once, in the order it was first registered, kept only when its latest
@@ -859,6 +929,35 @@ def activeMaps (registry : Registry) (scheme : InputScheme) (state : EditorState
     let major := (target.buffer.major.map (registry.modeKeymaps scheme)).getD []
     minors ++ major ++ [global]
 
+/-- The names the uses for `mode` (`none` for every buffer) give: config's
+in the order it made them, then compiled code's. -/
+def usesFor (registry : Registry) (mode : Option String) : Array String :=
+  let of (owner : Owner) :=
+    (registry.atPointUses.filter fun use => use.owner == owner && use.mode == mode).map (·.source)
+  of .config ++
+    (registry.atPointUses.filter fun use => use.owner != .config && use.mode == mode).map (·.source)
+
+/-- The chain of at-point sources of a buffer whose major mode is `major`
+and whose minor modes are `minors`, the one added last first ("At-point
+sources", in the module docs): each minor mode, then the major mode, each
+with its lineage nearest first, each mode giving its uses, config's then
+compiled code's, then its own list; then the uses for every buffer. Each
+name once, at its first place. -/
+def atPointNames (registry : Registry) (major : Option String) (minors : Array String) :
+    Array String :=
+  let ofMode (name : String) : Array String :=
+    (registry.lineage name).toArray.flatMap fun mode =>
+      registry.usesFor (some mode.name) ++ mode.atPoint.toArray
+  let names := minors.flatMap ofMode ++ (major.map ofMode).getD #[] ++ registry.usesFor none
+  names.toList.eraseDups.toArray
+
+/-- The at-point source names a mode's list or a use names that no at-point
+source is registered under, in order, each once. -/
+def unknownAtPoints (registry : Registry) : Array String :=
+  let named :=
+    registry.atPointUses.map (·.source) ++ registry.modes.flatMap (·.mode.atPoint.toArray)
+  (named.filter fun name => (registry.atPoint? name).isNone).toList.eraseDups.toArray
+
 /-- What the loop is told of the registry for a command's state requests
 (`Editor/Command/Dispatch.lean`): for a name a mode is registered under,
 its lineage, root first, whose on-enter actions run when the mode becomes a
@@ -886,7 +985,8 @@ def registered (registry : Registry) : Loop.Registered :=
     generation := registry.generation, displayRules := registry.displayRules
     shellTimeLimit := registry.shellTimeLimit, syntaxRefreshDelay := registry.syntaxRefreshDelay
     languages := registry.languageTable, compile := registry.compileHook
-    sources := registry.source?, categorySources := registry.sourcesIn }
+    sources := registry.source?, categorySources := registry.sourcesIn
+    atPoint := registry.atPoint?, atPointNames := registry.atPointNames }
 
 end Registry
 
@@ -970,6 +1070,11 @@ they were made: one at most, in a `setup` that is not refused. -/
   order: a category, or the default, once at most in a `setup` that is not
   refused. -/
   displayChoices : Array (Option String × String) := #[]
+  /-- The at-point sources, in the order they were defined. -/
+  atPoints : Array Completion.AtPoint := #[]
+  /-- The uses of at-point sources (`useAtPoint`, `useAtPointIn`), each a
+  mode or `none` for every buffer and a source's name, in order. -/
+  atPointUses : Array (Option String × String) := #[]
 
 namespace Registrations
 
@@ -1072,6 +1177,10 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with displays := collected.displays.push display })
   | .useDisplay category name, collected =>
     ((), { collected with displayChoices := collected.displayChoices.push (category, name) })
+  | .atPoint atPoint, collected =>
+    ((), { collected with atPoints := collected.atPoints.push atPoint })
+  | .useAtPoint mode name, collected =>
+    ((), { collected with atPointUses := collected.atPointUses.push (mode, name) })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
@@ -1134,6 +1243,11 @@ def displayChosenTwice : Option String → String
   | some category => s!"the completion display of `{category}` is chosen twice"
   | none => "the default completion display is chosen twice"
 
+/-- What a `setup` that defines the at-point source `name` twice is refused
+with. -/
+def atPointTwice (name : String) : String :=
+  s!"the at-point completion source `{name}` is registered twice"
+
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
   for index in [0:items.size] do
@@ -1156,7 +1270,8 @@ named, a completion source defined twice (`sourceTwice`), a completion
 style defined twice (`styleTwice`), the style of a category, or the
 default style, chosen twice (`styleChosenTwice`), a completion display
 defined twice (`displayTwice`), or the display of a category, or the
-default display, chosen twice (`displayChosenTwice`).
+default display, chosen twice (`displayChosenTwice`), or an at-point source
+defined twice (`atPointTwice`).
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
@@ -1247,6 +1362,8 @@ def problem? (collected : Registrations) : Option String := do
     return displayTwice name
   if let some category := repeated? (collected.displayChoices.map (·.1)) then
     return displayChosenTwice category
+  if let some name := repeated? (collected.atPoints.map (·.name)) then
+    return atPointTwice name
   none
 
 /-- What `setup` registers, or the message it is refused with: the one it

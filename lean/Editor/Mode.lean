@@ -141,6 +141,12 @@ structure Mode where
   says (`Editor/Language.lean`): the `code` mode's, and none other that
   ships. Its own `syntaxTree`, when it has one, wins over it. -/
   syntaxTreeOfLanguage : Bool := false
+  /-- The names of its at-point sources (`Editor/Completion/AtPoint.lean`),
+  in order: what completion at point asks in a buffer of the mode, after
+  config's and compiled code's uses for it (`Config.Registry.atPointNames`).
+  A name is looked up when a key asks, so it may name a source config
+  defines. -/
+  atPoint : List String := []
   /-- What runs, given the view, when the mode becomes a buffer's major
   mode, and also, before the derived mode's own, when a mode derived from
   this one does (the loop runs the lineage's, root first, inside the

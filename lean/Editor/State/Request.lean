@@ -129,6 +129,16 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   asking command's (`Editor/Command/Dispatch.lean`, "Requests that name
   something registered"). The reply says whether a command was registered
   under the name.
+- **A session at point is opened, moved, retyped, retaken and closed by
+  one request each** (`openAtPoint`, `chooseAtPoint`, `retypeAtPoint`,
+  `retakeAtPoint`, `closeAtPoint`), each refused with an `AtPointRefusal`
+  (`Editor/State.lean`, "A session at point"). Which at-point sources a
+  buffer's chain has for an occasion (`atPointSources`) and an at-point
+  source's region (`askAtPoint`, run inside the asking command as
+  `askSource` is) are the loop's to answer, from the registry: here they
+  are answered no name and `none`. `retype` records what a command typed in
+  place of typed text (`EditorState.retyped`), which the loop tells the
+  input scheme once the command has run to its end.
 - **A completion source is asked inside the asking command by one
   request**, `askSource`, with the name it is registered under and the
   query (`Editor/Completion.lean`). It is the loop's to act on, as
@@ -364,6 +374,29 @@ inductive StateRequest where
   /-- Whether a job is registered under `name`, which the loop that runs the
   command answers with. -/
   | hasJob (name : String)
+  /-- The names of the at-point sources of the chain of the buffer `view`
+  shows that ask on `occasion`, in order, which the loop that runs the
+  command answers from the registry. -/
+  | atPointSources (view : ViewId) (occasion : Completion.Occasion)
+  /-- Ask the at-point source registered under `name` for its region at
+  `spot`, inside this command. -/
+  | askAtPoint (name : String) (spot : Completion.Spot)
+  /-- Open a session at point, `session`, with what its sources answered,
+  `collected`. -/
+  | openAtPoint (session : AtPointSession) (collected : Completion.Collected)
+  /-- Close the open session at point, and hand it back. -/
+  | closeAtPoint
+  /-- Move the open session's choice by `step` through its listing. -/
+  | chooseAtPoint (step : Candidates.Step)
+  /-- Record what a preview left in the open session's region, and whether
+  a preview was made. -/
+  | retypeAtPoint (shown : String) (previewed : Bool)
+  /-- Record an edit the user made in the open session's region, which now
+  holds `text`. -/
+  | retakeAtPoint (text : String)
+  /-- Record that this command typed `text` in `view` in place of typed
+  text, for the input scheme. -/
+  | retype (view : ViewId) (text : String)
   /-- Have the window `view` keep `wanted` as its wanted column, or none. -/
   | setWanted (view : ViewId) (wanted : Option Window.Wanted)
   /-- Which command the ex name `name` is bound to, and what it takes. -/
@@ -492,6 +525,14 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .listMatched .. => Unit
   | .matchFailed .. => Unit
   | .hasJob _ => Bool
+  | .atPointSources .. => Array String
+  | .askAtPoint .. => Option Completion.Region
+  | .openAtPoint .. => Except AtPointRefusal Unit
+  | .closeAtPoint => Except AtPointRefusal AtPointSession
+  | .chooseAtPoint _ => Except AtPointRefusal Unit
+  | .retypeAtPoint .. => Except AtPointRefusal Unit
+  | .retakeAtPoint _ => Except AtPointRefusal Unit
+  | .retype .. => Unit
   | .setWanted .. => Except LayoutRefusal Unit
   | .ex _ => Option Ex.Binding
   | .exNames => Array String
@@ -608,6 +649,16 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   -- The registry is the loop's to answer from (`Program.dispatched`): here,
   -- with no loop, any name is taken, as `startJob` takes any.
   | .hasJob _, state => (true, state)
+  -- The chain and the at-point sources are the loop's to answer from
+  -- (`Program.dispatched`): here, with no registry, there are none.
+  | .atPointSources .., state => (#[], state)
+  | .askAtPoint .., state => (none, state)
+  | .openAtPoint session collected, state => state.openAtPoint session collected
+  | .closeAtPoint, state => state.closeAtPoint
+  | .chooseAtPoint step, state => state.chooseAtPoint step
+  | .retypeAtPoint shown previewed, state => state.retypeAtPoint shown previewed
+  | .retakeAtPoint text, state => state.retakeAtPoint text
+  | .retype view text, state => ((), state.retype view text)
   | .setWanted view wanted, state => state.setWanted view wanted
   | .ex _, state => (none, state)
   | .exNames, state => (#[], state)

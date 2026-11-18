@@ -5605,6 +5605,25 @@ keymap of its bindings. Its services are a fake clock's over a table of
 waits of its own, which no pump reads: nothing here starts a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
+        "the executable's hosts start with the source words registered compiled in the category word, its job words registered compiled, the at-point source words registered compiled, and a modeless buffer's at-point chain is words"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return registry.sources.any
+              (fun entry => entry.source.name == "words" && entry.owner == .compiled) &&
+            registry.sourcesIn Completion.Words.category == #["words"] &&
+            registry.jobs.any
+              (fun entry =>
+                entry.registration.name == Completion.Words.job && entry.owner == .compiled) &&
+            registry.atPoints.any
+              (fun entry => entry.atPoint.name == "words" && entry.owner == .compiled) &&
+            registry.atPointNames none #[] == #["words"] &&
+            registry.unknownAtPoints == #[] },
+    { name :=
         "the executable's hosts start with the code mode and the languages rust, json, markdown, toml and lean, in that order, registered for the owner compiled"
       run := do
         let completions ← Job.Completions.new
@@ -5932,6 +5951,54 @@ def environmentHostChecks (context : Context) : List Check :=
           let (echo, _) ← session.scene
           return echo == (Process.failureMessage "/p/d" (.exited 1 "not trusted")).quote }]
 
+/-- A chunk whose `setup` registers `make-other`, bound to `C-c o`, which
+makes a buffer `other` holding `almond alpaca`. -/
+def otherBufferChunk : String :=
+  "def setup : SetupM Unit := do
+  command \"make-other\" (discard <| createBuffer \"other\" \"almond alpaca\")
+  bindKey \"C-c o\" \"make-other\"
+"
+
+/-- Whether no decoration line of `lines` draws a row in the face of a
+chosen candidate: nothing is chosen in the candidate list. -/
+def noneChosen (lines : Array String) : Bool :=
+  !lines.any fun line =>
+      line.startsWith "decorations " &&
+        (line.splitOn Completion.Displays.chosenFace.name).length > 1
+
+/-- The checks of completion at point through the headless host of the Vim
+scheme that ships (`withVimHost`), with the real elaborator, the real text
+binding, the recorder and the stage's fake clock (`Editor/AtPoint.lean`,
+`docs/design/keymaps-and-modes.md`, "Completion at point"). -/
+def atPointChecks (context : Context) : List Check :=
+  [{  name :=
+        "C-n in insert state lists the words of open buffers that match the word before the cursor"
+      run :=
+        withVimHost context [("10-other.lean", otherBufferChunk)] fun session => do
+          session.ask [.reload]
+          session.host.resize 640 480
+          session.typed "C-c o i"
+          session.host.commit "alpha beta al"
+          session.typed "C-n"
+          unless (← session.host.join patience) == .settled do
+            return false
+          let lines ← session.sceneLines
+          let words :=
+            Completion.Words.ordered #["alpha beta al", "almond alpaca"]
+              (some { start := 11, stop := 13 })
+          let rows ← realOrder "al" words
+          let some listId := listViewId lines | return false
+          let some (_, listY, _, listHeight) := printedRect lines listId | return false
+          let some (_, windowY, _, windowHeight) := printedRect lines 0 | return false
+          let output ← session.lines
+          return rows.length == 3 && listViewShows lines rows && noneChosen lines &&
+              windowY + windowHeight == listY &&
+              listY + listHeight < 480 &&
+              listHeight > 0 &&
+              (lines.filter (·.startsWith "view ")).size == 2 &&
+              output.any (fun line => line.startsWith "job " && line.endsWith " words: started") &&
+              !output.any (·.startsWith "loop: refused") }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
@@ -5946,6 +6013,7 @@ def checks (context : Context) : List Check :=
     hostLoopChecks context ++
     modeChecks context ++
     promptChecks context ++
+    atPointChecks context ++
     exChecks context ++
     evilChecks context ++
     reloadEchoChecks context ++

@@ -1,6 +1,7 @@
 import Editor.Command.Call
 import Editor.Compile.Contribution
 import Editor.Completion
+import Editor.Completion.AtPoint
 import Editor.Completion.Displays
 import Editor.Completion.Later
 import Editor.Completion.Styles
@@ -517,6 +518,12 @@ inductive SetupRequest where
   of `category`, or, with `none`, for every prompt whose category has none
   chosen. -/
   | useDisplay (category : Option String) (name : String)
+  /-- Register `atPoint` as an at-point completion source, by its name
+  (`Editor/Completion/AtPoint.lean`). -/
+  | atPoint (atPoint : Completion.AtPoint)
+  /-- Have the buffers of the mode `mode`, or with `none` every buffer, ask
+  the at-point source registered under `name`. -/
+  | useAtPoint (mode : Option String) (name : String)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -551,6 +558,8 @@ def SetupRequest.Reply : SetupRequest → Type
   | .useStyle .. => Unit
   | .display _ => Unit
   | .useDisplay .. => Unit
+  | .atPoint _ => Unit
+  | .useAtPoint .. => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -740,6 +749,28 @@ in the echo area. The editor refuses the `setup` for choosing one
 category's display twice. -/
 def useDisplayFor (category name : String) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.useDisplay (some category) name))
+
+/-- Registers `atPoint` as an at-point completion source, for this config,
+under its name (`Editor/Completion/AtPoint.lean`): a mode's list and
+`useAtPoint` can then name it. Config's at-point source of a compiled one's
+name is used in that one's place, so `defineAtPoint
+(Completion.AtPoint.words (pause := 100))` tunes the shipped `words`. The
+editor refuses the `setup` for a name defined twice. -/
+def defineAtPoint (atPoint : Completion.AtPoint) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.atPoint atPoint))
+
+/-- Has every buffer ask the at-point source registered under `name`, after
+the ones its modes ask (`Config.Registry.atPointNames`). The name is looked
+up when a key asks; one no at-point source is registered under is said in
+the echo area at install. -/
+def useAtPoint (name : String) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.useAtPoint none name))
+
+/-- Has the buffers of the mode `mode`, and of the modes derived from it,
+ask the at-point source registered under `name`, before the mode's own list
+(`Mode.atPoint`). The name is looked up when a key asks. -/
+def useAtPointIn (mode name : String) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.useAtPoint (some mode) name))
 
 /-- Names the theme called `name` as the one in force once the config is
 installed: the compiled theme of that name, or one this `setup` defines.

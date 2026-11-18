@@ -1,3 +1,4 @@
+import Editor.AtPoint.Compiled
 import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
 import Editor.Compile.Compiled
@@ -862,6 +863,16 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   every host's config can choose `minibuffer` and replace it to set its
   rows. -/
   displays : Array Completion.Display := Completion.Displays.shipped
+  /-- The compiled at-point sources (`Editor/Completion/AtPoint.lean`):
+  registered for the owner `compiled` when the loop starts, before any
+  config. The default is none; the executable's hosts are handed the
+  shipped ones (`shippedOver`). -/
+  atPoints : Array Completion.AtPoint := #[]
+  /-- The compiled uses of at-point sources, each a mode or `none` for every
+  buffer and a source's name (`Config.Registry.atPointNames`): registered
+  for the owner `compiled` when the loop starts. The default is none; the
+  executable's hosts use `words` in every buffer (`shippedOver`). -/
+  atPointUses : Array (Option String × String) := #[]
   /-- Where a log entry goes: a command that took longer than `slowAfter`.
   The editor thread calls it. It is not `emit`: the output is what a test
   compares, and a log entry depends on how long the machine took. -/
@@ -978,7 +989,9 @@ that says so, a `segment:` line for each segment its mode line listed
 that nobody registered, a `style:` line for each completion style it chose
 that nobody registered (`Config.Report.unknownStyles`), a `display:` line
 for each completion display it chose that nobody registered
-(`Config.Report.unknownDisplays`), and a `rule:` line
+(`Config.Report.unknownDisplays`), an `at-point:` line for each at-point
+source a use or a mode names that nobody registered
+(`Config.Report.unknownAtPoints`), and a `rule:` line
 for each display rule left out because its target does not exist
 (`Config.Report.unusableRules`). -/
 def reportLines (report : Config.Report) : Array String :=
@@ -994,6 +1007,7 @@ def reportLines (report : Config.Report) : Array String :=
     report.unknownSegments.map (fun name => s!"segment: {ModeLine.unknown name}") ++
     report.unknownStyles.map (fun name => s!"style: {Completion.Styles.unknown name}") ++
     report.unknownDisplays.map (fun name => s!"display: {Completion.Displays.unknown name}") ++
+    report.unknownAtPoints.map (fun name => s!"at-point: {Completion.AtPoint.unknown name}") ++
     report.unusableRules.map fun sentence => s!"rule: {sentence}"
 
 /-- How a job that has ended is reported, after `job <id> <name>: `. -/
@@ -1771,18 +1785,21 @@ languages, compile contributions, completion sources, completion styles
 and completion displays, for the owner `compiled`, before any config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
-  (((((((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
-                                            collaborators.compiledJobs).replaceBindings
-                                        .compiled collaborators.bindings).replaceModes
-                                    .compiled collaborators.modes).replaceEx
-                                .compiled collaborators.ex).replaceThemes
-                            .compiled collaborators.themes).replaceSegments
-                        .compiled collaborators.segments).replaceLanguages
-                    .compiled collaborators.languages).replaceContributions
-                .compiled collaborators.contributions).replaceSources
-            .compiled collaborators.sources).replaceStyles
-        .compiled collaborators.styles).replaceDisplays
-    .compiled collaborators.displays
+  (((((((((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs
+                                                    .compiled
+                                                    collaborators.compiledJobs).replaceBindings
+                                                .compiled collaborators.bindings).replaceModes
+                                            .compiled collaborators.modes).replaceEx
+                                        .compiled collaborators.ex).replaceThemes
+                                    .compiled collaborators.themes).replaceSegments
+                                .compiled collaborators.segments).replaceLanguages
+                            .compiled collaborators.languages).replaceContributions
+                        .compiled collaborators.contributions).replaceSources
+                    .compiled collaborators.sources).replaceStyles
+                .compiled collaborators.styles).replaceDisplays
+            .compiled collaborators.displays).replaceAtPoints
+        .compiled collaborators.atPoints).replaceAtPointUses
+    .compiled collaborators.atPointUses
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, the display its collaborators make over the table of
@@ -2367,13 +2384,18 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         Themes.commands ++
         Workspace.commands ++
         Shell.commands ++
-        Compile.commands
+        Compile.commands ++
+        AtPoint.commands
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
-    compiledJobs := Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs
+    compiledJobs :=
+      Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs ++ Completion.Words.jobs
     modes := Minibuffer.modes ++ Compile.modes ++ Language.modes, ex := Ex.bindings
     themes := Themes.shipped, languages := Language.shipped
     segments := ModeLine.shipped, contributions := Compile.shipped
-    sources := Ex.sources ++ Buffers.sources ++ TabCommands.sources ++ Themes.sources
+    sources :=
+      Ex.sources ++ Buffers.sources ++ TabCommands.sources ++ Themes.sources ++
+        Completion.Words.shipped
+    atPoints := Completion.AtPoint.shipped, atPointUses := #[(none, "words")]
     log := IO.eprintln }
 
 /-- The environments every job of a host shares, over `state`

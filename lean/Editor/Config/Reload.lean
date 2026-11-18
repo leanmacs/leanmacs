@@ -198,6 +198,10 @@ structure Report where
   display is registered under, in order, each once: their categories fall
   to the default, and the default to the minibuffer display. -/
   unknownDisplays : Array String := #[]
+  /-- The at-point source names the installed config's uses and the
+  registered modes' lists name that no at-point source is registered under,
+  in order, each once: they are never asked. -/
+  unknownAtPoints : Array String := #[]
   /-- What is said of each display rule of the installed config whose target
   the layout it chose lacks, in order (`Report.leftOut`): those rules are
   left out, and the rest are kept. -/
@@ -217,7 +221,8 @@ config named a theme, listed segments or chose completion styles or
 displays nobody registered, or made display rules whose targets do not
 exist: then `reload: ` and the sentences, `Theme.unknown`'s, then each
 `ModeLine.unknown`, then each `Completion.Styles.unknown`, then each
-`Completion.Displays.unknown` and then each rule left out
+`Completion.Displays.unknown`, then each `Completion.AtPoint.unknown` and
+then each rule left out
 (`unusableRules`), joined by `; `. The whole report is the host's to
 print. -/
 def Report.echo (report : Report) : Option String :=
@@ -227,6 +232,7 @@ def Report.echo (report : Report) : Option String :=
         report.unknownSegments.map ModeLine.unknown ++
         report.unknownStyles.map Completion.Styles.unknown ++
         report.unknownDisplays.map Completion.Displays.unknown ++
+        report.unknownAtPoints.map Completion.AtPoint.unknown ++
         report.unusableRules
     if sentences.isEmpty then none else some s!"reload: {"; ".intercalate sentences.toList}"
   else
@@ -376,22 +382,25 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
         chunks := built.chunks,
         registry :=
           {
-            ((((((((((((state.registry.replace .config built.registrations.commands).replaceJobs
+            ((((((((((((((state.registry.replace .config built.registrations.commands).replaceJobs
+                                                                  .config
+                                                                  built.registrations.jobs).replaceBindings
+                                                              .config
+                                                              built.registrations.bindings).replaceModes
                                                           .config
-                                                          built.registrations.jobs).replaceBindings
-                                                      .config
-                                                      built.registrations.bindings).replaceModes
-                                                  .config built.registrations.modes).replaceEx
-                                              .config built.registrations.ex).replaceFaces
-                                          .config built.registrations.faces).replaceThemes
-                                      .config built.registrations.themes).replaceSegments
-                                  .config built.registrations.segments).replaceLanguages
-                              .config built.registrations.languages).replaceContributions
-                          .config built.registrations.contributions).replaceSources
-                      .config built.registrations.sources).replaceStyles
-                  .config built.registrations.styles).replaceDisplays
+                                                          built.registrations.modes).replaceEx
+                                                      .config built.registrations.ex).replaceFaces
+                                                  .config built.registrations.faces).replaceThemes
+                                              .config built.registrations.themes).replaceSegments
+                                          .config built.registrations.segments).replaceLanguages
+                                      .config built.registrations.languages).replaceContributions
+                                  .config built.registrations.contributions).replaceSources
+                              .config built.registrations.sources).replaceStyles
+                          .config built.registrations.styles).replaceDisplays
+                      .config built.registrations.displays).replaceAtPoints
+                  .config built.registrations.atPoints).replaceAtPointUses
               .config
-              built.registrations.displays with
+              built.registrations.atPointUses with
             styleChoices := built.registrations.styleChoices
             displayChoices := built.registrations.displayChoices
             environment := built.registrations.environment
@@ -409,13 +418,14 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
     let unknownSegments := (modeLine.map fun order => (state.registry.resolve order).2).getD #[]
     let unknownStyles := state.registry.unknownStyles
     let unknownDisplays := state.registry.unknownDisplays
+    let unknownAtPoints := state.registry.unknownAtPoints
     ({ state with
         themeName, modeLine, framePadding := built.registrations.framePadding
         layout := built.registrations.layout, tabBar := built.registrations.tabBar
         titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
         chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments
-        unknownStyles, unknownDisplays, unusableRules })
+        unknownStyles, unknownDisplays, unknownAtPoints, unusableRules })
 
 /-- The appearance the window is to be asked for, and the state that
 remembers it: when the window is open and the paper of the theme now in

@@ -943,6 +943,96 @@ asks for none. -/
 def reloadConfig : EditorM Unit :=
   EditorState.ask .reload
 
+/-- Asks `sources` for `query` ("Prompts", in the module docs), as a prompt
+and a session at point ask theirs: each source in order, as itself or by
+name, a category for its sources' names once, a source that answers later
+recorded as asking, for the query's text, and not run. The category is the
+first reference's, or the first source's. Each job a source that answers
+later names must be registered. When a source that answers later reads the
+open buffers' texts (`Completion.Later.readsTexts`), a snapshot is taken of
+the asking view's buffer and then of each other open buffer
+(`EditorState.openBuffers`), and they are what was collected's texts. The
+query's region is kept too. Refused, as a value, with `noSuchSource` for a
+name no source is registered under, and `noSuchJob` for a job no job is
+registered under, before any snapshot is taken. -/
+def collectSources (sources : List Completion.SourceRef) (query : Completion.Query) :
+    EditorM (Except SourceRefusal Completion.Collected) := do
+  -- Each source to ask, as itself or by name. A category is asked for its
+  -- sources' names once: a default is asked by name where a source of its
+  -- name is registered in the category, and as itself otherwise, then the
+  -- category's other sources, in registration order.
+  let mut resolved : Array (Completion.Source ⊕ String) := #[]
+  for source in sources do
+    match source with
+    | .given source =>
+      resolved := resolved.push (.inl source)
+    | .named name =>
+      resolved := resolved.push (.inr name)
+    | .category category defaults =>
+      let names ← EditorState.ask (.categorySources category)
+      resolved :=
+        resolved ++
+          defaults.toArray.map
+            (fun default =>
+              if names.contains default.name then .inr default.name else .inl default) ++
+          (names.filter fun name => !defaults.any (·.name == name)).map .inr
+  -- The category is the first reference's: the one a category reference
+  -- names, or the first source's.
+  let mut collected : Completion.Collected :=
+    { category :=
+        match sources.head? with
+        | some (.category category _) => some category
+        | _ => none
+      region := query.region }
+  for source in resolved do
+    let (name, answer) : String × Completion.Answer ←
+      match source with
+      | .inl { name, category, filtered, later := some later, .. } =>
+        -- A source that answers later is not run here: its job answers.
+        pure (name, { category, filtered, candidates := #[], later := some later })
+      | .inl source =>
+        pure
+            (source.name,
+              { category := source.category, filtered := source.filtered
+                candidates := (← source.candidates query).map (·.inGroup source.name) })
+      | .inr name =>
+        let some answered ←
+          EditorState.ask (.askSource name query) | return .error (.noSuchSource name)
+        pure (name, { answered with candidates := answered.candidates.map (·.inGroup name) })
+    -- Failing that, the category is the first source's.
+    let category := collected.category <|> some answer.category
+    collected :=
+      match answer.later with
+      | some later =>
+        { collected with
+          asking :=
+            collected.asking.push
+              { source := name, filtered := answer.filtered, later, askedFor := query.text }
+          category }
+      | none =>
+        if answer.filtered then
+          { collected with
+            passed := collected.passed ++ answer.candidates, category }
+        else
+          { collected with
+            all := collected.all ++ answer.candidates, category }
+  -- Each job a source that answers later names must be registered.
+  for source in collected.asking do
+    unless ← EditorState.ask (.hasJob source.later.job) do
+      return .error (.noSuchJob source.later.job)
+  -- A source that reads the open buffers' texts is handed a snapshot of
+  -- each, the asking view's buffer's first: taken once, here.
+  if collected.asking.any (·.later.readsTexts) then
+    let state ← editorState
+    let first := (state.target? query.view).map (·.window.buffer)
+    let buffers := first.toArray ++ state.openBuffers.filter (some · != first)
+    let mut texts := #[]
+    for buffer in buffers do
+      if let some held := state.buffer? buffer then
+        texts := texts.push (← held.text.snapshot)
+    collected := { collected with texts }
+  return .ok collected
+
 /-- Asks for a string: opens a prompt labelled `label`, whose minibuffer
 holds `initial`, with the cursor after it, and returns the minibuffer's
 view at once ("Prompts", in the module docs). When the prompt is accepted,
@@ -978,69 +1068,14 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
     return .error (.alreadyOpen asked.view)
   let some asker := state.focusedTarget? | return .error .noWindow
   let query : Completion.Query := { text := initial, view := asker.window.id }
-  -- Each source to ask, as itself or by name. A category is asked for its
-  -- sources' names once: a default is asked by name where a source of its
-  -- name is registered in the category, and as itself otherwise, then the
-  -- category's other sources, in registration order.
-  let mut resolved : Array (Completion.Source ⊕ String) := #[]
-  for source in sources do
-    match source with
-    | .given source =>
-      resolved := resolved.push (.inl source)
-    | .named name =>
-      resolved := resolved.push (.inr name)
-    | .category category defaults =>
-      let names ← EditorState.ask (.categorySources category)
-      resolved :=
-        resolved ++
-          defaults.toArray.map
-            (fun default =>
-              if names.contains default.name then .inr default.name else .inl default) ++
-          (names.filter fun name => !defaults.any (·.name == name)).map .inr
-  -- The prompt's category is its first reference's: the one a category
-  -- reference names, or the first source's.
-  let mut collected : Completion.Collected :=
-    {
-      category :=
-        match sources.head? with
-        | some (.category category _) => some category
-        | _ => none }
-  for source in resolved do
-    let (name, answer) : String × Completion.Answer ←
-      match source with
-      | .inl { name, category, filtered, later := some later, .. } =>
-        -- A source that answers later is not run here: its job answers.
-        pure (name, { category, filtered, candidates := #[], later := some later })
-      | .inl source =>
-        pure
-            (source.name,
-              { category := source.category, filtered := source.filtered
-                candidates := (← source.candidates query).map (·.inGroup source.name) })
-      | .inr name =>
-        let some answered ←
-          EditorState.ask (.askSource name query) | return .error (.noSuchSource name)
-        pure (name, { answered with candidates := answered.candidates.map (·.inGroup name) })
-    -- Failing that, the prompt's category is its first source's.
-    let category := collected.category <|> some answer.category
-    collected :=
-      match answer.later with
-      | some later =>
-        { collected with
-          asking :=
-            collected.asking.push
-              { source := name, filtered := answer.filtered, later, askedFor := initial }
-          category }
-      | none =>
-        if answer.filtered then
-          { collected with
-            passed := collected.passed ++ answer.candidates, category }
-        else
-          { collected with
-            all := collected.all ++ answer.candidates, category }
-  -- Each job a source that answers later names must be registered.
-  for source in collected.asking do
-    unless ← EditorState.ask (.hasJob source.later.job) do
-      return .error (.noSuchJob source.later.job)
+  let collected ←
+    match ← collectSources sources query with
+    | .ok collected =>
+      pure collected
+    | .error (.noSuchSource name) =>
+      return .error (.noSuchSource name)
+    | .error (.noSuchJob name) =>
+      return .error (.noSuchJob name)
   let text ← createText initial
   let scroll ← text.mark (.anchor { offset := 0, bias := .before })
   let cursor := initial.utf8ByteSize
@@ -1872,5 +1907,149 @@ def set {α : Type} (store : Store α) (identity : Project.Identity) (value : α
   setValue identity store.name (store.encode value)
 
 end Project
+
+/-- `count` backspace characters (U+0008): what a command that removed
+`count` cells says it typed, as an input scheme records a backspace
+(`EditorState.retyped`). -/
+def backspaces (count : Nat) : String :=
+  String.ofList (List.replicate count '\x08')
+
+/-- Records that this command typed `text` in `view` in place of typed text
+(`EditorState.retyped`): the loop tells the input scheme once the command
+has run to its end, so the last change's recording gets it ("Completion at
+point", in the module docs). -/
+def retype (view : ViewId) (text : String) : EditorM Unit :=
+  EditorState.ask (.retype view text)
+
+/-- Whether `offset` is a position of `text`: within it, and at a
+character's start or its end. -/
+def isPosition (text : String) (offset : Nat) : Bool :=
+  let (walked, found) :=
+    text.foldl (fun (walked, found) char => (walked + char.utf8Size, found || walked == offset))
+      (0, false)
+  found || walked == offset
+
+/-- Asks the at-point sources of the chain of the focused window's buffer
+that ask on `occasion`, in order, for the region at the cursor, stopping at
+the first that answers ("Completion at point", in the module docs); asks
+the sources it names (`collectSources`) with the region's text; marks the
+region's ends, the start with the bias `before` and the end with `after`;
+and opens a session over them with nothing chosen. Says whether one
+answered. Refused, as a value, with `promptOpen` while a prompt is open,
+`alreadyOpen` while a session is, `noWindow` where no window is focused,
+`outside` for a region that does not hold the cursor or whose ends are not
+positions of the text, and `source` when the sources cannot be asked. -/
+def completeAtPoint (occasion : Completion.Occasion) : EditorM (Except AtPointRefusal Bool) := do
+  let state ← editorState
+  if state.prompt.isSome then
+    return .error .promptOpen
+  if state.atPoint.isSome then
+    return .error .alreadyOpen
+  let some target := state.focusedTarget? | return .error .noWindow
+  let view := target.window.id
+  let selection ← target.selection
+  let some range := selection.ranges[selection.primary]? | return .ok false
+  let head := range.head
+  let spot : Completion.Spot := { view, offset := head, occasion }
+  let mut answered : Option (String × Completion.Region) := none
+  for name in ← EditorState.ask (.atPointSources view occasion) do
+    if let some region← EditorState.ask (.askAtPoint name spot) then
+      answered := some (name, region)
+      break
+  let some (name, region) := answered | return .ok false
+  let text := target.buffer.text
+  let whole ← text.read
+  unless
+    region.start ≤ head && head ≤ region.stop && isPosition whole region.start &&
+      isPosition whole region.stop do
+    return .error (.outside name)
+  let typed ← text.slice region.start region.stop
+  let query : Completion.Query :=
+    { text := typed, view, region := some { start := region.start, stop := region.stop } }
+  match ← collectSources (region.sources.map Completion.Named.ref) query with
+  | .error refusal =>
+    return .error (.source refusal)
+  | .ok collected =>
+    let start ← text.mark (.anchor { offset := region.start, bias := .before })
+    let stop ← text.mark (.anchor { offset := region.stop, bias := .after })
+    let session : AtPointSession :=
+      { view, buffer := target.window.buffer, source := name, start, stop, typed, shown := typed }
+    match ← EditorState.ask (.openAtPoint session collected) with
+    | .ok () =>
+      return .ok true
+    | .error refusal =>
+      text.unmark start
+      text.unmark stop
+      for snapshot in collected.texts do
+        snapshot.release
+      return .error refusal
+
+/-- The offsets of the open session's region as its markers now hold them,
+and the region's text. Refused as the store refuses reading a marker. -/
+def AtPointSession.region (session : AtPointSession) : TextM (Nat × Nat × String) := do
+  let .anchor start ← session.start.text.marker session.start | throw .noSuchMarker
+  let .anchor stop ← session.stop.text.marker session.stop | throw .noSuchMarker
+  let stop := max start.offset stop.offset
+  return (start.offset, stop, ← session.start.text.slice start.offset stop)
+
+/-- The text the open session's region is to hold once its choice is what
+it is: the chosen candidate's text, when one is chosen and the listing is
+for the text typed, and otherwise the text typed. -/
+def AtPointSession.wanted (session : AtPointSession) : String :=
+  match session.candidates.chosen with
+  | some index =>
+    if session.candidates.listedFor == some session.typed then
+      (session.candidates.listed[index]?.map (·.text)).getD session.typed
+    else session.typed
+  | none => session.typed
+
+/-- Moves the open session's choice by `step` and previews it
+("Completion at point", in the module docs): when the region's text is not
+what the choice wants (`AtPointSession.wanted`), the buffer's group is closed
+before the session's first preview, the region is replaced with it as one
+transaction that carries the selection before it and leaves the cursor
+after it, and the command says it typed backspaces for the region's
+characters and then the new text (`retype`). Refused with `notOpen` when no
+session is open, and `noWindow` when its view has no window. -/
+def previewAtPoint (step : Candidates.Step) : EditorM (Except AtPointRefusal Unit) := do
+  if let .error refusal← EditorState.ask (.chooseAtPoint step) then
+    return .error refusal
+  let some session := (← editorState).atPoint | return .error .notOpen
+  let .ok target ← session.view.target | return .error .noWindow
+  let (start, stop, old) ← session.region
+  let wanted := session.wanted
+  if old != wanted then
+    unless session.previewed do
+      discard <| session.buffer.closeGroup
+    target.replaceExtents (← target.selection) #[{ start, stop }] wanted
+    retype session.view (backspaces old.length ++ wanted)
+    return ← EditorState.ask (.retypeAtPoint wanted true)
+  return .ok ()
+
+/-- Closes the open session ("Completion at point", in the module docs),
+leaving the region as it is, and closes its buffer's group when it made a
+preview: the previews, the accept and what was typed after them are one
+step of the history. Its markers and snapshots are given up by the loop once
+this command has run to its end. Refused with `notOpen` when no session is
+open. -/
+def endAtPoint : EditorM (Except AtPointRefusal Unit) := do
+  match ← EditorState.ask .closeAtPoint with
+  | .error refusal =>
+    return .error refusal
+  | .ok session =>
+    if session.previewed then
+      discard <| session.buffer.closeGroup
+    return .ok ()
+
+/-- Accepts the open session's chosen candidate: the region already holds it,
+by the preview, so the session closes (`endAtPoint`). Refused with
+`notOpen` when no session is open. -/
+def acceptAtPoint : EditorM (Except AtPointRefusal Unit) :=
+  endAtPoint
+
+/-- Quits the open session, leaving the region as it is, as Doom's `C-g`
+does (`endAtPoint`). Refused with `notOpen` when no session is open. -/
+def quitAtPoint : EditorM (Except AtPointRefusal Unit) :=
+  endAtPoint
 
 end Editor
