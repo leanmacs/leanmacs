@@ -162,7 +162,8 @@ after another is staged, one whose context overlaps another change, a
 last line without a line feed and one that adds it, CRLF lines and an
 added line ending in spaces, quoted paths and an empty index file; unstage
 one of two staged hunks; and commit, on an unborn branch, with nothing
-staged and under a hook that refuses.
+staged, with a conflicted file (refused with status 128 before the hook
+runs, as the model refuses it) and under a hook that refuses.
 
 ## The git implementation
 

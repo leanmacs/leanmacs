@@ -273,6 +273,26 @@ def hunkProperties : List Property :=
             before.isSome &&
             (← statusOf) == before },
     { name :=
+        "committing with a conflicted file is refused with status 128 before a hook runs, and HEAD and the index are as they were"
+      repository :=
+        { committed := #[("a.txt", "one\n"), ("c.txt", "base\n")]
+          index :=
+            #[("a.txt", .file "two\n"),
+              ("c.txt", .conflict (some "base\n") (some "ours\n") (some "theirs\n"))]
+          worktree := #[("a.txt", "two\n"), ("c.txt", "merged\n")]
+          hook := some "the hook ran\n" }
+      holds := do
+        let before ← statusOf
+        let committed ← commit "conflicted\n"
+        return committed matches .error (.failed (.code 128) _) &&
+            saidEach "error: Committing is not possible because you have unmerged files."
+              committed &&
+            !saidEach "the hook ran" committed &&
+            (← fileAt "HEAD" "a.txt") == .ok (some "one\n") &&
+            (← indexOf "a.txt") == some "two\n" &&
+            before.isSome &&
+            (← statusOf) == before },
+    { name :=
         "a commit a hook refuses fails with every line the hook printed on either stream, and HEAD and the index are as they were"
       repository :=
         { committed := #[("a.txt", "one\n")], index := #[("a.txt", .file "two\n")]
