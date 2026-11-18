@@ -77,6 +77,13 @@ def keyNotationChecks : List Check :=
             refusesStrokes "x M-<localleader>" "M-<localleader>" &&
             refusesStrokes "C-x nope" "nope") },
     { name :=
+        "a modifier prefix on a placeholder is refused with a message that names what the placeholder stands for: the leader for <leader>, the localleader for <localleader>"
+      run :=
+        pure
+          (refusesStrokes "C-<leader>" "the keys the leader is on" &&
+            refusesStrokes "C-<localleader>" "C-<localleader>" &&
+            refusesStrokes "C-<localleader>" "the keys the localleader is on") },
+    { name :=
         "a key string with placeholders, read against leaders, names the leaders' keys in their place, and the other keys as chords"
       run :=
         pure

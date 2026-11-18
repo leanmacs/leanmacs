@@ -42,7 +42,8 @@ and what the walk compares.
 localleader are on (`docs/design/keymaps-and-modes.md`, "Key strings").
 They are lowercase and exact, and read before a name is tried, so
 `<Leader>` is still the named key `Leader`. A modifier prefix on one
-(`C-<leader>`) is refused, naming the stroke.
+(`C-<leader>`) is refused, naming the stroke and what the placeholder
+stands for: the leader, or the localleader.
 
 A key string is read in two steps. `Key.parseStrokes` reads it as strokes
 (`Key.Stroke`): a key, as a chord, or a placeholder. `Key.expand` puts the
@@ -66,7 +67,7 @@ character or a named key. A dead key and an unidentified one are written
 | A new modifier | A row of `modifierPrefixes` |
 | A short name for a key | A row of `aliases` |
 | A new kind of key | Its case in `parseKey` and in `Key.notation` |
-| A new placeholder, a stroke a binding expands | A variant of `Key.Stroke`, a row of `placeholders`, its keys in `Key.Leaders` and its case in `Key.expand` and `Key.Stroke.notation` |
+| A new placeholder, a stroke a binding expands | A variant of `Key.Stroke`, a row of `placeholders` (its written form, its stroke and the name messages give it), its keys in `Key.Leaders` and its case in `Key.expand` and `Key.Stroke.notation` |
 
 Each is pinned by `ModelTest.keyNotationChecks`.
 -/
@@ -144,21 +145,23 @@ structure Key.Leaders where
   localLeader : List Key := []
   deriving DecidableEq, Repr
 
-/-- The placeholders, as they are written: lowercase and exact. -/
-private def Key.placeholders : List (String × Key.Stroke) :=
-  [("<leader>", .leader), ("<localleader>", .localLeader)]
+/-- The placeholders, as they are written (lowercase and exact), each with
+the stroke it is read as and the name of what it stands for, as messages
+name it. -/
+private def Key.placeholders : List (String × Key.Stroke × String) :=
+  [("<leader>", .leader, "leader"), ("<localleader>", .localLeader, "localleader")]
 
 /-- The stroke `stroke` is read as, or why it is none: a placeholder, which
 takes no modifier prefix, or a key. -/
 private def Key.readStroke (stroke : String) : Except String Key.Stroke :=
   match Key.placeholders.lookup stroke with
-  | some placeholder => .ok placeholder
+  | some (placeholder, _) => .ok placeholder
   | none =>
     let (_, rest) := Key.splitModifiers {} stroke.toList
     match Key.placeholders.lookup (String.ofList rest) with
-    | some _ =>
+    | some (_, named) =>
       .error
-        s!"`{stroke}` puts a modifier prefix on `{String.ofList rest}`, which names the keys the leader is on and takes none"
+        s!"`{stroke}` puts a modifier prefix on `{String.ofList rest}`, which names the keys the {named} is on and takes none"
     | none => Key.parseStroke stroke |>.map .key
 
 /-- The strokes `text` is written as: its strokes, separated by spaces, in
@@ -197,10 +200,9 @@ def Key.parse (text : String) (leaders : Option Key.Leaders := none) : Except St
   | some leaders =>
     pure (Key.expand leaders strokes)
   | none =>
-    match Key.placeholders.find? fun (_, placeholder) => strokes.contains placeholder with
-    | some (written, _) =>
-      throw
-          s!"`{written}` names the {if written == "<leader>" then "leader" else "localleader"}, which only a key binding expands (`bindKey`)"
+    match Key.placeholders.find? fun (_, placeholder, _) => strokes.contains placeholder with
+    | some (written, _, named) =>
+      throw s!"`{written}` names the {named}, which only a key binding expands (`bindKey`)"
     | none =>
       pure (Key.expand {} strokes)
 
