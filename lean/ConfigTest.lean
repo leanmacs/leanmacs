@@ -3,6 +3,7 @@ import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
+import Editor.ExecuteCommand.Compiled
 import Editor.Files.Compiled
 import Editor.Headless
 import Editor.InputScheme.Test
@@ -5846,6 +5847,56 @@ def themeChecks (context : Context) : List Check :=
               (lines.filter (· == "theme: no theme is registered as `nope`")).size == 2 &&
               scene.endsWith ", theme \"default\"" }]
 
+/-- What compiled code hands the hosts of the command prompt's checks: the
+minibuffer's commands and its mode, the command prompt and the command that
+loads a theme, and the themes that ship. -/
+def commandCompiled : Compiled :=
+  { minibufferCompiled with
+    commands := Minibuffer.commands ++ ExecuteCommand.commands ++ Themes.commands
+    themes := Themes.shipped }
+
+/-- A chunk whose `setup` defines the style `starts`, which keeps the
+candidates a text starts, in their order, chooses it for the category
+`command`, and registers `zz-other`, which says `other`, and, when `mine`,
+`zz-mine`, which says `mine`. -/
+def commandChunk (mine : Bool) : String :=
+  "def setup : SetupM Unit := do\n" ++
+    "  defineStyle (.keeping \"starts\" fun text candidate => candidate.startsWith text)\n" ++
+    "  useStyleFor \"command\" \"starts\"\n" ++
+    "  command \"zz-other\" (message \"other\")\n" ++
+    if mine then "  command \"zz-mine\" (message \"mine\")\n" else ""
+
+/-- The checks of the command prompt (`Editor/ExecuteCommand.lean`) through
+a host over the real elaborator and the real registry: its candidates are
+the commands compiled code registers and config's, and a reload that drops
+one of config's drops it from them. The style `starts`, which config
+chooses for the category `command`, keeps each listing short and in the
+source's order, so no check pins the library matcher's order. -/
+def commandPromptChecks (context : Context) : List Check :=
+  [{  name :=
+        "criteria 2 and 3: the command prompt lists the commands compiled code registers and config's, config's in the order registered; a reload whose config no longer registers zz-mine drops it from the candidates"
+      run :=
+        withHost context [("10-commands.lean", commandChunk true)]
+          (fun session => do
+            let asked (typed : String) : IO (Array String) := do
+              session.ask [.run ExecuteCommand.name]
+              unless ← Event.post (.commit typed) do
+                return #[]
+              let asking ← session.sceneLines
+              session.pressKeys cancelKeys
+              return asking
+            session.ask [.reload]
+            let configs ← asked "zz-"
+            let compiled ← asked "load"
+            session.write "10-commands.lean" (commandChunk false)
+            session.ask [.reload]
+            let dropped ← asked "zz-"
+            return listsAfter configs ExecuteCommand.label ["zz-other", "zz-mine"] &&
+                listsAfter compiled ExecuteCommand.label [Themes.loadName] &&
+                listsAfter dropped ExecuteCommand.label ["zz-other"] &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
+          commandCompiled }]
+
 /-- The checks of what the executable's hosts are handed as compiled code
 (`Headless.shippedOver`, which `Headless.shipped` makes them with), on the
 registry a host starts with (`Headless.compiled`) and the test scheme's
@@ -5952,7 +6003,7 @@ def shippedChecks (_ : Unit) : List Check :=
         return !TabCommands.commands.isEmpty && TabCommands.commands.all (compiled ·.name) &&
             Vim.Default.tabKeys.all (compiled ·.2) },
     { name :=
-        "the executable's hosts start with the completion sources that ship registered for the owner compiled, so config can ask for each by name: the ex line's history and its names, the buffers, the tabs and the themes"
+        "the executable's hosts start with the completion sources that ship registered for the owner compiled, so config can ask for each by name: the ex line's history and its names, the buffers, the tabs, the themes and the commands; and with the command prompt, execute-command, registered for that owner"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -5963,8 +6014,9 @@ def shippedChecks (_ : Unit) : List Check :=
         let compiled (name : String) : Bool :=
           registry.sources.any fun entry => entry.source.name == name && entry.owner == .compiled
         return [Ex.historySource.name, Ex.namesSource.name, Buffers.source.name,
-                TabCommands.source.name, Themes.source.name].all
-            fun name => compiled name && (registry.source? name).isSome },
+                TabCommands.source.name, Themes.source.name, ExecuteCommand.source.name].all
+            (fun name => compiled name && (registry.source? name).isSome) &&
+          (registry.find? ExecuteCommand.name).any (·.owner == .compiled) },
     { name :=
         "the executable's hosts start with the shipped completion styles, fuzzy and orderless, and the shipped completion display, minibuffer, registered for the owner compiled, and with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
       run := do
@@ -5985,7 +6037,8 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
             registry.sourcesIn "buffer" == #[Buffers.source.name] &&
             registry.sourcesIn "tab" == #[TabCommands.source.name] &&
-            registry.sourcesIn "theme" == #[Themes.source.name] },
+            registry.sourcesIn "theme" == #[Themes.source.name] &&
+            registry.sourcesIn ExecuteCommand.category == #[ExecuteCommand.source.name] },
     { name :=
         "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation, compilation-output, next-error, previous-error and compile-goto-error, the job compile-run and the mode compilation registered for the owner compiled, and the ex names compile, which takes text, recompile, kill-compilation, next-error and previous-error bound to them"
       run := do
@@ -6982,7 +7035,7 @@ loads with no reload error and `SPC f f` opens a file, each binding names a
 registered command, and each prefix it binds under the leader is named. -/
 def defaultConfigChecks (context : Context) : List Check :=
   [{  name :=
-        "the default config: a reload installs it with no diagnostic, and SPC f f then runs open-file, which asks for a path"
+        "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, and once that is cancelled SPC : opens the command prompt"
       run := do
         let files ← chunksOf context.defaultConfig
         withVimHost context files.toList fun session => do
@@ -6994,11 +7047,25 @@ def defaultConfigChecks (context : Context) : List Check :=
             session.typed "SPC f f"
             let joined := (← session.host.join patience) == .settled
             let after ← session.sceneLines
-            return installed && clean && joined &&
+            session.typed "<Escape>"
+            let cancelled ← session.sceneLines
+            session.typed "SPC :"
+            let rejoined := (← session.host.join patience) == .settled
+            let commanding ← session.sceneLines
+            -- Each prompt opens a minibuffer view of its own, so the command
+            -- prompt's status line is compared from its view's id on.
+            let commandPrompt (lines : Array String) : Bool :=
+              lines.any fun line =>
+                line.startsWith "status " &&
+                  afterId line == afterId (promptStatus ExecuteCommand.label)
+            return installed && clean && joined && rejoined &&
                 !before.contains (promptStatus Files.openPrompt) &&
-                after.contains (promptStatus Files.openPrompt) },
+                after.contains (promptStatus Files.openPrompt) &&
+                !cancelled.contains (promptStatus Files.openPrompt) &&
+                !commandPrompt cancelled &&
+                commandPrompt commanding },
     { name :=
-        "the default config: every binding names a command registered compiled or by the config, and <leader> f f is bound to open-file"
+        "the default config: every binding names a command registered compiled or by the config, <leader> f f is bound to open-file, and <leader> : to execute-command, described Execute command"
       run := do
         let registrations ← defaultBuilt context
         let registry ← defaultRegistry registrations
@@ -7009,9 +7076,14 @@ def defaultConfigChecks (context : Context) : List Check :=
         unless unregistered.isEmpty do
           throw <| IO.userError s!"unregistered commands: {unregistered.toList.map (·.command)}"
         return !registrations.bindings.isEmpty &&
+            registrations.bindings.any
+              (fun binding =>
+                Key.strokeNotations binding.keys == "<leader> f f" &&
+                  binding.command == Files.openName) &&
             registrations.bindings.any fun binding =>
-              Key.strokeNotations binding.keys == "<leader> f f" &&
-                binding.command == Files.openName },
+              Key.strokeNotations binding.keys == "<leader> :" &&
+                binding.command == ExecuteCommand.name &&
+                binding.desc == some "Execute command" },
     { name :=
         "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are SPC f, SPC b, SPC w, SPC TAB and SPC h"
       run := do
@@ -7059,6 +7131,7 @@ def checks (context : Context) : List Check :=
     faceChecks context ++
     cursorResolutionChecks () ++
     themeChecks context ++
+    commandPromptChecks context ++
     environmentHostChecks context ++
     fileChecks context ++
     languageChecks context ++

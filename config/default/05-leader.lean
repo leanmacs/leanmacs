@@ -2,8 +2,8 @@
 -- none is there: a starter map under the leader (`SPC` in the Vim scheme),
 -- after Doom Emacs's `SPC` keys, over commands the editor already ships.
 -- Each binding has a description and each prefix a name, for the key hints.
--- `SPC :` (the command prompt) and `SPC ?` are to be added here once those
--- commands exist.
+-- `SPC :` opens the command prompt, which runs any registered command by
+-- name. `SPC ?` is to be added here once that command exists.
 --
 -- The map is `leaderMap`, apart from `setup` (in `90-setup.lean`), so it can
 -- be dropped into a config of your own: copy this file in and call
@@ -23,6 +23,7 @@ def leaderMap : SetupM Unit := do
   -- Top level.
   bindKey "<leader> ." "open-file" (desc := "Find file")
   bindKey "<leader> ," "switch-buffer" (desc := "Switch buffer")
+  bindKey "<leader> :" "execute-command" (desc := "Execute command")
   -- file
   bindKey "<leader> f f" "open-file" (desc := "Find file")
   bindKey "<leader> f s" "save-buffer" (desc := "Save file")

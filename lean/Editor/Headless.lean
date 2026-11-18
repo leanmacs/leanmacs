@@ -12,6 +12,7 @@ import Editor.Display.Recorder
 import Editor.Event.Queue
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
+import Editor.ExecuteCommand.Compiled
 import Editor.Files.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Headless.CommandLine
@@ -196,7 +197,10 @@ as before, so reload and job completion work as they did.
   `ex`, so that key opens the ex line. And it is handed the command that
   loads a theme and the themes that ship (`Themes.commands`,
   `Themes.shipped`, `Editor/Themes/Compiled.lean`): `load-theme`, and the
-  theme `default`, the built-in one. And it is handed the workspace
+  theme `default`, the built-in one. And it is handed the command prompt
+  (`ExecuteCommand.commands`, `Editor/ExecuteCommand/Compiled.lean`):
+  `execute-command`, which lists every registered command and runs the one
+  accepted. And it is handed the workspace
   command and the job that finds a file's workspace (`Workspace.commands`,
   `Workspace.jobs`, `Editor/Workspace/Compiled.lean`): `workspace-current`,
   and `find-workspace`, which a file's open starts for its directory when
@@ -2623,7 +2627,8 @@ ones, the file commands with their jobs, the minibuffer's commands with its
 mode, evil's commands, the ex line's commands with the ex names that ship,
 the buffer commands, the frame's commands with their bindings, the window
 commands, the command that loads a theme
-with the themes that ship, the workspace command with the job that finds a
+with the themes that ship, the command prompt, `execute-command`, which
+lists every registered command, the workspace command with the job that finds a
 file's workspace, the shell's command with the job that runs `:!`, the
 compile mode's commands, its jobs, its mode and the contributions that ship,
 `cargo-mode`, `lake-mode` and `mise-mode` (`Editor/Compile.lean`,
@@ -2648,6 +2653,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         WindowCommands.commands ++
         TabCommands.commands ++
         Themes.commands ++
+        ExecuteCommand.commands ++
         Workspace.commands ++
         Shell.commands ++
         Compile.commands ++
@@ -2665,6 +2671,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     segments := ModeLine.shipped, contributions := Compile.shipped
     sources :=
       Ex.sources ++ Buffers.sources ++ TabCommands.sources ++ Themes.sources ++
+        ExecuteCommand.sources ++
         Completion.Words.shipped ++
         Files.sources
     styleDefaults := Files.styleDefaults
