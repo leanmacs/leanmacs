@@ -1,6 +1,7 @@
 import Editor.Config.Registry
 import Editor.VersionControl.Commit
 import Editor.VersionControl.Gutter
+import Editor.VersionControl.Review
 import Editor.VersionControl.Show
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
@@ -31,7 +32,11 @@ command of that name.
   (`Editor/VersionControl/Commit.lean`); and `vc-worktrees`, the status
   buffer's leader suffix `w`, which opens the worktree list, with
   `vc-worktrees-refresh` and `vc-worktrees-visit`, its mode's `refresh`
-  and `activate` (`Editor/VersionControl/Worktrees.lean`).
+  and `activate` (`Editor/VersionControl/Worktrees.lean`); and
+  `vc-review`, which opens the review buffer of a branch's change, with
+  `vc-review-refresh`, its mode's `refresh`, and `vc-review-keep` and
+  `vc-review-revert`, its leader suffixes `k` and `r`
+  (`Editor/VersionControl/Review.lean`).
 - **`VersionControl.jobs`**: `vc-status-read`, which reads a repository's
   status and shows it (`VersionControl.readWork`), and `vc-status-apply`,
   which stages or unstages and then starts a read
@@ -41,12 +46,18 @@ command of that name.
   `vc-commit-run`, which commits; `vc-worktrees-read`, which reads the
   worktree list and shows it (`VersionControl.listWork`), and
   `vc-worktree-find`, which finds a listed worktree's workspace and opens
-  its status (`VersionControl.visitFindWork`). A host that is not handed them shows no
+  its status (`VersionControl.visitFindWork`); `vc-review-read` and
+  `vc-review-diff`, the steps of the review (`VersionControl.reviewReadWork`,
+  `VersionControl.reviewDiffWork`). A host that is not handed them shows no
   status, and says so when one is asked for.
 - **`VersionControl.modes`**: `vc-status`, the status buffer's major mode
   (`VersionControl.mode`), `vc-commit`, the message buffer's
-  (`VersionControl.commitMode`), and `vc-worktrees`, the worktree list's
-  (`VersionControl.worktreesMode`).
+  (`VersionControl.commitMode`), `vc-worktrees`, the worktree list's
+  (`VersionControl.worktreesMode`), and `vc-review`, the review buffer's
+  (`VersionControl.reviewMode`).
+- **`VersionControl.segments`**: the mode line's `review`, a review
+  buffer's counts (`VersionControl.reviewSegment`), which the default
+  order lists (`ModeLine.Order.standard`).
 
 This module is apart from `Editor/VersionControl/Status.lean` because it
 names the registry, which is the config session's.
@@ -74,7 +85,11 @@ def commands : Array Config.Registration :=
     { name := abortName, action := .call abortCommand },
     { name := worktreesName, action := .call worktreesCommand },
     { name := worktreesRefreshName, action := .call worktreesRefreshCommand },
-    { name := worktreesVisitName, action := .call worktreesVisitCommand }]
+    { name := worktreesVisitName, action := .call worktreesVisitCommand },
+    { name := reviewName, action := .call reviewCommand },
+    { name := reviewRefreshName, action := .call reviewRefreshCommand },
+    { name := reviewKeepName, action := .call reviewKeepCommand },
+    { name := reviewRevertName, action := .call reviewRevertCommand }]
 
 /-- The status buffer's jobs, as a host registers them for the owner
 `compiled`. -/
@@ -83,7 +98,9 @@ def jobs : Array Config.JobRegistration :=
     { name := showJob, work := showWork }, { name := hunkFetchJob, work := hunkFetchWork },
     { name := hunkDiffJob, work := hunkDiffWork }, { name := hunkApplyJob, work := hunkApplyWork },
     { name := commitJob, work := commitWork }, { name := worktreesReadJob, work := listWork },
-    { name := worktreeFindJob, work := visitFindWork }]
+    { name := worktreeFindJob, work := visitFindWork },
+    { name := reviewReadJob, work := reviewReadWork },
+    { name := reviewDiffJob, work := reviewDiffWork }]
 
 /-- The version-control gutter's command, `vc-gutter-moved`, which its watch
 job posts (`Editor/VersionControl/Gutter.lean`), as a host registers it for
@@ -101,6 +118,11 @@ def gutterJobs : Array Config.JobRegistration :=
 /-- The status buffer's mode, as a host registers it for the owner
 `compiled`. -/
 def modes : Array Mode :=
-  #[mode, commitMode, worktreesMode]
+  #[mode, commitMode, worktreesMode, reviewMode]
+
+/-- The mode line's segments of version control, as a host registers them
+for the owner `compiled`: `review`. -/
+def segments : Array Segment :=
+  #[reviewSegment]
 
 end Editor.VersionControl

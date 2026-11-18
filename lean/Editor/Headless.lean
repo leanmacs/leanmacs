@@ -2578,7 +2578,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     modes := Minibuffer.modes ++ Compile.modes ++ VersionControl.modes ++ Language.modes
     ex := Ex.bindings
     themes := Themes.shipped, languages := Language.shipped
-    segments := ModeLine.shipped, contributions := Compile.shipped
+    segments := ModeLine.shipped ++ VersionControl.segments, contributions := Compile.shipped
     sources :=
       Ex.sources ++ Buffers.sources ++ TabCommands.sources ++ Themes.sources ++
         Completion.Words.shipped ++

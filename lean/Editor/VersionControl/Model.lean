@@ -14,7 +14,10 @@ implementation's flags, so the real parser reads the model's status
 (`Editor/VersionControl/Porcelain.lean`). `Repository.jobModel` is the job
 model (`JobModel`, `Editor/Job/Model.lean`) whose process scripts answer
 the git implementation's command lines in a repository, so the git
-implementation runs on the models too.
+implementation runs on the models too. `Model.readHandler` answers the
+port's requests inside a job from a repository as it is, for a read whose
+replies the job model's scripts do not print (the review's read,
+`Editor/VersionControl/Review.lean`).
 
 ## How it answers
 
@@ -728,5 +731,13 @@ def handle : (request : Request) → Repository → request.Reply × Repository
       match repository.removingWorktree path with
       | .ok after => (.ok (), after)
       | .error error => (.error error, repository)
+
+/-- The model as an implementation of the port inside a job: each request
+answered as `handle` answers it in `repository`, the repository it gives
+back dropped. So a read that only asks runs over the model on the job
+model, as the review's read does in the model checks
+(`Editor/VersionControl/Review.lean`). -/
+def readHandler (repository : Repository) : Handler := fun request =>
+  pure (handle request repository).1
 
 end Editor.VersionControl.Model

@@ -121,6 +121,7 @@ import ModelTest.Editor.VersionControl.Hunk
 import ModelTest.Editor.VersionControl.Model
 import ModelTest.Editor.VersionControl.Plumbing
 import ModelTest.Editor.VersionControl.Porcelain
+import ModelTest.Editor.VersionControl.Review
 import ModelTest.Editor.VersionControl.ReviewHunks
 import ModelTest.Editor.VersionControl.Show
 import ModelTest.Editor.VersionControl.Stage
@@ -982,7 +983,8 @@ def checks : List Check :=
     gutterCarryChecks ++
     gutterChecks ++
     stageHunkChecks ++
-    commitBufferChecks
+    commitBufferChecks ++
+    reviewBufferChecks
 
 end ModelTest
 

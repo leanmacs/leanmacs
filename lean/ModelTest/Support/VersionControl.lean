@@ -19,6 +19,7 @@ import Editor.Keymap
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Mode
+import Editor.ModeLine
 import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
@@ -31,6 +32,7 @@ import Editor.VersionControl.Commit
 import Editor.VersionControl.Compiled
 import Editor.VersionControl.Hunk
 import Editor.VersionControl.Model
+import Editor.VersionControl.Review
 import Editor.VersionControl.Show
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
@@ -176,28 +178,32 @@ def stagingBindings : List (String × Invocation) :=
       (fun row => (s!"C-r {row}", { command := "to-row", arguments := [.nat row] })) ++
     [("C-r t", { command := "to-row", arguments := [.nat 10] })]
 
+/-- The commands of the hunk and message buffer checks (`stagingBindings`):
+the status buffer checks', and `top-line`, `set-text` and
+`disk-changed`. -/
+def stagingCommands : List (String × Dispatched) :=
+  statusCommands ++
+    [("top-line", fun call => do
+        call.target.buffer.text.insert 0 "0\n"
+        return none),
+      ("set-text", fun call => do
+        if let .str text :: _ := call.arguments then
+          let target := call.target.buffer.text
+          target.replaceRange 0 (← target.byteLength) text
+        return none),
+      ("disk-changed", fun call => do
+        let buffer := call.target.window.buffer
+        if let some file := ((← editorState).buffer? buffer).bind (·.file) then
+          Files.checked
+              #[({ buffer, path := file.path, stamp := file.stamp },
+                  if call.arguments == [.bool true] then .error .notFound
+                  else .ok { file.stamp with size := file.stamp.size + 1 })]
+        return none)]
+
 /-- The keys of the hunk and message buffer checks (`stagingBindings`), with
 the version-control modes known to the loop that sets them. -/
 def stagingKeys : Loop.Keys TestScheme.scheme :=
-  let keys :=
-    dispatchKeys stagingBindings
-      (statusCommands ++
-        [("top-line", fun call => do
-            call.target.buffer.text.insert 0 "0\n"
-            return none),
-          ("set-text", fun call => do
-            if let .str text :: _ := call.arguments then
-              let target := call.target.buffer.text
-              target.replaceRange 0 (← target.byteLength) text
-            return none),
-          ("disk-changed", fun call => do
-            let buffer := call.target.window.buffer
-            if let some file := ((← editorState).buffer? buffer).bind (·.file) then
-              Files.checked
-                  #[({ buffer, path := file.path, stamp := file.stamp },
-                      if call.arguments == [.bool true] then .error .notFound
-                      else .ok { file.stamp with size := file.stamp.size + 1 })]
-            return none)])
+  let keys := dispatchKeys stagingBindings stagingCommands
   { keys with
     registered :=
       { keys.registered with
@@ -222,5 +228,93 @@ def stagingDriverOf (repository : VersionControl.Model.Repository)
           files :=
             { driver.jobs.files with
               directories := driver.jobs.files.directories.push "/r/src" } } }
+
+/-- The bindings of the review buffer checks: the hunk checks', and, under
+`C-t`: `r`, `m`, `n` and `d`, `vc-review` against `base`, against `main`,
+with no name, and against `-x`; `k`, `v` and `f`, `vc-review-keep`,
+`vc-review-revert` and `vc-review-refresh`; `u`, which undoes one step of
+the window's buffer; `i`, which inserts `X` at the window's cursors; `x`,
+which gives the window's buffer a review record
+with no hunk; `z`, which does nothing, so its step only publishes; `e`,
+which puts `0\n` at the start of the buffer of `/r/lean/Pkg/B.lean`; and `0`
+to `9`, which put the cursor at the start of that excerpt of the window's
+text. -/
+def reviewBindings : List (String × Invocation) :=
+  stagingBindings ++
+    [("C-t r", { command := VersionControl.reviewName, arguments := [.str "base"] }),
+      ("C-t m", { command := VersionControl.reviewName, arguments := [.str "main"] }),
+      ("C-t n", invoke VersionControl.reviewName),
+      ("C-t d", { command := VersionControl.reviewName, arguments := [.str "-x"] }),
+      ("C-t k", invoke VersionControl.reviewKeepName),
+      ("C-t v", invoke VersionControl.reviewRevertName),
+      ("C-t f", invoke VersionControl.reviewRefreshName), ("C-t u", invoke "undo-here"),
+      ("C-t i", invoke "insert-x"), ("C-t x", invoke "no-hunks"), ("C-t z", invoke "noop"),
+      ("C-t e", invoke "edit-b")] ++
+    (List.range 10).map fun index =>
+      (s!"C-t {index}", { command := "to-excerpt", arguments := [.nat index] })
+
+/-- The mode line of the review buffer checks: the default order resolved over
+the shipped segments and version control's, as a host's registry holds them
+(`Headless.keys`), so `review` is drawn. -/
+def reviewModeLine : ModeLine :=
+  (ModeLine.resolve ModeLine.Order.standard fun name =>
+      (ModeLine.shipped ++ VersionControl.segments).find? (·.name == name)).1
+
+/-- The keys of the review buffer checks (`reviewBindings`), with the
+version-control modes known to the loop that sets them, and the mode line
+`reviewModeLine`. -/
+def reviewKeys : Loop.Keys TestScheme.scheme :=
+  let keys :=
+    dispatchKeys reviewBindings
+      (stagingCommands ++
+        [("undo-here", fun call => do
+            discard <| call.target.window.buffer.undo
+            return none),
+          ("insert-x", fun call => do
+            call.target.insertAtSelections "X"
+            return none),
+          ("no-hunks", fun call => do
+            discard <|
+                call.target.window.buffer.setValue VersionControl.ReviewRecord.localName
+                  ({ root := "/r", against := "base", base := "B" } :
+                      VersionControl.ReviewRecord).encode
+            return none),
+          ("noop", fun _ => pure none),
+          ("edit-b", fun _ => do
+            if let some id := (← editorState).findFile "/r/lean/Pkg/B.lean" then
+              discard <| id.insertAt 0 "0\n"
+            return none),
+          ("to-excerpt", fun call => do
+            if let .nat index :: _ := call.arguments then
+              if let some excerpt := (← call.target.buffer.text.excerpts)[index]? then
+                discard <|
+                    call.target.window.id.select { ranges := #[⟨excerpt.start, excerpt.start⟩] }
+            return none)])
+  { keys with
+    registered :=
+      { keys.registered with
+        entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) }
+    modeLine := reviewModeLine }
+
+/-- The jobs of the review buffer checks: the hunk checks', with the review's
+read over the version-control model of `repository`
+(`Model.readHandler`). -/
+def reviewJobs (repository : VersionControl.Model.Repository) (name : String) :
+    Option (List Argument → Work) :=
+  if name == VersionControl.reviewReadJob then
+    some (VersionControl.reviewReadWork fun _ _ => VersionControl.Model.readHandler repository)
+  else stagingJobs name
+
+/-- A driver of the review buffer checks over `repository`
+(`statusDriverOf`), its frame resized so that its one window is `rows` rows
+of text tall, with the working tree's files in the file model at `/r`. -/
+def reviewDriverOf (repository : VersionControl.Model.Repository) (rows : Nat := 6) :
+    Option TestDriver :=
+  (statusDriverOf repository stagingWrites #[] (reviewJobs repository) reviewKeys).map fun driver =>
+    let cells := driver.model.display.cells
+    let height := (rows + 2) * cells.lineHeight
+    (driver.feed
+        { event := .resize { width := 40 * cells.advance, height, scale := 1.0 }
+          stamp := 0 }).1
 
 end ModelTest
