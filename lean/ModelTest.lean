@@ -569,8 +569,9 @@ need no model and no fake of a collaborator:
 
 - `keymapChecks`: a keymap (`Editor/Keymap.lean`), on keys built in code:
   what a sequence is bound to, which sequences a binding begins with, the
-  chord a binding names a key by, and the walk through a list of keymaps
-  in precedence order;
+  chord a binding names a key by, the walk through a list of keymaps
+  in precedence order, a binding's description, and the keys that can
+  follow a pending prefix, in order, with what the walk makes of each;
 - `keyNotationChecks`: key strings (`Editor/Key/Notation.lean`): the keys
   a string names, the strokes it is written as with `<leader>` and
   `<localleader>` and their expansion against leaders, the strings that are

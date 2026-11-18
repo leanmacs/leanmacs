@@ -14,10 +14,10 @@ namespace ModelTest
 
 open Editor
 
-/-- The checks of a keymap (`Editor/Keymap.lean`): what a sequence is bound
-to, which sequences a binding begins with, and the form of a key a binding
-names. -/
-def keymapChecks : List Check :=
+/-- The checks of a keymap's lookup (`Editor/Keymap.lean`): what a sequence
+is bound to, which sequences a binding begins with, and the form of a key a
+binding names. -/
+def keymapLookupChecks : List Check :=
   let save : Keymap Nat := Keymap.empty.bind [controlKey "x", controlKey "s"] 1
   let other : Keymap Nat := Keymap.empty.bind [controlKey "x", controlKey "s"] 2
   let find : Keymap Nat := Keymap.empty.bind [charKey "f"] 3
@@ -191,5 +191,151 @@ def keymapChecks : List Check :=
           (Keymap.walkOver [specific] [defaults] [] (charKey "z") == ([], none) &&
             Keymap.walkOver [specific] [defaults] [controlKey "w"] (charKey "x") == ([], none) &&
             Keymap.walkOver [specific] [defaults] [charKey "g"] (charKey "q") == ([], none)) }]
+
+/-- The checks of a keymap's descriptions: each one is on the binding it
+describes, set by `bind` and `ofDescribed`, and dropped with the binding. -/
+def descriptionChecks : List Check :=
+  let described : Keymap Nat :=
+    Keymap.empty.bind [controlKey "x", controlKey "s"] 1 (desc := some "Save")
+  [{  name := "a sequence bound with a description is described by it"
+      run :=
+        pure
+          (described.describe? [controlKey "x", controlKey "s"] == some "Save" &&
+            described.describe? [controlKey "x"] == none &&
+            (Keymap.empty.bind [charKey "f"] (3 : Nat)).describe? [charKey "f"] == none) },
+    { name := "binding a described sequence again without a description drops the description"
+      run :=
+        let again := described.bind [controlKey "x", controlKey "s"] 2
+        let relabelled := described.bind [controlKey "x", controlKey "s"] 2 (desc := some "Write")
+        pure
+          (again.describe? [controlKey "x", controlKey "s"] == none && again.descriptions.isEmpty &&
+            relabelled.describe? [controlKey "x", controlKey "s"] == some "Write" &&
+            relabelled.descriptions.length == 1) },
+    { name :=
+        "filtering a keymap drops the description of a binding it removes and keeps the others"
+      run :=
+        let keymap : Keymap Nat :=
+          Keymap.ofDescribed
+            [([charKey "a"], 1, some "one"), ([charKey "b"], 2, some "two"),
+              ([charKey "c"], 3, none)]
+        let odd := keymap.filter (· % 2 == 1)
+        pure
+          (odd.describe? [charKey "a"] == some "one" && odd.describe? [charKey "b"] == none &&
+            odd.descriptions == [([charKey "a"], "one")]) },
+    { name :=
+        "a keymap made from a described list binds each sequence with its row's description, a later row replacing an earlier"
+      run :=
+        let keymap : Keymap Nat :=
+          Keymap.ofDescribed
+            [([charKey "a"], 1, some "one"), ([charKey "b"], 2, none),
+              ([charKey "a"], 3, some "three")]
+        pure
+          (keymap.find? [charKey "a"] == some 3 && keymap.describe? [charKey "a"] == some "three" &&
+            keymap.find? [charKey "b"] == some 2 &&
+            keymap.describe? [charKey "b"] == none &&
+            keymap.bindings.length == 2) }]
+
+/-- Whether every continuation of `listed`, walked by `walk` after
+`pending`, gives what it says it leads to (`Keymap.Continuation.walked`). -/
+def walksAsListed {β : Type} [BEq β] (walk : List Key → Key → List Key × Option β)
+    (pending : List Key) (listed : List (Keymap.Continuation β)) : Bool :=
+  listed.all fun c => walk pending c.key == c.walked pending
+
+/-- The checks of what can follow a pending prefix (`Keymap.continuations`,
+`Keymap.continuationsOver`): the keys listed, in order, what each leads to,
+and that the walk agrees. -/
+def continuationChecks : List Check :=
+  let g := charKey "g"
+  let r := charKey "r"
+  let cw := controlKey "w"
+  let cx := controlKey "x"
+  [{  name :=
+        "with g g bound in the defaults and g r in the specific keymaps, the keys after g are r and then g, the specific tier's first, each leading to its binding"
+      run :=
+        let specific : Keymap Nat := Keymap.empty.bind [g, r] 1
+        let defaults : Keymap Nat := Keymap.empty.bind [g, g] 2
+        let listed := Keymap.continuationsOver [specific] [defaults] [g]
+        pure
+          (listed == [⟨r, .bound 1 none⟩, ⟨g, .bound 2 none⟩] &&
+            walksAsListed (Keymap.walkOver [specific] [defaults]) [g] listed) },
+    { name :=
+        "with C-w l bound in the specific keymaps over C-w bound alone in the defaults, the only key after C-w is l"
+      run :=
+        let specific : Keymap Nat := Keymap.empty.bind [cw, charKey "l"] 1
+        let defaults : Keymap Nat := Keymap.empty.bind [cw] 2
+        let listed := Keymap.continuationsOver [specific] [defaults] [cw]
+        pure
+          (listed == [⟨charKey "l", .bound 1 none⟩] &&
+            walksAsListed (Keymap.walkOver [specific] [defaults]) [cw] listed) },
+    { name :=
+        "with C-w l bound in the specific keymaps and C-w h and C-w l in the defaults, the keys after C-w are l, once and the specific binding, and h"
+      run :=
+        let specific : Keymap Nat := Keymap.empty.bind [cw, charKey "l"] 1
+        let defaults : Keymap Nat :=
+          (Keymap.empty.bind [cw, charKey "h"] 3).bind [cw, charKey "l"] 4
+        let listed := Keymap.continuationsOver [specific] [defaults] [cw]
+        pure
+          (listed == [⟨charKey "l", .bound 1 none⟩, ⟨charKey "h", .bound 3 none⟩] &&
+            walksAsListed (Keymap.walkOver [specific] [defaults]) [cw] listed) },
+    { name :=
+        "a key the list leaves out walks to nothing pending and nothing bound: one no binding has, and one bound only alone"
+      run :=
+        let specific : Keymap Nat := Keymap.empty.bind [g, r] 1
+        let defaults : Keymap Nat := (Keymap.empty.bind [g, g] 2).bind [charKey "f"] 3
+        let listed := Keymap.continuationsOver [specific] [defaults] [g]
+        pure
+          (listed.all (fun c => c.key != charKey "z" && c.key != charKey "f") &&
+            Keymap.walkOver [specific] [defaults] [g] (charKey "z") == ([], none) &&
+            Keymap.walkOver [specific] [defaults] [g] (charKey "f") == ([], none) &&
+            (Keymap.continuations [defaults] [g]).all (·.key != charKey "f") &&
+            Keymap.walk [defaults] [g] (charKey "f") == ([], none)) },
+    { name :=
+        "a key that leads to a prefix is listed with the prefix's name and the number of bindings the walk can reach under it, leaving out one under a shorter bound sequence"
+      run :=
+        let keymap : Keymap Nat :=
+          Keymap.ofList
+            [([cx, charKey "a", charKey "b"], 1), ([cx, charKey "a", charKey "b", charKey "c"], 2),
+              ([cx, charKey "a", charKey "d"], 3)]
+        let names (keys : List Key) : Option String :=
+          if keys == [cx, charKey "a"] then some "alpha" else none
+        let listed := Keymap.continuations [keymap] [cx] names
+        pure
+          (listed == [⟨charKey "a", .prefix (some "alpha") 2⟩] &&
+            Keymap.continuations [keymap] [cx] == [⟨charKey "a", .prefix none 2⟩] &&
+            walksAsListed (Keymap.walk [keymap]) [cx] listed) },
+    { name :=
+        "a prefix's count leaves out a default binding the specific tier hides under a binding of its own"
+      run :=
+        let specific : Keymap Nat := Keymap.empty.bind [cx, charKey "a", charKey "b"] 1
+        let defaults : Keymap Nat := Keymap.empty.bind [cx, charKey "a", charKey "b", charKey "c"] 2
+        let listed := Keymap.continuationsOver [specific] [defaults] [cx]
+        pure
+          (listed == [⟨charKey "a", .prefix none 1⟩] &&
+            walksAsListed (Keymap.walkOver [specific] [defaults]) [cx] listed) },
+    { name :=
+        "a listed binding carries the description of the keymap whose binding the walk reaches: the deciding tier's, not the defaults' of the same keys"
+      run :=
+        let specific : Keymap Nat := Keymap.empty.bind [charKey "x"] 1 (desc := some "specific")
+        let defaults : Keymap Nat :=
+          Keymap.ofDescribed [([charKey "x"], 2, some "default"), ([charKey "b"], 3, some "bee")]
+        let first : Keymap Nat := Keymap.empty.bind [charKey "x"] 4
+        pure
+          (Keymap.continuationsOver [specific] [defaults] [] ==
+              [⟨charKey "x", .bound 1 (some "specific")⟩, ⟨charKey "b", .bound 3 (some "bee")⟩] &&
+            Keymap.continuations [first, defaults] [] ==
+              [⟨charKey "x", .bound 4 none⟩, ⟨charKey "b", .bound 3 (some "bee")⟩]) },
+    { name := "with nothing pending, the list is every first key, each once, in the order bound"
+      run :=
+        let keymap : Keymap Nat :=
+          Keymap.ofList [([cx, controlKey "s"], 1), ([charKey "f"], 2), ([cx, controlKey "f"], 3)]
+        let listed := Keymap.continuations [keymap] []
+        pure
+          (listed == [⟨cx, .prefix none 2⟩, ⟨charKey "f", .bound 2 none⟩] &&
+            walksAsListed (Keymap.walk [keymap]) [] listed) }]
+
+/-- The checks of a keymap (`Editor/Keymap.lean`): its lookup, its
+descriptions, and what can follow a pending prefix. -/
+def keymapChecks : List Check :=
+  keymapLookupChecks ++ descriptionChecks ++ continuationChecks
 
 end ModelTest
