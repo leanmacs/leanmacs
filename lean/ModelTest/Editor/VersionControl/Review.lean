@@ -148,6 +148,16 @@ def strayShots (driver : TestDriver) : Nat :=
   (driver.model.texts.snapshots.zipIdx.filter fun (snapshot, index) =>
       snapshot.isSome && !named.contains ⟨index⟩).size
 
+/-- The names of the old buffers of `driver`: the buffers whose name has
+`@B`, the base of the review buffer checks' repositories. -/
+def oldNames (driver : TestDriver) : Array String :=
+  ((driver.loop.state.buffers.filterMap id).map (·.name)).filter fun name =>
+    (name.splitOn "@B").length > 1
+
+/-- A repository whose branch changes one line of `x.txt`: one hunk. -/
+def oneHunkRepository : Model.Repository :=
+  VersionControlContract.forked #[("x.txt", "x\n")] #[("x.txt", "y\n")] #[] #[("base", "B")]
+
 /-- `reviewRepository`'s driver with `/r/src/a.lean` open in view 0, so the
 window's buffer is in the workspace at `/r`. -/
 def reviewOpened (repository : Model.Repository := reviewRepository) : Option TestDriver :=
@@ -332,6 +342,30 @@ def reviewBufferChecks : List Check :=
                   "vc-review: lean/Pkg/B.lean changed while the review was read; run vc-review again" &&
               (showing diffed).map (·.buffer.name) == some "a.lean" &&
               strayShots diffed == 0 },
+    { name :=
+        "a round that ends before its review buffer is built removes the old buffers it made: a working buffer edited while the review was read, and a refresh once every hunk is reverted"
+      run :=
+        pure <|
+          match reviewOpened, reviewOpened oneHunkRepository with
+          | some opened, some single =>
+            let (asked, _) := fedTo opened (presses "C-t r")
+            let read := finishNamed asked reviewReadJob
+            let (edited, _) := fedTo read (presses "C-t e")
+            let diffed := reviewSettledOn edited []
+            let reviewed := reviewAfter single "C-t r"
+            -- Excerpt 1 is the new side of x.txt's one hunk.
+            let reverted := reviewAfter reviewed "C-t 1 C-t v"
+            let refreshed := reviewAfter reverted "C-t f"
+            oldNames read ==
+                #["lean/Pkg/A.lean@B", "lean/Pkg/B.lean@B", "lean/Pkg/C.lean@B",
+                  "lean/Pkg/D.lean@B"] &&
+              oldNames diffed == #[] &&
+              fileText reverted "/r/x.txt" == some "x\n" &&
+              echoOf refreshed == some "vc-review: no change against base" &&
+              oldNames reviewed == #["x.txt@B"] &&
+              oldNames refreshed == oldNames reviewed &&
+              strayShots refreshed == 0
+          | _, _ => false },
     { name :=
         "keep and revert outside a review buffer say so; revert of a deleted file's hunk says there is nothing to revert into; a record with no hunk on the line says so"
       run :=

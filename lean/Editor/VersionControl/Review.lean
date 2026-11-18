@@ -62,7 +62,7 @@ diff service is a job, and each job's command does the next step:
    It snapshots each old buffer and each working buffer, recording the
    working text's revision, an empty text standing for a side a file lacks,
    and starts `vc-review-diff` with them. A refused start releases every
-   snapshot.
+   snapshot and removes the old buffers that no window shows.
 3. **`vc-review-diff`** asks the hunks of each file's old side against its
    new side (`Diff.hunks`, under `Files.diffLineLimit`), and finishes with
    `reviewDiffed`.
@@ -81,7 +81,9 @@ diff service is a job, and each job's command does the next step:
    gutter, mode and record are set, the store written, and a new one shown
    where the display rules say for the opener `vc-review` and focused. A
    refresh then removes the previous round's old buffers that no window
-   shows, and an old buffer no hunk of this round reads is removed.
+   shows, and an old buffer no hunk of this round reads is removed. A round
+   that ends before its buffer is built, on any path, removes the old
+   buffers it made that no window shows (`reviewDiffed`).
 
 The read and the diff are not one job because the working buffers must be
 snapshotted on the editor thread once the files are taken in. The diff is
@@ -574,10 +576,23 @@ def leftOut (missing : Array String) : Option String :=
   if missing.isEmpty then none
   else some s!"{reviewName}: left out {", ".intercalate missing.toList}: its load was refused"
 
-/-- The command a finished diff hands the loop ("The pipeline", in the module
-docs). -/
-def reviewDiffed (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff.Hunks)) :
-    EditorM Unit := do
+/-- Removes each buffer of `olds` that no window shows. -/
+def removeUnshown (olds : Array BufferId) : EditorM Unit := do
+  for id in olds do
+    let state ← editorState
+    unless state.windows.any (·.buffer == id) do
+      discard <| id.remove
+
+/-- Removes the old buffers `order` made that no window shows: what a round
+that ends before its review buffer is built does with them ("The pipeline",
+in the module docs). -/
+def ReviewDiffOrder.removeOlds (order : ReviewDiffOrder) : EditorM Unit :=
+  removeUnshown (order.files.filterMap (·.oldBuffer))
+
+/-- Builds the review buffer of `order` from `diffs`, or says why there is
+none (`reviewDiffed`): whether it was built. -/
+def reviewBuilt (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff.Hunks)) :
+    EditorM Bool := do
   let read ←
     tryCatch (reviewSpansOf order diffs) fun error => do
         order.release
@@ -587,7 +602,7 @@ def reviewDiffed (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff
     match read with
     | .error sentence =>
       message sentence
-      return
+      return false
     | .ok read =>
       pure read
   for file in order.files do
@@ -596,12 +611,12 @@ def reviewDiffed (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff
         if (← text.revision) != file.revision then
           message
               s!"{reviewName}: {file.path} changed while the review was read; run {reviewName} again"
-          return
+          return false
   let against := order.order.against
   let (list, hunks, marks) := reviewBuild read
   if list.isEmpty then
     message ((leftOut order.missing).getD s!"{reviewName}: no change against {against}")
-    return
+    return false
   let root := order.order.root
   let location := Location.local root
   let state ← editorState
@@ -609,15 +624,16 @@ def reviewDiffed (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff
   let id ←
     match previous with
     | some (id, _) =>
-      let .ok () ← id.setExcerpts list | return
+      let .ok () ← id.setExcerpts list | return false
       pure id
     | none =>
       let .ok id ←
-        createExcerptBuffer (state.freeName (reviewBufferName order.order.label)) list | return
+        createExcerptBuffer (state.freeName (reviewBufferName order.order.label))
+            list | return false
       Workspace.setBufferWorkspace id location
       discard <| id.setMajorMode reviewModeName
       pure id
-  let .ok text ← id.text | return
+  let .ok text ← id.text | return false
   discard <| id.setGutter (some (← reviewGutter text marks))
   let used := hunks.filterMap (·.oldBuffer?)
   let olds := (order.files.filterMap (·.oldBuffer)).map (·.index)
@@ -628,10 +644,7 @@ def reviewDiffed (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff
   -- An old buffer no hunk reads, and, for a refresh, the last round's, go
   -- unless a window shows them.
   let gone := olds.filter (!used.contains ·) ++ ((previous.map (·.2.olds)).getD #[])
-  for index in gone do
-    let state ← editorState
-    unless state.windows.any (·.buffer == ⟨index⟩) do
-      discard <| (⟨index⟩ : BufferId).remove
+  removeUnshown (gone.map (⟨·⟩))
   if previous.isNone then
     let state ← editorState
     let view := order.order.view
@@ -639,6 +652,19 @@ def reviewDiffed (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff
     discard <| id.display asking reviewName
   if let some sentence := leftOut order.missing then
     message sentence
+  return true
+
+/-- The command a finished diff hands the loop ("The pipeline", in the module
+docs): the review buffer built (`reviewBuilt`), or, on every other path, the
+old buffers the round made removed unless a window shows them. -/
+def reviewDiffed (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff.Hunks)) :
+    EditorM Unit := do
+  let built ←
+    tryCatch (reviewBuilt order diffs) fun error => do
+        order.removeOlds
+        throw error
+  unless built do
+    order.removeOlds
 
 /-- The diff job: the hunks of each file's old side against its new side, and
 finishes with what they come to (`reviewDiffed`). It fails only for
@@ -718,6 +744,7 @@ def reviewRead (order : ReviewOrder) (reply : Except String (String × Changes))
     { order := { order with against }, base := changes.base, missing, files }
   if let .error refusal← startJob reviewDiffJob diff.arguments then
     diff.release
+    diff.removeOlds
     message s!"{reviewName}: {refusal.describe}"
 
 /-- The read job: the branch to review against, the change of `HEAD` against

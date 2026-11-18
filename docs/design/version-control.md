@@ -700,7 +700,8 @@ against`.
   `vc-review-diff`, which asks the diff service for each file's hunks.
   Its command groups and orders them, checks that no working buffer moved
   since its snapshot, and builds the buffer, releasing every snapshot on
-  every path.
+  every path; a round that ends before the buffer is built removes the old
+  buffers it made that no window shows.
 - **Hunks and their excerpts.** A hunk is git's: each run of changed lines
   with 3 rows of context, runs whose context touches merged
   (`ReviewSpan.group`). It is one or two tracked excerpts under one
