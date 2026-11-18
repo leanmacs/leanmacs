@@ -114,9 +114,8 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     -- A run changes the disk as its command does, when it ends.
     let fileWatches :=
       match request with
-      | .run command _ | .runWithin command _ _ | .runInput command _ _ _
-      | .runHead command _ _ _ =>
-        model.fileWatches.touch (model.fileWatches.effectsOf command) now
+      | .run command _ | .runWithin command _ _ | .runInput command _ _ _ |
+        .runHead command _ _ _ => model.fileWatches.touch (model.fileWatches.effectsOf command) now
       | _ => model.fileWatches
     (reply,
       { model with

@@ -567,8 +567,8 @@ def takenRun (refused : RefusedRuns) (id : UInt64) : BaseIO (Except ProcessError
 /-- The reply to the run that keeps its head that was started as the wait
 `id`, which has completed, as `takenRun` takes a run's: a cut run is
 `Process.Head.cut`, and one that ran to its end `Process.Head.whole`. -/
-def takenHead (refused : RefusedRuns) (id : UInt64) :
-    BaseIO (Except ProcessError Process.Head) := do
+def takenHead (refused : RefusedRuns) (id : UInt64) : BaseIO (Except ProcessError Process.Head) :=
+  do
   let refusal? ← refused.refused.modifyGet fun refused => (refused[id]?, refused.erase id)
   if let some refusal := refusal? then
     return .error refusal

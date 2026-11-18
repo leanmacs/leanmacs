@@ -570,8 +570,7 @@ def take (processes : FakeProcesses) (id : UInt64) (request : ProcessRequest) :
         else ((request.refused (.failed "the request is not pending"), false), state)
   if ran then
     match request with
-    | .run command _ | .runWithin command _ _ | .runInput command _ _ _
-    | .runHead command _ _ _ =>
+    | .run command _ | .runWithin command _ _ | .runInput command _ _ _ | .runHead command _ _ _ =>
       processes.ran command
     | _ =>
       pure ()
