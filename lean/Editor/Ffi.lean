@@ -261,7 +261,9 @@ stamp's three numbers. A stamp's seconds are an `Int`, and cross as a 64-bit
 two's complement word in both directions.
 
 The process service is the third: `processesRun` starts a run of a command
-to its end, `processesRunInput` one fed its standard input, `processesTake` hands its result over once its completion has
+to its end, `processesRunInput` one fed its standard input, `processesRunHead` one fed its
+standard input that keeps the head of its standard output and ends the child there
+(`ProcessResult.cut`), `processesTake` hands its result over once its completion has
 arrived, `processesCancel` cancels it, which kills the child's process
 group, `processesShutdown` kills every group and blocks until every child is
 reaped, and `processesPending` is a readout for tests. A command crosses as

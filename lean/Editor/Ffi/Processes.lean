@@ -48,6 +48,10 @@ inductive ProcessResult where
   | shutDown (detail : String)
   /-- Anything else. -/
   | failed (detail : String)
+  /-- A run that keeps its head (`processesRunHead`): its standard output
+  reached the limit, and the child's group was killed. `stdout` is exactly
+  its first `limit` bytes, `stderr` what was read of standard error by then. -/
+  | cut (stdout stderr : ByteArray)
   deriving DecidableEq
 
 /-- The result a status, words, a detail and the two streams spell, by the
@@ -81,6 +85,8 @@ def ProcessResult.decode (status : UInt64) (words : ByteArray) (detail : String)
     return .shutDown detail
   | 7, [] =>
     return .failed detail
+  | 9, [] =>
+    return .cut stdout stderr
   | status, words =>
     throw s!"the status {status} with the words {words} is no process result"
 
@@ -147,6 +153,23 @@ def processesRunInput (id : UInt64) (program : String) (arguments : Array String
     (input : ByteArray) : IO Bool :=
   let (words, strings) := runLayout program arguments clear set unset directory limit
   processesRunInputRaw id words strings input
+
+/-- `processesRunHead` as it crosses: a run's words and string, and the
+input's bytes. -/
+@[extern "editor_glue_processes_run_head"]
+private opaque processesRunHeadRaw (id : UInt64) (words : @& ByteArray) (strings : @& String)
+    (input : @& ByteArray) : IO Bool
+
+/-- Asks the library's process service to run a command fed `input` as
+`processesRunInput` does, keeping the head of its standard output: once that
+reaches `limit` bytes the child's group is killed and the run answers
+`ProcessResult.cut` with exactly those bytes. Standard error keeps the usual
+rule, and a run whose output stays within the limit answers `ran`. -/
+def processesRunHead (id : UInt64) (program : String) (arguments : Array String) (clear : Bool)
+    (set : Array (String × String)) (unset : Array String) (directory : String) (limit : UInt64)
+    (input : ByteArray) : IO Bool :=
+  let (words, strings) := runLayout program arguments clear set unset directory limit
+  processesRunHeadRaw id words strings input
 
 /-- `processesOpen` as it crosses: the open's three words and a run's words,
 and one string. -/

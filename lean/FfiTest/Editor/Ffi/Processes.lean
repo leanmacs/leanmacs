@@ -128,6 +128,13 @@ def processChecks (_ : Unit) : List Check :=
             decodedProcess 6 [] "shut" == some (.shutDown "shut") &&
             decodedProcess 7 [] "f" == some (.failed "f")) },
     { name :=
+        "a run that kept its head decodes from status 9 with no words to its two streams, and status 9 with words is no result"
+      run :=
+        pure
+          ((Editor.Ffi.ProcessResult.decode 9 .empty "" "0123".toUTF8 "e".toUTF8).toOption ==
+              some (.cut "0123".toUTF8 "e".toUTF8) &&
+            (decodedProcess 9 [0]).isNone) },
+    { name :=
         "a process result the bindings cannot read is an error: a status the table does not have, and words that are not the status's"
       run :=
         pure

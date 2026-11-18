@@ -520,7 +520,8 @@ def exitOf : Ffi.ProcessExit → Process.Exit
 
 /-- The port's reply for a result of the library's process service. A
 refusal as shut down is `failed` with its words: a job sees it only if it
-runs a program while the editor is quitting. -/
+runs a program while the editor is quitting. A cut run is answered only to a
+run that keeps its head (`takenHead`); here it is a failure that says so. -/
 def runReplyOf : Ffi.ProcessResult → Except ProcessError Process.Ran
   | .ran exit stdout stderr => .ok { exit := exitOf exit, stdout, stderr }
   | .relativeDirectory _ => .error .relativeDirectory
@@ -531,6 +532,7 @@ def runReplyOf : Ffi.ProcessResult → Except ProcessError Process.Ran
   | .outputTooLarge .err limit => .error (.outputTooLarge .err limit.toNat)
   | .shutDown detail => .error (.failed detail)
   | .failed detail => .error (.failed detail)
+  | .cut _ _ => .error (.failed "the process service cut a run that did not ask for it")
 
 /-- What a run is refused with when the library's service did not take it:
 its id is in use there, or the service could not start its thread. -/

@@ -69,10 +69,13 @@
 //! | A stream past the limit | 5 | the stream (0 out, 1 err), the limit |
 //! | Shut down | 6 | |
 //! | Failed | 7 | |
+//! | Cut: a run that keeps its head reached its limit | 9 | |
 //!
 //! Every refusal carries its detail, the platform's words naming the
 //! program and the directory. The streams are empty but for a run that
-//! ran.
+//! ran or was cut: a cut run's standard output is its first `limit` bytes.
+//! Status 8 is a refusal as input closed, and 10 to 12 are a streaming
+//! child's, so 9 is the first a run's result did not use.
 //!
 //! # How a streaming child crosses
 //!
@@ -108,6 +111,7 @@
 //! |---|---|
 //! | [`editor_ffi_processes_run`] | Starts a run. False, starting nothing, for words that spell no command, an id in use, or when the system refuses the run its thread |
 //! | [`editor_ffi_processes_run_input`] | Starts a run as [`editor_ffi_processes_run`] does, with a copy of the bytes it is lent as the child's standard input, then end of file |
+//! | [`editor_ffi_processes_run_head`] | Starts a run fed its input as [`editor_ffi_processes_run_input`] does, that keeps the first `limit` bytes of its standard output and ends its child there (status 9) |
 //! | [`editor_ffi_processes_take`] | Fills a [`RawProcessResult`] and returns true, or returns false when the service keeps no result for the id |
 //! | [`editor_ffi_processes_open`] | Starts a streaming child. False, starting nothing, for words that spell no open, an id in use, or when the system refuses its thread |
 //! | [`editor_ffi_processes_read`] | Asks for a child's next delivery |
@@ -311,6 +315,13 @@ pub fn encoded(result: RunResult) -> Encoded {
             };
             bare(5, vec![stream, limit], String::new())
         }
+        RunResult::Cut { stdout, stderr } => Encoded {
+            status: 9,
+            words: Vec::new(),
+            detail: String::new(),
+            stdout,
+            stderr,
+        },
     }
 }
 
@@ -459,6 +470,41 @@ pub unsafe extern "C" fn editor_ffi_processes_run_input(
         return false;
     };
     PROCESSES.start_with_input(id, command, Some(input.to_vec()), limit)
+}
+
+/// Starts the command the words and the string spell as the run `id`, fed
+/// the `input_len` bytes at `input` as [`editor_ffi_processes_run_input`]
+/// does, keeping the head of its standard output: once that reaches the
+/// limit the child's group is killed and the run comes to its first
+/// `limit` bytes (status 9).
+///
+/// Returns false, starting nothing, as [`editor_ffi_processes_run`] does.
+///
+/// # Safety
+///
+/// As for [`editor_ffi_processes_run_input`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_processes_run_head(
+    id: u64,
+    words: *const u8,
+    words_len: usize,
+    strings: *const u8,
+    strings_len: usize,
+    input: *const u8,
+    input_len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees each pointer and its length.
+    let (words, strings, input) = unsafe {
+        (
+            words::borrow(words, words_len),
+            words::borrow(strings, strings_len),
+            words::borrow(input, input_len),
+        )
+    };
+    let Some((command, limit)) = command_of(words, strings) else {
+        return false;
+    };
+    PROCESSES.start_head(id, command, Some(input.to_vec()), limit)
 }
 
 /// The result of a run as it crosses the boundary: one record, filled in
@@ -890,6 +936,19 @@ mod tests {
         assert_eq!(
             encoded(refused(RefusalKind::InputClosed)),
             bare(8, vec![], "why")
+        );
+        assert_eq!(
+            encoded(RunResult::Cut {
+                stdout: b"0123".to_vec(),
+                stderr: b"\xff".to_vec(),
+            }),
+            Encoded {
+                status: 9,
+                words: vec![],
+                detail: String::new(),
+                stdout: b"0123".to_vec(),
+                stderr: b"\xff".to_vec(),
+            }
         );
     }
 
