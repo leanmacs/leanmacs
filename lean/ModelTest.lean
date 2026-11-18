@@ -7719,6 +7719,28 @@ and the shipped styles (`Editor/Completion/Styles.lean`), over the fuzzy
 model. -/
 def styleChecks : List Check :=
   [{  name :=
+        "the path style ranks by the last component alone, in the fuzzy model's order, its spans within the last component; a pattern that ends in / lists every candidate in order; a directory candidate notes/ is first for notes"
+      run :=
+        pure <|
+          let candidates := #["~/src/main.lean", "~/src/makefile", "~/src/", "~/a/ma"]
+          let hits := styled Completion.Styles.path "~/src/ma" candidates
+          let lasts := candidates.map fun candidate => (Completion.Styles.lastComponent candidate)
+          hits.map (·.index) == FuzzyModel.rank "ma" (lasts.map (·.2)) &&
+                        hits.all
+                          (fun hit =>
+                            let (offset, last) := (lasts[hit.index]?).getD (0, "")
+                            hit.ranges.all fun range =>
+                              offset ≤ range.start && range.stop ≤ offset + last.utf8ByteSize) &&
+                      (styled Completion.Styles.path "~/src/" candidates).map (·.index) ==
+                        #[0, 1, 2, 3] &&
+                    ((styled Completion.Styles.path "notes" #["nothing", "notes/", "notes.md"]).map
+                          (·.index))[0]? ==
+                      some 1 &&
+                  Completion.Styles.lastComponent "notes/" == (0, "notes") &&
+                Completion.Styles.lastComponent "~/src/main.lean" == (6, "main.lean") &&
+              Completion.Styles.path.name == "path" &&
+            Completion.Styles.shipped.map (·.name) == #["fuzzy", "orderless", "path"] },
+    { name :=
         "the fuzzy style answers, for each text and candidates of a table, the indices the fuzzy model ranks, in that order, each with its leftmost in-order spans; adjacent characters make one span, a character's span is its bytes, and the empty text has none"
       run :=
         pure <|
@@ -7786,7 +7808,7 @@ def styleChecks : List Check :=
               (starts.hits "w" #["wq", "edit", "w", "aw"]) 0
           starts.name == "starts" && hits == #[.ofIndex 0, .ofIndex 2] && asked == 0 },
     { name :=
-        "matching picks a category's style when it has one and the default otherwise, and with no category the default; the standard matching is the fuzzy style for every category; the shipped styles are fuzzy and orderless"
+        "matching picks a category's style when it has one and the default otherwise, and with no category the default; the standard matching is the fuzzy style for every category; the shipped styles are fuzzy, orderless and path"
       run :=
         pure <|
           let matching : Completion.Matching :=
@@ -7797,7 +7819,7 @@ def styleChecks : List Check :=
             (matching.styleFor (some "other")).name == "fuzzy" &&
             (matching.styleFor none).name == "fuzzy" &&
             (Completion.Matching.standard.styleFor (some "pick")).name == "fuzzy" &&
-            Completion.Styles.shipped.map (·.name) == #["fuzzy", "orderless"] &&
+            Completion.Styles.shipped.map (·.name) == #["fuzzy", "orderless", "path"] &&
             Completion.Styles.unknown "nope" == "no completion style is registered under `nope`" }]
 
 /-- The names of the style contract's properties that do not hold of
@@ -7815,6 +7837,7 @@ def styleContractChecks : List Check :=
       run := do
         return (← styleBroken Completion.Styles.fuzzy).isEmpty &&
             (← styleBroken Completion.Styles.orderless).isEmpty &&
+            (← styleBroken Completion.Styles.path).isEmpty &&
             (←
                 styleBroken
                     (.keeping "starts" fun text candidate => candidate.startsWith text)).isEmpty &&
@@ -7907,6 +7930,23 @@ def completionDisplayChecks : List Check :=
             sheet.decorations ==
               #[candidate 0 2, matched 0 1, candidate 3 6, matched 5 6, candidate 7 11, matched 8 9,
                 matched 10 11] },
+    { name :=
+        "a candidate whose label ends its text has the text's ranges within that end drawn on the label, shifted, a range that crosses into it cut at its start; a label that does not end the text draws none"
+      run :=
+        pure <|
+          let sheet :=
+            minibufferSheet
+              {
+                listed :=
+                  #[listedOf "/w/notes/" #[⟨1, 2⟩, ⟨3, 5⟩] (label := some "notes/"),
+                    listedOf "/w/alps.md" #[⟨1, 5⟩] (label := some "alps.md"),
+                    listedOf "/w/x" #[⟨3, 4⟩] (label := some "y")] }
+          let candidate (stop : Nat) : Decoration :=
+            { start := 0, stop, face := Completion.Displays.candidateFace }
+          let matched (start stop : Nat) : Decoration :=
+            { start, stop, face := Completion.Displays.matchFace }
+          sheet.rows.map (·.decorations) ==
+            #[#[candidate 6, matched 0 2], #[candidate 7, matched 0 2], #[candidate 1]] },
     { name := "a candidate with a label is shown by its label, with no matched range drawn"
       run :=
         pure <|

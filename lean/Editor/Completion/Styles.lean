@@ -1,10 +1,12 @@
 import Editor.Completion.Style
+import Editor.TypedPath
 
 /-!
 # The completion styles that ship
 
-Two styles (`Editor/Completion/Style.lean`): the fuzzy matcher's, the
-default, and orderless's, which proves the interface holds a second rule.
+Three styles (`Editor/Completion/Style.lean`): the fuzzy matcher's, the
+default, orderless's, which proves the interface holds a second rule, and
+the path style, which matches a path's last component.
 
 ## Fuzzy
 
@@ -33,6 +35,17 @@ matches. A text with no component (empty, or spaces alone) matches every
 candidate. The order is the candidates' own: orderless does not sort. The
 ranges are each component's first occurrence (`occurrence?`), sorted, with
 overlapping or touching ones merged. It asks the port nothing.
+
+## Path
+
+`Styles.path` matches a path by its last component, with the fuzzy style:
+the text's last component (after its last `/`, `TypedPath.split`) is
+matched against each candidate's (`lastComponent`, where a trailing `/` is
+not part of it, so a directory `notes/` is matched as `notes`), and each
+span is shifted by its candidate's offset. **The directory part is never
+matched**, so it never ranks a candidate. A text that ends in `/` has an
+empty last component, and lists every candidate in order. It is the style
+compiled code gives the category `file` (`Files.styleDefaults`).
 
 Pinned by `ModelTest.styleChecks` and `styleContractChecks`.
 -/
@@ -117,10 +130,33 @@ def orderless : Style :=
               a.start < b.start || (a.start == b.start && a.stop < b.stop)
           some { index, ranges := sorted.foldl mergeInto #[] } }
 
+/-- The byte offset and the text of the last component of `text`, a path:
+what follows its last `/`, a trailing `/` not counted, so `notes/` is
+`notes` at 0 and `~/src/main.lean` is `main.lean` at 6. -/
+def lastComponent (text : String) : Nat × String :=
+  let trimmed := if text.endsWith "/" then String.ofList text.toList.dropLast else text
+  let (directory, last) := TypedPath.split trimmed
+  (directory.utf8ByteSize, last)
+
+/-- The path style: the fuzzy style over the last components, the text's
+against the candidates', each span shifted to its candidate's text. The
+directory part is never matched. -/
+def path : Style :=
+  { name := "path"
+    hits := fun text candidates => do
+      let lasts := candidates.map lastComponent
+      let hits ← fuzzy.hits (TypedPath.split text).2 (lasts.map (·.2))
+      return hits.map fun hit =>
+          let offset := ((lasts[hit.index]?).map (·.1)).getD 0
+          { hit with
+            ranges :=
+              hit.ranges.map fun range =>
+                { start := range.start + offset, stop := range.stop + offset } } }
+
 /-- The styles that ship, registered compiled by every host
 (`Headless.Collaborators.styles`). -/
 def shipped : Array Style :=
-  #[fuzzy, orderless]
+  #[fuzzy, orderless, path]
 
 /-- What the report says of a style chosen under `name` that no style is
 registered under. -/

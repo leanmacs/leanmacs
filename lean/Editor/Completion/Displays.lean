@@ -19,9 +19,12 @@ input (`Loop.candidateListView`, `Editor/Loop.lean`; `EditorState`'s
 - **Faces.** A row starts with the candidate's label, or its text when it
   has none, and the whole row is in `candidateFace`
   (`minibuffer.candidate`), or in `chosenFace` (`minibuffer.chosen`) for
-  the chosen one. Then, only when it has no label, each matched range of
-  its text (`Listed.ranges`) is in `matchFace` (`minibuffer.match`), drawn
-  over it.
+  the chosen one. Then each matched range of its text (`Listed.ranges`) is
+  in `matchFace` (`minibuffer.match`), drawn over it: when it has no label;
+  and when its label ends its text, as a path's last component ends the
+  path, the ranges within that end, shifted onto the label, a range that
+  crosses into it cut at its start (`labelRanges`). Any other label has
+  none drawn.
 - **Annotations in an aligned column.** A row with an annotation is its
   shown text, then spaces up to the column the longest shown text among
   the rows shown reaches plus `gap` (2), counted in characters, then the
@@ -161,6 +164,21 @@ none. -/
 def shownText (listed : Listed) : String :=
   listed.candidate.label.getD listed.text
 
+/-- The ranges of `listed`'s text that are drawn on what shows it: all of
+them with no label; with a label that ends the text, those within that end,
+shifted onto the label, one that crosses into it cut at its start; and none
+with any other label. -/
+def labelRanges (listed : Listed) : Array Span :=
+  match listed.candidate.label with
+  | none => listed.ranges
+  | some label =>
+    if !listed.text.endsWith label then #[]
+    else
+      let offset := listed.text.utf8ByteSize - label.utf8ByteSize
+      listed.ranges.filterMap fun range =>
+        if range.stop ≤ offset then none
+        else some { start := max range.start offset - offset, stop := range.stop - offset }
+
 /-- The row of the candidate `listed`, chosen or not, its annotation, if
 any, at `column` characters (`minibuffer`). -/
 def candidateRow (listed : Listed) (chosen : Bool) (column : Nat) : Row :=
@@ -174,10 +192,8 @@ def candidateRow (listed : Listed) (chosen : Bool) (column : Nat) : Row :=
   let span (start stop : Nat) (face : FaceName) : Array Decoration :=
     if start < stop then #[{ start, stop, face }] else #[]
   let ranges :=
-    if listed.candidate.label.isSome then #[]
-    else
-      (listed.ranges.filter fun range => range.stop ≤ shown.utf8ByteSize).flatMap fun range =>
-        span range.start range.stop matchFace
+    (labelRanges listed |>.filter fun range => range.stop ≤ shown.utf8ByteSize).flatMap fun range =>
+      span range.start range.stop matchFace
   let annotation :=
     match annotated with
     | some (start, size) => span start (start + size) annotationFace

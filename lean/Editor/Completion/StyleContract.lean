@@ -17,7 +17,8 @@ never depends on a style.
 Each property runs over a table of texts and arrays of candidates
 (`texts`, `candidateSets`): a letter, two components, a space alone, a
 character of two bytes, a candidate repeated, a composed and a decomposed
-character, and no candidates at all.
+character, no candidates at all, and paths with a `/`, so a style that
+shifts its ranges, as the path style does, is held to them.
 
 - **The indices** (`indices`): each index a style answers is one of the
   candidates', and none is answered twice.
@@ -47,12 +48,13 @@ structure Property where
 
 /-- The texts each property asks with. -/
 def texts : List String :=
-  ["", "w", "a b", " ", "é", "ab"]
+  ["", "w", "a b", " ", "é", "ab", "s/a"]
 
 /-- The candidates each property asks among: `é` is U+00E9, and `é` its
 decomposed form. -/
 def candidateSets : List (Array String) :=
-  [#["wq", "edit", "rewrite", "w"], #["é", "é", "a b", "b a", ""], #[], #["ab", "ab"]]
+  [#["wq", "edit", "rewrite", "w"], #["é", "é", "a b", "b a", ""], #[], #["ab", "ab"],
+    #["src/", "src/a.lean", "a/b"]]
 
 /-- The byte offsets of the character boundaries of `text`: 0, then the
 end of each character. -/
