@@ -624,6 +624,16 @@ def vimDefaultHintChecks : List Check :=
     { name := "the default states have keymap prefixes for the agreement check to hold of"
       run :=
         let (active, own) := ({} : Vim.State).tiers Vim.Default.states vimListingMaps ⟨0⟩
-        pure (!(vimKeymapPrefixes active own).isEmpty) }]
+        pure (!(vimKeymapPrefixes active own).isEmpty) },
+    { name :=
+        "a default table given descriptions puts each on the row whose key string parses to the same chords, and leaves a row without one undescribed"
+      run :=
+        let keymap :=
+          Vim.Default.keymap [("TAB", .motion "a"), ("g g", .motion "b"), ("x", .motion "c")]
+            [("<Tab>", "Tab"), ("g g", "Top")]
+        pure
+          (keymap.describe? (keys "TAB") == some "Tab" &&
+            keymap.describe? (keys "g g") == some "Top" &&
+            keymap.describe? (keys "x") == none) }]
 
 end ModelTest

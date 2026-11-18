@@ -27,6 +27,10 @@ The operators' entries are `Evil.operators`
 (`Editor/Evil/Operators.lean`), and the text objects' `Evil.objects`
 (`Editor/Evil/Objects.lean`).
 
+A table may be given descriptions for the key hints, as rows of a key
+string and its label beside the table (`keymap`'s `descs`), a row matched
+to the table's by its parsed chords. No table that ships has any yet.
+
 | Table | Binds |
 |---|---|
 | `motions` | The motions of normal state and the visual states. `f`, `F`, `t` and `T` are motions that take the character the next key names (`Bound.charMotion`), and `/` and `?` motions that ask for a pattern in the minibuffer (`Bound.promptMotion`, labelled `/` and `?`). `%` is the motion `matching-bracket` |
@@ -398,14 +402,16 @@ def visualRuns : List (String × Edit) :=
     ("clipboard-cut", .operate { name := "delete" } .selection none (some "+")),
     ("clipboard-paste", .operate { name := "replace" } .selection none (some "+")), selectAllRun]
 
-/-- The keymap that binds each key string of `table` to what is beside it.
-A string `Key.parse` refuses binds nothing. -/
-def keymap (table : List (String × Bound)) : Keymap Bound :=
-  Keymap.ofList
+/-- The keymap that binds each key string of `table` to what is beside it,
+described by the row of `descs` whose key string parses to the same
+chords, if one does. A string `Key.parse` refuses binds nothing. -/
+def keymap (table : List (String × Bound)) (descs : List (String × String) := []) : Keymap Bound :=
+  let parsed (text : String) : Option (List Key) := (Key.parse text).toOption
+  let describe (keys : List Key) : Option String :=
+    (descs.find? fun (text, _) => parsed text == some keys).map (·.2)
+  Keymap.ofDescribed
     (table.filterMap fun (text, bound) =>
-      match Key.parse text with
-      | .ok keys => some (keys, bound)
-      | .error _ => none)
+      (parsed text).map fun keys => (keys, bound, describe keys))
 
 /-- The default registry of Vim states (the table in the module docs). -/
 def states : States :=

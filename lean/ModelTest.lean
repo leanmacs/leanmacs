@@ -717,6 +717,9 @@ names a scheme's key:
   keymaps a mode makes for a scheme (`Editor/Mode.lean`): its roles at the
   scheme's keys for them, its suffixes under the localleader, and the scheme's
   hand-tuned keys for it ahead of both; and what `Mode.check` reports;
+- `modeDescriptionChecks`: a mode's descriptions of its roles and
+  suffixes (`Mode.roleDescs`, `Mode.localDescs`) are on their keys in its
+  keymaps;
 - `modeRegistryChecks`: modes in the registry
   (`Editor/Config/Registry.lean`): a mode's lineage, and the active keymaps
   of a view, in precedence order;
@@ -898,6 +901,7 @@ def checks : List Check :=
     vimDefaultHintChecks ++
     vimContractChecks ++
     modeRecordChecks ++
+    modeDescriptionChecks ++
     languageMatchChecks ++
     modeRegistryChecks ++
     modeDispatchChecks ++

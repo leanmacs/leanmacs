@@ -185,4 +185,23 @@ def modeRecordChecks : List Check :=
                 Role.mark] ==
               Role.registered) }]
 
+/-- The checks of a mode's descriptions (`Mode.roleDescs`,
+`Mode.localDescs`): each is on its key in the mode's keymaps. -/
+def modeDescriptionChecks : List Check :=
+  [{  name :=
+        "a mode's described role and described suffix carry their descriptions in its keymaps, a suffix matched as parsed chords, and an undescribed one has none"
+      run :=
+        let described : Mode :=
+          { listing with
+            locals := listing.locals ++ [("TAB", "listing-tab")]
+            roleDescs := [(Role.nextItem, "Next")]
+            localDescs := [("<Tab>", "Tab it")] }
+        let localLeader := TestScheme.scheme.leaders.localLeader
+        let roles := (described.keymaps TestScheme.scheme).getLast?.getD Keymap.empty
+        pure
+          (roles.describe? (roleKeys Role.nextItem) == some "Next" &&
+            roles.describe? (localLeader ++ keys "TAB") == some "Tab it" &&
+            roles.describe? (roleKeys Role.previousItem) == none &&
+            roles.describe? (localLeader ++ keys "x") == none) }]
+
 end ModelTest

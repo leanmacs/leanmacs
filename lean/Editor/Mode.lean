@@ -66,7 +66,9 @@ key for it (`InputScheme.roleKey`) and each suffix under the localleader,
 bound to what the scheme says a mode's key is bound to
 (`InputScheme.modeCommand`). A role the scheme's table lacks, and an
 unreadable suffix, bind nothing. So a tuned key wins over a role on the
-same keys.
+same keys. A role or a suffix the mode describes (`roleDescs`,
+`localDescs`, side tables so a mode's literal need not change) carries its
+description on its binding, for the key hints.
 
 The localleader is the one in force: the leaders it is given, which the
 registry resolves from config's and the scheme's
@@ -140,6 +142,13 @@ structure Mode where
   /-- Its local commands: each suffix, as a key string typed after the
   localleader, and the name of the command it runs. -/
   locals : List (String × String) := []
+  /-- Descriptions of the roles it fills, for the key hints: each role, and
+  the label of its key. -/
+  roleDescs : List (Role × String) := []
+  /-- Descriptions of its suffixes, for the key hints: each suffix, as a key
+  string, and its label. A suffix is matched as parsed chords, as
+  `Mode.suffixes` compares suffixes. -/
+  localDescs : List (String × String) := []
   /-- How its text is parsed and drawn, if it says: none for a mode of
   plain text, or one that takes its parent's (`Mode.syntaxTreeOf`). -/
   syntaxTree : Option Mode.SyntaxTree := none
@@ -191,16 +200,20 @@ def tunedFor (scheme : InputScheme) (name : String) : List (List Key × scheme.B
 hand-tuned keys for the mode, then the mode's roles, each at the scheme's
 key for it, and its suffixes, each under the localleader of `leaders`, the
 scheme's own by default, bound to `scheme.modeCommand` of the command's
-name. -/
+name. Each role and suffix carries its description (`roleDescs`,
+`localDescs`), if it has one. -/
 def keymaps (scheme : InputScheme) (mode : Mode) (leaders : Key.Leaders := scheme.leaders) :
     List (Keymap scheme.Binding) :=
+  let roleDesc (role : Role) : Option String := (mode.roleDescs.find? (·.1 == role)).map (·.2)
+  let localDesc (keys : List Key) : Option String :=
+    (mode.localDescs.find? fun (text, _) => (Key.parse text).toOption == some keys).map (·.2)
   let roles :=
     mode.roles.filterMap fun (role, command) =>
-      (scheme.roleKey role).map fun keys => (keys, scheme.modeCommand command)
+      (scheme.roleKey role).map fun keys => (keys, scheme.modeCommand command, roleDesc role)
   let suffixes :=
     mode.suffixes.map fun (keys, command) =>
-      (leaders.localLeader ++ keys, scheme.modeCommand command)
-  [Keymap.ofList (tunedFor scheme mode.name), Keymap.ofList (roles ++ suffixes)]
+      (leaders.localLeader ++ keys, scheme.modeCommand command, localDesc keys)
+  [Keymap.ofList (tunedFor scheme mode.name), Keymap.ofDescribed (roles ++ suffixes)]
 
 /-- What a mode cannot mean. -/
 inductive Problem where
