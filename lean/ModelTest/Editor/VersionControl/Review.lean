@@ -202,6 +202,27 @@ def reviewBufferChecks : List Check :=
               (reviewShown undone).map (fun (_, record) => record.hunks.map (·.decision)) ==
                 some #[.«open», .reverted, .«open», .«open», .«open», .«open»] },
     { name :=
+        "vc-review-revert on the hunk of a file the branch adds empties that file's buffer, says so, and leaves the other files' buffers as they were"
+      run :=
+        pure <|
+          match reviewOpened with
+          | none => false
+          | some opened =>
+            let reviewed := reviewAfter opened "C-t r"
+            -- Excerpt 0 is the new side of ATest's one hunk, which has no
+            -- old side.
+            let reverted := reviewAfter reviewed "C-t 0 C-t v"
+            let others : List (System.FilePath × String) :=
+              [("/r/lean/Pkg/A.lean", "import Pkg.B\n\ndef a := 2\n"),
+                ("/r/lean/Pkg/B.lean", reviewedB),
+                ("/r/lean/Pkg/C.lean", "def c := 1\ndef c2 := 2\n")]
+            fileText reviewed "/r/lean/PkgTest/ATest.lean" == some "import Pkg.A\n#eval Pkg.a\n" &&
+              fileText reverted "/r/lean/PkgTest/ATest.lean" == some "" &&
+              echoOf reverted == some "reverted a hunk of lean/PkgTest/ATest.lean" &&
+              others.all (fun (path, text) => fileText reverted path == some text) &&
+              (reviewShown reverted).map (fun (_, record) => record.hunks.map (·.decision)) ==
+                some #[.reverted, .«open», .«open», .«open», .«open», .«open»] },
+    { name :=
         "criterion 3 on the models: a hunk's excerpt is drawn in review-unexamined in the scene that first shows it and not after, and a hunk below the view is never marked until it is shown"
       run :=
         pure <|
