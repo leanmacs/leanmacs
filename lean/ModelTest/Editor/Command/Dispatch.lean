@@ -363,6 +363,29 @@ def dispatchRegistryChecks : List Check :=
         pure <|
           match (program.runModel editorModel).1 with
           | .ok (.finished answer, _) => answer == (some "rust", none)
+          | _ => false },
+    { name :=
+        "a dispatched command that asks for a language's indent unit is answered the unit of the loop's entry of that name, the first in the table, or none; and a target's unit is its buffer's language's, or four spaces for a buffer with no language or one the table has no entry of"
+      run :=
+        let table := [{ Language.json with indentUnit := .tab }, Language.rust, Language.json]
+        let program :
+          EditorM
+            (Guarded (List (Option Language.IndentUnit) × List Language.IndentUnit) ×
+              EditorState) :=
+          do
+          (do
+                  let asked := [← indentUnitOf "json", ← indentUnitOf "rust", ← indentUnitOf "toml"]
+                  let unitOf (language : Option String) : EditorM Language.IndentUnit := do
+                    discard <| (⟨0⟩ : BufferId).setLanguage language
+                    let some target := (← editorState).target? ⟨0⟩ | throw TextError.noSuchText
+                    target.indentUnit
+                  let units := [← unitOf (some "json"), ← unitOf none, ← unitOf (some "toml")]
+                  return (asked, units)).dispatched
+              { languages := table } (← twoBuffers)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) =>
+            answer == ([some .tab, some (.spaces 4), none], [.tab, .spaces 4, .spaces 4])
           | _ => false }]
 
 end ModelTest

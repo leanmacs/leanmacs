@@ -915,13 +915,13 @@ def BufferId.setLanguage (id : BufferId) (name : Option String) :
 records as its buffer's language. `none` where no loop runs the
 command. -/
 def languageOf (path : System.FilePath) : EditorM (Option String) :=
-  EditorState.ask (.languageOf path)
+  RegistryRequest.ask (.languageOf path)
 
 /-- The indent unit of the language called `name`: the unit of the
 registry's first entry of that name, or none when the table has none. `none`
 where no loop runs the command. -/
 def indentUnitOf (name : String) : EditorM (Option Language.IndentUnit) :=
-  EditorState.ask (.indentUnitOf name)
+  RegistryRequest.ask (.indentUnitOf name)
 
 /-- One level of indentation in `target`'s buffer: the unit of its
 language's entry, or four spaces (`Language.IndentUnit.default`) for a
@@ -1042,7 +1042,7 @@ def collectSources (sources : List Completion.SourceRef) (query : Completion.Que
     | .named name =>
       resolved := resolved.push (.inr name)
     | .category category defaults =>
-      let names ← EditorState.ask (.categorySources category)
+      let names ← RegistryRequest.ask (.categorySources category)
       resolved :=
         resolved ++
           defaults.toArray.map
@@ -1091,7 +1091,7 @@ def collectSources (sources : List Completion.SourceRef) (query : Completion.Que
             all := collected.all ++ answer.candidates, category }
   -- Each job a source that answers later names must be registered.
   for source in collected.asking do
-    unless ← EditorState.ask (.hasJob source.later.job) do
+    unless ← RegistryRequest.ask (.hasJob source.later.job) do
       return .error (.noSuchJob source.later.job)
   -- A source that reads the open buffers' texts is handed a snapshot of
   -- each, the asking view's buffer's first: taken once, here.
@@ -2264,7 +2264,8 @@ def completeAtPoint (occasion : Completion.Occasion) (silent : Bool := false) :
   let head := range.head
   let spot : Completion.Spot := { view, offset := head, occasion }
   let mut answered : Option (String × Completion.Region) := none
-  for name in ← EditorState.ask (.atPointSources view occasion) do
+  for name in
+    ← RegistryRequest.ask (.atPointSources target.buffer.major target.buffer.minors occasion) do
     if let some region← EditorState.ask (.askAtPoint name spot) then
       answered := some (name, region)
       break

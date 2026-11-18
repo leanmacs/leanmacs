@@ -1619,7 +1619,7 @@ def dispatchStateChecks : List Check :=
       [("split", split), ("fail", failingAfter fun call => discard <| splitting call),
         ("moving", moving)]
   [{  name :=
-        "an at-point source is asked inside the asking command, its requests answered there, and a name nobody registered answers none; a buffer's chain is asked filtered by the occasion"
+        "an at-point source is asked inside the asking command, its requests answered there, and a name nobody registered answers none; a buffer's chain is asked by its modes, filtered by the occasion"
       run :=
         pure <|
           let reading : Completion.AtPoint :=
@@ -1631,7 +1631,8 @@ def dispatchStateChecks : List Check :=
             { Completion.AtPoint.silent "dots" with triggers := ['.'] }
           let registered : Loop.Registered :=
             { atPoint := fun name => [reading, dots].find? (·.name == name)
-              atPointNames := fun _ _ => #["reading", "dots", "nobody"] }
+              atPointNames := fun major _ =>
+                if major == some "notes" then #["reading", "dots", "nobody"] else #[] }
           let asking :
             EditorM
               (Option Completion.Region ×
@@ -1640,10 +1641,10 @@ def dispatchStateChecks : List Check :=
             do
             let asked ← EditorState.ask (.askAtPoint "reading" { view := ⟨0⟩, offset := 0 })
             let nobody ← EditorState.ask (.askAtPoint "nobody" { view := ⟨0⟩, offset := 0 })
-            let onKey ← EditorState.ask (.atPointSources ⟨0⟩ .key)
-            let onDot ← EditorState.ask (.atPointSources ⟨0⟩ (.trigger '.'))
-            let onPause ← EditorState.ask (.atPointSources ⟨0⟩ (.pause 240))
-            let elsewhere ← EditorState.ask (.atPointSources ⟨9⟩ .key)
+            let onKey ← RegistryRequest.ask (.atPointSources (some "notes") #["one"] .key)
+            let onDot ← RegistryRequest.ask (.atPointSources (some "notes") #["one"] (.trigger '.'))
+            let onPause ← RegistryRequest.ask (.atPointSources (some "notes") #["one"] (.pause 240))
+            let elsewhere ← RegistryRequest.ask (.atPointSources (some "text") #["one"] .key)
             return (asked, nobody, onKey, onDot, onPause, elsewhere)
           let program :
             EditorM
@@ -2085,8 +2086,8 @@ def dispatchStateChecks : List Check :=
               jobs := (· == "later-pick") }
           let command : EditorM (Option Completion.Answer × Bool × Bool) := do
             let answered ← EditorState.ask (.askSource "later" { text := "w", view := ⟨0⟩ })
-            return (answered, ← EditorState.ask (.hasJob "later-pick"),
-                ← EditorState.ask (.hasJob "nope"))
+            return (answered, ← RegistryRequest.ask (.hasJob "later-pick"),
+                ← RegistryRequest.ask (.hasJob "nope"))
           let program : EditorM (Guarded _ × EditorState) := do
             command.dispatched registered (← EditorState.initial ⟨640, 480⟩)
           match (program.runModel editorModel).1 with
@@ -2110,7 +2111,8 @@ def dispatchStateChecks : List Check :=
             let program : EditorM (Guarded (Array String) × Bool) := do
               let start ← EditorState.initial ⟨640, 480⟩
               let (outcome, state) ←
-                (EditorState.ask (.categorySources category) : EditorM (Array String)).dispatched
+                (RegistryRequest.ask (.categorySources category) :
+                        EditorM (Array String)).dispatched
                     registered start
               return (outcome, state == start)
             (program.runModel editorModel).1.toOption

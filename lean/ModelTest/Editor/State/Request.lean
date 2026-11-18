@@ -1,23 +1,11 @@
 import Editor.Api
-import Editor.Command
-import Editor.Command.Call
 import Editor.Command.Dispatch
-import Editor.Command.Model
-import Editor.Compile.Contribution
-import Editor.Completion
-import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Completion.Styles
-import Editor.DisplayRules
-import Editor.Ex.Line
 import Editor.File
 import Editor.Floating
 import Editor.Invocation
-import Editor.Language
-import Editor.Language.IndentUnit
 import Editor.Layout
-import Editor.Mode
 import Editor.Program
 import Editor.Scene
 import Editor.State
@@ -25,7 +13,6 @@ import Editor.State.Request
 import Editor.Text
 import Editor.UndoTree
 import Editor.Value
-import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Completion
 import ModelTest.Support.Models
@@ -70,10 +57,10 @@ def stateRequests : List StateRequest :=
         asking :=
           #[{ source := "later", later := { job := "j" }, askedFor := "", generation := 1 }] },
     .addCandidates ⟨3⟩ 0 1 (offered #["three"]), .addCandidates ⟨3⟩ 4 1 #[],
-    .sourceAnswered ⟨3⟩ 0 1, .listMatched ⟨3⟩ "" 0 #[], .matchFailed ⟨3⟩ "" 0 "no", .hasJob "count",
+    .sourceAnswered ⟨3⟩ 0 1, .listMatched ⟨3⟩ "" 0 #[], .matchFailed ⟨3⟩ "" 0 "no",
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .categorySources "buffer",
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }),
     .matchCandidates (some "buffer") "w" #["w"], .loadTheme "second", .invoke asked, .quit, .reload,
     .giveUp "no", .breakOff "far enough", .setRegister "a" { text := "a line\n", linewise := true },
     .setScrollMargin 2, .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
@@ -96,8 +83,7 @@ def stateRequests : List StateRequest :=
     .show ⟨1⟩ ⟨0⟩ (marker 0 0) (marker 0 1), .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .tab,
     .tab (.select 1), .tab (.rename 1 (some "notes")), .tab (.move 0 1), .tab (.select 0),
     .tab (.close 1), .tab (.close 0), .tab (.select 7), .setLanguage ⟨0⟩ (some "rust"),
-    .setLanguage ⟨0⟩ none, .setLanguage ⟨9⟩ (some "rust"), .languageOf notePath,
-    .indentUnitOf "rust"]
+    .setLanguage ⟨0⟩ none, .setLanguage ⟨9⟩ (some "rust")]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -124,7 +110,6 @@ def stateRequestChecks : List Check :=
             let (retaken, taken) := shown.handle (.retakeAtPoint "a1z")
             let (closed, gone) := taken.handle .closeAtPoint
             let ((), told) := state.handle (.retype ⟨0⟩ "\x08b")
-            let (names, _) := state.handle (.atPointSources ⟨0⟩ .key)
             let (region, _) := state.handle (.askAtPoint "line" { view := ⟨0⟩, offset := 0 })
             opened matches .ok () && chose matches .ok () && retyped matches .ok () &&
               retaken matches .ok () &&
@@ -134,7 +119,6 @@ def stateRequestChecks : List Check :=
               closed.toOption.map (·.source) == some "line" &&
               gone.atPoint.isNone &&
               told.retyped == #[(⟨0⟩, "\x08b")] &&
-              names.isEmpty &&
               region.isNone &&
               (state.handle .closeAtPoint).1.toOption.isNone },
     { name :=
@@ -157,42 +141,6 @@ def stateRequestChecks : List Check :=
               | .error (.noSuchBuffer id) => id == ⟨9⟩
               | _ => false) &&
               same == state },
-    { name :=
-        "with no loop to answer, a path's language is none; a dispatched command that asks is answered the name of the language the loop's table chooses for the path, or none"
-      run :=
-        let program : EditorM (Guarded (Option String × Option String) × EditorState) := do
-          (do
-                  return (← languageOf "/p/main.rs", ← languageOf "/p/notes.txt")).dispatched
-              { languages := Language.shipped.toList } (← twoBuffers)
-        pure <|
-          (EditorState.none.handle (.languageOf "/p/main.rs")).1 == none &&
-            match (program.runModel editorModel).1 with
-            | .ok (.finished answer, _) => answer == (some "rust", none)
-            | _ => false },
-    { name :=
-        "with no loop to answer, a language's indent unit is none; a dispatched command that asks is answered the unit of the loop's entry of that name, the first in the table, or none; and a target's unit is its buffer's language's, or four spaces for a buffer with no language or one the table has no entry of"
-      run :=
-        let table := [{ Language.json with indentUnit := .tab }, Language.rust, Language.json]
-        let program :
-          EditorM
-            (Guarded (List (Option Language.IndentUnit) × List Language.IndentUnit) ×
-              EditorState) :=
-          do
-          (do
-                  let asked := [← indentUnitOf "json", ← indentUnitOf "rust", ← indentUnitOf "toml"]
-                  let unitOf (language : Option String) : EditorM Language.IndentUnit := do
-                    discard <| (⟨0⟩ : BufferId).setLanguage language
-                    let some target := (← editorState).target? ⟨0⟩ | throw TextError.noSuchText
-                    target.indentUnit
-                  let units := [← unitOf (some "json"), ← unitOf none, ← unitOf (some "toml")]
-                  return (asked, units)).dispatched
-              { languages := table } (← twoBuffers)
-        pure <|
-          (EditorState.none.handle (.indentUnitOf "rust")).1 == none &&
-            match (program.runModel editorModel).1 with
-            | .ok (.finished answer, _) =>
-              answer == ([some .tab, some (.spaces 4), none], [.tab, .spaces 4, .spaces 4])
-            | _ => false },
     { name := "a read hands back the whole state and changes nothing"
       run :=
         pure <|
@@ -832,22 +780,6 @@ def stateRequestChecks : List Check :=
                 failed.echo == "completion-match: broken" &&
                 other == waiting
             | _ => false },
-    { name :=
-        "the handler knows no registry: asked whether a job is registered under a name, it answers yes for any name, as it takes any start, and leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state => state.handle (.hasJob "nope") == (true, state) },
-    { name :=
-        "the handler knows no registry: asked which sources are registered in a category, it answers none, and leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (names, after) := state.handle (.categorySources "x")
-            names == #[] && after == state },
     { name :=
         "the handler knows no style: asked to match a text with a category's style, it answers no hit, asks the matcher nothing, and leaves the state as it was"
       run :=

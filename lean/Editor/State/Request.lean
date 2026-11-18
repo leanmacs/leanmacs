@@ -388,13 +388,6 @@ inductive StateRequest where
   /-- The match in flight for `pattern` at `revision` in the prompt open in
   `view` could not list, for `message`. -/
   | matchFailed (view : ViewId) (pattern : String) (revision : Nat) (message : String)
-  /-- Whether a job is registered under `name`, which the loop that runs the
-  command answers with. -/
-  | hasJob (name : String)
-  /-- The names of the at-point sources of the chain of the buffer `view`
-  shows that ask on `occasion`, in order, which the loop that runs the
-  command answers from the registry. -/
-  | atPointSources (view : ViewId) (occasion : Completion.Occasion)
   /-- Ask the at-point source registered under `name` for its region at
   `spot`, inside this command. -/
   | askAtPoint (name : String) (spot : Completion.Spot)
@@ -427,9 +420,6 @@ inductive StateRequest where
   /-- Ask the completion source registered under `name` for its candidates
   for `query`, inside this command. -/
   | askSource (name : String) (query : Completion.Query)
-  /-- Which completion sources are registered in `category`, by name, in
-  registration order. -/
-  | categorySources (category : String)
   /-- Which of `candidates` `text` matches, in order, with the completion
   style the loop chooses for `category` (`none` for a prompt with no
   category), as the prompt of that category lists them. -/
@@ -471,12 +461,6 @@ inductive StateRequest where
   /-- Record `name` as the language of the buffer `id`, or that it has
   none. -/
   | setLanguage (id : BufferId) (name : Option String)
-  /-- The name of the language the registry's table chooses for `path`,
-  which the loop that runs the command answers with. -/
-  | languageOf (path : System.FilePath)
-  /-- The indent unit of the language called `language`, which the loop
-  that runs the command answers from its table. -/
-  | indentUnitOf (language : String)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -524,8 +508,6 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .sourceFailed .. => Unit
   | .listMatched .. => Unit
   | .matchFailed .. => Unit
-  | .hasJob _ => Bool
-  | .atPointSources .. => Array String
   | .askAtPoint .. => Option Completion.Region
   | .openAtPoint .. => Except AtPointRefusal Unit
   | .closeAtPoint => Except AtPointRefusal AtPointSession
@@ -538,7 +520,6 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .invoke _ => Unit
   | .runCommand .. => Bool
   | .askSource .. => Option Completion.Answer
-  | .categorySources _ => Array String
   | .matchCandidates .. => Array Completion.Hit
   | .quit => Unit
   | .reload => Unit
@@ -554,8 +535,6 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setProjectValue .. => Except WorkspaceRefusal Unit
   | .setUnscopedValue .. => Unit
   | .setLanguage .. => Except BufferRefusal Unit
-  | .languageOf _ => Option String
-  | .indentUnitOf _ => Option Language.IndentUnit
 
 namespace EditorState
 
@@ -645,12 +624,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
     ((), state.listMatched view pattern revision listed)
   | .matchFailed view pattern revision message, state =>
     ((), state.matchFailed view pattern revision message)
-  -- The registry is the loop's to answer from (`Program.dispatched`): here,
-  -- with no loop, any name is taken, as `startJob` takes any.
-  | .hasJob _, state => (true, state)
-  -- The chain and the at-point sources are the loop's to answer from
-  -- (`Program.dispatched`): here, with no registry, there are none.
-  | .atPointSources .., state => (#[], state)
+  -- An at-point source is the loop's to ask (`Program.dispatched`): here,
+  -- with no registry, there is none.
   | .askAtPoint .., state => (none, state)
   | .openAtPoint session collected, state => state.openAtPoint session collected
   | .closeAtPoint, state => state.closeAtPoint
@@ -664,7 +639,6 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
     ((), { state with outbox.answered := state.outbox.answered.push invocation })
   | .runCommand .., state => (false, state)
   | .askSource .., state => (none, state)
-  | .categorySources _, state => (#[], state)
   | .matchCandidates .., state => (#[], state)
   | .quit, state => ((), { state with quitting := true })
   | .reload, state => ((), { state with outbox.reload := true })
@@ -683,11 +657,6 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setUnscopedValue name value, state =>
     ((), { state with workspaces := state.workspaces.setUnscopedValue name value })
   | .setLanguage id name, state => state.setLanguage id name
-  -- The language table is the loop's to answer from (`Program.dispatched`):
-  -- here, with no registry, no path has a language.
-  | .languageOf _, state => (none, state)
-  -- So is a language's indent unit.
-  | .indentUnitOf _, state => (none, state)
 
 end EditorState
 

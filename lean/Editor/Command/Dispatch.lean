@@ -647,11 +647,6 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     else dispatched registered state (next (.error (.noSuchTheme name)))
   | state, .step (.state .autoReloadMode) next =>
     dispatched registered state (next (state.autoReload.getD registered.autoReload))
-  | state, .step (.state (.languageOf path)) next =>
-    dispatched registered state (next ((Language.forPath registered.languages path).map (·.name)))
-  | state, .step (.state (.indentUnitOf name)) next =>
-    dispatched registered state
-      (next ((registered.languages.find? (·.name == name)).map (·.indentUnit)))
   | state, .step (.state (.runCommand name call)) next =>
     match registered.command name with
     | none => dispatched registered state (next false)
@@ -676,14 +671,6 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           next (some { category := source.category, filtered := source.filtered, candidates })
         | .error error =>
           pure (.error error)
-  | state, .step (.state (.atPointSources view occasion)) next =>
-    let names :=
-      match state.target? view with
-      | some target =>
-        (registered.atPointNames target.buffer.major target.buffer.minors).filter fun name =>
-          (registered.atPoint name).any (·.asksOn occasion)
-      | none => #[]
-    dispatched registered state (next names)
   | state, .step (.state (.askAtPoint name spot)) next =>
     match registered.atPoint name with
     | none => dispatched registered state (next none)
@@ -694,10 +681,6 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           next region
         | .error error =>
           pure (.error error)
-  | state, .step (.state (.categorySources category)) next =>
-    dispatched registered state (next (registered.categorySources category))
-  | state, .step (.state (.hasJob name)) next =>
-    dispatched registered state (next (registered.jobs name))
   | state, .step (.state (.matchCandidates category text candidates)) next =>
     dispatched registered state do
       next (← ((registered.matching.styleFor category).hits text candidates).embedFuzzy)
