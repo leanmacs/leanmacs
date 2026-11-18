@@ -439,6 +439,18 @@ def worktreeProperties : List Property :=
             (← worktrees) == .ok before &&
             (← branchesOf) == some #["main"] },
     { name :=
+        "creating a worktree on a name that is a tag or a commit's id, and no branch, is refused with status 128, and the list and the branches are as they were"
+      repository := { clean #[("a.txt", "a\n")] with revisions := #[("v1", #[("a.txt", "v\n")])] }
+      holds := do
+        let some (before, main) ← listed | return false
+        let some head := ((← changes "HEAD" "HEAD").toOption).map (·.base) | return false
+        let onTag ← addWorktree (beside main.path "x") "v1"
+        let onId ← addWorktree (beside main.path "y") head
+        return onTag matches .error (.failed (.code 128) _) &&
+            onId matches .error (.failed (.code 128) _) &&
+            (← worktrees) == .ok before &&
+            (← branchesOf) == some #["main"] },
+    { name :=
         "removing a worktree with an untracked file in it is refused with status 128, and it is still listed"
       repository :=
         { clean #[("a.txt", "a\n")] with
