@@ -254,9 +254,10 @@ module of `crates/editor-ffi/src/` that defines them, all still in
 `namespace Editor.Ffi`, so no name a caller uses changed. With
 `Editor.Ffi` defining nothing itself, lean-fmt's FMT004 flags an
 `import Editor.Ffi` that another import already brings, so that line was
-dropped from the four files that had one:
+dropped from the four files where another import already brings it in:
 `lean/Editor/Display/Real.lean`, `lean/Editor/Job/Real.lean`,
-`lean/Editor/SyntaxTree/Real.lean` and `lean/FfiTest.lean`. The word codec the families
+`lean/Editor/SyntaxTree/Real.lean` and `lean/FfiTest.lean`. The other six
+files that import `Editor.Ffi` keep the line. The word codec the families
 share is `lean/Editor/Ffi/Words.lean`, under `Editor.Ffi.Words`, the one
 place a raw structure is not private to its family. The largest family
 module is `Syntax.lean` (490 lines).
