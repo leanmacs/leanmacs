@@ -49,8 +49,9 @@ inductive ProcessResult where
   /-- Anything else. -/
   | failed (detail : String)
   /-- A run that keeps its head (`processesRunHead`): its standard output
-  reached the limit, and the child's group was killed. `stdout` is exactly
-  its first `limit` bytes, `stderr` what was read of standard error by then. -/
+  went past the limit, and the child's group was killed. `stdout` is exactly
+  its first `limit` bytes, `stderr` what was read of standard error by then.
+  Output of exactly `limit` bytes is not cut: the run answers `ran`. -/
   | cut (stdout stderr : ByteArray)
   deriving DecidableEq
 
@@ -162,9 +163,10 @@ private opaque processesRunHeadRaw (id : UInt64) (words : @& ByteArray) (strings
 
 /-- Asks the library's process service to run a command fed `input` as
 `processesRunInput` does, keeping the head of its standard output: once that
-reaches `limit` bytes the child's group is killed and the run answers
-`ProcessResult.cut` with exactly those bytes. Standard error keeps the usual
-rule, and a run whose output stays within the limit answers `ran`. -/
+goes past `limit` bytes the child's group is killed and the run answers
+`ProcessResult.cut` with exactly its first `limit` bytes. Standard error keeps
+the usual rule, and a run whose output stays within the limit, exactly `limit`
+bytes among it, answers `ran`. -/
 def processesRunHead (id : UInt64) (program : String) (arguments : Array String) (clear : Bool)
     (set : Array (String × String)) (unset : Array String) (directory : String) (limit : UInt64)
     (input : ByteArray) : IO Bool :=

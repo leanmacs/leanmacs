@@ -248,8 +248,9 @@ structure Ran where
 inductive Head where
   /-- The child ended with its output within the limit: what a run answers. -/
   | whole (ran : Ran)
-  /-- Standard output reached the limit, and the child's group was killed:
-  exactly its first `limit` bytes, and what was read of standard error. -/
+  /-- Standard output went past the limit, and the child's group was killed:
+  exactly its first `limit` bytes, and what was read of standard error.
+  Output of exactly `limit` bytes is not cut: it answers `whole`. -/
   | cut (stdout stderr : ByteArray)
   deriving DecidableEq
 

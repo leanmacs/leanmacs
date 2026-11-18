@@ -170,12 +170,12 @@ job reads as it comes and whose standard input it writes to (phase 2;
   not UTF-8 among it, gives it back whole; and `/usr/bin/true` fed a
   mebibyte exits 0. **A run may keep the head of its standard output**
   (`Service::start_head`, project navigation's phase 1): it is fed as
-  above, and its standard output's reader, once the stream reaches the
+  above, and its standard output's reader, once the stream goes past the
   run's limit, keeps exactly the first `limit` bytes, kills the group and
   the run comes to `RunResult::Cut` with them and what was read of
   standard error; how the child ended is not said, since the service ended
-  it. Standard error keeps the usual rule, and output within the limit is a
-  run to its end. It is a fact about a process with no policy in it: it is
+  it. Standard error keeps the usual rule, and output within the limit,
+  exactly `limit` bytes among it, is a run to its end (`RunResult::Ran`). It is a fact about a process with no policy in it: it is
   how a filter given an empty text, which prints every candidate, still
   answers ([concurrency.md](concurrency.md), "Prompts": sources a command
   filters). The contract holds it to one more property, `RUN_HEAD`: a

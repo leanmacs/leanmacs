@@ -69,7 +69,7 @@
 //! | A stream past the limit | 5 | the stream (0 out, 1 err), the limit |
 //! | Shut down | 6 | |
 //! | Failed | 7 | |
-//! | Cut: a run that keeps its head reached its limit | 9 | |
+//! | Cut: a run that keeps its head went past its limit | 9 | |
 //!
 //! Every refusal carries its detail, the platform's words naming the
 //! program and the directory. The streams are empty but for a run that
@@ -474,9 +474,10 @@ pub unsafe extern "C" fn editor_ffi_processes_run_input(
 
 /// Starts the command the words and the string spell as the run `id`, fed
 /// the `input_len` bytes at `input` as [`editor_ffi_processes_run_input`]
-/// does, keeping the head of its standard output: once that reaches the
-/// limit the child's group is killed and the run comes to its first
-/// `limit` bytes (status 9).
+/// does, keeping the head of its standard output: once that goes past
+/// `limit` bytes the child's group is killed and the run comes to its first
+/// `limit` bytes (status 9). Output of exactly `limit` bytes is not cut: the
+/// run comes to Ran (status 0).
 ///
 /// Returns false, starting nothing, as [`editor_ffi_processes_run`] does.
 ///

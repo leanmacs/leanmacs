@@ -98,9 +98,10 @@
 //!    up to `limit` bytes; a stream with more than that kills the group,
 //!    and the run comes to [`RunResult::OutputTooLarge`], never to output
 //!    cut short; except for standard output of a run that keeps its head
-//!    ([`Service::start_head`]), whose reader keeps exactly the first
-//!    `limit` bytes, kills the group, and the run comes to
-//!    [`RunResult::Cut`] with them and what was read of standard error;
+//!    ([`Service::start_head`]), whose reader, once the stream goes past
+//!    `limit` bytes, keeps exactly the first `limit`, kills the group, and
+//!    the run comes to [`RunResult::Cut`] with them and what was read of
+//!    standard error;
 //! 4. waits for the child, which ends what is left of its group and reaps
 //!    it ([`Child::wait`]);
 //! 5. waits for both readers to reach their stream's end, so the streams
@@ -196,8 +197,10 @@ pub enum RunResult {
         limit: u64,
     },
     /// A run that keeps its head ([`Service::start_head`]): standard output
-    /// reached the run's limit, and the group was killed. How the child
-    /// ended is not said: the service ended it.
+    /// went past the run's limit, and the group was killed. Output of
+    /// exactly `limit` bytes is not cut: the run comes to
+    /// [`RunResult::Ran`]. How the child ended is not said: the service
+    /// ended it.
     Cut {
         /// The first `limit` bytes of its standard output, exactly.
         stdout: Vec<u8>,
@@ -599,10 +602,11 @@ impl<P: Processes + 'static> Service<P> {
 
     /// Starts `command` as the run `id`, fed `input`, as
     /// [`start_with_input`](Self::start_with_input) does, keeping the head
-    /// of its standard output: once it reaches `limit` bytes the group is
-    /// killed and the run comes to [`RunResult::Cut`] with exactly those
-    /// bytes. Standard error keeps the usual rule, and a run whose output
-    /// stays within the limit comes to [`RunResult::Ran`].
+    /// of its standard output: once it goes past `limit` bytes the group is
+    /// killed and the run comes to [`RunResult::Cut`] with exactly its first
+    /// `limit` bytes. Standard error keeps the usual rule, and a run whose
+    /// output stays within the limit, exactly `limit` bytes among it, comes
+    /// to [`RunResult::Ran`].
     pub fn start_head(
         &self,
         id: u64,
