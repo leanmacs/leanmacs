@@ -1320,20 +1320,23 @@ def fileRoot : System.FilePath :=
   "/files"
 
 /-- The model of the files a file property or a case starts with: the
-directory `fileRoot`, and in it `files`, each a name and its bytes. -/
-def fileModelOf (files : Array (String × ByteArray)) : FileModel :=
+directory `fileRoot`, and in it `files`, each a name and its bytes, and the
+directories `directories`, each a name. -/
+def fileModelOf (files : Array (String × ByteArray)) (directories : Array String := #[]) :
+    FileModel :=
   files.foldl (fun model (name, bytes) => model.withFile (fileRoot / name) bytes)
-    (({} : FileModel).withDirectory fileRoot)
+    (directories.foldl (fun model (name : String) => model.withDirectory (fileRoot / name))
+      (({} : FileModel).withDirectory fileRoot))
 
 /-- The files of `model`, as a file property names them: one in `fileRoot`
 by its name, and one anywhere else by its whole path, so that a file written
-where none should be is seen. -/
+where none should be is seen; and each directory directly in `fileRoot` by
+its name, with no bytes, as `ContractTest.filesOf` names one. -/
 def filesIn (model : FileModel) : Array (String × ByteArray) :=
-  model.files.map fun file =>
-    let name :=
-      if file.path.parent == some fileRoot then file.path.fileName.getD file.path.toString
-      else file.path.toString
-    (name, file.bytes)
+  let named (path : System.FilePath) : String :=
+    if path.parent == some fileRoot then path.fileName.getD path.toString else path.toString
+  (model.directories.filter (·.parent == some fileRoot)).map (fun path => (named path, .empty)) ++
+    model.files.map fun file => (named file.path, file.bytes)
 
 /-- A rig whose services have a fake file service over `model`, and that
 service. -/
@@ -1350,7 +1353,8 @@ def Rig.withFiles (model : FileModel) : BaseIO (Rig × Job.FakeFiles) := do
 of its files: how the job ended, and the files afterwards. -/
 def runFilesOnModel (property : JobContract.FileProperty) :
     IO (Job.Outcome Bool × Array (String × ByteArray)) :=
-  let (outcome, model) := (property.holds fileRoot).runModel { files := fileModelOf property.files }
+  let (outcome, model) :=
+    (property.holds fileRoot).runModel { files := fileModelOf property.files property.directories }
   pure (outcome, filesIn model.files)
 
 /-- Runs a file property's job on the runner over a fake clock and the fake
@@ -1358,7 +1362,7 @@ of the file service, over the model of its files: how the job ended, and the
 files afterwards. -/
 def runFilesOnFake (property : JobContract.FileProperty) :
     IO (Job.Outcome Bool × Array (String × ByteArray)) := do
-  let (rig, files) ← Rig.withFiles (fileModelOf property.files)
+  let (rig, files) ← Rig.withFiles (fileModelOf property.files property.directories)
   let outcome ← runOnFake (property.holds fileRoot) (some rig)
   return (outcome, filesIn (← files.model))
 
@@ -7044,7 +7048,46 @@ def modelWithFile : FileModel :=
 (`Editor/File/Model.lean`) and of the file data (`Editor/File.lean`). They
 touch no file. -/
 def fileModelChecks : List Check :=
-  [{  name :=
+  [{  name := "a listing of a directory named in unreadable is refused denied"
+      run :=
+        let model :=
+          { (modelWithFile.withDirectory (modelRoot / "locked")) with
+            unreadable := #[modelRoot / "locked"] }
+        let (locked, _) := model.list (modelRoot / "locked")
+        let (open_, _) := model.list modelRoot
+        pure
+          ((match locked with
+            | .error .denied => true
+            | _ => false) &&
+            match open_ with
+            | .ok _ => true
+            | .error _ => false) },
+    { name :=
+        "each list request's directory is recorded in listed, refused or not, after the relative check"
+      run :=
+        let model := modelWithFile.withDirectory (modelRoot / "sub")
+        let (_, model) := model.list "relative"
+        let (_, model) := model.list modelRoot
+        let (_, model) := model.list (modelRoot / "missing")
+        let (_, model) := model.list (modelRoot / "sub")
+        pure (model.listed == #[modelRoot, modelRoot / "missing", modelRoot / "sub"]) },
+    { name := "a listing names only the directory's own children"
+      run :=
+        let model :=
+          ((modelWithFile.withDirectory (modelRoot / "sub")).withFile
+                (modelRoot / "sub" / "deep.txt") "deep".toUTF8).withDirectory
+            (modelRoot / "sub" / "deeper")
+        let (listed, _) := model.list modelRoot
+        let (inner, _) := model.list (modelRoot / "sub")
+        pure
+          (listed matches
+              .ok
+                #[{ name := "mixed.txt", kind := .file }, { name := "sub", kind := .directory }] &&
+            inner matches
+              .ok
+                #[{ name := "deep.txt", kind := .file },
+                  { name := "deeper", kind := .directory }]) },
+    { name :=
         "the file model's stamp of a file is the stamp it was written with, and a write changes it; of nothing it is none"
       run :=
         let (before, model) := modelWithFile.handle (.stamp (modelRoot / "mixed.txt"))

@@ -55,6 +55,12 @@ It answers by the library's rules and by its own route.
   what the save expects; a directory that is not there.
 - **A stamp request is refused in this order**: a path that is not absolute;
   a directory. Nothing there is `none`.
+- **A listing is refused in this order**: a path that is not absolute;
+  nothing there (`notFound`); a file (`notADirectory`); a directory named in
+  `unreadable` (`denied`). It answers the directories and files whose parent
+  is the path, by file name, sorted. Each list request's directory, past
+  the relative check, is recorded in `listed`, refused or not: a test counts
+  the reads with it.
 - It has no temporary file, no link and no permissions: how a save reaches
   the disk is the library's, pinned in Rust on the file port's fake.
 
@@ -89,6 +95,12 @@ structure FileModel where
   /-- What the job's loads made, where a `JobSnapshotId` is an index. A slot
   is `none` once its snapshot has been released. -/
   held : Array (Option TextContent) := #[]
+  /-- The directories a listing refuses with `denied`: a knob a test sets, as
+  it sets the files. -/
+  unreadable : Array System.FilePath := #[]
+  /-- Each directory a list request named, past the relative check, oldest
+  first, whether it was refused or not: the reads a test counts. -/
+  listed : Array System.FilePath := #[]
   deriving DecidableEq
 
 namespace FileModel
@@ -229,11 +241,34 @@ def stamp (model : FileModel) (path : System.FilePath) : Except FileError (Optio
     if model.directories.contains path then .error .notAFile
     else .ok ((model.file? path).map (·.stamp))
 
+/-- The model's answer to a listing of `path`, and the model after it, which
+records the read in `listed` once the path is absolute. The entries are the
+directories and the files whose parent is `path`, by file name, sorted. -/
+def list (model : FileModel) (path : System.FilePath) :
+    Except FileError (Array File.Entry) × FileModel :=
+  if !path.isAbsolute then (.error .relativePath, model)
+  else
+    let model := { model with listed := model.listed.push path }
+    if (model.file? path).isSome then (.error .notADirectory, model)
+    else
+      if !model.directories.contains path then (.error .notFound, model)
+      else
+        if model.unreadable.contains path then (.error .denied, model)
+        else
+          let named (child : System.FilePath) (kind : File.Kind) : Option File.Entry :=
+            if child.parent == some path then (child.fileName.map fun name => { name, kind })
+            else none
+          let entries :=
+            model.directories.filterMap (named · .directory) ++
+              model.files.filterMap fun file => named file.path .file
+          (.ok (entries.qsort (·.name < ·.name)), model)
+
 /-- The model's answer to each file request, and the model after it. -/
 def handle : (request : FileRequest) → FileModel → request.Reply × FileModel
   | .load path limit, model => model.load path limit
   | .save source path expect, model => model.save source path expect
   | .stamp path, model => (model.stamp path, model)
+  | .list path, model => model.list path
 
 /-- The model's answer to a diff request (`Editor/Diff.lean`), over the
 snapshots it holds: the script of the model of a line diff

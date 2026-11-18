@@ -34,8 +34,8 @@ an error layer of messages, so a job has `throw`, `try` and `catch`.
 
 A job reaches files through one request, `file`, which carries a
 `FileRequest` (`Editor/File.lean`): `File.load` loads a file, `File.save`
-saves a snapshot as one, and `File.stamp` reads a file's stamp (`File.stat`
-reads it refused as a load would be). Each waits, as a wait on the clock does, and
+saves a snapshot as one, `File.stamp` reads a file's stamp (`File.stat`
+reads it refused as a load would be), and `File.list` lists a directory. Each waits, as a wait on the clock does, and
 replies with a result or a refusal: an `Except FileError`, a value, which
 the job matches on. Nothing about a file ends a job or cancels it. A load
 replies with the name of a snapshot the job then holds (`JobSnapshotId`):
@@ -377,6 +377,12 @@ waits for it; nothing of the file is read. A directory is refused as
 the rules. -/
 def File.stamp (path : System.FilePath) : JobM (Except FileError (Option File.Stamp)) :=
   ExceptT.lift (Program.request (port := jobPort) (.file (.stamp path)))
+
+/-- What the directory at `path` holds, sorted by name, each entry with its
+kind, and waits for it. The refusal is a value: the job goes on.
+`Editor/File.lean` has the rules. -/
+def File.list (path : System.FilePath) : JobM (Except FileError (Array File.Entry)) :=
+  ExceptT.lift (Program.request (port := jobPort) (.file (.list path)))
 
 /-- Stats the file at `path`, reading nothing, and waits for it: the file's
 stamp, or why it was refused, as a load would be. It is a stamp request

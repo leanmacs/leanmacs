@@ -316,12 +316,34 @@ def takenStamp (held : HeldSnapshots) (id : UInt64) :
   | .inr _ =>
     return .error noResult
 
+/-- The port's kind of an entry's kind code from the library: 0 a file, 1 a
+directory, anything else other. -/
+def kindOf : UInt64 → File.Kind
+  | 0 => .file
+  | 1 => .directory
+  | _ => .other
+
+/-- The reply to a listing that was started as the wait `id`, which has
+completed. -/
+def takenList (held : HeldSnapshots) (id : UInt64) : BaseIO (Except FileError (Array File.Entry)) :=
+  do
+  match ← fetched held id with
+  | .inl refusal =>
+    return .error refusal
+  | .inr (some (.listed entries)) =>
+    return .ok (entries.map fun (name, kind) => { name, kind := kindOf kind })
+  | .inr (some (.refused refusal)) =>
+    return .error (errorOf refusal)
+  | .inr _ =>
+    return .error noResult
+
 /-- The reply to `request`, which was started as the wait `id` and has
 completed. -/
 def taken (held : HeldSnapshots) (id : UInt64) : (request : FileRequest) → BaseIO request.Reply
   | .load .. => takenLoad held id
   | .save .. => takenSave held id
   | .stamp _ => takenStamp held id
+  | .list _ => takenList held id
 
 /-- The file port answered by the library's file service. `completions` is
 the table its waits are registered in, `published` the read half of the text
@@ -353,6 +375,10 @@ def realFiles (completions : Completions) (published : SnapshotReader) (held : H
             refuse id notTaken
       | .stamp path =>
         let started ← (Ffi.filesStamp id path.toString).catchExceptions fun _ => pure false
+        unless started do
+          refuse id notTaken
+      | .list path =>
+        let started ← (Ffi.filesList id path.toString).catchExceptions fun _ => pure false
         unless started do
           refuse id notTaken
     take := fun id request => taken held id request

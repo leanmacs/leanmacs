@@ -513,6 +513,8 @@ def runFilesOnService (services : Job.Services) (property : JobContract.FileProp
   try
     for (name, bytes) in property.files do
       IO.FS.writeBinFile (directory / name) bytes
+    for name in property.directories do
+      IO.FS.createDirAll (directory / name)
     let outcome ← runOnTimers services (property.holds directory)
     return (outcome, ← filesOf directory)
   finally

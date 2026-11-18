@@ -154,11 +154,14 @@ structure FileProperty where
   /-- The files there are to start with, each a name in the directory and
   its bytes. -/
   files : Array (String × ByteArray)
+  /-- The directories there are to start with, each a name in the
+  directory. -/
+  directories : Array String := #[]
   /-- Observes the property, given the directory, an absolute path; `true`
   when it holds. A job that fails or is cancelled has not held. -/
   holds : System.FilePath → JobM Bool
   /-- Every file that must be in the directory afterwards, each a name and
-  its bytes, in any order. -/
+  its bytes, in any order; a directory is named with no bytes. -/
   after : Array (String × ByteArray)
 
 /-- A file with LF line endings: two- and four-byte characters. -/
@@ -450,7 +453,32 @@ def fileProperties : List FileProperty :=
           refusedFor { file.stamp with nanoseconds := file.stamp.nanoseconds + 2 ^ 32 }
         let seconds ← refusedFor { file.stamp with seconds := file.stamp.seconds + 2 ^ 64 }
         return size && nanoseconds && seconds
-      after := #[("a.txt", rawFile), ("b.txt", otherFile)] }]
+      after := #[("a.txt", rawFile), ("b.txt", otherFile)] },
+    { name :=
+        "a list answers a directory's entries, each once, sorted by name, a file as file and a directory as directory; a file is refused notADirectory, nothing notFound, and a relative path relativePath"
+      files := #[("a.txt", rawFile), ("B.txt", otherFile)]
+      directories := #["sub"]
+      holds := fun root => do
+        let listed ← File.list root
+        let file ← File.list (root / "a.txt")
+        let missing ← File.list (root / "missing")
+        let relative ← File.list "relative"
+        return (match listed with
+            | .ok entries =>
+              entries ==
+                #[{ name := "B.txt", kind := .file }, { name := "a.txt", kind := .file },
+                  { name := "sub", kind := .directory }]
+            | .error _ => false) &&
+            (match file with
+            | .error .notADirectory => true
+            | _ => false) &&
+            (match missing with
+            | .error .notFound => true
+            | _ => false) &&
+            match relative with
+            | .error .relativePath => true
+            | _ => false
+      after := #[("a.txt", rawFile), ("B.txt", otherFile), ("sub", ByteArray.empty)] }]
 
 /-- `files` in the order of their names, to compare two sets of files. -/
 def byName (files : Array (String × ByteArray)) : Array (String × ByteArray) :=

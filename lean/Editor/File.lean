@@ -4,7 +4,7 @@ import Editor.Text
 # Files, as a job asks for them
 
 The data of the file requests a job can make: load a file, save a snapshot
-as a file, and read a file's stamp. It is plain data, and it imports only the text port, for
+as a file, read a file's stamp, and list a directory. It is plain data, and it imports only the text port, for
 the two kinds of id a save names its source by. The requests themselves are
 requests of the job port (`Editor/Job.lean`, `JobRequest.file`): a command
 may not wait and a job may, so loading and saving are things a job does, and
@@ -51,6 +51,13 @@ names a snapshot.
   directory, or anything else that is not a file, is refused with
   `notAFile`. It is how a job tells whether a file changed without loading
   it.
+- **A listing** (`FileRequest.list`) answers what the directory at a path
+  holds, one `File.Entry` per name with its kind (`File.Kind`: a file, a
+  directory, or anything else), links followed. It is refused in the order
+  `relativePath`, `notFound`, `notADirectory` (what is there is not a
+  directory), `denied`. The entries are sorted by name in byte order, which
+  is the library's order and the model's. A name that is not UTF-8 is left
+  out, since a path here is a Lean string.
 - **A stamp** (`File.Stamp`) is when a file was last modified and how long it
   is. Two stamps are compared for equality and never ordered: a file put
   back from a backup has changed.
@@ -222,6 +229,24 @@ structure Loaded where
   endings : LineEndings
   deriving DecidableEq, Repr
 
+/-- What kind of thing a directory's entry is, links followed. -/
+inductive Kind where
+  /-- A file. -/
+  | file
+  /-- A directory. -/
+  | directory
+  /-- Anything else: a pipe, a socket, a device, or a link to nothing. -/
+  | other
+  deriving DecidableEq, Repr
+
+/-- One thing a directory holds: its name in the directory and its kind. -/
+structure Entry where
+  /-- Its name in the directory. -/
+  name : String
+  /-- What kind of thing it is. -/
+  kind : Kind
+  deriving DecidableEq, Repr
+
 /-- What a save writes: a snapshot, named one of two ways. -/
 inductive Source where
   /-- A snapshot of the text store, which a command took or adopted. -/
@@ -287,6 +312,8 @@ inductive FileRequest where
   | save (source : File.Source) (path : System.FilePath) (expect : File.Expect)
   /-- The stamp of the file at `path`, or `none` when nothing is there. -/
   | stamp (path : System.FilePath)
+  /-- What the directory at `path` holds, sorted by name. -/
+  | list (path : System.FilePath)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each file request: a refusal or the result. A
@@ -295,5 +322,6 @@ def FileRequest.Reply : FileRequest → Type
   | .load .. => Except FileError File.Loaded
   | .save .. => Except FileError File.Stamp
   | .stamp _ => Except FileError (Option File.Stamp)
+  | .list _ => Except FileError (Array File.Entry)
 
 end Editor
