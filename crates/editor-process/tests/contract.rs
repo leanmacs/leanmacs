@@ -8,8 +8,9 @@
 use std::path::Path;
 
 use editor_process::contract::{
-    self, AFTER_REAP, CANCEL, ESCAPED, INPUT, INPUT_CLOSED, KILL, RUN, RUN_INPUT, SHUTDOWN, SIGNAL,
-    STRAGGLERS, STREAM_CANCEL, STREAM_LINE_TOO_LONG, STREAM_LINES, STREAM_SHUTDOWN, TOO_LARGE,
+    self, AFTER_REAP, CANCEL, ESCAPED, INPUT, INPUT_CLOSED, KILL, RUN, RUN_HEAD, RUN_INPUT,
+    SHUTDOWN, SIGNAL, STRAGGLERS, STREAM_CANCEL, STREAM_LINE_TOO_LONG, STREAM_LINES,
+    STREAM_SHUTDOWN, TOO_LARGE,
 };
 use editor_process::fake::{FakeChild, FakeInput, FakeOutput, FakeProcesses, Flaws};
 use editor_process::{Child, Command, Exit, Input, Output, Processes, Refusal, Stream};
@@ -58,6 +59,7 @@ fn a_fake_whose_group_kill_ends_only_the_child_is_reported() {
             CANCEL,
             SHUTDOWN,
             TOO_LARGE,
+            RUN_HEAD,
             STREAM_LINE_TOO_LONG,
             STREAM_CANCEL
         ]
@@ -80,6 +82,7 @@ fn a_fake_whose_wait_does_not_reap_is_reported() {
             SHUTDOWN,
             TOO_LARGE,
             ESCAPED,
+            RUN_HEAD,
             STREAM_LINE_TOO_LONG,
             STREAM_CANCEL,
             STREAM_SHUTDOWN

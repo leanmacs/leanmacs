@@ -97,7 +97,10 @@
 //! 3. takes both streams and starts a reader thread for each, which keeps
 //!    up to `limit` bytes; a stream with more than that kills the group,
 //!    and the run comes to [`RunResult::OutputTooLarge`], never to output
-//!    cut short;
+//!    cut short; except for standard output of a run that keeps its head
+//!    ([`Service::start_head`]), whose reader keeps exactly the first
+//!    `limit` bytes, kills the group, and the run comes to
+//!    [`RunResult::Cut`] with them and what was read of standard error;
 //! 4. waits for the child, which ends what is left of its group and reaps
 //!    it ([`Child::wait`]);
 //! 5. waits for both readers to reach their stream's end, so the streams
@@ -191,6 +194,16 @@ pub enum RunResult {
         stream: Stream,
         /// The limit, in bytes.
         limit: u64,
+    },
+    /// A run that keeps its head ([`Service::start_head`]): standard output
+    /// reached the run's limit, and the group was killed. How the child
+    /// ended is not said: the service ended it.
+    Cut {
+        /// The first `limit` bytes of its standard output, exactly.
+        stdout: Vec<u8>,
+        /// Its standard error, as far as it was read before the group was
+        /// killed.
+        stderr: Vec<u8>,
     },
 }
 
@@ -441,8 +454,20 @@ enum Read {
     Whole(Vec<u8>),
     /// More than the limit.
     TooLarge,
+    /// More than the limit, of a stream whose head is kept: its first
+    /// `limit` bytes.
+    Cut(Vec<u8>),
     /// A read failed.
     Failed(Refusal),
+}
+
+/// What a reader does with a stream past the run's limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Overflow {
+    /// Refuses it: the run comes to [`RunResult::OutputTooLarge`].
+    Refuse,
+    /// Keeps its first `limit` bytes: the run comes to [`RunResult::Cut`].
+    Keep,
 }
 
 /// What a run's two readers have read, shared between them and the run.
@@ -569,6 +594,35 @@ impl<P: Processes + 'static> Service<P> {
         input: Option<Vec<u8>>,
         limit: u64,
     ) -> bool {
+        self.begin(id, command, input, limit, Overflow::Refuse)
+    }
+
+    /// Starts `command` as the run `id`, fed `input`, as
+    /// [`start_with_input`](Self::start_with_input) does, keeping the head
+    /// of its standard output: once it reaches `limit` bytes the group is
+    /// killed and the run comes to [`RunResult::Cut`] with exactly those
+    /// bytes. Standard error keeps the usual rule, and a run whose output
+    /// stays within the limit comes to [`RunResult::Ran`].
+    pub fn start_head(
+        &self,
+        id: u64,
+        command: Command,
+        input: Option<Vec<u8>>,
+        limit: u64,
+    ) -> bool {
+        self.begin(id, command, input, limit, Overflow::Keep)
+    }
+
+    /// Starts a run, its standard output past `limit` handled as `overflow`
+    /// says.
+    fn begin(
+        &self,
+        id: u64,
+        command: Command,
+        input: Option<Vec<u8>>,
+        limit: u64,
+        overflow: Overflow,
+    ) -> bool {
         let mut state = self.inner.state();
         if state.in_use(id) {
             return false;
@@ -595,7 +649,7 @@ impl<P: Processes + 'static> Service<P> {
         let inner = Arc::clone(&self.inner);
         let started = thread::Builder::new()
             .name("editor-process".into())
-            .spawn(move || inner.run(id, &command, input, limit))
+            .spawn(move || inner.run(id, &command, input, limit, overflow))
             .is_ok();
         if !started {
             let mut state = self.inner.state();
@@ -990,7 +1044,14 @@ impl<P: Processes + 'static> Inner<P> {
     }
 
     /// The run `id`'s thread: the module docs' steps.
-    fn run(&self, id: u64, command: &Command, input: Option<Vec<u8>>, limit: u64) {
+    fn run(
+        &self,
+        id: u64,
+        command: &Command,
+        input: Option<Vec<u8>>,
+        limit: u64,
+        overflow: Overflow,
+    ) {
         let piped = if input.is_some() {
             Input::Pipe
         } else {
@@ -1000,7 +1061,7 @@ impl<P: Processes + 'static> Inner<P> {
             Some(refusal) => RunResult::Refused(refusal),
             None => match self.processes.spawn(command, piped) {
                 Err(refusal) => RunResult::Refused(refusal),
-                Ok(child) => match self.own(id, child, input, limit) {
+                Ok(child) => match self.own(id, child, input, limit, overflow) {
                     Some(result) => result,
                     None => {
                         self.finish(id, None);
@@ -1015,13 +1076,15 @@ impl<P: Processes + 'static> Inner<P> {
     /// Registers `child` as the run `id`'s, kills it if the run was
     /// cancelled meanwhile, feeds it `input`, reads its streams, waits for
     /// it and says what the run came to: `None` if it was cancelled before
-    /// its streams reached their end.
+    /// its streams reached their end. Standard output past `limit` is
+    /// handled as `overflow` says; standard error is always refused.
     fn own(
         &self,
         id: u64,
         mut child: P::Child,
         input: Option<Vec<u8>>,
         limit: u64,
+        overflow: Overflow,
     ) -> Option<RunResult> {
         let outputs = [
             child.take_output(Stream::Out),
@@ -1053,6 +1116,11 @@ impl<P: Processes + 'static> Inner<P> {
         let [out, err] = outputs;
         for (slot, output) in [out, err].into_iter().enumerate() {
             let (killed, delivered) = (Arc::clone(&child), Arc::clone(&reads));
+            let overflow = if slot == 0 {
+                overflow
+            } else {
+                Overflow::Refuse
+            };
             // The reader's thread is detached: a run that stops waiting for
             // it leaves it to end when its stream closes.
             let spawned = thread::Builder::new()
@@ -1064,7 +1132,7 @@ impl<P: Processes + 'static> Inner<P> {
                         read: None,
                     };
                     hand_over.read = Some(output.map_or(Read::Whole(Vec::new()), |output| {
-                        read(output, limit, &*killed)
+                        read(output, limit, overflow, &*killed)
                     }));
                 });
             if let Err(error) = spawned {
@@ -1088,11 +1156,16 @@ impl<P: Processes + 'static> Inner<P> {
         let streams = [Stream::Out, Stream::Err].into_iter().zip(streams);
         let mut whole = [Vec::new(), Vec::new()];
         let mut failed = None;
+        let mut cut = false;
         for (stream, read) in streams {
             match read {
                 Read::TooLarge => return Some(RunResult::OutputTooLarge { stream, limit }),
                 Read::Failed(refusal) => {
                     failed.get_or_insert(refusal);
+                }
+                Read::Cut(bytes) => {
+                    cut = true;
+                    whole[0] = bytes;
                 }
                 Read::Whole(bytes) => whole[usize::from(stream == Stream::Err)] = bytes,
             }
@@ -1101,6 +1174,9 @@ impl<P: Processes + 'static> Inner<P> {
             return Some(RunResult::Refused(refusal));
         }
         let [stdout, stderr] = whole;
+        if cut {
+            return Some(RunResult::Cut { stdout, stderr });
+        }
         Some(RunResult::Ran {
             exit,
             stdout,
@@ -1472,8 +1548,10 @@ fn stream_reader(
 }
 
 /// Reads `output` to its end, keeping up to `limit` bytes. Past the limit,
-/// or when a read fails, it kills `child`'s group and stops.
-fn read(mut output: impl Output, limit: u64, child: &impl Child) -> Read {
+/// or when a read fails, it kills `child`'s group and stops: past the
+/// limit it refuses the stream, or keeps its first `limit` bytes, as
+/// `overflow` says.
+fn read(mut output: impl Output, limit: u64, overflow: Overflow, child: &impl Child) -> Read {
     let mut kept = Vec::new();
     let mut buffer = [0; 8192];
     loop {
@@ -1483,7 +1561,12 @@ fn read(mut output: impl Output, limit: u64, child: &impl Child) -> Read {
                 let count = count.min(buffer.len());
                 if (kept.len() as u64).saturating_add(count as u64) > limit {
                     child.kill();
-                    return Read::TooLarge;
+                    if overflow == Overflow::Refuse {
+                        return Read::TooLarge;
+                    }
+                    let room = usize::try_from(limit).map_or(count, |limit| limit - kept.len());
+                    kept.extend_from_slice(&buffer[..room]);
+                    return Read::Cut(kept);
                 }
                 kept.extend_from_slice(&buffer[..count]);
             }
@@ -1704,7 +1787,7 @@ mod tests {
         drop(state);
 
         let inner = Arc::clone(&service.inner);
-        thread::spawn(move || inner.run(3, &command("x"), None, ROOMY))
+        thread::spawn(move || inner.run(3, &command("x"), None, ROOMY, Overflow::Refuse))
             .join()
             .expect("the run ends");
 
@@ -2007,6 +2090,92 @@ mod tests {
         assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
         assert_eq!(service.take(1), Some(ran(Exit::Code(0), b"0123", b"abcd")));
         assert!(Path::new("/dir").is_absolute());
+    }
+
+    #[test]
+    fn a_head_run_past_its_limit_keeps_the_first_limit_bytes_of_its_output_and_kills_the_group() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .stdout("0123456789")
+                .hold(Hold::UntilKilled)
+                .members(1)),
+        )]);
+        let (service, completed) = service(&fake);
+
+        assert!(service.start_head(1, command("x"), Some(b"in".to_vec()), 4));
+
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(
+            service.take(1),
+            Some(RunResult::Cut {
+                stdout: b"0123".to_vec(),
+                stderr: Vec::new(),
+            })
+        );
+        let child = fake.record().spawned[0].0;
+        assert_eq!(fake.record().killed, [child]);
+        assert!(!fake.alive(child) && !fake.alive(child + 1));
+        assert!(pending_comes_to(&service, 0));
+    }
+
+    #[test]
+    fn a_head_run_within_its_limit_comes_to_its_whole_output() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(1)).stdout("0123").stderr("ab")),
+        )]);
+        let (service, completed) = service(&fake);
+
+        assert!(service.start_head(1, command("x"), None, 4));
+
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(service.take(1), Some(ran(Exit::Code(1), b"0123", b"ab")));
+        assert_eq!(fake.record().killed, []);
+    }
+
+    #[test]
+    fn a_head_runs_standard_error_past_its_limit_is_still_output_too_large() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .stderr("0123456789")
+                .hold(Hold::UntilKilled)
+                .members(1)),
+        )]);
+        let (service, completed) = service(&fake);
+
+        assert!(service.start_head(1, command("x"), None, 4));
+
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(
+            service.take(1),
+            Some(RunResult::OutputTooLarge {
+                stream: Stream::Err,
+                limit: 4
+            })
+        );
+    }
+
+    #[test]
+    fn a_cancelled_head_run_is_never_completed() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .hold(Hold::UntilKilled)
+                .members(1)),
+        )]);
+        let (service, completed) = service(&fake);
+        assert!(service.start_head(6, command("x"), Some(b"in".to_vec()), 4));
+        assert!(fake.until(DEADLINE, |record| record.waiting.len() == 1));
+        let child = fake.record().spawned[0].0;
+
+        assert!(service.cancel(6));
+
+        assert!(pending_comes_to(&service, 0));
+        assert!(!fake.alive(child) && !fake.alive(child + 1));
+        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        assert_eq!(service.take(6), None);
     }
 }
 

@@ -167,6 +167,12 @@ pub const RUN_INPUT: &str = "what a run is fed reaches its child whole, then end
 /// broken pipe is no refusal.
 pub const RUN_INPUT_IGNORED: &str =
     "a run whose child does not read what it is fed comes to what the child did";
+/// A run that keeps its head ([`Service::start_head`]), fed a few bytes,
+/// of a child that never stops writing to its standard output, answers
+/// exactly the first `limit` bytes of it as [`RunResult::Cut`], and its
+/// child and grandchild end.
+pub const RUN_HEAD: &str =
+    "a run that keeps its head answers the first limit bytes of its output and ends its group";
 
 /// A child's standard input reaches it: `/bin/cat` given a line, a byte
 /// that is not UTF-8 and bytes with no line feed gives them back, and ends
@@ -225,7 +231,7 @@ pub const STREAM_SHUTDOWN: &str =
 pub const ESCAPE: &str = "/usr/bin/perl";
 
 /// Every property, by name, in the order [`check`] runs them.
-pub const PROPERTIES: [&str; 28] = [
+pub const PROPERTIES: [&str; 29] = [
     RUN,
     SIGNAL,
     DIRECTORY,
@@ -242,6 +248,7 @@ pub const PROPERTIES: [&str; 28] = [
     ESCAPED,
     RUN_INPUT,
     RUN_INPUT_IGNORED,
+    RUN_HEAD,
     INPUT,
     INPUT_CLOSED,
     NO_INPUT,
@@ -316,6 +323,15 @@ const PIPE: usize = 1 << 16;
 const YES: &str = "while :; do echo y; done";
 /// How many bytes [`RUN_INPUT`] feeds its child: four times a pipe.
 const FED: usize = 4 * PIPE;
+/// The script of [`RUN_HEAD`]'s family: a child that never stops writing
+/// `0123456789` to its standard output.
+fn head_family() -> String {
+    family(
+        "s-head-child",
+        "s-head-grandchild",
+        "while :; do printf 0123456789; done",
+    )
+}
 /// How many bytes [`RUN_INPUT_IGNORED`] feeds its child: a mebibyte.
 const FED_IGNORED: usize = 1 << 20;
 /// The program [`RUN_INPUT_IGNORED`] runs, which reads nothing.
@@ -473,6 +489,13 @@ pub fn scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
             .writes(at("s5-child"), Writer::Child)
             .writes(at("s5-grandchild"), Writer::Member(0))),
     ));
+    scripts.push((
+        sh(dir, &head_family()),
+        Ok(held_family()
+            .stdout("0123456789")
+            .writes(at("s-head-child"), Writer::Child)
+            .writes(at("s-head-grandchild"), Writer::Member(0))),
+    ));
     for name in ["e1", "e2"] {
         scripts.push((
             sh(dir, &escaping(name)),
@@ -623,6 +646,7 @@ pub fn check<P: Processes + Clone + 'static>(
         (ESCAPED, check.escaped(processes)),
         (RUN_INPUT, check.run_input(processes)),
         (RUN_INPUT_IGNORED, check.run_input_ignored(processes)),
+        (RUN_HEAD, check.run_head(processes)),
         (INPUT, check.input(processes)),
         (INPUT_CLOSED, check.input_closed(processes)),
         (NO_INPUT, check.no_input(processes)),
@@ -1136,6 +1160,30 @@ impl<G: Ground> Check<'_, G> {
                 stdout: Vec::new(),
                 stderr: Vec::new(),
             })
+    }
+
+    /// [`RUN_HEAD`].
+    fn run_head<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let (service, completions) = Self::service(processes);
+        if !service.start_head(1, sh(self.dir, &head_family()), Some(b"fed".to_vec()), 4) {
+            return false;
+        }
+        let Some((child, grandchild)) = self.family_ids("s-head") else {
+            self.shut(&service);
+            return false;
+        };
+        let arrived = completions.arrives(1, self.ground.deadline());
+        if !arrived {
+            self.shut(&service);
+        }
+        arrived
+            && service.take(1)
+                == Some(RunResult::Cut {
+                    stdout: b"0123".to_vec(),
+                    stderr: Vec::new(),
+                })
+            && !self.ground.alive(child)
+            && self.soon(|| !self.ground.alive(grandchild))
     }
 
     /// Writes every byte of `bytes` to `input`.
@@ -1654,10 +1702,10 @@ mod tests {
     use super::PROPERTIES;
 
     #[test]
-    fn the_properties_are_twenty_eight_and_each_is_named_once() {
+    fn the_properties_are_twenty_nine_and_each_is_named_once() {
         let mut names = PROPERTIES.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 28);
+        assert_eq!(names.len(), 29);
     }
 }
