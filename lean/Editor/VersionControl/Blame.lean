@@ -2,10 +2,10 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Mode
 import Editor.VersionControl.Git
-import Editor.VersionControl.Log
 import Editor.VersionControl.Review
 import Editor.VersionControl.Show
 import Editor.VersionControl.Status
+import Editor.VersionControl.Views
 
 /-!
 # Blame: `vc-blame`
@@ -29,8 +29,9 @@ Pure, and tested on values (`BlameView`):
 - **Row r is line r** of the file: there is no header row. Each is
   `<id8> <author> <day> | <line>`: the first 8 characters of the commit that
   last changed the line, its author cut at 16 characters and padded to the
-  widest author of the view, the author time's date in UTC (`dayOf`), a
-  bar, and the line without its line feed.
+  widest author of the view, the author time's date in UTC (`dayOf`,
+  `Editor/VersionControl/Views.lean`), a bar, and the line without its line
+  feed.
 - **The commit on a row** is its line's (`BlameView.idAt`); past the last
   row there is none.
 
@@ -208,20 +209,15 @@ def blameShown (order : BlameOrder) (reply : Except Error (Option Blame)) : Edit
   | .ok none =>
     message s!"{blameName}: {order.path} is not in {order.revision}"
   | .ok (some blame) =>
-    let state ← editorState
-    let .ok id ←
-      createBuffer (state.freeName s!"*{blameName}: {order.path}@{order.revision}*")
-          (BlameView.render blame) | return
-    discard <| id.setReadOnly true
-    Workspace.setBufferWorkspace id (.local order.root)
+    let some id ←
+      readOnlyBufferOf s!"*{blameName}: {order.path}@{order.revision}*" (BlameView.render blame)
+          (.local order.root) | return
     discard <| id.setMajorMode blameModeName
     let record : BlameRecord :=
       { root := order.root.toString, revision := order.revision, path := order.path
         ids := blame.lines.map (·.id) }
     discard <| id.setValue BlameRecord.localName record.encode
-    let state ← editorState
-    let asking := if (state.window? order.view).isSome then order.view else state.frame.focused
-    discard <| id.display asking blameName
+    displayFor id order.view blameName
 
 /-- The blame read job: asks the implementation `connect` makes of its
 order's git and root for the blame of its path at its revision, and

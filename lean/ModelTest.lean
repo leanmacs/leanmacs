@@ -129,6 +129,7 @@ import ModelTest.Editor.VersionControl.ReviewHunks
 import ModelTest.Editor.VersionControl.Show
 import ModelTest.Editor.VersionControl.Stage
 import ModelTest.Editor.VersionControl.Status
+import ModelTest.Editor.VersionControl.Views
 import ModelTest.Editor.VersionControl.Worktrees
 import ModelTest.Editor.Watch.Contract
 import ModelTest.Editor.Watch.Model
@@ -818,6 +819,9 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   on values and their commands on that driver, their reads over the
   interface's model: what each lists, with each commit's author, and the
   review a row's visit opens;
+- `versionControlViewsChecks`: what the version-control buffers share
+  (`Editor/VersionControl/Views.lean`), on values: a day as the log's and
+  the blame's rows show it;
 - `excerptViewedChecks`: what a view shows of a tracked excerpt
   (`Editor/ExcerptView.lean`) and the marking of what was viewed
   (`EditorState.markViewed`, `creditViewed`), on hand-built rows and
@@ -1022,7 +1026,8 @@ def checks : List Check :=
     logViewChecks ++
     logBufferChecks ++
     blameViewChecks ++
-    blameBufferChecks
+    blameBufferChecks ++
+    versionControlViewsChecks
 
 end ModelTest
 

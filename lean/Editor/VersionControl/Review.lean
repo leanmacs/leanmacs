@@ -9,6 +9,7 @@ import Editor.VersionControl.Gutter
 import Editor.VersionControl.ReviewHunks
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
+import Editor.VersionControl.Views
 
 /-!
 # The review buffer: `vc-review`
@@ -615,10 +616,7 @@ def reviewHeaders (record : ReviewRecord) (count : Nat) : Array String :=
 module docs). -/
 def revisionBufferOf (root : System.FilePath) (path revision content : String) :
     EditorM (Option BufferId) := do
-  let .ok id ←
-    createBuffer ((← editorState).freeName s!"{path}@{shortId revision}") content | return none
-  discard <| id.setReadOnly true
-  Workspace.setBufferWorkspace id (.local root)
+  let some id ← readOnlyBufferOf s!"{path}@{shortId revision}" content (.local root) | return none
   if let some language← languageOf (root / path) then
     discard <| id.setLanguage (some language)
     discard <| id.setMajorMode Language.codeName
@@ -798,10 +796,7 @@ def reviewBuilt (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff.
   let gone := olds.filter (!used.contains ·) ++ ((previous.map (·.2.olds)).getD #[])
   removeUnshown (gone.map (⟨·⟩))
   if previous.isNone then
-    let state ← editorState
-    let view := order.order.view
-    let asking := if (state.window? view).isSome then view else state.frame.focused
-    discard <| id.display asking scope.commandName
+    displayFor id order.order.view scope.commandName
   if let some sentence := leftOut order.missing then
     message sentence
   return true
@@ -915,13 +910,9 @@ def rangeShown (order : ReviewOrder) (commit : String) (reply : Except Error Ran
     let content :=
       s!"{order.label}: HEAD was rewritten since {shortId commit}; its commits against {order.against}\n" ++
         diff.text
-    let .ok id ←
-      createBuffer ((← editorState).freeName s!"*vc-range-diff: {order.label}*") content | return
-    discard <| id.setReadOnly true
-    Workspace.setBufferWorkspace id (.local order.root)
-    let state ← editorState
-    let asking := if (state.window? order.view).isSome then order.view else state.frame.focused
-    discard <| id.display asking reviewSinceName
+    let some id ←
+      readOnlyBufferOf s!"*vc-range-diff: {order.label}*" content (.local order.root) | return
+    displayFor id order.view reviewSinceName
 
 /-- The read job: the branch to review against, the change of `HEAD` against
 it and each changed file's load, asked of the implementation `connect`

@@ -31,7 +31,9 @@ blame and range-diff),
 `lean/Editor/VersionControl/ReviewHunks.lean` and
 `lean/Editor/VersionControl/Review.lean` (the review buffer),
 `lean/Editor/VersionControl/Log.lean` (the log buffer),
-`lean/Editor/VersionControl/Blame.lean` (the blame view) and
+`lean/Editor/VersionControl/Blame.lean` (the blame view),
+`lean/Editor/VersionControl/Views.lean` (what those buffers share: a day,
+the cursor's row, making a read-only buffer and showing it) and
 `lean/Editor/VersionControl/Compiled.lean` (their registrations).
 
 ## The interface

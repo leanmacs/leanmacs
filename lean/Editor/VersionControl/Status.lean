@@ -3,6 +3,7 @@ import Editor.Command.Call
 import Editor.Files
 import Editor.Mode
 import Editor.VersionControl.Git
+import Editor.VersionControl.Views
 
 /-!
 # The status buffer: `vc-status`
@@ -478,8 +479,7 @@ def startRead (order : ReadOrder) : EditorM Unit := do
 def cursorRow (view : ViewId) (text : TextId) : EditorM (Option Nat) := do
   match ← view.selection with
   | .ok selection =>
-    let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
-    return some (← text.pointOf head).row
+    return some (← selectionRow text selection)
   | .error _ =>
     return none
 
@@ -516,16 +516,12 @@ def shown (order : ReadOrder) (reply : Except Error Status) : EditorM Unit := do
         replace id content
         pure id
       | none =>
-        let .ok id ← createBuffer (state.freeName (bufferName order.label)) content | return
-        discard <| id.setReadOnly true
-        Workspace.setBufferWorkspace id location
+        let some id ← readOnlyBufferOf (bufferName order.label) content location | return
         discard <| id.setMajorMode modeName
         pure id
     discard <| Workspace.set statusStore location { buffer := some id.index, files := status.files }
     if order.shows then
-      let state ← editorState
-      let asking := if (state.window? order.view).isSome then order.view else state.frame.focused
-      discard <| id.display asking statusName
+      displayFor id order.view statusName
 
 /-- The read job: asks its order's repository for its status through git,
 and finishes with what it comes to (`shown`). It fails only for arguments
@@ -610,10 +606,7 @@ def statusOf (call : Call) (name : String) : EditorM (Option (ReadOrder × Statu
 
 /-- The file on the row of `call`'s cursor among `files`. -/
 def cursorFile (call : Call) (files : Array FileStatus) : EditorM (Option FileStatus) := do
-  let selection ← call.target.selection
-  let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
-  let row := (← call.target.buffer.text.pointOf head).row
-  return StatusView.fileAt files row
+  return StatusView.fileAt files (← cursorRowOf call)
 
 /-- What a command says on a row with no file. -/
 def noFile : String :=

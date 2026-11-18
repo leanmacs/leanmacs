@@ -4,6 +4,7 @@ import Editor.Command.Call
 import Editor.Mode
 import Editor.VersionControl.Git
 import Editor.VersionControl.Status
+import Editor.VersionControl.Views
 
 /-!
 # The message buffer: `vc-commit`
@@ -200,15 +201,11 @@ def showOutput (order : CommitOrder) (output : String) : EditorM Unit := do
       replace id output
       pure id
     | none =>
-      let .ok id ← createBuffer (state.freeName (outputBufferName order.label)) output | return
-      discard <| id.setReadOnly true
-      Workspace.setBufferWorkspace id location
+      let some id ← readOnlyBufferOf (outputBufferName order.label) output location | return
       pure id
   let record := (← editorState).workspaces.get commitStore location
   discard <| Workspace.set commitStore location { record with output := some id.index }
-  let state ← editorState
-  let asking := if (state.window? order.view).isSome then order.view else state.frame.focused
-  discard <| id.display asking commitName (focus := false)
+  displayFor id order.view commitName (focus := false)
 
 /-- The command a finished commit hands the loop ("The commands", in the
 module docs). -/

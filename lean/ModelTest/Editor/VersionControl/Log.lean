@@ -41,13 +41,6 @@ def logViewChecks : List Check :=
   let entries :=
     #[entry "0123456789abcdef" "Bé Two" 1767312000 "change two", entry "fedcba98" "a" 0 "base"]
   [{  name :=
-        "a day is the author time's date in UTC: 0 is 1970-01-01, 951782400 is 2000-02-29 and 1767225600 is 2026-01-01"
-      run :=
-        pure <|
-          dayOf 0 == "1970-01-01" && dayOf 951782400 == "2000-02-29" &&
-            dayOf 1767225600 == "2026-01-01" &&
-            dayOf (1767225600 + 86399) == "2026-01-01" },
-    { name :=
         "a log's text is its head row, then one row per commit, newest first, its first 8 characters, its day, its subject and its author; no commit says so, and a reply past the limit ends with a row that says so"
       run :=
         pure <|

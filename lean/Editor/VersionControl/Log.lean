@@ -4,6 +4,7 @@ import Editor.Mode
 import Editor.VersionControl.Git
 import Editor.VersionControl.Review
 import Editor.VersionControl.Status
+import Editor.VersionControl.Views
 
 /-!
 # The log buffer: `vc-log`
@@ -26,7 +27,8 @@ Pure, and tested on values (`LogView`):
 - **Row 0** is `<label>: log of <revision>`.
 - **Each commit** is a row, newest first, along first parents, as `log`
   answers: `<id8> <day> <subject> (<author>)`, the day the author time's
-  date in UTC (`dayOf`). A merge is one row.
+  date in UTC (`dayOf`, `Editor/VersionControl/Views.lean`). A merge is
+  one row.
 - **No commit** is the row `no commits`.
 - **The limit**: the read asks for `Log.limit` (256) commits and one more;
   when the one more is there, the first `Log.limit` are shown and a last
@@ -103,25 +105,6 @@ def logModeName : String :=
 /-- How many commits a log buffer shows. -/
 def Log.limit : Nat :=
   256
-
-/-- `value` in decimal, padded with zeros to `width` digits. -/
-def zeroPadded (width value : Nat) : String :=
-  let digits := toString value
-  String.ofList (List.replicate (width - digits.length) '0') ++ digits
-
-/-- The date, `YYYY-MM-DD` in UTC, of the time `seconds` since the epoch:
-the civil date of its day (Howard Hinnant's `civil_from_days`). -/
-def dayOf (seconds : Nat) : String :=
-  let z := seconds / 86400 + 719468
-  let era := z / 146097
-  let dayOfEra := z - era * 146097
-  let yearOfEra := (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365
-  let dayOfYear := dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100)
-  let shifted := (5 * dayOfYear + 2) / 153
-  let day := dayOfYear - (153 * shifted + 2) / 5 + 1
-  let month := if shifted < 10 then shifted + 3 else shifted - 9
-  let year := yearOfEra + era * 400 + if month ≤ 2 then 1 else 0
-  s!"{zeroPadded 4 year}-{zeroPadded 2 month}-{zeroPadded 2 day}"
 
 /-! ## The view -/
 
@@ -259,16 +242,12 @@ def logShown (order : LogOrder) (reply : Except Error (Array LogEntry)) : Editor
         replace id content
         pure id
       | none =>
-        let .ok id ← createBuffer (state.freeName name) content | return
-        discard <| id.setReadOnly true
-        Workspace.setBufferWorkspace id (.local order.root)
+        let some id ← readOnlyBufferOf name content (.local order.root) | return
         discard <| id.setMajorMode logModeName
         pure id
     discard <| id.setValue LogRecord.localName record.encode
     if order.shows then
-      let state ← editorState
-      let asking := if (state.window? order.view).isSome then order.view else state.frame.focused
-      discard <| id.display asking logName
+      displayFor id order.view logName
 
 /-- The log read job: asks the implementation `connect` makes of its order's
 git and root for the log of its revision, `Log.limit` commits and one more,
@@ -303,12 +282,6 @@ def logOf (call : Call) (name : String) : EditorM (Option LogRecord) := do
   | none =>
     message s!"{name}: {call.target.buffer.name} is not a log buffer"
     return none
-
-/-- The row of `call`'s cursor. -/
-def cursorRowOf (call : Call) : EditorM Nat := do
-  let selection ← call.target.selection
-  let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
-  return (← call.target.buffer.text.pointOf head).row
 
 /-- `vc-log-visit` ("The commands", in the module docs). -/
 def logVisitCommand (call : Call) : EditorM Unit := do
