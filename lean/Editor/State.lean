@@ -1573,6 +1573,10 @@ structure AtPointSession where
   first, and is closed again when the session ends, so the previews and the
   accept are one step of the history. -/
   previewed : Bool := false
+  /-- Whether it was asked silently, by itself on a trigger or a pause: it
+  then closes without saying `no completions` when it never showed a
+  row. -/
+  silent : Bool := false
   /-- The candidates, their listing and the choice, as a prompt holds
   them. -/
   candidates : Candidates := {}

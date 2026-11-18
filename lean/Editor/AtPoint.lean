@@ -20,8 +20,8 @@ the operations of `Editor/Api.lean`, "Completion at point".
 | `at-point-backtab` | `previewAtPoint .previous` | Nothing |
 | `at-point-return` | `acceptAtPoint` when a candidate is chosen; otherwise `endAtPoint`, then as with none | Runs `insert-newline` by name, then says it typed a line feed |
 | `at-point-quit` | `quitAtPoint` | Runs `keyboard-quit` by name, as `C-g` does in normal state |
-| `at-point-triggered` (a character) | Nothing | `completeAtPoint (.trigger c)`, silent when nothing answers |
-| `at-point-paused` (a view and milliseconds) | Nothing | When the view is focused and no prompt is open, `completeAtPoint (.pause ms)`, silent when nothing answers |
+| `at-point-triggered` (a character) | Nothing | `completeAtPoint (.trigger c)`, silent when nothing answers and when the session closes having shown no row |
+| `at-point-paused` (a view and milliseconds) | Nothing | When the view is focused and no prompt is open, `completeAtPoint (.pause ms)`, silent when nothing answers and when the session closes having shown no row |
 
 `insert-tab` and `insert-newline` run by name, so config's commands of those
 names stay reachable from `TAB` and `RET`. What they type reaches the last
@@ -92,10 +92,10 @@ def sessionOf (call : Call) : EditorM (Option AtPointSession) :=
   return (← editorState).atPoint.filter (·.view == call.target.window.id)
 
 /-- Asks for completion at point on `occasion` (`completeAtPoint`): when
-nothing answers, or the ask is refused, the echo area says so, unless
-`silent`. -/
+nothing answers, the ask is refused, or the session it opens closes having
+never shown a row, the echo area says so, unless `silent`. -/
 def ask (occasion : Completion.Occasion) (silent : Bool := false) : EditorM Unit := do
-  match ← completeAtPoint occasion with
+  match ← completeAtPoint occasion silent with
   | .ok true =>
     pure ()
   | .ok false =>

@@ -40186,7 +40186,19 @@ def atPointLoopChecks : List Check :=
               sessionRows listed == #["alpha", "alpine"] &&
               closed.loop.state.atPoint.isNone &&
               texts.all (contents closed · |>.isNone) &&
-              !closed.loop.state.completionKeys.contains (Loop.sourceKey ⟨0⟩ "words") }]
+              !closed.loop.state.completionKeys.contains (Loop.sourceKey ⟨0⟩ "words") },
+    { name :=
+        "C-n on a word that appears nowhere else opens a session of words, and when its job lists nothing the session closes and the echo area says no completions"
+      run :=
+        pure <|
+          match atPointDriver "xyz |" #["words"] [] with
+          | none => false
+          | some driver =>
+            let asked := evilFed driver "a q w C-n"
+            let drained := evilDrained asked
+            asked.loop.state.atPoint.map (·.source) == some "words" &&
+              drained.loop.state.atPoint.isNone &&
+              drained.loop.state.echo == AtPoint.noCompletions }]
 
 /-- The at-point source `dots` of the trigger checks: an empty region at
 the cursor, completed from the source `pick`, asked by itself when `.` is
@@ -40275,7 +40287,21 @@ def atPointByItselfChecks : List Check :=
               sessionChosen due == none &&
               due.armed.isEmpty &&
               moved.armed.isEmpty &&
-              moved.loop.state.atPoint.isNone }]
+              moved.loop.state.atPoint.isNone },
+    { name :=
+        "a pause on a word that appears nowhere else opens a session of words, and when its job lists nothing the session closes and the echo area is left as it was"
+      run :=
+        pure <|
+          match atPointDriver "xyz |" #["words"] [] with
+          | none => false
+          | some driver =>
+            let typed := evilFed driver "a q w"
+            let due := typed.pass 240
+            let drained := evilDrained due
+            due.loop.state.atPoint.map (·.source) == some "words" &&
+              drained.loop.state.atPoint.isNone &&
+              drained.loop.state.echo != AtPoint.noCompletions &&
+              drained.loop.state.echo == typed.loop.state.echo }]
 
 /-- Every check, in the order they run.
 

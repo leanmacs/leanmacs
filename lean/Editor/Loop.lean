@@ -1831,14 +1831,16 @@ def atPointKept (state : EditorState) (report : ViewId → InputScheme.Report) :
 /-- `state` with its session at point closed, and handed back, when nothing
 more is to come of its candidates and nothing is listed for what is typed
 (`Candidates.exhausted`): the text stopped matching. When it never showed a
-row, the echo area says `no completions`. -/
+row and was not asked silently (`AtPointSession.silent`), the echo area says
+`no completions`. -/
 def atPointExhausted (state : EditorState) : EditorState × Option AtPointSession :=
   match state.prompt, state.atPoint with
   | none, some session =>
     if session.candidates.exhausted session.typed then
       ({ state with
           atPoint := none
-          echo := if session.tallest == 0 then AtPoint.noCompletions else state.echo },
+          echo :=
+            if session.tallest == 0 && !session.silent then AtPoint.noCompletions else state.echo },
         some session)
     else (state, none)
   | _, _ => (state, none)

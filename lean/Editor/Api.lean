@@ -1955,12 +1955,13 @@ that ask on `occasion`, in order, for the region at the cursor, stopping at
 the first that answers ("Completion at point", in the module docs); asks
 the sources it names (`collectSources`) with the region's text; marks the
 region's ends, the start with the bias `before` and the end with `after`;
-and opens a session over them with nothing chosen. Says whether one
-answered. Refused, as a value, with `promptOpen` while a prompt is open,
+and opens a session over them with nothing chosen, asked silently when
+`silent` (`AtPointSession.silent`). Says whether one answered. Refused, as a value, with `promptOpen` while a prompt is open,
 `alreadyOpen` while a session is, `noWindow` where no window is focused,
 `outside` for a region that does not hold the cursor or whose ends are not
 positions of the text, and `source` when the sources cannot be asked. -/
-def completeAtPoint (occasion : Completion.Occasion) : EditorM (Except AtPointRefusal Bool) := do
+def completeAtPoint (occasion : Completion.Occasion) (silent : Bool := false) :
+    EditorM (Except AtPointRefusal Bool) := do
   let state ← editorState
   if state.prompt.isSome then
     return .error .promptOpen
@@ -2000,7 +2001,8 @@ def completeAtPoint (occasion : Completion.Occasion) : EditorM (Except AtPointRe
     let start ← text.mark (.anchor { offset := region.start, bias := .before })
     let stop ← text.mark (.anchor { offset := region.stop, bias := .after })
     let session : AtPointSession :=
-      { view, buffer := target.window.buffer, source := name, start, stop, typed, shown := typed }
+      { view, buffer := target.window.buffer, source := name, start, stop, typed, shown := typed,
+        silent }
     match ← EditorState.ask (.openAtPoint session collected) with
     | .ok () =>
       return .ok true

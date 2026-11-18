@@ -3909,7 +3909,10 @@ Doom Emacs's corfu module (owner decisions, 2026-11-17).
   its markers cannot be read, or the cursor is before the region's start or
   after its end (`Loop.atPointKept`); and once it is listed, when nothing
   more is to come and nothing matches (`Candidates.exhausted`), the echo
-  area saying `no completions` when it never showed a row. Its markers are
+  area saying `no completions` when it never showed a row and was asked by
+  a key. A session asked by itself, on a trigger or a pause, closes
+  silently (`AtPointSession.silent`), as corfu's auto popup does, so a
+  pause on a new word says nothing. Its markers are
   given up and its snapshots released.
 - **One undo step.** The buffer's group is closed before the first preview
   and again when the session ends, so the previews, the accept and what
