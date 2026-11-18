@@ -97,8 +97,8 @@ If process-per-query is too slow for status in large repositories, an
 in-process library can sit behind the same interface.
 
 The interface, its git implementation, the status buffer, a file at a
-revision (`vc-show`) and the gutter marks as built are in
-[version-control.md](version-control.md).
+revision (`vc-show`), the gutter marks, staging a hunk and committing from
+a message buffer as built are in [version-control.md](version-control.md).
 
 ## rdm
 

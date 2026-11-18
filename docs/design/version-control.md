@@ -1,8 +1,8 @@
 # Version control
 
 What the editor asks of a version-control system, the status buffer that
-shows it, a file at a revision, and the gutter that marks a tracked file's
-lines against `HEAD`. The model is magit: every operation is a git command and its
+shows it, a file at a revision, the gutter that marks a tracked file's
+lines against `HEAD`, staging a hunk, and the message buffer that commits. The model is magit: every operation is a git command and its
 parsed output, run as a job over the process service
 ([review-and-navigation.md](review-and-navigation.md), "Version control").
 Git is one implementation of a small interface in the editor's own terms,
@@ -15,7 +15,10 @@ Built in `lean/Editor/VersionControl.lean` (the interface),
 `lean/Editor/VersionControl/Contract.lean` (its model and its contract),
 `lean/Editor/VersionControl/Status.lean` (the status buffer),
 `lean/Editor/VersionControl/Show.lean` (`vc-show`),
-`lean/Editor/VersionControl/Gutter.lean` (the gutter) and
+`lean/Editor/VersionControl/Gutter.lean` (the gutter),
+`lean/Editor/VersionControl/Hunk.lean` and
+`lean/Editor/VersionControl/Stage.lean` (staging a hunk),
+`lean/Editor/VersionControl/Commit.lean` (the message buffer) and
 `lean/Editor/VersionControl/Compiled.lean` (their registrations).
 
 ## The interface
@@ -32,6 +35,9 @@ request in `JobM`, run with `Program.runM` inside a job.
 | `unstage paths` | Nothing; the index holds each path as `HEAD` has it |
 | `fileAt revision path` | The path's content at the revision, or none when the revision does not have it or is not there; the empty revision is the index |
 | `watched` | What to watch so as to see `HEAD` or the index move: a directory, the files in it whose change matters, and the trees in it under which any change matters |
+| `stageHunk path hunk` | Nothing; `hunk`, of the file against the index, is applied to the index |
+| `unstageHunk path hunk` | Nothing; the reverse of `hunk`, of the index against `HEAD`, is applied to the index |
+| `commit message` | Nothing; `HEAD` is a new commit of the index with `message` |
 
 - **Paths** are relative to the repository's root, `/`-separated, as UTF-8
   strings.
@@ -65,13 +71,25 @@ request in `JobM`, run with `Program.runM` inside a job.
   or under one of the trees, never at a lock file (`*.lock`), which a
   system writes and renames away while it moves `HEAD` or the index; a
   delivery that missed changes matters too. Objects and logs never do.
+- **A hunk** (`LineHunk`) is a run of changed lines with the index's lines
+  around it: the row in each text of its first context line, the context
+  before, the lines removed, the lines added and the context after. Each
+  line keeps its line feed, and only a text's last line may lack one,
+  which is how "no newline at end of file" is carried. Its context always
+  comes from the index, the text it is applied to: the old side when
+  staging, the new side when unstaging. Lines that are not where the hunk
+  says refuse it, and the index is as it was.
+- **A commit** refused (nothing staged, a conflict, a hook that says no)
+  is a refusal with everything the system printed, so a hook's output can
+  be shown, not swallowed.
 - **Errors are values**: the system could not be run (missing, denied,
   past its time or output limit), it ran and refused (its exit and its
   standard error), or what it printed cannot be read.
 
 The interface grows by data, one request at a time, with the phase that
 first uses it: a file at a revision and what to watch came with the gutter
-marks, and the branches, the worktrees and a diff between two revisions
+marks, a hunk staged and unstaged and a commit with staging hunks, and the
+branches, the worktrees and a diff between two revisions
 come with worktree lifecycle. Each comes with its reply type, a clause of the model, a clause
 of the git implementation and a property of the contract.
 
@@ -82,7 +100,13 @@ the index (a file, or a conflict's three versions) and the working tree.
 It also has named revisions (tags, each with its files) and its git and
 common directories, which `fileAt` and `watched` answer from, and a
 `commit` a test makes `HEAD` the index's files with, as a commit made
-outside the editor does. Its status compares `HEAD` with the index and the
+outside the editor does, and a pre-commit hook that refuses every commit,
+printing what it is given. It applies a hunk where its rows say, exactly,
+and refuses one whose lines are not there; git may apply a hunk at an
+offset when its lines are found elsewhere, but the editor's hunks are made
+from the index just read, so their rows are exact. It refuses a commit on
+a conflict, then on its hook, then on an index equal to `HEAD`, as git
+checks them, and keeps no message. Its status compares `HEAD` with the index and the
 index with the working tree, path by path, and pairs renames as git's exact rename detection
 does: each path added in the index, in path order, takes the first path
 deleted in the index whose `HEAD` content is its content. An empty file is
@@ -92,8 +116,9 @@ The model also prints its status as git prints it with the git
 implementation's flags, so the real parser reads the model's status, and
 it builds the job model whose process scripts answer the git
 implementation's command lines in a repository: the status read, the
-writes a test names, both runs of `fileAt` for each file of `HEAD` and of
-each named revision (an id made of the content alone, then its bytes), the
+writes a test names (a hunk's apply exits 0 whatever it is fed, and a
+commit too, unless the repository has a hook), both runs of `fileAt` for
+each file of `HEAD`, of the index and of each named revision (an id made of the content alone, then its bytes), the
 first run exiting 1 for each revision and path a test names missing, and
 `watched`. A command no script names is refused as "not found", so a test
 that asks for a missing path names it.
@@ -117,17 +142,33 @@ the repository it starts from, run three ways:
   system's config (`GIT_CONFIG_NOSYSTEM` and the test's own `HOME`) and
   given, as the user's (`GIT_CONFIG_GLOBAL`), a config that asks for what
   the command line pins away: copies found by `status.renames` and
-  `diff.renames`, and no untracked files listed. The editor runs git under
-  the user's config, so the contract does too, under a hostile one.
+  `diff.renames`, no untracked files listed, a patch's whitespace fixed
+  (`apply.whitespace=fix`) and its context matched loosely
+  (`apply.ignoreWhitespace=change`), and a message's `#` lines stripped
+  (`commit.cleanup=strip`); with a user, which no commit runs without,
+  and signing off. A repository's hook is written as an executable
+  `.git/hooks/pre-commit` run by `/bin/sh`, its first line printed on its
+  standard output and the rest on its standard error. The editor runs git
+  under the user's config, so the contract does too, under a hostile one.
 
 Its first property is the adapter test that git and the model agree on a
 repository with a staged, an unstaged, an untracked, a renamed and a
-conflicted file.
+conflicted file. The properties of a hunk take their hunks as the editor
+does, from the texts the repository holds, through the model's line diff
+and the pure core of hunks, so a property tests the interface and not a
+diff engine; one of them is the adapter test that staging one hunk of a
+file with two changed hunks stages that hunk alone. Others stage a hunk
+after another is staged, one whose context overlaps another change, a
+last line without a line feed and one that adds it, CRLF lines and an
+added line ending in spaces, quoted paths and an empty index file; unstage
+one of two staged hunks; and commit, on an unborn branch, with nothing
+staged and under a hook that refuses.
 
 ## The git implementation
 
-Each run is one `Process.runWithin` in the repository's root, one a
-request but `fileAt`, which is two, so the child gets its directory's
+Each run is one `Process.runWithin` in the repository's root, or a fed
+`Process.runWithInput` for a hunk and a commit, one a request but
+`fileAt`, which is two, so the child gets its directory's
 environment and is killed with its process group when its job is
 cancelled. No binding is added.
 
@@ -138,6 +179,9 @@ cancelled. No binding is added.
 | unstage | `git reset -q -- <paths>` |
 | fileAt | `git rev-parse --verify --quiet <revision>:<path>`, then `git cat-file blob <id>` with the id it printed |
 | watched | `git rev-parse --git-dir --git-common-dir` |
+| stageHunk | `git -c apply.whitespace=nowarn -c apply.ignoreWhitespace=false apply --cached -`, fed the hunk's patch |
+| unstageHunk | The same with `--reverse`, fed the patch of the hunk of the index against `HEAD` |
+| commit | `git commit --file=- --cleanup=whitespace`, fed the message |
 
 - git runs under the user's config, so each flag pins what that config
   could change: `-z` ends each record with a NUL and never quotes a path;
@@ -166,6 +210,45 @@ cancelled. No binding is added.
   blob it applies the user's `textconv` filter, which plumbing never does
   (the contract runs under a hostile user config by design). A directory's
   id is a tree, which `cat-file blob` refuses.
+- **A hunk's patch** is pure: a `diff --git` header and `---`/`+++` lines
+  naming the path C-quoted, always, so a space, a quote or a byte past
+  ASCII reads back as itself; one `@@ -o,oc +n,nc @@` line, a side's start
+  its row plus one, or the row itself when its count is 0 (`-0,0` into an
+  empty index file), as git prints it; then the context, removed, added
+  and context lines, each that lacks a line feed followed by `\ No newline
+  at end of file`. Staging's `n` is its `o`: nothing before the hunk
+  changes. Unstaging's is the index's row, and `--reverse` has git match
+  the `+` side, context and index lines, against the index. Its text is
+  turned back into bytes by the store's rule, so an escape is its byte
+  again.
+- **Applying is strict.** The two `-c` pin what a user's config could
+  change: `apply.whitespace=fix` would rewrite trailing spaces and a
+  carriage return on an added line, and `apply.ignoreWhitespace=change`
+  would match context loosely. Never `--unidiff-zero`, `--recount`,
+  `-C<n>` or `--3way`: every context line must match the index exactly,
+  or git refuses and the index is untouched, the main guard against a
+  wrong patch. `--cached` never touches the working tree, so a wrong
+  patch is undone by unstaging the whole file, and the file is never at
+  risk.
+- **The message reaches git on its standard input**, as git's message
+  file: never an argument, so no length limit and no leading `-` read as
+  an option, and no temporary file to write, clean up or race another
+  commit for. `--cleanup=whitespace` is git's own default for a message
+  from a file; pinning it stops a user's `commit.cleanup=strip` from
+  dropping a line that starts with `#`, since the buffer has no comment
+  template to strip.
+- **A commit's environment** is the others' less `GIT_LITERAL_PATHSPECS`:
+  git hands its environment to hooks, and a hook running `git diff --
+  '*.rs'` must see a pattern. A commit passes no pathspec, so nothing is
+  lost. `GIT_OPTIONAL_LOCKS=0` reaches hooks too, which is harmless.
+- **A commit's time limit** is 10 minutes, not 30 s, because a pre-commit
+  hook may run linters or tests, and a commit killed while its hook runs
+  could leave `index.lock` behind. git gets no terminal and gives hooks no
+  input, so a hook or a `gpg` pinentry that needs a terminal fails, and
+  its output is shown; one that waits for input is killed at the limit.
+- **A refused commit** carries git's standard error and then its standard
+  output, each trimmed: git says `nothing to commit` on its standard
+  output, and sends a hook's standard output to its standard error.
 - **What to watch** reads its two lines, each resolved against the root
   when git prints it relative, so both are spelled as the root is and a
   watch's changes, spelled under its target, compare with them. Output
@@ -318,6 +401,100 @@ the driver's touch of the parked watch for a commit made outside the
 editor) and `ConfigTest.gutterChecks` over real git, the library's watch
 service and its diff engine.
 
+## Staging a hunk: `vc-stage-hunk` and `vc-unstage-hunk`
+
+Stage, or unstage, the hunk on the cursor's line of a file buffer of a
+tracked file (the gutter's gate), magit's `s` and `u` on a hunk. The ex
+names run them, and no key binds them: binding one is config's.
+
+- **A stageable hunk** is a hunk of the saved file against the index (its
+  content read through `fileAt` of the empty revision, by plumbing, so no
+  `textconv`), diffed by the library: not one of the gutter's, which are
+  of the buffer against `HEAD`. So staging one hunk is right when other
+  hunks of the file are staged already. Staging from a buffer with unsaved
+  changes saves it first: the fetch is the save's follow-up job
+  (`Files.save`'s `after`), started once the file is written, and a
+  refused save starts nothing. A buffer edited after its save, before its
+  hunks are taken, stages nothing and says so.
+- **An unstageable hunk** is a hunk of the index against `HEAD`. The
+  cursor's line of the buffer is carried to a line of the index across
+  the hunks of the index against the buffer, and the hunk picked there.
+  Unstaging saves nothing: the file's content plays no part in it.
+- **The hunk on a line** is one whose lines overlap it, or else a removal
+  just before it, where the gutter draws its `-`, or a removal at the
+  end on the last line. Its context is 3 lines, git's default, from the
+  index, clamped at its ends. Over the diff line limit the middle of a
+  file is one hunk, so the hunk on a line may be all of it.
+- **The pipeline** is a command and three jobs, each job's command the
+  next step: `vc-hunk-fetch` reads the index's content (and `HEAD`'s, to
+  unstage); its command makes each a text, snapshots it and releases the
+  text, snapshots the buffer, and starts `vc-hunk-diff`, which asks for
+  the hunks; its command picks the hunk, reads only its lines and their
+  context from the snapshots, releases every snapshot on every path, and
+  starts `vc-hunk-apply`, which applies it. What that comes to is said,
+  `staged a hunk of <path>` or the refusal, and the workspace's kept
+  status buffer, if it has one, is read again. The gutter is against
+  `HEAD`, which staging does not move.
+- **None of the jobs is keyed.** A keyed restart would cancel a job whose
+  command releases snapshots, and cancelling an apply could kill git
+  holding the index's lock. A second press while the first runs is safe:
+  its patch's context no longer matches, git refuses it, and that is said.
+- **Hunks are picked in file buffers only.** The status buffer's rows are
+  files, and gives whole-file stage and unstage; hunk sections in it,
+  magit's expandable hunks, need a view model of rows to hunks and a diff
+  per file shown, which belong with the change view of worktree lifecycle.
+- **Untracked, conflicted and deleted files** have no hunk to stage: each
+  is said, and the whole-file commands stage them.
+
+Pinned by `ModelTest.hunkChecks` (the pure core and the exact patch text),
+`ModelTest.stageHunkChecks` on the models, and
+`ContractTest.statusBufferChecks` over real git and the library's diff
+engine: on a line of the second of two hunks, in a buffer with unsaved
+changes, the buffer is saved and that hunk alone is staged.
+
+## The message buffer: `vc-commit`
+
+magit's commit message buffer. `vc-commit` (the ex name, and the status
+buffer's leader `c`), under `vc-status`'s gate, shows the workspace's
+message buffer if it has one, and otherwise makes `*vc-commit: <label>*`:
+empty, editable, with no file, given the workspace, in the major mode
+`vc-commit`, shown where the display rules say for the opener `vc-commit`,
+and focused. Message conventions (a template, a summary's length,
+trailers) are config's business: the buffer's text is the message, as it
+is.
+
+| Command | Suffix | What it does |
+|---|---|---|
+| `vc-commit-accept` | leader `c` | Commits with the buffer's text, as magit's `C-c C-c`; refused outside the workspace's message buffer and while a commit runs |
+| `vc-commit-abort` | leader `k` | Closes the message buffer, as magit's `C-c C-k`; refused while a commit runs |
+
+- **Accepting** reads the text and its revision, records the commit as in
+  flight in the workspace's store, and starts the unkeyed job
+  `vc-commit-run`, which asks for the commit.
+- **A commit made** closes the message buffer if its text is still at the
+  revision accepted, and otherwise keeps it and says so; it says
+  `vc-commit: committed <first line>`, and reads the kept status buffer
+  again. The gutter's watch sees `HEAD` move.
+- **A refusal of git's** (nothing staged, a conflict, a hook) writes
+  everything git printed into the read-only `*vc-commit-output: <label>*`,
+  in place of its text, shown for the opener `vc-commit` without the
+  focus, and keeps the message buffer with its text, to be fixed and
+  accepted again. The echo area names the output buffer. A run that could
+  not happen is said in the echo area only.
+- **Accept and abort are the mode's locals**, not roles: they are actions
+  of one mode family (`lean/Editor/Role.lean`, "The rule for adding a
+  role").
+- **The workspace's store** keeps the message buffer's number, the output
+  buffer's, and whether a commit is in flight, as the shell keeps what it
+  runs.
+
+Pinned by `ModelTest.commitBufferChecks` on the models (the bytes
+`git commit --file=-` is fed are the buffer's text) and
+`ContractTest.statusBufferChecks` over real git: the commit's message is
+the buffer's text, and a pre-commit hook's lines on both streams are shown
+with `HEAD` as it was. A commit run by the checks has git's user from the
+hostile config, never guessed from the host's name.
+
 ## Open questions
 
 - **A config root below the top level.** The status buffer takes the
@@ -332,7 +509,19 @@ service and its diff engine.
   the rest.
 - **Index-lock contention.** Two writes at once, or a write while another
   program holds the index lock, fail with git's message, which is said; the
-  second is not retried.
+  second is not retried. A commit killed past its time limit, or on quit
+  while its hook runs, can leave `index.lock`, and the next write then
+  says git's message.
+- **Files git converts on add.** A hunk is of the raw saved file against
+  the raw index blob. Under `core.autocrlf`, `eol` or `text` attributes,
+  or a clean filter (LFS), every line may differ, and a staged hunk
+  carries unconverted bytes into the index. Not guarded yet; one more run
+  (`git ls-files --eol`, `check-attr`) could refuse such a file.
+- **Hunks in the status buffer**, magit's expandable sections, wait for
+  the change view's row model.
+- **The message from a file on disk.** It is git's message file on
+  standard input. A file under the git directory, written by the job file
+  service, would do the same with more to clean up.
 - **A file opened through a link.** The workspace's root is git's top
   level, which git spells with links resolved; a file opened by a path
   through a link (a temporary directory on macOS) is not under that

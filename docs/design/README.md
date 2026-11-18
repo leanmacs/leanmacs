@@ -18,7 +18,7 @@ and the document updated.
 | [projects.md](projects.md) | Projects, workspaces and locations: which codebase and which checkout a buffer belongs to, the finder and its config, git and marker adapters, which state lives in a workspace and which in a project, and `workspace-current`; where `:!` runs, and where its history and output buffer live; the compile mode's scope, its record per workspace (with its error list and current location) and its project history. Built |
 | [agent-hosting.md](agent-hosting.md) | Hosting coding agents: ACP, the terminal front end, the agent table, permissions, sessions |
 | [review-and-navigation.md](review-and-navigation.md) | Reviewing agents' plans and code, provenance, version control, the rdm client, codebase navigation |
-| [version-control.md](version-control.md) | The version-control interface in the editor's own terms, its model and contract, the git implementation and its porcelain reader, and the status buffer. Built: status, stage and unstage, and `vc-status` |
+| [version-control.md](version-control.md) | The version-control interface in the editor's own terms, its model and contract, the git implementation and its porcelain reader, the status buffer, the gutter, staging a hunk and the message buffer. Built: status, stage and unstage, `vc-status`, `vc-show`, the gutter marks, `vc-stage-hunk`, `vc-unstage-hunk` and `vc-commit` |
 
 `AGENTS.md` at the repository root holds the working rules (test-first, ports
 and adapters, hand-written fakes). These documents say what to build; that
