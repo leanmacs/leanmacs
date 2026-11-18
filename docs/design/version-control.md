@@ -252,7 +252,8 @@ added, removed and changed against the file at `HEAD`, as a gutter in an
 editor with git integration does.
 
 - **Which buffers.** A file buffer whose workspace is a local root that
-  can run commands and is on a branch, with the file under the root, where
+  can run commands and is a repository (it has a `Workspace.branch`, a
+  detached `HEAD` included), with the file under the root, where
   the host registered the gutter's jobs (`VersionControl.gutterJobs`); the
   gate auto-reload uses. The column appears once `HEAD`'s content has
   arrived. A file `HEAD` lacks (untracked, new, an unborn branch) has no

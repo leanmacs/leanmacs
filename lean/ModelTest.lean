@@ -33460,13 +33460,13 @@ def workspaceKeys : Loop.Keys TestScheme.scheme :=
 
 /-- A driver with the keys `keys`, those of the workspace driver checks by
 default, and the jobs `registered`, whose jobs meet the processes and the
-files of `workspaceWorld` for its three directories, its git the program
-`git`, with the files the keys open, and two more in `/r/src` for the shell
+files of `world`, `workspaceWorld` by default, for its three directories,
+its git the program `git`, with the files the keys open, and two more in `/r/src` for the shell
 checks' filters; `none` if making the state was refused. -/
 def workspaceDriver (registered : String → Option (List Argument → Work) := workspaceJobs)
-    (keys : Loop.Keys TestScheme.scheme := workspaceKeys) (git : String := "git") :
-    Option TestDriver :=
-  let model := workspaceWorld.jobModel git #["/r/src", "/w/src", "/x"]
+    (keys : Loop.Keys TestScheme.scheme := workspaceKeys) (git : String := "git")
+    (world : Workspace.World := workspaceWorld) : Option TestDriver :=
+  let model := world.jobModel git #["/r/src", "/w/src", "/x"]
   let files :=
     [("/r/src/a.lean", "a"), ("/r/src/b.lean", "b"), ("/r/src/c.lean", "c"), ("/w/src/b.lean", "w"),
           ("/x/a.txt", "x"), ("/r/src/s.txt", "b\nc\na\n"), ("/r/src/t.txt", "d\nb\nc\na")].foldl
@@ -38802,11 +38802,11 @@ def gutterKeys : Loop.Keys TestScheme.scheme :=
 gutter's keys and jobs, whose git in `/r` meets `repository`, saying `HEAD`
 has no `src/b.lean`, whose watches may be made in `/r/.git`, and with each
 file of `repository`'s working tree on disk under `/r`; its git the program
-`git`, which the loop is told is config's (`Loop.Registered.git`); `none`
-if making the state was refused. -/
-def gutterDriverOf (repository : VersionControl.Model.Repository) (git : String := "git") :
-    Option TestDriver :=
-  (workspaceDriver gutterJobs gutterKeys git).map fun driver =>
+`git`, which the loop is told is config's (`Loop.Registered.git`), and
+the finder meeting `world`; `none` if making the state was refused. -/
+def gutterDriverOf (repository : VersionControl.Model.Repository) (git : String := "git")
+    (world : Workspace.World := workspaceWorld) : Option TestDriver :=
+  (workspaceDriver gutterJobs gutterKeys git world).map fun driver =>
     let scripts :=
       (repository.jobModel git "/r" (missing := #[("HEAD", "src/b.lean")])).processes.scripts
     { driver with
@@ -38877,6 +38877,19 @@ def gutterChecks : List Check :=
   -- The epoch, staleness and fetching of the tracked entry view 0 shows.
   let fetchOf (driver : TestDriver) : Option (Nat × Bool × Bool) :=
     (trackedShown driver).map fun entry => (entry.epoch, entry.stale, entry.fetching)
+  -- The command the watch job runs to ask what to watch.
+  let watchRun := VersionControl.Git.command "git" "/r" VersionControl.Git.watchedArguments
+  -- How many watches of `/r` `driver` has started.
+  let watchReads (driver : TestDriver) : Nat :=
+    (driver.jobs.processes.started.filter (· == watchRun)).size
+  -- Whether `driver` tracks nothing, starts no fetch and no watch, and its
+  -- view 0 shows no gutter and no gutter column.
+  let untracked (driver : TestDriver) : Bool :=
+    driver.loop.state.tracked.isEmpty && driver.loop.state.refWatches.isEmpty &&
+      heads driver == 0 &&
+      watchReads driver == 0 &&
+      ((showing driver).bind (·.buffer.gutter)).isNone &&
+      (gutterView driver).map (·.padding.gutter) == some 0
   -- The marks of `new\na\nB\nc\n` against the committed `a\nB\nc\nd\n`.
   let againstCommit : Array GutterMark :=
     #[{ start := 0, stop := 4, text := "+", face := ⟨"diff.added"⟩ },
@@ -39093,6 +39106,124 @@ def gutterChecks : List Check :=
               #[{ entry with
                   diffing := none, diffed := some 4 }] &&
             (state.changeGutter (.held ⟨1⟩ 1 (some ⟨9⟩))).tracked == #[entry] },
+    { name :=
+        "a watch the watch service refuses is started once and recorded refused, and no later publish starts another while the buffer is tracked; the gutter still marks edits"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let refusing :=
+              { driver with
+                jobs :=
+                  { driver.jobs with
+                    fileWatches := { driver.jobs.fileWatches with directories := #[] } } }
+            let opened := settledAfter refusing "C-o a"
+            let edited := settledAfter (settledAfter opened "C-g x") "C-g z"
+            watchReads opened == 1 && watchReads edited == 1 &&
+              opened.loop.state.refWatches == #[{ root := "/r", refused := true }] &&
+              edited.loop.state.refWatches == #[{ root := "/r", refused := true }] &&
+              opened.openWatches == 0 &&
+              edited.openWatches == 0 &&
+              ((gutterView edited).map (·.marks)).any (!·.isEmpty) },
+    { name :=
+        "a watch whose git directory git will not say is refused, recorded, and not started again while the buffer is tracked"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let refusing :=
+              withScript driver
+                { command := watchRun
+                  reply :=
+                    .ok {
+                        exit := .code 128, stdout := .empty
+                        stderr := "fatal: not a git repository\n".toUTF8 } }
+            let opened := settledAfter refusing "C-o a"
+            let edited := settledAfter opened "C-g x"
+            watchReads opened == 1 && watchReads edited == 1 &&
+              edited.loop.state.refWatches == #[{ root := "/r", refused := true }] &&
+              edited.openWatches == 0 },
+    { name :=
+        "a head fetch whose git exits with an error takes the gutter away: once HEAD moves and the fetch fails, the buffer has no gutter, its view no gutter column, and its old head is released"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            match (trackedShown opened).bind (·.head) with
+            | none => false
+            | some head =>
+              let failing :=
+                withScript opened
+                  { command := headRun
+                    reply :=
+                      .ok {
+                          exit := .code 128, stdout := .empty
+                          stderr := "fatal: bad object HEAD\n".toUTF8 } }
+              let fetched :=
+                settledOn (postDelivered (failing.touch #[("/r/.git/index", .written)])) []
+              ((showing opened).bind (·.buffer.gutter)).isSome && heads fetched == 2 &&
+                ((showing fetched).bind (·.buffer.gutter)).isNone &&
+                (gutterView fetched).map (·.padding.gutter) == some 0 &&
+                (trackedShown fetched).map (·.head) == some none &&
+                (snapshotText fetched head).isNone },
+    { name :=
+        "where the host registered no gutter jobs, a tracked file's buffer is not tracked: no fetch, no watch, no gutter"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter { driver with registered := statusJobs } "C-o a"
+            (showing opened).isSome && untracked opened },
+    { name :=
+        "a buffer whose workspace is no repository, found by its .git marker with git saying it is none, so with no branch, is not tracked"
+      run :=
+        pure <|
+          let bare :=
+            { workspaceWorld with
+              repositories :=
+                workspaceWorld.repositories.filter (·.toplevel != ("/r" : System.FilePath)) }
+          match gutterDriverOf gutterRepository (world := bare) with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            (shownWorkspace opened).any (·.1.branch.isNone) && untracked opened },
+    { name :=
+        "a buffer whose repository has HEAD detached is still tracked: a detached HEAD is a branch of the workspace's, and HEAD has the file"
+      run :=
+        pure <|
+          let detached :=
+            { workspaceWorld with
+              repositories :=
+                workspaceWorld.repositories.map fun repository =>
+                  if repository.toplevel == ("/r" : System.FilePath) then
+                    { repository with branch := none }
+                  else repository }
+          match gutterDriverOf gutterRepository (world := detached) with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            (shownWorkspace opened).any (·.1.branch == some .detached) &&
+              ((trackedShown opened).bind (·.head)).bind (snapshotText opened) == some gutterHead },
+    { name :=
+        "a buffer with no file, though it has the tracked buffer's workspace, and a file in no repository are not tracked"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let made := settledAfter opened "C-o n"
+            let elsewhere := settledAfter made "C-o x"
+            let buffers (driver : TestDriver) : Array BufferId :=
+              driver.loop.state.tracked.map (·.buffer)
+            (made.loop.state.findBuffer "made").isSome && (buffers opened).size == 1 &&
+              buffers made == buffers opened &&
+              buffers elsewhere == buffers opened },
     { name := "a change to an object or a lock file alone in the git directory posts nothing"
       run :=
         pure <|

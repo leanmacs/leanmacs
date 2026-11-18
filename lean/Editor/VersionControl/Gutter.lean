@@ -19,8 +19,8 @@ hunks (`Diff.hunks`, `Editor/Diff.lean`), each time the buffer has changed.
 ## Which buffers
 
 A buffer is tracked when it has a file, and its workspace is a local root
-that can run commands and is on a branch (`Workspace.branch`), with the
-file under the root; and only where the host registered the gutter's jobs,
+that can run commands and is a repository (it has a `Workspace.branch`, a
+detached `HEAD` included), with the file under the root; and only where the host registered the gutter's jobs,
 the same gate auto-reload uses. An excerpt buffer and a buffer with no
 file have none. The column appears once `HEAD`'s content has arrived, with
 no mark until its diff lands; a file `HEAD` lacks (untracked, new, an
