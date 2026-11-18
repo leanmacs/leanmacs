@@ -17,6 +17,7 @@ registers, undo and dot repeat, on the editor API:
 | A binding that holds only in some of a scheme's states (`bindKey … (states := …)`, `SchemeState`, `InputScheme.stateCommand`, `Vim.Bound.within`, `Vim.Bound.holdsIn`) | `lean/Editor/Setup.lean`, `lean/Editor/InputScheme.lean`, `lean/Editor/InputScheme/Vim.lean`; the Vim scheme's state names in `lean/Editor/InputScheme/Vim/Default.lean` |
 | Descriptions on bindings and names of prefixes, for the key hints (`Keymap.descriptions`, `bindKey`'s `desc`, `prefixName`, `Registry.prefixName?`, `Mode.roleDescs`, `Mode.localDescs`, `Vim.Default.keymap`'s `descs`) | `lean/Editor/Keymap.lean`, `lean/Editor/Setup.lean`, `lean/Editor/Config/Registry.lean`, `lean/Editor/Mode.lean`, `lean/Editor/InputScheme/Vim/Default.lean` |
 | What can follow a pending prefix, and its agreement with the walk (`Keymap.continuations`, `Keymap.continuationsOver`, `InputScheme.continuations`, `Vim.State.continuations`, `Scene.keyHints`, `Loop.keyHints`) | `lean/Editor/Keymap.lean`, `lean/Editor/InputScheme.lean`, `lean/Editor/InputScheme/Vim.lean`, `lean/Editor/Scene.lean`, `lean/Editor/Loop.lean` |
+| The key hints shown through the completion display after a delay, and the pending prefix's segment (`Completion.Keys`, `Loop.armedHints`, `Loop.keyHinted`, `EditorState.keyHints`, `keyHintDelay`, `ModeLine.pendingKeys`) | `lean/Editor/Completion/Keys.lean`, `lean/Editor/Loop.lean`, `lean/Editor/State.lean`, `lean/Editor/Setup.lean`, `lean/Editor/ModeLine.lean`, `lean/Editor/Headless.lean` ("The key hints (built)" below) |
 | Invocations | `lean/Editor/Invocation.lean` |
 | The scheme interface, and what a key prints | `lean/Editor/InputScheme.lean` |
 | The test scheme | `lean/Editor/InputScheme/Test.lean` |
@@ -311,9 +312,9 @@ structure InputScheme where
   scheme to its walk (`continuationsWalk`). The loop turns the list into
   the scene's key hints (`Loop.keyHints`, `Scene.keyHints`), dropping the
   bindings, which are the scheme's own type: a `KeyHint` is the key as a
-  key string and what it leads to. The hints are a Lean-only readout, not
-  drawn yet: the leader-and-key-hints roadmap's phase 4 draws them through
-  the completion display.
+  key string and what it leads to. The hints are a Lean-only readout,
+  shown once a delay has passed through the completion display chosen for
+  the category `key` ("The key hints (built)", below).
 
 - **`answered` is how a scheme is answered.** A key whose edit needs a text
   typed in the minibuffer (Vim's `/`) yields `minibuffer-ask`, which opens
@@ -549,7 +550,10 @@ scheme.
   "Publishing").
 - **The scene shows the pending keys**, as a key string
   (`Key.notations`): empty once a sequence completes and after an unbound
-  key.
+  key. The selected window's status line draws them, first on its right
+  side, in the `pending-keys` segment (`ModeLine.pendingKeys`), written
+  with the leader's own key (`SPC f`) and with counts, the register and an
+  operator among them (`d 2`, `" a`); a row at rest is as it was.
 - **A failure is said in the echo area** and the editor keeps running:
   `<name>: no such command`, `<name>: refused: <error>`,
   `<name>: interrupted`, or `<name>: <reason>` for a command that gave up
@@ -557,6 +561,58 @@ scheme.
   and not by a key that yields nothing. What the command did is rolled
   back, but for a command that broke off, whose doings stay
   ([concurrency.md](concurrency.md), "Foreground: commands").
+
+#### The key hints (built)
+
+The keys that can follow a pending prefix are shown, after a delay, as a
+list through the completion display, as which-key shows them:
+
+- **The delay.** `keyHintDelay 250` in config's `setup` waits 250
+  milliseconds; `keyHintDelay 0` shows them at once and
+  `keyHintDelay .never` turns them off. A config that sets none has the
+  editor's 500 (`Loop.keyHintDelay`), and a reload changes it. A value
+  that is not a delay (`keyHintDelay 0.5`) does not elaborate, a delay
+  over a minute is refused (`Completion.Keys.keyHintDelayTooLong`, which
+  says to write `.never`), and so is setting it twice.
+- **It runs from the start of a sequence, and the list then follows the
+  walk.** The delay is armed when keys come to be able to follow, and not
+  again while some still can: once the hints are shown, a further prefix
+  (`SPC f`) lists its keys in the next scene. A sequence that completes,
+  an unbound key that resets it, a command that fails and sends the
+  scheme back to rest, and a prompt or a session at point that opens all
+  withdraw the delay and close the hints (`Loop.armedHints`).
+- **The delay is a wait on the job clock**, armed and withdrawn per step
+  as completion at point's pause is (`Loop.Stepped.hintDelay`,
+  `Headless.Running.delayHints`), not a spawned job: it prints nothing,
+  takes no job id and no pool thread. When it fires, a step that runs no
+  command makes the hints of its generation due
+  (`Loop.keyHintsDue`, `EditorState.keyHintsDue`), so one that raced its
+  withdrawal changes nothing.
+- **The walk has no timeout.** The delay only shows the hints; the keys
+  pending stay pending however long they wait (`Keymap.walk_unbound`,
+  `walkOver_unbound` are untouched).
+- **The `key` source and category.** The hints are the candidates of a
+  source of the category `key` (`Completion.Keys.source`): the text is
+  the key, the annotation the binding's description, or `+<name> (<count>)`
+  for a named prefix and `+prefix (<count>)` for an unnamed one, and the
+  kind `binding` or `prefix`. It has filtered already and is asked with no
+  typed text, so typing walks the keymaps and never narrows the list. It
+  is made per publish from the scheme's continuations and is not
+  registered.
+- **The display is the one chosen for `key`.** The list is shown by the
+  display config chose for the category (`useDisplayFor "key" "<name>"`),
+  the minibuffer display by default, as the candidate list's view: above
+  the bottom row, with no input row, growing and never shrinking while
+  the sequence is pending ([text-and-display.md](text-and-display.md),
+  "The candidate list"). A float display is a configuration choice
+  (`rdm:task/completion-float-displays`), not code here.
+- **Closed while a prompt or a session at point is open**: the candidate
+  list's place is theirs then.
+
+Pinned by `ModelTest.keyHintSourceChecks`, `keyHintStateChecks`,
+`keyHintLoopChecks`, `driverChecks`, `setupChecks` and the reload's
+checks, and by `config-test`'s `keyHintChecks`, on the headless host with
+the fake clock and the recorder.
 
 ### Vocabulary
 
@@ -5221,7 +5277,8 @@ on a real file in the headless executable (`tests/headless/session/`,
   `reloadHintChecks` pin config's labels, `dispatchHintChecks` the scene
   the loop publishes, and `config-test`'s `hintChecks` the whole path from
   a config's `desc` and `prefixName` to the headless host's `hint` lines,
-  and a reload that drops a name.
+  and a reload that drops a name. When and where they are shown is pinned
+  apart ("The key hints (built)").
 
 ### Config
 

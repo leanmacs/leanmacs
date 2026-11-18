@@ -2156,6 +2156,13 @@ echo area, the preedit, and the prompt that is open, if one is.
     minibuffer's view is and not down. The rows are not text of the
     minibuffer's buffer, whose whole text is the input
     ([keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's sources").
+    The list's part is the prompt's, the session's, or the key hints'
+    shown (`EditorState.candidateSheet?`): the keys that can follow a
+    pending prefix once the key hint delay has passed, a list with no
+    typed text drawn by the display chosen for the category `key`, with
+    no input row below it, growing and never shrinking while the sequence
+    is pending ([keymaps-and-modes.md](keymaps-and-modes.md), "The key
+    hints (built)").
 - **The floating layer** (window management's phase 4, decided
   2026-11-17; `lean/Editor/Floating.lean`, `lean/Editor/State.lean`, "A
   floating window").
@@ -2417,8 +2424,8 @@ The scene is plain Lean data (`lean/Editor/Scene.lean`, `Scene`):
 | `focused` | The view with the keyboard focus, if any |
 | `echo` | The echo area's text |
 | `echoPadding` | How far the echo is inset from the frame's left and right edges, in whole points, when layout draws it in the bottom row: the bottom row's inset (`EditorState.bottomInset`), the frame padding and at least the window's corner clearance outside fullscreen. 0 by default |
-| `pending` | The pending key prefix, rendered by Lean into a string |
-| `keyHints` | The keys that can follow the pending keymap prefix, for the key hints (`KeyHint`: the key as a key string, and the binding it completes, with its description, or the prefix it leads to, with its name and count); empty when none is pending. A Lean-only readout: it does not cross to the Rust scene, and it is not drawn yet (the leader-and-key-hints roadmap's phase 4 draws it through the completion display, a view Lean makes) |
+| `pending` | The pending key prefix, rendered by Lean into a string. Drawn by the `pending-keys` segment of the selected window's status line (`ModeLine.pendingKeys`), so it does not cross on a field of its own |
+| `keyHints` | The key hints shown: the keys that can follow the pending keymap prefix once the key hint delay has passed (`KeyHint`: the key as a key string, and the binding it completes, with its description, or the prefix it leads to, with its name and count); empty when none is pending and before the delay has passed. Drawn by the completion display chosen for the category `key`, as the candidate list's view, a view Lean makes. A Lean-only readout: it does not cross to the Rust scene |
 | `preedit` | The input method's preedit text in the focused view, if it is composing |
 | `title` | The window's title: the selected buffer's name (`EditorState.title`), the focused window's, or the asking window's while a prompt is open, so it does not become the minibuffer's while a prompt is typed into |
 
@@ -2717,7 +2724,11 @@ decided 2026-11-13 by its phase 2):
 - The pending prefix is the keys the loop's input scheme reports as
   pending, as a key string (`C-x`): empty once a sequence completes and
   after an unbound key ([keymaps-and-modes.md](keymaps-and-modes.md), "The
-  loop runs one scheme"). The headless `scene` line does not print it.
+  loop runs one scheme"). The headless `scene` line does not print it. It
+  is drawn first on the right of the selected window's status row, by the
+  `pending-keys` segment in `mode-line.secondary`, written with the
+  leader's own key (`SPC f`), and gives no field at rest, so the headless
+  `status` line shows it while a sequence is pending.
 
 ## Layout and rendering
 
@@ -3910,9 +3921,14 @@ frame journal and the renderer's counters.
   closes until a command says something; a key's command clears it too
   before it runs, so what a job's command said while the prompt was open
   shows only if the prompt is closed by something other than a key. The
-  pending prefix, the keys that can follow it, and the preedit are still
-  drawn nowhere: tasks
-  `show-pending-key-prefix` and `draw-input-method-preedit`.
+  pending prefix is drawn in the selected window's status row (the
+  `pending-keys` segment) and the keys that can follow it as the candidate
+  list's view, through the completion display chosen for `key`, after the
+  key hint delay (leader-and-key-hints phase 4). Neither uses the bottom
+  row's right end: `Scene.pending` does not cross to Rust, so drawing it
+  there would need a wire field and layout work, where a segment is
+  Lean-only and config may move or drop it. The preedit is still drawn
+  nowhere: task `draw-input-method-preedit`.
 - **The height of a view's text area, for the rows query** (answered, as
   built): the display answers one more question, `heights` (text, status
   and message, each a whole number of physical pixels rounded up, at the
@@ -4048,8 +4064,9 @@ frame journal and the renderer's counters.
   strike-through sit (the frame carries no metric for either), and the
   default atlas budget and page size. The order of a display's colour
   stripes is a setting nobody sets yet.
-- **What the frame does not carry is not drawn.** The echo area, the
-  pending key prefix and the input method's preedit are in no frame.
+- **What the frame does not carry is not drawn.** The echo area and the
+  input method's preedit are in no frame; the pending key prefix is, as a
+  field of the selected window's status row (the `pending-keys` segment).
   Boxes, images and gutter marks are not in the frame either. A curly
   underline is a stepped line.
 - **The whole frame is drawn on every draw.** Quads are kept per row,
