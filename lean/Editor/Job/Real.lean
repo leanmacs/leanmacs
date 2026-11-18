@@ -564,6 +564,28 @@ def takenRun (refused : RefusedRuns) (id : UInt64) : BaseIO (Except ProcessError
   | .ok none =>
     return .error runNoResult
 
+/-- The reply to the run that keeps its head that was started as the wait
+`id`, which has completed, as `takenRun` takes a run's: a cut run is
+`Process.Head.cut`, and one that ran to its end `Process.Head.whole`. -/
+def takenHead (refused : RefusedRuns) (id : UInt64) :
+    BaseIO (Except ProcessError Process.Head) := do
+  let refusal? ← refused.refused.modifyGet fun refused => (refused[id]?, refused.erase id)
+  if let some refusal := refusal? then
+    return .error refusal
+  let taken ←
+    (return .ok (← Ffi.processesTake id) :
+            IO (Except ProcessError (Option Ffi.ProcessResult))).catchExceptions
+        fun error => pure (.error (.failed (toString error)))
+  match taken with
+  | .error refusal =>
+    return .error refusal
+  | .ok (some (.cut stdout stderr)) =>
+    return .ok (.cut stdout stderr)
+  | .ok (some result) =>
+    return (runReplyOf result).map .whole
+  | .ok none =>
+    return .error runNoResult
+
 /-- The port's form of a stream's frames as the library delivered them. -/
 def framesOf : Ffi.StreamFrames → Process.Frames
   | .lines lines => .lines lines
@@ -691,6 +713,10 @@ def realProcesses (completions : Completions) (refused : RefusedRuns) (timers : 
                   let environment := command.environment
                   Ffi.processesRunInput id command.program command.arguments environment.clear
                     environment.set environment.unset command.directory.toString (word limit) input
+                | .runHead command input limit _ =>
+                  let environment := command.environment
+                  Ffi.processesRunHead id command.program command.arguments environment.clear
+                    environment.set environment.unset command.directory.toString (word limit) input
                 | .start command streaming =>
                   let environment := command.environment
                   Ffi.processesOpen id streaming.input (streaming.stdout == .bytes)
@@ -704,7 +730,7 @@ def realProcesses (completions : Completions) (refused : RefusedRuns) (timers : 
             fun _ => pure false
       if started then
         match request with
-        | .runWithin _ _ time | .runInput _ _ _ time =>
+        | .runWithin _ _ time | .runInput _ _ _ time | .runHead _ _ _ time =>
           arm completions timers timed id time
         | _ =>
           pure ()
@@ -724,6 +750,16 @@ def realProcesses (completions : Completions) (refused : RefusedRuns) (timers : 
             takenRun refused id
         | none =>
           takenRun refused id
+      | .runHead _ _ _ time => do
+        match ← timed.take id with
+        | some run =>
+          disarm completions timers run
+          if run.timedOut then
+            return .error (.timedOut time)
+          else
+            takenHead refused id
+        | none =>
+          takenHead refused id
       | .start .. => do
         match ← takenStream refused id with
         | .ok .opened =>

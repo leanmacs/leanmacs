@@ -41,6 +41,7 @@ def onChanged (services : Job.Services) (change : Process.Command → Process.Co
     | .run command limit => .run (change command) limit
     | .runWithin command limit time => .runWithin (change command) limit time
     | .runInput command input limit time => .runInput (change command) input limit time
+    | .runHead command input limit time => .runHead (change command) input limit time
     | .start command streaming => .start (change command) streaming
     | other => other
   { services with
@@ -53,6 +54,8 @@ def onChanged (services : Job.Services) (change : Process.Command → Process.Co
             processes.take id (.runWithin (change command) limit time)
           | .runInput command input limit time =>
             processes.take id (.runInput (change command) input limit time)
+          | .runHead command input limit time =>
+            processes.take id (.runHead (change command) input limit time)
           | .start command streaming => processes.take id (.start (change command) streaming)
           | .read process => processes.take id (.read process)
           | .write process bytes => processes.take id (.write process bytes)

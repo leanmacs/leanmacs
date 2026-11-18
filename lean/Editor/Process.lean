@@ -46,6 +46,15 @@ Starting, waiting for, killing and reaping a child are the library's
   does not read its input, or not all of it, is no refusal: the run
   answers what the child did. It is how a filter feeds lines to a command
   (`Editor/Shell.lean`).
+- **A run that keeps its head** (`ProcessRequest.runHead`) is a fed run
+  whose standard output past its limit is not refused: the library keeps
+  exactly its first `limit` bytes, kills the child's group, and the run
+  answers `Process.Head.cut` with them and what was read of standard error.
+  How the child ended is not said, since the library ended it. Standard
+  error past the limit is still `outputTooLarge`, and a run whose output
+  stays within the limit answers `Process.Head.whole`. It is how a filter
+  that prints every candidate for an empty query is read
+  (`Editor/Completion/Filtering.lean`).
 - **What a run answers** (`Process.Ran`): how the child ended, by a status
   or a signal, and its standard output and standard error as bytes, kept as
   they were written.
@@ -235,6 +244,15 @@ structure Ran where
   stderr : ByteArray
   deriving DecidableEq
 
+/-- What a run that keeps its head answers (`ProcessRequest.runHead`). -/
+inductive Head where
+  /-- The child ended with its output within the limit: what a run answers. -/
+  | whole (ran : Ran)
+  /-- Standard output reached the limit, and the child's group was killed:
+  exactly its first `limit` bytes, and what was read of standard error. -/
+  | cut (stdout stderr : ByteArray)
+  deriving DecidableEq
+
 end Process
 
 /-- Why a run was refused, or did not come to an end with its output. -/
@@ -290,6 +308,9 @@ inductive ProcessRequest where
   /-- Run `command` as `runWithin` does, with `input` as its standard input,
   followed by end of file. -/
   | runInput (command : Process.Command) (input : ByteArray) (limit : Nat) (time : Nat)
+  /-- Run `command` as `runInput` does, but keep the first `limit` bytes of its
+  standard output, and end the child there, instead of refusing it. -/
+  | runHead (command : Process.Command) (input : ByteArray) (limit : Nat) (time : Nat)
   /-- Start `command` as a streaming child, as `streaming` says: the child,
   named for the job. -/
   | start (command : Process.Command) (streaming : Process.Streaming)
@@ -314,6 +335,10 @@ instance : Repr ProcessRequest where
       "ProcessRequest.runInput " ++ repr command ++ s!" ({input.size} bytes) " ++ repr limit ++
         " " ++
         repr time
+    | .runHead command input limit time =>
+      "ProcessRequest.runHead " ++ repr command ++ s!" ({input.size} bytes) " ++ repr limit ++
+        " " ++
+        repr time
     | .start command streaming => "ProcessRequest.start " ++ repr command ++ " " ++ repr streaming
     | .read process => "ProcessRequest.read " ++ repr process
     | .write process bytes => "ProcessRequest.write " ++ repr process ++ s!" ({bytes.size} bytes)"
@@ -325,6 +350,7 @@ def ProcessRequest.Reply : ProcessRequest â†’ Type
   | .run .. => Except ProcessError Process.Ran
   | .runWithin .. => Except ProcessError Process.Ran
   | .runInput .. => Except ProcessError Process.Ran
+  | .runHead .. => Except ProcessError Process.Head
   | .start .. => Except ProcessError Process.Id
   | .read .. => Except ProcessError Process.Delivery
   | .write .. => Except ProcessError Unit
@@ -336,6 +362,7 @@ def ProcessRequest.refused (error : ProcessError) : (request : ProcessRequest) â
   | .run .. => .error error
   | .runWithin .. => .error error
   | .runInput .. => .error error
+  | .runHead .. => .error error
   | .start .. => .error error
   | .read .. => .error error
   | .write .. => .error error

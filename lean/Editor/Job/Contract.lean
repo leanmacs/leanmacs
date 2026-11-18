@@ -770,6 +770,11 @@ def errBytes : ByteArray :=
 def fedBytes : ByteArray :=
   ("b\nc\na\n".toUTF8.push 0 |>.push 0xFF).push 10
 
+/-- The script of a child that never stops writing `0123456789`: what a
+run that keeps its head cuts. -/
+def headScript : String :=
+  "while :; do printf 0123456789; done"
+
 /-- `/bin/cat` in `directory`. -/
 def cat (directory : System.FilePath) : Process.Command :=
   { program := "/bin/cat", directory }
@@ -1148,6 +1153,27 @@ def processProperties : List ProcessProperty :=
               | .error (.timedOut 50) => true
               | _ => false) &&
               after.exit == .code 0 },
+      { name :=
+          "a run that keeps its head answers the first limit bytes of a child that writes forever, as cut"
+        scripts := fun root =>
+          #[{ command := sh root headScript
+              reply := wrote "0123456789" }]
+        holds := fun root => do
+          match ← Process.runHead (sh root headScript) fedBytes 4 10000 with
+          | .ok (.cut stdout _) =>
+            return stdout == "0123".toUTF8
+          | _ =>
+            return false },
+      { name := "a run that keeps its head and ends within its limit answers whole"
+        scripts := fun root =>
+          #[{ command := cat root,
+              reply := .ok { exit := .code 0, stdout := fedBytes, stderr := .empty } }]
+        holds := fun root => do
+          match ← Process.runHead (cat root) fedBytes roomyOutput 10000 with
+          | .ok (.whole ran) =>
+            return ran.exit == .code 0 && ran.stdout == fedBytes && ran.stderr.isEmpty
+          | _ =>
+            return false },
       { name := "output past the limit is refused as too large, with the stream and the limit"
         scripts := fun root =>
           #[{ command := sh root "printf 0123456789"

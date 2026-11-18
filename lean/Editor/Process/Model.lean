@@ -33,6 +33,12 @@ runner's process service is this model behind a reference
   command's script: the script carries what the child writes for that
   input. It is recorded with its input in `fed`, so a test sees what was
   written, once it has passed the refusals that start nothing.
+- **A run that keeps its head** (`runHead`) is answered as a fed run, except
+  that a scripted standard output over the limit answers `Process.Head.cut`
+  with its first `limit` bytes and the script's standard error, and is
+  recorded as killed, which is what the library does to it. Standard error
+  over the limit is still `outputTooLarge`, and output within it answers
+  `Process.Head.whole`.
 
 - **A streaming child that pauses** (`Process.Step.pause`) stops for that
   many milliseconds of the job clock from when it begins the step. A read
@@ -339,17 +345,29 @@ def limited (limit : Nat) : Except ProcessError Process.Ran → Except ProcessEr
     else if ran.stderr.size > limit then .error (.outputTooLarge .err limit) else .ok ran
   | .error error => .error error
 
+/-- What a run that keeps its head under `limit` answers when its command is
+scripted to answer `reply`: standard error past the limit is too large, and
+standard output past it is cut to its first `limit` bytes. -/
+def headed (limit : Nat) : Except ProcessError Process.Ran → Except ProcessError Process.Head
+  | .ok ran =>
+    if ran.stderr.size > limit then .error (.outputTooLarge .err limit)
+    else
+      if ran.stdout.size > limit then .ok (.cut (ran.stdout.extract 0 limit) ran.stderr)
+      else .ok (.whole ran)
+  | .error error => .error error
+
 /-- `model` with `child` in place of its child of the same id. -/
 def put (model : ProcessModel) (child : Child) : ProcessModel :=
   { model with
     children := model.children.map fun held => if held.id == child.id then child else held }
 
-/-- The model's answer to a run of `command` under `limit` made at `now` by
-a job cancelled at `cancelAt`, ended by its time limit `time` if it has one
-and its script takes longer: the reply, the model after it, and the clock
-after it. -/
-def runFor (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) (command : Process.Command)
-    (limit : Nat) (time : Option Nat) : Except ProcessError Process.Ran × ProcessModel × Nat :=
+/-- The model's answer to a run of `command` made at `now` by a job cancelled
+at `cancelAt`, ended by its time limit `time` if it has one and its script
+takes longer, its script's reply given to `answer`, which applies the run's
+limit: the reply, the model after it, and the clock after it. -/
+def runFor {α : Type} (model : ProcessModel) (now : Nat) (cancelAt : Option Nat)
+    (command : Process.Command) (answer : Except ProcessError Process.Ran → Except ProcessError α)
+    (time : Option Nat) : Except ProcessError α × ProcessModel × Nat :=
   if !command.directory.isAbsolute then (.error .relativeDirectory, model, now)
   else
     if command.namesRelative then (.error .relativeProgram, model, now)
@@ -371,13 +389,13 @@ def runFor (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) (command :
           else
             let after := now + script.takes
             let killed := cancelAt.any fun instant => now < instant && instant ≤ after
-            (limited limit script.reply,
+            (answer script.reply,
               if killed then { started with killed := started.killed.push command } else started,
               after)
         | none =>
           let after := now + script.takes
           let killed := cancelAt.any fun instant => now < instant && instant ≤ after
-          (limited limit script.reply,
+          (answer script.reply,
             if killed then { started with killed := started.killed.push command } else started,
             after)
 
@@ -386,12 +404,23 @@ cancelled at `cancelAt` if it ever is: the reply, the model after it, and
 the clock after it. -/
 def handle (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) :
     (request : ProcessRequest) → request.Reply × ProcessModel × Nat
-  | .run command limit => model.runFor now cancelAt command limit none
-  | .runWithin command limit time => model.runFor now cancelAt command limit (some time)
+  | .run command limit => model.runFor now cancelAt command (limited limit) none
+  | .runWithin command limit time => model.runFor now cancelAt command (limited limit) (some time)
   | .runInput command input limit time =>
-    let (reply, after, now') := model.runFor now cancelAt command limit (some time)
+    let (reply, after, now') := model.runFor now cancelAt command (limited limit) (some time)
     let fed := after.started.size > model.started.size
     (reply, if fed then { after with fed := after.fed.push (command, input) } else after, now')
+  | .runHead command input limit time =>
+    let (reply, after, now') := model.runFor now cancelAt command (headed limit) (some time)
+    let fed := after.started.size > model.started.size
+    let after := if fed then { after with fed := after.fed.push (command, input) } else after
+    -- The library ends a child it cut, unless a cancel or the clock already
+    -- did.
+    let cut :=
+      match reply with
+      | .ok (.cut ..) => after.killed.size == model.killed.size
+      | _ => false
+    (reply, if cut then { after with killed := after.killed.push command } else after, now')
   | .start command streaming =>
     if !command.directory.isAbsolute then (.error .relativeDirectory, model, now)
     else

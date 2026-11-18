@@ -253,6 +253,7 @@ def processChecks : List Check :=
             | .run _ _ => "run"
             | .runWithin .. => "runWithin"
             | .runInput .. => "runInput"
+            | .runHead .. => "runHead"
         return finished && kinds == #["start", "read"] && (← processes.withdrawn).isEmpty },
     -- Seen to bite once by hand, on 2026-11-15: with `Handle.endChildren`
     -- taken out of `Handle.conclude`, this check and the next fail.
