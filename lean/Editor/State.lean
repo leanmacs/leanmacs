@@ -1375,6 +1375,59 @@ structure Following where
 def Following.keyOf (buffer : BufferId) : String :=
   s!"follow {buffer.index}"
 
+/-- A buffer of a tracked file the version-control gutter keeps marks for
+(`Editor/VersionControl/Gutter.lean`): which file, its content at `HEAD`,
+and the head fetch and the diff in flight for it. Plain data, beside
+`Following`; the gutter's reconciler keeps it in step after each publish. -/
+structure Tracked where
+  /-- The buffer. -/
+  buffer : BufferId
+  /-- The root of its workspace, the repository's. -/
+  root : System.FilePath
+  /-- Its file's path, relative to the root. -/
+  path : String
+  /-- The git program. -/
+  git : String
+  /-- A snapshot of its file's content at `HEAD`, once one has arrived;
+  `none` before, and when `HEAD` lacks the file. -/
+  head : Option SnapshotId := none
+  /-- Whether a head fetch is in flight. -/
+  fetching : Bool := true
+  /-- The revision of the buffer's text a diff in flight was taken at, and
+  the snapshot taken of it. -/
+  diffing : Option (Nat × SnapshotId) := none
+  /-- The revision of the buffer's text last diffed against `head`. -/
+  diffed : Option Nat := none
+  /-- Whether `HEAD` or the index may have moved since `head` was fetched. -/
+  stale : Bool := false
+  /-- Which head fetch is the latest: a reply of another is stale. -/
+  epoch : Nat := 0
+  deriving DecidableEq, Repr
+
+/-- A repository the version-control gutter watches for `HEAD` or the index
+moving: its root, and whether the watch was refused, which is not tried
+again while a buffer of it is tracked. -/
+structure RefWatch where
+  /-- The root. -/
+  root : System.FilePath
+  /-- Whether its watch was refused. -/
+  refused : Bool := false
+  deriving DecidableEq, Repr
+
+/-- What a command of the version-control gutter tells the state of what
+arrived (`StateRequest.gutter`). -/
+inductive GutterChange where
+  /-- The head fetch `epoch` of the buffer arrived: its content at `HEAD`, or
+  `none` when `HEAD` lacks the file or the fetch failed. -/
+  | held (buffer : BufferId) (epoch : Nat) (head : Option SnapshotId)
+  /-- The diff of the buffer, taken at `revision`, arrived or failed. -/
+  | diffed (buffer : BufferId) (epoch revision : Nat)
+  /-- `HEAD` or the index of the repository at `root` may have moved. -/
+  | moved (root : System.FilePath)
+  /-- The watch of the repository at `root` was refused. -/
+  | refused (root : System.FilePath)
+  deriving DecidableEq, Repr
+
 /-- The candidates of an open prompt, and what the prompt has shown of
 them ("Prompts", in the module docs). It is plain data. -/
 structure Candidates where
@@ -1570,6 +1623,12 @@ structure EditorState where
   /-- The file buffers the loop follows for auto-reload, each with its path
   and whether its watch was refused (`Editor/Loop.lean`, "Auto-reload"). -/
   following : Array Following := #[]
+  /-- The buffers of tracked files the version-control gutter keeps marks
+  for (`Editor/VersionControl/Gutter.lean`). -/
+  tracked : Array Tracked := #[]
+  /-- The repositories whose `HEAD` and index the version-control gutter
+  watches. -/
+  refWatches : Array RefWatch := #[]
   /-- The workspaces and projects of the session, with their stores, and
   each directory's cached answer ("Workspaces", in the module docs). -/
   workspaces : Workspace.Table := {}
@@ -2644,6 +2703,38 @@ def setReadOnly (id : BufferId) (on : Bool) (state : EditorState) :
 def setSpans (id : BufferId) (spans : Array Decoration) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with spans })) state
+
+/-- The state once `change` is told ("The version-control gutter",
+`Editor/VersionControl/Gutter.lean`): a head that arrived for the latest
+fetch is held and the next publish diffs against it; a diff that arrived
+for the latest head clears the one in flight and records its revision; a
+repository that moved makes its tracked buffers stale; and a refused watch
+is recorded. A change of another epoch changes nothing. -/
+def changeGutter (change : GutterChange) (state : EditorState) : EditorState :=
+  match change with
+  | .held buffer epoch head =>
+    { state with
+      tracked :=
+        state.tracked.map fun entry =>
+          if entry.buffer == buffer && entry.epoch == epoch then
+            { entry with head, fetching := false, diffed := none }
+          else entry }
+  | .diffed buffer epoch revision =>
+    { state with
+      tracked :=
+        state.tracked.map fun entry =>
+          if entry.buffer == buffer then
+            { entry with
+              diffing := none
+              diffed := if entry.epoch == epoch then some revision else entry.diffed }
+          else entry }
+  | .moved root =>
+    { state with
+      tracked := state.tracked.map fun entry => if entry.root == root then { entry with stale := true } else entry }
+  | .refused root =>
+    { state with
+      refWatches :=
+        state.refWatches.map fun watch => if watch.root == root then { watch with refused := true } else watch }
 
 /-- Sets the gutter of the buffer `id`, or takes it away with `none`
 ("Buffers", in the module docs). Refused with `noSuchBuffer` for a buffer

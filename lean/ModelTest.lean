@@ -38757,6 +38757,217 @@ def statusBufferChecks : List Check :=
               [("s", VersionControl.stageName), ("u", VersionControl.unstageName)] &&
             VersionControl.mode.problems == [] }]
 
+/-- The jobs of the gutter checks: the status buffer checks', and the
+version-control gutter's. -/
+def gutterJobs (name : String) : Option (List Argument → Work) :=
+  ((VersionControl.gutterJobs.find? (·.name == name)).map (·.work)) <|> statusJobs name
+
+/-- The keys of the gutter checks: the workspace driver checks', with
+`C-g x`, which makes the window's text `new\na\nB\nc\n`, `C-g z`, which
+puts `z\n` at its start, and `C-g k`, which closes the window's buffer; and
+the gutter's command, which its watch job posts. -/
+def gutterKeys : Loop.Keys TestScheme.scheme :=
+  dispatchKeys
+    (workspaceBindings ++
+      [("C-g x", invoke "gutter-edit"), ("C-g z", invoke "gutter-top"),
+        ("C-g k", invoke Buffers.closeName)])
+    (workspaceCommands ++ dispatchedOf VersionControl.gutterCommands ++
+        dispatchedOf Buffers.commands ++
+      [("gutter-edit", fun call => do
+          let text := call.target.buffer.text
+          text.replaceRange 0 (← text.byteLength) "new\na\nB\nc\n"
+          return none),
+        ("gutter-top", fun call => do
+          call.target.buffer.text.insert 0 "z\n"
+          return none)])
+
+/-- A driver of the gutter checks: the workspace driver's world, with the
+gutter's keys and jobs, whose git in `/r` meets `repository`, saying `HEAD`
+has no `src/b.lean`, whose watches may be made in `/r/.git`, and with each
+file of `repository`'s working tree on disk under `/r`; `none` if making the
+state was refused. -/
+def gutterDriverOf (repository : VersionControl.Model.Repository) : Option TestDriver :=
+  (workspaceDriver gutterJobs gutterKeys).map fun driver =>
+    let scripts :=
+      (repository.jobModel "git" "/r" (missing := #[("HEAD", "src/b.lean")])).processes.scripts
+    { driver with
+      jobs :=
+        { driver.jobs with
+          files :=
+            repository.worktree.foldl
+              (fun (files : FileModel) (path, content) =>
+                files.withFile (("/r" : System.FilePath) / path) content.toUTF8)
+              driver.jobs.files
+          processes :=
+            { driver.jobs.processes with scripts := scripts ++ driver.jobs.processes.scripts }
+          fileWatches := { driver.jobs.fileWatches with directories := #["/r/.git"] } } }
+
+/-- `driver` with its git in `/r` meeting `repository` from now on, as after
+a change made outside the editor. -/
+def meeting (driver : TestDriver) (repository : VersionControl.Model.Repository) : TestDriver :=
+  let scripts :=
+    (repository.jobModel "git" "/r" (missing := #[("HEAD", "src/b.lean")])).processes.scripts
+  { driver with
+    jobs :=
+      { driver.jobs with
+        processes :=
+          { driver.jobs.processes with scripts := scripts ++ driver.jobs.processes.scripts } } }
+
+/-- `HEAD`'s content of `src/a.lean` in the gutter checks. -/
+def gutterHead : String :=
+  "a\nb\nc\nd\n"
+
+/-- The repository of the gutter checks: `src/a.lean` the same in `HEAD`,
+the index and the working tree. -/
+def gutterRepository : VersionControl.Model.Repository :=
+  VersionControlContract.clean #[("src/a.lean", gutterHead)]
+
+/-- `driver` with the post its watch job holds delivered, if it holds one. -/
+def postDelivered (driver : TestDriver) : TestDriver :=
+  match driver.posting[0]? with
+  | some job => (driver.posted job.id).1
+  | none => driver
+
+/-- The tracked entry of the buffer view 0 shows in `driver`. -/
+def trackedShown (driver : TestDriver) : Option Tracked := do
+  let id := (← showing driver).id
+  driver.loop.state.tracked.find? (·.buffer == id)
+
+/-- What the snapshot `snapshot` holds in `driver`'s text model. -/
+def snapshotText (driver : TestDriver) (snapshot : SnapshotId) : Option String :=
+  ((snapshot.read).runModel driver.model.texts).1.toOption
+
+/-- The checks of the version-control gutter
+(`Editor/VersionControl/Gutter.lean`), on the loop's driver over the
+editor's models, the job model, the model of a repository in `/r` and the
+model of watches, whose waiting jobs it holds parked. -/
+def gutterChecks : List Check :=
+  let headRun := gitRun #["rev-parse", "--verify", "--quiet", "HEAD:src/a.lean"]
+  let staged : VersionControl.Model.Repository :=
+    { committed := #[("src/a.lean", gutterHead)]
+      index := #[("src/a.lean", .file "a\nB\nc\nd\n")]
+      worktree := #[("src/a.lean", "a\nB\nc\nd\n")] }
+  [{  name :=
+        "criterion 4: a tracked file's buffer takes its content at HEAD as its old text: its fetch runs rev-parse HEAD:src/a.lean then cat-file blob, and its tracked entry holds a snapshot of HEAD's content"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let started := gitStarted opened
+            (started.idxOf? headRun).isSome &&
+              started.contains (gitRun #["cat-file", "blob", VersionControl.Model.blobId gutterHead]) &&
+              ((trackedShown opened).bind (·.head)).bind (snapshotText opened) == some gutterHead &&
+              ((showing opened).bind (·.buffer.gutter)).isSome &&
+              (gutterView opened).map (·.padding.gutter) == some Buffer.Gutter.width &&
+              (gutterView opened).map (·.marks) == some #[] &&
+              opened.openWatches == 1 },
+    { name := "a file HEAD lacks has no gutter, and its view no gutter column"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o b"
+            ((trackedShown opened).map (·.head)) == some none &&
+              ((showing opened).bind (·.buffer.gutter)).isNone &&
+              (gutterView opened).map (·.padding.gutter) == some 0 },
+    { name :=
+        "the marks of hunks: lines added are + in diff.added over them, lines changed ~ in diff.changed, and lines removed an empty - in diff.removed at the start of the line after them"
+      run :=
+        pure <|
+          VersionControl.marksOf
+              #[{ oldStart := 0, oldStop := 0, newStart := 0, newStop := 4 },
+                { oldStart := 2, oldStop := 4, newStart := 6, newStop := 8 },
+                { oldStart := 6, oldStop := 8, newStart := 10, newStop := 10 }] ==
+            #[{ start := 0, stop := 4, text := "+", face := ⟨"diff.added"⟩ },
+              { start := 6, stop := 8, text := "~", face := ⟨"diff.changed"⟩ },
+              { start := 10, stop := 10, text := "-", face := ⟨"diff.removed"⟩ }] },
+    { name :=
+        "criterion 5: after an edit that adds a line, changes one and removes one, the view's gutter marks are + over the added line in diff.added, ~ over the changed one in diff.changed, and - at the end where the removed one was in diff.removed"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let edited := settledAfter opened "C-g x"
+            (gutterView edited).map (·.marks) ==
+              some
+                #[{ start := 0, stop := 4, text := "+", face := ⟨"diff.added"⟩ },
+                  { start := 6, stop := 8, text := "~", face := ⟨"diff.changed"⟩ },
+                  { start := 10, stop := 10, text := "-", face := ⟨"diff.removed"⟩ }] },
+    { name :=
+        "between an edit and its diff the marks are carried through the edit, and a second edit starts no second diff until the first lands, which starts the next"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let edited := settledAfter (settledAfter driver "C-o a") "C-g x"
+            let (once, _) := fedTo edited (presses "C-g z")
+            let (twice, steps) := fedTo once (presses "C-g z")
+            let landed := finishNamed twice VersionControl.diffJob
+            (gutterView once).map (·.marks) ==
+                some
+                  #[{ start := 2, stop := 6, text := "+", face := ⟨"diff.added"⟩ },
+                    { start := 8, stop := 10, text := "~", face := ⟨"diff.changed"⟩ },
+                    { start := 12, stop := 12, text := "-", face := ⟨"diff.removed"⟩ }] &&
+              (once.pending.filter (·.name == VersionControl.diffJob)).size == 1 &&
+              !(startNames steps).contains VersionControl.diffJob &&
+              (landed.pending.filter (·.name == VersionControl.diffJob)).size == 1 },
+    { name :=
+        "criterion 6: a tracked file's gutter marks change after a commit made outside the editor: with its change staged, the buffer has a changed mark; the commit's touch of the index and the branch's ref makes the watch post vc-gutter-moved, which fetches HEAD again, whose content is now the buffer's, and whose diff leaves the gutter with no mark"
+      run :=
+        pure <|
+          match gutterDriverOf staged with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let committed :=
+              (meeting opened staged.commit).touch
+                #[("/r/.git/index", .written), ("/r/.git/refs/heads/main", .written)]
+            let moved := postDelivered committed
+            let fetched := finishNamed moved VersionControl.headJob
+            let diffed := finishNamed fetched VersionControl.diffJob
+            opened.openWatches == 1 &&
+              (gutterView opened).map (·.marks) ==
+                some #[{ start := 2, stop := 4, text := "~", face := ⟨"diff.changed"⟩ }] &&
+              committed.posting.size == 1 &&
+              (pendingOf moved VersionControl.headJob).isSome &&
+              ((trackedShown diffed).bind (·.head)).bind (snapshotText diffed) ==
+                some "a\nB\nc\nd\n" &&
+              ((showing diffed).bind (·.buffer.gutter)).isSome &&
+              (gutterView diffed).map (·.marks) == some #[] &&
+              diffed.openWatches == 1 },
+    { name := "a change to an object or a lock file alone in the git directory posts nothing"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let touched :=
+              opened.touch #[("/r/.git/objects/ab/cdef", .created), ("/r/.git/index.lock", .created)]
+            touched.posting.isEmpty && touched.openWatches == 1 },
+    { name :=
+        "closing the buffer cancels its jobs, releases its snapshot of HEAD, takes it off the tracked buffers, and, the last buffer of its repository, cancels the watch"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            match (trackedShown opened).bind (·.head) with
+            | none => false
+            | some head =>
+              let closed := settledAfter opened "C-g k"
+              opened.openWatches == 1 && closed.openWatches == 0 &&
+                closed.loop.state.tracked.isEmpty &&
+                closed.loop.state.refWatches.isEmpty &&
+                (snapshotText closed head).isNone }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -38906,7 +39117,8 @@ def checks : List Check :=
     statusViewChecks ++
     statusBufferChecks ++
     revisionBufferChecks ++
-    gutterCarryChecks
+    gutterCarryChecks ++
+    gutterChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

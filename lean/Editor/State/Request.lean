@@ -292,6 +292,8 @@ inductive StateRequest where
   | setSpans (id : BufferId) (spans : Array Decoration)
   /-- Set the gutter of the buffer `id`, or take it away. -/
   | setGutter (id : BufferId) (gutter : Option Buffer.Gutter)
+  /-- Tell the version-control gutter's state what arrived. -/
+  | gutter (change : GutterChange)
   /-- Choose auto-reload on or off, for as long as the editor runs. -/
   | setAutoReload (on : Bool)
   /-- Whether auto-reload is in effect: a command's choice, or else config's
@@ -424,6 +426,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setReadOnly .. => Except BufferRefusal Unit
   | .setSpans .. => Except BufferRefusal Unit
   | .setGutter .. => Except BufferRefusal Unit
+  | .gutter _ => Unit
   | .setAutoReload _ => Unit
   | .autoReloadMode => Bool
   | .unfollow _ => Unit
@@ -523,6 +526,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setReadOnly id on, state => state.setReadOnly id on
   | .setSpans id spans, state => state.setSpans id spans
   | .setGutter id gutter, state => state.setGutter id gutter
+  | .gutter change, state => ((), state.changeGutter change)
   | .setAutoReload on, state => ((), { state with autoReload := some on })
   -- Config's setting is the loop's to answer with (`Program.dispatched`):
   -- here, with no loop, a choice no command made is off.

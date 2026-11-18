@@ -7,6 +7,7 @@ import Editor.Event
 import Editor.Ex
 import Editor.Files
 import Editor.Gutter
+import Editor.VersionControl.Gutter
 import Editor.InputScheme
 import Editor.Key.Notation
 import Editor.ModeLine
@@ -2357,9 +2358,13 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
   do
   let loop ← stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar
   let (loop, starts, cancels) := loop.fileJobs keys
+  let git := ({} : Workspace.Settings).git
+  let (state, gutterStarts, gutterCancels) ←
+    VersionControl.reconcile keys.registered.jobs git loop.state
+  let loop := { loop with state }
   return { stepped with
-      loop, next := nextOf loop, starts := stepped.starts ++ starts
-      cancels := stepped.cancels ++ cancels }
+      loop, next := nextOf loop, starts := stepped.starts ++ starts ++ gutterStarts
+      cancels := stepped.cancels ++ cancels ++ gutterCancels }
 
 /-- Hands the answer `invocation` carries, its first argument, to the input
 scheme, for the focused view (`InputScheme.answered`), and runs the

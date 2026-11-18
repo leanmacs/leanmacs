@@ -207,6 +207,10 @@ as before, so reload and job completion work as they did.
   `Editor/VersionControl/Compiled.lean`): `vc-status` and the commands of
   its buffer, the jobs `vc-status-read` and `vc-status-apply`, which run
   git, and the mode `vc-status`; the ex name `vc-status` runs the first.
+  It is handed `vc-show` and its job too, and the version-control gutter's
+  command and jobs (`VersionControl.gutterCommands`,
+  `VersionControl.gutterJobs`): a tracked file's buffer shows its lines
+  added, removed and changed against `HEAD` in a column before its text.
   And it is handed the
   `code` mode and the languages that ship (`Language.modes`,
   `Language.shipped`, `Editor/Language.lean`): `rust`, `json` and
@@ -1449,10 +1453,12 @@ def posted (collaborators : Collaborators σ scheme) (running : Running σ schem
   running.took collaborators stepped
 
 /-- A scene as `scene` prints it, read from the text store as it is now: its
-frame, then each view, its snapshot's text and its markers' offsets, then,
-for a view that has any, its decorations, each its face and its range
-(`decorations <view>: <face> <start>..<stop> ...`), and its status line
-(`statusLine`). `published` is how many scenes have been published, and
+frame, then each view, its snapshot's text and its markers' offsets, and
+its gutter's width when it has a gutter column, then, for a view that has
+any, its decorations, each its face and its range (`decorations <view>:
+<face> <start>..<stop> ...`), and its gutter marks, each its text, its face
+and its range (`marks <view>: <text> <face> <start>..<stop> ...`), and its
+status line (`statusLine`). `published` is how many scenes have been published, and
 `theme` the name of the theme the scene was drawn in. -/
 def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array String) := do
   let focused :=
@@ -1475,7 +1481,7 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
     let rect := view.rect
     lines :=
       lines.push
-        s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}, padding {view.padding.across} {view.padding.down}{if view.padding.top == 0 then "" else s!" top {view.padding.top}"}"
+        s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}, padding {view.padding.across} {view.padding.down}{if view.padding.top == 0 then "" else s!" top {view.padding.top}"}{if view.padding.gutter == 0 then "" else s!" gutter {view.padding.gutter}"}"
     -- Only a view that has decorations has the line, so a scene with none
     -- prints as it did before there were any.
     unless view.decorations.isEmpty do
@@ -1483,6 +1489,11 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
         view.decorations.map fun decoration =>
           s!"{decoration.face.name} {decoration.start}..{decoration.stop}"
       lines := lines.push s!"decorations {view.id.index}: {" ".intercalate spans.toList}"
+    -- Likewise for its gutter marks, each its text, its face and its range.
+    unless view.marks.isEmpty do
+      let marks :=
+        view.marks.map fun mark => s!"{mark.text} {mark.face.name} {mark.start}..{mark.stop}"
+      lines := lines.push s!"marks {view.id.index}: {" ".intercalate marks.toList}"
     lines := lines.push (statusLine view.id view.status view.statusFace)
   -- Only a scene that has dividers has their lines, so a scene of one
   -- window prints as it did before there were any.
@@ -2276,10 +2287,12 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         Workspace.commands ++
         Shell.commands ++
         Compile.commands ++
-        VersionControl.commands
+        VersionControl.commands ++
+        VersionControl.gutterCommands
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
     compiledJobs :=
-      Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs ++ VersionControl.jobs
+      Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs ++ VersionControl.jobs ++
+        VersionControl.gutterJobs
     modes := Minibuffer.modes ++ Compile.modes ++ VersionControl.modes ++ Language.modes
     ex := Ex.bindings
     themes := Themes.shipped, languages := Language.shipped

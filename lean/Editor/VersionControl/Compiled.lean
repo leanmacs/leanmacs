@@ -1,4 +1,5 @@
 import Editor.Config.Registry
+import Editor.VersionControl.Gutter
 import Editor.VersionControl.Show
 import Editor.VersionControl.Status
 
@@ -53,6 +54,19 @@ def commands : Array Config.Registration :=
 def jobs : Array Config.JobRegistration :=
   #[{ name := readJob, work := readWork }, { name := applyJob, work := applyWork },
     { name := showJob, work := showWork }]
+
+/-- The version-control gutter's command, `vc-gutter-moved`, which its watch
+job posts (`Editor/VersionControl/Gutter.lean`), as a host registers it for
+the owner `compiled`. -/
+def gutterCommands : Array Config.Registration :=
+  #[{ name := movedName, action := .call movedCommand }]
+
+/-- The version-control gutter's jobs, as a host registers them for the owner
+`compiled`: `vc-gutter-head`, `vc-gutter-diff` and `vc-gutter-refs`. A host
+that is not handed them tracks no buffer, and its windows have no gutter. -/
+def gutterJobs : Array Config.JobRegistration :=
+  #[{ name := headJob, work := headWork }, { name := diffJob, work := diffWork },
+    { name := refsJob, work := refsWork }]
 
 /-- The status buffer's mode, as a host registers it for the owner
 `compiled`. -/
