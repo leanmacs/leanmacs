@@ -145,6 +145,7 @@ import ModelTest.Editor.WindowCommands
 import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
 import ModelTest.Editor.Workspace.Contract
+import ModelTest.Editor.Workspace.Lister
 
 /-!
 # The model tests
@@ -937,6 +938,14 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   (`EditorState.markViewed`, `creditViewed`), on hand-built rows and
   entries; the loop's marking and the face of what was not examined are
   among `excerptDisplayChecks`, on the loop's driver.
+
+Listing a workspace's files is checked in Lean alone too:
+
+- `workspaceListerChecks`: which command lists a workspace's files
+  (`Editor/Workspace/Lister.lean`), pure: config's lister for the root,
+  then for the project, then git's for a workspace git found, then the
+  fallback; their exact command lines, the fallback's records without
+  `./`, and a lister as plain arguments.
 -/
 
 namespace ModelTest
@@ -1116,6 +1125,7 @@ def checks : List Check :=
     workspaceGitChecks ++
     workspaceStateChecks ++
     workspaceChecks ++
+    workspaceListerChecks ++
     modeMarkerChecks ++
     shellChecks ++
     readOnlyChecks ++

@@ -47,6 +47,12 @@ It imports only the plain trees and the pure part of a child's environment
   config root that holds the directory), the git command lines and the
   reading of what they print (`Git`), and the order the marker adapter looks
   in (`markerPaths`, nearest directory first, then the markers in order).
+- **Which adapter found a workspace** is read from its branch
+  (`foundByGit`): only the git adapter gives one, so a local workspace with
+  a branch is one git found. A workspace does not record its adapter.
+- **Config's listers** (`DeclaredLister`, `Settings.listers`) are declared
+  for a root or for a project (`ListerScope`); which command lists a
+  workspace's files is chosen in `Editor/Workspace/Lister.lean`.
 - **Modes on markers** (`searchedFrom`, `markerSearchPaths`, `onModes`): a
   minor mode's markers (`MarkerMode`, a compile contribution's,
   `Editor/Compile/Contribution.lean`) are looked for from a file's
@@ -358,6 +364,42 @@ structure ConfigRoot where
   project : Option String := none
   deriving DecidableEq, Repr
 
+/-- What a lister config declares is for: one workspace root, or every
+workspace of a project. -/
+inductive ListerScope where
+  /-- The workspace whose root is `path`, an absolute path. -/
+  | root (path : System.FilePath)
+  /-- Every workspace of the project of `identity`. -/
+  | project (identity : Project.Identity)
+  deriving DecidableEq, Repr
+
+/-- `scope` for a person. -/
+def ListerScope.describe : ListerScope → String
+  | .root path => s!"the workspace root `{path}`"
+  | .project identity => s!"the project {identity.describe}"
+
+/-- `scope` with a root's trailing `/` dropped, so two declarations of one
+root are one scope. -/
+def ListerScope.trimmed : ListerScope → ListerScope
+  | .root path => .root (Process.trimmed path)
+  | .project identity => .project identity
+
+/-- A command config declares to list the files of a workspace root, or of
+every workspace of a project, in place of git's or the fallback's
+(`Editor/Workspace/Lister.lean`): run at the workspace's root, its standard
+output the root-relative paths, one a record. -/
+structure DeclaredLister where
+  /-- Which workspaces it lists. -/
+  scope : ListerScope
+  /-- The program: a bare name, looked up on the `PATH`, or an absolute
+  path. -/
+  program : String
+  /-- Its arguments. -/
+  arguments : Array String := #[]
+  /-- Whether its records end in a NUL rather than a line feed. -/
+  nul : Bool := false
+  deriving DecidableEq, Repr
+
 /-- The files whose presence makes a directory a workspace, in the order
 they are looked for. -/
 def defaultMarkers : Array String :=
@@ -401,7 +443,8 @@ def modesLocal : String :=
 
 /-- What the finder is handed: config's roots, the git it runs, and the
 marker files it looks for; and, for what opens a file, the minor modes that
-markers turn on, which the finder does not read. -/
+markers turn on, and, for what lists a workspace's files, config's listers,
+neither of which the finder reads. -/
 structure Settings where
   /-- The roots config declares. -/
   roots : Array ConfigRoot := #[]
@@ -413,6 +456,9 @@ structure Settings where
   /-- The minor modes markers turn on, in registration order: what the loop
   says of the registered compile contributions. -/
   markerModes : Array MarkerMode := #[]
+  /-- The listers config declares, in the order it declared them
+  (`Editor/Workspace/Lister.lean`). -/
+  listers : Array DeclaredLister := #[]
   deriving DecidableEq, Repr
 
 /-- What the finder answers for a directory: the workspace's root, its
@@ -605,6 +651,16 @@ directory and the origin identify the project. -/
 def Found.ofGit (answer : Git.Answer) (origin : Option String) : Found :=
   { root := answer.toplevel, branch := some answer.branch
     project := Project.of answer.toplevel (some answer.commonDir) origin none }
+
+/-- Whether git found `workspace`: it is on this machine and has a branch,
+named or detached. Only the git adapter gives a branch (`Found.ofGit`); the
+config adapter (`fromConfig?`) and the marker adapter (`Found.ofMarker`)
+give none, and a registered workspace is not local. An adapter that gives a
+branch without git, jj's, must change this rule with it. -/
+def foundByGit (workspace : Workspace) : Bool :=
+  match workspace.location, workspace.branch with
+  | .local _, some _ => true
+  | _, _ => false
 
 /-! ## The table -/
 
