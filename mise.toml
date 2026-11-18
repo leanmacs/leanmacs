@@ -288,6 +288,12 @@ run = [
   # before the bar and the `l` after it is text (`insert-word-delete/expected`).
   # It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/insert-word-delete/config ../tests/headless/insert-word-delete/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/insert-word-delete/expected -",
+  # Completion at point's auto popup (tests/headless/at-point), on the shared
+  # config: two characters typed in insert state, then `advance 240` on the
+  # headless mode's fake clock fires the pause of the shipped `words` source,
+  # whose session lists the words that match; `C-n` previews the first and
+  # `RET` accepts it (`at-point/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/at-point/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/at-point/expected -",
   # Display rules (tests/headless/display-rules): a config whose one rule
   # names the right edge the default layout lacks is installed with the
   # rule left out, and says so in its report's `rule:` line and in the

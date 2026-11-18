@@ -40153,6 +40153,95 @@ def atPointLoopChecks : List Check :=
               texts.all (contents closed · |>.isNone) &&
               !closed.loop.state.completionKeys.contains (Loop.sourceKey ⟨0⟩ "words") }]
 
+/-- The at-point source `dots` of the trigger checks: an empty region at
+the cursor, completed from the source `pick`, asked by itself when `.` is
+typed. -/
+def dotsAtPoint : Completion.AtPoint :=
+  {
+    Completion.AtPoint.fixed "dots" fun spot =>
+      some { start := spot.offset, stop := spot.offset, sources := [.source "pick"] } with
+    triggers := ['.'] }
+
+/-- The checks of what a key asks of completion at point (`Loop.atPointAsks`),
+pure: a trigger's command, the pause armed, kept or withdrawn. -/
+def atPointAskChecks : List Check :=
+  let paused : Completion.AtPoint := { Completion.AtPoint.silent "paused" with pause := some 100 }
+  let atPoints := [dotsAtPoint, paused, Completion.AtPoint.words]
+  [{  name :=
+        "a typed . with a trigger source hands back at-point-triggered with it, and a typed a none; a typed key with pause sources arms each distinct pause, and a chain with no pause keeps what is armed"
+      run :=
+        pure <|
+          match atPointDriver "|" #["dots", "paused", "words"] atPoints,
+            atPointDriver "|" #["dots"] atPoints with
+          | some driver, some noPause =>
+            let loop := driver.loop
+            let triggered := loop.atPointAsks driver.handed (some (⟨0⟩, some "x."))
+            let plain := loop.atPointAsks driver.handed (some (⟨0⟩, some "a"))
+            triggered ==
+                (#[{ command := AtPoint.triggeredName, arguments := [.str "."] }],
+                  .arm ⟨0⟩ #[100, 240]) &&
+              plain == (#[], .arm ⟨0⟩ #[100, 240]) &&
+              noPause.loop.atPointAsks noPause.handed (some (⟨0⟩, some "a")) == (#[], .keep) &&
+              (atPointDriver "|" #["paused", "paused"] atPoints).any fun once =>
+                once.loop.atPointAsks once.handed (some (⟨0⟩, some "a")) == (#[], .arm ⟨0⟩ #[100])
+          | _, _ => false },
+    { name :=
+        "a key that typed nothing withdraws what is armed, and keeps nothing armed as it is; no step key asks nothing; a key for an unfocused view, or with a prompt or a session open, asks nothing and withdraws"
+      run :=
+        pure <|
+          match atPointDriver "|" #["dots", "paused"] atPoints with
+          | none => false
+          | some driver =>
+            let loop := driver.loop
+            let armed := { loop with pausing := some { view := ⟨0⟩, pauses := #[100] } }
+            let session := { armed with state := { armed.state with atPoint := some stateSession } }
+            let (_, prompting) := prompted armed.state
+            armed.atPointAsks driver.handed (some (⟨0⟩, none)) == (#[], .disarm) &&
+              loop.atPointAsks driver.handed (some (⟨0⟩, none)) == (#[], .keep) &&
+              armed.atPointAsks driver.handed none == (#[], .keep) &&
+              armed.atPointAsks driver.handed (some (⟨5⟩, some ".")) == (#[], .disarm) &&
+              session.atPointAsks driver.handed (some (⟨0⟩, some ".")) == (#[], .disarm) &&
+              ({ armed with state := prompting }).atPointAsks driver.handed
+                  (some (⟨0⟩, some ".")) ==
+                (#[], .disarm) }]
+
+/-- The checks of completion at point asked by itself, through the loop on
+the evil driver over the models: a trigger, and a pause. -/
+def atPointByItselfChecks : List Check :=
+  [{  name :=
+        "a source that declares a trigger character opens a session when that character is typed, with nothing chosen, and no other character does"
+      run :=
+        pure <|
+          match atPointDriver "|" #["dots"] [dotsAtPoint] with
+          | none => false
+          | some driver =>
+            let typed := evilFed driver "i a x"
+            let dotted := evilFed typed "."
+            typed.loop.state.atPoint.isNone && !listShown typed &&
+              dotted.loop.state.atPoint.map (·.source) == some "dots" &&
+              sessionChosen dotted == none &&
+              listShown dotted &&
+              sessionRows dotted == #["wq", "w"] &&
+              evilText dotted == some "ax." },
+    { name :=
+        "typing a then b in insert state leaves the driver with one pause armed and no job; 239 ms open nothing, and one more opens a session of words, with nothing chosen; a move before the pause withdraws it, and nothing opens"
+      run :=
+        pure <|
+          match atPointDriver "alpha |" #["words"] [] with
+          | none => false
+          | some driver =>
+            let typed := evilFed driver "a a l"
+            let early := typed.pass 239
+            let due := early.pass 1
+            let moved := (evilFed typed "<ArrowLeft>").pass 240
+            typed.armed.size == 1 && typed.pending.isEmpty && typed.posting.isEmpty &&
+              early.loop.state.atPoint.isNone &&
+              due.loop.state.atPoint.map (·.source) == some "words" &&
+              sessionChosen due == none &&
+              due.armed.isEmpty &&
+              moved.armed.isEmpty &&
+              moved.loop.state.atPoint.isNone }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -40255,6 +40344,8 @@ def checks : List Check :=
     atPointChecks ++
     atPointRepeatChecks ++
     atPointLoopChecks ++
+    atPointAskChecks ++
+    atPointByItselfChecks ++
     fileCommandChecks ++
     openFilesChecks ++
     languageOpenChecks ++

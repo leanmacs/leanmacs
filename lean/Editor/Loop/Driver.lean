@@ -203,6 +203,12 @@ structure Loop.Driver (scheme : InputScheme) where
   (`Loop.Stepped.theme`), in order. The driver has no config session: a
   host feeds its reload reducer a choice for each. -/
   themes : Array String := #[]
+  /-- The driver's own reading of time for the pauses of completion at
+  point, in milliseconds: moved only by `pass`. -/
+  now : Nat := 0
+  /-- The pauses armed (`Loop.Stepped.pause`), each its view, its
+  milliseconds and the reading it is due at. -/
+  armed : Array (ViewId × Nat × Nat) := #[]
 
 namespace Loop.Driver
 
@@ -409,7 +415,12 @@ partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
             loop := stepped.loop, model
             stopped := driver.stopped || stepped.next == Loop.Next.stop
             reloads := driver.reloads + if stepped.reload then 1 else 0
-            themes := driver.themes ++ stepped.theme.toArray }).started
+            themes := driver.themes ++ stepped.theme.toArray
+            armed :=
+              match stepped.pause with
+              | .keep => driver.armed
+              | .arm view pauses => pauses.map fun ms => (view, ms, driver.now + ms)
+              | .disarm => #[] }).started
       stepped.starts
   let driver := driver.spawned stepped.spawns
   stepped.answered.foldl
@@ -486,6 +497,23 @@ def posted (driver : Loop.Driver scheme) (id : Nat) :
           job.id job.name job.key (job.resume ()) job.watches job.children,
         stepped.toOption)
     else (driver, stepped.toOption)
+
+/-- The driver once `ms` milliseconds have passed on its reading of time
+(`now`): each pause armed that is now due runs `at-point-paused` with its
+view and milliseconds, as a step of its own (`Loop.invoke`), as a host runs
+it when the pause's wait completes, in the order they were armed. -/
+def pass (driver : Loop.Driver scheme) (ms : Nat) : Loop.Driver scheme :=
+  let now := driver.now + ms
+  let due := driver.armed.filter (·.2.2 ≤ now)
+  let driver :=
+    { driver with
+      now, armed := driver.armed.filter (now < ·.2.2) }
+  due.foldl
+    (fun driver (view, ms, _) =>
+      (driver.stepped
+          (driver.loop.invoke driver.handed
+            { command := AtPoint.pausedName, arguments := [.nat view.index, .nat ms] })).1)
+    driver
 
 end Loop.Driver
 

@@ -1163,6 +1163,27 @@ structure Loop.Seen where
   present : Array BufferId := #[]
   deriving DecidableEq, Repr
 
+/-- What a step does to the pause of completion at point ("Completion at
+point", in the module docs), for its host to carry out on the job clock. -/
+inductive Loop.PauseChange where
+  /-- Leave what is armed as it is. -/
+  | keep
+  /-- Withdraw what is armed, and arm a pause of each of `pauses`
+  milliseconds for `view`. -/
+  | arm (view : ViewId) (pauses : Array Nat)
+  /-- Withdraw what is armed. -/
+  | disarm
+  deriving DecidableEq, Repr
+
+/-- The pauses the loop last asked its host to arm: the view, and each
+pause's milliseconds. -/
+structure Loop.Pausing where
+  /-- The view the pauses are for. -/
+  view : ViewId
+  /-- Each pause's milliseconds. -/
+  pauses : Array Nat
+  deriving DecidableEq, Repr
+
 /-- The loop's own state, for a loop that runs the input scheme `scheme`:
 the editor state, the snapshots the last scene named, and the scheme's
 state.
@@ -1192,6 +1213,9 @@ structure Loop (scheme : InputScheme) where
   with candidates was open; `none` otherwise ("Prompts", in the module
   docs). The reconciler of the prompt's jobs reads it (`completionJobs`). -/
   typed : Option String := none
+  /-- The pauses of completion at point the loop last asked its host to arm,
+  if any ("Completion at point", in the module docs). -/
+  pausing : Option Loop.Pausing := none
 
 /-- What the loop does after a step. -/
 inductive Loop.Next where
@@ -1375,6 +1399,14 @@ structure Loop.Stepped (scheme : InputScheme) where
   its key (`Loop.Spawn`): a prompt's match ("Prompts", in the module docs).
   A host runs them after the cancels and the starts. -/
   spawns : Array Loop.Spawn := #[]
+  /-- The view the step's key was for and the text it typed there, if it
+  typed some, for a step that took a key or a committed text that was
+  inserted; `none` for any other step ("Completion at point", in the module
+  docs). -/
+  key : Option (ViewId × Option String) := none
+  /-- What the host is to do with the pause of completion at point: what
+  `atPointAsks` said of the step's key, once its scene is published. -/
+  pause : Loop.PauseChange := .keep
 
 namespace EditorState
 
@@ -2496,22 +2528,33 @@ first key of the sequence. -/
 def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped scheme) := do
   let before := scheme.pending loop.input
   let (input, yielded) := scheme.step (keys.maps loop.state) loop.state.frame.focused loop.input key
+  let focused := loop.state.frame.focused
   let some invocation := yielded |
     return {
         loop :=
           { loop with
             input, atRest := if (scheme.pending input).isEmpty then input else loop.atRest }
-        next := .continue }
-  let ran ←
-    run keys loop.state invocation (before ++ [key.chord])
-        (scheme.report input loop.state.frame.focused)
+        next := .continue, key := some (focused, none) }
+  let ran ← run keys loop.state invocation (before ++ [key.chord]) (scheme.report input focused)
+  -- The key typed its text where typing was text before it and after it,
+  -- outside the minibuffer, and its command ran to its end.
+  let typed :=
+    if
+        ran.finished && (scheme.report loop.input focused).takesText &&
+          (scheme.report input focused).takesText &&
+          loop.state.minibufferView? != some focused then
+      key.printed?
+    else none
   if ran.finished then
-    return ({ loop with
-              input, atRest := input } :
-            Loop scheme).ranInto
-        ran
+    return {
+        ({ loop with
+                input, atRest := input } :
+              Loop scheme).ranInto
+          ran with
+        key := some (focused, typed) }
   else
-    return ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
+    return { ({ loop with input := loop.atRest } : Loop scheme).ranInto ran with
+        key := some (focused, none) }
 
 /-- What `state` shows the loop of itself, for the next publish to compare
 with ("Files that changed on disk", in the module docs). -/
@@ -2732,6 +2775,39 @@ def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
         state := { state.replaceCandidatesIn view candidates with completionKeys := wanted } },
       starts, cancels ++ unwanted.filter (!cancels.contains ·), spawns)
 
+/-- What a step's key asks of completion at point ("Completion at point",
+in the module docs), from `loop`, once its scene is published, pure: the
+invocations to run next and what to do with the pause. A key that typed
+`text` in the focused view, with no prompt and no session open, looks at the
+chain of its buffer's at-point sources: when the text's last character is a
+trigger of one of them, `at-point-triggered` with it is run next; when any
+declares a pause, a pause of each length is armed, replacing whatever was.
+A key that typed nothing, and any key while a prompt or a session is open,
+withdraws what is armed. A step that took no key leaves it. -/
+def atPointAsks (loop : Loop scheme) (keys : Keys scheme) (key : Option (ViewId × Option String)) :
+    Array Invocation × PauseChange :=
+  let withdraw := if loop.pausing.isSome then PauseChange.disarm else .keep
+  match key with
+  | none => (#[], .keep)
+  | some (view, typed) =>
+    let state := loop.state
+    if state.prompt.isSome || state.atPoint.isSome || state.frame.focused != view then
+      (#[], withdraw)
+    else
+      match typed, state.target? view with
+      | some text, some target =>
+        let sources :=
+          (keys.registered.atPointNames target.buffer.major target.buffer.minors).filterMap
+            keys.registered.atPoint
+        let trigger :=
+          text.toList.getLast?.filter fun char => sources.any (·.triggers.contains char)
+        let invocations : Array Invocation :=
+          trigger.toArray.map fun char =>
+            { command := AtPoint.triggeredName, arguments := [.str char.toString] }
+        let pauses := (sources.filterMap (·.pause)).toList.eraseDups.toArray
+        (invocations, if pauses.isEmpty then .keep else .arm view pauses)
+      | _, _ => (#[], withdraw)
+
 /-- `loop` with the menu bar `keys` names (`Keys.menu`) as the one its
 scenes name: how a step, an invocation and a delivery start, so that a
 reload's bindings move the menu's shortcuts from the next one. -/
@@ -2756,9 +2832,19 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
         keys.inlineMatches keys.displaying
   let (loop, starts, cancels) := loop.fileJobs keys
   let (loop, sourceStarts, sourceCancels, spawns) := loop.completionJobs keys
+  -- What the key asks of completion at point, from the state the scene
+  -- shows: a trigger's command to run next, and the pause.
+  let (asked, pause) := loop.atPointAsks keys stepped.key
+  let pausing :=
+    match pause with
+    | .keep => loop.pausing
+    | .arm view pauses => some { view, pauses }
+    | .disarm => none
+  let loop := { loop with pausing }
   return { stepped with
       loop, next := nextOf loop, starts := stepped.starts ++ starts ++ sourceStarts
-      cancels := stepped.cancels ++ cancels ++ sourceCancels, spawns := stepped.spawns ++ spawns }
+      cancels := stepped.cancels ++ cancels ++ sourceCancels, spawns := stepped.spawns ++ spawns
+      answered := stepped.answered ++ asked, pause }
 
 /-- Hands the answer `invocation` carries, its first argument, to the input
 scheme, for the focused view (`InputScheme.answered`), and runs the
@@ -2885,7 +2971,8 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
     ({        loop :=
                 { loop with
                   state, input := told loop.input, atRest := told loop.atRest }
-              next := .continue } : Stepped scheme).published keys
+              next := .continue, key := typed.map fun text => (focused, some text) } :
+            Stepped scheme).published keys
 
 /-- Lowers the interrupt flag for an event taken off the queue when the
 library marked it as a press of the interrupt key (`interrupt`), and for no

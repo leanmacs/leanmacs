@@ -513,7 +513,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
   let clock ← Job.FakeClock.new completions
   let watches ← Job.FakeFileWatches.new completions { directories := #["/watched"] }
   let published ← Snapshots.new
-  let requests ← context.ids.modifyGet fun next => (next, next + 5)
+  let requests ← context.ids.modifyGet fun next => (next, next + 6)
   return {
       collaborators :=
         { elaborator, source,
@@ -525,7 +525,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
               snapshots := Job.realSnapshots published.reader }
           published, held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
           jobs := requests + 2, environment := requests + 3
-          posts := requests + 4
+          posts := requests + 4, pauseEvents := requests + 5
           commands := compiled.commands, compiledJobs := compiled.jobs,
           bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
           themes := compiled.themes, languages := compiled.languages, sources := compiled.sources,
@@ -1432,7 +1432,8 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
       { shipped with
         elaborator := context.elaborator, source, requests := staged.requests
         wakeups := staged.wakeups, jobs := staged.jobs, environment := staged.environment
-        log := staged.log, syntaxTree, clock := staged.clock }
+        posts := staged.posts, pauseEvents := staged.pauseEvents, log := staged.log, syntaxTree
+        clock := staged.clock }
     let host ← Headless.start collaborators
     try
       let held ←
@@ -6000,6 +6001,20 @@ def otherBufferChunk : String :=
   bindKey \"C-c o\" \"make-other\"
 "
 
+/-- A chunk whose `setup` defines the source `members`, of the category
+`member`, listing `field` and `method`; the at-point source `dots`, an empty
+region at the cursor completed from `members`, asked by itself when `.` is
+typed; and uses `dots` in every buffer. -/
+def dotsChunk : String :=
+  "def setup : SetupM Unit := do
+  defineSource (Completion.Source.ofTexts \"members\" \"member\" #[\"field\", \"method\"])
+  defineAtPoint
+    { name := \"dots\", triggers := ['.']
+      ask := fun spot =>
+        pure (some { start := spot.offset, stop := spot.offset, sources := [.source \"members\"] }) }
+  useAtPoint \"dots\"
+"
+
 /-- Whether no decoration line of `lines` draws a row in the face of a
 chosen candidate: nothing is chosen in the candidate list. -/
 def noneChosen (lines : Array String) : Bool :=
@@ -6038,7 +6053,98 @@ def atPointChecks (context : Context) : List Check :=
               listHeight > 0 &&
               (lines.filter (·.startsWith "view ")).size == 2 &&
               output.any (fun line => line.startsWith "job " && line.endsWith " words: started") &&
-              !output.any (·.startsWith "loop: refused") }]
+              !output.any (·.startsWith "loop: refused") },
+    { name :=
+        "a source that declares a trigger character opens a session when that character is typed, and no other character does"
+      run :=
+        withVimHost context [("10-dots.lean", dotsChunk)] fun session => do
+          session.ask [.reload]
+          session.host.resize 640 480
+          session.typed "i a x"
+          let before ← session.sceneLines
+          session.typed "."
+          let dotted ← session.sceneLines
+          session.typed "<Escape>"
+          let closed ← session.sceneLines
+          let rows ← realOrder "" #["field", "method"]
+          return (listViewId before).isNone && listViewShows dotted rows && noneChosen dotted &&
+              rows.length == 2 &&
+              (listViewId closed).isNone },
+    { name :=
+        "pausing after typing two characters of a word opens a session of the words source, with nothing chosen"
+      run := do
+        let first ←
+          withVimHost context [] fun session => do
+              session.ask [.reload]
+              session.host.resize 640 480
+              session.typed "i"
+              session.host.commit "alpha alpine"
+              session.typed "RET a l"
+              let armed ← session.clock.waiting
+              let before ← session.sceneLines
+              let started := (← session.lines).filter (·.startsWith "job ")
+              session.clock.advance 240
+              unless (← session.host.join patience) == .settled do
+                return false
+              let lines ← session.sceneLines
+              let rows ←
+                realOrder "al"
+                    (Completion.Words.ordered #["alpha alpine\nal"]
+                      (some { start := 13, stop := 15 }))
+              return armed == 1 && started.isEmpty && (listViewId before).isNone &&
+                  rows.length == 2 &&
+                  listViewShows lines rows &&
+                  noneChosen lines
+        let second ←
+          withVimHost context [] fun session => do
+              session.ask [.reload]
+              session.host.resize 640 480
+              session.typed "i"
+              session.host.commit "beta"
+              session.typed "RET a"
+              session.clock.advance 240
+              unless (← session.host.join patience) == .settled do
+                return false
+              return (listViewId (← session.sceneLines)).isNone
+        return first && second },
+    { name :=
+        "a typed key in insert state arms one pause wait and starts no job: after i a b the clock holds one wait and has withdrawn one, the table of waits holds one, no job line is printed, and a join returns at once"
+      run :=
+        withVimHost context [] fun session => do
+          session.ask [.reload]
+          session.typed "i a b"
+          let waiting ← session.clock.waiting
+          let withdrawn := (← session.clock.withdrawn).size
+          session.typed "c d e"
+          let afterMore ← session.clock.waiting
+          let withdrawnMore := (← session.clock.withdrawn).size
+          let joined ← session.host.join patience
+          let jobLines := (← session.lines).filter (·.startsWith "job ")
+          let table ← session.clock.completions.waiting
+          return waiting == 1 && withdrawn == 1 && afterMore == 1 && withdrawnMore == 4 &&
+              table == 1 &&
+              joined == .settled &&
+              jobLines.isEmpty },
+    { name :=
+        "the pause's event is queued before the clock's move returns: advance then join, five times over, each time finds the session the pause opened listed"
+      run :=
+        withVimHost context [] fun session => do
+          session.ask [.reload]
+          session.host.resize 640 480
+          session.typed "i"
+          session.host.commit "alpha alpine"
+          let mut held := true
+          for _ in [0:5] do
+            session.typed "RET a l"
+            -- No settle between the move and the join: the join's marker
+            -- must find the pause's event ahead of it.
+            session.clock.advance 240
+            unless (← session.host.join patience) == .settled do
+              return false
+            let lines ← session.sceneLines
+            held := held && (listViewId lines).isSome
+            session.typed "C-g"
+          return held }]
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
@@ -6151,7 +6257,7 @@ def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
         { elaborator, source := { chunks := chunks.get }, emit,
           services := { completions, timers := clock.timers }, published := ← Snapshots.new,
           held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3, environment := 4,
-          posts := 5 }
+          posts := 5, pauseEvents := 6 }
   return { host, chunks, reported, others }
 
 /-- Makes `config` the source's chunks, asks for a reload, and returns the
@@ -6425,14 +6531,15 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   -- cancels its jobs, and the row is over when every pool thread is free.
   let row (job : String) (count : Nat) (going : IO Unit) : IO (Array Nat × Nat × Nat) := do
     -- Hosts follow one another on one queue: each has source ids of its own.
-    let requests ← ids.modifyGet fun next => (next, next + 5)
+    let requests ← ids.modifyGet fun next => (next, next + 6)
     reloads.set #[]
     let host ←
       Headless.start (scheme := TestScheme.scheme)
           { elaborator, source := { chunks := pure jobsConfig }, emit,
             services := { completions, timers := counted }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
-            jobs := requests + 2, environment := requests + 3, posts := requests + 4 }
+            jobs := requests + 2, environment := requests + 3, posts := requests + 4
+            pauseEvents := requests + 5 }
     try
       host.send .reload
       unless ← host.settle patience do
@@ -6588,13 +6695,14 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   -- latency and, when `listing`, each listing's.
   let row (count inline : Nat) (listing : Bool) (joined : Bool := true) :
     IO (Array Nat × Array Nat) := do
-    let requests ← ids.modifyGet fun next => (next, next + 5)
+    let requests ← ids.modifyGet fun next => (next, next + 6)
     let host ←
       Headless.start (scheme := TestScheme.scheme)
           { elaborator, source := { chunks := pure #[] }, emit,
             services := { completions, timers, fuzzy := Fuzzy.real }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
             jobs := requests + 2, environment := requests + 3, posts := requests + 4,
+            pauseEvents := requests + 5,
             commands :=
               (Minibuffer.commands.push (askingMany count)).push
                 { name := "noop", action := .plain (pure ()) }

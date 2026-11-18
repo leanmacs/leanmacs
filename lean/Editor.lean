@@ -1,8 +1,10 @@
 import Editor.Api.Theorems
+import Editor.AtPoint
 import Editor.Buffers
 import Editor.Command.Append
 import Editor.Compile
 import Editor.Compile.Shipped
+import Editor.Completion.Words
 import Editor.Evil.Clipboard
 import Editor.Evil.Operators
 import Editor.Evil.Repeat

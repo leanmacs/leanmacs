@@ -812,6 +812,9 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   as its code: the post itself waits in the host's mailbox
   (`Running.mailbox`). -/
   posts : UInt64
+  /-- The Lean source id a pause of completion at point that fired is posted
+  under, with its wait's id as its code (`Running.pause`). -/
+  pauseEvents : UInt64
   /-- The compiled commands: registered for the owner `compiled` when the
   loop starts, before any config. -/
   commands : Array Config.Registration := #[]
@@ -1080,6 +1083,9 @@ structure Running (σ : Type) (scheme : InputScheme) where
   /-- The posts the jobs made that the editor thread has not run, each with
   its job's id. -/
   mailbox : Job.Mailbox
+  /-- The pauses of completion at point armed on the job clock, each its
+  wait's id, its view and its milliseconds (`pause`). -/
+  pauses : Array (UInt64 × ViewId × Nat) := #[]
 
 namespace Running
 
@@ -1229,6 +1235,51 @@ def launch (collaborators : Collaborators σ scheme) (running : Running σ schem
     collaborators.emit s!"job {id} {spawn.label}: started"
     running := { started with keyed := started.keyed.push (spawn.key, id) }
   return running
+
+/-- Withdraws every pause of completion at point armed: its wait is
+withdrawn from the clock and ended as cancelled in the table of waits, as a
+job's cancel ends its wait, so the task that awaits it ends and posts
+nothing. -/
+def withdrawPauses (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
+    BaseIO (Running σ scheme) := do
+  for (id, _, _) in running.pauses do
+    collaborators.services.timers.cancel id
+    collaborators.services.completions.finish id .cancelled
+  return { running with pauses := #[] }
+
+/-- Carries out what a step said of the pause of completion at point
+(`Loop.Stepped.pause`, "Completion at point" in `Editor/Loop.lean`): to keep
+it, nothing; to disarm it, every pause armed is withdrawn
+(`withdrawPauses`); to arm it, those are withdrawn, and a wait is started on
+the job clock for each pause, due that many milliseconds from now. When a
+wait completes, the clock's own completion posts an event to the editor
+queue under `pauseEvents`, with the wait's id as its code, synchronously,
+before the clock's move returns, so a driver's `join` after an `advance`
+finds it queued; a wait withdrawn posts nothing. -/
+def pause (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+    (change : Loop.PauseChange) : BaseIO (Running σ scheme) := do
+  match change with
+  | .keep =>
+    return running
+  | .disarm =>
+    running.withdrawPauses collaborators
+  | .arm view pauses =>
+    let running ← running.withdrawPauses collaborators
+    let services := collaborators.services
+    let now ← services.timers.now
+    let mut held := #[]
+    for ms in pauses do
+      let (id, wait) ← services.completions.register
+      let fired (completion : Option Job.Completion) : BaseIO Unit :=
+        if completion == some .completed then
+          (discard <| Ffi.postEvent .editor collaborators.pauseEvents id "" :
+                IO Unit).catchExceptions
+            fun _ => pure ()
+        else pure ()
+      discard <| BaseIO.mapTask fired wait.result? (sync := true)
+      services.timers.start id (now + ms)
+      held := held.push (id, view, ms)
+    return { running with pauses := held }
 
 /-- Starts the job registered under `name`, with no arguments, as the driver
 asks, and prints its id. -/
@@ -1412,6 +1463,7 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
             config := running.config.written stepped.write
             stopped := running.stopped || stepped.next == Loop.Next.stop }).launch
         collaborators stepped.starts stepped.cancels stepped.spawns
+  running ← running.pause collaborators stepped.pause
   if stepped.reload then
     -- What the driver's `reload` request does: one job at a time.
     running ← running.reduce collaborators .requested
@@ -1539,6 +1591,24 @@ def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme
   | .cancelled =>
     collaborators.emit s!"{label}: cancelled"
     return running
+
+/-- Deals with the pause of completion at point whose wait `id` fired, on the
+editor thread: when it is still armed, it is no longer, and the loop runs
+`at-point-paused` with its view and milliseconds (`Loop.invoke`), as it
+runs a prompt's answered continuation, printing nothing. A pause withdrawn
+since its wait completed is passed over. -/
+def paused (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : UInt64) :
+    IO (Running σ scheme) := do
+  let some (_, view, ms) := running.pauses.find? (·.1 == id) | return running
+  let running := { running with pauses := running.pauses.filter (·.1 != id) }
+  let (made, running) ← running.framed collaborators
+  let some frame := made | return running
+  let (stepped, running) ←
+    running.attempt collaborators
+        (frame.invoke (running.keys collaborators)
+          { command := AtPoint.pausedName, arguments := [.nat view.index, .nat ms] })
+  let some stepped := stepped | return running
+  running.took collaborators stepped
 
 /-- Deals with a post of the job `id`, on the editor thread: takes the job's
 oldest post out of the mailbox and, while the job is in the table, has the
@@ -1712,6 +1782,8 @@ def other (collaborators : Collaborators σ scheme) (running : Running σ scheme
       return ← running.ended collaborators event.code.toNat
     if event.source.id == collaborators.posts then
       return ← running.posted collaborators event.code.toNat
+    if event.source.id == collaborators.pauseEvents then
+      return ← running.paused collaborators event.code
     if event.source.id == collaborators.environment then
       return running.said event.text
     unless event.source.id == collaborators.requests do
@@ -1846,8 +1918,10 @@ def loop {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ sc
     progress.set
         { markers := running.markers, reloading := running.config.running,
           jobs := running.jobs.running, titleBar := running.config.titleBar }
-  -- Nothing will deal with a result any more: no job runs on unowned.
+  -- Nothing will deal with a result any more: no job runs on unowned, and
+  -- no pause waits.
   running.jobs.cancelAll
+  discard <| running.withdrawPauses collaborators
   -- Nor will anything take a key off the queue, so none is to raise the flag.
   discard <| Event.setInterruptKey none
 
@@ -2415,7 +2489,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     Collaborators Config.Elaborate.State Vim.Default.scheme :=
   { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
     source := Config.Directory.source configDir, emit, services, published, held, requests := 1,
-    wakeups := 2, jobs := 3, environment := 4, posts := 5
+    wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
     commands :=
       Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++ Buffers.commands ++
         FrameCommands.commands ++
