@@ -342,7 +342,7 @@ impl FileResult {
     ///
     /// The matches on `editor-text`'s [`LoadError`], [`SaveError`] and [`ListError`] are
     /// exhaustive on purpose. This crate must act on every variant of
-    /// both: a refusal with no status and no words of its own would not
+    /// all three: a refusal with no status and no words of its own would not
     /// reach Lean as what it is, so a new variant has to be given its row
     /// of the table here before the crate builds.
     pub fn encoded(&self) -> Encoded {
