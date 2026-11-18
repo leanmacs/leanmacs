@@ -247,10 +247,7 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
       display := hostDisplay display platform
       clipboard := pure clipboard
       workingDirectory
-      home :=
-        match processes with
-        | .window home => home
-        | _ => none }
+      home := processes.home }
   display.present
   let host ← Headless.start collaborators
   for start in options.starts plan said do

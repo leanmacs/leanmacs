@@ -113,6 +113,13 @@ def Setting.resolveNow : Setting → Host → Option Lookup
   | .auto, .window _ => none
   | .auto, .headless => some .inherited
 
+/-- The user's home directory the host knows, which the editor state is given
+(`Headless.Collaborators.home`): the window mode's, if `HOME` names one,
+and none in the headless mode, which reads nothing from the environment. -/
+def Host.home : Host → Option System.FilePath
+  | .window home => home
+  | .headless => none
+
 /-- The candidates a setting that does not resolve at once picks from. -/
 def Host.candidates : Host → Array System.FilePath
   | .window home => miseCandidates home

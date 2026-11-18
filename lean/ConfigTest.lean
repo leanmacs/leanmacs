@@ -1434,7 +1434,8 @@ syntax service, which after an attach, and before a question of a text's
 captures, waits, with a bound, for the text's tree to be delivered. Stops the host; `false` if the check did not
 hold or the host did not stop. The directory is removed. -/
 def withVimHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
-    (fileModel : Option FileModel := none) (realFiles : Bool := false) : IO Bool :=
+    (fileModel : Option FileModel := none) (realFiles : Bool := false)
+    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeFiles directory files
     let source := Config.Directory.source directory
@@ -1474,7 +1475,7 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
         elaborator := context.elaborator, source, requests := staged.requests
         wakeups := staged.wakeups, jobs := staged.jobs, environment := staged.environment
         posts := staged.posts, pauseEvents := staged.pauseEvents, log := staged.log, syntaxTree
-        clock := staged.clock }
+        clock := staged.clock, workingDirectory, home }
     let host ← Headless.start collaborators
     try
       let held ←
@@ -6362,6 +6363,35 @@ def filePromptChecks (context : Context) : List Check :=
                     (fun line =>
                       line.startsWith "job " && line.endsWith s!" {Files.loadJob}: ok") &&
                   !output.any (·.startsWith "loop: refused") },
+    { name :=
+        "the host's home reaches the editor, on real files: started with a temporary directory as its home and its notes/ as its working directory, open-file asks with ~/notes/ and lists todo.md, and ~/alpha.txt RET opens the home's alpha.txt"
+      run :=
+        IO.FS.withTempDir fun home => do
+          IO.FS.writeFile (home / "alpha.txt") "alpha\n"
+          IO.FS.createDir (home / "notes")
+          IO.FS.writeFile (home / "notes" / "todo.md") "todo\n"
+          withVimHost context [] (realFiles := true) (workingDirectory := home / "notes") (home :=
+              some home) fun session => do
+              session.ask [.run Files.openName]
+              unless (← session.host.join patience) == .settled do
+                return false
+              let asked ← session.sceneLines
+              session.typed "C-u"
+              unless ← Event.post (.commit "~/alpha.txt") do
+                return false
+              unless (← session.host.join patience) == .settled do
+                return false
+              session.typed "RET"
+              unless (← session.host.join patience) == .settled do
+                return false
+              let lines ← session.sceneLines
+              return minibufferHolds asked "~/notes/" && listLabels asked == ["todo.md"] &&
+                  lines.any (fun line => line.startsWith s!"view 0 0,0 0x0: {"alpha\n".quote}") &&
+                  lines.any
+                    (fun line =>
+                      line.startsWith "status 0: " &&
+                        (line.splitOn s!"mode-line.buffer {"alpha.txt".quote}").length > 1) &&
+                  !(← session.output.get).any (·.startsWith "loop: refused") },
     { name :=
         "AC 6 over the recorder: committing w/locked/ says files: cannot list /w/locked/: the file system does not allow it in the echo area and lists nothing; RET then says the load's refusal, and no prompt is left open"
       run :=

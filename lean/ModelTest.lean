@@ -35525,6 +35525,13 @@ lookup's variables and a command's own environment combine, the config files
 whose stamps keep an entry, the shared state's answers and the messages. -/
 def processEnvironmentChecks : List Check :=
   [{  name :=
+        "a host's home directory is the window mode's, the one HOME names, and none with no HOME and in the headless mode"
+      run :=
+        pure
+          (Process.Host.home (.window (some "/u")) == some "/u" &&
+            Process.Host.home (.window none) == none &&
+            Process.Host.home .headless == none) },
+    { name :=
         "parseVariables reads mise's layout, a multi-line object with a PATH of 400 characters"
       run :=
         pure

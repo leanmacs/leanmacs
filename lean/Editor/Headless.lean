@@ -922,7 +922,8 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   workingDirectory : System.FilePath := "/"
   /-- The home directory, which `start` writes into the editor state
   (`EditorState.home`): what `~` names in a typed path. The window mode's
-  is `HOME`, read at the edge; the headless mode reads nothing from the
+  is `HOME`, read at the edge (`Process.Host.home`, which `Window.host`
+  hands here); the headless mode reads nothing from the
   environment, so its is none, and a `~` there says the home is not known. -/
   home : Option System.FilePath := none
   /-- How the host makes its display, over the read half of the table of
