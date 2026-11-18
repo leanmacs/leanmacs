@@ -332,7 +332,7 @@ def outcomeOf (order : ListOrder) (read : ByteArray → Except String (Array Nam
 module docs). -/
 def listed (order : ListOrder) (stamps : Array (Option File.Stamp))
     (ran : Except ProcessError Process.Ran) : EditorM Unit := do
-  let hook ← EditorState.ask .compileHook
+  let hook ← RegistryRequest.ask .compileHook
   let some contribution := hook.contributions.find? (·.mode == order.mode) | return
   let some listing := contribution.listing | return
   let entry : Listing.Entry :=
@@ -358,8 +358,8 @@ def listWork (arguments : List Argument) : Work := fun _ => do
 /-- Checks the listing of each of the on-modes `modes` in `place` ("A
 check", in the module docs). -/
 def refreshListings (place : Option Location) (modes : Array Workspace.OnMode) : EditorM Unit := do
-  let hook ← EditorState.ask .compileHook
-  let (_, generation) ← EditorState.ask .workspaceSettings
+  let hook ← RegistryRequest.ask .compileHook
+  let (_, generation) ← RegistryRequest.ask .workspaceSettings
   let entries := entriesOf (← editorState) place
   for on in modes do
     let some contribution := hook.contributions.find? (·.mode == on.mode) | continue

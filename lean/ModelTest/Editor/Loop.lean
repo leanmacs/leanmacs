@@ -1670,7 +1670,7 @@ def dispatchStateChecks : List Check :=
         let program : EditorM (Guarded (Array DisplayRule) × EditorState × EditorState) := do
           let state ← twoBuffers
           let (ended, after) ←
-            (EditorState.ask .displayRules).dispatched { displayRules := rules } state
+            (RegistryRequest.ask .displayRules).dispatched { displayRules := rules } state
           return (ended, after, state)
         pure <|
           match (program.runModel editorModel).1 with

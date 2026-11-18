@@ -640,10 +640,6 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       let (reply, state) := state.handle (.startJob name arguments key)
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchJob name)))
-  | state, .step (.state (.ex name)) next => dispatched registered state (next (registered.ex name))
-  | state, .step (.state .exNames) next => dispatched registered state (next registered.exNames)
-  | state, .step (.state .themeNames) next =>
-    dispatched registered state (next registered.themeNames)
   | state, .step (.state (.loadTheme name)) next =>
     if registered.themeNames.contains name then
       let (reply, state) := state.handle (.loadTheme name)
@@ -651,20 +647,11 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     else dispatched registered state (next (.error (.noSuchTheme name)))
   | state, .step (.state .autoReloadMode) next =>
     dispatched registered state (next (state.autoReload.getD registered.autoReload))
-  | state, .step (.state .shellTimeLimit) next =>
-    dispatched registered state (next registered.shellTimeLimit)
-  | state, .step (.state .syntaxRefreshDelay) next =>
-    dispatched registered state (next registered.syntaxRefreshDelay)
   | state, .step (.state (.languageOf path)) next =>
     dispatched registered state (next ((Language.forPath registered.languages path).map (·.name)))
   | state, .step (.state (.indentUnitOf name)) next =>
     dispatched registered state
       (next ((registered.languages.find? (·.name == name)).map (·.indentUnit)))
-  | state, .step (.state .workspaceSettings) next =>
-    dispatched registered state (next (registered.workspaceSettings, registered.generation))
-  | state, .step (.state .compileHook) next => dispatched registered state (next registered.compile)
-  | state, .step (.state .displayRules) next =>
-    dispatched registered state (next registered.displayRules)
   | state, .step (.state (.runCommand name call)) next =>
     match registered.command name with
     | none => dispatched registered state (next false)

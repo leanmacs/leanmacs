@@ -559,13 +559,13 @@ def remember (scope : Scope) (line : String) : EditorM Unit := do
 docs); none when it gives none. -/
 def projectSettings (identity : Project.Identity) (mode : String) :
     EditorM (List (String × Value)) := do
-  return (← EditorState.ask .compileHook).settingsOf identity mode
+  return (← RegistryRequest.ask .compileHook).settingsOf identity mode
 
 /-- The commands the on-modes `modes` offer in `scope` ("The hook", in the
 module docs): the hook asked of the loop, with the commands the scope's
 listings last gave and, for a workspace scope, its project's commands. -/
 def hookOffers (scope : Scope) (modes : Array Workspace.OnMode) : EditorM (Array Offer) := do
-  let hook ← EditorState.ask .compileHook
+  let hook ← RegistryRequest.ask .compileHook
   let projects :=
     match scope with
     | .workspace _ project => hook.projectsOf project.identity
@@ -1047,7 +1047,7 @@ read with the run's modes' formats, then the general one (`formatsOf`). -/
 def noteSites (record : Record) (id : BufferId) (start : Nat × Nat) (lines : Array String) :
     EditorM Record := do
   let state ← editorState
-  let hook ← EditorState.ask .compileHook
+  let hook ← RegistryRequest.ask .compileHook
   let directory : System.FilePath := (record.last.map (·.2)).getD state.workingDirectory
   -- The row before the first appended one, when it is output and not the
   -- header line (row 0), may be a lead.

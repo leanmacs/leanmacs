@@ -160,7 +160,7 @@ def showCommand (call : Call) : EditorM Unit := do
   let some path :=
     path? | message s!"{showName}: {call.target.buffer.name} has no file in {workspace.label}"
   let order : ShowOrder :=
-    { root, git := (← EditorState.ask .workspaceSettings).1.git, revision, path
+    { root, git := (← RegistryRequest.ask .workspaceSettings).1.git, revision, path
       view := call.target.window.id }
   if let .error refusal← startJob showJob order.arguments (key := some order.key) then
     message s!"{showName}: {refusal.describe}"

@@ -867,18 +867,18 @@ def cancelJob (key : String) : EditorM Unit :=
 runs, and what the name takes (`Ex.Binding`, `Editor/Ex/Line.lean`). `none`
 for a name nobody bound, and where no loop runs the command. -/
 def exBinding (name : String) : EditorM (Option Ex.Binding) :=
-  EditorState.ask (.ex name)
+  RegistryRequest.ask (.ex name)
 
 /-- The ex names that are bound, each once, in the order they were first
 bound. None where no loop runs the command. -/
 def exNames : EditorM (Array String) :=
-  EditorState.ask .exNames
+  RegistryRequest.ask .exNames
 
 /-- The names themes are registered under, each once, in the order they
 were first registered ("Themes", in the module docs). None where no loop
 runs the command. -/
 def themeNames : EditorM (Array String) :=
-  EditorState.ask .themeNames
+  RegistryRequest.ask .themeNames
 
 /-- Asks for the theme registered under `name` to be the theme in force,
 once this command has run to its end ("Themes", in the module docs).
@@ -2023,7 +2023,7 @@ def BufferId.display (buffer : BufferId) (asking : ViewId) (opener : String)
     if state.minibufferBuffer? == some buffer then
       return .error (.ofMinibuffer minibuffer)
   let some shown := state.buffer? buffer | return .error (.noSuchBuffer buffer)
-  let rules ← EditorState.ask .displayRules
+  let rules ← RegistryRequest.ask .displayRules
   let (decided, focus) := state.displaying rules buffer asking opener focus
   let placed : Except LayoutRefusal ViewId ←
     match decided with

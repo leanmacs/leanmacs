@@ -555,7 +555,7 @@ def applyWork (arguments : List Argument) : Work := fun _ => do
 
 /-- The git program config's workspace settings name. -/
 def gitProgram : EditorM String := do
-  return (← EditorState.ask .workspaceSettings).1.git
+  return (← RegistryRequest.ask .workspaceSettings).1.git
 
 /-- The read the command `name` asks of the focused buffer's workspace, shown:
 `none`, said, when the buffer has no workspace or its location cannot run

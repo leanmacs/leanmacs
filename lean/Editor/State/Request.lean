@@ -416,12 +416,6 @@ inductive StateRequest where
   | retype (view : ViewId) (text : String)
   /-- Have the window `view` keep `wanted` as its wanted column, or none. -/
   | setWanted (view : ViewId) (wanted : Option Window.Wanted)
-  /-- Which command the ex name `name` is bound to, and what it takes. -/
-  | ex (name : String)
-  /-- Which ex names are bound. -/
-  | exNames
-  /-- Which names themes are registered under. -/
-  | themeNames
   /-- Have the theme called `name` loaded once this command has run to its
   end. -/
   | loadTheme (name : String)
@@ -471,22 +465,9 @@ inductive StateRequest where
   | setWorkspaceValue (location : Location) (name : String) (value : Value)
   /-- Have the project of `identity` keep `value` under `name`. -/
   | setProjectValue (identity : Project.Identity) (name : String) (value : Value)
-  /-- What the finder is to be handed, config's roots among it, and the
-  config generation, which the loop that runs the command answers with. -/
-  | workspaceSettings
-  /-- Config's display rules, in order, which the loop that runs the
-  command answers with. -/
-  | displayRules
   /-- Have the unscoped store, of the buffers outside any workspace, keep
   `value` under `name`. -/
   | setUnscopedValue (name : String) (value : Value)
-  /-- How long a `:!` or a filter may run, in milliseconds, as config set
-  it, which the loop that runs the command answers with. -/
-  | shellTimeLimit
-  /-- How long a text goes unchanged after an edit before it is parsed
-  whole again, in milliseconds, as config set it, which the loop that runs
-  the command answers with. -/
-  | syntaxRefreshDelay
   /-- Record `name` as the language of the buffer `id`, or that it has
   none. -/
   | setLanguage (id : BufferId) (name : Option String)
@@ -496,9 +477,6 @@ inductive StateRequest where
   /-- The indent unit of the language called `language`, which the loop
   that runs the command answers from its table. -/
   | indentUnitOf (language : String)
-  /-- The compile contributions, in registration order, and config's
-  project commands, which the loop that runs the command answers with. -/
-  | compileHook
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -556,9 +534,6 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .retakeAtPoint _ => Except AtPointRefusal Unit
   | .retype .. => Unit
   | .setWanted .. => Except LayoutRefusal Unit
-  | .ex _ => Option Ex.Binding
-  | .exNames => Array String
-  | .themeNames => Array String
   | .loadTheme _ => Except ThemeRefusal Unit
   | .invoke _ => Unit
   | .runCommand .. => Bool
@@ -577,15 +552,10 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .registerWorkspace .. => Except WorkspaceRefusal Unit
   | .setWorkspaceValue .. => Except WorkspaceRefusal Unit
   | .setProjectValue .. => Except WorkspaceRefusal Unit
-  | .workspaceSettings => Workspace.Settings × Nat
-  | .displayRules => Array DisplayRule
   | .setUnscopedValue .. => Unit
-  | .shellTimeLimit => Option Nat
-  | .syntaxRefreshDelay => Option Nat
   | .setLanguage .. => Except BufferRefusal Unit
   | .languageOf _ => Option String
   | .indentUnitOf _ => Option Language.IndentUnit
-  | .compileHook => Compile.Hook
 
 namespace EditorState
 
@@ -689,9 +659,6 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .retakeAtPoint text, state => state.retakeAtPoint text
   | .retype view text, state => ((), state.retype view text)
   | .setWanted view wanted, state => state.setWanted view wanted
-  | .ex _, state => (none, state)
-  | .exNames, state => (#[], state)
-  | .themeNames, state => (#[], state)
   | .loadTheme name, state => (.ok (), { state with outbox.theme := some name })
   | .invoke invocation, state =>
     ((), { state with outbox.answered := state.outbox.answered.push invocation })
@@ -713,28 +680,14 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
     state.registerWorkspace location remote branch
   | .setWorkspaceValue location name value, state => state.setWorkspaceValue location name value
   | .setProjectValue identity name value, state => state.setProjectValue identity name value
-  -- Config's roots and its generation are the loop's to answer with
-  -- (`Program.dispatched`): here, with no loop, config has none.
-  | .workspaceSettings, state => (({}, 0), state)
-  -- Config's rules are the loop's to answer with (`Program.dispatched`):
-  -- here, with no loop, config has none.
-  | .displayRules, state => (#[], state)
   | .setUnscopedValue name value, state =>
     ((), { state with workspaces := state.workspaces.setUnscopedValue name value })
-  -- Config's limit is the loop's to answer with (`Program.dispatched`):
-  -- here, with no loop, config set none.
-  | .shellTimeLimit, state => (none, state)
-  -- So is config's syntax refresh delay.
-  | .syntaxRefreshDelay, state => (none, state)
   | .setLanguage id name, state => state.setLanguage id name
   -- The language table is the loop's to answer from (`Program.dispatched`):
   -- here, with no registry, no path has a language.
   | .languageOf _, state => (none, state)
   -- So is a language's indent unit.
   | .indentUnitOf _, state => (none, state)
-  -- The contributions are the loop's to answer with (`Program.dispatched`):
-  -- here, with no loop, none is registered.
-  | .compileHook, state => ({}, state)
 
 end EditorState
 

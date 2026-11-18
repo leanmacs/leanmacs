@@ -73,18 +73,17 @@ def stateRequests : List StateRequest :=
     .sourceAnswered ⟨3⟩ 0 1, .listMatched ⟨3⟩ "" 0 #[], .matchFailed ⟨3⟩ "" 0 "no", .hasJob "count",
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
-    .categorySources "buffer", .matchCandidates (some "buffer") "w" #["w"], .loadTheme "second",
-    .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
-    .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
-    .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .categorySources "buffer",
+    .matchCandidates (some "buffer") "w" #["w"], .loadTheme "second", .invoke asked, .quit, .reload,
+    .giveUp "no", .breakOff "far enough", .setRegister "a" { text := "a line\n", linewise := true },
+    .setScrollMargin 2, .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
     .arrange ⟨0⟩ .promote, .arrange ⟨1⟩ (.exchange none), .arrange ⟨0⟩ .zoom, .arrange ⟨9⟩ .zoom,
     .arrange ⟨0⟩ (.mainCount true 1), .arrange ⟨1⟩ (.edge .left),
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .stack,
     .openWindow ⟨2⟩ (marker 2 8) (marker 2 9) .stack,
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.edge .left),
     .openWindow ⟨9⟩ (marker 0 8) (marker 0 9) .stack,
-    .openWindow ⟨0⟩ (marker 1 8) (marker 0 9) .stack, .displayRules,
+    .openWindow ⟨0⟩ (marker 1 8) (marker 0 9) .stack,
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.float .frame {} false),
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.float (.window ⟨1⟩) {} true),
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.float (.position ⟨1⟩ (marker 1 3)) {} false),
@@ -841,25 +840,6 @@ def stateRequestChecks : List Check :=
           | none => false
           | some state => state.handle (.hasJob "nope") == (true, state) },
     { name :=
-        "the handler knows no registry: asked which command an ex name is bound to, it answers none for any name, and leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            ["w", "greet", ""].all fun name =>
-              let (bound, after) := state.handle (.ex name)
-              bound == none && after == state },
-    { name :=
-        "the handler knows no registry: asked which ex names are bound, it answers none, and leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (names, after) := state.handle .exNames
-            names == #[] && after == state },
-    { name :=
         "the handler knows no registry: asked which sources are registered in a category, it answers none, and leaves the state as it was"
       run :=
         pure <|
@@ -878,17 +858,15 @@ def stateRequestChecks : List Check :=
             let (hits, after) := state.handle (.matchCandidates (some "buffer") "w" #["w", "wq"])
             hits == #[] && after == state },
     { name :=
-        "the handler knows no registry: asked which themes are registered, it answers none and leaves the state as it was; asked to load a theme, it takes any name and keeps the latest until the loop takes it out"
+        "asked to load a theme, the handler takes any name and keeps the latest until the loop takes it out"
       run :=
         pure <|
           match onTextModel twoBuffers with
           | none => false
           | some state =>
-            let (names, after) := state.handle .themeNames
             let (first, loaded) := state.handle (.loadTheme "first")
             let (second, again) := loaded.handle (.loadTheme "second")
-            names == #[] && after == state && replied first == .inr () &&
-              replied second == .inr () &&
+            replied first == .inr () && replied second == .inr () &&
               loaded == { state with outbox.theme := some "first" } &&
               again == { state with outbox.theme := some "second" } },
     { name :=
@@ -1063,15 +1041,6 @@ def stateRequestChecks : List Check :=
               replied absent == .inl (.noSuchWindow ⟨9⟩) &&
               same == state &&
               replied last == .inl .lastTile &&
-              kept == moved },
-    { name :=
-        "with no loop to answer, the display rules are none, and asking for them leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel sidebar with
-          | none => false
-          | some state =>
-            let (rules, after) := state.handle .displayRules
-            rules == #[] && after == state }]
+              kept == moved }]
 
 end ModelTest

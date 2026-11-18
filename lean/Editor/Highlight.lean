@@ -146,7 +146,7 @@ private def say (text : String) : EditorM Unit :=
 /-- Config's syntax refresh delay, asked of the state as the API's
 `EditorState.ask` asks it, here below the API. -/
 private def refreshDelay : EditorM (Option Nat) :=
-  ExceptT.lift (Program.request (port := editorPort) (.state .syntaxRefreshDelay))
+  ExceptT.lift (Program.request (port := editorPort) (.registry .syntaxRefreshDelay))
 
 /-- The source of the query of `kind` a mode with `syntaxTree` uses: its
 own, `own`, or the one its grammar ships; `none` when it has none and the

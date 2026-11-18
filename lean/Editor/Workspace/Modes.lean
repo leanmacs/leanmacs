@@ -102,7 +102,7 @@ while the buffer still holds a file in the order's directory, it keeps the
 modes the markers `present` turn on and has each as a minor mode. -/
 def modesFound (order : MarkerOrder) (present : Array (System.FilePath × String)) : EditorM Unit :=
   do
-  let (settings, _) ← EditorState.ask .workspaceSettings
+  let (settings, _) ← RegistryRequest.ask .workspaceSettings
   let some buffer := (← editorState).buffer? order.buffer | return
   let some file := buffer.file | return
   if (file.path.parent.map Process.trimmed) != some order.directory then

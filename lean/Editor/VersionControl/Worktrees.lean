@@ -366,7 +366,7 @@ def worktreesVisitCommand (call : Call) : EditorM Unit := do
   if worktree.path == order.root then
     startRead { order with shows := true }
     return
-  let (settings, generation) ← EditorState.ask .workspaceSettings
+  let (settings, generation) ← RegistryRequest.ask .workspaceSettings
   match (← editorState).workspaces.cached? worktree.path generation with
   | some (some location) =>
     readWorkspace location worktree.path order.git order.view
