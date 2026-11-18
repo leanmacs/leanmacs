@@ -176,15 +176,20 @@ for.
 The timer service is the first: `timersNow`, `timersStart`, `timersCancel`,
 and `timersPending`, a readout for tests.
 
-The file service is the second: `filesLoad`, `filesSave` and `filesStamp`
-start a request,
+The file service is the second: `filesLoad`, `filesSave`, `filesStamp` and
+`filesList` start a request,
 `filesTake` hands its result over once its completion has arrived,
 `filesCancel` cancels, and `filesPending` is a readout for tests. A request
 has a result, which a timer's has not, so there is one more step: the
 completion says only that the request `id` is done, and the result is taken
 by that id, once, as one record (`FileResult`): a loaded file's text as a
 `Snapshot` handle with its stamp and its line endings, a saved file's stamp,
-a file's stamp or none, or a refusal (`FileRefusal`). A file's content never crosses as a Lean
+a file's stamp or none, a directory's entries (`listed`, each a name and a
+kind code: 0 a file, 1 a directory, 2 anything else), or a refusal
+(`FileRefusal`). A listing's names cross as a list of strings does: the
+count and each entry's kind and byte length as words, and the names end to
+end as the detail; a name that is not UTF-8 is left out by the library,
+since a Lean string cannot hold it. A file's content never crosses as a Lean
 string or a byte array: a load hands back a handle, and a save borrows one.
 A path crosses as the bytes of a Lean string, which the library does not
 decode. What a save expects on disk (`FileExpect`) crosses as a tag and a
@@ -1701,6 +1706,8 @@ inductive FileRefusal where
   | notFound
   /-- What is at the path is not a file. -/
   | notAFile
+  /-- What is at the path is not a directory: a listing's refusal. -/
+  | notADirectory
   /-- The file system does not allow it; `detail` is the platform's words. -/
   | denied (detail : String)
   /-- The file is binary: its first NUL byte is at `offset`. -/
@@ -1726,6 +1733,9 @@ inductive FileResult where
   | saved (stamp : FileStamp)
   /-- A stamp was read: the file's, or `none` when nothing is there. -/
   | stamped (stamp : Option FileStamp)
+  /-- A directory was listed: each entry's name and kind code (0 a file, 1 a
+  directory, 2 anything else), sorted by the bytes of the names. -/
+  | listed (entries : Array (String × UInt64))
   /-- The request was refused. -/
   | refused (refusal : FileRefusal)
 
@@ -1735,6 +1745,33 @@ private def stampAt (words : Array UInt64) (first : Nat) : FileStamp where
   seconds := words[first]!.toInt64.toInt
   nanoseconds := words[first + 1]!
   size := words[first + 2]!
+
+/-- The entries a listing's words and detail spell: after the count, each
+entry's kind code and the byte length of its name, the names end to end in
+`detail`. An error for a kind code no one defined, a length past the
+detail's end or inside a character, and a detail longer than the names. -/
+private def listingOf (words : Array UInt64) (detail : String) :
+    Except String (Array (String × UInt64)) := do
+  let count := words[0]!.toNat
+  unless words.size == 1 + 2 * count do
+    throw s!"a listing of {count} entries has {words.size} words"
+  let bytes := detail.toUTF8
+  let mut entries := #[]
+  let mut start := 0
+  for index in [0:count] do
+    let kind := words[1 + 2 * index]!
+    unless kind < 3 do
+      throw s!"the kind {kind} is no entry's kind"
+    let stop := start + words[2 + 2 * index]!.toNat
+    unless stop ≤ bytes.size do
+      throw s!"a name ends at {stop}, past the names' {bytes.size} bytes"
+    let some name := String.fromUTF8? (bytes.extract start stop)
+      | throw s!"the name from {start} to {stop} is not whole characters"
+    entries := entries.push (name, kind)
+    start := stop
+  unless start == bytes.size do
+    throw s!"the names are {bytes.size} bytes, and the lengths add up to {start}"
+  return entries
 
 /-- The result a status, a snapshot, words and a detail spell, by the table
 in the module docs of `crates/editor-ffi/src/files.rs`. An error, with what
@@ -1783,6 +1820,12 @@ def FileResult.decode (status : UInt64) (snapshot : Option Snapshot) (words : By
     return .refused .noTemporaryName
   | 9, 0, none =>
     return .refused (.failed detail)
+  | 10, 0, none =>
+    return .refused .notADirectory
+  | 11, size, none =>
+    if size == 0 then
+      throw "a listing has its count"
+    return .listed (← listingOf words detail)
   | status, count, snapshot =>
     let handle := if snapshot.isSome then "a snapshot" else "no snapshot"
     throw s!"the status {status} with {count} words and {handle} is no file result"
@@ -1808,6 +1851,16 @@ and nothing of the file is read. The completion and the result are as
 start its thread. -/
 @[extern "editor_glue_files_stamp"]
 opaque filesStamp (id : UInt64) (path : @& String) : IO Bool
+
+/-- Asks the library's file service to list the directory at `path`, as the
+request `id`, and returns whether it was accepted. It returns at once. The
+completion and the result are as `filesLoad`'s: the result is `listed`, or a
+refusal.
+
+`false`, with nothing started, if `id` is in use or the service could not
+start its thread. -/
+@[extern "editor_glue_files_list"]
+opaque filesList (id : UInt64) (path : @& String) : IO Bool
 
 /-- `filesSave` as it crosses: what the save expects as a tag (0 whatever, 1
 absent, 2 unchanged) and a stamp's three numbers, its seconds as a two's

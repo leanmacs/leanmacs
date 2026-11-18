@@ -484,10 +484,49 @@ def fileChecks (_ : Unit) : List Check :=
               some (some { seconds := -1, nanoseconds := 5, size := 9 }) &&
             stamped [0, 0, 0, 0] == some none) },
     { name :=
+        "FileResult.decode reads a listing's words and names, and statuses 10 and 11, and refuses a length past the detail"
+      run :=
+        let listed (values : List UInt64) (detail : String) : Option (Array (String × UInt64)) :=
+          match Editor.Ffi.FileResult.decode 11 none (wordBytes values) detail with
+          | .ok (.listed entries) => some entries
+          | _ => none
+        pure
+          (listed [3, 1, 5, 0, 9, 2, 4] "notescafé.txtfifo" ==
+              some #[("notes", 1), ("café.txt", 0), ("fifo", 2)] &&
+            listed [0] "" == some #[] &&
+            decodedFile 10 [] == (none, some .notADirectory) &&
+            -- A length past the detail's end, one that cuts a character,
+            -- a detail longer than the names, a kind no one defined, and
+            -- a count the words do not hold.
+            listed [1, 0, 6] "notes" == none &&
+            listed [1, 0, 4] "café" == none &&
+            listed [1, 0, 4] "notes" == none &&
+            listed [1, 3, 5] "notes" == none &&
+            listed [2, 0, 5] "notes" == none) },
+    { name :=
+        "a directory is listed through the file service: its entries cross sorted by name, each with its kind, and a file is refused as not a directory"
+      run :=
+        inOwnDirectory fun directory => do
+          IO.FS.createDirAll (directory / "sub")
+          IO.FS.writeFile (directory / "b.txt") "b"
+          IO.FS.writeFile (directory / "a.txt") "a"
+          unless ← Editor.Ffi.filesList 1050 directory.toString do
+            return false
+          unless ← fileCompleted 1050 do
+            return false
+          let some (.listed entries) ← Editor.Ffi.filesTake 1050 | return false
+          unless ← Editor.Ffi.filesList 1051 (directory / "a.txt").toString do
+            return false
+          unless ← fileCompleted 1051 do
+            return false
+          let refused := (← Editor.Ffi.filesTake 1051).bind refusalOf
+          return entries == #[("a.txt", 0), ("b.txt", 0), ("sub", 1)] &&
+              refused == some .notADirectory },
+    { name :=
         "a file result the bindings cannot read is an error: a status the table does not have, words that are not the status's, and a load with no snapshot"
       run :=
         pure
-          (([(10, []), (0, []), (0, [1, 2]), (0, [2, 0, 0, 0]), (0, [1, 2, 3, 4, 5]), (5, []),
+          (([(12, []), (0, []), (0, [1, 2]), (0, [2, 0, 0, 0]), (0, [1, 2, 3, 4, 5]), (5, []),
                   (6, [1]), (7, [1, 2, 3]), (7, [2, 0, 0, 0]), (2, [1])].all
               fun ((status, values) : UInt64 × List UInt64) =>
               (Editor.Ffi.FileResult.decode status none (wordBytes values) "").toOption.isNone) &&

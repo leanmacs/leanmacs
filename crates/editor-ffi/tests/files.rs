@@ -40,8 +40,8 @@ use editor_ffi::events::{
     EventKind, QueueId, RawEvent, SourceKind, editor_ffi_events_next, editor_ffi_events_waiting,
 };
 use editor_ffi::files::{
-    FileStatus, RawExpect, RawFileResult, SERVICE, editor_ffi_files_cancel, editor_ffi_files_load,
-    editor_ffi_files_pending, editor_ffi_files_save, editor_ffi_files_take,
+    FileStatus, RawExpect, RawFileResult, SERVICE, editor_ffi_files_cancel, editor_ffi_files_list,
+    editor_ffi_files_load, editor_ffi_files_pending, editor_ffi_files_save, editor_ffi_files_take,
 };
 use editor_ffi::snapshot::{Snapshot, editor_ffi_snapshot_free, editor_ffi_snapshot_live};
 use editor_ffi::text::editor_ffi_text_free;
@@ -122,6 +122,8 @@ struct Taken {
     snapshot: *mut Snapshot,
     /// The words the status came with.
     words: Vec<u64>,
+    /// The detail.
+    detail: String,
 }
 
 /// Starts a load of `path` as the request `id`.
@@ -130,6 +132,14 @@ fn load(id: u64, path: &Path) -> bool {
     // SAFETY: the pointer and length are those of `bytes`, alive for the
     // call.
     unsafe { editor_ffi_files_load(id, bytes.as_ptr(), bytes.len(), NO_LIMIT) }
+}
+
+/// Starts a listing of `path` as the request `id`.
+fn list(id: u64, path: &Path) -> bool {
+    let bytes = path.as_os_str().as_bytes();
+    // SAFETY: the pointer and length are those of `bytes`, alive for the
+    // call.
+    unsafe { editor_ffi_files_list(id, bytes.as_ptr(), bytes.len()) }
 }
 
 /// Starts a save of `snapshot` to `path` as the request `id`.
@@ -155,7 +165,7 @@ fn take(id: u64) -> Option<Taken> {
     let raw = unsafe { raw.assume_init() };
     // SAFETY: the record's buffers are `words_len` and `detail_len` bytes,
     // owned by this caller until they are handed back, each once.
-    let words = unsafe {
+    let (words, detail) = unsafe {
         let words = if raw.words_len == 0 {
             Vec::new()
         } else {
@@ -163,14 +173,21 @@ fn take(id: u64) -> Option<Taken> {
             assert!(rest.is_empty(), "the words are whole words");
             words.iter().copied().map(u64::from_le_bytes).collect()
         };
+        let detail = if raw.detail_len == 0 {
+            String::new()
+        } else {
+            String::from_utf8(slice::from_raw_parts(raw.detail, raw.detail_len).to_vec())
+                .expect("the detail is UTF-8")
+        };
         editor_ffi_text_free(raw.words, raw.words_len);
         editor_ffi_text_free(raw.detail, raw.detail_len);
-        words
+        (words, detail)
     };
     Some(Taken {
         status: raw.status,
         snapshot: raw.snapshot,
         words,
+        detail,
     })
 }
 
@@ -285,6 +302,19 @@ fn files_are_loaded_and_saved_through_c_and_completed_on_the_completion_queue() 
     let refused = completed(nothing);
     assert_eq!(refused.status, FileStatus::NotFound.code());
     assert!(refused.snapshot.is_null());
+
+    // A directory with a file and a directory lists both, with their kinds
+    // (0 a file, 1 a directory) and the lengths of their names.
+    let listed = directory.path().join("listed");
+    std::fs::create_dir_all(listed.join("sub")).expect("the directories can be made");
+    std::fs::write(listed.join("a.txt"), b"a").expect("the file can be written");
+    let listing = next_id();
+    assert!(list(listing, &listed));
+    let entries = completed(listing);
+    assert_eq!(entries.status, FileStatus::Listed.code());
+    assert_eq!(entries.words, [2, 0, 5, 1, 3]);
+    assert_eq!(entries.detail, "a.txtsub");
+    assert!(entries.snapshot.is_null());
 
     // A save that expects nothing a save can expect starts nothing.
     let unknown = RawExpect { tag: 9, ..WHATEVER };

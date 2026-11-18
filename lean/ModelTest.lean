@@ -7194,9 +7194,10 @@ def fileModelChecks : List Check :=
         "each file error describes its own thing: no two say the same, a binary file's says its offset, a file too large its size and its limit, a changed file whether one is there, and a failure its detail"
       run := do
         let errors : List FileError :=
-          [.relativePath, .notFound, .notAFile, .denied, .binary 7999, .tooLarge 4321 1234,
-            .changed none, .changed (some { seconds := 5, nanoseconds := 6, size := 8765 }),
-            .noSuchSnapshot, .noTemporaryName, .failed "the disk is on fire"]
+          [.relativePath, .notFound, .notAFile, .notADirectory, .denied, .binary 7999,
+            .tooLarge 4321 1234, .changed none,
+            .changed (some { seconds := 5, nanoseconds := 6, size := 8765 }), .noSuchSnapshot,
+            .noTemporaryName, .failed "the disk is on fire"]
         let said := errors.map FileError.describe
         let says (error : FileError) (part : String) : Bool :=
           (error.describe.splitOn part).length > 1

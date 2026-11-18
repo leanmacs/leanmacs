@@ -240,6 +240,8 @@ inductive FileError where
   | notFound
   /-- What is at the path is not a file. -/
   | notAFile
+  /-- What is at the path is not a directory: a listing's refusal. -/
+  | notADirectory
   /-- The file system does not allow it. -/
   | denied
   /-- The file is binary: its first NUL byte is at `offset`, among its first
@@ -265,6 +267,7 @@ def FileError.describe : FileError → String
   | .relativePath => "the path is not absolute"
   | .notFound => "nothing is at the path"
   | .notAFile => "what is at the path is not a file"
+  | .notADirectory => "what is at the path is not a directory"
   | .denied => "the file system does not allow it"
   | .binary offset => s!"the file is binary: it has a NUL byte at offset {offset}"
   | .tooLarge size limit => s!"the file is {size} bytes long, over the limit of {limit}"

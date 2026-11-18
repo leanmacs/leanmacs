@@ -241,6 +241,7 @@ def errorOf : Ffi.FileRefusal → FileError
   | .relativePath => .relativePath
   | .notFound => .notFound
   | .notAFile => .notAFile
+  | .notADirectory => .notADirectory
   | .denied _ => .denied
   | .binary offset => .binary offset.toNat
   | .tooLarge size limit => .tooLarge size.toNat limit.toNat
