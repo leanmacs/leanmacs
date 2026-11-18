@@ -1,4 +1,5 @@
 import Editor.Config.Registry
+import Editor.VersionControl.Show
 import Editor.VersionControl.Status
 
 /-!
@@ -16,12 +17,14 @@ command of that name.
   `vc-status-refresh`, `vc-status-visit` and `vc-status-toggle`, the
   status buffer's mode's `refresh`, `activate` and `toggle`; and
   `vc-status-stage` and `vc-status-unstage`, its leader suffixes `s` and
-  `u`.
+  `u`; and `vc-show`, which opens a file at a revision as a read-only buffer
+  (`VersionControl.showCommand`, `Editor/VersionControl/Show.lean`).
 - **`VersionControl.jobs`**: `vc-status-read`, which reads a repository's
   status and shows it (`VersionControl.readWork`), and `vc-status-apply`,
   which stages or unstages and then starts a read
-  (`VersionControl.applyWork`). A host that is not handed them shows no
-  status, and says so when one is asked for.
+  (`VersionControl.applyWork`); and `vc-show-read`, which reads a file at a
+  revision and shows it (`VersionControl.showWork`). A host that is not
+  handed them shows no status, and says so when one is asked for.
 - **`VersionControl.modes`**: `vc-status`, the status buffer's major mode
   (`VersionControl.mode`).
 
@@ -42,12 +45,14 @@ def commands : Array Config.Registration :=
     { name := visitName, action := .call visitCommand },
     { name := toggleName, action := .call toggleCommand },
     { name := stageName, action := .call stageCommand },
-    { name := unstageName, action := .call unstageCommand }]
+    { name := unstageName, action := .call unstageCommand },
+    { name := showName, action := .call showCommand }]
 
 /-- The status buffer's jobs, as a host registers them for the owner
 `compiled`. -/
 def jobs : Array Config.JobRegistration :=
-  #[{ name := readJob, work := readWork }, { name := applyJob, work := applyWork }]
+  #[{ name := readJob, work := readWork }, { name := applyJob, work := applyWork },
+    { name := showJob, work := showWork }]
 
 /-- The status buffer's mode, as a host registers it for the owner
 `compiled`. -/

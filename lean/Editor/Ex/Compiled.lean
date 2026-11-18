@@ -3,6 +3,7 @@ import Editor.Compile
 import Editor.Config.Registry
 import Editor.Ex
 import Editor.Files
+import Editor.VersionControl.Show
 import Editor.VersionControl.Status
 
 /-!
@@ -84,6 +85,9 @@ drops it.
     buffer the line was asked from. A host must be handed the status
     buffer's commands, jobs and mode
     (`Editor/VersionControl/Compiled.lean`).
+  - `vc-show` runs `vc-show` (`Editor/VersionControl/Show.lean`) and takes
+    text, a revision and a path: it opens that file at that revision as a
+    read-only buffer.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -124,6 +128,7 @@ def bindings : Array Binding :=
     { name := "kill-compilation", command := Compile.killName },
     { name := "next-error", command := Compile.nextName },
     { name := "previous-error", command := Compile.previousName },
-    { name := "vc-status", command := VersionControl.statusName }]
+    { name := "vc-status", command := VersionControl.statusName },
+    { name := "vc-show", command := VersionControl.showName, takes := .text }]
 
 end Editor.Ex
