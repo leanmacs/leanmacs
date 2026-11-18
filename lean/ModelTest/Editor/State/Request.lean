@@ -61,8 +61,7 @@ def stateRequests : List StateRequest :=
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .loadTheme "second", .invoke asked,
-    .quit, .reload, .giveUp "no", .breakOff "far enough",
-    .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
+    .quit, .reload, .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
     .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
     .arrange ⟨0⟩ .promote, .arrange ⟨1⟩ (.exchange none), .arrange ⟨0⟩ .zoom, .arrange ⟨9⟩ .zoom,
     .arrange ⟨0⟩ (.mainCount true 1), .arrange ⟨1⟩ (.edge .left),
@@ -829,24 +828,6 @@ def stateRequestChecks : List Check :=
             let (_, asked) := state.handle .reload
             !state.outbox.reload && asked.outbox.reload &&
               { asked with outbox.reload := false } == state },
-    { name :=
-        "the request by which a command gives up changes nothing of the state: the handler knows no command to end, and the state after it is the state before"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (_, after) := state.handle (.giveUp "no such thing")
-            after == state },
-    { name :=
-        "the request by which a command breaks off changes nothing of the state either: the handler knows no command to end"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (_, after) := state.handle (.breakOff "far enough")
-            after == state },
     { name :=
         "the request to set a register sets the register of that name, in place of the one the name had, and changes nothing else of the state"
       run :=

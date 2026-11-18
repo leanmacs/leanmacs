@@ -645,8 +645,6 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       let (reply, state) := state.handle (.loadTheme name)
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchTheme name)))
-  | state, .step (.state (.giveUp reason)) _ => .done (.gaveUp reason, state)
-  | state, .step (.state (.breakOff reason)) _ => .done (.brokeOff reason, state)
   | state, .step (.registry request) next =>
     dispatched registered state (next (registered.answer request))
   | state, .step (.control request) next =>

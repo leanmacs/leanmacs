@@ -816,7 +816,7 @@ the echo area, and nothing after this runs, a `catch` round it included.
 Run where no loop dispatches the command it is refused with
 `badSelection`. -/
 def giveUp {α : Type} (reason : String) : EditorM α := do
-  EditorState.ask (.giveUp reason)
+  ControlRequest.ask (.giveUp reason)
   throw .badSelection
 
 /-- Ends the command here, with `reason`, and keeps what it did ("Breaking
@@ -826,7 +826,7 @@ back in its state at rest, and nothing after this runs, a `catch` round it
 included. Run where no loop dispatches the command it is refused with
 `badSelection`. -/
 def breakOff {α : Type} (reason : String) : EditorM α := do
-  EditorState.ask (.breakOff reason)
+  ControlRequest.ask (.breakOff reason)
   throw .badSelection
 
 /-- Keeps `register` under `name`, in place of the register the name had

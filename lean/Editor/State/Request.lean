@@ -1,8 +1,4 @@
-import Editor.Command.Call
-import Editor.Compile.Contribution
-import Editor.Ex.Line
 import Editor.Invocation
-import Editor.Language.IndentUnit
 import Editor.State
 
 /-!
@@ -412,11 +408,6 @@ inductive StateRequest where
   | quit
   /-- Ask for the config to be reloaded. -/
   | reload
-  /-- End this command here, with `reason`: it gives up. -/
-  | giveUp (reason : String)
-  /-- End this command here, with `reason`, and keep what it did: it breaks
-  off. -/
-  | breakOff (reason : String)
   /-- Keep `register` under `name`, in place of the register the name
   had. -/
   | setRegister (name : String) (register : Register)
@@ -502,8 +493,6 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .invoke _ => Unit
   | .quit => Unit
   | .reload => Unit
-  | .giveUp _ => Unit
-  | .breakOff _ => Unit
   | .setRegister .. => Unit
   | .setLastFind _ => Unit
   | .setLastSearch _ => Unit
@@ -612,8 +601,6 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
     ((), { state with outbox.answered := state.outbox.answered.push invocation })
   | .quit, state => ((), { state with quitting := true })
   | .reload, state => ((), { state with outbox.reload := true })
-  | .giveUp _, state => ((), state)
-  | .breakOff _, state => ((), state)
   | .setRegister name register, state => ((), state.setRegister name register)
   | .setLastFind find, state => ((), state.setLastFind find)
   | .setLastSearch search, state => ((), state.setLastSearch search)
