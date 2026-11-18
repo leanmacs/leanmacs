@@ -1950,14 +1950,6 @@ point", in the module docs). -/
 def retype (view : ViewId) (text : String) : EditorM Unit :=
   EditorState.ask (.retype view text)
 
-/-- Whether `offset` is a position of `text`: within it, and at a
-character's start or its end. -/
-def isPosition (text : String) (offset : Nat) : Bool :=
-  let (walked, found) :=
-    text.foldl (fun (walked, found) char => (walked + char.utf8Size, found || walked == offset))
-      (0, false)
-  found || walked == offset
-
 /-- Asks the at-point sources of the chain of the focused window's buffer
 that ask on `occasion`, in order, for the region at the cursor, stopping at
 the first that answers ("Completion at point", in the module docs); asks
@@ -1987,12 +1979,18 @@ def completeAtPoint (occasion : Completion.Occasion) : EditorM (Except AtPointRe
       break
   let some (name, region) := answered | return .ok false
   let text := target.buffer.text
-  let whole ← text.read
-  unless
-    region.start ≤ head && head ≤ region.stop && isPosition whole region.start &&
-      isPosition whole region.stop do
+  unless region.start ≤ head && head ≤ region.stop do
     return .error (.outside name)
-  let typed ← text.slice region.start region.stop
+  -- The text port refuses a range whose ends are not positions, and reads
+  -- the region and no more of the text.
+  let typed ←
+    try
+      text.slice region.start region.stop
+    catch
+    | .badRange =>
+      return .error (.outside name)
+    | refusal =>
+      throw refusal
   let query : Completion.Query :=
     { text := typed, view, region := some { start := region.start, stop := region.stop } }
   match ← collectSources (region.sources.map Completion.Named.ref) query with

@@ -39947,6 +39947,26 @@ def atPointChecks : List Check :=
               (evilFed silent "i C-g").loop.state.atPoint.isNone
           | _, _, _ => false },
     { name :=
+        "a region that holds the cursor but starts or stops inside a character is refused outside, and no session opens"
+      run :=
+        pure <|
+          let starting : Completion.AtPoint :=
+            .fixed "starting" fun spot =>
+              some { start := spot.offset - 1, stop := spot.offset, sources := [.source "pick"] }
+          let stopping : Completion.AtPoint :=
+            .fixed "stopping" fun spot =>
+              some { start := spot.offset, stop := spot.offset + 1, sources := [.source "pick"] }
+          match atPointDriver "é|é" #["starting"] [starting],
+            atPointDriver "é|é" #["stopping"] [stopping] with
+          | some starts, some stops =>
+            let started := evilFed starts "i C-SPC"
+            let stopped := evilFed stops "i C-SPC"
+            started.loop.state.echo == (AtPointRefusal.outside "starting").describe &&
+              started.loop.state.atPoint.isNone &&
+              stopped.loop.state.echo == (AtPointRefusal.outside "stopping").describe &&
+              stopped.loop.state.atPoint.isNone
+          | _, _ => false },
+    { name :=
         "a session is refused while a prompt is open, and asking again while one is open does nothing; C-g closes it and the loop gives its markers up"
       run :=
         pure <|
