@@ -533,6 +533,14 @@ so it links under either compiler. It starts at Lean's `main`. -/
   root := `ModelTest
   moreLinkArgs := #["-L", leanSystemLibDir.toString]
 
+/-- The model tests' modules (`ModelTest/*.lean`), which the `model-test`
+executable's root `ModelTest.lean` imports. Lake resolves an import only to
+a module of a library, never to one of an executable's, so these need a
+library of their own. It is not a default target: `lake test` builds it for
+the test driver. `.submodules` takes `ModelTest.X` and not `ModelTest`
+itself, so the executable's root belongs to no library. -/
+lean_lib ModelTests where globs := #[.submodules `ModelTest]
+
 /-- The contract checks of the text port and of the job port against their
 real bindings (`ContractTest.lean`), linked like `editor` with the glue and
 the Rust archive. `mise run ffi-test` runs it. It interprets nothing, so it
