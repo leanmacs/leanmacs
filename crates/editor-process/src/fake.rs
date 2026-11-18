@@ -162,6 +162,10 @@ pub struct ChildRecord {
     pub read: [usize; 2],
     /// What it is waiting for now.
     pub blocked_on: Blocked,
+    /// Whether each stream's reader has let go of it, out then err: the
+    /// stream was taken and its [`FakeOutput`] dropped. A reader is done
+    /// with the stream once this is set.
+    pub outputs_dropped: [bool; 2],
 }
 
 impl Script {
@@ -874,6 +878,20 @@ impl FakeProcesses {
         drop(state);
         self.shared.changed.notify_all();
     }
+
+    /// Records that the reader of child `id`'s `stream` has let go of it.
+    fn drop_output(&self, id: u32, stream: Stream) {
+        let slot = match stream {
+            Stream::Out => 0,
+            Stream::Err => 1,
+        };
+        let mut state = self.shared.state();
+        if let Some(io) = state.record.children.get_mut(&id) {
+            io.outputs_dropped[slot] = true;
+        }
+        drop(state);
+        self.shared.changed.notify_all();
+    }
 }
 
 impl Processes for FakeProcesses {
@@ -1035,6 +1053,12 @@ pub struct FakeOutput {
 impl Output for FakeOutput {
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Refusal> {
         self.fake.read(self.id, self.stream, buffer)
+    }
+}
+
+impl Drop for FakeOutput {
+    fn drop(&mut self) {
+        self.fake.drop_output(self.id, self.stream);
     }
 }
 
@@ -1368,6 +1392,21 @@ mod tests {
 
     fn io(fake: &FakeProcesses, id: u32) -> ChildRecord {
         fake.record().children.get(&id).cloned().expect("a child")
+    }
+
+    #[test]
+    fn dropping_a_childs_stream_is_recorded_for_that_stream_alone() {
+        let fake = FakeProcesses::scripted([(command("x"), Ok(Script::ends(Exit::Code(0))))]);
+        let mut child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
+        let out = child.take_output(Stream::Out).expect("out");
+        let err = child.take_output(Stream::Err).expect("err");
+        assert_eq!(io(&fake, child.id()).outputs_dropped, [false, false]);
+
+        drop(err);
+
+        assert_eq!(io(&fake, child.id()).outputs_dropped, [false, true]);
+        drop(out);
+        assert_eq!(io(&fake, child.id()).outputs_dropped, [true, true]);
     }
 
     #[test]
