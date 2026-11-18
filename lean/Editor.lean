@@ -1,5 +1,4 @@
 import Editor.Api.Theorems
-import Editor.Buffers
 import Editor.Command.Append
 import Editor.Compile
 import Editor.Compile.Shipped
@@ -18,7 +17,6 @@ import Editor.TabCommands
 import Editor.Themes
 import Editor.VersionControl.Commit
 import Editor.VersionControl.Stage
-import Editor.VersionControl.Status
 
 /-!
 # The editor
