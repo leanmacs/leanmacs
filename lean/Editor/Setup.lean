@@ -125,7 +125,11 @@ def setup : SetupM Unit := do
   `.insert`, `.visual`, `.visualLine` and `.minibuffer`). Given states, the
   binding holds there and nowhere else, under a leader or not. With none,
   the default, it holds in every state unless the rule above keeps it out.
-  The same keys bound once plain and once with states are bound twice.
+- **Two bindings of one sequence are refused**, however each is written
+  and whatever states each names: the registry's keymap holds a sequence
+  once, so the later would hide the earlier in every state. The keys are
+  compared as they expand against the leaders in force, so under the Vim
+  scheme `<leader> f` and `SPC f` are one sequence.
 - A key that reaches the leader from insert state, as general.el's
   `:non-normal-prefix` does, is not built.
 
@@ -174,7 +178,9 @@ with that message, and the config that was loaded before stays.
 The editor refuses a `setup` too, the same way, when what it registered
 cannot be meant: a command name or a job name registered twice (the first
 could never run), a key sequence bound twice (the first binding could never
-run; compared as written, so `<leader> f` twice is), the leader or the
+run; compared as the keys expand against the leaders in force, so
+`<leader> f` twice is, and so is `<leader> f` with `SPC f` under the `SPC`
+leader, whatever states each names), the leader or the
 localleader set twice, an ex name bound twice, a store name declared twice, a theme defined
 twice or named twice, a segment defined twice, the mode line listed twice,
 a completion source defined twice, a completion style defined twice, the

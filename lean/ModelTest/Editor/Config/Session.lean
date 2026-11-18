@@ -1,6 +1,7 @@
 import Editor.Config.Diagnostic
 import Editor.Config.Registry
 import Editor.Config.Session
+import Editor.InputScheme.Test
 import Editor.Program
 import Editor.Setup
 import ModelTest.Check
@@ -26,7 +27,7 @@ def builtChunks (outcome : Config.Outcome Elaborated) : Option (Array (String ×
 imported, and returns the calls the elaborator received. -/
 def rebuildCalls (chunks : List String) (source : Config.Source) : IO (Array ElaboratorCall) := do
   let calls ← IO.mkRef #[]
-  discard <| Config.build (fakeElaborator calls) source (some #[]) (loaded chunks)
+  discard <| Config.build TestScheme.scheme (fakeElaborator calls) source (some #[]) (loaded chunks)
   calls.get
 
 /-- The checks of the session core (`Editor/Config/Session.lean`): which
@@ -37,7 +38,9 @@ def sessionChecks : List Check :=
         "a first load imports the base, then elaborates every chunk in the source's order, each on the state after the one before it, then asks for setup on the last state",
       run := do
         let calls ← IO.mkRef #[]
-        let outcome ← Config.build (fakeElaborator calls) (fakeSource ["a", "b", "c"]) none #[]
+        let outcome ←
+          Config.build TestScheme.scheme (fakeElaborator calls) (fakeSource ["a", "b", "c"]) none
+              #[]
         return (← calls.get) ==
               #[.base, .chunk #[] "a", .chunk #["a"] "b", .chunk #["a", "b"] "c",
                 .setup #["a", "b", "c"]] &&
@@ -48,7 +51,9 @@ def sessionChecks : List Check :=
     { name := "with the base given, it is not imported again, and the outcome hands it back"
       run := do
         let calls ← IO.mkRef #[]
-        let outcome ← Config.build (fakeElaborator calls) (fakeSource ["a"]) (some #["given"]) #[]
+        let outcome ←
+          Config.build TestScheme.scheme (fakeElaborator calls) (fakeSource ["a"]) (some #["given"])
+              #[]
         return (← calls.get) == #[.chunk #["given"] "a", .setup #["given", "a"]] &&
             outcome.base == some #["given"] },
     { name :=
@@ -77,16 +82,16 @@ def sessionChecks : List Check :=
       run := do
         let calls ← IO.mkRef #[]
         let outcome ←
-          Config.build (fakeElaborator calls) (fakeSource ["a", "b", "c"] [("b", "fails")])
-              (some #[]) #[]
+          Config.build TestScheme.scheme (fakeElaborator calls)
+              (fakeSource ["a", "b", "c"] [("b", "fails")]) (some #[]) #[]
         return (← calls.get) == #[.chunk #[] "a", .chunk #["a"] "b"] && outcome.built.isNone &&
             outcome.diagnostics == #[told "b" .error] },
     { name := "a chunk with only a warning is built, and the outcome carries the warning"
       run := do
         let calls ← IO.mkRef #[]
         let outcome ←
-          Config.build (fakeElaborator calls) (fakeSource ["a", "b"] [("a", "warns")]) (some #[])
-              #[]
+          Config.build TestScheme.scheme (fakeElaborator calls)
+              (fakeSource ["a", "b"] [("a", "warns")]) (some #[]) #[]
         return builtChunks outcome == some #[("a", #["a"]), ("b", #["a", "b"])] &&
             outcome.diagnostics == #[told "a" .warning] },
     { name := "what setup registers is in the outcome"
@@ -94,7 +99,8 @@ def sessionChecks : List Check :=
         let calls ← IO.mkRef #[]
         let setup : SetupM Unit := command "greet" (makes "hello")
         let outcome ←
-          Config.build (fakeElaborator calls (.ok setup)) (fakeSource ["a"]) (some #[]) #[]
+          Config.build TestScheme.scheme (fakeElaborator calls (.ok setup)) (fakeSource ["a"])
+              (some #[]) #[]
         return (outcome.built.map (·.registrations.commands.map (·.name))) == some #["greet"] },
     { name :=
         "a setup that throws gives a rejected outcome whose diagnostic's source is setup and whose message is the one thrown"
@@ -104,7 +110,8 @@ def sessionChecks : List Check :=
           command "greet" (makes "hello")
           throw "no thanks"
         let outcome ←
-          Config.build (fakeElaborator calls (.ok setup)) (fakeSource ["a"]) (some #[]) #[]
+          Config.build TestScheme.scheme (fakeElaborator calls (.ok setup)) (fakeSource ["a"])
+              (some #[]) #[]
         return outcome.built.isNone &&
             outcome.diagnostics ==
               #[{ source := "setup", severity := .error, message := "no thanks" }] },
@@ -116,23 +123,41 @@ def sessionChecks : List Check :=
           command "greet" (makes "hello")
           command "greet" (makes "again")
         let outcome ←
-          Config.build (fakeElaborator calls (.ok setup)) (fakeSource ["a"]) (some #[]) #[]
+          Config.build TestScheme.scheme (fakeElaborator calls (.ok setup)) (fakeSource ["a"])
+              (some #[]) #[]
         return outcome.built.isNone &&
             outcome.diagnostics ==
               #[{ source := "setup", severity := .error,
                   message := "the command `greet` is registered twice" }] },
     { name :=
+        "a setup whose bindings are one sequence under the leaders in force of the scheme it is built for gives a rejected outcome whose diagnostic's source is setup and names both ways the keys are written"
+      run := do
+        let calls ← IO.mkRef #[]
+        let setup : SetupM Unit := do
+          bindKey "<leader> f" "find"
+          bindKey "C-c f" "fill"
+        let outcome ←
+          Config.build TestScheme.scheme (fakeElaborator calls (.ok setup)) (fakeSource ["a"])
+              (some #[]) #[]
+        return outcome.built.isNone &&
+            outcome.diagnostics ==
+              #[{ source := "setup", severity := .error,
+                  message :=
+                    "the keys `C-c f` are bound twice: as `<leader> f` and as `C-c f`" }] },
+    { name :=
         "a config whose setup cannot be produced gives a rejected outcome with the diagnostics"
       run := do
         let calls ← IO.mkRef #[]
         let outcome ←
-          Config.build (fakeElaborator calls (.error #[told "setup" .error])) (fakeSource ["a"])
-              (some #[]) #[]
+          Config.build TestScheme.scheme (fakeElaborator calls (.error #[told "setup" .error]))
+              (fakeSource ["a"]) (some #[]) #[]
         return outcome.built.isNone && outcome.diagnostics == #[told "setup" .error] },
     { name := "a config with no chunks is built with nothing registered, and no setup is asked for"
       run := do
         let calls ← IO.mkRef #[]
-        let outcome ← Config.build (fakeElaborator calls) (fakeSource []) (some #[]) (loaded ["a"])
+        let outcome ←
+          Config.build TestScheme.scheme (fakeElaborator calls) (fakeSource []) (some #[])
+              (loaded ["a"])
         return (← calls.get).isEmpty && builtChunks outcome == some #[] &&
             (outcome.built.map (·.registrations.commands.size)) == some 0 },
     { name :=
@@ -140,7 +165,7 @@ def sessionChecks : List Check :=
       run := do
         let calls ← IO.mkRef #[]
         let source : Config.Source := { chunks := throw (IO.userError "no such directory") }
-        let outcome ← Config.build (fakeElaborator calls) source none #[]
+        let outcome ← Config.build TestScheme.scheme (fakeElaborator calls) source none #[]
         return (← calls.get) == #[.base] && outcome.built.isNone && outcome.base == some #[] &&
             outcome.diagnostics.map (fun diagnostic => (diagnostic.source, diagnostic.severity)) ==
               #[("config", .error)] },
@@ -148,8 +173,8 @@ def sessionChecks : List Check :=
       run := do
         let calls ← IO.mkRef #[]
         let outcome ←
-          Config.build (fakeElaborator calls) (fakeSource ["a", "b"] [("a", "throws")]) (some #[])
-              #[]
+          Config.build TestScheme.scheme (fakeElaborator calls)
+              (fakeSource ["a", "b"] [("a", "throws")]) (some #[]) #[]
         return (← calls.get) == #[.chunk #[] "a"] && outcome.built.isNone &&
             outcome.diagnostics.map (fun diagnostic => (diagnostic.source, diagnostic.severity)) ==
               #[("a", .error)] },
@@ -158,7 +183,8 @@ def sessionChecks : List Check :=
       run := do
         let calls ← IO.mkRef #[]
         let outcome ←
-          Config.build (fakeElaborator calls (baseThrows := true)) (fakeSource ["a"]) none #[]
+          Config.build TestScheme.scheme (fakeElaborator calls (baseThrows := true))
+              (fakeSource ["a"]) none #[]
         return (← calls.get) == #[.base] && outcome.built.isNone && outcome.base == none &&
             outcome.diagnostics.map (fun diagnostic => (diagnostic.source, diagnostic.severity)) ==
               #[("base", .error)] },
@@ -167,8 +193,8 @@ def sessionChecks : List Check :=
       run := do
         let calls ← IO.mkRef #[]
         let outcome ←
-          Config.build (fakeElaborator calls (setupThrows := true)) (fakeSource ["a"]) (some #[])
-              #[]
+          Config.build TestScheme.scheme (fakeElaborator calls (setupThrows := true))
+              (fakeSource ["a"]) (some #[]) #[]
         return (← calls.get) == #[.chunk #[] "a", .setup #["a"]] && outcome.built.isNone &&
             outcome.base == some #[] &&
             outcome.diagnostics.map (fun diagnostic => (diagnostic.source, diagnostic.severity)) ==

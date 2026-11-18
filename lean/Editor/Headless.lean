@@ -1147,7 +1147,8 @@ a job that is gone. -/
 def reloadJob (collaborators : Collaborators σ scheme) (base : Option σ)
     (chunks : Array (Config.Chunk σ)) (promise : IO.Promise (Config.Outcome σ)) : IO Unit := do
   try
-    promise.resolve (← Config.build collaborators.elaborator collaborators.source base chunks)
+    promise.resolve
+        (← Config.build scheme collaborators.elaborator collaborators.source base chunks)
   finally
     discard <| Ffi.postEvent .editor collaborators.wakeups 0 ""
 

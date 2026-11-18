@@ -27,6 +27,9 @@ The decisions are here, in plain Lean with no elaborator in it:
   the state after the last chunk and run against the collecting handler
   (`Registrations.ofSetup`), on the thread that runs `build`. A `setup` that
   throws, or registers something that is refused, rejects the reload.
+  `build` is given the host's input scheme, and refuses too what is wrong
+  under its leaders (`Registrations.problemUnder?`): two bindings whose
+  keys expand to one sequence.
 - **Failure is data.** A rejected outcome carries diagnostics. A port that
   throws is a rejected outcome too, with a diagnostic that names what was
   being done.
@@ -135,10 +138,12 @@ def failure (source message : String) : Diagnostic :=
   { source, severity := .error, message }
 
 /-- One reload: reads the source, elaborates the chunks that changed, and
-runs the new config's `setup`. `base` is the base if an earlier reload
-imported it, and `loaded` the chunks of the config that is installed. -/
-def build {σ : Type} (elaborator : Elaborator σ) (source : Source) (base : Option σ)
-    (loaded : Array (Chunk σ)) : IO (Outcome σ) := do
+runs the new config's `setup`, for the input scheme `scheme`, whose leaders
+are in force where the config sets none. `base` is the base if an earlier
+reload imported it, and `loaded` the chunks of the config that is
+installed. -/
+def build {σ : Type} (scheme : InputScheme) (elaborator : Elaborator σ) (source : Source)
+    (base : Option σ) (loaded : Array (Chunk σ)) : IO (Outcome σ) := do
   let base ←
     match base with
     | some base => pure base
@@ -183,6 +188,11 @@ def build {σ : Type} (elaborator : Elaborator σ) (source : Source) (base : Opt
       return { base := some base, diagnostics := diagnostics.push (failure "setup" message),
                built := none }
     | .ok registrations =>
-      return { base := some base, diagnostics, built := some { chunks, registrations } }
+      match registrations.problemUnder? scheme with
+      | some message =>
+        return { base := some base, diagnostics := diagnostics.push (failure "setup" message),
+                 built := none }
+      | none =>
+        return { base := some base, diagnostics, built := some { chunks, registrations } }
 
 end Editor.Config

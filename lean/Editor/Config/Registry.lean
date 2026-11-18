@@ -85,9 +85,15 @@ leader moves every binding written with it, and every mode's suffix
 - otherwise, what it binds a key bound to a command name to
   (`InputScheme.command`).
 
-`Registrations.problem?` compares bindings' keys as written, so
-`<leader> f` bound twice is bound twice, and so are the same keys bound
-once plain and once with `states`.
+**Two bindings of one sequence are refused**, whatever states each names:
+`keymap` holds a sequence once, so the later would hide the earlier in
+every state. `Registrations.problem?` compares bindings' keys as written,
+which finds what is bound twice under every scheme, so `<leader> f` bound
+twice is refused. `Registrations.problemUnder?` compares them as they expand against
+the leaders in force under the scheme the config is built for (the ones
+config set, else the scheme's), so `<leader> f` with `SPC f` under the
+`SPC` leader is bound twice too, and the message names both ways the keys
+were written (`keysBoundTwice`). `Config.build` asks it after `problem?`.
 
 **The menu bar shows a command's key from these bindings**
 (`keyEquivalent?`): of the sequences the bindings, as one keymap, bind to
@@ -1372,7 +1378,7 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
 twice, a command name or a job name registered twice, a face set twice, a
 theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
-twice, the layout chosen twice, the tab bar chosen twice, the title bar chosen twice, the leader set twice (`leaderTwice`), the localleader set twice (`localLeaderTwice`), a key sequence bound twice (compared as written, so the same keys bound once plain and once with states are bound twice), a binding of
+twice, the layout chosen twice, the tab bar chosen twice, the title bar chosen twice, the leader set twice (`leaderTwice`), the localleader set twice (`localLeaderTwice`), a key sequence bound twice (compared as written, whatever states each binding names; `problemUnder?` compares the keys as they expand), a binding of
 no keys, an ex name bound twice, the process environment set twice,
 auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a compile contribution registered twice or naming a command twice, project commands given twice for one project and mode or naming a command twice, a command over a store that is not declared, a mode name defined twice, a
 mode with a problem under any scheme (`Mode.problems`), of which the first
@@ -1492,6 +1498,30 @@ def ofSetup (setup : SetupM Unit) : Except String Registrations :=
     match collected.problem? with
     | some problem => .error problem
     | none => .ok collected
+
+/-- What a `setup` whose bindings written as `first` and as `second` are the
+one sequence `keys` under the leaders in force is refused with. -/
+def keysBoundTwice (keys : List Key) (first second : List Key.Stroke) : String :=
+  s!"the keys `{Key.notations keys}` are bound twice: as `{Key.strokeNotations first}` and as `{Key.strokeNotations second}`"
+
+/-- What is wrong with what was collected under the input scheme `scheme`,
+if anything: two bindings whose keys, expanded against the leaders in force
+(the leader and the localleader `setup` set, each the scheme's where it set
+none: `InputScheme.leaders`), are one sequence (`keysBoundTwice`), whatever
+states each names. The registry's keymap holds a sequence once
+(`Registry.keymap`), so the later would hide the earlier in every state.
+What `problem?` refuses is wrong under every scheme; this is what is wrong
+under this one, so `Config.build` asks it of a `setup` `problem?` let by. -/
+def problemUnder? (collected : Registrations) (scheme : InputScheme) : Option String := do
+  let leaders := scheme.leaders collected.leader collected.localLeader
+  let expanded :=
+    collected.bindings.map fun binding =>
+      ((Key.expand leaders binding.keys).map Key.chord, binding.keys)
+  for index in [0:expanded.size] do
+    if let some (keys, second) := expanded[index]? then
+      if let some (_, first) := (expanded.extract 0 index).find? (·.1 == keys) then
+        return keysBoundTwice keys first second
+  none
 
 end Registrations
 

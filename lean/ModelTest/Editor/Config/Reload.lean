@@ -737,8 +737,8 @@ def reloadChecks : List Check :=
         let (loaded, first) := reduce [.requested, .finished (accepted ["a"] setup)]
         let calls ← IO.mkRef #[]
         let outcome ←
-          Config.build (fakeElaborator calls (.ok twice)) (fakeSource ["a"]) loaded.base
-              loaded.chunks
+          Config.build TestScheme.scheme (fakeElaborator calls (.ok twice)) (fakeSource ["a"])
+              loaded.base loaded.chunks
         let (state, effects) := reduceFrom loaded [.requested, .finished outcome]
         return first == #[.start none #[], .cancelJobs "config", .report 1 true #[] 1 2] &&
             effects == #[.start (some #[]) #["a"], .report 2 false #["setup"] 1 2] &&

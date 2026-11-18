@@ -4642,8 +4642,20 @@ which run the executable on a real file.
   - **`bindKey … (states := [.insert])` says the scheme's states a binding
     holds in** (`SchemeState`, whose Vim constants are `.normal`,
     `.insert`, `.visual`, `.visualLine` and `.minibuffer`). Given states,
-    they replace the leader rule for that binding. The same keys bound once
-    plain and once with states are bound twice, and refused.
+    they replace the leader rule for that binding.
+  - **Two bindings of one sequence are refused, however each is written
+    and whatever states each names.** The check reads the expanded keys,
+    against the leaders in force when the config is built: the ones it
+    sets, else the scheme's (`Registrations.problemUnder?`, which
+    `Config.build` asks under the host's scheme). So under the Vim scheme
+    `<leader> f` with `SPC f`, `<localleader> x` with `<leader> m x`, and
+    `<leader> f` with a literal `C-x f` under `leaderKey "C-x"` are each
+    refused, with a message that names the keys and both ways they were
+    written. Bindings given states apart are no exception: the registry's
+    keymap holds a sequence once (`Registry.keymap`, `Keymap.ofList`), so
+    the later binding would hide the earlier in every state, not only in
+    its own. A sequence bound in some states and something else in others
+    is not built.
   - **Deferred**: a key that reaches the leader from insert state, as
     general.el's `:non-normal-prefix` does.
 - Built: completion at point from config ("Completion at point").

@@ -547,11 +547,12 @@ The config session's decisions are tested here too, with no elaborator:
 - `registryChecks`: the registry, its commands, its jobs, its key
   bindings, its modes, its ex bindings and its faces, replaced by owner,
   and the keymap it makes, its bindings expanded against the leaders in
-  force and bound by where they hold;
+  force and bound by where they hold, and the bindings a scheme's leaders
+  make one sequence, which are refused;
 - `storeChecks`: the rule that meets a new config's stores with the cells
   there are, one check for each case;
 - `sessionChecks`: one reload (`Config.build`), on a fake elaborator that
-  records every call and a fake source;
+  records every call and a fake source, built for the test scheme;
 - `reloadChecks`: the reducer that serialises reloads, with outcomes built
   by hand. The phase's acceptance tests are here on fakes (reload replaces a
   command, a rejected reload keeps the old config, a reload does not

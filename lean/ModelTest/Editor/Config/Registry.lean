@@ -91,6 +91,21 @@ def apartScheme : InputScheme :=
     modeCommand := apartMode
     stateCommand := apartState }
 
+/-- The test scheme with the Vim scheme's leaders: the leader on `SPC` and
+the localleader on `<leader> m`. -/
+def spaceScheme : InputScheme :=
+  { TestScheme.scheme with
+    leader := keys "SPC"
+    localLeader := [.leader, .key (charKey "m")] }
+
+/-- What is wrong under `scheme` with what `setup` collects
+(`Registrations.problemUnder?`); `none` when nothing is, and when `setup` is
+refused before (`Registrations.ofSetup`). -/
+def problemUnder (scheme : InputScheme) (setup : SetupM Unit) : Option String :=
+  match Config.Registrations.ofSetup setup with
+  | .ok collected => collected.problemUnder? scheme
+  | .error _ => none
+
 /-- The checks of the registry (`Editor/Config/Registry.lean`). -/
 def registryChecks : List Check :=
   [{  name :=
@@ -295,6 +310,68 @@ def registryChecks : List Check :=
             bound "C-c d" == some (apartMode "d") &&
             bound "C-x e" == some (invoke "e") &&
             bound "C-c s" == some (apartState ["insert"] "s")) },
+    { name :=
+        "two bindings written apart whose keys are one sequence under the leaders in force are bound twice, and the refusal names the keys and both ways they are written"
+      run :=
+        pure
+          (problemUnder spaceScheme
+                (do
+                  bindKey "<leader> f" "a"
+                  bindKey "SPC f" "b") ==
+              some "the keys `SPC f` are bound twice: as `<leader> f` and as `SPC f`" &&
+            problemUnder spaceScheme
+                (do
+                  bindKey "<localleader> x" "a"
+                  bindKey "<leader> m x" "b") ==
+              some
+                "the keys `SPC m x` are bound twice: as `<localleader> x` and as `<leader> m x`" &&
+            problemUnder spaceScheme
+                (do
+                  leaderKey "C-x"
+                  bindKey "<leader> f" "a"
+                  bindKey "C-x f" "b") ==
+              some "the keys `C-x f` are bound twice: as `<leader> f` and as `C-x f`" &&
+            problemUnder spaceScheme
+                (do
+                  localLeaderKey "C-l"
+                  bindKey "<localleader> x" "a"
+                  bindKey "C-l x" "b") ==
+              some "the keys `C-l x` are bound twice: as `<localleader> x` and as `C-l x`") },
+    { name :=
+        "bindings whose keys are apart under the leaders in force are not bound twice, though they would be under other leaders"
+      run :=
+        pure
+          (problemUnder spaceScheme
+                (do
+                  bindKey "<leader> f" "a"
+                  bindKey "C-x f" "b"
+                  bindKey "<localleader> f" "c") ==
+              none &&
+            problemUnder TestScheme.scheme
+                (do
+                  bindKey "<leader> f" "a"
+                  bindKey "SPC f" "b") ==
+              none) },
+    { name :=
+        "the registry's keymap holds a sequence once, so of two bindings of one sequence for states apart only the later can run, and the earlier is gone in every state"
+      run :=
+        let registry : Config.Registry :=
+          ({} : Config.Registry).replaceBindings .config
+            #[{ binding "C-a" "first" with states := ["insert"] },
+              { binding "C-a" "second" with states := ["normal"] }]
+        let keymap : Keymap Invocation := registry.keymap apartScheme
+        pure
+          (keymap.find? (keys "C-a") == some (apartState ["normal"] "second") &&
+            keymap.bindings.length == 1) },
+    { name :=
+        "bindings given states apart whose keys are one sequence under the leaders in force are bound twice, as the registry's keymap would keep only the later"
+      run :=
+        pure
+          (problemUnder spaceScheme
+              (do
+                bindKey "<leader> a" "a" (states := [⟨"insert"⟩])
+                bindKey "SPC a" "b" (states := [⟨"normal"⟩])) ==
+            some "the keys `SPC a` are bound twice: as `<leader> a` and as `SPC a`") },
     { name :=
         "the menu bar's key equivalent of a command is never a binding written with a placeholder, whatever the leader is on"
       run :=
