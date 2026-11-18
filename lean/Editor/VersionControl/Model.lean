@@ -361,8 +361,8 @@ namespace Repository
 
 /-- The job model in which the git implementation, running `git` in `root`,
 meets `repository`: its status read prints `porcelain`; each of `writes`
-exits 0; `fileAt`'s two runs answer each file of `HEAD` and of each named
-revision, its id and then its bytes; its first run exits 1 for each
+exits 0; `fileAt`'s two runs answer each file of `HEAD`, of the index (the
+empty revision) and of each named revision, its id and then its bytes; its first run exits 1 for each
 revision and path of `missing`; and `watched` prints the git and the common
 directories. A hunk's apply of `writes` exits 0 whatever it is fed, and so
 does its commit, but in a repository with a `hook`, where it exits 1 with
@@ -373,7 +373,8 @@ def jobModel (repository : Repository) (git : String) (root : System.FilePath)
   let script (arguments : Array String) (stdout : ByteArray) : Process.Script :=
     { command := Git.command git root arguments, reply := ran stdout }
   let files :=
-    (("HEAD", repository.committed) :: repository.revisions.toList).toArray.flatMap
+    (("HEAD", repository.committed) ::
+          ("", repository.indexFiles) :: repository.revisions.toList).toArray.flatMap
       fun (revision, files) => files.map fun (path, content) => (revision, path, content)
   {
     processes :=

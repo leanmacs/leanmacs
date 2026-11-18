@@ -592,9 +592,9 @@ def afterArguments : Option JobStart → List Argument
   | none => []
   | some start =>
     .str start.name ::
-        (match start.key with
-        | some key => Argument.str key
-        | none => .bool false) ::
+      (match start.key with
+      | some key => Argument.str key
+      | none => .bool false) ::
       start.arguments
 
 /-- The job to start after a save, read back from its arguments
@@ -610,7 +610,7 @@ the snapshot's, the path, then what the save expects (`expectArguments`),
 then the job to start after it (`afterArguments`). -/
 def SaveOrder.arguments (order : SaveOrder) : List Argument :=
   [.nat order.buffer.index, .nat order.snapshot.index, .str order.path.toString] ++
-      expectArguments order.expect ++
+    expectArguments order.expect ++
     afterArguments order.after
 
 /-- The order `arguments` are, if they are one (`SaveOrder.arguments`). -/
@@ -688,8 +688,8 @@ area, for a buffer there is none of, for one with no file and while a save
 of the buffer is in flight. Where no save job is registered it says so,
 releases the snapshot it took, and records no save. Once the file is
 written the job `after` is started, if it is given. -/
-def save (id : BufferId) (force : Bool := false) (after : Option JobStart := none) :
-    EditorM Unit := do
+def save (id : BufferId) (force : Bool := false) (after : Option JobStart := none) : EditorM Unit :=
+  do
   let some buffer := (← editorState).buffer? id | message noBuffer
   let some file := buffer.file | message (noFile buffer.name)
   if file.saving.isSome then

@@ -300,18 +300,27 @@ def movedCommand (call : Call) : EditorM Unit := do
 
 /-! ## The reconciler -/
 
+/-- The root and the path relative to it of the file of the buffer `id`, when
+it is a tracked file ("Which buffers", in the module docs): it has a file,
+and its workspace is a local root that can run commands and is a
+repository, with the file under the root. The gutter tracks these
+buffers, and a hunk is staged in them (`Editor/VersionControl/Stage.lean`). -/
+def trackedFile? (state : EditorState) (id : BufferId) : Option (System.FilePath × String) := do
+  let buffer ← state.buffer? id
+  let file ← buffer.file
+  let (workspace, _) ← state.workspaceOf? id
+  let .local root := workspace.location | none
+  if !workspace.location.can.runCommands || workspace.branch.isNone then
+    none
+  let path ← relativeTo root file.path
+  return (root, path)
+
 /-- The buffers `state` wants tracked ("Which buffers", in the module docs):
-each with its root and its file's path relative to it. -/
+each with its root and its file's path relative to it (`trackedFile?`). -/
 def wantedBuffers (state : EditorState) : Array (BufferId × System.FilePath × String) :=
   (List.range state.buffers.size).toArray.filterMap fun index => do
     let id : BufferId := ⟨index⟩
-    let buffer ← state.buffer? id
-    let file ← buffer.file
-    let (workspace, _) ← state.workspaceOf? id
-    let .local root := workspace.location | none
-    if !workspace.location.can.runCommands || workspace.branch.isNone then
-      none
-    let path ← relativeTo root file.path
+    let (root, path) ← trackedFile? state id
     return (id, root, path)
 
 /-- The version-control gutter's reconciler ("The reconciler", in the module

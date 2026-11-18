@@ -108,7 +108,8 @@ files last shown, which the commands read the cursor's file from.
 (`Editor/Command/Dispatch.lean`, "Read-only buffers"). It fills three
 roles, `refresh` with `vc-status-refresh`, `activate` with
 `vc-status-visit` and `toggle` with `vc-status-toggle`, and has the leader
-suffixes `s` and `u`. It needs no key of its own: each scheme's role table
+suffixes `s`, `u` and `c`, the last `vc-commit`, which opens the message
+buffer (`Editor/VersionControl/Commit.lean`). It needs no key of its own: each scheme's role table
 puts its keys on the roles.
 
 Pinned by `ModelTest.statusViewChecks` on the model's values,
@@ -148,6 +149,12 @@ def stageName : String :=
 under. -/
 def unstageName : String :=
   "vc-status-unstage"
+
+/-- The name the command that opens the message buffer
+(`Editor/VersionControl/Commit.lean`) is registered under, and the opener its
+buffers are shown for: the status buffer's leader suffix `c`. -/
+def commitName : String :=
+  "vc-commit"
 
 /-- The name the job that reads a status is registered under. -/
 def readJob : String :=
@@ -641,6 +648,6 @@ def unstageCommand (call : Call) : EditorM Unit :=
 def mode : Mode :=
   { name := modeName
     roles := [(Role.refresh, refreshName), (Role.activate, visitName), (Role.toggle, toggleName)]
-    locals := [("s", stageName), ("u", unstageName)] }
+    locals := [("s", stageName), ("u", unstageName), ("c", commitName)] }
 
 end Editor.VersionControl

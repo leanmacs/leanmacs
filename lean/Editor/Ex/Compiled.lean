@@ -3,7 +3,9 @@ import Editor.Compile
 import Editor.Config.Registry
 import Editor.Ex
 import Editor.Files
+import Editor.VersionControl.Commit
 import Editor.VersionControl.Show
+import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 
 /-!
@@ -88,6 +90,13 @@ drops it.
   - `vc-show` runs `vc-show` (`Editor/VersionControl/Show.lean`) and takes
     text, a revision and a path: it opens that file at that revision as a
     read-only buffer.
+  - `vc-stage-hunk` and `vc-unstage-hunk` run the commands of those names
+    (`Editor/VersionControl/Stage.lean`) and take nothing: they stage, or
+    unstage, the hunk on the cursor's line of the focused file buffer. No
+    key binds them; binding one is config's.
+  - `vc-commit`, `vc-commit-accept` and `vc-commit-abort` run the commands
+    of those names (`Editor/VersionControl/Commit.lean`) and take nothing:
+    they open the message buffer, commit with its text, and give it up.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -129,6 +138,11 @@ def bindings : Array Binding :=
     { name := "next-error", command := Compile.nextName },
     { name := "previous-error", command := Compile.previousName },
     { name := "vc-status", command := VersionControl.statusName },
-    { name := "vc-show", command := VersionControl.showName, takes := .text }]
+    { name := "vc-show", command := VersionControl.showName, takes := .text },
+    { name := "vc-stage-hunk", command := VersionControl.stageHunkName },
+    { name := "vc-unstage-hunk", command := VersionControl.unstageHunkName },
+    { name := "vc-commit", command := VersionControl.commitName },
+    { name := "vc-commit-accept", command := VersionControl.acceptName },
+    { name := "vc-commit-abort", command := VersionControl.abortName }]
 
 end Editor.Ex

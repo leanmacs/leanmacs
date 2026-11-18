@@ -21076,8 +21076,8 @@ def fileKeys : Loop.Keys TestScheme.scheme :=
         Files.save ⟨9⟩
         return none),
       ("save-then", fun call => do
-        Files.save call.target.window.buffer
-            (after := some { name := "follow", arguments := [.str "x"], key := some "k" })
+        Files.save call.target.window.buffer (after :=
+            some { name := "follow", arguments := [.str "x"], key := some "k" })
         return none),
       ("scratch", fun call => do
         discard <| call.target.window.id.show ⟨0⟩
@@ -22217,7 +22217,8 @@ def fileCommandChecks : List Check :=
                   | [.str said] => message s!"followed {said}"
                   | _ => message "followed nothing"
             else fileJobs Files.limit name
-          match (filesDriver registered).map fun driver =>
+          match
+            (filesDriver registered).map fun driver =>
               ((fedTo driver (presses "C-o n")).1.finish 1).1 with
           | none => false
           | some opened =>
@@ -22228,8 +22229,8 @@ def fileCommandChecks : List Check :=
             let changed := rewritten opened path JobContract.otherFile
             let (refused, _) := (fedTo changed (presses "C-o t")).1.finish 2
             saving.pending.map (·.name) == #[Files.saveJob] &&
-                saved.pending.map (fun job => (job.name, job.key)) == #[("follow", some "k")] &&
-                echoOf followed == some "followed x" &&
+              saved.pending.map (fun job => (job.name, job.key)) == #[("follow", some "k")] &&
+              echoOf followed == some "followed x" &&
               refused.pending.isEmpty &&
               echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) },
     { name :=
@@ -22242,7 +22243,8 @@ def fileCommandChecks : List Check :=
           let expects : List File.Expect := stamps.map .unchanged ++ [.absent, .whatever]
           let afters : List (Option JobStart) :=
             [none, some { name := "follow" },
-              some { name := "follow", arguments := [.str "x", .nat 2, .bool false], key := some "k" }]
+              some
+                { name := "follow", arguments := [.str "x", .nat 2, .bool false], key := some "k" }]
           expects.all
                 (fun expect =>
                   afters.all fun after =>
@@ -23467,7 +23469,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, compile-command, recompile, next-error and previous-error, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, compile-command, recompile, next-error, previous-error, vc-stage-hunk, vc-unstage-hunk and vc-commit-accept, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -23479,7 +23481,8 @@ def exChecks : List Check :=
               (candidatesOf typed).map (·.listed) ==
                 some
                   #["e", "e!", "autoread", "noautoread", "reload", "compile", "compile-command",
-                    "recompile", "next-error", "previous-error"] &&
+                    "recompile", "next-error", "previous-error", "vc-stage-hunk", "vc-unstage-hunk",
+                    "vc-commit-accept"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               candidatesOf opening == some {} }]
 
@@ -38569,14 +38572,15 @@ def statusWrites : Array VersionControl.Request :=
   #[.stage #["unstaged.txt"], .unstage #["staged.txt"], .unstage #["new.txt", "old.txt"]]
 
 /-- A driver of the status buffer checks: the workspace driver's world, with
-the status buffer's keys and jobs, whose git in `/r` meets `repository`
+the status buffer's keys and jobs (or `keys` and `registered`), whose git in `/r` meets `repository`
 (`Repository.jobModel`) and answers `writes`, and with each file of
 `repository`'s working tree on disk under `/r`; `none` if making the state
 was refused. -/
 def statusDriverOf (repository : VersionControl.Model.Repository)
-    (writes : Array VersionControl.Request := #[]) (missing : Array (String × String) := #[]) :
-    Option TestDriver :=
-  (workspaceDriver statusJobs statusKeys).map fun driver =>
+    (writes : Array VersionControl.Request := #[]) (missing : Array (String × String) := #[])
+    (registered : String → Option (List Argument → Work) := statusJobs)
+    (keys : Loop.Keys TestScheme.scheme := statusKeys) : Option TestDriver :=
+  (workspaceDriver registered keys).map fun driver =>
     let scripts := (repository.jobModel "git" "/r" writes missing).processes.scripts
     { driver with
       jobs :=
@@ -39021,8 +39025,368 @@ def statusBufferChecks : List Check :=
                 (Role.activate, VersionControl.visitName),
                 (Role.toggle, VersionControl.toggleName)] &&
             VersionControl.mode.locals ==
-              [("s", VersionControl.stageName), ("u", VersionControl.unstageName)] &&
+              [("s", VersionControl.stageName), ("u", VersionControl.unstageName),
+                ("c", VersionControl.commitName)] &&
             VersionControl.mode.problems == [] }]
+
+/-- The jobs of the hunk and message buffer checks: every job of the
+version-control registrations (`VersionControl.jobs`), and the workspace
+driver checks', the file commands' among them. -/
+def stagingJobs (name : String) : Option (List Argument → Work) :=
+  ((VersionControl.jobs.find? (·.name == name)).map (·.work)) <|> workspaceJobs name
+
+/-- The bindings of the hunk and message buffer checks: the workspace driver
+checks', and `C-v s` (`vc-status`), `C-v g` (`vc-stage-hunk`), `C-v G`
+(`vc-unstage-hunk`), `C-v c` (`vc-commit`), `C-v y` (`vc-commit-accept`),
+`C-v q` (`vc-commit-abort`), `C-v z`, which puts `0\n` at the start of the
+window's text, `C-v m` and `C-v n`, which make the window's text the
+messages `stagingMessage` and `edited\n`, and `C-r 0` to `C-r 9`, which
+put the window's cursor at the start of that row, and `C-r t` of row 10. -/
+def stagingBindings : List (String × Invocation) :=
+  workspaceBindings ++
+    [("C-v s", invoke VersionControl.statusName), ("C-v g", invoke VersionControl.stageHunkName),
+      ("C-v G", invoke VersionControl.unstageHunkName), ("C-v c", invoke VersionControl.commitName),
+      ("C-v y", invoke VersionControl.acceptName), ("C-v q", invoke VersionControl.abortName),
+      ("C-v z", invoke "top-line"),
+      ("C-v m",
+        { command := "set-text",
+          arguments := [.str "Subject line\n\n# kept, as git's own cleanup keeps it\n"] }),
+      ("C-v n", { command := "set-text", arguments := [.str "edited\n"] })] ++
+    (List.range 10).map
+      (fun row => (s!"C-r {row}", { command := "to-row", arguments := [.nat row] })) ++
+    [("C-r t", { command := "to-row", arguments := [.nat 10] })]
+
+/-- The message `C-v m` types in the hunk and message buffer checks. -/
+def stagingMessage : String :=
+  "Subject line\n\n# kept, as git's own cleanup keeps it\n"
+
+/-- The keys of the hunk and message buffer checks (`stagingBindings`), with
+the version-control modes known to the loop that sets them. -/
+def stagingKeys : Loop.Keys TestScheme.scheme :=
+  let keys :=
+    dispatchKeys stagingBindings
+      (statusCommands ++
+        [("top-line", fun call => do
+            call.target.buffer.text.insert 0 "0\n"
+            return none),
+          ("set-text", fun call => do
+            if let .str text :: _ := call.arguments then
+              let target := call.target.buffer.text
+              target.replaceRange 0 (← target.byteLength) text
+            return none)])
+  { keys with
+    registered :=
+      { keys.registered with
+        entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) } }
+
+/-- The writes the hunk and message buffer checks expect git to be asked for
+in `/r`: an apply, its reverse and a commit. -/
+def stagingWrites : Array VersionControl.Request :=
+  let none := VersionControl.LineHunk.make 0 0 "" "" "" ""
+  #[.stageHunk "" none, .unstageHunk "" none, .commit ""]
+
+/-- A driver of the hunk and message buffer checks over `repository`
+(`statusDriverOf`), whose git says the index has no `src/b.lean`, and whose
+files may be saved in `/r/src`. -/
+def stagingDriverOf (repository : VersionControl.Model.Repository) : Option TestDriver :=
+  (statusDriverOf repository stagingWrites #[("", "src/b.lean")] stagingJobs stagingKeys).map
+    fun driver =>
+    { driver with
+      jobs :=
+        { driver.jobs with
+          files :=
+            { driver.jobs.files with
+              directories := driver.jobs.files.directories.push "/r/src" } } }
+
+/-- The repository of the hunk checks: `src/a.lean` is
+`VersionControlContract.tenLines` in `HEAD` and the index, and
+`VersionControlContract.twoChanged`, two hunks, in the working tree. -/
+def stagingRepository : VersionControl.Model.Repository :=
+  VersionControlContract.writing
+    (VersionControlContract.clean #[("src/a.lean", VersionControlContract.tenLines)]) "src/a.lean"
+    VersionControlContract.twoChanged
+
+/-- How many snapshots `driver`'s text model holds that are not released. -/
+def liveSnapshots (driver : TestDriver) : Nat :=
+  (driver.model.texts.snapshots.filter (·.isSome)).size
+
+/-- The checks of staging and unstaging a hunk
+(`Editor/VersionControl/Stage.lean`), on the loop's driver over the editor's
+models, the job model, the model of files and the model of a repository in
+`/r`, whose diffs are the model's. -/
+def stageHunkChecks : List Check :=
+  let patch := VersionControl.Git.patch
+  let make := VersionControl.LineHunk.make
+  let second := make 5 5 "6\n7\n8\n" "9\n" "nine\n" "10\n"
+  let fetchRun := gitRun #["rev-parse", "--verify", "--quiet", ":src/a.lean"]
+  [{  name :=
+        "criterion 1 on the models: vc-stage-hunk on a line of the second of two changed hunks feeds git apply --cached exactly that hunk's patch, says it staged a hunk, and leaves no snapshot held"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let staged := settledAfter opened "C-r 8 C-v g"
+            staged.jobs.processes.fed ==
+                #[(gitApplyRun false, (patch "src/a.lean" second false).toUTF8)] &&
+              echoOf staged == some "staged a hunk of src/a.lean" &&
+              staged.pending.isEmpty &&
+              liveSnapshots staged == liveSnapshots opened },
+    { name :=
+        "a buffer with unsaved changes is saved first: the fetch starts once the file is written, and the hunk staged is of the file as written"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let edited := settledAfter (settledAfter driver "C-o a") "C-v z"
+            let written := "0\n" ++ VersionControlContract.twoChanged
+            let (asked, _) := fedTo edited (presses "C-r 9 C-v g")
+            let saved := finishNamed asked Files.saveJob
+            let staged := settledOn saved []
+            let hunk :=
+              (VersionControlContract.lineHunks .stage VersionControlContract.tenLines written)[2]?
+            asked.pending.map (·.name) == #[Files.saveJob] &&
+              saved.pending.map (·.name) == #[VersionControl.hunkFetchJob] &&
+              bytesOf staged "/r/src/a.lean" == some written.toUTF8 &&
+              hunk.map
+                  (fun hunk => #[(gitApplyRun false, (patch "src/a.lean" hunk false).toUTF8)]) ==
+                some staged.jobs.processes.fed &&
+              echoOf staged == some "staged a hunk of src/a.lean" &&
+              liveSnapshots staged == liveSnapshots edited },
+    { name := "a save that is refused starts no fetch, and stages nothing"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let edited := settledAfter (settledAfter driver "C-o a") "C-v z"
+            let changed := rewritten edited "/r/src/a.lean" "other\n".toUTF8
+            let refused := settledAfter changed "C-r 9 C-v g"
+            echoOf refused ==
+                some
+                  (Files.notSaved "/r/src/a.lean" (.changed (stampOf changed "/r/src/a.lean"))) &&
+              !(gitStarted refused).contains fetchRun &&
+              refused.jobs.processes.fed.isEmpty },
+    { name :=
+        "a buffer edited while its index is fetched says it changed, stages nothing and holds no snapshot"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let (asked, _) := fedTo opened (presses "C-r 1 C-v g")
+            let (edited, _) := fedTo asked (presses "C-v z")
+            let fetched := settledOn (finishNamed edited VersionControl.hunkFetchJob) []
+            asked.pending.map (·.name) == #[VersionControl.hunkFetchJob] &&
+              echoOf fetched ==
+                some "vc-stage-hunk: src/a.lean changed while staging; nothing staged" &&
+              fetched.jobs.processes.fed.isEmpty &&
+              liveSnapshots fetched == liveSnapshots opened },
+    { name := "a line with no change says so, stages nothing and holds no snapshot"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let asked := settledAfter opened "C-r 4 C-v g"
+            echoOf asked == some "vc-stage-hunk: no change on this line" &&
+              asked.jobs.processes.fed.isEmpty &&
+              liveSnapshots asked == liveSnapshots opened },
+    { name :=
+        "a file the index does not hold says to stage the whole file; a file in no repository and a buffer with no file say so, and start no job"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let untracked := settledAfter (settledAfter driver "C-o b") "C-v g"
+            let (outside, _) := fedTo (settledAfter driver "C-o x") (presses "C-v g")
+            let (bare, _) := fedTo driver (presses "C-v g")
+            echoOf untracked ==
+                some
+                  "vc-stage-hunk: src/b.lean has no version in the index to stage (untracked or in conflict); stage the whole file" &&
+              untracked.jobs.processes.fed.isEmpty &&
+              echoOf outside == some "vc-stage-hunk: a.txt is not in a repository" &&
+              outside.pending.isEmpty &&
+              echoOf bare == some s!"vc-stage-hunk: {EditorState.scratchName} has no file" &&
+              bare.pending.isEmpty },
+    { name :=
+        "vc-unstage-hunk carries the cursor's line through the hunks of the index against the buffer and feeds git apply --cached --reverse the staged hunk's patch; on a line with nothing staged it says so; it saves nothing"
+      run :=
+        pure <|
+          match
+            stagingDriverOf
+              { committed := #[("src/a.lean", VersionControlContract.tenLines)]
+                index := #[("src/a.lean", .file VersionControlContract.twoChanged)]
+                worktree := #[("src/a.lean", "0\n" ++ VersionControlContract.twoChanged)] } with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let unstaged := settledAfter opened "C-r 9 C-v G"
+            let nothing := settledAfter opened "C-r 0 C-v G"
+            let edited := settledAfter (settledAfter opened "C-v z") "C-r t C-v G"
+            let hunk :=
+              (VersionControlContract.lineHunks .unstage VersionControlContract.tenLines
+                  VersionControlContract.twoChanged)[1]?
+            let fed :=
+              hunk.map fun hunk => #[(gitApplyRun true, (patch "src/a.lean" hunk true).toUTF8)]
+            fed == some unstaged.jobs.processes.fed &&
+              echoOf unstaged == some "unstaged a hunk of src/a.lean" &&
+              echoOf nothing == some "vc-unstage-hunk: nothing staged on this line" &&
+              nothing.jobs.processes.fed.isEmpty &&
+              fed == some edited.jobs.processes.fed &&
+              !(edited.pending.any (·.name == Files.saveJob)) &&
+              liveSnapshots unstaged == liveSnapshots opened },
+    { name := "a hunk staged with the workspace's status buffer kept reads the status again into it"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let shown := settledAfter (settledAfter driver "C-o a") "C-v s"
+            let staged := settledAfter (settledAfter shown "C-o a") "C-r 8 C-v g"
+            let statusRead := gitRun VersionControl.Git.statusArguments
+            (gitStarted staged).back? == some statusRead &&
+              ((gitStarted staged).filter (· == statusRead)).size == 2 }]
+
+/-- The name of the message buffer of `/r`. -/
+def messageBufferName : String :=
+  "*vc-commit: r@main*"
+
+/-- The name of the output buffer of `/r`. -/
+def outputBufferName : String :=
+  "*vc-commit-output: r@main*"
+
+/-- The repository of the message buffer checks: `src/a.lean` with a staged
+change, and `hook` as its pre-commit hook. -/
+def committingRepository (hook : Option String := none) : VersionControl.Model.Repository :=
+  { committed := #[("src/a.lean", "one\n")], index := #[("src/a.lean", .file "two\n")]
+    worktree := #[("src/a.lean", "two\n")], hook }
+
+/-- `driver` with `src/a.lean` open, and its message buffer open over it,
+settled. -/
+def messageOpen (driver : TestDriver) : TestDriver :=
+  settledAfter (settledAfter driver "C-o a") "C-v c"
+
+/-- The checks of the message buffer (`Editor/VersionControl/Commit.lean`),
+on the loop's driver over the editor's models, the job model and the model
+of a repository in `/r`. -/
+def commitBufferChecks : List Check :=
+  let buffers (driver : TestDriver) (lead : String) : Nat :=
+    ((driver.loop.state.buffers.filterMap id).filter (·.name.startsWith lead)).size
+  [{  name :=
+        "vc-commit opens *vc-commit: r@main*: empty, editable, with no file, in the mode vc-commit, of the workspace /r, focused; asked again, it shows that buffer and makes no other"
+      run :=
+        pure <|
+          match stagingDriverOf (committingRepository) with
+          | none => false
+          | some driver =>
+            let opened := messageOpen driver
+            let again := settledAfter (settledAfter opened "C-o a") "C-v c"
+            let state := opened.loop.state
+            match state.findBuffer messageBufferName with
+            | none => false
+            | some id =>
+              (state.buffer? id).map (·.readOnly) == some false &&
+                ((state.buffer? id).bind (·.file)).isNone &&
+                (state.buffer? id).bind (·.major) == some VersionControl.commitModeName &&
+                (state.workspaceOf? id).map (·.1.location) == some (.local "/r") &&
+                (showingFocused opened).map (·.id) == some id &&
+                namedText opened messageBufferName == some "" &&
+                (showingFocused again).map (·.id) == some id &&
+                buffers again "*vc-commit" == 1 },
+    { name :=
+        "criterion 2 on the models: vc-commit-accept feeds git commit --file=- exactly the buffer's text, closes the message buffer and says it committed, by the message's first line"
+      run :=
+        pure <|
+          match stagingDriverOf (committingRepository) with
+          | none => false
+          | some driver =>
+            let accepted := settledAfter (messageOpen driver) "C-v m C-v y"
+            accepted.jobs.processes.fed == #[(gitCommitRun, stagingMessage.toUTF8)] &&
+              (accepted.loop.state.findBuffer messageBufferName).isNone &&
+              echoOf accepted == some "vc-commit: committed Subject line" &&
+              (showingFocused accepted).map (·.buffer.name) == some "a.lean" },
+    { name :=
+        "criterion 3 on the models: a commit the hook refuses writes everything git printed into *vc-commit-output: r@main*, read-only, shown without the focus, and keeps the message buffer with its text"
+      run :=
+        pure <|
+          match
+            stagingDriverOf (committingRepository (some "no on its output\nno on its error\n")) with
+          | none => false
+          | some driver =>
+            let refused := settledAfter (messageOpen driver) "C-v m C-v y"
+            let state := refused.loop.state
+            match state.findBuffer outputBufferName with
+            | none => false
+            | some output =>
+              namedText refused outputBufferName == some "no on its output\nno on its error" &&
+                (state.buffer? output).map (·.readOnly) == some true &&
+                state.windows.any (·.buffer == output) &&
+                (showingFocused refused).map (·.buffer.name) == some messageBufferName &&
+                namedText refused messageBufferName == some stagingMessage &&
+                echoOf refused ==
+                  some
+                    "vc-commit: exited with status 1: no on its output (output in *vc-commit-output: r@main*)" },
+    { name := "a second refusal writes the same output buffer again, in place of its text"
+      run :=
+        pure <|
+          match stagingDriverOf (committingRepository (some "no\n")) with
+          | none => false
+          | some driver =>
+            let twice := settledAfter (settledAfter (messageOpen driver) "C-v m C-v y") "C-v y"
+            buffers twice "*vc-commit-output" == 1 &&
+              namedText twice outputBufferName == some "no" },
+    { name :=
+        "accepting while a commit runs says so and starts no second; a message edited while it ran is kept, and said so"
+      run :=
+        pure <|
+          match stagingDriverOf (committingRepository) with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo (settledAfter (messageOpen driver) "C-v m") (presses "C-v y")
+            let (again, _) := fedTo asked (presses "C-v y")
+            let (edited, _) := fedTo again (presses "C-v n")
+            let landed := finishNamed edited VersionControl.commitJob
+            echoOf again == some "vc-commit-accept: a commit is running" &&
+              (again.pending.filter (·.name == VersionControl.commitJob)).size == 1 &&
+              namedText landed messageBufferName == some "edited\n" &&
+              echoOf landed ==
+                some
+                  "vc-commit: committed Subject line; the message buffer was edited since, and is kept" },
+    { name :=
+        "vc-commit-abort closes the message buffer, and the next vc-commit makes a new one; accept and abort outside a message buffer say it is not one; vc-commit with no workspace says so"
+      run :=
+        pure <|
+          match stagingDriverOf (committingRepository) with
+          | none => false
+          | some driver =>
+            let opened := messageOpen driver
+            let aborted := settledAfter opened "C-v q"
+            let reopened := settledAfter (settledAfter aborted "C-o a") "C-v c"
+            let outside := settledAfter (settledAfter driver "C-o a") "C-v y"
+            let outsideAbort := settledAfter (settledAfter driver "C-o a") "C-v q"
+            let bare := settledAfter driver "C-v c"
+            (aborted.loop.state.findBuffer messageBufferName).isNone &&
+              (showingFocused aborted).map (·.buffer.name) == some "a.lean" &&
+              (reopened.loop.state.findBuffer messageBufferName).isSome &&
+              echoOf outside == some "vc-commit-accept: a.lean is not a commit message buffer" &&
+              echoOf outsideAbort ==
+                some "vc-commit-abort: a.lean is not a commit message buffer" &&
+              echoOf bare == some s!"vc-commit: {EditorState.scratchName} has no workspace" },
+    { name :=
+        "the vc-commit mode has no role and the leader suffixes c, accept, and k, abort, and is registered with the status buffer's mode"
+      run :=
+        pure <|
+          VersionControl.commitMode.name == "vc-commit" && VersionControl.commitMode.roles == [] &&
+            VersionControl.commitMode.locals ==
+              [("c", VersionControl.acceptName), ("k", VersionControl.abortName)] &&
+            VersionControl.commitMode.problems == [] &&
+            VersionControl.modes.map (·.name) == #["vc-status", "vc-commit"] }]
 
 /-- The jobs of the gutter checks: the status buffer checks', and the
 version-control gutter's. -/
@@ -39664,7 +40028,9 @@ def checks : List Check :=
     statusBufferChecks ++
     revisionBufferChecks ++
     gutterCarryChecks ++
-    gutterChecks
+    gutterChecks ++
+    stageHunkChecks ++
+    commitBufferChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

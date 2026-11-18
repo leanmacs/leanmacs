@@ -1,6 +1,8 @@
 import Editor.Config.Registry
+import Editor.VersionControl.Commit
 import Editor.VersionControl.Gutter
 import Editor.VersionControl.Show
+import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 
 /-!
@@ -18,16 +20,25 @@ command of that name.
   `vc-status-refresh`, `vc-status-visit` and `vc-status-toggle`, the
   status buffer's mode's `refresh`, `activate` and `toggle`; and
   `vc-status-stage` and `vc-status-unstage`, its leader suffixes `s` and
-  `u`; and `vc-show`, which opens a file at a revision as a read-only buffer
-  (`VersionControl.showCommand`, `Editor/VersionControl/Show.lean`).
+  `u`; `vc-show`, which opens a file at a revision as a read-only buffer
+  (`VersionControl.showCommand`, `Editor/VersionControl/Show.lean`);
+  `vc-stage-hunk` and `vc-unstage-hunk`, which stage and unstage the hunk
+  on the cursor's line of a file buffer
+  (`Editor/VersionControl/Stage.lean`); and `vc-commit`, the status
+  buffer's leader suffix `c`, which opens the message buffer, with
+  `vc-commit-accept` and `vc-commit-abort`, its mode's suffixes `c` and `k`
+  (`Editor/VersionControl/Commit.lean`).
 - **`VersionControl.jobs`**: `vc-status-read`, which reads a repository's
   status and shows it (`VersionControl.readWork`), and `vc-status-apply`,
   which stages or unstages and then starts a read
   (`VersionControl.applyWork`); and `vc-show-read`, which reads a file at a
-  revision and shows it (`VersionControl.showWork`). A host that is not
-  handed them shows no status, and says so when one is asked for.
+  revision and shows it (`VersionControl.showWork`); `vc-hunk-fetch`,
+  `vc-hunk-diff` and `vc-hunk-apply`, the steps of staging a hunk; and
+  `vc-commit-run`, which commits. A host that is not handed them shows no
+  status, and says so when one is asked for.
 - **`VersionControl.modes`**: `vc-status`, the status buffer's major mode
-  (`VersionControl.mode`).
+  (`VersionControl.mode`), and `vc-commit`, the message buffer's
+  (`VersionControl.commitMode`).
 
 This module is apart from `Editor/VersionControl/Status.lean` because it
 names the registry, which is the config session's.
@@ -47,13 +58,20 @@ def commands : Array Config.Registration :=
     { name := toggleName, action := .call toggleCommand },
     { name := stageName, action := .call stageCommand },
     { name := unstageName, action := .call unstageCommand },
-    { name := showName, action := .call showCommand }]
+    { name := showName, action := .call showCommand },
+    { name := stageHunkName, action := .call stageHunkCommand },
+    { name := unstageHunkName, action := .call unstageHunkCommand },
+    { name := commitName, action := .call commitCommand },
+    { name := acceptName, action := .call acceptCommand },
+    { name := abortName, action := .call abortCommand }]
 
 /-- The status buffer's jobs, as a host registers them for the owner
 `compiled`. -/
 def jobs : Array Config.JobRegistration :=
   #[{ name := readJob, work := readWork }, { name := applyJob, work := applyWork },
-    { name := showJob, work := showWork }]
+    { name := showJob, work := showWork }, { name := hunkFetchJob, work := hunkFetchWork },
+    { name := hunkDiffJob, work := hunkDiffWork }, { name := hunkApplyJob, work := hunkApplyWork },
+    { name := commitJob, work := commitWork }]
 
 /-- The version-control gutter's command, `vc-gutter-moved`, which its watch
 job posts (`Editor/VersionControl/Gutter.lean`), as a host registers it for
@@ -71,6 +89,6 @@ def gutterJobs : Array Config.JobRegistration :=
 /-- The status buffer's mode, as a host registers it for the owner
 `compiled`. -/
 def modes : Array Mode :=
-  #[mode]
+  #[mode, commitMode]
 
 end Editor.VersionControl

@@ -16,6 +16,8 @@ import Editor.Minibuffer
 import Editor.Setup
 import Editor.TabCommands
 import Editor.Themes
+import Editor.VersionControl.Commit
+import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 
 /-!
@@ -204,7 +206,9 @@ a version-control system answers, in the editor's own terms, with its git
 implementation (`Editor/VersionControl/Git.lean`), which runs git as jobs,
 and the status buffer, `vc-status`, which shows a workspace's changed files
 and stages and unstages them (`Editor/VersionControl/Status.lean`, which
-brings the interface and git with it). Its registrations
+brings the interface and git with it); staging and unstaging the hunk on
+the cursor's line (`Editor/VersionControl/Stage.lean`); and the message
+buffer, `vc-commit`, which commits (`Editor/VersionControl/Commit.lean`). Its registrations
 (`Editor/VersionControl/Compiled.lean`) name the registry and are not
 imported. Its model and its contract (`Editor/VersionControl/Model.lean`,
 `Editor/VersionControl/Contract.lean`) are for tests, and are not

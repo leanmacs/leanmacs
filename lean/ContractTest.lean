@@ -2970,7 +2970,8 @@ structure ProjectRig where
   /-- The services the jobs run on. -/
   services : Job.Services
 
-/-- A rig over `services`, with a file service of its own. -/
+/-- A rig over `services`, with a file service and a diff service of its own,
+each reading the snapshots its texts publish. -/
 def ProjectRig.over (services : Job.Services) : IO ProjectRig := do
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
@@ -2978,7 +2979,10 @@ def ProjectRig.over (services : Job.Services) : IO ProjectRig := do
   return {
       published, held, display := recorder.handle
       services :=
-        { services with files := Job.realFiles services.completions published.reader held } }
+        { services with
+          files := Job.realFiles services.completions published.reader held
+          diffs :=
+            Job.realDiffs services.completions published.reader held (← Job.RefusedDiffs.new) } }
 
 /-- A rig over `services`, whose children get `path` as their `PATH`
 (`onFixturePath`), with a file service of its own. -/
@@ -3454,27 +3458,35 @@ def statusJobs : Array Config.JobRegistration :=
   Files.jobs ++ Workspace.jobs ++ VersionControl.jobs
 
 /-- The keys of the status buffer check: none bound; the file commands',
-the workspace's and the status buffer's commands by name, and `to-row`,
-which puts the window's cursor at the start of the row its argument names;
-their jobs registered; and the status buffer's mode known to the loop. -/
+the workspace's and the version-control commands by name, `to-row`, which
+puts the window's cursor at the start of the row its argument names, and
+`set-text`, which makes the window's text its argument; their jobs
+registered; and the version-control modes known to the loop. -/
 def statusKeys : Loop.Keys TestScheme.scheme :=
   let toRow : Call → EditorM (Option Config.Write) := fun call => do
     if let .nat row :: _ := call.arguments then
       let offset ← call.target.buffer.text.offsetOf ⟨row, 0⟩
       discard <| call.target.window.id.select { ranges := #[⟨offset, offset⟩] }
     return none
+  let setText : Call → EditorM (Option Config.Write) := fun call => do
+    if let .str text :: _ := call.arguments then
+      let target := call.target.buffer.text
+      target.replaceRange 0 (← target.byteLength) text
+    return none
   { command? := fun name =>
       if name == "to-row" then some toRow
       else
-        ((Files.commands ++ Workspace.commands ++ VersionControl.commands).find?
-              (·.name == name)).bind
-          fun registration =>
-          match registration.action with
-          | .call run =>
-            some fun call => do
-              run call
-              return none
-          | _ => none
+        if name == "set-text" then some setText
+        else
+          ((Files.commands ++ Workspace.commands ++ VersionControl.commands).find?
+                (·.name == name)).bind
+            fun registration =>
+            match registration.action with
+            | .call run =>
+              some fun call => do
+                run call
+                return none
+            | _ => none
     registered :=
       { jobs := fun name => statusJobs.any (·.name == name)
         entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) } }
@@ -3482,6 +3494,23 @@ def statusKeys : Loop.Keys TestScheme.scheme :=
 /-- The invocation that puts the window's cursor at the start of `row`. -/
 def toRow (row : Nat) : Invocation :=
   { command := "to-row", arguments := [.nat row] }
+
+/-- The invocation that makes the window's text `text`. -/
+def setText (text : String) : Invocation :=
+  { command := "set-text", arguments := [.str text] }
+
+/-- `check` handed a home holding `pinnedAwayConfig` as the file `gitconfig`,
+whose path it is also handed, and a repository directory, both its own
+(`withRepository`), with `repository` written out in the directory. A
+commit needs the config's user: git run without one would guess an address
+from the host's name, and fails where that has no domain. -/
+def withConfiguredRepository {α : Type} (repository : VersionControl.Model.Repository)
+    (check : System.FilePath → System.FilePath → System.FilePath → IO α) : IO α :=
+  withRepository fun home directory => do
+    writeGitRepository home directory repository
+    let config := home / "gitconfig"
+    IO.FS.writeFile config pinnedAwayConfig
+    check home config directory
 
 /-- Whether the git implementation reads the status of the repository at
 `directory` as `expected`, over `services`. -/
@@ -3493,8 +3522,9 @@ def gitStatusIs (services : Job.Services) (directory : System.FilePath)
   return (← runOnTimers services read) == .finished true
 
 /-- The checks of the git implementation over real git of what the model has
-no value for: files added with intent to add, which git alone makes, and
-what to watch in a linked worktree. -/
+no value for: files added with intent to add, which git alone makes, what
+to watch in a linked worktree, and a commit's message, which the model does
+not keep. -/
 def versionControlChecks (services : Job.Services) : List Check :=
   [{  name :=
         "in a linked worktree, watched names the main repository's git directory to watch, and HEAD and the index of the worktree's own git directory under it"
@@ -3535,12 +3565,31 @@ def versionControlChecks (services : Job.Services) : List Check :=
                   #[{ path := "a.txt", state := .changed none (some .deleted) },
                     { path := "b.txt", state := .changed (some .modified) (some .deleted) },
                     { path := "c.txt", state := .changed none (some .added) },
-                    { path := "d.txt", state := .changed none (some .added) }] } }]
+                    { path := "d.txt", state := .changed none (some .added) }] } },
+    { name :=
+        "a commit's message is the message given, a line that starts with # kept, under a user config whose commit.cleanup is strip"
+      run :=
+        withConfiguredRepository
+          { committed := #[("a.txt", "one\n")], index := #[("a.txt", .file "two\n")]
+            worktree := #[("a.txt", "two\n")] } fun home config directory => do
+          let message := "Subject\n\n# kept\nbody\n"
+          let committed : JobM Bool := do
+            return (←
+                  Program.runM (VersionControl.Git.handler "git" directory)
+                      (VersionControl.commit message)) matches
+                .ok ()
+          let ran ← runOnTimers (onIsolatedGit services home config) committed
+          let object ← gitIn home directory #["cat-file", "commit", "HEAD"]
+          return ran == .finished true && object.endsWith s!"\n\n{message}" }]
 
-/-- The checks of the status buffer (`Editor/VersionControl/Status.lean`)
-over real git: its jobs run over the library's process and file services in
-a temporary repository, the real finder recording the workspace, every
-child's git kept from the user's and the system's config. -/
+/-- The checks of the status buffer (`Editor/VersionControl/Status.lean`),
+of `vc-show`, of staging a hunk (`Editor/VersionControl/Stage.lean`) and of
+the message buffer (`Editor/VersionControl/Commit.lean`) over real git: their
+jobs run over the library's process, file and diff services in a temporary
+repository, the real finder recording the workspace, every child's git kept
+from the user's and the system's config. A check that commits runs git
+under `pinnedAwayConfig` (`withConfiguredRepository`), whose user a commit
+needs. -/
 def statusBufferChecks (services : Job.Services) : List Check :=
   [{  name :=
         "criteria 2 to 4 over real git: vc-status in a file of a repository with a.txt changed and b.txt staged shows one line for each naming its state; toggling on a.txt's line stages it in git and its line then says so, and toggling on b.txt's line unstages it in git"
@@ -3603,7 +3652,75 @@ def statusBufferChecks (services : Job.Services) : List Check :=
               (← bufferText rig texts shown "a.txt@HEAD") == some "now\n" &&
               (shown.state.buffer? old).map (·.readOnly) == some true &&
               ((shown.state.buffer? old).bind (·.file)).isNone &&
-              ((shown.state.buffer? head).bind (·.file)).isNone }]
+              ((shown.state.buffer? head).bind (·.file)).isNone },
+    { name :=
+        "criterion 1 through vc-stage-hunk over real git: on a line of the second of two changed hunks, in a buffer with unsaved changes, the buffer is saved and that hunk alone is staged"
+      run :=
+        withConfiguredRepository
+          (VersionControlContract.writing
+            (VersionControlContract.clean #[("a.txt", VersionControlContract.tenLines)]) "a.txt"
+            VersionControlContract.secondChanged)
+          fun home config directory => do
+          let isolated := onIsolatedGit services home config
+          let rig ← ProjectRig.over isolated
+          let some (_, _) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"), setText VersionControlContract.twoChanged, toRow 8,
+                  { command := VersionControl.stageHunkName }]
+                statusKeys statusJobs | return false
+          let index ← gitIn home directory #["show", ":a.txt"]
+          let written ← IO.FS.readFile (directory / "a.txt")
+          let state ←
+            gitStatusIs isolated directory
+                { head := .branch "main"
+                  files :=
+                    #[{ path := "a.txt", state := .changed (some .modified) (some .modified) }] }
+          return index ==
+                VersionControlContract.lineSet VersionControlContract.tenLines 8 "nine\n" &&
+              written == VersionControlContract.twoChanged &&
+              state },
+    { name :=
+        "criterion 2 over real git: vc-commit, the message typed, vc-commit-accept makes a commit whose message is the buffer's text, and the message buffer is gone"
+      run :=
+        withConfiguredRepository
+          { committed := #[("a.txt", "one\n")], index := #[("a.txt", .file "two\n")]
+            worktree := #[("a.txt", "two\n")] } fun home config directory => do
+          let message := "Commit from the message buffer\n\n# kept, as typed\n"
+          let rig ← ProjectRig.over (onIsolatedGit services home config)
+          let some (committed, _) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"), { command := VersionControl.commitName },
+                  setText message, { command := VersionControl.acceptName }]
+                statusKeys statusJobs | return false
+          let object ← gitIn home directory #["cat-file", "commit", "HEAD"]
+          return object.endsWith s!"\n\n{message}" &&
+              (committed.state.findBuffer "*vc-commit: repo@main*").isNone },
+    { name :=
+        "criterion 3 over real git: a pre-commit hook printing a line on each stream and exiting 1 leaves HEAD as it was, *vc-commit-output: repo@main* shown holding both lines, and the message buffer kept with its text"
+      run :=
+        withConfiguredRepository
+          { committed := #[("a.txt", "one\n")], index := #[("a.txt", .file "two\n")]
+            worktree := #[("a.txt", "two\n")]
+            hook := some "the hook says no on its output\nthe hook says no on its error\n" }
+          fun home config directory => do
+          let before ← gitIn home directory #["rev-parse", "HEAD"]
+          let rig ← ProjectRig.over (onIsolatedGit services home config)
+          let some (refused, texts) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"), { command := VersionControl.commitName },
+                  setText "refused\n", { command := VersionControl.acceptName }]
+                statusKeys statusJobs | return false
+          let after ← gitIn home directory #["rev-parse", "HEAD"]
+          let output ← bufferText rig texts refused "*vc-commit-output: repo@main*"
+          let kept ← bufferText rig texts refused "*vc-commit: repo@main*"
+          let shown :=
+            match refused.state.findBuffer "*vc-commit-output: repo@main*" with
+            | some id => refused.state.windows.any (·.buffer == id)
+            | none => false
+          return before == after && kept == some "refused\n" && shown &&
+              output.any fun text =>
+                (text.splitOn "the hook says no on its output").length > 1 &&
+                  (text.splitOn "the hook says no on its error").length > 1 }]
 
 end ContractTest
 
@@ -3760,6 +3877,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, under a user config asking for what its command line pins away, with {versionControlChecks.length} checks of what only git makes (a status read of files added with intent to add, and what to watch in a linked worktree) and {statusBufferChecks.length} checks of the status buffer and of vc-show over it, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, under a user config asking for what its command line pins away, with {versionControlChecks.length} checks of what only git makes (a status read of files added with intent to add, what to watch in a linked worktree, and a commit's message under a config that strips one) and {statusBufferChecks.length} checks of the status buffer, of vc-show, of staging a hunk and of the message buffer over it, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0
