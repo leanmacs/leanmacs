@@ -107,8 +107,9 @@ request in `JobM`, run with `Program.runM` inside a job.
 - **Making a worktree** with a start makes the branch there; without one
   it checks out an existing local branch. A branch that exists (with a
   start), a missing branch or one checked out in another worktree (without
-  one), or a path that is a worktree already, refuses it and nothing
-  changes. **Removing one** keeps its branch, and is refused for the main
+  one), or a path that is a worktree already, however it is spelled, or a
+  directory that holds a file, refuses it and nothing changes: no branch
+  is left behind. **Removing one** keeps its branch, and is refused for the main
   worktree, for a path that is no worktree, and for one holding a modified
   or untracked file. Neither has a command yet: agent dispatch calls them
   ([agent-hosting.md](agent-hosting.md)).
@@ -152,8 +153,11 @@ paired too; git pairs it, and a property of the contract says so.
 It also has a commit graph, its branches and its linked worktrees: the main
 worktree's directory, commits besides `HEAD`'s by id (parents before
 children), branches besides the checked-out one, `HEAD`'s parents and its
-id, and each linked worktree's directory, its branch or none for detached,
-and whether it holds an untracked file. A name resolves to `HEAD`'s
+id, each linked worktree's directory, its branch or none for detached,
+and whether it holds an untracked file, and the directories beside the
+root that hold a file and are no worktree. A worktree's path is taken as
+git takes it, `normal`: a trailing separator dropped and each `..`
+resolved, which is git's answer while the directories hold no link. A name resolves to `HEAD`'s
 commit (`HEAD`, or the checked-out branch while it is born), a branch's
 commit, a tag (a parentless commit of its files) or a commit's id, and
 `fileAt` reads through that. The merge base is the first of one commit's
@@ -208,7 +212,8 @@ the repository it starts from, run three ways:
   `commit-tree` over its parents' real ids, `HEAD`'s over its parents
   with its branch pointed at it and the index read from it, each other
   branch with `update-ref`, and each linked worktree with `git worktree
-  add` beside the repository, a dirty one given an untracked file. The
+  add` beside the repository, a dirty one given an untracked file, and
+  each directory that holds a file beside it with one file. The
   temporary directory is spelled with links resolved, as git spells a
   worktree's path. A repository's hook is written as an executable
   `.git/hooks/pre-commit` run by `/bin/sh`, its first line printed on its
@@ -236,7 +241,10 @@ is the adapter test that creating a worktree for a new branch and removing
 it leaves the list as it was, with the worktree on its branch in between;
 others list linked and detached worktrees, make one on an existing branch,
 refuse each bad making and removal (a dirty worktree among them, under the
-hostile config's `status.showUntrackedFiles=no`), refuse a leading `-` and
+hostile config's `status.showUntrackedFiles=no`; an existing worktree's
+path spelled with a trailing `/` or through `..`, and a directory that
+holds a file, each leaving the branches as they were; and a tag's name or
+a commit's id with no start, which git alone would detach at), refuse a leading `-` and
 a relative path, list the branches, and take a branch's change against
 `main`: each file changed since the fork with both contents and `main`'s
 later commits not in it, a branch made from `HEAD` before a commit, a move
@@ -265,7 +273,7 @@ cancelled. No binding is added.
 | worktrees | `git worktree list --porcelain -z` |
 | branches | `git for-each-ref --format=%(refname) refs/heads/` |
 | changes | `git rev-parse --verify --quiet <name>^{commit}` for each name, `git merge-base <R> <A>`, `git diff-tree -r -z --no-renames <M> <R>`, then `git cat-file --batch` fed each distinct blob id, one a line |
-| addWorktree | `git worktree list --porcelain -z`; without a start, `git rev-parse --verify --quiet refs/heads/<branch>`; then `git worktree add --quiet -b <branch> <path> <start>`, or `git worktree add --quiet <path> <branch>` |
+| addWorktree | `git rev-parse --verify --quiet refs/heads/<branch>`; then `git worktree add --quiet -b <branch> <path> <start>`, and `git branch -D <branch>` when that exits non-zero, or `git worktree add --quiet <path> <branch>` |
 | removeWorktree | `git -c status.showUntrackedFiles=normal worktree remove <path>` |
 
 - git runs under the user's config, so each flag pins what that config
@@ -353,12 +361,21 @@ cancelled. No binding is added.
   refusal; the model gives the same. Every stream is held to 16 MiB, so
   the old and new contents together are; past it the request could not
   run, never a partial change.
-- **Making a worktree** first lists the worktrees and refuses a path that is
-  one, since git makes a new branch before it refuses an existing path;
-  and, without a start, checks the branch is a local one, since `git
-  worktree add <path> <name>` would otherwise detach at a tag or commit of
-  that name, or make a branch from a remote one. A non-empty directory
-  that is no worktree is git's to refuse, after it has made the branch.
+- **Making a worktree** first checks whether the branch is a local one:
+  with a start, one that is refused before git runs, so a branch git
+  makes later is known to be new; without one, one that is not is
+  refused, since `git worktree add <path> <name>` would otherwise detach
+  at a tag or commit of that name, or make a branch from a remote one.
+  git makes a new branch before it checks the path, so when `worktree add
+  -b` exits non-zero the implementation deletes the branch with `git
+  branch -D`, and the reply is git's refusal. Rolling back rather than
+  checking the path first is what makes this hold for every reason git
+  refuses: a path compared as text misses a trailing `/`, a `..` or a
+  link (`/var` against `/private/var` on macOS), and resolving paths
+  would duplicate git's own rules for a non-empty directory. `-D`
+  refuses a branch a worktree has checked out, so a worktree a failing
+  `post-checkout` hook left made keeps its branch; a run that timed out
+  or was cancelled deletes nothing.
 - **Removing a worktree** pins `status.showUntrackedFiles=normal`: under a
   user's `no`, git does not see an untracked file and deletes it with the
   worktree. The hostile config of the contract sets `no`, and its
