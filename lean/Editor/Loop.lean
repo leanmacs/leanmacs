@@ -2738,8 +2738,8 @@ what a command run in a step whose scheme state is `input` is answered when
 it asks. A function, so nothing is listed for a step whose command does not
 ask. -/
 def keyBindingsIn (keys : Keys scheme) (state : EditorState) (input : scheme.State) :
-    ViewId → Array KeyBinding :=
-  fun view => (scheme.keyBindings (keys.maps state) view input).toArray
+    ViewId → Array KeyBinding := fun view =>
+  (scheme.keyBindings (keys.maps state) view input).toArray
 
 /-- Runs `command` from `state`, under `name`, as the loop runs every
 command ("Every command goes through the loop", in the module docs):
@@ -2899,7 +2899,7 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped
         next := .continue, key := some (focused, none) }
   let ran ←
     run keys loop.state invocation (before ++ [key.chord]) (scheme.report input focused)
-      (keyBindingsIn keys loop.state input)
+        (keyBindingsIn keys loop.state input)
   -- The key typed its text where typing was text before it and after it,
   -- outside the minibuffer, and its command ran to its end.
   let typed :=
@@ -3305,10 +3305,13 @@ def pressed (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) 
     return ← ({ loop := said, next := .continue } : Stepped scheme).published keys
   let ran ←
     run keys loop.state completed chords (scheme.report input focused)
-      (keyBindingsIn keys loop.state input)
+        (keyBindingsIn keys loop.state input)
   let stepped :=
     if ran.finished then
-      ({ loop with input, atRest := input } : Loop scheme).ranInto ran
+      ({ loop with
+              input, atRest := input } :
+            Loop scheme).ranInto
+        ran
     else ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
   stepped.published keys
 
@@ -3328,8 +3331,10 @@ def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
     return ← loop.pressed keys invocation
   let report := scheme.report loop.input loop.state.frame.focused
   (loop.ranInto
-          (← run keys loop.state invocation [] report (keyBindingsIn keys loop.state loop.input))).published
-    keys
+          (←
+            run keys loop.state invocation [] report
+                (keyBindingsIn keys loop.state loop.input))).published
+      keys
 
 /-- Runs the command registered under `name` as an invocation with no
 arguments that no key yielded (`invoke`), and publishes a scene of the
@@ -3392,7 +3397,7 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
     let (input, invocation) := scheme.invoked focused loop.input { command := name }
     let ran ←
       run keys loop.state invocation [] (scheme.report input focused)
-        (keyBindingsIn keys loop.state input)
+          (keyBindingsIn keys loop.state input)
     if ran.finished then
       let atRest := if (scheme.pending input).isEmpty then input else loop.atRest
       (({ loop with

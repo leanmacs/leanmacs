@@ -402,8 +402,7 @@ private def describeIn (maps : List (Keymap β)) (keys : List Key) : Option Stri
 
 /-- The description of `keys` over two tiers, `specific` over `defaults`:
 the deciding tier's, the one whose binding `resolveOver` gives. -/
-private def describeOver (specific defaults : List (Keymap β)) (keys : List Key) :
-    Option String :=
+private def describeOver (specific defaults : List (Keymap β)) (keys : List Key) : Option String :=
   match resolve specific keys with
   | .bound _ => describeIn specific keys
   | _ => describeIn defaults keys
@@ -457,8 +456,8 @@ completes it from rest. -/
 theorem reachableOver_resolves {specific defaults : List (Keymap β)} {r : Reached β}
     (listed : r ∈ reachableOver specific defaults) :
     resolveOver specific defaults r.keys = .bound r.binding ∧
-      ∀ n, 0 < n → n < r.keys.length →
-        resolveOver specific defaults (r.keys.take n) = .pending := by
+      ∀ n,
+        0 < n → n < r.keys.length → resolveOver specific defaults (r.keys.take n) = .pending := by
   simp only [reachableOver, List.mem_filterMap] at listed
   obtain ⟨keys, _, found⟩ := listed
   split at found
@@ -468,7 +467,10 @@ theorem reachableOver_resolves {specific defaults : List (Keymap β)} {r : Reach
           cases found
           refine ⟨bound, fun n positive short => ?_⟩
           simp only [reaches, Bool.and_eq_true, List.all_eq_true, List.mem_range] at reached
-          have pending := reached.2 (n - 1) (by simp at short ⊢; omega)
+          have pending :=
+            reached.2 (n - 1)
+              (by
+                simp at short ⊢; omega)
           have index : 0 + 1 + (n - 1) = n := by omega
           rw [List.length_nil, index] at pending
           split at pending

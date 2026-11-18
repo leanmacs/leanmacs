@@ -1421,7 +1421,11 @@ def vimKeyBindingChecks : List Check :=
         pure
           (listed.any (· == (keys "i", "insert", none)) &&
             listed.any (· == (keys ":", "ex", none)) &&
-            !has "d" && !has "j" && !has "f" && !has "\"" && !has ".") },
+            !has "d" &&
+            !has "j" &&
+            !has "f" &&
+            !has "\"" &&
+            !has ".") },
     { name :=
         "an active keymap's binding of SPC f f to a mode's command is listed first with its description, and one whose first key is a count digit is not listed"
       run :=
@@ -1435,8 +1439,7 @@ def vimKeyBindingChecks : List Check :=
         let inInsert := vimKeyBindings "i" vimFindFileMaps
         let windowRight := vimKeyBindings "i" vimWindowRightMaps
         pure
-          (!inInsert.any (·.1 == keys "SPC f f") &&
-            windowRight.any (·.1 == keys "C-w l") &&
+          (!inInsert.any (·.1 == keys "SPC f f") && windowRight.any (·.1 == keys "C-w l") &&
             !windowRight.any (·.1 == keys "C-w") &&
             (vimKeyBindings "i").any (·.1 == keys "C-w")) },
     { name := "the Vim scheme reports its key bindings through its keyBindings field"

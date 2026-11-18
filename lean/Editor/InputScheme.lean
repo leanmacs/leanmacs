@@ -331,8 +331,8 @@ structure InputScheme where
   state with nothing pending, whose binding runs a command by name, each
   with that name and its description, specific tier first; none from a
   scheme that says nothing. -/
-  keyBindings : (ViewId → List (Keymap Binding)) → ViewId → State → List KeyBinding :=
-    fun _ _ _ => []
+  keyBindings : (ViewId → List (Keymap Binding)) → ViewId → State → List KeyBinding := fun _ _ _ =>
+    []
 
 /-- `c` as a key hint (`KeyHint`): its key as a key string names it, and what
 it leads to, without the binding, which is the scheme's own. -/
