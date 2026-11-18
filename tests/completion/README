@@ -1,0 +1,16 @@
+The fixtures of contract-test's filtering checks (filteringChecks in
+lean/ContractTest/Editor/Completion/Filtering.lean), which `mise run ffi-test`
+hands contract-test as its sixth argument. They must stay executable (mode
+100755).
+
+- filter: stands for `fzf --filter`, so the checks pass where fzf is not
+  installed. It accepts exactly `[--read0] [--print0] --filter <text>`: any
+  other command line, a missing text or an extra argument exits 2 with a
+  message on standard error, so a text split into several arguments fails
+  the run. It reads records from standard input, one a line, or
+  NUL-separated with `--read0` (through `/usr/bin/tr`, since POSIX `sh`
+  cannot read a NUL), and prints, in input order, those that contain the
+  text as a literal substring, each ended by a line feed, or by a NUL with
+  `--print0`. An empty text prints every record. It exits 1 when it prints
+  none, as fzf does. The text is never evaluated by a shell. Records carry
+  no line feed.

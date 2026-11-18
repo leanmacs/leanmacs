@@ -669,7 +669,7 @@ driver does not need it. The tests of the pool pin no size, so they pass
 whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
-linked against the real library, then `contract-test`, handed five
+linked against the real library, then `contract-test`, handed six
 directories: `tests/process-environment` (the fixtures that stand in for
 mise in the checks of a child's environment), `tests/workspaces` (the
 fixture that stands in for git in the workspace finder's checks, which run
@@ -682,9 +682,11 @@ fixture `compile` runs over the real process service, which waits for files
 the check makes, so its pauses are the check's to end; and the programs that
 stand for cargo, lake and mise, put first on each child's `PATH` with the git
 fixture after them, and the trees the shipped modes are checked in, which
-the checks copy into a temporary directory, so no real tool runs) and `tests/syntax`
+the checks copy into a temporary directory, so no real tool runs), `tests/syntax`
 (the syntax fixtures, whose Rust fixtures the indent and text-object checks
-read); each fixture must stay executable. Then `config-test`, handed
+read) and `tests/completion` (the fixture that stands in for fzf in the
+checks of a source a command filters, so they pass where fzf is not
+installed); each fixture must stay executable. Then `config-test`, handed
 `tests/syntax` too, whose Rust indent fixture its indent checks mangle and
 re-indent through a headless host, and
 then the editor: once as `editor demo`, the demonstration, ten times in its headless

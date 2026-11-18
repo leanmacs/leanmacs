@@ -4,6 +4,7 @@ import ContractTest.Editor.Clipboard.Contract
 import ContractTest.Editor.Clipboard.Real
 import ContractTest.Editor.Compile
 import ContractTest.Editor.Compile.Shipped
+import ContractTest.Editor.Completion.Filtering
 import ContractTest.Editor.Completion.StyleContract
 import ContractTest.Editor.Display.Contract
 import ContractTest.Editor.Display.Recorder
@@ -240,6 +241,18 @@ lines, which the check makes only once it has seen the line before in the
 compilation buffer: so each line is shown before the child ends, the last
 line says its exit status, 2, and the child is reaped.
 
+`filteringChecks` runs a source a command filters
+(`Editor/Completion/Filtering.lean`) over the real process service, with
+`/bin/cat` of a list the check writes as the lister and the fixture
+`tests/completion/filter` standing in for fzf, each in a temporary
+directory of its own: a text of shell metacharacters and quotes reaches the
+filter as one literal argument, with line-separated and NUL-separated
+records, and no command in it runs; the fixture fails a text split in two;
+the empty text over 10,000 records with a small byte limit answers whole
+records, a prefix of the list, the filter ended; a filter that is not there
+fails naming it; and the fixture's exit 1 is no matches, or a failure when
+no status is declared. Every child is reaped.
+
 The cases of the editor API (`Editor/Api/Cases.lean`) are played on the
 real text binding, with a recorder as the display and nothing watched
 (`apiFailures`): each from a table of its own, dropped with the case.
@@ -271,14 +284,16 @@ timer service, the display interface's against the recorder and the watch
 port's against its real binding, then shuts down: exits 0 when everything
 holds, and 1 after naming on stderr what does not.
 
-Its five arguments are the directory of the fixtures a child's
+Its six arguments are the directory of the fixtures a child's
 environment is looked up with (`tests/process-environment`), the directory
 of the fixture that stands in for git in the workspace finder's checks
 (`tests/workspaces`), the directory of the fixture `:!` runs, which is also
 the editor's working directory in those checks (`tests/shell`), the
 directory of the fixtures `compile` runs, with the programs that stand for
 cargo, lake and mise and the trees the shipped modes are checked in
-(`tests/compile`), and the directory of the syntax fixtures (`tests/syntax`), each made absolute here;
+(`tests/compile`), the directory of the syntax fixtures (`tests/syntax`),
+and the directory of the fixture that stands in for fzf in the filtering
+checks (`tests/completion`), each made absolute here;
 any other command line is status 2, with the usage on stderr.
 
 The pool's threads are learnt first, by warming it, before anything else
@@ -290,15 +305,18 @@ def main (arguments : List String) : IO UInt32 := do
   -- The fixtures of the environment checks, the workspace checks, the shell
   -- checks, the compile checks and the syntax checks, made absolute here, at
   -- the edge.
-  let (fixtures, workspaceFixtures, shellFixtures, compileFixtures, syntaxFixtures) ←
+  let
+    (fixtures, workspaceFixtures, shellFixtures, compileFixtures, syntaxFixtures,
+      completionFixtures)
+    ←
     match arguments with
-    | [directory, workspaces, shell, compile, syntaxDirectory] =>
+    | [directory, workspaces, shell, compile, syntaxDirectory, completion] =>
       pure
           (← IO.FS.realPath directory, ← IO.FS.realPath workspaces, ← IO.FS.realPath shell,
-            ← IO.FS.realPath compile, ← IO.FS.realPath syntaxDirectory)
+            ← IO.FS.realPath compile, ← IO.FS.realPath syntaxDirectory, ← IO.FS.realPath completion)
     | _ =>
       IO.eprintln
-          "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures> <the directory of the shell fixtures> <the directory of the compile fixtures> <the directory of the syntax fixtures>"
+          "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures> <the directory of the shell fixtures> <the directory of the compile fixtures> <the directory of the syntax fixtures> <the directory of the completion fixtures>"
       return 2
   let pool ← Editor.Job.Pool.whole ContractTest.warmPatience
   let completions ← Editor.Job.Completions.new
@@ -344,6 +362,8 @@ def main (arguments : List String) : IO UInt32 := do
   let shellCheckFailed ← ContractTest.checkFailures shellChecks
   let compileChecks := ContractTest.compileChecks services compileFixtures
   let compileCheckFailed ← ContractTest.checkFailures compileChecks
+  let filteringChecks := ContractTest.filteringChecks services completionFixtures
+  let filteringCheckFailed ← ContractTest.checkFailures filteringChecks
   let projectModeChecks := ContractTest.projectModeChecks services compileFixtures workspaceFixtures
   let projectModeCheckFailed ← ContractTest.checkFailures projectModeChecks
   let versionControlFailed ← ContractTest.versionControlFailures services
@@ -400,6 +420,7 @@ def main (arguments : List String) : IO UInt32 := do
       workspaceCheckFailed ++
       shellCheckFailed ++
       compileCheckFailed ++
+      filteringCheckFailed ++
       projectModeCheckFailed ++
       versionControlFailed ++
       versionControlCheckFailed ++
@@ -431,6 +452,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties over the library's matcher, and {Editor.JobContract.snapshotProperties.length} snapshot properties over a published table, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, under a user config asking for what its command line pins away, with {versionControlChecks.length} checks of what only git makes (a branch's change asked from two worktrees, a status read of files added with intent to add, what to watch in a linked worktree, and a commit's message under a config that strips one) and {statusBufferChecks.length} checks of the status buffer, of the worktree list, of vc-show, of staging a hunk and of the message buffer over it, and {reviewBufferChecks.length} of the review buffer, and {historyBufferChecks.length} of the log, the blame and the change since the last review, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, {Editor.Completion.StyleContract.properties.length} properties of the completion styles hold of the fuzzy style and of the path style over it, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties over the library's matcher, and {Editor.JobContract.snapshotProperties.length} snapshot properties over a published table, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {filteringChecks.length} of a source a command filters, with fzf standing in as a fixture, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, under a user config asking for what its command line pins away, with {versionControlChecks.length} checks of what only git makes (a branch's change asked from two worktrees, a status read of files added with intent to add, what to watch in a linked worktree, and a commit's message under a config that strips one) and {statusBufferChecks.length} checks of the status buffer, of the worktree list, of vc-show, of staging a hunk and of the message buffer over it, and {reviewBufferChecks.length} of the review buffer, and {historyBufferChecks.length} of the log, the blame and the change since the last review, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, {Editor.Completion.StyleContract.properties.length} properties of the completion styles hold of the fuzzy style and of the path style over it, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0
