@@ -154,6 +154,10 @@ def oldNames (driver : TestDriver) : Array String :=
   ((driver.loop.state.buffers.filterMap id).map (·.name)).filter fun name =>
     (name.splitOn "@B").length > 1
 
+/-- What the workspace at `/r` of `driver` keeps of its reviews. -/
+def keptReviews (driver : TestDriver) : ReviewStore :=
+  driver.loop.state.workspaces.get reviewStore (.local "/r")
+
 /-- A repository whose branch changes one line of `x.txt`: one hunk. -/
 def oneHunkRepository : Model.Repository :=
   VersionControlContract.forked #[("x.txt", "x\n")] #[("x.txt", "y\n")] #[] #[("base", "B")]
@@ -429,6 +433,48 @@ def reviewBufferChecks : List Check :=
               rounds reviewed == 1 &&
               rounds refreshed == 2 &&
               strayShots refreshed == 0 },
+    { name :=
+        "keep and revert rewrite the store's last round in place: after vc-review-keep it holds one round, its first hunk kept and that hunk's viewed records showing it was on screen, a hunk never shown not; after vc-review-revert still one round"
+      run :=
+        pure <|
+          match reviewOpened with
+          | none => false
+          | some opened =>
+            let reviewed := reviewAfter opened "C-t r"
+            let kept := reviewAfter reviewed "C-t 0 C-t k"
+            let reverted := reviewAfter kept "C-t 2 C-t v"
+            match (keptReviews kept).rounds, (keptReviews reverted).rounds with
+            | #[round], #[later] =>
+              round.hunks.map (·.decision) ==
+                  #[.kept, .«open», .«open», .«open», .«open», .«open»] &&
+                (round.against, round.base) == ("base", "B") &&
+                (round.hunks[0]?.any fun hunk =>
+                  !hunk.viewed.isEmpty && hunk.viewed.all (·.examined)) &&
+                (round.hunks.back?.any fun hunk =>
+                  !hunk.viewed.isEmpty && hunk.viewed.all (!·.examined)) &&
+                later.hunks.map (·.decision) ==
+                  #[.kept, .reverted, .«open», .«open», .«open», .«open»] &&
+                (keptReviews reverted).buffer == (reviewShown reverted).map (·.1.index)
+            | _, _ => false },
+    { name :=
+        "the store keeps the last Review.keptRounds (20) rounds: a fresh round past them drops the oldest"
+      run :=
+        pure <|
+          match reviewOpened with
+          | none => false
+          | some opened =>
+            let record (round : Nat) : ReviewRecord :=
+              { root := "/r", against := s!"b{round}", base := "B" }
+            let written :=
+              dispatchedFrom (start := pure opened.loop.state) do
+                for round in List.range (Review.keptRounds + 1) do
+                  writeRound ⟨0⟩ (record round) true
+            Review.keptRounds == 20 &&
+              written.any fun (_, state) =>
+                let kept := state.workspaces.get reviewStore (.local "/r")
+                kept.rounds.map (·.against) ==
+                    ((List.range 20).map fun round => s!"b{round + 1}").toArray &&
+                  kept.buffer == some 0 },
     { name :=
         "an edit typed in a new excerpt changes the file's buffer, and one typed in an old excerpt is refused as read-only"
       run :=

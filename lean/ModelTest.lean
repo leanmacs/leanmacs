@@ -800,8 +800,8 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   (`Editor/VersionControl/Review.lean`) on that driver, its read run over
   the version-control interface's model (`Model.readHandler`): the four
   criteria of the excerpts roadmap's phase 4, its refusals, refresh, the
-  old buffers a round that ends early removes, and edits through its
-  excerpts;
+  old buffers a round that ends early removes, the rounds its store keeps,
+  and edits through its excerpts;
 - `excerptViewedChecks`: what a view shows of a tracked excerpt
   (`Editor/ExcerptView.lean`) and the marking of what was viewed
   (`EditorState.markViewed`, `creditViewed`), on hand-built rows and
