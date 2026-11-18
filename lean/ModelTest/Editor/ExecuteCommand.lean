@@ -230,6 +230,27 @@ def executeCommandChecks : List Check :=
               promptEcho ran == "marked" &&
               [exact, padded].all fun driver =>
                 driver.loop.state.prompt.map (·.label) == some Themes.label &&
-                  promptEcho driver != "marked" }]
+                  promptEcho driver != "marked" },
+    { name :=
+        "pressing C-c x, a key bound to execute-command, or choosing execute-command from the menu, annotates each candidate with its keys as calling it by name does: marked with C-c m, C-c n  Mark it"
+      run :=
+        let bound (map : List (Keymap TestScheme.Binding)) : List (Keymap TestScheme.Binding) :=
+          map ++ [Keymap.ofDescribed [(keys "C-c x", invoke ExecuteCommand.name, none)]]
+        pure <|
+          match
+            executeDriver
+              { executeKeys with
+                maps := fun state view => bound (executeKeys.maps state view) } with
+          | none => false
+          | some driver =>
+            let annotations (driver : TestDriver) : Option (Array (String × Option String)) :=
+              (candidatesOf driver).map (·.all.map fun c => (c.text, c.annotation))
+            let named := calling driver
+            let pressed := (fedTo driver (presses "C-c x")).1
+            let chosen := (fedTo driver [.menu ExecuteCommand.name]).1
+            let marked := (annotations pressed).bind (·.find? (·.1 == "marked"))
+            marked == some ("marked", some "C-c m, C-c n  Mark it") &&
+              annotations pressed == annotations named &&
+              annotations chosen == annotations named }]
 
 end ModelTest

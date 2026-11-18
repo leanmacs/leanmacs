@@ -7071,7 +7071,7 @@ loads with no reload error and `SPC f f` opens a file, each binding names a
 registered command, and each prefix it binds under the leader is named. -/
 def defaultConfigChecks (context : Context) : List Check :=
   [{  name :=
-        "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, once that is cancelled SPC : opens the command prompt, and once that is cancelled SPC ? opens the binding search"
+        "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, once that is cancelled SPC : opens the command prompt, and once that is cancelled SPC ? opens the binding search, which, once open is typed, lists SPC f f  open-file"
       run := do
         let files ← chunksOf context.defaultConfig
         withVimHost context files.toList fun session => do
@@ -7092,19 +7092,26 @@ def defaultConfigChecks (context : Context) : List Check :=
             session.typed "SPC ?"
             let searched := (← session.host.join patience) == .settled
             let searching ← session.sceneLines
+            -- The list shows only its first rows: typing `open` narrows it
+            -- to the bindings that match.
+            session.typed "o p e n"
+            let narrowed := (← session.host.join patience) == .settled
+            let opening ← session.sceneLines
             -- Each prompt opens a minibuffer view of its own, so a prompt's
             -- status line is compared from its view's id on.
             let promptOf (label : String) (lines : Array String) : Bool :=
               lines.any fun line =>
                 line.startsWith "status " && afterId line == afterId (promptStatus label)
-            return installed && clean && joined && rejoined && searched &&
+            return installed && clean && joined && rejoined && searched && narrowed &&
                 !before.contains (promptStatus Files.openPrompt) &&
                 after.contains (promptStatus Files.openPrompt) &&
                 !cancelled.contains (promptStatus Files.openPrompt) &&
                 !promptOf ExecuteCommand.label cancelled &&
                 promptOf ExecuteCommand.label commanding &&
                 !promptOf BindingSearch.label commanding &&
-                promptOf BindingSearch.label searching },
+                promptOf BindingSearch.label searching &&
+                opening.any fun line =>
+                  line.startsWith "view " && (afterId line).contains "SPC f f  open-file" },
     { name :=
         "the default config: every binding names a command registered compiled or by the config, <leader> f f is bound to open-file, <leader> : to execute-command, described Execute command, and <leader> ? to search-bindings, described Search bindings"
       run := do

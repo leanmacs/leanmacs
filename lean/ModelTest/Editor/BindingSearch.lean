@@ -86,6 +86,42 @@ it and the minibuffer's accept runs. -/
 def acceptingBinding (driver : TestDriver) (typed : String) : TestDriver :=
   (fedTo (searching driver) (.commit typed :: presses "C-e y")).1
 
+/-- The keys of the binding search's checks (`searchKeys`) with `C-c s` bound
+to `search-bindings` as well, after the others. -/
+def keyedSearchKeys : Loop.Keys TestScheme.scheme :=
+  { searchKeys with
+    maps := fun _ _ =>
+      [Keymap.ofDescribed
+          [(keys "C-e y", invoke Minibuffer.acceptName, none),
+            (keys "C-c m", invoke "marked", some "Mark it"),
+            (keys "C-c s", invoke BindingSearch.name, none)]] }
+
+/-- What the prompt open in `driver`'s loop lists: each candidate's text and
+annotation; `none` with no prompt open. -/
+def promptRows {scheme : InputScheme} (driver : Loop.Driver scheme) :
+    Option (Array (String × Option String)) :=
+  driver.loop.state.prompt.map fun asking =>
+    asking.candidates.all.map fun candidate => (candidate.text, candidate.annotation)
+
+/-- What the binding search lists from `keyedSearchKeys`, by whichever path
+it is opened. -/
+def keyedSearchRows : Array (String × Option String) :=
+  #[("C-e y  minibuffer-accept", none), ("C-c m  marked", some "Mark it"),
+    ("C-c s  search-bindings", none)]
+
+/-- The test scheme, but an answer to its question completes the invocation
+of the command the answer names: a fake that hands the loop a command an
+answer completes, which the Vim scheme, whose answers complete only
+motions, never does. -/
+def answeringScheme : InputScheme :=
+  { TestScheme.scheme with answered := fun _ text state => (state, some { command := text }) }
+
+/-- The keys of `keyedSearchKeys`, for `answeringScheme`. -/
+def answeringSearchKeys : Loop.Keys answeringScheme :=
+  { maps := keyedSearchKeys.maps
+    command? := keyedSearchKeys.command?
+    matching := keyedSearchKeys.matching }
+
 /-- A fake style for the binding search's checks: it keeps every candidate,
 in reverse order, with no ranges. -/
 def reversingBindings : Completion.Style :=
@@ -165,6 +201,43 @@ def bindingSearchChecks : List Check :=
           | none => false
           | some driver =>
             (candidatesOf (searching driver)).map (·.listed.map (·.candidate.text)) ==
-              some #["C-c m  marked", "C-e y  minibuffer-accept"] }]
+              some #["C-c m  marked", "C-e y  minibuffer-accept"] },
+    { name :=
+        "pressing C-c s, a key bound to search-bindings, lists every binding with its description, as calling it by name does"
+      run :=
+        pure <|
+          match searchDriver keyedSearchKeys with
+          | none => false
+          | some driver =>
+            let named := searching driver
+            let pressed := (fedTo driver (presses "C-c s")).1
+            promptRows pressed == some keyedSearchRows && promptRows pressed == promptRows named },
+    { name :=
+        "choosing search-bindings from the menu lists every binding with its description, as calling it by name does"
+      run :=
+        pure <|
+          match searchDriver keyedSearchKeys with
+          | none => false
+          | some driver =>
+            let named := searching driver
+            let chosen := (fedTo driver [.menu BindingSearch.name]).1
+            promptRows chosen == some keyedSearchRows && promptRows chosen == promptRows named },
+    { name :=
+        "an answer to the scheme's question that completes search-bindings, from a fake scheme whose answer names the command, lists every binding with its description, as calling it by name does"
+      run :=
+        pure <|
+          match
+            (Loop.Driver.over answeringSearchKeys (fun _ => none) (EditorState.initial ⟨640, 480⟩)
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let named := (driver.stepped (driver.loop.runNamed driver.handed BindingSearch.name)).1
+            let answered :=
+              (driver.stepped
+                  (driver.loop.invoke driver.handed
+                    { command := InputScheme.answerName,
+                      arguments := [.str BindingSearch.name] })).1
+            promptRows answered == some keyedSearchRows &&
+              promptRows answered == promptRows named }]
 
 end ModelTest

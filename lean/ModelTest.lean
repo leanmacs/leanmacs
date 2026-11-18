@@ -505,14 +505,17 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   a text nothing matches is said and an empty one runs nothing; a prompt
   already open is said; and a fake style chosen for the category `command`
   reverses the listing and decides which command a fragment runs, while a
-  theme prompt keeps its own order;
+  theme prompt keeps its own order; opened by a key bound to it or from the
+  menu, it annotates its candidates with their keys as when called by name;
 - `bindingSearchChecks`: the binding search (`Editor/BindingSearch.lean`)
   on that driver: it lists each binding the scheme reaches as its keys and
   command, annotated with its description; accepting one runs its command
   as pressing its keys at rest does, with those keys; a typed fragment runs
   the style's first, a text nothing matches is said and an empty one runs
-  nothing; a prompt already open is said; and a fake style chosen for the
-  category `binding` reverses the listing;
+  nothing; a prompt already open is said; a fake style chosen for the
+  category `binding` reverses the listing; and opened by a key bound to it,
+  from the menu, or as the command a fake scheme's answer completes, it
+  lists the same bindings as when called by name;
 - `faceVocabularyChecks`: the face vocabulary (`Editor/Face/Vocabulary.lean`)
   names each face once with its meaning, and lists every face the shipped
   Vim scheme and the loop draw, layout's four and the faces declared
