@@ -60,7 +60,7 @@ Its output at 37b1335 (non-test lines, total lines, path):
    1651    1663 crates/editor-process/src/contract.rs
 ```
 
-There are 478 such files. Four more are audited because the task names
+The command measures 478 tracked files; these 10 are over the line. Four more are audited because the task names
 them, though they fall under the line: `crates/editor-process/src/service.rs`
 (1,476 of 2,988), `crates/editor-ffi/src/window.rs` (1,364 of 2,913),
 `crates/editor-layout/src/frame.rs` (1,356 of 3,715) and
