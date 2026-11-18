@@ -135,6 +135,26 @@ is cited 73 times in 28 files, `docs/dev-practices/the-gate.md` and
 `docs/design/lean-runtime.md` among them; the split keeps those names and
 the root's path resolvable, or updates the citations.
 
+**Done** (roadmap `structural-splits`, phase
+`phase-2-split-lean-integration-test-roots`): split. `lean/ConfigTest.lean`,
+7,419 lines at 5f86580, is now 303: its imports, its module doc, `checks`
+and `main`. Its lists are in 15 test modules under `lean/ConfigTest/Editor/`,
+each the mirror of the module its doc names as its subject, where ModelTest
+keeps the model counterpart where there is one (the host's own lists in
+`lean/ConfigTest/Editor/Headless.lean`, `promptChecks` in
+`lean/ConfigTest/Editor/Minibuffer.lean`). The helpers several modules
+share are in six support modules under `lean/ConfigTest/Support/`, among
+them `Candidates.lean`, which holds `manyPaths` for the prompt checks and
+the benchmark. `Check`, `Context`, `failures`, `run` and `usage` are in
+`lean/ConfigTest/Check.lean`; `run` now takes the list to run as its first
+argument, which `main` passes as `ConfigTest.checks`, the one change to a
+definition. The benchmark is `lean/ConfigTest/Bench.lean` (790 lines),
+`namespace ConfigTest.Bench` unchanged. Everything stays in `namespace
+ConfigTest`, so every `ConfigTest.<name>Checks` citation resolves
+unchanged. The run is the same before and after: `config-test: 204 checks
+passed`. The largest new module is `lean/ConfigTest/Editor/Headless.lean`
+(2,305 lines).
+
 ### The binding's tests: `lean/FfiTest.lean`
 
 **Cohesion**: The root of the `ffi-test` executable, linked exactly like
@@ -205,9 +225,9 @@ The helpers several modules share are in seven support modules under
 `lean/ContractTest/Support/`, and `Check` and `checkFailures` in
 `lean/ContractTest/Check.lean`. Everything stays in `namespace
 ContractTest`, so every `ContractTest.<name>Checks` citation resolves
-unchanged; the one that named a list that does not exist,
-`ContractTest.revisionBufferChecks` in `lean/Editor/VersionControl/Show.lean`,
-now names `ContractTest.statusBufferChecks`, which holds the vc-show checks.
+unchanged. The one citation that named a list contract-test does not have
+(a `revisionBufferChecks`, in `lean/Editor/VersionControl/Show.lean`) now
+names `ContractTest.statusBufferChecks`, which holds the vc-show checks.
 contract-test's summary line is the same before and after. The largest new
 module is `lean/ContractTest/Editor/SyntaxTree/Real.lean` (713 lines).
 

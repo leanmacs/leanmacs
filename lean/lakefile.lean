@@ -567,6 +567,18 @@ imports it, so `lake build` builds it and links its objects in.
 not `ContractTest` itself, so the executable's root belongs to no library. -/
 lean_lib ContractTests where globs := #[.submodules `ContractTest]
 
+/-- The `config-test` executable's modules (`ConfigTest/**/*.lean`: the test
+modules under `ConfigTest/Editor/`, the support modules under
+`ConfigTest/Support/`, `ConfigTest/Check.lean` and the benchmark
+`ConfigTest/Bench.lean`), which its root `ConfigTest.lean` imports. Lake
+resolves an import only to a module of a library, never to one of an
+executable's, so these need a library of their own. It is not a default
+target: the `config-test` executable, which is, imports it, so `lake build`
+builds it and links its objects in. `.submodules` takes every module under
+`ConfigTest`, at any depth, and not `ConfigTest` itself, so the executable's
+root belongs to no library. -/
+lean_lib ConfigTests where globs := #[.submodules `ConfigTest]
+
 /-- The contract checks of the text port and of the job port against their
 real bindings (`ContractTest.lean`), linked like `editor` with the glue and
 the Rust archive. `mise run ffi-test` runs it. It interprets nothing, so it

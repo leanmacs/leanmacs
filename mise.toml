@@ -779,7 +779,7 @@ run = '''status=0; out=$( (ulimit -c 0; exec env -u LEAN_STACK_SIZE_KB .lake/bui
 # whose directories are passed in. LEAN_STACK_SIZE_KB is removed from the
 # environment, so the threads have the stack the editor gives them.
 [tasks.config-bench]
-description = "Opt-in, never part of ci: measure start-up, reload time and memory across reloads of the config session (lean/ConfigTest.lean). It asserts nothing"
+description = "Opt-in, never part of ci: measure start-up, reload time and memory across reloads of the config session (lean/ConfigTest/Bench.lean). It asserts nothing"
 depends = ["lean"]
 dir = "lean"
 run = [
@@ -832,7 +832,7 @@ run = "tools/module-bench.sh lean"
 # and LEAN_STACK_SIZE_KB are removed from the environment, so the pool has
 # Lean's size and the threads the stack the editor gives them.
 [tasks.job-bench]
-description = "Opt-in, never part of ci: measure the latency of the editor loop while background jobs run (lean/ConfigTest.lean). It asserts nothing"
+description = "Opt-in, never part of ci: measure the latency of the editor loop while background jobs run (lean/ConfigTest/Bench.lean). It asserts nothing"
 depends = ["lean"]
 dir = "lean"
 run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-jobs \"$(lean --print-prefix)\" .lake/build/lib/lean 10000"
@@ -858,7 +858,7 @@ run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test
 # matcher among it; LEAN_NUM_THREADS and LEAN_STACK_SIZE_KB are removed from
 # the environment, as for `job-bench`.
 [tasks.prompt-bench]
-description = "Opt-in, never part of ci: measure what a key costs in a prompt over many candidates, listed on the editor thread and matched off it (lean/ConfigTest.lean). It asserts nothing"
+description = "Opt-in, never part of ci: measure what a key costs in a prompt over many candidates, listed on the editor thread and matched off it (lean/ConfigTest/Bench.lean). It asserts nothing"
 depends = ["lean"]
 dir = "lean"
 run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-prompt \"$(lean --print-prefix)\" .lake/build/lib/lean 600"

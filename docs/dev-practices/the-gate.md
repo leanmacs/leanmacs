@@ -484,6 +484,21 @@ helper that a second test module comes to need in a support module; don't
 raise the bound. Every list stays in the namespace `ModelTest`, so
 `ModelTest.<name>Checks` names it wherever it lives.
 
+`ffi-test`, `config-test` and `contract-test` are laid out the same way,
+under `lean/FfiTest/`, `lean/ConfigTest/` and `lean/ContractTest/`: the
+checks of `lean/Editor/Ffi/Document.lean` are in
+`lean/FfiTest/Editor/Ffi/Document.lean`, and a run of a port's contract
+against its real binding is in the mirror of that contract
+(`lean/ContractTest/Editor/Display/Contract.lean`). The helpers several
+test modules share are in `<Root>/Support/`; `Check` (and `failures`,
+`run` and `usage`, and config-test's `Context`, where the root has them)
+are in `<Root>/Check.lean`; and the benchmark is in
+`lean/ConfigTest/Bench.lean`. Each root keeps its imports, its `checks`
+aggregator (contract-test's is `main`) and `main`, and every list stays in
+its root's namespace, so `FfiTest.<name>Checks`, `ConfigTest.<name>Checks`
+and `ContractTest.<name>Checks` name it wherever it lives. Put a new check
+in the test module of the module it tests.
+
 The ex command line (`lean/Editor/Ex.lean`) is checked there in layers,
 so that a change to one breaks no other's checks:
 
