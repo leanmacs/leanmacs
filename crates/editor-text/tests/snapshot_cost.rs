@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use editor_text::fs::{
-    FakeFs, Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Pieces, Stat,
+    Entry, FakeFs, Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Pieces, Stat,
 };
 use editor_text::{
     Anchor, Bias, ChangeSet, Marker, Motion, Origin, Revision, Text, Transaction, WordKind, file,
@@ -615,6 +615,10 @@ impl Fs for Discard {
 
     fn read_link(&self, _: &Path) -> Result<Option<PathBuf>, FsError> {
         Ok(None)
+    }
+
+    fn list(&self, _: &Path) -> Result<Vec<Entry>, FsError> {
+        Err(FsError::new(FsErrorKind::NotFound, "nothing is kept"))
     }
 }
 

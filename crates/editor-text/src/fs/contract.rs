@@ -41,12 +41,18 @@
 //!   is is refused as [`FsErrorKind::Exists`] and does not make what it
 //!   names. And a link that holds a path that is not absolute is read as
 //!   it holds it.
+//! - **A listing.** A directory holding a file, a directory, a link to a
+//!   file and a link to nothing lists each once, with the kinds file,
+//!   directory, file and other: links followed, and a link to nothing is
+//!   other. Listing nothing is refused as [`FsErrorKind::NotFound`], and
+//!   listing a file as [`FsErrorKind::NotAFile`].
 //! - **A file is removed**, and its stat is then none.
 //!
 //! # The ground
 //!
-//! The port has no method to make a link, to set a file's modification
-//! time, or to set or read its permissions behind the port's back. The
+//! The port has no method to make a link or a directory, to set a file's
+//! modification time, or to set or read its permissions behind the port's
+//! back. The
 //! check needs each done, so its caller supplies them as a [`Ground`]: the
 //! truth the port's answers are compared with. For the fake it is the fake
 //! itself ([`FakeFs::ground`](super::FakeFs::ground)); for a real adapter
@@ -79,6 +85,9 @@ pub trait Ground {
 
     /// Makes a link at `link` that names `to`, which may hold nothing.
     fn link(&self, link: &Path, to: &Path) -> Result<(), String>;
+
+    /// Makes an empty directory at `path`, in a directory that is there.
+    fn directory(&self, path: &Path) -> Result<(), String>;
 
     /// Stamps the file at `path` as modified at `to`.
     fn set_modified(&self, path: &Path, to: Modified) -> Result<(), String>;
@@ -171,6 +180,15 @@ pub enum Violation {
     StatOfALinkToNothing,
     /// Resolving a link to nothing was not refused as not found.
     ResolvedALinkToNothing,
+    /// A directory did not list each thing it holds once, by its name.
+    ListNotEachOnce,
+    /// A directory listed something with the wrong kind: links are
+    /// followed, and a link to nothing is other.
+    ListKindsWrong,
+    /// Listing nothing was not refused as not found.
+    ListOfNothing,
+    /// Listing a file was not refused as not a file.
+    ListOfAFile,
     /// A removed file was still there.
     NotRemoved,
 }
@@ -235,6 +253,12 @@ impl fmt::Display for Violation {
             Self::ResolvedALinkToNothing => {
                 "resolving a link to nothing was not refused as not found"
             }
+            Self::ListNotEachOnce => "a directory did not list each thing it holds once",
+            Self::ListKindsWrong => {
+                "a directory listed something with the wrong kind, links followed"
+            }
+            Self::ListOfNothing => "listing nothing was not refused as not found",
+            Self::ListOfAFile => "listing a file was not refused as not a file",
             Self::NotRemoved => "a removed file was still there",
         })
     }
@@ -271,6 +295,7 @@ pub fn check(fs: &dyn Fs, ground: &dyn Ground) -> Result<(), Violation> {
     a_directory(fs, root)?;
     links(fs, ground, root, &file, &joined)?;
     a_link_to_nothing(fs, ground, root)?;
+    a_listing(fs, ground, root, &file)?;
 
     must("removing a file", fs.remove(&file))?;
     if must("the stat of a removed file", fs.stat(&file))?.is_some() {
@@ -543,13 +568,45 @@ fn a_link_to_nothing(fs: &dyn Fs, ground: &dyn Ground, root: &Path) -> Result<()
     Ok(())
 }
 
+/// A directory holding a file, a directory, a link to a file and a link to
+/// nothing lists each once, with its kind, links followed; listing nothing
+/// and listing a file are refused.
+fn a_listing(fs: &dyn Fs, ground: &dyn Ground, root: &Path, file: &Path) -> Result<(), Violation> {
+    let listed = root.join("listed");
+    grounded(ground.directory(&listed))?;
+    must(
+        "writing a new file",
+        write(fs, &listed.join("a-file"), &[b"x"], None),
+    )?;
+    grounded(ground.directory(&listed.join("a-directory")))?;
+    grounded(ground.link(&listed.join("a-link"), file))?;
+    grounded(ground.link(&listed.join("dangling"), &root.join("nowhere")))?;
+    let mut entries = must("listing a directory", fs.list(&listed))?;
+    entries.sort_by(|one, other| one.name.cmp(&other.name));
+    let names: Vec<&std::ffi::OsStr> = entries.iter().map(|entry| entry.name.as_os_str()).collect();
+    if names != ["a-directory", "a-file", "a-link", "dangling"] {
+        return Err(Violation::ListNotEachOnce);
+    }
+    let kinds: Vec<Kind> = entries.iter().map(|entry| entry.kind).collect();
+    if kinds != [Kind::Directory, Kind::File, Kind::File, Kind::Other] {
+        return Err(Violation::ListKindsWrong);
+    }
+    if !refused_as(&fs.list(&root.join("missing")), FsErrorKind::NotFound) {
+        return Err(Violation::ListOfNothing);
+    }
+    if !refused_as(&fs.list(file), FsErrorKind::NotAFile) {
+        return Err(Violation::ListOfAFile);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::sync::{Mutex, PoisonError};
 
-    use super::super::{FakeFs, Pieces, Stat};
+    use super::super::{Entry, FakeFs, Pieces, Stat};
     use super::*;
 
     /// One way to break one rule of the port.
@@ -587,6 +644,12 @@ mod tests {
         StatsALinkToNothing,
         /// A resolve of a link to nothing answers the path the link names.
         ResolvesALinkToNothing,
+        /// A listing leaves out its last entry by name.
+        ListLeavesOutAnEntry,
+        /// A listing says a link is other, whatever it names.
+        ListDoesNotFollowLinks,
+        /// A listing of a file answers no entries.
+        ListOfAFileIsNotRefused,
     }
 
     impl Broken {
@@ -718,6 +781,28 @@ mod tests {
                 return Ok(named);
             }
             self.inner.resolve(path)
+        }
+
+        fn list(&self, path: &Path) -> Result<Vec<Entry>, FsError> {
+            if self.fault == Fault::ListOfAFileIsNotRefused && self.inner.bytes(path).is_some() {
+                return Ok(Vec::new());
+            }
+            let mut entries = self.inner.list(path)?;
+            match self.fault {
+                Fault::ListLeavesOutAnEntry => {
+                    entries.sort_by(|one, other| one.name.cmp(&other.name));
+                    entries.pop();
+                }
+                Fault::ListDoesNotFollowLinks => {
+                    for entry in &mut entries {
+                        if self.inner.link_target(path.join(&entry.name)).is_some() {
+                            entry.kind = Kind::Other;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            Ok(entries)
         }
 
         fn read_link(&self, path: &Path) -> Result<Option<PathBuf>, FsError> {
@@ -882,6 +967,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_listing_that_leaves_out_an_entry_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::ListLeavesOutAnEntry),
+            Err(Violation::ListNotEachOnce)
+        );
+    }
+
+    #[test]
+    fn a_listing_that_does_not_follow_links_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::ListDoesNotFollowLinks),
+            Err(Violation::ListKindsWrong)
+        );
+    }
+
+    #[test]
+    fn a_listing_of_a_file_that_is_not_refused_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::ListOfAFileIsNotRefused),
+            Err(Violation::ListOfAFile)
+        );
+    }
+
     /// A ground that cannot set a file's permissions.
     struct NoPermissions<'a>(super::super::FakeGround<'a>);
 
@@ -892,6 +1001,10 @@ mod tests {
 
         fn link(&self, link: &Path, to: &Path) -> Result<(), String> {
             self.0.link(link, to)
+        }
+
+        fn directory(&self, path: &Path) -> Result<(), String> {
+            self.0.directory(path)
         }
 
         fn set_modified(&self, path: &Path, to: Modified) -> Result<(), String> {
@@ -1058,6 +1171,22 @@ mod tests {
             (
                 Violation::ResolvedALinkToNothing,
                 "resolving a link to nothing was not refused as not found",
+            ),
+            (
+                Violation::ListNotEachOnce,
+                "a directory did not list each thing it holds once",
+            ),
+            (
+                Violation::ListKindsWrong,
+                "a directory listed something with the wrong kind, links followed",
+            ),
+            (
+                Violation::ListOfNothing,
+                "listing nothing was not refused as not found",
+            ),
+            (
+                Violation::ListOfAFile,
+                "listing a file was not refused as not a file",
             ),
             (Violation::NotRemoved, "a removed file was still there"),
         ];

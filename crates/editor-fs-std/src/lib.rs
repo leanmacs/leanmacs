@@ -34,6 +34,11 @@
 //!   the path as the link holds it. The system refuses a path that is no
 //!   link as an invalid argument, and one where nothing is as not found:
 //!   both are `None`.
+//! - **`list`** is `fs::read_dir`, with `fs::metadata` of each entry for
+//!   its kind, which follows links: a link whose metadata cannot be read,
+//!   one that names nothing included, is `Other`. The system refuses a
+//!   path that is not a directory as not a directory, which is the port's
+//!   `NotAFile`, as for every other operation.
 //!
 //! [`StdFs::system`] is the one way to make one, so that the real file
 //! system has a name a lint can refuse where it does not belong
@@ -69,7 +74,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use editor_text::fs::{Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Pieces, Stat};
+use editor_text::fs::{Entry, Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Pieces, Stat};
 
 /// The machine's file system, as the file port.
 pub struct StdFs(());
@@ -82,6 +87,17 @@ impl StdFs {
     /// refuse.
     pub const fn system() -> Self {
         Self(())
+    }
+}
+
+/// The port's kind of the thing `metadata` describes.
+fn kind_of(metadata: &fs::Metadata) -> Kind {
+    if metadata.is_file() {
+        Kind::File
+    } else if metadata.is_dir() {
+        Kind::Directory
+    } else {
+        Kind::Other
     }
 }
 
@@ -102,13 +118,7 @@ impl Fs for StdFs {
     fn stat(&self, path: &Path) -> Result<Option<Stat>, FsError> {
         match fs::metadata(path) {
             Ok(metadata) => Ok(Some(Stat {
-                kind: if metadata.is_file() {
-                    Kind::File
-                } else if metadata.is_dir() {
-                    Kind::Directory
-                } else {
-                    Kind::Other
-                },
+                kind: kind_of(&metadata),
                 size: metadata.len(),
                 modified: Modified {
                     seconds: metadata.mtime(),
@@ -198,6 +208,22 @@ impl Fs for StdFs {
             }
             Err(error) => Err(refusal(&error)),
         }
+    }
+
+    fn list(&self, path: &Path) -> Result<Vec<Entry>, FsError> {
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(path).map_err(|error| refusal(&error))? {
+            let entry = entry.map_err(|error| refusal(&error))?;
+            // Followed: a link is listed as what it names, and a link to
+            // nothing, whose metadata cannot be read, as other.
+            let kind =
+                fs::metadata(entry.path()).map_or(Kind::Other, |metadata| kind_of(&metadata));
+            entries.push(Entry {
+                name: entry.file_name(),
+                kind,
+            });
+        }
+        Ok(entries)
     }
 }
 

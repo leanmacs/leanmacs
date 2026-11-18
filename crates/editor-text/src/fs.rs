@@ -36,6 +36,14 @@
 //!   or nothing; and none for what is no link, nothing included. It is how
 //!   a caller finds the file a link to nothing names, which `resolve`
 //!   cannot say.
+//! - **[`Fs::list`]** gives what the directory at a path holds, one
+//!   [`Entry`] per name, with `.` and `..` left out. Each entry's kind is
+//!   taken with links followed, and a link that names nothing is
+//!   [`Kind::Other`]. The order is not specified. A link to a directory is
+//!   listed as the directory. It is refused as [`FsErrorKind::NotFound`]
+//!   when nothing is at the path, as [`FsErrorKind::NotAFile`] when what is
+//!   there is not a directory, and as [`FsErrorKind::Denied`] when the
+//!   system does not allow it.
 //! - **An error is a kind and a detail** ([`FsError`]). The kind is what
 //!   the crate decides on; the detail is the platform's words, for a
 //!   person.
@@ -51,6 +59,7 @@
 //! |---|---|---|
 //! | Another thing the crate needs of a file system | A method of [`Fs`], in the crate's terms, with its rule in the list above | Its rule in [`contract::check`], with a fake written to break it in the contract's tests, and the fake's own tests |
 //! | Another fact about a file | A field of [`Stat`] | The same |
+//! | Another fact a listing gives of each thing a directory holds | A field of [`Entry`] | The contract's listing rule, with a fake written to break it |
 //! | Another failure the crate decides on | A variant of [`FsErrorKind`] | The rule of the contract that asks for it |
 //! | Another way for a test to set the file system up, or to make it fail | A method of [`FakeFs`] | The fake's tests in `fs/fake.rs` |
 //!
@@ -71,6 +80,7 @@
 
 use std::borrow::Cow;
 use std::error::Error;
+use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -142,6 +152,25 @@ pub trait Fs: Send + Sync {
     /// name a file, another link, or nothing. `None` when what is at `path`
     /// is not a link, and when nothing is there.
     fn read_link(&self, path: &Path) -> Result<Option<PathBuf>, FsError>;
+
+    /// What the directory at `path` holds, one entry per name, `.` and
+    /// `..` left out, in no particular order. Each kind is taken with links
+    /// followed, and a link that names nothing is [`Kind::Other`]. Refused
+    /// as [`FsErrorKind::NotFound`] when nothing is there, as
+    /// [`FsErrorKind::NotAFile`] when what is there is not a directory, and
+    /// as [`FsErrorKind::Denied`] when the system does not allow it.
+    fn list(&self, path: &Path) -> Result<Vec<Entry>, FsError>;
+}
+
+/// One thing a directory holds ([`Fs::list`]): its name in the directory
+/// and its kind, links followed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    /// Its name in the directory, which may not be UTF-8.
+    pub name: OsString,
+    /// What kind of thing it is, links followed; a link to nothing is
+    /// [`Kind::Other`].
+    pub kind: Kind,
 }
 
 /// What is at a path ([`Fs::stat`]).
@@ -216,7 +245,8 @@ pub enum FsErrorKind {
     /// Something is at the path already.
     Exists,
     /// What is there is not a file, or a directory on the way to it is not
-    /// a directory.
+    /// a directory. For a listing ([`Fs::list`]), what is there is not a
+    /// directory.
     NotAFile,
     /// Anything else. The detail says what.
     Other,

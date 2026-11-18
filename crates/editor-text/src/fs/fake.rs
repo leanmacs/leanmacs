@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use super::contract::Ground;
-use super::{Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Pieces, Stat};
+use super::{Entry, Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Pieces, Stat};
 
 /// An operation of the port, for a test to say which call it means
 /// ([`FakeFs::fail`], [`FakeFs::after`]).
@@ -54,6 +54,8 @@ pub enum Op {
     Resolve,
     /// [`Fs::read_link`].
     ReadLink,
+    /// [`Fs::list`].
+    List,
 }
 
 /// A call the fake received ([`FakeFs::calls`]), with what it was asked.
@@ -73,6 +75,8 @@ pub enum Call {
     Resolve(PathBuf),
     /// [`Fs::read_link`] of this path.
     ReadLink(PathBuf),
+    /// [`Fs::list`] of this path.
+    List(PathBuf),
 }
 
 impl Call {
@@ -86,6 +90,7 @@ impl Call {
             Self::Remove(_) => Op::Remove,
             Self::Resolve(_) => Op::Resolve,
             Self::ReadLink(_) => Op::ReadLink,
+            Self::List(_) => Op::List,
         }
     }
 }
@@ -559,6 +564,35 @@ impl State {
         }
     }
 
+    /// [`Fs::list`].
+    fn list(&self, path: &Path) -> Result<Vec<Entry>, FsError> {
+        let at = self.followed(path)?;
+        if at.parent().is_some() {
+            match self.nodes.get(&at) {
+                Some(Node::Directory(_)) => {}
+                Some(Node::File { .. } | Node::Other(_)) => {
+                    return Err(refused(FsErrorKind::NotAFile, path));
+                }
+                Some(Node::Link(_)) | None => return Err(refused(FsErrorKind::NotFound, path)),
+            }
+        }
+        let entries = self
+            .nodes
+            .keys()
+            .filter(|child| child.parent() == Some(at.as_path()))
+            .filter_map(|child| {
+                let name = child.file_name()?.to_os_string();
+                let kind = self
+                    .stat(child)
+                    .ok()
+                    .flatten()
+                    .map_or(Kind::Other, |stat| stat.kind);
+                Some(Entry { name, kind })
+            })
+            .collect();
+        Ok(entries)
+    }
+
     /// [`Fs::read_link`].
     fn read_link(&self, path: &Path) -> Option<PathBuf> {
         match self.nodes.get(path) {
@@ -615,6 +649,10 @@ impl Fs for FakeFs {
             Ok(state.read_link(path))
         })
     }
+
+    fn list(&self, path: &Path) -> Result<Vec<Entry>, FsError> {
+        self.call(Call::List(path.to_path_buf()), |state| state.list(path))
+    }
 }
 
 /// The ground the contract is checked on, for the fake: the fake itself
@@ -633,6 +671,11 @@ impl Ground for FakeGround<'_> {
 
     fn link(&self, link: &Path, to: &Path) -> Result<(), String> {
         self.fs.link(link, to);
+        Ok(())
+    }
+
+    fn directory(&self, path: &Path) -> Result<(), String> {
+        self.fs.directory(path);
         Ok(())
     }
 
@@ -1061,5 +1104,74 @@ mod tests {
             fs.paths(),
             [PathBuf::from("/dir"), PathBuf::from("/dir/sub")]
         );
+    }
+
+    /// The names and kinds of `entries`, by name.
+    fn named(mut entries: Vec<Entry>) -> Vec<(String, Kind)> {
+        entries.sort_by(|one, other| one.name.cmp(&other.name));
+        entries
+            .into_iter()
+            .map(|entry| (entry.name.to_string_lossy().into_owned(), entry.kind))
+            .collect()
+    }
+
+    #[test]
+    fn a_listing_names_a_directorys_own_children_with_their_kinds_links_followed() {
+        let fs = FakeFs::new();
+        fs.file("/w/a.txt", b"a");
+        fs.file("/w/sub/deep.txt", b"deep");
+        fs.other("/w/pipe");
+        fs.link("/w/to-a", "/w/a.txt");
+        fs.link("/w/to-sub", "/w/sub");
+        fs.link("/w/dangling", "/nowhere");
+
+        assert_eq!(
+            named(fs.list(Path::new("/w")).expect("a directory lists")),
+            [
+                (String::from("a.txt"), Kind::File),
+                (String::from("dangling"), Kind::Other),
+                (String::from("pipe"), Kind::Other),
+                (String::from("sub"), Kind::Directory),
+                (String::from("to-a"), Kind::File),
+                (String::from("to-sub"), Kind::Directory),
+            ]
+        );
+        assert_eq!(
+            named(
+                fs.list(Path::new("/w/to-sub"))
+                    .expect("a link to a directory lists")
+            ),
+            [(String::from("deep.txt"), Kind::File)]
+        );
+        assert_eq!(
+            named(fs.list(Path::new("/")).expect("the root lists")),
+            [(String::from("w"), Kind::Directory)]
+        );
+    }
+
+    #[test]
+    fn a_listing_of_nothing_or_of_what_is_not_a_directory_is_refused() {
+        let fs = FakeFs::new();
+        fs.file("/w/a.txt", b"a");
+        fs.other("/w/pipe");
+        let kind = |path: &str| fs.list(Path::new(path)).map_err(|error| error.kind);
+
+        assert_eq!(kind("/w/missing"), Err(FsErrorKind::NotFound));
+        assert_eq!(kind("/w/a.txt"), Err(FsErrorKind::NotAFile));
+        assert_eq!(kind("/w/pipe"), Err(FsErrorKind::NotAFile));
+        assert_eq!(
+            fs.calls().last(),
+            Some(&Call::List(PathBuf::from("/w/pipe")))
+        );
+    }
+
+    #[test]
+    fn fail_fails_the_next_listing() {
+        let fs = FakeFs::new();
+        fs.directory("/w");
+        fs.fail(Op::List, refusal(FsErrorKind::Denied));
+
+        assert_eq!(fs.list(Path::new("/w")), Err(refusal(FsErrorKind::Denied)));
+        assert_eq!(fs.list(Path::new("/w")), Ok(Vec::new()));
     }
 }

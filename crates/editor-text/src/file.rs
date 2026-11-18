@@ -59,6 +59,21 @@
 //! not a file is [`LoadError::NotAFile`]. It is how a caller tells whether a
 //! file changed without loading it.
 //!
+//! # Listing a directory
+//!
+//! [`list`] answers what the directory at a path holds, one [`Entry`] per
+//! name, each with its kind, links followed. A path that is not absolute is
+//! refused ([`ListError::Relative`]) before the file system is asked, as a
+//! load's is. Nothing there is [`ListError::NotFound`], and what is not a
+//! directory is [`ListError::NotADirectory`]: the port says that as
+//! [`FsErrorKind::NotAFile`], its kind for "not what was asked for", which
+//! a listing names in its own words. Anything else the file system refuses
+//! is handed on ([`ListError::Fs`]).
+//!
+//! The entries are **sorted by the bytes of their names**, so the answer
+//! does not depend on the order a file system keeps them in, and a model
+//! of the port answers the same.
+//!
 //! # Saving
 //!
 //! [`save`] saves a [`Snapshot`], so the thread that owns the text hands
@@ -172,7 +187,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::fs::{Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Stat};
+use crate::fs::{Entry, Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Stat};
 use crate::{Snapshot, Text};
 
 /// How many bytes from the start of a file are looked at for a NUL byte,
@@ -409,6 +424,53 @@ pub fn stamp(fs: &dyn Fs, path: &Path) -> Result<Option<Stamp>, LoadError> {
         Some(stat) if stat.kind == Kind::File => Ok(Some(Stamp::of(&stat))),
         Some(_) => Err(LoadError::NotAFile),
     }
+}
+
+/// Why a directory was not listed ([`list`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListError {
+    /// The path is not absolute. The file system was not asked.
+    Relative,
+    /// Nothing is at the path.
+    NotFound,
+    /// What is at the path is not a directory.
+    NotADirectory,
+    /// The file system refused, for another reason.
+    Fs(FsError),
+}
+
+impl fmt::Display for ListError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Relative => f.write_str("the path is not absolute"),
+            Self::NotFound => f.write_str("nothing is there"),
+            Self::NotADirectory => f.write_str("what is there is not a directory"),
+            Self::Fs(error) => write!(f, "the file system refused: {error}"),
+        }
+    }
+}
+
+impl Error for ListError {}
+
+/// What the directory at `path`, which must be absolute, holds: one entry
+/// per name, links followed for each kind, sorted by the bytes of the
+/// names. The module docs say what is refused.
+pub fn list(fs: &dyn Fs, path: &Path) -> Result<Vec<Entry>, ListError> {
+    if !path.is_absolute() {
+        return Err(ListError::Relative);
+    }
+    let mut entries = fs.list(path).map_err(|error| match error.kind {
+        FsErrorKind::NotFound => ListError::NotFound,
+        // The port's kind for what is not a directory, when listing.
+        FsErrorKind::NotAFile => ListError::NotADirectory,
+        FsErrorKind::Denied | FsErrorKind::Exists | FsErrorKind::Other => ListError::Fs(error),
+    })?;
+    entries.sort_by(|one, other| {
+        one.name
+            .as_encoded_bytes()
+            .cmp(other.name.as_encoded_bytes())
+    });
+    Ok(entries)
 }
 
 /// What a save expects to find at the path, which it checks before it
@@ -879,6 +941,77 @@ mod tests {
             );
         }
         assert_eq!(fs.calls(), []);
+    }
+
+    #[test]
+    fn a_listing_of_a_path_that_is_not_absolute_is_refused_before_the_file_system_is_asked() {
+        let fs = fake_with(b"text");
+
+        for path in ["dir", "dir/", ""] {
+            assert_eq!(
+                list(&fs, Path::new(path)),
+                Err(ListError::Relative),
+                "{path:?}"
+            );
+        }
+        assert_eq!(fs.calls(), []);
+    }
+
+    #[test]
+    fn a_listing_is_sorted_by_the_bytes_of_its_names() {
+        let fs = FakeFs::new();
+        fs.file("/w/b.txt", b"b");
+        fs.file("/w/A.txt", b"a");
+        fs.directory("/w/src");
+        fs.file("/w/.hidden", b"h");
+        fs.link("/w/dangling", "/nowhere");
+
+        let listed = list(&fs, Path::new("/w")).expect("a directory lists");
+
+        let names: Vec<(&OsStr, Kind)> = listed
+            .iter()
+            .map(|entry| (entry.name.as_os_str(), entry.kind))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                (OsStr::new(".hidden"), Kind::File),
+                (OsStr::new("A.txt"), Kind::File),
+                (OsStr::new("b.txt"), Kind::File),
+                (OsStr::new("dangling"), Kind::Other),
+                (OsStr::new("src"), Kind::Directory),
+            ]
+        );
+        assert_eq!(fs.calls(), [Call::List(PathBuf::from("/w"))]);
+    }
+
+    #[test]
+    fn a_listing_refused_by_the_file_system_is_refused_in_the_listings_words() {
+        let fs = FakeFs::new();
+        fs.file("/w/a.txt", b"a");
+
+        assert_eq!(list(&fs, Path::new("/w/missing")), Err(ListError::NotFound));
+        assert_eq!(
+            list(&fs, Path::new("/w/a.txt")),
+            Err(ListError::NotADirectory)
+        );
+        let denied = FsError::new(FsErrorKind::Denied, "injected");
+        fs.fail(Op::List, denied.clone());
+        assert_eq!(list(&fs, Path::new("/w")), Err(ListError::Fs(denied)));
+    }
+
+    #[test]
+    fn each_listing_error_says_what_it_is() {
+        assert_eq!(ListError::Relative.to_string(), "the path is not absolute");
+        assert_eq!(ListError::NotFound.to_string(), "nothing is there");
+        assert_eq!(
+            ListError::NotADirectory.to_string(),
+            "what is there is not a directory"
+        );
+        assert_eq!(
+            ListError::Fs(FsError::new(FsErrorKind::Denied, "os error 13")).to_string(),
+            "the file system refused: it is not allowed: os error 13"
+        );
     }
 
     #[test]

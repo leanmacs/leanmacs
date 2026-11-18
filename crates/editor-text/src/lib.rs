@@ -320,7 +320,10 @@
 //!   file, and keeps the file's permissions. It is told what to expect on
 //!   disk, and a file that is not as expected is not overwritten: the
 //!   refusal says what is there now.
-//! - Both are tested on the port's published fake ([`fs::FakeFs`]) and
+//! - **A listing** ([`file::list`]) answers what a directory holds, each
+//!   entry with its kind, links followed, sorted by the bytes of the
+//!   names.
+//! - All three are tested on the port's published fake ([`fs::FakeFs`]) and
 //!   make no real file; the real adapter is another crate, held to the
 //!   port's contract by its own tests.
 //!

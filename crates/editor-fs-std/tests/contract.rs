@@ -58,6 +58,10 @@ impl Ground for Disk {
         std::os::unix::fs::symlink(to, link).map_err(said)
     }
 
+    fn directory(&self, path: &Path) -> Result<(), String> {
+        fs::create_dir(path).map_err(said)
+    }
+
     fn set_modified(&self, path: &Path, to: Modified) -> Result<(), String> {
         let seconds = u64::try_from(to.seconds).map_err(|_| String::from("before the epoch"))?;
         let instant = SystemTime::UNIX_EPOCH + Duration::new(seconds, to.nanoseconds);
