@@ -39471,6 +39471,48 @@ def commitBufferChecks : List Check :=
                 some
                   "vc-commit: committed Subject line; the message buffer was edited since, and is kept" },
     { name :=
+        "vc-commit-abort while a commit runs says so and keeps the message buffer with its text; the commit then closes it"
+      run :=
+        pure <|
+          match stagingDriverOf (committingRepository) with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo (settledAfter (messageOpen driver) "C-v m") (presses "C-v y")
+            let (aborted, _) := fedTo asked (presses "C-v q")
+            let landed := settledOn (finishNamed aborted VersionControl.commitJob) []
+            echoOf aborted == some "vc-commit-abort: a commit is running" &&
+              namedText aborted messageBufferName == some stagingMessage &&
+              aborted.pending.map (·.name) == #[VersionControl.commitJob] &&
+              (landed.loop.state.findBuffer messageBufferName).isNone &&
+              echoOf landed == some "vc-commit: committed Subject line" },
+    { name :=
+        "a commit git could not run is said in the echo area alone: no output buffer is made, and the message buffer is kept with its text"
+      run :=
+        pure <|
+          match stagingDriverOf (committingRepository) with
+          | none => false
+          | some driver =>
+            let failing :=
+              withScript driver { command := gitCommitRun, reply := .error (.notFound "git") }
+            let refused := settledAfter (messageOpen failing) "C-v m C-v y"
+            echoOf refused ==
+                some
+                  s!"vc-commit: {(VersionControl.Error.couldNotRun (.notFound "git")).describe}" &&
+              buffers refused "*vc-commit-output" == 0 &&
+              namedText refused messageBufferName == some stagingMessage },
+    { name := "a commit made with the workspace's status buffer kept reads the status again into it"
+      run :=
+        pure <|
+          match stagingDriverOf (committingRepository) with
+          | none => false
+          | some driver =>
+            let shown := settledAfter (settledAfter driver "C-o a") "C-v s"
+            let committed := settledAfter (messageOpen shown) "C-v m C-v y"
+            let statusRead := gitRun VersionControl.Git.statusArguments
+            echoOf committed == some "vc-commit: committed Subject line" &&
+              (gitStarted committed).back? == some statusRead &&
+              ((gitStarted committed).filter (· == statusRead)).size == 2 },
+    { name :=
         "vc-commit-abort closes the message buffer, and the next vc-commit makes a new one; accept and abort outside a message buffer say it is not one; vc-commit with no workspace says so"
       run :=
         pure <|
