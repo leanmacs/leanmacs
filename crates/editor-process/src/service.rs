@@ -2937,6 +2937,51 @@ mod streaming {
     }
 
     #[test]
+    fn a_cancel_abandons_the_stream_before_the_kill_so_a_reader_back_from_a_read_reads_no_more() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .stdout("a\n")
+                .step(Step::EchoLine(Stream::Out))),
+        )]);
+        let (service, completed) = service(&fake);
+        fake.hold_reads();
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            lines_with(Input::Pipe, ROOMY),
+        );
+        assert!(service.read(1, 2));
+        assert!(fake.until(DEADLINE, |record| record.reads_parked == 2));
+        let child = fake.record().spawned[0].0;
+        fake.hold_kills();
+
+        thread::scope(|scope| {
+            let cancelling = scope.spawn(|| service.cancel(1));
+            assert!(fake.until(DEADLINE, |record| record.kills_parked == 1));
+            fake.release_reads();
+            // The child is not killed yet, so its output is still open: a
+            // reader back from its read that read again would block.
+            let let_go = fake.until(DEADLINE, |record| {
+                record.children[&child].read[0] == 2 && record.children[&child].outputs_dropped[0]
+            });
+            fake.release_kills();
+            assert!(cancelling.join().expect("the cancel returns"));
+            assert!(
+                let_go,
+                "the reader of out read what was there and let go, the kill still held"
+            );
+        });
+
+        assert!(pending_comes_to(&service, 0), "its waiter is done");
+        assert!(readers_done(&fake, child));
+        assert_eq!(completed.try_recv(), Err(TryRecvError::Empty));
+        assert_eq!(service.take_stream(2), None);
+    }
+
+    #[test]
     fn shutdown_with_its_readers_inside_a_pending_read_never_completes_it() {
         let fake = FakeProcesses::scripted([(
             command("x"),
