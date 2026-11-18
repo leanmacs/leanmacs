@@ -6694,12 +6694,14 @@ check that fails says why. -/
 def defaultBuilt (context : Context) : IO Config.Registrations := do
   let outcome ←
     Config.build Vim.Default.scheme context.elaborator
-      (Config.Directory.source context.defaultConfig) (some context.base) #[]
+        (Config.Directory.source context.defaultConfig) (some context.base) #[]
   match outcome.built with
-  | some built => return built.registrations
+  | some built =>
+    return built.registrations
   | none =>
-    throw <| IO.userError
-        s!"the default config was rejected: {outcome.diagnostics.toList.map (·.message)}"
+    throw <|
+        IO.userError
+          s!"the default config was rejected: {outcome.diagnostics.toList.map (·.message)}"
 
 /-- The registry a host of the executable starts with
 (`Headless.shippedOver`), with the default config's bindings, prefix names
@@ -6727,17 +6729,17 @@ def defaultConfigChecks (context : Context) : List Check :=
       run := do
         let files ← chunksOf context.defaultConfig
         withVimHost context files.toList fun session => do
-          session.ask [.reload]
-          let output ← session.output.get
-          let installed := output.any (·.startsWith "reload 1: installed")
-          let clean := !output.any (·.startsWith "diagnostic:")
-          let before ← session.sceneLines
-          session.typed "SPC f f"
-          let joined := (← session.host.join patience) == .settled
-          let after ← session.sceneLines
-          return installed && clean && joined &&
-              !before.contains (promptStatus Files.openPrompt) &&
-              after.contains (promptStatus Files.openPrompt) },
+            session.ask [.reload]
+            let output ← session.output.get
+            let installed := output.any (·.startsWith "reload 1: installed")
+            let clean := !output.any (·.startsWith "diagnostic:")
+            let before ← session.sceneLines
+            session.typed "SPC f f"
+            let joined := (← session.host.join patience) == .settled
+            let after ← session.sceneLines
+            return installed && clean && joined &&
+                !before.contains (promptStatus Files.openPrompt) &&
+                after.contains (promptStatus Files.openPrompt) },
     { name :=
         "the default config: every binding names a command registered compiled or by the config, and <leader> f f is bound to open-file"
       run := do
@@ -6825,8 +6827,8 @@ failed, and returns the exit status, 0 when all hold and 1 otherwise.
 
 `sysroot` is the Lean toolchain's directory and `oleanDir` the directory
 holding the package's `.olean` files. -/
-def run (sysroot oleanDir : String) (syntaxFixtures defaultConfig : System.FilePath) :
-    IO UInt8 := do
+def run (sysroot oleanDir : String) (syntaxFixtures defaultConfig : System.FilePath) : IO UInt8 :=
+  do
   let real :=
     Config.Elaborate.elaborator { sysroot, oleanDir, imports := #[`Editor, `ConfigFixture] }
   -- Compiled code writes to the fixture's cell before the base is imported.
