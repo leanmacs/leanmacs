@@ -16,6 +16,7 @@ import ModelTest.Editor.Api
 import ModelTest.Editor.Api.Cases
 import ModelTest.Editor.Appearance
 import ModelTest.Editor.AtPoint
+import ModelTest.Editor.BindingSearch
 import ModelTest.Editor.Buffers
 import ModelTest.Editor.Clipboard.Contract
 import ModelTest.Editor.Clipboard.Model
@@ -505,6 +506,13 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   already open is said; and a fake style chosen for the category `command`
   reverses the listing and decides which command a fragment runs, while a
   theme prompt keeps its own order;
+- `bindingSearchChecks`: the binding search (`Editor/BindingSearch.lean`)
+  on that driver: it lists each binding the scheme reaches as its keys and
+  command, annotated with its description; accepting one runs its command
+  as pressing its keys at rest does, with those keys; a typed fragment runs
+  the style's first, a text nothing matches is said and an empty one runs
+  nothing; a prompt already open is said; and a fake style chosen for the
+  category `binding` reverses the listing;
 - `faceVocabularyChecks`: the face vocabulary (`Editor/Face/Vocabulary.lean`)
   names each face once with its meaning, and lists every face the shipped
   Vim scheme and the loop draw, layout's four and the faces declared
@@ -1013,6 +1021,7 @@ def checks : List Check :=
     bufferCommandChecks ++
     themeChecks ++
     executeCommandChecks ++
+    bindingSearchChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++
     solarizedChecks ++

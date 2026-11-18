@@ -66,10 +66,15 @@ def executeCommands : List (String × Dispatched) :=
 commands' and the themes `default` and `second` as the registered ones; a
 style that keeps the candidates a text starts, in order, for every
 category. No key is bound to `execute-command` or to `load-theme`, as in a
-config that binds nothing: `C-e y` runs the minibuffer's accept alone. -/
+config that binds nothing: `C-e y` runs the minibuffer's accept alone, and
+`C-c m`, described `Mark it`, and `C-c n` run `marked`. -/
 def executeKeys : Loop.Keys TestScheme.scheme :=
-  { dispatchKeys [("C-e y", invoke Minibuffer.acceptName)]
+  { dispatchKeys []
       executeCommands with
+    maps := fun _ _ =>
+      [Keymap.ofDescribed
+          [(keys "C-e y", invoke Minibuffer.acceptName, none),
+            (keys "C-c m", invoke "marked", some "Mark it"), (keys "C-c n", invoke "marked", none)]]
     registered :=
       { themeNames := #[Theme.defaultName, "second"]
         commandNames := (executeCommands.map (·.1)).toArray }
@@ -135,6 +140,29 @@ def executeCommandChecks : List Check :=
               names.contains ExecuteCommand.name &&
               names.contains Themes.loadName &&
               names.back? == some "marked" },
+    { name :=
+        "each of the command prompt's candidates is annotated with the keys that reach its command in the asking view, joined by commas, and the first description among them: marked with C-c m, C-c n  Mark it, the minibuffer's accept with C-e y, and load-theme, which no key reaches, with none"
+      run :=
+        pure <|
+          match executeDriver with
+          | none => false
+          | some driver =>
+            let annotated (name : String) : Option (Option String) :=
+              (candidatesOf (calling driver)).bind fun candidates =>
+                (candidates.all.find? (·.text == name)).map (·.annotation)
+            annotated "marked" == some (some "C-c m, C-c n  Mark it") &&
+              annotated Minibuffer.acceptName == some (some "C-e y") &&
+              annotated Themes.loadName == some none },
+    { name :=
+        "a command's annotation is none with no binding, the keys of one with no description, and the keys then the description of a described one"
+      run :=
+        let undescribed : KeyBinding := { keys := keys "SPC f f", command := "open-file" }
+        let described : KeyBinding := { undescribed with desc := some "Find file" }
+        pure
+          (ExecuteCommand.annotation #[] "open-file" == none &&
+            ExecuteCommand.annotation #[undescribed] "open-file" == some "SPC f f" &&
+            ExecuteCommand.annotation #[described] "open-file" == some "SPC f f  Find file" &&
+            ExecuteCommand.annotation #[described] "other" == none) },
     { name :=
         "accepting a typed fragment that is no command's name with nothing chosen runs the first command the style lists for it: load-th runs load-theme, which asks"
       run :=

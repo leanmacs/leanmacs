@@ -1,5 +1,6 @@
 import Editor.Api.Theorems
 import Editor.AtPoint
+import Editor.BindingSearch
 import Editor.Command.Append
 import Editor.Compile
 import Editor.Compile.Shipped
@@ -120,7 +121,10 @@ the themes that ship (`Editor/Themes/Compiled.lean`) are not imported. So is
 the command prompt (`Editor/ExecuteCommand.lean`): `execute-command`, which
 a command of config's calls with `ExecuteCommand.executeCommand`, over
 `commandNames`; its registration (`Editor/ExecuteCommand/Compiled.lean`) is
-not imported.
+not imported. So is the binding search (`Editor/BindingSearch.lean`):
+`search-bindings`, which a command of config's calls with
+`BindingSearch.searchBindings`, over `keyBindings`; its registration
+(`Editor/BindingSearch/Compiled.lean`) is not imported.
 
 How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they

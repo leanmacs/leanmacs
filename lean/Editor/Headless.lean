@@ -1,4 +1,5 @@
 import Editor.AtPoint.Compiled
+import Editor.BindingSearch.Compiled
 import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
 import Editor.Compile.Compiled
@@ -200,7 +201,10 @@ as before, so reload and job completion work as they did.
   theme `default`, the built-in one. And it is handed the command prompt
   (`ExecuteCommand.commands`, `Editor/ExecuteCommand/Compiled.lean`):
   `execute-command`, which lists every registered command and runs the one
-  accepted. And it is handed the workspace
+  accepted. And it is handed the binding search (`BindingSearch.commands`,
+  `Editor/BindingSearch/Compiled.lean`): `search-bindings`, which lists
+  every binding the scheme reaches in the view and runs the one accepted
+  as its key would. And it is handed the workspace
   command and the job that finds a file's workspace (`Workspace.commands`,
   `Workspace.jobs`, `Editor/Workspace/Compiled.lean`): `workspace-current`,
   and `find-workspace`, which a file's open starts for its directory when
@@ -2628,7 +2632,8 @@ mode, evil's commands, the ex line's commands with the ex names that ship,
 the buffer commands, the frame's commands with their bindings, the window
 commands, the command that loads a theme
 with the themes that ship, the command prompt, `execute-command`, which
-lists every registered command, the workspace command with the job that finds a
+lists every registered command, the binding search, `search-bindings`, which
+lists every binding the scheme reaches, the workspace command with the job that finds a
 file's workspace, the shell's command with the job that runs `:!`, the
 compile mode's commands, its jobs, its mode and the contributions that ship,
 `cargo-mode`, `lake-mode` and `mise-mode` (`Editor/Compile.lean`,
@@ -2654,6 +2659,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         TabCommands.commands ++
         Themes.commands ++
         ExecuteCommand.commands ++
+        BindingSearch.commands ++
         Workspace.commands ++
         Shell.commands ++
         Compile.commands ++
@@ -2672,6 +2678,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     sources :=
       Ex.sources ++ Buffers.sources ++ TabCommands.sources ++ Themes.sources ++
         ExecuteCommand.sources ++
+        BindingSearch.sources ++
         Completion.Words.shipped ++
         Files.sources
     styleDefaults := Files.styleDefaults

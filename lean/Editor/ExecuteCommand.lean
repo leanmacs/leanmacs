@@ -17,6 +17,15 @@ compiled code registers it is in `Editor/ExecuteCommand/Compiled.lean`.
   registry as it is for the step that asks (`commandNames`), so a reload
   that drops config's command drops it from the next prompt: nothing is
   kept across a reload. Filtering and ordering are the style's.
+- **Each candidate shows the keys that reach its command** (`annotation`):
+  the key bindings the input scheme reaches in the asking view, in its
+  state then (`keyBindings`), whose command is the candidate's, each
+  written as a key string and joined by `, `, then two spaces and the
+  first description among them, as in `SPC ., SPC f f  Find file`. A
+  command no key reaches has none. They are asked of the scheme's own
+  list, not of a keymap's raw bindings (`Keymap.keysFor`), so a key a
+  specific tier shadows is never shown. The text stays the name, so
+  resolution is unchanged.
 - **It asks when it is given no name** (`executeCommand`), as the ex
   command asks for its line (`Editor/Ex.lean`). With a string as its first
   argument it runs the command that string names. With anything else
@@ -47,8 +56,8 @@ compiled code registers it is in `Editor/ExecuteCommand/Compiled.lean`.
 ## Where an addition goes
 
 A new list of candidates is a source registered in the category `command`.
-A new order or search is config's style for `command`. Showing each
-command's keys beside it is an annotation of `source`'s candidates.
+A new order or search is config's style for `command`. What a candidate
+shows beside its name is `annotation`.
 
 Pinned by `ModelTest.executeCommandChecks`, on the loop's driver over the
 editor's models and the test scheme; by `ConfigTest.commandPromptChecks`,
@@ -81,12 +90,30 @@ def notAsking (refusal : PromptRefusal) : String :=
 def noMatch (text : String) : String :=
   s!"{name}: no command matches `{text}`"
 
+/-- The annotation of the command `name` among the key bindings `bound`:
+the keys of every binding whose command is `name`, each written as a key
+string, joined by `, `, in their order, then two spaces and the first
+description among them when one has one; `none` when no key reaches the
+command. -/
+def annotation (bound : Array KeyBinding) (name : String) : Option String :=
+  let reaching := bound.filter (·.command == name)
+  if reaching.isEmpty then none
+  else
+    let written := ", ".intercalate (reaching.toList.map (Key.notations ·.keys))
+    match reaching.findSome? (·.desc) with
+    | some desc => some s!"{written}  {desc}"
+    | none => some written
+
 /-- The completion source of the names commands are registered under
 (`commandNames`), as the loop answers them when it is asked: `commands`, of
-the category `command`. -/
+the category `command`, each annotated with the keys that reach it in the
+asking view (`annotation`). -/
 def source : Completion.Source :=
   { name := "commands", category
-    candidates := fun _ => return (← commandNames).map Completion.Candidate.ofText }
+    candidates := fun query => do
+      let bound ← keyBindings query.view
+      return (← commandNames).map fun name =>
+          { text := name, annotation := annotation bound name } }
 
 /-- The command `text` names, resolved as the prompt listed it: the name a
 command is registered under that is `text` exactly, else the first the

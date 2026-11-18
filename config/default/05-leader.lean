@@ -3,7 +3,8 @@
 -- after Doom Emacs's `SPC` keys, over commands the editor already ships.
 -- Each binding has a description and each prefix a name, for the key hints.
 -- `SPC :` opens the command prompt, which runs any registered command by
--- name. `SPC ?` is to be added here once that command exists.
+-- name, and `SPC ?` the binding search, which lists every binding the view
+-- can reach and runs the one chosen as its key would.
 --
 -- The map is `leaderMap`, apart from `setup` (in `90-setup.lean`), so it can
 -- be dropped into a config of your own: copy this file in and call
@@ -24,6 +25,7 @@ def leaderMap : SetupM Unit := do
   bindKey "<leader> ." "open-file" (desc := "Find file")
   bindKey "<leader> ," "switch-buffer" (desc := "Switch buffer")
   bindKey "<leader> :" "execute-command" (desc := "Execute command")
+  bindKey "<leader> ?" "search-bindings" (desc := "Search bindings")
   -- file
   bindKey "<leader> f f" "open-file" (desc := "Find file")
   bindKey "<leader> f s" "save-buffer" (desc := "Save file")

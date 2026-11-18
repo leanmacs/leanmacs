@@ -5848,22 +5848,29 @@ def themeChecks (context : Context) : List Check :=
               scene.endsWith ", theme \"default\"" }]
 
 /-- What compiled code hands the hosts of the command prompt's checks: the
-minibuffer's commands and its mode, the command prompt and the command that
-loads a theme, and the themes that ship. -/
+minibuffer's commands and its mode, the command prompt, the binding search
+and the command that loads a theme, and the themes that ship. -/
 def commandCompiled : Compiled :=
   { minibufferCompiled with
-    commands := Minibuffer.commands ++ ExecuteCommand.commands ++ Themes.commands
+    commands :=
+      Minibuffer.commands ++ ExecuteCommand.commands ++ BindingSearch.commands ++ Themes.commands
     themes := Themes.shipped }
 
 /-- A chunk whose `setup` defines the style `starts`, which keeps the
-candidates a text starts, in their order, chooses it for the category
-`command`, and registers `zz-other`, which says `other`, and, when `mine`,
-`zz-mine`, which says `mine`. -/
+candidates a text starts, in their order, chooses it for the categories
+`command` and `binding`, registers `zz-other`, which says `other`, bound to
+`SPC f f` with no description, `yy-said`, which says `said`, bound to
+`SPC y y` and described `Say it`, and, when `mine`, `zz-mine`, which says
+`mine`. -/
 def commandChunk (mine : Bool) : String :=
   "def setup : SetupM Unit := do\n" ++
     "  defineStyle (.keeping \"starts\" fun text candidate => candidate.startsWith text)\n" ++
     "  useStyleFor \"command\" \"starts\"\n" ++
+    "  useStyleFor \"binding\" \"starts\"\n" ++
     "  command \"zz-other\" (message \"other\")\n" ++
+    "  command \"yy-said\" (message \"said\")\n" ++
+    "  bindKey \"SPC y y\" \"yy-said\" (desc := \"Say it\")\n" ++
+    "  bindKey \"SPC f f\" \"zz-other\"\n" ++
     if mine then "  command \"zz-mine\" (message \"mine\")\n" else ""
 
 /-- The checks of the command prompt (`Editor/ExecuteCommand.lean`) through
@@ -5871,12 +5878,15 @@ a host over the real elaborator and the real registry: its candidates are
 the commands compiled code registers and config's, and a reload that drops
 one of config's drops it from them, and the command it runs is a step of
 its own, so `load-theme` asked through it puts the chosen theme in force
-with no key bound to either. The style `starts`, which config
-chooses for the category `command`, keeps each listing short and in the
+with no key bound to either; a command config binds is shown with its keys.
+And of the binding search (`Editor/BindingSearch.lean`) in the same session:
+it lists a binding of config's with its keys and description, and accepting
+it runs its command. The style `starts`, which config chooses for the
+categories `command` and `binding`, keeps each listing short and in the
 source's order, so no check pins the library matcher's order. -/
 def commandPromptChecks (context : Context) : List Check :=
   [{  name :=
-        "criteria 1, 2 and 3: the command prompt lists the commands compiled code registers and config's, config's in the order registered; a reload whose config no longer registers zz-mine drops it from the candidates; from a config that binds neither execute-command nor load-theme, calling execute-command, accepting load-theme and then solarized-dark puts that theme in force, as the scene line names it"
+        "criteria 1, 2 and 3: the command prompt lists the commands compiled code registers and config's, config's in the order registered; a reload whose config no longer registers zz-mine drops it from the candidates; from a config that binds neither execute-command nor load-theme, calling execute-command, accepting load-theme and then solarized-dark puts that theme in force, as the scene line names it; a config command bound to SPC f f shows SPC f f as its annotation; the binding search lists SPC y y with its command and description, and accepting it runs yy-said"
       run :=
         withHost context [("10-commands.lean", commandChunk true)]
           (fun session => do
@@ -5907,11 +5917,19 @@ def commandPromptChecks (context : Context) : List Check :=
             unless ← answered Themes.Solarized.dark.name do
               return false
             let after ← drawnIn
-            return listsAfter configs ExecuteCommand.label ["zz-other", "zz-mine"] &&
+            session.ask [.run BindingSearch.name]
+            unless ← Event.post (.commit "SPC y") do
+              return false
+            let searching ← session.sceneLines
+            session.pressKeys acceptKeys
+            let said := (← session.scene).1
+            return listsAfter configs ExecuteCommand.label ["zz-other  SPC f f", "zz-mine"] &&
                 listsAfter compiled ExecuteCommand.label [Themes.loadName] &&
-                listsAfter dropped ExecuteCommand.label ["zz-other"] &&
+                listsAfter dropped ExecuteCommand.label ["zz-other  SPC f f"] &&
                 before.endsWith s!", theme {Theme.defaultName.quote}" &&
                 after.endsWith s!", theme {Themes.Solarized.dark.name.quote}" &&
+                listsAfter searching BindingSearch.label ["SPC y y  yy-said  Say it"] &&
+                said == "said".quote &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           commandCompiled }]
 
@@ -7053,7 +7071,7 @@ loads with no reload error and `SPC f f` opens a file, each binding names a
 registered command, and each prefix it binds under the leader is named. -/
 def defaultConfigChecks (context : Context) : List Check :=
   [{  name :=
-        "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, and once that is cancelled SPC : opens the command prompt"
+        "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, once that is cancelled SPC : opens the command prompt, and once that is cancelled SPC ? opens the binding search"
       run := do
         let files ← chunksOf context.defaultConfig
         withVimHost context files.toList fun session => do
@@ -7070,20 +7088,25 @@ def defaultConfigChecks (context : Context) : List Check :=
             session.typed "SPC :"
             let rejoined := (← session.host.join patience) == .settled
             let commanding ← session.sceneLines
-            -- Each prompt opens a minibuffer view of its own, so the command
-            -- prompt's status line is compared from its view's id on.
-            let commandPrompt (lines : Array String) : Bool :=
+            session.typed "<Escape>"
+            session.typed "SPC ?"
+            let searched := (← session.host.join patience) == .settled
+            let searching ← session.sceneLines
+            -- Each prompt opens a minibuffer view of its own, so a prompt's
+            -- status line is compared from its view's id on.
+            let promptOf (label : String) (lines : Array String) : Bool :=
               lines.any fun line =>
-                line.startsWith "status " &&
-                  afterId line == afterId (promptStatus ExecuteCommand.label)
-            return installed && clean && joined && rejoined &&
+                line.startsWith "status " && afterId line == afterId (promptStatus label)
+            return installed && clean && joined && rejoined && searched &&
                 !before.contains (promptStatus Files.openPrompt) &&
                 after.contains (promptStatus Files.openPrompt) &&
                 !cancelled.contains (promptStatus Files.openPrompt) &&
-                !commandPrompt cancelled &&
-                commandPrompt commanding },
+                !promptOf ExecuteCommand.label cancelled &&
+                promptOf ExecuteCommand.label commanding &&
+                !promptOf BindingSearch.label commanding &&
+                promptOf BindingSearch.label searching },
     { name :=
-        "the default config: every binding names a command registered compiled or by the config, <leader> f f is bound to open-file, and <leader> : to execute-command, described Execute command"
+        "the default config: every binding names a command registered compiled or by the config, <leader> f f is bound to open-file, <leader> : to execute-command, described Execute command, and <leader> ? to search-bindings, described Search bindings"
       run := do
         let registrations ← defaultBuilt context
         let registry ← defaultRegistry registrations
@@ -7098,10 +7121,15 @@ def defaultConfigChecks (context : Context) : List Check :=
               (fun binding =>
                 Key.strokeNotations binding.keys == "<leader> f f" &&
                   binding.command == Files.openName) &&
+            registrations.bindings.any
+              (fun binding =>
+                Key.strokeNotations binding.keys == "<leader> :" &&
+                  binding.command == ExecuteCommand.name &&
+                  binding.desc == some "Execute command") &&
             registrations.bindings.any fun binding =>
-              Key.strokeNotations binding.keys == "<leader> :" &&
-                binding.command == ExecuteCommand.name &&
-                binding.desc == some "Execute command" },
+              Key.strokeNotations binding.keys == "<leader> ?" &&
+                binding.command == BindingSearch.name &&
+                binding.desc == some "Search bindings" },
     { name :=
         "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are SPC f, SPC b, SPC w, SPC TAB and SPC h"
       run := do
