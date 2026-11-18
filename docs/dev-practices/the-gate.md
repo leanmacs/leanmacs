@@ -458,20 +458,23 @@ save in flight, the snapshot the loop releases once a save has ended and
 the saved mark a rollback takes back are checked with the state requests
 and the loop's dispatch.
 
-The model tests are split by area into `lean/ModelTest/*.lean`, which the
-root `lean/ModelTest.lean` imports, so that lean-fmt's exact-frontend
+The model tests are split into test modules that mirror the module they
+test, under `lean/ModelTest/Editor/` (the checks of `lean/Editor/State.lean`
+are in `lean/ModelTest/Editor/State.lean`), with the helpers several of them
+share in small support modules under `lean/ModelTest/Support/`. Each imports
+only what it uses, and the root `lean/ModelTest.lean` keeps its imports, the
+`checks` aggregator and `main`. Splitting keeps lean-fmt's exact-frontend
 child, one per file with a 600 s bound by default
-(`LEAN_FMT_CHILD_TIMEOUT_MS`), never meets one huge file. As a single file
+(`LEAN_FMT_CHILD_TIMEOUT_MS`), from meeting one huge file. As a single file
 of 38,031 lines it took 221 to 318 s under `lake exe lean-fmt format
 --check --no-cache` on the owner's machine (2026-11-17) and once ran past
-the bound on the `macos-26` runner; split, the largest module took 9.1 s
-on the same machine, and the whole tree 22 s. Put a new area's checks in a module of its own, or in the module
-of the area it belongs to, and split a module that grows past a few
-thousand lines; don't raise the bound. The modules are areas in a chain of
-imports, each importing the one before it, rather than modules that mirror
-the module under test: the split moved the code verbatim, and the areas
-share helpers. Moving toward the mirrored layout is the task
-`modeltest-mirror-layout`.
+the bound on the `macos-26` runner; mirrored, the largest module
+(`lean/ModelTest/Editor/Loop.lean`, about 5,500 lines) took 9.4 s on the
+same machine, and the whole tree 23 s. Put a new check in the test module
+of the module it tests, creating that module if it is the first, and a
+helper that a second test module comes to need in a support module; don't
+raise the bound. Every list stays in the namespace `ModelTest`, so
+`ModelTest.<name>Checks` names it wherever it lives.
 
 The ex command line (`lean/Editor/Ex.lean`) is checked there in layers,
 so that a change to one breaks no other's checks:
