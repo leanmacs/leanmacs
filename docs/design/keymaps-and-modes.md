@@ -1189,8 +1189,18 @@ for). Typed text is no edit, so the change alone would not hold it.
   the minibuffer's included, is not.
 - **A command that changes no text adds what its binding says**
   (`Command.typed`), run in the recording view: insert state's
-  `<Backspace>`, `RET` and `TAB` add the backspace character, a line feed
-  and a tab, so the replay runs them again ("Insert state").
+  `<Backspace>` and `C-w` add the backspace character and `CTRL-W`, so the
+  replay runs them again ("Insert state").
+- **A command may say what it typed in place of typed text**
+  (`EditorState.retyped`, `retype`, `lean/Editor/Api.lean`): backspace
+  characters for the cells it removed, then what it inserted. Once the
+  command has run to its end the loop tells the scheme each as a committed
+  text (`Loop.ranInto`), on both its states, so it is added as typed text
+  is; a command that does not run to its end tells nothing. `RET` and
+  `TAB` say a line feed and a tab when they typed one, and a preview of
+  completion at point says backspaces for the region and the candidate's
+  text, so `.` after `a h e C-n C-n RET <Escape>` inserts what that insert
+  left, as Vim's redo buffer holds a completion ("Completion at point").
 - **A command can restart the last change** (`Command.restarts`, insert
   state's arrow keys): run in the recording view, it leaves a restart
   waiting (`State.restart`), the command it names as a change that enters
@@ -1632,15 +1642,26 @@ options:
 |---|---|---|
 | `<Backspace>` | `insert-delete-backward` | Deletes the character before the bar; a carriage return and line feed, or a character of several bytes, goes whole. At a line's start it joins the line to the one above, and it deletes past where the insert began: `i_<BS>` under `backspace=indent,eol,start`, Vim 9.1's default. At the text's start it deletes nothing |
 | `C-w` | `insert-delete-word-backward` | "Delete the word before the cursor" (`i_CTRL-W`): from the later of the line's start and the start of the word before the bar (`previousWordStart .word`) to the bar, so the blanks before the bar and the word before them go, as Vim's `ins_bs` with `BACKSPACE_WORD` does; a run of punctuation is a word; blanks back to the line's start go when no word is before them on the line. At a line's start it joins the line to the one above, as `<Backspace>` does there (`backspace=eol`); at the text's start it deletes nothing |
-| `RET` | `insert-newline` | Breaks the line at the bar with the buffer's own line ending, as `o` and `O` read it, and starts the new row at its indent level ("Indenting a new line", below): the blanks either side of the bar are replaced, so the row left keeps no trailing blanks and the rest starts at its level, and the bar goes after the indent. With no syntax tree or no indents query it inserts the line ending alone, as before indenting; a text not parsed yet gets the row's own indent. With several ranges it breaks the line at each (`Target.insertLineBreak`), with no indent |
-| `TAB` | `insert-tab` | Inserts a tab character: Vim's defaults `noexpandtab` and `softtabstop=0` |
+| `RET` | `at-point-return`, which with no session runs `insert-newline` | Breaks the line at the bar with the buffer's own line ending, as `o` and `O` read it, and starts the new row at its indent level ("Indenting a new line", below): the blanks either side of the bar are replaced, so the row left keeps no trailing blanks and the rest starts at its level, and the bar goes after the indent. With no syntax tree or no indents query it inserts the line ending alone, as before indenting; a text not parsed yet gets the row's own indent. With several ranges it breaks the line at each (`Target.insertLineBreak`), with no indent |
+| `TAB` | `at-point-tab`, which with no session runs `insert-tab` | Inserts a tab character: Vim's defaults `noexpandtab` and `softtabstop=0` |
+| `C-SPC`, `C-n`, `C-p` | `at-point-complete`, `at-point-next`, `at-point-previous` | Ask for completion at point ("Completion at point"); with a session open, `C-n` and `C-p` move its choice down and up |
+| `S-TAB` | `at-point-backtab` | With a session open, moves its choice up; nothing otherwise |
+| `C-g` | `at-point-quit` | Closes the session, leaving the region as it is; with none, runs `keyboard-quit` as `C-g` does in normal state |
 | `<ArrowLeft>` | `insert-left` | One cell back, no further than the line's start (`whichwrap=b,s`: no wrap) |
 | `<ArrowRight>` | `insert-right` | One cell on, no further than where the line's content ends |
 | `<ArrowUp>` | `insert-up` | A line up, at the wanted column, clamped to a shorter line and kept through it; nothing on the first line |
 | `<ArrowDown>` | `insert-down` | A line down, the same; nothing on the last line |
 
 - **Built: `<Backspace>`, `C-w`, `RET`, `TAB`, `<ArrowLeft>`,
-  `<ArrowRight>`, `<ArrowUp>` and `<ArrowDown>` in insert state.**
+  `<ArrowRight>`, `<ArrowUp>` and `<ArrowDown>` in insert state**, and
+  completion at point's `C-SPC`, `C-n`, `C-p`, `S-TAB` and `C-g`. With no
+  session `RET` and `TAB` do what they did: their commands run
+  `insert-newline` and `insert-tab` by name, so config's commands of those
+  names stay reachable from them, and say what they typed (`retype`).
+- **`C-SPC` and macOS.** macOS takes `Ctrl-Space` for "Select the previous
+  input source" by default, so the app may never see it. Free it in System
+  Settings › Keyboard › Keyboard Shortcuts › Input Sources. `C-n` and `C-p`
+  ask too, and always reach the editor.
 - **An arrow key that moves starts a new undo step** ("Insert sessions");
   the other four join the session's step.
 - **`C-w` is the shipped default, and a config can shadow it.** A config
@@ -1657,9 +1678,11 @@ options:
   text ("The last change").
 - **Dot repeat replays them as Vim 9.1's does** ("The last change", "Dot
   repeat as built"). `<Backspace>`, `C-w`, `RET` and `TAB` are kept in the
-  session's typed text, in the order typed (`Command.typed`: the backspace
-  character, Vim's `CTRL-W` character U+0017 (`Vim.wordDeleteTyped`), a
-  line feed and a tab), and `.` runs them again, so it makes the session's
+  session's typed text, in the order typed (`<Backspace>` and `C-w` by
+  their bindings, `Command.typed`: the backspace character and Vim's
+  `CTRL-W` character U+0017 (`Vim.wordDeleteTyped`); `RET` and `TAB` by
+  what their commands say they typed, `EditorState.retyped`: a line feed
+  and a tab, only when they typed one), and `.` runs them again, so it makes the session's
   result: after `i x <BS> y <Esc>` it inserts `y`, a `<Backspace>` past
   where the insert began deletes there too, `C-w` deletes the word before
   the bar, and `RET` is replayed by `RET`'s command (`Evil.newline`), so it
@@ -2737,7 +2760,7 @@ Which names have something behind them:
 | `objects` | `i w` inner-word, `a w` a-word, `i W` inner-bigword, `a W` a-bigword, `i "` `a "`, `i '` `a '`, `` i ` `` `` a ` `` the quote objects, `i (` `i )` `i b` inner-paren, `a (` `a )` `a b` a-paren, `i [` `i ]` inner-bracket, `a [` `a ]` a-bracket, `i {` `i }` `i B` inner-brace, `a {` `a }` `a B` a-brace, `a f` a-function, `i f` inner-function, `a c` a-class, `i c` inner-class, `a a` an-argument, `i a` inner-argument: in normal state's pending keymaps, read only while an operator waits, and in both visual states' keymaps |
 | `operators` | `d` delete, `c` change (enters insert), `y` yank (changes no text) |
 | `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex, `C-g` keyboard-quit; `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
-| `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `C-w` insert-delete-word-backward, `RET` insert-newline, `TAB` insert-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down (each enters no state, and none is a change dot repeat replays) |
+| `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `C-w` insert-delete-word-backward, `RET` at-point-return, `TAB` at-point-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down, `C-SPC` at-point-complete, `C-n` at-point-next, `C-p` at-point-previous, `S-TAB` at-point-backtab, `C-g` at-point-quit (each enters no state, and none is a change dot repeat replays) |
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
 | `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does, `C-u` minibuffer-delete-to-start, which deletes from the bar to the input's start (each enters no state, and none is a change dot repeat replays); `<ArrowLeft>` the motion left, `<ArrowRight>` the motion right |
@@ -2876,6 +2899,7 @@ of, and it does not need to.
 | Standard actions: next and previous item, activate, quit, refresh, toggle, mark | The mode fills named **roles**. Each scheme maps roles to keys once | One table per scheme |
 | Mode-specific commands | The mode picks a mnemonic suffix. The scheme supplies the prefix (`<localleader>` in Vim) | None |
 | Hand-tuned top-level keys | Written against one scheme's binding type, in that scheme's own table | Per mode and per scheme, opt-in |
+| Completion at point in its buffers | The mode lists the names of its at-point sources (`Mode.atPoint`), after config's and compiled code's uses for it ("Completion at point") | None |
 
 - **Roles** are registered names, an open set curated by the core.
 - **Hand-tuned keys** live in the scheme, not in the mode record. The
@@ -3607,9 +3631,9 @@ asked and what accepting gives).
   candidate `"{n} {label}"` for every tab, in order, so `C-w w`, a number
   and `<Enter>` select that tab; `tab-rename` asks labelled `Rename tab: `
   with the tab's name as the initial text, and no candidates.
-- **Set aside**, each to the phase of completion that builds it:
-  completion at point, in a buffer, to phase 5; and file paths for
-  `open-file`, to phase 6. Putting the chosen candidate's text into the
+- **Set aside**, to the phase of completion that builds it: file paths
+  for `open-file`, to phase 6. Completion at point is built ("Completion at
+  point", below). Putting the chosen candidate's text into the
   minibuffer stays set aside. Of phase 4's display:
   - **Align-to stops in pixels.** Annotations are aligned in characters,
     exact under the monospace default face; a proportional default face
@@ -3830,6 +3854,114 @@ model), `dispatchStateChecks` and `stateRequestChecks`
 real matcher). The fixtures `tests/headless/candidates`, `ex` and `tabs`
 are unchanged: criterion 1 on the executable, under the Vim scheme with
 the library's matcher.
+
+### Completion at point
+
+Status: built, by completion's phase 5 (`lean/Editor/Completion/AtPoint.lean`,
+`lean/Editor/Completion/Words.lean`, `lean/Editor/AtPoint.lean`,
+`lean/Editor/Api.lean` "Completion at point", `lean/Editor/Loop.lean`
+"Completion at point"). Typing in a buffer is completed by the prompt's
+own sources, styles and displays, asked from a position, as Emacs's
+`completion-at-point` asks `completion-at-point-functions`; the keys follow
+Doom Emacs's corfu module (owner decisions, 2026-11-17).
+
+- **An at-point source** (`Completion.AtPoint`) is asked with the view, the
+  cursor's byte offset and why it is asked (`Spot`, `Occasion`: a key, a
+  trigger character, a pause), and answers nothing, or the region to
+  replace, which holds the offset, and the sources to complete it from,
+  named (`Region`, `Named`): it runs inside the asking command through a
+  dispatcher request (`StateRequest.askAtPoint`), and a reply cannot hold a
+  program. It may declare trigger characters and a pause after which it
+  asks by itself. Its model is `AtPoint.fixed`, its fake
+  `Fake.AtPoint.refusing`, and its contract (`AtPointContract`) holds it to
+  a region that holds the offset, on positions, and to reading without
+  writing.
+- **The chain.** A mode lists its at-point sources (`Mode.atPoint`), and
+  config adds uses of one by mode or for every buffer (`useAtPointIn`,
+  `useAtPoint`). A buffer's chain (`Config.Registry.atPointNames`) is each
+  of its minor modes, the one added last first, then its major mode, each
+  with its lineage nearest first, each mode giving config's uses, then
+  compiled code's, then its own list; then the uses for every buffer,
+  config's then compiled code's; each name once. **The first that answers
+  wins**: `completeAtPoint` asks them in order and stops there.
+- **A session** (`EditorState.atPoint`, `AtPointSession`) reuses the
+  prompt's machinery: its own `Candidates`, `Sheet` and high-water mark,
+  reached through one accessor (`EditorState.completing?`), so batches,
+  match deliveries and the display reach it by its view with no rule of
+  their own. One is open at a time, and none while a prompt is.
+- **The region is held by markers**: the start with the bias `before`,
+  the end with `after`, so text typed at the end grows it and a preview
+  that replaces it whole leaves them round the replacement.
+- **The typed text and the preview.** A session opens with nothing
+  chosen, whatever opened it. Moving the choice puts the chosen candidate
+  in the region (`previewAtPoint`); choosing nothing again puts back what
+  was typed. The session keeps the text the user typed (`typed`) and
+  matches on that, never on the previewed region. Typing on keeps the
+  preview: the region's text, preview and all, becomes what is typed
+  (`retakeAtPoint`).
+- **The list** is the minibuffer display's, in the bottom strip, above the
+  bottom row, with no input row: at most ten rows, growing and never
+  shrinking while the session is open (`docs/design/text-and-display.md`).
+  A float at the cursor is set aside (rdm task
+  `completion-float-displays`).
+- **Closing.** At each publish the session closes when its view is not
+  focused or shows another buffer, a prompt opens, insert state is left,
+  its markers cannot be read, or the cursor is before the region's start or
+  after its end (`Loop.atPointKept`); and once it is listed, when nothing
+  more is to come and nothing matches (`Candidates.exhausted`), the echo
+  area saying `no completions` when it never showed a row. Its markers are
+  given up and its snapshots released.
+- **One undo step.** The buffer's group is closed before the first preview
+  and again when the session ends, so the previews, the accept and what
+  was typed after them are one step, and one undo restores the text from
+  before the first preview. `RET` and `C-g` leave the text as it is, as in
+  Doom; so does `<Escape>`.
+- **Dot repeat** replays the insert as it ended, the previewed text
+  included: a preview says it typed backspaces for the region's characters
+  and the candidate's text (`retype`; "The last change").
+- **The keys** (insert state, `Vim.Default.insertCommands`): `C-SPC`,
+  `C-n` and `C-p` ask; with a session open `C-n`/`TAB` move the choice down
+  and `C-p`/`S-TAB` up, wrapping through nothing chosen; `RET` accepts the
+  chosen candidate, and with nothing chosen closes the session and breaks
+  the line; `C-g` closes it. With no session `TAB` and `RET` do what they
+  did. The commands are `lean/Editor/AtPoint.lean`'s and work under any
+  scheme.
+- **Triggers and the pause.** A key that typed text asks the chain
+  (`Loop.atPointAsks`, pure): a trigger character runs `at-point-triggered`
+  as the next step; a source's pause has the host arm a wait on the job
+  clock (`Loop.PauseChange`, `Headless.Running.pause`), re-armed at each
+  typed key and withdrawn by any other key, so a pause counts from the last
+  typed character. Re-arming withdraws each held wait and ends it as
+  cancelled in the table of waits. When a wait completes, its event runs
+  `at-point-paused`, which asks on the pause when the view is still
+  focused and nothing is open. A typed key's own cost is the pure check
+  and the restart of one wait: no text request, no job and no job line.
+- **`words`** (`Completion.Words`), the source that ships: the words of the
+  open buffers, in Vim's `C-n` order, gathered by the job `words` from
+  snapshots of the open buffers the asking command took (a job reads a
+  snapshot's text with `JobRequest.snapshot`), so gathering never holds a
+  key. The at-point source `words` answers the word before the cursor; it
+  asks by itself after 240 ms once two characters are typed, as
+  `corfu-auto` does, and on a key even with nothing typed, which lists every
+  word. Compiled code uses it in every buffer
+  (`Headless.Collaborators.atPointUses`).
+- **The headless mode's clock is fake** (`docs/dev-practices/headless-mode.md`):
+  a pause fires only when a script advances it (`advance 240`).
+- **Reload.** At-point sources run only inside commands, looked up through
+  `Loop.Registered`, rebuilt for every step, so no old config code runs
+  after an install. The pause holds only a view and a number. A session
+  holds only data, and one a dropped config source opened keeps working on
+  what was collected.
+- **Set aside**: a float at the cursor; Vim's `C-x` submodes; removing a
+  compiled use; a per-language word class; `C-SPC` while a session is open
+  (Doom's separator insert for orderless); clicking a row; re-arming the
+  pause in place of restarting it.
+- **Pinned by** `ModelTest.atPointContractChecks`, `wordsChecks`,
+  `atPointStateChecks`, `atPointChecks`, `atPointRepeatChecks`,
+  `atPointLoopChecks`, `atPointAskChecks`, `atPointByItselfChecks`,
+  `registryChecks`, `setupChecks`, `reloadChecks`, `dispatchStateChecks`,
+  `stateRequestChecks` and `vimDefaultChecks`; `ConfigTest.atPointChecks`
+  and `shippedChecks`; and the fixture `tests/headless/at-point`.
 
 ### The compile mode, as built
 
@@ -4340,6 +4472,14 @@ which run the executable on a real file.
   is not registered is accepted: the name is looked up when the key runs.
   It is `bindKey` and not `bind`, which would shadow the monad's `bind` for
   config, which opens `Editor`.
+- Built: completion at point from config ("Completion at point").
+  `defineAtPoint` registers an at-point source by its name, and config's of
+  a shipped name replaces it, so `defineAtPoint (Completion.AtPoint.words
+  (pause := 100))` tunes the shipped `words`; `useAtPoint name` has every
+  buffer ask it, and `useAtPointIn mode name` the buffers of a mode and of
+  the modes derived from it, before the mode's own list. A name nobody
+  registered is said at install (`at-point:`); a `setup` that defines one
+  name twice is refused (`atPointTwice`).
 - Built: `setup` defines a mode with `defineMode { name := "listing", roles
   := [(Role.nextItem, "listing-next")], locals := [("x", "listing-run")] }`.
   A `setup` that defines a mode name twice, or a mode with a problem

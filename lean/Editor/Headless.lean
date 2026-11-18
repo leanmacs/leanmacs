@@ -455,6 +455,21 @@ position 0:0. A job's id is its number in this loop's table, from 1. A job
 is `cancelled` when a reload that installs replaces the config that
 registered it; a job that throws is `failed`.
 
+## Headless time
+
+The headless mode's job clock is fake (`Collaborators.clock`, a
+`Job.FakeClock`): every job's wait, every time limit and the pause of
+completion at point wait on it, and real time never moves it. A script
+moves it with `advance <milliseconds>`, which waits until the clock holds a
+wait due within them and then moves it, completing every wait then due. It
+sends nothing to the editor thread and prints nothing. So a job that sleeps
+ends only when a script advances, a pause fires only when a script
+advances, and saved outputs stay deterministic. The pause's wait posts its
+event from the clock's completion, before the move returns, so a `join`
+after an `advance` finds it queued. `idle <milliseconds>` still waits real
+time, for the render loop. The window mode passes no clock and keeps the
+library's timers.
+
 ## The driver, and the command line
 
 A host is driven from another thread: `Host.send` posts a request,

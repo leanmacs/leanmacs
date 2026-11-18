@@ -384,6 +384,18 @@ is rejected keeps them.
 A script is one directive a line. Blank lines and lines that start with `#`
 are skipped.
 
+**Headless time is fake.** The headless mode's job clock, which every job's
+wait, every time limit and the pause of completion at point wait on, is a
+fake clock: real time never moves it, and the script moves it with
+`advance <milliseconds>`. So a job that sleeps ends only once the script
+advances past its sleep, and a pause fires only when a script advances, and
+saved outputs stay deterministic. An `advance` waits for a wait due within
+its milliseconds before it moves the clock, so `advance 1` after `spawn
+count` cannot move the clock before `count` is in its sleep. `idle
+<milliseconds>` still waits real milliseconds, for the render loop, which is
+the render thread's and not the job clock's. The window mode keeps the real
+timers.
+
 | Directive | Does |
 |---|---|
 | `reload` | Asks for the config to be reloaded. Elaboration runs in the background, and the editor goes on answering. The command `reload-config`, and so the ex line `reload`, asks the same. |
@@ -391,6 +403,7 @@ are skipped.
 | `run <name>` | Runs the command registered under that name, through the editor loop, as a key would: with the focused window, guarded against the interrupt key, and rolled back if it does not run to its end. It is no key, so the input scheme's state is as it was: a command that a key enters a Vim state with enters none (the table of evil's commands, above). |
 | `spawn <name>` | Starts the job registered under that name. It runs in the background, and the editor goes on answering. |
 | `join` | Waits, for up to 30 seconds, until everything asked so far has been handled and no job is running. |
+| `advance <milliseconds>` | Moves the headless mode's job clock on by that many milliseconds, once it holds a wait due within them (for up to 30 seconds), completing every wait then due: a job's sleep, a time limit, the pause of completion at point. It sends nothing to the editor thread and prints nothing, so a scene count is unchanged by it. One with no wait due within the time runs out, saying `the advance on line N found no wait due within M ms on the clock within the patience`. Anything but one number is refused. |
 | `show` | Prints the commands, the texts and the stores. |
 | `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. The editor loop steps the key through its input scheme, and runs the command a completed sequence is bound to. |
 | `commit <text>` | Sends the rest of the line, trimmed, as an input method's composition would end with it, the same way as `key`. The editor loop inserts it at the focused window's cursors where the view takes typed text: under the Vim scheme, in insert state and in the minibuffer. In normal state it is dropped. A `commit` with no text is refused. |
@@ -437,8 +450,12 @@ key arrived: a KeyA shift+control
 key arrived: <Escape> Escape -
 ```
 
+`count` sleeps on the headless mode's clock, so the script advances it
+(`advance 1`) before its `join`.
+
 A third script, `tests/headless/scene-script`, presses `i`, commits text
-and asks for the scene, then reloads and runs a job; its output must be
+and asks for the scene, then reloads and runs a job, advancing the clock
+past its sleep (`advance 1`) before its `join`; its output must be
 exactly `tests/headless/scene-expected`. A committed text is typed text, so
 it is inserted in insert state, which `i` enters; in normal state it would
 be dropped:
@@ -466,7 +483,8 @@ them. It sends `C-c s` and then `C-g`, the interrupt key, which stops
 under the Vim scheme it runs `keyboard-quit`, which, with no `:!` running,
 says `Quit`. Then `C-c m`, which runs to its end.
 The config also registers the job `double` and the command `ask` shown
-above, on `C-c d`: the script sends `C-c d`, waits for the job with `join`,
+above, on `C-c d`: the script sends `C-c d`, advances the headless mode's
+clock past the job's sleep (`advance 1`), waits for the job with `join`,
 and asks for the scene, whose echo area holds what the job's command said.
 Its output must be exactly `tests/headless/dispatch/expected`; were `spin`
 not stopped, the gate's time limit would end the run:
@@ -1418,6 +1436,47 @@ key arrived: & Digit7 shift
 scene 640x480, focused 4, echo "tab-close: the last tab cannot be closed", echo padding 8, preedit -, published 41, theme "default"
 view 4 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 4: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+```
+
+A twenty-fourth, `tests/headless/at-point/script`, shows completion at
+point's auto popup on the shared config (`tests/headless/config`), under
+the Vim scheme that ships: in insert state it commits `alpha alpine beta`,
+breaks the line with `RET`, types `a` and `l`, each re-arming the pause of
+the shipped `words` source, and settles; then `advance 240` fires the pause,
+`join` waits for the `words` job, and the scene lists the words of the open
+buffers that match `al`, nothing chosen, in the candidate list's view above
+the bottom row, the window shorter by its two rows. `C-n` chooses the first
+and previews it in the buffer's text; `RET` accepts it, and the list is
+gone and the window full height again. Its output must be exactly
+`tests/headless/at-point/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/at-point/script
+reload 1: installed, 2 chunks, 1 commands
+key arrived: i KeyI -
+key arrived: <Enter> Enter -
+key arrived: a KeyA -
+key arrived: l KeyL -
+job 1 words: started
+job 1 words: ok
+job 1 words: ok
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 11, theme "default"
+view 0 0,0 640x432: "alpha alpine beta\nal", scroll 0, selections 20..20, padding 8 8
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "2:3" +4, mode-line.secondary "Bot" +4
+view 1 0,432 640x32: "alpha\nalpine", scroll 0, selections , padding 8 0
+decorations 1: minibuffer.candidate 0..5 minibuffer.match 0..2 minibuffer.candidate 6..12 minibuffer.match 6..8
+status 1: -
+key arrived: n KeyN control
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 13, theme "default"
+view 0 0,0 640x432: "alpha alpine beta\nalpha", scroll 0, selections 23..23, padding 8 8
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "2:6" +4, mode-line.secondary "Bot" +4
+view 1 0,432 640x32: "alpha\nalpine", scroll 0, selections , padding 8 0
+decorations 1: minibuffer.chosen 0..5 minibuffer.match 0..2 minibuffer.candidate 6..12 minibuffer.match 6..8
+status 1: -
+key arrived: <Enter> Enter -
+scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 15, theme "default"
+view 0 0,0 640x464: "alpha alpine beta\nalpha", scroll 0, selections 23..23, padding 8 8
+status 0: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "2:6" +4, mode-line.secondary "Bot" +4
 ```
 
 Two more runs of the gate are on a real file, and so on a script that

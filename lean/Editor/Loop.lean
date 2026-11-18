@@ -390,6 +390,50 @@ Pinned by `ModelTest.promptChecks`, the listing by
 sources that answer later and matching off the thread through the loop by
 `laterLoopChecks`; on the headless host by `ConfigTest.promptChecks`.
 
+## Completion at point
+
+A session at point (`EditorState.atPoint`, `docs/design/keymaps-and-modes.md`,
+"Completion at point") is listed, shown and matched by the same rules as a
+prompt: `listed`, `displayed`, `candidateListView` and `completionJobs` read
+what is completing (`EditorState.completing?`), a prompt or a session, and
+a session's pattern is the text the user typed (`AtPointSession.typed`),
+never its region's text, so a preview is not matched against itself. In
+the publish, before `listed`:
+
+- **`atPointKept`** closes the session when its view is not focused, is no
+  window or shows another buffer, when a prompt is open, when the view no
+  longer takes text (insert state was left), when its markers cannot be
+  read, and when the cursor is before its region's start or after its end.
+  Otherwise, when the region does not hold what the session last left
+  there, the user edited it, and its text becomes what is typed
+  (`retakeAtPoint`): so typing on keeps a preview.
+- **`atPointExhausted`**, after `listed`, closes it when nothing more is to
+  come and nothing matches (`Candidates.exhausted`), saying `no
+  completions` when it never showed a row.
+- **A session closed there** gives up its markers, releases its snapshots
+  and, when it made a preview, closes its buffer's group
+  (`closedAtPoint`, `EditorState.closeGroupOf`). One a command closed is
+  given up by `gaveUp`.
+
+**What a command typed** in place of typed text (`EditorState.retyped`) is
+told to the scheme, once the command has run to its end, as committed text
+(`ranInto`).
+
+**Asking by itself.** A step that took a key, or a committed text that was
+inserted, says the view and the text it typed (`Stepped.key`). Once its
+scene is published, `atPointAsks` (pure) looks at the chain of the buffer's
+at-point sources: a trigger character runs `at-point-triggered` as the next
+step (`Stepped.answered`), and the sources' pauses are armed
+(`Stepped.pause`, `PauseChange`), replacing whatever was; any other key, or
+one while a prompt or a session is open, withdraws them. The host arms each
+pause as a wait on the job clock, and runs `at-point-paused` when one fires
+(`Headless.Running.pause`, `paused`); the driver on the models by
+`Loop.Driver.pass`.
+
+Pinned by `ModelTest.atPointLoopChecks`, `atPointRepeatChecks`,
+`atPointAskChecks`, `atPointByItselfChecks` and `completionJobChecks`; on the
+headless host by `ConfigTest.atPointChecks`.
+
 ## Reload from a command
 
 A command asks for the config to be reloaded (`reloadConfig`,

@@ -663,6 +663,35 @@ A command asks for a string without waiting for it
   the minibuffer's view, with no marker made. `ViewId.focus` takes it, so
   the focus can leave the minibuffer and come back.
 
+## Completion at point
+
+A command completes the text at the cursor from the sources a buffer's
+at-point sources name (`docs/design/keymaps-and-modes.md`, "Completion at
+point"; `Editor/Completion/AtPoint.lean`).
+
+- `completeAtPoint occasion` asks the chain of the focused window's buffer
+  for the sources that ask on the occasion (`StateRequest.atPointSources`),
+  and asks each, in order, for its region at the cursor
+  (`StateRequest.askAtPoint`), **stopping at the first that answers**. A
+  region that does not hold the cursor, or whose ends are not positions of
+  the text, is refused `outside`. The sources it names are asked with the
+  region's text (`collectSources`, shared with `prompt`), the region's ends
+  are marked, the start with the bias `before` and the end with `after`,
+  and a session opens over them with nothing chosen. It is refused, as a
+  value, while a prompt or a session is open.
+- `previewAtPoint step` moves the session's choice and puts the chosen
+  candidate's text, or with nothing chosen the text typed, in the region,
+  as one transaction that carries the selection before it and leaves the
+  cursor after it. The buffer's group is closed before the first preview,
+  and the command says it typed backspaces for the region's characters and
+  then the new text (`retype`), for the last change's recording.
+- `acceptAtPoint` and `quitAtPoint` close the session (`endAtPoint`),
+  leaving the region as it is, and close the buffer's group when it made a
+  preview: the previews and the accept are one step of the history.
+- `retype view text` records what a command typed in place of typed text
+  (`EditorState.retyped`), which the loop tells the input scheme once the
+  command has run to its end.
+
 ## Files
 
 Opening a file and saving a buffer are not operations here: each is a

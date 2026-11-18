@@ -1450,7 +1450,9 @@ the one editor; with two tabs or more a tab bar lists them in a strip
 above the minibuffer's, a text view over generated text, as the buffer
 list is. While a prompt lists candidates, the minibuffer's strip holds
 the candidate list's view on top, another view over generated text,
-directly above the minibuffer's own view. A view's scroll position is an anchor. Layout invariants (for example, a minibuffer
+directly above the minibuffer's own view; while a session of completion at
+point lists them and no prompt is open, the strip is the list's view above
+the bottom row, with no input row. A view's scroll position is an anchor. Layout invariants (for example, a minibuffer
 exists) are part of the data model, and operations that would break one
 return a typed refusal.
 
@@ -1794,7 +1796,8 @@ echo area, the preedit, and the prompt that is open, if one is.
     Selecting a tab by clicking its chip is deferred: tabs are
     keyboard-only.
   - **The candidate list** (completion's phase 4) is the upper part of the
-    minibuffer's strip while a prompt is open and its list has shown a row
+    minibuffer's strip while a prompt is open, or a session of completion
+    at point (completion's phase 5), and its list has shown a row
     (`EditorState.candidateListRect?`), directly above the minibuffer's
     view, the most rows shown since the prompt opened tall. Its view is a
     text the state keeps for the editor's life
@@ -1926,7 +1929,16 @@ echo area, the preedit, and the prompt that is open, if one is.
     frame's bottom row, the display's `message` height, and holds the
     echo; with one open it is the candidate list's rows, a text row and
     that row, the list's view on top and the minibuffer's view filling the
-    rest. A frame shorter than the strip is all strip.
+    rest. While a session of completion at point is open and no prompt is
+    (completion's phase 5), it is the list's rows above the bottom row, with
+    no input row: `listRows·text + message`, the session's high-water mark
+    of rows (`AtPointSession.tallest`), so it grows and never shrinks while
+    the session is open, and the echo stays in the bottom row. The window
+    being edited is shorter by the list while it is open, the follow keeps
+    its cursor shown, and the windows get the rows back at the scene of the
+    step that closes it. The list's view draws the session's sheet as it
+    draws a prompt's (`EditorState.completing?`). A frame shorter than the
+    strip is all strip.
   - **The window commands do not have it.** Removing it, splitting it and
     showing another buffer in it are refused (`ofMinibuffer`), and so is
     showing its buffer in another window: it is closed by answering or

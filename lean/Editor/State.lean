@@ -651,6 +651,45 @@ A prompt is a request for one string, with a text to show beside the input
   - They are fields of the state, so a command that does not run to its
     end leaves the listing and the choice as they were.
 
+## A session at point
+
+A session of completion at point (`EditorState.atPoint`, an
+`AtPointSession`; `docs/design/keymaps-and-modes.md`, "Completion at
+point") completes the region of a buffer an at-point source named. It is
+plain data: the window it completes in and its buffer, the source that
+answered, the markers of the region's ends (the start of bias `before`, the
+end of bias `after`, so text typed at the end grows it), the text the user
+typed (`typed`, what is matched) and what the session last left in the
+region (`shown`), whether a preview was made, and the prompt's own
+candidates, sheet and high-water mark.
+
+- **One accessor serves both.** `completing?` is the open prompt's, else
+  the session's (`Completing`: the view its candidates are keyed by, the
+  view its sources are asked from, the candidates, the sheet, the
+  high-water mark, and the typed text for a session), and
+  `withCompleting view` writes back to whichever is in `view`. So
+  `candidatesIn?`, `replaceCandidatesIn`, `addCandidates`, `sourceAnswered`,
+  `listMatched`, `matchFailed` and `displayed` reach a session by its view
+  with no rule of their own.
+- `openAtPoint` opens one with the candidates its sources answered, nothing
+  chosen; it is refused `promptOpen`, `alreadyOpen` and `noWindow`.
+  `closeAtPoint` closes it and hands it back: its markers and snapshots
+  are the caller's to give up. `chooseAtPoint`, `retypeAtPoint` (what a
+  preview left) and `retakeAtPoint` (an edit the user made in the region:
+  typed and shown, nothing chosen) are refused `notOpen` with none.
+- `Candidates.region` and `Candidates.texts` keep the region as asked and
+  the snapshots taken for sources that read the open buffers' texts, and
+  `Candidates.exhausted` says nothing more is to come and nothing matches
+  the typed text: the session closes then.
+- **Its place.** While a session is open and no prompt is, the
+  minibuffer's strip is the list's rows above the bottom row, with no input
+  row (`listRows`, `minibufferPlace`, `cutStrip`, `candidateListRect?`),
+  growing and never shrinking while it is open.
+- `retyped` is a one-shot, as `answered` is: what commands typed in place
+  of typed text (`retype`), which the loop tells the input scheme.
+- `wellFormed` holds a session to a view that is a window and a choice
+  inside its listing.
+
 ## Buffers
 
 - `addBuffer` gives a new buffer the next slot. It refuses `nameTaken` for

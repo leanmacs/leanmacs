@@ -442,7 +442,15 @@ layout invariants with the minibuffer's window, the strip its place
 takes) is checked with the state's operations, the scene's side with the
 loop's, the notice a scheme is told with the loop's dispatch, and the
 operations `prompt`, `acceptPrompt` and `cancelPrompt` with the cases of
-the API. The editor state's side of a
+the API. Completion at point is checked on the models in the same layers
+(completion's phase 5): its interface and the shipped `words` against their
+contract (`atPointContractChecks`, `wordsChecks`), a session in the state
+(`atPointStateChecks`), asking through the dispatcher and the chain
+(`atPointChecks`, `registryChecks`), and, on the evil driver over the
+models, the keys, the preview, the accept, the closing rules, one undo step,
+the repeat, a trigger and a pause moved by `Loop.Driver.pass`
+(`atPointLoopChecks`, `atPointRepeatChecks`, `atPointAskChecks`,
+`atPointByItselfChecks`). The editor state's side of a
 save in flight, the snapshot the loop releases once a save has ended and
 the saved mark a rollback takes back are checked with the state requests
 and the loop's dispatch.
@@ -635,18 +643,24 @@ read); each fixture must stay executable. Then `config-test`, handed
 re-indent through a headless host, and
 then the editor: once as `editor demo`, the demonstration, ten times in its headless
 mode on the fixtures under `tests/headless`, and twice more on a real file
-in a temporary directory (below): with `script`, whose output must
-be exactly `expected`; with `keys-script`, which sends keys with their
+in a temporary directory (below): with `script`, whose job `count` sleeps
+on the headless mode's fake clock, which the script advances (`advance 1`)
+before its `join`, and whose output must be exactly `expected`; with `keys-script`, which sends keys with their
 identity through the library's window input and whose output must be exactly
 `keys-expected`; with `scene-script`, which enters insert state, commits
 text through the window input, prints the scene the editor loop published,
-and reloads and runs a job once the frame exists, and whose output must be
-exactly `scene-expected`; and with `dispatch/script` on the config in
+and reloads and runs a job once the frame exists, advancing the clock past
+its sleep, and whose output must be exactly `scene-expected`; and with `dispatch/script` on the config in
 `dispatch/config`, which sends the keys of a command that loops and the
 interrupt key, then the keys of a command that ends, then the keys of a
-command that starts a job with an argument, whose result the job's command
-says in the echo area, and whose output must
-be exactly `dispatch/expected`; and with `finder-session/script` on the
+command that starts a job with an argument, whose sleep the script
+advances past and whose result the job's command says in the echo area,
+and whose output must be exactly `dispatch/expected`; and with
+`at-point/script`, on the shared config, which types `a` and `l` in insert
+state, advances the headless mode's clock 240 ms so the shipped `words`
+source's pause fires, and prints the session's candidate list, then
+previews and accepts its first candidate, and whose output must be exactly
+`at-point/expected`; and with `finder-session/script` on the
 config in `finder-session/config`, the fixture
 `tools/install-app.sh` installs with the app when no config is there, which runs that
 config's command by its key `C-c h` and by its ex name `finder-hello`, so
@@ -803,6 +817,15 @@ arrives, across a reload that replaces it and one that drops it; the
 answer's command run before a key sent right after the accept key; and a
 continuation over a store reading the cell after the accepting command's
 write.
+
+`config-test` runs completion at point through headless hosts of the Vim
+scheme that ships (`ConfigTest.atPointChecks`, `withVimHost`), over the real
+elaborator, queue, text binding and recorder and the stage's fake clock:
+`C-n` in insert state lists the words of open buffers, a config's trigger
+source opens a session on its character and no other, a pause of 240 ms
+after two characters opens one of `words`, a typed key arms one pause wait
+and starts no job, and the pause's event is queued before the clock's
+move returns, so a `join` after an `advance` finds the session.
 
 `config-test` runs the ex command line through headless hosts too, with
 the test scheme and the ex line's commands and the ex names that ship as

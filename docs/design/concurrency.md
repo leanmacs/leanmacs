@@ -65,7 +65,13 @@ enters them, and leaves them, in a command.
   then names nothing, and a save of it is refused as a value. This is how
   the scene crosses to the renderer too, and a snapshot never changes, so a
   reader shares nothing that moves. Documents are not published: a text has
-  one writer and no reader but a command.
+  one writer and no reader but a command. **A job reads a published
+  snapshot's text** with one request, `JobRequest.snapshot`, answered at
+  once from that read half (`Job.realSnapshots`, over `Ffi.Snapshot.read`):
+  the text, or `none` for an id released by then. It waits for nothing and
+  moves no clock. This is how completion at point's `words` gathers the
+  open buffers' words off the editor thread, from snapshots the asking
+  command took (completion's phase 5).
 - **What a job makes is the job's until a command takes it.** A load's reply
   names its snapshot by a second kind of id (`JobSnapshotId`), which is not
   an id of the store. The runner holds the library's snapshot for the job
@@ -1528,6 +1534,54 @@ threads), 600 keys a row, in µs, median / 99th percentile / maximum:
   ranges), which the owner accepted: while typing fast the listing can be
   an earlier text's.
 
+**A typed key with completion at point, measured** (completion's phase 5).
+The two insert rows of `mise run prompt-bench` time a word key in insert
+state under the Vim scheme that ships, on a fake job clock and the real
+library, queue and recorder: with no at-point source, and with the shipped
+`words` re-arming its pause at each key over 20 open buffers of about
+50 KB, four of each sample's six keys typed with the session open
+([on-demand-checks.md](../dev-practices/on-demand-checks.md)). Three runs,
+2026-11-17, at `fdd4cb9`, on the Apple M5 Max above (a pool of 18
+threads), 600 keys a row, in µs, median / 99th percentile / maximum, with
+the run's no-candidates row beside them:
+
+| Run | no candidates | insert, no at-point | insert, auto popup, 20 buffers | Within bound |
+|---|---|---|---|---|
+| 1 | 53.3 / 136.2 / 179.2 | 115.2 / 214.9 / 264.3 | 125.6 / 236.6 / 437.5 | no: the median is over twice 53.3; both worker rows were out of bound in this run too |
+| 2 | 186.8 / 262.0 / 309.7 | 167.6 / 357.8 / 5483.3 | 122.9 / 242.7 / 369.2 | yes |
+| 3 | 180.0 / 242.2 / 267.4 | 105.0 / 140.3 / 182.8 | 133.6 / 256.3 / 346.7 | yes |
+
+- **The auto-popup row stays within about 30 µs of the plain insert row**
+  in every run, and its 99th percentile under 0.3 ms: re-arming the pause
+  (a withdraw and a start on the clock) and the pure check of the chain
+  are what a typed key adds, and the session's listing is matched off the
+  thread.
+- **The bound is judged against the prompt's no-candidates row**, a
+  key of the test scheme, which moved from 53 µs to 187 µs between runs on
+  this machine; a key of the Vim scheme's insert state costs more than
+  that floor on its own (the plain insert row). Run 1 is out of bound by
+  that floor alone. D9's fallback (re-arming in place of restarting) would
+  save at most the one withdraw and start, and is not built.
+
+**Sessions at point** (completion's phase 5,
+[keymaps-and-modes.md](keymaps-and-modes.md), "Completion at point") use
+the same jobs, keyed by the session's view: the reconciler reads what is
+completing, a prompt or a session (`EditorState.completing?`), so a
+session's later sources start under `completion <view> <source>`, its long
+list is matched under `completion-match <view>`, and closing the session
+cancels both at the closing step's publish. `words` answers later from the
+job `words`, registered compiled, so its owner is `compiled` and a reload
+does not cancel it; it reads snapshots of the open buffers the asking
+command took, released when the session closes. A trigger character asks
+through an invocation the step hands back (`at-point-triggered`), run as
+the next step. The pause is a timer the host arms on the job clock, not a
+job: each typed key in insert state restarts one wait (withdrawing the held
+one, ended as cancelled in the table of waits, then starting another), and
+its completion posts an event, from the clock's completion path, before the
+clock's move returns, which runs `at-point-paused`. So a typed key costs a
+pure check of its buffer's chain and two calls into the timer service, and
+no text request, job or job line; the insert rows below measure it.
+
 How the scene shows the candidates is in
 [text-and-display.md](text-and-display.md), "Views as built", and the keys
 that move through them in [keymaps-and-modes.md](keymaps-and-modes.md),
@@ -1850,6 +1904,15 @@ elaborate, or whose setup throws, is rejected and the old one stays.
   step and every publish, so the scene the install publishes already draws
   an open prompt's list with the new config's display; the state keeps only
   what a display answered, which is data.
+- **At-point sources need no stamp either** (completion's phase 5): they run
+  only inside commands (`C-SPC`, `C-n` and `C-p`'s, `at-point-triggered`
+  and `at-point-paused`), looked up through `Loop.Registered`, rebuilt for
+  every step and delivery, so no old config code runs after an install. An
+  armed pause holds only a view and a number, and asks the chain as it is
+  when it fires. A session holds only data, and one a dropped config
+  source opened keeps working on what was collected; its config later
+  source's job is config's and cancelled by the install, and its match is
+  respawned by the install's publish as a prompt's is.
 - Subscriptions and key bindings from config are replaced by owner, never
   accumulated. (`edmacs` repeatedly hit reloads that double-added hooks.)
 - Reloads are serialised, so two in flight cannot install out of order.
