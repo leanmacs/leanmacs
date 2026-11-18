@@ -485,7 +485,8 @@ run = [
   # (tests/render/themes/README.md). It reads only checked-in files and
   # writes nothing. `mise run theme-references` makes the images again.
   ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/fonts/NotoSansMono-Regular.subset.ttf",
-  # The excerpt picture (lean/FfiTest.lean, `excerptPictureScenario`): an
+  # The excerpt picture (lean/FfiTest/Editor/ExcerptView.lean,
+  # `excerptPictureScenario`): an
   # excerpt document's view with each excerpt's header as a block above it,
   # drawn by the CPU renderer through the display's real binding in
   # solarized-dark, must match tests/render/excerpts/excerpts.png within the
@@ -752,7 +753,7 @@ run = "tools/install-app.sh lean"
 # just before it recurses, so the marker must be the last line of stdout as
 # well.
 [tasks.ffi-overflow]
-description = "Opt-in, never part of ci: check that a stack overflow in interpreted Lean code aborts the process (lean/FfiTest.lean). Each run makes macOS write a crash report under ~/Library/Logs/DiagnosticReports"
+description = "Opt-in, never part of ci: check that a stack overflow in interpreted Lean code aborts the process (lean/FfiTest/Editor/Ffi/MainThread.lean). Each run makes macOS write a crash report under ~/Library/Logs/DiagnosticReports"
 depends = ["lean"]
 dir = "lean"
 timeout = "60s"

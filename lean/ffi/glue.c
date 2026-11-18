@@ -14,8 +14,8 @@
 // part of the gate.
 //
 // The conventions the wrappers follow are in the module docs of
-// `Editor/Ffi.lean`. `FfiTest.lean` pins what this file does, as Lean sees
-// it.
+// `Editor/Ffi.lean`. `ffi-test` (`FfiTest.lean` and its test modules under
+// `FfiTest/`) pins what this file does, as Lean sees it.
 
 // For `pthread_getattr_np` on Linux, which glibc declares only when this is
 // defined before the first include. It changes nothing on macOS.

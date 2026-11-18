@@ -519,5 +519,6 @@ No test pins this rule, and the build enforces only part of it.
   the module's initialiser when the executable starts, where the symbols do
   exist, so nothing stops it. Seen once by hand, with a constant defined as
   `add 2 3`. Keeping such constants out is left to review; a list of checks
-  is a function of `Unit` in `FfiTest.lean` for this reason.
+  is a function of `Unit` in `ffi-test`'s test modules (`FfiTest/`) for
+  this reason.
 -/

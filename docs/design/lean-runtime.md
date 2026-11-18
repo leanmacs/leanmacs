@@ -675,9 +675,9 @@ elaborates it.
 `ffi-test` checks the size on each kind of thread (`FfiTest.entryChecks`,
 in the gate); a thread reports its own stack size, so the check aborts
 nothing. `mise run ffi-overflow` shows the abort itself, under that size
-(the `overflow` scenario of `lean/FfiTest.lean`). It is run on demand and is
-not part of the gate, because every abort makes macOS write a crash report
-on the machine.
+(the `overflow` scenario of `lean/FfiTest/Editor/Ffi/MainThread.lean`). It
+is run on demand and is not part of the gate, because every abort makes
+macOS write a crash report on the machine.
 
 ## The editor API is an interface
 

@@ -154,6 +154,26 @@ root, in `split-lean-integration-test-roots`, low priority.
 `lean/Editor/Ffi.lean`'s conventions, `docs/design/lean-runtime.md` and
 `docs/dev-practices/the-gate.md`.
 
+**Done** (roadmap `structural-splits`, phase
+`phase-2-split-lean-integration-test-roots`): split. `lean/FfiTest.lean`,
+4,412 lines at 5f86580, is now 173: its imports, its module doc, `checks`
+and `main`. Its lists and scenarios are in 27 test modules under
+`lean/FfiTest/Editor/`, each mirroring the module it tests: one per binding
+family with a list of its own (`lean/FfiTest/Editor/Ffi/Document.lean` for
+`lean/Editor/Ffi/Document.lean`), and the mirror of the module tested for
+the lists that test something else (`sceneChecks` in
+`lean/FfiTest/Editor/Display/Real.lean`, `paddingChecks` in
+`lean/FfiTest/Editor/State.lean`, the window-host scenarios in
+`lean/FfiTest/Editor/Window/Real.lean`). The families with no list of their
+own (`Log`, `Text`, `Excerpts`, `Diffs`, `Clipboard`, `Words`) have no test
+module. The helpers several modules share are in six support modules under
+`lean/FfiTest/Support/`, and `Check`, `failures`, `run` and `usage` in
+`lean/FfiTest/Check.lean`. Everything stays in `namespace FfiTest`, so every
+`FfiTest.<name>Checks` citation resolves unchanged. The run is the same
+before and after: `ffi-test: 205 checks passed` and `ffi-test shutdown: 3
+checks passed`. The largest new module is
+`lean/FfiTest/Editor/Display/Real.lean` (435 lines).
+
 ### The contracts against the real bindings: `lean/ContractTest.lean`
 
 **Cohesion**: The root of the `contract-test` executable: 3,378 lines, 37
