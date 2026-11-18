@@ -68,7 +68,7 @@ import ModelTest.Support.Workspace
 The model tests of `Editor/State.lean`: `windowOperationChecks`,
 `floatingWindowChecks`, `stateChecks`, `tabChecks`, `paddingChecks`,
 `heightChecks`, `titleChecks`, `readOnlyChecks`, `excerptBufferChecks`,
-`displayStateChecks` and `atPointStateChecks`.
+`displayStateChecks`, `atPointStateChecks` and `keyHintStateChecks`.
 `readOnlyChecks` and `excerptBufferChecks` also cover
 `Editor/Command/Dispatch.lean`, and `paddingChecks`, `heightChecks` and
 `titleChecks` read the state through the loop; each is here because what it pins
@@ -3574,5 +3574,83 @@ def atPointStateChecks : List Check :=
               !(listing.withCompleting ⟨0⟩ fun completing =>
                     { completing with
                       candidates := { completing.candidates with chosen := some 4 } }).wellFormed }]
+
+/-- `state` with key hints of the generation `generation` (`KeyHintList`),
+due when `due` is, listing a candidate of each of `texts` once due. -/
+def hintsOver (state : EditorState) (texts : Array String) (due : Bool := true)
+    (generation : Nat := 1) : EditorState :=
+  let pending :=
+    { state with
+      keyHints := some { generation }, keyHintGeneration := generation }
+  let fired := if due then pending.keyHintsDue generation else pending
+  fired.listKeyHints (texts.map Completion.Candidate.ofText)
+
+/-- The checks of the key hints in the state (`Editor/State.lean`, "Key
+hints"): a candidate list with no typed text, which takes the candidate
+list's place once due, under the bottom row's strip with no input row,
+gives way to a prompt, and grows and never shrinks while it is open; a
+generation that is not its own changes nothing. -/
+def keyHintStateChecks : List Check :=
+  [{  name :=
+        "due key hints of 3 rows take the candidate list's place directly above the bottom row, with no input row; hints not due take none"
+      run :=
+        pure <|
+          match atPointBase with
+          | none => false
+          | some state =>
+            let due := (hintsOver state #["f", "s", "w"]).displayed .standard
+            let waiting := (hintsOver state #["f", "s", "w"] (due := false)).displayed .standard
+            let heights := due.heights
+            due.hinting?.isSome && due.listRows == 3 &&
+              due.minibufferPlace == 3 * heights.text + heights.message &&
+              due.candidateListRect? ==
+                some
+                  { x := 0, y := 480 - (3 * heights.text + heights.message), width := 640
+                    height := 3 * heights.text } &&
+              due.cutStrip.2.height == heights.message &&
+              due.keyHints.map (·.sheet.rows.size) == some 3 &&
+              waiting.hinting?.isNone &&
+              waiting.listRows == 0 &&
+              waiting.candidateListRect? == none &&
+              waiting.minibufferPlace == heights.message &&
+              waiting.keyHints.map (·.listed.size) == some 0 },
+    { name :=
+        "while a prompt is open the candidate list is the prompt's, and due key hints are not shown"
+      run :=
+        pure <|
+          match atPointBase with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted (hintsOver state #["f", "s", "w"])
+            let shown := (picking asking).displayed .standard
+            shown.hinting?.isNone &&
+              shown.candidateSheet?.map (·.1) == shown.prompt.map (·.sheet) &&
+              shown.listRows == 3 &&
+              shown.keyHints.map (·.sheet.rows.size) == some 0 },
+    { name :=
+        "a delay that fires for another generation changes nothing, and one for its own makes the hints due"
+      run :=
+        pure <|
+          match atPointBase with
+          | none => false
+          | some state =>
+            let pending := hintsOver state #["f"] (due := false) (generation := 2)
+            pending.keyHintsDue 7 == pending &&
+              (pending.keyHintsDue 2).keyHints.map (·.due) == some true &&
+              state.keyHintsDue 2 == state },
+    { name :=
+        "the key hints' part of the strip grows and never shrinks while they are open, and closing them gives the bottom row back"
+      run :=
+        pure <|
+          match atPointBase with
+          | none => false
+          | some state =>
+            let three := (hintsOver state #["f", "s", "w"]).displayed .standard
+            let one := (three.listKeyHints #[Completion.Candidate.ofText "t"]).displayed .standard
+            let closed := { one with keyHints := none }
+            one.keyHints.map (·.sheet.rows.size) == some 1 && one.listRows == 3 &&
+              one.minibufferPlace == three.minibufferPlace &&
+              closed.listRows == 0 &&
+              closed.candidateListRect? == none }]
 
 end ModelTest

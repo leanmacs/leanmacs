@@ -43,13 +43,16 @@ the last scene published, on its own thread, so painting never waits on Lean
   with no selection and no status field. Which cursor shape and face a view has is the
   input scheme's to say (`InputScheme.report`, `Editor/InputScheme.lean`):
   the Vim scheme's is the cursor of the view's Vim state. The pending key
-  prefix is rendered by Lean into a string.
-- **The key hints are a Lean-only readout.** The keys that can follow the
-  pending prefix (`Scene.keyHints`, from `InputScheme.continuations`) are
-  data the command loop fills, but they do not cross to the Rust scene,
-  and they are not drawn yet: the leader-and-key-hints roadmap's phase 4
-  draws them through the completion display, a view Lean makes, as the
-  candidate list is, so no Rust code reads them.
+  prefix is rendered by Lean into a string, and drawn as a field of the
+  selected window's status line (the `pending-keys` segment,
+  `Editor/ModeLine.lean`), so it needs no field of its own on the wire.
+- **The key hints are a Lean-only readout.** The key hints shown
+  (`Scene.keyHints`: the keys that can follow the pending prefix, from
+  `InputScheme.continuations`, once the key hint delay has passed) are
+  data the command loop fills, but they do not cross to the Rust scene:
+  they are drawn by the completion display chosen for the category `key`,
+  as the candidate list's view, a view Lean makes, so no Rust code reads
+  them.
 - **A block is text only.** A view's blocks (`View.blocks`) are rows of
   text of their own between its rows, each in its own faces: which ones,
   and where, is the command loop's choice (an excerpt buffer's headers,
@@ -310,12 +313,15 @@ structure Scene where
   at least the window's corner clearance. -/
   echoPadding : Nat := 0
   /-- The pending key prefix, as Lean renders it; empty when there is
-  none. -/
+  none. The selected window's status line draws it
+  (`ModeLine.pendingKeys`). -/
   pending : String
-  /-- The keys that can follow the pending prefix, in the input scheme's
-  order, for the key hints (`InputScheme.continuations`); none when no
-  keymap prefix is pending. A Lean-only readout: it does not cross to the
-  Rust scene. -/
+  /-- The key hints shown: the keys that can follow the pending prefix, in
+  the input scheme's order (`InputScheme.continuations`), once the key hint
+  delay has passed; none before it, and none when no keymap prefix is
+  pending. They are drawn by the completion display chosen for the
+  category `key`, as the candidate list's view (`Loop.keyHinted`). A
+  Lean-only readout: it does not cross to the Rust scene. -/
   keyHints : Array KeyHint := #[]
   /-- The text an input method is composing in the focused view, if it is
   composing. -/

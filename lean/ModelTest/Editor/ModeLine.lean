@@ -106,15 +106,35 @@ def modeLineChecks : List Check :=
             unknown == #["nope", "gone"] &&
             ModeLine.unknown "nope" == "no segment is registered as `nope`") },
     { name :=
-        "the default order is the badge, buffer, modified mark, changed mark and directory on the left, and major mode, line:col and position on the right"
+        "the pending-keys segment gives the keys pending in mode-line.secondary for the selected window, and nothing for a window that is not selected or with nothing pending"
+      run :=
+        let pending (context : ModeLine.Context) : Array StatusField :=
+          ModeLine.pendingKeys.fields context
+        pure
+          (pending { loopContext with pending := "SPC f" } ==
+              #[{ text := "SPC f", face := ModeLine.secondaryFace, padding := 4 }] &&
+            (pending { loopContext (selected := false) with pending := "SPC f" }).isEmpty &&
+            (pending loopContext).isEmpty &&
+            ModeLine.pendingKeys.name == "pending-keys") },
+    { name :=
+        "the shipped mode line draws the keys pending first on the right of the selected window's row, and a row at rest is as it was"
+      run :=
+        let texts (context : ModeLine.Context) := (ModeLine.standard.fields context).map (·.text)
+        pure
+          (texts { loopContext with pending := "SPC" } ==
+              #["NORMAL", "Loop.lean", "●", "lean/Editor", "SPC", "lean", "959:5", "41%"] &&
+            texts loopContext ==
+              #["NORMAL", "Loop.lean", "●", "lean/Editor", "lean", "959:5", "41%"]) },
+    { name :=
+        "the default order is the badge, buffer, modified mark, changed mark and directory on the left, and the pending keys, major mode, line:col and position on the right"
       run :=
         pure
           (ModeLine.Order.standard ==
               { left := #["state", "buffer", "modified", "changed", "directory"]
-                right := #["major-mode", "line-column", "position"] } &&
+                right := #["pending-keys", "major-mode", "line-column", "position"] } &&
             ModeLine.shipped.map (·.name) ==
-              #["state", "buffer", "modified", "changed", "directory", "major-mode", "line-column",
-                "position"] &&
+              #["state", "buffer", "modified", "changed", "directory", "pending-keys", "major-mode",
+                "line-column", "position"] &&
             ModeLine.standard.left.map (·.name) == ModeLine.Order.standard.left &&
             ModeLine.standard.right.map (·.name) == ModeLine.Order.standard.right) }]
 

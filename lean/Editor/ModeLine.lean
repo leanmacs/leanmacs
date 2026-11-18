@@ -28,6 +28,7 @@ In the default order (`ModeLine.Order.standard`):
 | Left | `modified` | `●` while the buffer is modified | `mode-line.modified` |
 | Left | `changed` | `[changed on disk]` while a check has found the buffer's file changed on disk, or gone (`Editor/Loop.lean`, "Files that changed on disk") | `mode-line.changed` |
 | Left | `directory` | The opened path's parent, as written | `mode-line.secondary` |
+| Right | `pending-keys` | The keys pending of a sequence begun and not completed (`Loop.pending`: `SPC f`, `d 2`, `" a`), when the window is selected | `mode-line.secondary` |
 | Right | `major-mode` | The buffer's major mode | `mode-line.secondary` |
 | Right | `line-column` | `row:column` of the cursor, each from 1, the column in the text's cells (`ColumnUnit.cells`) | `mode-line.secondary` |
 | Right | `position` | `All`, `Top`, `Bot` or a whole percentage | `mode-line.secondary` |
@@ -38,7 +39,9 @@ with no file, or whose path's parent is absent, empty or `.`;
 opened from a file, since opening a file sets no major mode; `line-column`
 and `position` for a window whose cursor could not be read; `modified` for
 a buffer that is not modified; `changed` for a buffer whose file no check
-has found changed. Buffers may be read-only (`Buffer.readOnly`), but the
+has found changed; `pending-keys` for a window that is not selected, and
+while nothing is pending, so a row at rest is as it was before the segment
+shipped. Buffers may be read-only (`Buffer.readOnly`), but the
 mode line has no read-only mark yet: task `mode-line-read-only-mark` adds a
 segment for it.
 
@@ -99,6 +102,10 @@ structure ModeLine.Context where
   lines : Nat := 0
   /-- Whether it is the selected window (`EditorState.selectedView`). -/
   selected : Bool := true
+  /-- The keys pending of a sequence begun and not completed, as a key
+  string (`Loop.pending`), for the selected window; empty for any other,
+  and while nothing is pending. -/
+  pending : String := ""
 
 /-- A segment of the mode line: a name it is registered and listed by, and
 the fields it gives for a window. -/
@@ -250,16 +257,26 @@ def position : Segment where
     | some point => #[field (positionOf point.row context.lines) secondaryFace]
     | none => #[]
 
+/-- The `pending-keys` segment: the keys pending of a sequence begun and not
+completed (`Context.pending`, the leader written as its own key, `SPC`),
+while the window is selected; none for one that is not, and none while
+nothing is pending. -/
+def pendingKeys : Segment where
+  name := "pending-keys"
+  fields context :=
+    if context.selected && !context.pending.isEmpty then #[field context.pending secondaryFace]
+    else #[]
+
 /-- The shipped segments, in the default order (`Order.standard`). -/
 def shipped : Array Segment :=
-  #[state, buffer, modified, changed, directory, majorMode, lineColumn, position]
+  #[state, buffer, modified, changed, directory, pendingKeys, majorMode, lineColumn, position]
 
 /-- The default listing: the badge, the buffer's name, the modified mark,
-the changed mark and the directory on the left; the major mode, line:col
-and the position on the right. -/
+the changed mark and the directory on the left; the pending keys, the
+major mode, line:col and the position on the right. -/
 def Order.standard : Order where
   left := #["state", "buffer", "modified", "changed", "directory"]
-  right := #["major-mode", "line-column", "position"]
+  right := #["pending-keys", "major-mode", "line-column", "position"]
 
 /-- The mode line `order` names, each name the segment `segment?` finds for
 it, and the names it finds none for, in order, each once. Which segment a

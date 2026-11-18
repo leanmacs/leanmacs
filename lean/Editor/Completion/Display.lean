@@ -27,7 +27,10 @@ alone: it reads no state and asks no port, so it cannot be refused or
 interrupted, and the loop may run config's display inside the publish, as
 it runs config's mode-line segments. Neither the prompt nor the minibuffer
 appears in what it is shown, so a session at point can hand its own
-candidates to the same interface.
+candidates to the same interface. A listing need not be a prompt's or a
+session's, nor have typed text: the key hints are a listing with nothing
+chosen and no typed text, of the category `key`, shown by the display
+chosen for `key` (`Editor/Completion/Keys.lean`, `EditorState.displayed`).
 
 Nothing in it is a program the state holds: the state keeps the sheet the
 last publish answered (data) and where its window started, never a

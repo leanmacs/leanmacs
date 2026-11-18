@@ -1173,6 +1173,10 @@ accepted names at most one (`theme`). -/
   more than one is refused, so a `setup` that is accepted sets at most one
   (`framePadding`). -/
   framePaddings : Array Nat := #[]
+  /-- The key hint delays `setup` set (`keyHintDelay`), in order: more than
+  one is refused, so a `setup` that is accepted sets at most one
+  (`keyHintDelay`). -/
+  keyHintDelays : Array Completion.Keys.Delay := #[]
   /-- The layouts `setup` chose (`layout`), in order: more than one is
   refused, so a `setup` that is accepted chooses at most one (`layout`). -/
   layouts : Array Layout := #[]
@@ -1240,6 +1244,14 @@ def modeLine (collected : Registrations) : Option ModeLine.Order :=
 /-- The frame padding a `setup` set, in points, if it set one. -/
 def framePadding (collected : Registrations) : Option Nat :=
   collected.framePaddings[0]?
+
+/-- The key hint delay a `setup` set, if it set one. -/
+def keyHintDelay (collected : Registrations) : Option Completion.Keys.Delay :=
+  collected.keyHintDelays[0]?
+
+/-- What a `setup` that sets the key hint delay twice is refused with. -/
+def keyHintDelayTwice : String :=
+  "the key hint delay is set twice"
 
 /-- The layout a `setup` chose, if it chose one. -/
 def layout (collected : Registrations) : Option Layout :=
@@ -1335,6 +1347,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with modeLines := collected.modeLines.push order })
   | .framePadding points, collected =>
     ((), { collected with framePaddings := collected.framePaddings.push points })
+  | .keyHintDelay delay, collected =>
+    ((), { collected with keyHintDelays := collected.keyHintDelays.push delay })
   | .layout chosen, collected => ((), { collected with layouts := collected.layouts.push chosen })
   | .tabBar shown, collected => ((), { collected with tabBars := collected.tabBars.push shown })
   | .titleBar style, collected =>
@@ -1491,6 +1505,8 @@ def problem? (collected : Registrations) : Option String := do
     return "the mode line is listed twice"
   if collected.framePaddings.size > 1 then
     return "the frame padding is set twice"
+  if collected.keyHintDelays.size > 1 then
+    return keyHintDelayTwice
   if collected.layouts.size > 1 then
     return "the layout is chosen twice"
   if collected.tabBars.size > 1 then

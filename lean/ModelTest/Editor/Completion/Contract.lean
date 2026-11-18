@@ -9,6 +9,7 @@ import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Contract
 import Editor.Completion.Fake
+import Editor.Completion.Keys
 import Editor.Completion.Paths
 import Editor.Completion.Styles
 import Editor.DisplayRules
@@ -66,13 +67,16 @@ def sourceRunner : Completion.Contract.Runner := fun text source =>
 
 /-- The checks of the completion sources' contract
 (`Editor/Completion/Contract.lean`): it holds of the model, of the fake that
-answers what it was asked and of every shipped source, and it reports a
+answers what it was asked, of every shipped source and of the key hints'
+source (`Completion.Keys.source`), and it reports a
 source that makes a text and one that is refused. -/
 def sourceContractChecks : List Check :=
   let subjects : List Completion.Source :=
     [.fixed "fixed" "test" (offered #["wq", "w"]), Completion.Fake.echo "echo" "test",
       Ex.historySource, Ex.namesSource, Buffers.source, TabCommands.source, Themes.source,
-      Completion.Paths.source]
+      Completion.Paths.source,
+      Completion.Keys.source
+        #[{ key := "s", leads := .binding (some "Save") }, { key := "f", leads := .prefix none 2 }]]
   let writes : Completion.Source :=
     { name := "writes", category := "test"
       candidates := fun _ => do

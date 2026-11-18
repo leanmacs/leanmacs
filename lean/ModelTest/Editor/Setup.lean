@@ -8,6 +8,7 @@ import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
 import Editor.Completion.Displays
+import Editor.Completion.Keys
 import Editor.Completion.Later
 import Editor.Completion.Style
 import Editor.Config.Registry
@@ -794,6 +795,23 @@ def setupChecks : List Check :=
             (collected.syntaxRefreshDelay == some 250 && plain.syntaxRefreshDelay == none &&
               refusal twice == some Config.Registrations.syntaxRefreshDelayTwice)
         | _, _ => pure false },
+    { name :=
+        "a setup's key hint delay is collected as milliseconds, 0 or .never; a setup that sets none has none; one longer than a minute is refused with keyHintDelayTooLong, and one that sets it twice is refused with a message that says so"
+      run :=
+        let collected (setup : SetupM Unit) : Option (Option Completion.Keys.Delay) :=
+          (Config.Registrations.ofSetup setup).toOption.map (·.keyHintDelay)
+        let twice : SetupM Unit := do
+          keyHintDelay 250
+          keyHintDelay 0
+        pure
+          (collected (keyHintDelay 250) == some (some (.after 250)) &&
+            collected (keyHintDelay 0) == some (some (.after 0)) &&
+            collected (keyHintDelay .never) == some (some .never) &&
+            collected (keyHintDelay 60000) == some (some (.after 60000)) &&
+            collected (command "x" (makes "1")) == some none &&
+            refusal (keyHintDelay 60001) == some (Completion.Keys.keyHintDelayTooLong 60001) &&
+            refusal twice == some Config.Registrations.keyHintDelayTwice &&
+            Config.Registrations.keyHintDelayTwice == "the key hint delay is set twice") },
     { name :=
         "a setup's compile contributions and project commands are collected in the order it registered them; a setup that registers none collects none"
       run :=

@@ -400,7 +400,32 @@ def driverChecks : List Check :=
             (lost.pending.map fun job => job.outcome matches .failed "lost") == #[true] &&
               lost.jobs.files.held == #[none] &&
               delivered.isNone &&
-              finished.model.texts.contents == #[""] }]
+              finished.model.texts.contents == #[""] },
+    { name :=
+        "with a key hint delay of 500, the hints after a prefix are not shown until 500 ms have passed and are shown then; a sequence completed before the delay shows none after it; and a delay that fires for another generation changes nothing"
+      run :=
+        pure <|
+          match
+            (Loop.Driver.over (hintedKeys 500) (fun _ => none) (EditorState.initial ⟨640, 480⟩)
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let lastHints (driver : TestDriver) : Option (Array KeyHint) :=
+              driver.model.display.scenes.back?.map (·.keyHints)
+            let (prefixed, _) := fedTo driver (presses "C-x")
+            let early := prefixed.pass 499
+            let due := early.pass 1
+            let (completed, _) := fedTo prefixed (presses "C-s")
+            let after := completed.pass 500
+            let (stale, _) := prefixed.stepped (prefixed.loop.keyHintsDue prefixed.handed 7)
+            prefixed.hinted == some (1, 500) && lastHints early == some #[] &&
+              lastHints due == some afterPrefix &&
+              due.hinted == none &&
+              completed.hinted == none &&
+              lastHints after == some #[] &&
+              after.model.display.scenes.size == completed.model.display.scenes.size &&
+              lastHints stale == some #[] &&
+              stale.loop.state.keyHints == prefixed.loop.state.keyHints }]
 
 /-- What a step of the prompt checks is handed: one keymap, the same for
 every view, the minibuffer's among them, that binds a key sequence under

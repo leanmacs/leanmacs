@@ -70,6 +70,7 @@ share (`defineSource`, `Editor/Setup.lean`; `Editor/Config/Registry.lean`,
 | A way to match candidates | A style (`Editor/Completion/Style.lean`), not a source |
 | A rule every source keeps | A property of `Editor/Completion/Contract.lean` |
 | A source asked at a position of a buffer | An at-point source (`Editor/Completion/AtPoint.lean`), which names the sources to complete its region from (`Named`, `Named.ref`) |
+| What the key hints list | The `key` source (`Editor/Completion/Keys.lean`), made per publish from the input scheme's continuations and not registered |
 
 Pinned by `ModelTest.sourceContractChecks` (the contract, on the model,
 the fake and the shipped sources), `candidateChecks` (sources asked by a

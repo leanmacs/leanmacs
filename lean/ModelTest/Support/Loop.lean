@@ -3,6 +3,9 @@ import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Compile.Contribution
+import Editor.Completion.Display
+import Editor.Completion.Displays
+import Editor.Completion.Keys
 import Editor.Config.Stores
 import Editor.Display.Model
 import Editor.DisplayRules
@@ -214,5 +217,30 @@ scroll anchor's first. -/
 def markerRefusals (window : Window) : TextM (List (Option TextError)) :=
   return [← refusalOf (window.scroll.text.marker window.scroll),
       ← refusalOf (window.selection.text.marker window.selection)]
+
+/-- What the key hint checks hand a step, with the key hint delay `delay`:
+one keymap that binds `C-x C-s`, described `Save`, and `C-x r t`, described
+`Rectangle`, with the prefix `C-x r` named `rect`. -/
+def hintedKeys (delay : Completion.Keys.Delay := 0) : Loop.Keys TestScheme.scheme :=
+  { maps := fun _ _ =>
+      [Keymap.ofDescribed
+          [(keys "C-x C-s", invoke "save", some "Save"),
+            (keys "C-x r t", invoke "rectangle", some "Rectangle")]]
+    prefixNames := fun typed => if typed == keys "C-x r" then some "rect" else none
+    keyHintDelay := delay }
+
+/-- The key hints after `C-x` under `hintedKeys`: `C-s`, the binding, and
+`r`, the prefix `rect`. -/
+def afterPrefix : Array KeyHint :=
+  #[{ key := "C-s", leads := .binding (some "Save") },
+    { key := "r", leads := .prefix (some "rect") 1 }]
+
+/-- The text the candidate list's view shows of `hints` drawn by `display`:
+its sheet's text over their listing, of the category `key`. -/
+def hintRows (hints : Array KeyHint)
+    (display : Completion.Display := Completion.Displays.minibuffer) : String :=
+  (display.sheet
+      { listed := (Completion.Keys.candidates hints).map (Completion.Listed.of ·)
+        category := some Completion.Keys.category }).text
 
 end ModelTest

@@ -3,6 +3,7 @@ import Editor.Compile.Contribution
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Displays
+import Editor.Completion.Keys
 import Editor.Completion.Later
 import Editor.Completion.Styles
 import Editor.DisplayRules
@@ -350,6 +351,16 @@ window's text is inset from its edges, the bottom row at least as far as
 the window's corners reach. A config that sets none has the editor's 8,
 and a reload changes it. Setting it twice is refused.
 
+Config sets the key hint delay in milliseconds (`keyHintDelay 250`): how
+long a prefix is pending before the keys that can follow it are listed
+through the completion display chosen for the category `key`
+(`Editor/Completion/Keys.lean`). `keyHintDelay 0` lists them at once, and
+`keyHintDelay .never` turns them off. A config that sets none has the
+editor's 500 (`Loop.keyHintDelay`), and a reload changes it. A value that
+is not a delay (`keyHintDelay 0.5`, `keyHintDelay "fast"`) does not
+elaborate, a delay over a minute is refused
+(`Completion.Keys.keyHintDelayTooLong`), and so is setting it twice.
+
 Config chooses the window layout (`layout`, `Editor/Layout.lean`), as a
 value with its parameters, the way it sets the frame padding:
 `layout (.masterStack { share := 60, side := .right })`, with main's count
@@ -543,6 +554,9 @@ inductive SetupRequest where
   how far every window's content is inset from its edges, and the bottom
   row at least (`EditorState.paddingOf`). -/
   | framePadding (points : Nat)
+  /-- Set how long a prefix is pending before its key hints are shown, once
+  the config is installed (`Editor/Completion/Keys.lean`). -/
+  | keyHintDelay (delay : Completion.Keys.Delay)
   /-- Choose the layout the frame's windows are arranged by, once the config
   is installed (`Editor/Layout.lean`). -/
   | layout (chosen : Layout)
@@ -621,6 +635,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .segment _ => Unit
   | .modeLine _ => Unit
   | .framePadding _ => Unit
+  | .keyHintDelay _ => Unit
   | .layout _ => Unit
   | .tabBar _ => Unit
   | .titleBar _ => Unit
@@ -978,6 +993,19 @@ changes it with no restart. The editor refuses the `setup` for setting the
 frame padding twice. -/
 def framePadding (points : Nat) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.framePadding points))
+
+/-- Sets how long a prefix is pending before the keys that can follow it are
+listed, once the config is installed: `keyHintDelay 250` waits 250
+milliseconds, `keyHintDelay 0` lists them at once and `keyHintDelay .never`
+turns them off. A config that sets none has the editor's 500
+(`Loop.keyHintDelay`). A reload changes it with no restart. The editor
+refuses the `setup` for a delay over a minute
+(`Completion.Keys.keyHintDelayTooLong`) and for setting it twice. -/
+def keyHintDelay (delay : Completion.Keys.Delay) : SetupM Unit := do
+  if let .after ms := delay then
+    if ms > Completion.Keys.longest then
+      throw (Completion.Keys.keyHintDelayTooLong ms)
+  ExceptT.lift (Program.request (port := setupPort) (.keyHintDelay delay))
 
 /-- Chooses the layout the frame's windows are arranged by once the config
 is installed: master-and-stack with main's share, in percent, its side and

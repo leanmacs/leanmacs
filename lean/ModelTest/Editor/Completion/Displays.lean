@@ -1,6 +1,7 @@
 import Editor.Completion.Candidate
 import Editor.Completion.Display
 import Editor.Completion.Displays
+import Editor.Completion.Keys
 import Editor.Scene
 import ModelTest.Check
 
@@ -205,6 +206,25 @@ def completionDisplayChecks : List Check :=
             (Completion.Displaying.standard.displayFor (some "pick")).name == "minibuffer" &&
             Completion.Displays.shipped.map (·.name) == #["minibuffer"] &&
             Completion.Displays.unknown "nope" ==
-              "no completion display is registered under `nope`" }]
+              "no completion display is registered under `nope`" },
+    { name :=
+        "a listing of the key category with nothing chosen and no typed text is drawn by the display chosen for key, and the minibuffer display starts its window at 0 and shows the annotations in their column"
+      run :=
+        pure <|
+          let hints : Array KeyHint :=
+            #[{ key := "f", leads := .prefix (some "file") 1 },
+              { key := "s", leads := .binding (some "Save") }]
+          let showing : Completion.Showing :=
+            { listed := (Completion.Keys.candidates hints).map (Completion.Listed.of ·)
+              category := some Completion.Keys.category }
+          let displaying : Completion.Displaying :=
+            { default := Completion.Displays.minibuffer
+              byCategory := fun category =>
+                if category == "key" then some (Completion.Display.plain "fake") else none }
+          let chosen := displaying.displayFor showing.category
+          let shipped := Completion.Displays.minibuffer.sheet showing
+          chosen.name == "fake" && rowTexts (chosen.sheet showing) == #["  f", "  s"] &&
+            shipped.first == 0 &&
+            rowTexts shipped == #["f  +file (1)", "s  Save"] }]
 
 end ModelTest

@@ -878,17 +878,11 @@ def hintsShown (keys : Loop.Keys TestScheme.scheme) (events : List Event)
 
 /-- The checks of the key hints the scene shows (`Loop.keyHints`): the keys
 that can follow the pending prefix, with their descriptions and the names
-of prefixes the keys are handed, and none at rest. -/
+of prefixes the keys are handed, and none at rest. The hints are shown at
+once (`hintedKeys`, a delay of 0), so what they list is pinned apart from
+when they are shown (`keyHintLoopChecks`). -/
 def dispatchHintChecks : List Check :=
-  let hinted : Loop.Keys TestScheme.scheme :=
-    { maps := fun _ _ =>
-        [Keymap.ofDescribed
-            [(keys "C-x C-s", invoke "save", some "Save"),
-              (keys "C-x r t", invoke "rectangle", some "Rectangle")]]
-      prefixNames := fun typed => if typed == keys "C-x r" then some "rect" else none }
-  let afterPrefix : Array KeyHint :=
-    #[{ key := "C-s", leads := .binding (some "Save") },
-      { key := "r", leads := .prefix (some "rect") 1 }]
+  let hinted := hintedKeys
   [{  name :=
         "after a prefix the scene lists the keys that can follow it, with a binding's description and a prefix's name and count; after a further prefix the keys under it; and none once the sequence completes"
       run :=
@@ -897,6 +891,111 @@ def dispatchHintChecks : List Check :=
             #[afterPrefix, #[{ key := "t", leads := .binding (some "Rectangle") }], #[]]) },
     { name := "after a key that goes on with no binding the scene lists no key hints"
       run := pure (hintsShown hinted (presses "C-x" ++ [pressF5]) == #[afterPrefix, #[]]) }]
+
+/-- The texts of the views each scene of a run of `keys` over `events` drew
+after its first, the window's: the candidate list's, while one is drawn.
+Each is read once the run has reached that scene, before a later one
+releases its snapshot. `none` when the run was refused. -/
+def listsShown (keys : Loop.Keys TestScheme.scheme) (events : List Event)
+    (start : TextM EditorState := EditorState.initial ⟨640, 480⟩) :
+    Option (Array (Array (Option String))) :=
+  (List.range events.length).toArray.mapM fun index => do
+    let (_, scenes, model) ← dispatched keys (events.take (index + 1)) start
+    let scene ← scenes.back?
+    return (scene.views.extract 1 scene.views.size).map (shownText model)
+
+/-- The checks of when the key hints are shown and where (`Editor/Loop.lean`,
+"Key hints"): the delay armed when a prefix becomes pending and withdrawn
+when the sequence completes or resets (`Loop.armedHints`), the hints shown
+at once with a delay of 0 and following the walk, drawn as the candidate
+list's view by the display chosen for `key`, and the pending keys drawn by
+the selected window's `pending-keys` segment. -/
+def keyHintLoopChecks : List Check :=
+  let pendingField (text : String) : StatusField :=
+    { text, face := ModeLine.secondaryFace, side := .right, padding := ModeLine.padding }
+  [{  name :=
+        "armedHints opens hints of a new generation and arms their delay when a prefix becomes pending, keeps them while it stays pending, closes them and disarms when nothing can follow, opens them due at once with a delay of 0, and opens none with .never or while a prompt is open"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let loop : TestLoop := { state }
+            let (armed, arming) := Loop.armedHints (hintedKeys 500) loop afterPrefix
+            let (closed, closing) := Loop.armedHints (hintedKeys 500) armed #[]
+            let (kept, keeping) := Loop.armedHints (hintedKeys 500) armed afterPrefix
+            let (rest, resting) := Loop.armedHints (hintedKeys 500) loop #[]
+            let (never, nothing) := Loop.armedHints (hintedKeys .never) loop afterPrefix
+            let (atOnce, once) := Loop.armedHints (hintedKeys 0) loop afterPrefix
+            let (_, asking) := prompted state
+            let (prompting, notArmed) :=
+              Loop.armedHints (hintedKeys 500) ({ state := asking } : TestLoop) afterPrefix
+            arming == .arm 1 500 && armed.state.keyHints == some { generation := 1 } &&
+              armed.state.keyHintGeneration == 1 &&
+              closing == .disarm &&
+              closed.state.keyHints == none &&
+              closed.state.keyHintGeneration == 1 &&
+              keeping == .keep &&
+              kept.state == armed.state &&
+              resting == .keep &&
+              rest.state == state &&
+              nothing == .keep &&
+              never.state.keyHints == none &&
+              once == .keep &&
+              atOnce.state.keyHints == some { generation := 1, due := true } &&
+              notArmed == .keep &&
+              prompting.state.keyHints == none },
+    { name :=
+        "with a delay of 0 the scene after a prefix lists its hints and draws them as the candidate list's view, after a further prefix the list follows the walk with no new delay, and once the sequence completes there are no hints and no list"
+      run :=
+        pure
+          (hintsShown hintedKeys (presses "C-x r t") ==
+              #[afterPrefix, #[{ key := "t", leads := .binding (some "Rectangle") }], #[]] &&
+            listsShown hintedKeys (presses "C-x r t") ==
+              some
+                #[#[some (hintRows afterPrefix)],
+                  #[some (hintRows #[{ key := "t", leads := .binding (some "Rectangle") }])],
+                  #[]] &&
+            listsShown hintedKeys (presses "C-x C-s") ==
+              some #[#[some (hintRows afterPrefix)], #[]]) },
+    { name :=
+        "with a delay of 500 the step after a prefix hands the delay to arm for generation 1 and its scene shows no hints; the step that completes the sequence hands its withdrawal"
+      run :=
+        pure <|
+          match dispatched (hintedKeys 500) (presses "C-x C-s") with
+          | some ((_, steps), scenes, _) =>
+            steps.map (·.hintDelay) == #[.arm 1 500, .disarm] &&
+              scenes.map (·.keyHints) == #[#[], #[]] &&
+              scenes.map (·.views.size) == #[1, 1]
+          | none => false },
+    { name :=
+        "the hints are drawn by the display chosen for the key category: a fake display's rows, not the minibuffer display's"
+      run :=
+        let fake : Loop.Keys TestScheme.scheme :=
+          { hintedKeys with
+            displaying :=
+              { default := Completion.Displays.minibuffer
+                byCategory := fun category =>
+                  if category == "key" then some (Completion.Display.plain "fake") else none } }
+        pure
+          (listsShown fake (presses "C-x") ==
+              some #[#[some (hintRows afterPrefix (Completion.Display.plain "fake"))]] &&
+            hintRows afterPrefix (Completion.Display.plain "fake") != hintRows afterPrefix) },
+    { name :=
+        "the selected window's status line holds the keys pending in mode-line.secondary while a sequence is pending, and none once it completes; no other window's holds them"
+      run :=
+        pure <|
+          let holds (scene : Scene) (text : String) : Nat :=
+            (scene.views.filter (·.status.contains (pendingField text))).size
+          match dispatched (hintedKeys .never) (presses "C-x C-s"),
+            dispatched (hintedKeys .never) (presses "C-x") threeWindows with
+          | some (_, scenes, _), some (_, three, _) =>
+            scenes.map (holds · "C-x") == #[1, 0] &&
+              (scenes.all fun scene =>
+                scene.views.all fun view => !view.status.any (·.text == "C-x C-s")) &&
+              three.map (holds · "C-x") == #[1] &&
+              three.all (·.views.size == 3)
+          | _, _ => false }]
 
 /-- What the last scene of a run showed: its echo, its pending keys, and the
 text of each of its views. `none` when the run was refused or published
@@ -3259,8 +3358,9 @@ editor's models: keys through the scheme and the commands they run,
 rollback, the interrupt, the slow-command log, a command's state requests,
 what the loop gives up after a command, a command that gives up, a command
 that breaks off, a command that has another run inside it, the scheme's
-notice of a closed view, undo from a command, and what a command is told of
-its view. -/
+notice of a closed view, undo from a command, what a command is told of
+its view, and the key hints: what they list, when and where they are
+shown, and the pending keys' segment. -/
 def dispatchChecks : List Check :=
   dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks ++
     dispatchStateChecks ++
@@ -3273,7 +3373,8 @@ def dispatchChecks : List Check :=
     dispatchCommandGivesUpChecks ++
     dispatchCommandBreaksOffChecks ++
     dispatchRunCommandChecks ++
-    dispatchHintChecks
+    dispatchHintChecks ++
+    keyHintLoopChecks
 
 /-- What a step of the mode dispatch checks is handed: the active keymaps
 `registry` makes for the test scheme from the loop's state, and, for every

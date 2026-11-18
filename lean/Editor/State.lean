@@ -101,7 +101,10 @@ part, `heights.text + heights.message` tall, and the candidate list's view
 (`candidateListRect?`) the upper part, directly above it. A frame shorter
 than the strip is all strip, and the tiled area has no height; a strip
 shorter than the input and the bottom row is all the minibuffer's view, so
-the list is cut before the input.
+the list is cut before the input. The list's part is the prompt's, a
+session at point's, or the key hints' shown ("Key hints"), whichever the
+candidate list draws (`candidateSheet?`); a session and the hints have no
+input row, so the strip is their list's rows and the bottom row.
 
 **The list's part grows and never shrinks while the prompt is open**, as
 vertico's default `vertico-resize` (grow-only) does: `listRows` is the
@@ -706,6 +709,30 @@ candidates, sheet and high-water mark.
   of typed text (`retype`), which the loop tells the input scheme.
 - `wellFormed` holds a session to a view that is a window and a choice
   inside its listing.
+
+## Key hints
+
+The keys that can follow a pending prefix, once a delay has passed, are a
+candidate list with no typed text (`EditorState.keyHints`, a
+`KeyHintList`; `Editor/Loop.lean`, "Key hints", opens and closes them):
+
+- **Fields.** The generation they were opened at, whether they are due,
+  their listing (one candidate a key, with no ranges), the sheet the
+  display answered at the last publish and its high-water mark.
+  `keyHintGeneration` counts the generations and is never used again.
+- **Due, by generation.** `keyHintsDue generation` makes them due only
+  when they are of that generation, so a delay that fires for hints since
+  closed, or for others, changes nothing, even when the host's withdrawal
+  raced it. `listKeyHints` lists due hints and nothing else.
+- **Shown while nothing is completing** (`hinting?`): the candidate list's
+  place is an open prompt's or session's then (`candidateSheet?`), and the
+  hints are not shown.
+- **Their place** is the candidate list's, directly above the bottom row,
+  with no input row (`listRows`, `minibufferPlace`, `cutStrip`,
+  `candidateListRect?`), growing and never shrinking while they are open,
+  as a prompt's does. `displayed` shows them with the display chosen for
+  the category `key` (`KeyHintList.category`), handed their listing with
+  nothing chosen.
 
 ## Buffers
 
@@ -1853,6 +1880,28 @@ structure Completing where
   typed : Option String
   deriving DecidableEq, Repr
 
+/-- The key hints of a pending prefix ("Key hints", in the module docs): a
+candidate list with no typed text, shown once its delay has passed. -/
+structure KeyHintList where
+  /-- The generation it was opened at (`EditorState.keyHintGeneration`): a
+  delay that fires for another changes nothing. -/
+  generation : Nat
+  /-- Whether its delay has passed, so it is shown. -/
+  due : Bool := false
+  /-- The listing, one candidate a key that can follow, in the scheme's
+  order, with no ranges: none until it is due. -/
+  listed : Array Completion.Listed := #[]
+  /-- What the display answered at the last publish. -/
+  sheet : Completion.Sheet := {}
+  /-- The most rows any sheet has shown since it opened. -/
+  tallest : Nat := 0
+  deriving DecidableEq, Repr
+
+/-- The category the key hints are listed under, `key`: the display config
+chose for it draws them (`Completion.Keys.category`, the `key` source's). -/
+def KeyHintList.category : String :=
+  "key"
+
 /-- A register: a text a command set aside ("Registers", in the module
 docs). -/
 structure Register where
@@ -1911,6 +1960,15 @@ structure EditorState where
   /-- The session of completion at point that is open, if one is ("A session
   at point", in the module docs). -/
   atPoint : Option AtPointSession := none
+  /-- The key hints of the prefix pending, if a prefix is pending and the
+  hints are on ("Key hints", in the module docs): shown once due, while
+  nothing is completing. The loop opens and closes them
+  (`Loop.armedHints`). -/
+  keyHints : Option KeyHintList := none
+  /-- The generation the last key hints were opened at: counted up for
+  each and never used again, so a delay armed for hints since closed
+  fires for nothing. -/
+  keyHintGeneration : Nat := 0
   /-- What commands typed in place of typed text, each with its view, in
   order, which the loop has not yet told the input scheme: backspace
   characters for the cells a command removed, then what it inserted, as the
@@ -2346,15 +2404,49 @@ is open. -/
 def views (state : EditorState) : Array ViewId :=
   state.frame.all ++ state.minibufferView?.toArray
 
-/-- How many text rows the candidate list's part of the minibuffer's place
-is: the open prompt's high-water mark (`Prompt.tallest`), the most rows any
-sheet has shown since it opened, so it grows and never shrinks while the
-prompt is open; 0 with no prompt. -/
-def listRows (state : EditorState) : Nat :=
+/-- The key hints shown ("Key hints", in the module docs): the hints, when
+they are due and neither a prompt nor a session at point is open, whose
+place the candidate list is then; none otherwise. -/
+def hinting? (state : EditorState) : Option KeyHintList :=
+  if state.prompt.isSome || state.atPoint.isSome then none else state.keyHints.filter (·.due)
+
+/-- The sheet the candidate list's view draws and the high-water mark of its
+rows: the open prompt's, else the open session's, else the key hints'
+shown (`hinting?`); none when none of them is. -/
+def candidateSheet? (state : EditorState) : Option (Completion.Sheet × Nat) :=
   match state.prompt, state.atPoint with
-  | some asked, _ => asked.tallest
-  | none, some session => session.tallest
-  | none, none => 0
+  | some asked, _ => some (asked.sheet, asked.tallest)
+  | none, some session => some (session.sheet, session.tallest)
+  | none, none => state.hinting?.map fun hints => (hints.sheet, hints.tallest)
+
+/-- `state` with its key hints due, when they are of `generation`: a delay
+that fires for hints since closed, or for others, changes nothing. -/
+def keyHintsDue (generation : Nat) (state : EditorState) : EditorState :=
+  match state.keyHints with
+  | some hints =>
+    if hints.generation == generation then
+      { state with keyHints := some { hints with due := true } }
+    else state
+  | none => state
+
+/-- `state` with `candidates` as its key hints' listing, in order, with no
+ranges, when they are due; as it was otherwise. -/
+def listKeyHints (candidates : Array Completion.Candidate) (state : EditorState) : EditorState :=
+  match state.keyHints with
+  | some hints =>
+    if hints.due then
+      { state with
+        keyHints := some { hints with listed := candidates.map (Completion.Listed.of ·) } }
+    else state
+  | none => state
+
+/-- How many text rows the candidate list's part of the minibuffer's place
+is: the high-water mark of what the list's view draws (`candidateSheet?`),
+the open prompt's (`Prompt.tallest`), the session's or the key hints', the
+most rows any sheet has shown since it opened, so it grows and never
+shrinks while it is open; 0 with none. -/
+def listRows (state : EditorState) : Nat :=
+  (state.candidateSheet?.map (·.2)).getD 0
 
 /-- How tall the minibuffer's strip at the frame's bottom is: the frame's
 bottom row while no prompt is open, where the echo is drawn; and while one
@@ -2487,12 +2579,12 @@ def bottomRow (state : EditorState) (id : ViewId) : Nat :=
 
 /-- The candidate list's strip: the upper part of the minibuffer's
 (`cutStrip`), `listRows` text rows tall or what the frame leaves of it,
-directly above the minibuffer's view, while a prompt is open and its list
-has shown a row (even when the current sheet has fewer rows, or none, and
-when it is 0 pixels tall); none otherwise. -/
+directly above the minibuffer's view, while a prompt, a session at point or
+the key hints shown (`candidateSheet?`) have a list that has shown a row
+(even when the current sheet has fewer rows, or none, and when it is 0
+pixels tall); none otherwise. -/
 def candidateListRect? (state : EditorState) : Option Rect :=
-  if (state.prompt.isSome || state.atPoint.isSome) && 0 < state.listRows then some state.cutStrip.1
-  else none
+  if state.candidateSheet?.isSome && 0 < state.listRows then some state.cutStrip.1 else none
 
 /-- Whether `id` is the tab bar's view (`tabBar`). -/
 def isTabBar (state : EditorState) (id : ViewId) : Bool :=
@@ -2507,7 +2599,8 @@ strip for its view (`tabBarRect?`), or the candidate list's for its view
 (`candidateListRect?`); none for a view that is not laid out: one with no
 window in the list, a window the layout does not show, the minibuffer's
 when no prompt is open, the tab bar's while it is not shown, and the
-candidate list's while no prompt has listed a row. -/
+candidate list's while no prompt, session or key hints shown have listed a
+row. -/
 def rect? (state : EditorState) (id : ViewId) : Option Rect :=
   (state.rects.find? (·.1 == id)).map (·.2) <|>
     if state.isTabBar id then state.tabBarRect?
@@ -4309,11 +4402,26 @@ the display is handed the listing, the choice, where its window started
 last and whether the listing is grouped, and what it answers is kept on
 the prompt (`Prompt.sheet`), where its window starts now as the
 candidates' `first`, and the high-water mark raised to its rows
-(`Prompt.tallest`). With no prompt open it is as it was. It is pure: a
-display reads no state and asks no port. -/
+(`Prompt.tallest`); a session at point's the same way. With neither open,
+the key hints shown (`hinting?`) are shown by the display chosen for the
+category `key` (`KeyHintList.category`), handed their listing with nothing
+chosen, its window at 0 and not grouped, and what it answers is kept on
+the hints with their high-water mark raised. With none of them it is as it
+was. It is pure: a display reads no state and asks no port. -/
 def displayed (state : EditorState) (displaying : Completion.Displaying) : EditorState :=
   match state.completing? with
-  | none => state
+  | none =>
+    match state.hinting? with
+    | none => state
+    | some hints =>
+      let sheet :=
+        (displaying.displayFor (some KeyHintList.category)).sheet
+          { listed := hints.listed, category := some KeyHintList.category }
+      { state with
+        keyHints :=
+          some
+            { hints with
+              sheet, tallest := max hints.tallest sheet.rows.size } }
   | some completing =>
     state.withCompleting completing.view fun completing =>
       let candidates := completing.candidates

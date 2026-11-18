@@ -67,6 +67,11 @@ handled after the answer's command.
   command asked for. A host ends its loop there (`Editor/Loop.lean`,
   "Quit"), so the driver runs no further invocation of that step. It does
   not refuse what a test feeds it afterwards: a test reads `stopped`.
+- **Time is the driver's own reading** (`now`), moved only by `pass`: the
+  pauses of completion at point and the key hint delay a step arms
+  (`Loop.Stepped.pause`, `Loop.Stepped.hintDelay`) are due that many
+  milliseconds from it, and `pass` fires what is due, as a host's job clock
+  completes their waits.
 - **A reload a step asked for is counted** (`reloads`), and **a theme a step
   asked for is recorded** (`themes`). The driver has no config session to
   reload or to switch the theme of: a host feeds its reload reducer
@@ -204,11 +209,14 @@ structure Loop.Driver (scheme : InputScheme) where
   host feeds its reload reducer a choice for each. -/
   themes : Array String := #[]
   /-- The driver's own reading of time for the pauses of completion at
-  point, in milliseconds: moved only by `pass`. -/
+  point and the key hint delay, in milliseconds: moved only by `pass`. -/
   now : Nat := 0
   /-- The pauses armed (`Loop.Stepped.pause`), each its view, its
   milliseconds and the reading it is due at. -/
   armed : Array (ViewId × Nat × Nat) := #[]
+  /-- The key hint delay armed (`Loop.Stepped.hintDelay`), if one is: the
+  generation of the hints it makes due, and the reading it is due at. -/
+  hinted : Option (Nat × Nat) := none
 
 namespace Loop.Driver
 
@@ -402,7 +410,9 @@ of its own (`Loop.invoke`), which is taken in the same way, before anything
 else is fed. An answer's step that is refused changes the models and not
 the loop. A step that said stop is recorded (`stopped`), and no invocation
 is run once one has. A step that asked for a reload is counted
-(`reloads`), and the theme a step asked for is recorded (`themes`).
+(`reloads`), and the theme a step asked for is recorded (`themes`). The
+pauses and the key hint delay it arms are due that many milliseconds from
+the driver's reading of time (`armed`, `hinted`).
 
 It has no termination proof: an answer's command can ask and accept again,
 for ever, which is runaway code (`docs/design/concurrency.md`, "Runaway
@@ -420,7 +430,12 @@ partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
               match stepped.pause with
               | .keep => driver.armed
               | .arm view pauses => pauses.map fun ms => (view, ms, driver.now + ms)
-              | .disarm => #[] }).started
+              | .disarm => #[]
+            hinted :=
+              match stepped.hintDelay with
+              | .keep => driver.hinted
+              | .arm generation ms => some (generation, driver.now + ms)
+              | .disarm => none }).started
       stepped.starts
   let driver := driver.spawned stepped.spawns
   stepped.answered.foldl
@@ -501,19 +516,32 @@ def posted (driver : Loop.Driver scheme) (id : Nat) :
 /-- The driver once `ms` milliseconds have passed on its reading of time
 (`now`): each pause armed that is now due runs `at-point-paused` with its
 view and milliseconds, as a step of its own (`Loop.invoke`), as a host runs
-it when the pause's wait completes, in the order they were armed. -/
+it when the pause's wait completes, in the order they were armed; and the
+key hint delay, when it is now due, makes its generation's hints due, as a
+step of its own (`Loop.keyHintsDue`), as a host runs it when its wait
+completes. They fire in the order of their deadlines, the hints after the
+pauses due at the same reading. -/
 def pass (driver : Loop.Driver scheme) (ms : Nat) : Loop.Driver scheme :=
   let now := driver.now + ms
   let due := driver.armed.filter (·.2.2 ≤ now)
+  let hint := driver.hinted.filter (·.2 ≤ now)
   let driver :=
     { driver with
-      now, armed := driver.armed.filter (now < ·.2.2) }
-  due.foldl
-    (fun driver (view, ms, _) =>
-      (driver.stepped
-          (driver.loop.invoke driver.handed
-            { command := AtPoint.pausedName, arguments := [.nat view.index, .nat ms] })).1)
-    driver
+      now, armed := driver.armed.filter (now < ·.2.2)
+      hinted := if hint.isSome then none else driver.hinted }
+  let pause (driver : Loop.Driver scheme) (view : ViewId) (ms : Nat) : Loop.Driver scheme :=
+    (driver.stepped
+        (driver.loop.invoke driver.handed
+          { command := AtPoint.pausedName, arguments := [.nat view.index, .nat ms] })).1
+  let hinting (driver : Loop.Driver scheme) (generation : Nat) : Loop.Driver scheme :=
+    (driver.stepped (driver.loop.keyHintsDue driver.handed generation)).1
+  match hint with
+  | none => due.foldl (fun driver (view, ms, _) => pause driver view ms) driver
+  | some (generation, deadline) =>
+    let before := due.filter (·.2.2 ≤ deadline)
+    let after := due.filter (deadline < ·.2.2)
+    let driver := before.foldl (fun driver (view, ms, _) => pause driver view ms) driver
+    after.foldl (fun driver (view, ms, _) => pause driver view ms) (hinting driver generation)
 
 end Loop.Driver
 

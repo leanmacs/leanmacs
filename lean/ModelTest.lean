@@ -30,6 +30,7 @@ import ModelTest.Editor.Completion.AtPointContract
 import ModelTest.Editor.Completion.Contract
 import ModelTest.Editor.Completion.DisplayContract
 import ModelTest.Editor.Completion.Displays
+import ModelTest.Editor.Completion.Keys
 import ModelTest.Editor.Completion.Later
 import ModelTest.Editor.Completion.Paths
 import ModelTest.Editor.Completion.Style
@@ -362,7 +363,16 @@ registered command:
   no `refused:`, and the scheme is back at rest;
 - `dispatchRunCommandChecks`: a command that has another run inside it
   (`runCommand`, `Editor/Api.lean`) runs the one a key's invocation of the
-  name runs, as part of itself.
+  name runs, as part of itself;
+- `dispatchHintChecks`: what the key hints list after a prefix, a
+  binding's description and a prefix's name and count, shown at once with
+  a delay of 0;
+- `keyHintLoopChecks`: when and where the key hints are shown: the
+  reconciler `Loop.armedHints` opening, keeping and closing them and
+  arming and withdrawing their delay, the hints drawn as the candidate
+  list's view and following the walk, the delay handed to the host, a
+  fake display chosen for `key` drawing them, and the pending keys drawn
+  in the selected window's status line.
 
 What the loop does with a scheme's report of a view is checked with a
 scheme written here, `switching`: the test scheme, with a report of each
@@ -377,7 +387,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
 - `driverChecks`: a command starts a job by its name, the job's result
   comes back as a command, events fed meanwhile are handled first, a job
   reads a snapshot its command took, and a job's command is handed what its
-  own job loaded;
+  own job loaded; and the key hint delay on the driver's time: hints shown
+  once it has passed and not before, none after a sequence completed
+  before it, and a delay of another generation that changes nothing;
 - `promptChecks`: prompts on that driver. `promptLoopChecks`, with commands
   written here under keys of the global keymap: an accepted prompt's
   answer is handed back with the step, and the answer's command runs
@@ -407,6 +419,11 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   open, the strip cut into the list's part and the minibuffer view's, a
   frame too short for it, and the list's view's rectangle, padding and
   well-formedness;
+- `keyHintStateChecks`: the key hints in the state, pure: a candidate
+  list with no typed text that takes the list's place above the bottom
+  row once due, with no input row, gives way to an open prompt, grows and
+  never shrinks while open, and a delay of another generation that
+  changes nothing;
 - `laterChecks`, `completionJobChecks` and `laterLoopChecks`: sources that
   answer later (`Editor/Completion/Later.lean`), their orders and batches
   as arguments and their jobs on the job model; the reconciler of a
@@ -415,9 +432,15 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   models, with a job held at each post and a match job delivered at
   `finish`, and a match that fails;
 - `sourceContractChecks`: the completion sources' contract
-  (`Editor/Completion/Contract.lean`) on the model, the fake and each
-  shipped source, run on `twoBuffers` over the editor's models, and seen
-  to report a source that writes and one that is refused;
+  (`Editor/Completion/Contract.lean`) on the model, the fake, each
+  shipped source and the key hints' source, run on `twoBuffers` over the
+  editor's models, and seen to report a source that writes and one that is
+  refused;
+- `keyHintSourceChecks`: the key hints' source
+  (`Editor/Completion/Keys.lean`): a candidate of each kind of hint, its
+  annotation and kind, a source of the category `key` that has filtered
+  and answers the same for any text, and the delay's notation and its
+  longest;
 - `fileCommandChecks`: the file commands (`Editor/Files.lean`) on that
   driver, over the model of files (`Editor/File/Model.lean`), with keys
   bound to the commands and jobs registered as the test says: opening a
@@ -936,9 +959,11 @@ def checks : List Check :=
     fileNameChecks ++
     laterLoopChecks ++
     sourceContractChecks ++
+    keyHintSourceChecks ++
     atPointContractChecks ++
     wordsChecks ++
     atPointStateChecks ++
+    keyHintStateChecks ++
     atPointChecks ++
     atPointRepeatChecks ++
     atPointLoopChecks ++

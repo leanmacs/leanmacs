@@ -4,6 +4,7 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Completion.Displays
+import Editor.Completion.Keys
 import Editor.Completion.Later
 import Editor.Completion.Styles
 import Editor.Config.Owner
@@ -52,12 +53,15 @@ the loop's state holds, so a mode set by one key holds from the next.
 - **The scene shows the pending keys** (`Loop.pending`): what the scheme
   reports as pending, as a key string. It is empty once a sequence
   completes and after a key that goes on with no binding, since the scheme
-  then reports none. **And the keys that can follow them** (`Loop.keyHints`,
-  `Scene.keyHints`): what the scheme lists after its keymap prefix for the
+  then reports none. The selected window's status line draws them, in the
+  `pending-keys` segment (`ModeLine.pendingKeys`, `contextOf`). **And,
+  once the key hint delay has passed, the keys that can follow them**
+  (`Loop.keyHints`, `shownHints`, `Scene.keyHints`; "Key hints", below):
+  what the scheme lists after its keymap prefix for the
   focused view (`InputScheme.continuations`), over the active keymaps and
   with the prefix names the host hands (`Keys.prefixNames`), each with its
   description or its name and count. None while no keymap prefix is
-  pending.
+  pending, and none before the delay has passed.
 - **The scheme is told of a view that is closed** (`Loop.forgetViews`,
   `InputScheme.closeView`). After a command that ran to its end, each view
   the state before it had a window of and the state it left has none of is
@@ -445,6 +449,49 @@ pause as a wait on the job clock, and runs `at-point-paused` when one fires
 Pinned by `ModelTest.atPointLoopChecks`, `atPointRepeatChecks`,
 `atPointAskChecks`, `atPointByItselfChecks` and `completionJobChecks`; on the
 headless host by `ConfigTest.atPointChecks`.
+
+## Key hints
+
+The keys that can follow a pending prefix are listed through the completion
+display config chose for the category `key`, once a delay has passed
+(`docs/design/keymaps-and-modes.md`, "The key hints"). They are a
+candidate list with no typed text, held in the state
+(`EditorState.keyHints`, "Key hints" in `Editor/State.lean`), and the loop
+opens, closes and lists them before every publish (`keyHinted`):
+
+- **The reconciler, `armedHints`** (pure), compares the hints open with
+  the keys that can follow now (`keyHints`). They are wanted while some key
+  can follow, nothing is completing and the delay is not `.never`
+  (`Keys.keyHintDelay`). Not open and wanted: they open at a new
+  generation (`EditorState.keyHintGeneration`), due at once with a delay of
+  0, and otherwise with a wait of the delay armed for that generation
+  (`Stepped.hintDelay`, `HintDelayChange.arm`). Open and no longer wanted
+  (the sequence completed, an unbound key reset it, a command failed and
+  the scheme went back to rest, or a prompt or a session opened): they
+  close, and the wait is withdrawn (`.disarm`). Otherwise as they are.
+- **The delay runs from the start of a sequence, and the list then follows
+  the walk.** While keys can follow, nothing is armed again: once due, a
+  further prefix (`SPC f`) lists its keys in the next scene. Typing walks
+  the keymaps as it does with no hints shown; the list never consumes a key
+  or narrows on typed text.
+- **The delay is a wait on the job clock**, not a spawned job: it prints
+  nothing and takes no job id. The host arms and withdraws it as it does a
+  pause of completion at point (`Headless.Running.delayHints`), and when it
+  fires runs `keyHintsDue`, a step that runs no command and makes the
+  hints of its generation due, so a stale wait changes nothing; the driver
+  on the models by `Loop.Driver.pass`. The walk itself has no timeout
+  (`Keymap.walk_unbound`).
+- **Listing them**: once due, the `key` source of the keys that can follow
+  (`Completion.Keys.source`) is asked with no typed text, from the focused
+  view, and its candidates are the hints' listing; the publish shows it
+  with the display chosen for `key` as the candidate list's view, above
+  the bottom row with no input row (`EditorState.displayed`,
+  `candidateListView`). The scene's `keyHints` are the hints shown
+  (`shownHints`), a Lean-only readout the headless host prints.
+
+Pinned by `ModelTest.keyHintLoopChecks` and `dispatchHintChecks`, the
+driver by `driverChecks`, the state by `keyHintStateChecks`; on the
+headless host by `ConfigTest.keyHintChecks` and `hintChecks`.
 
 ## Reload from a command
 
@@ -1262,6 +1309,18 @@ inductive Loop.PauseChange where
   | disarm
   deriving DecidableEq, Repr
 
+/-- What a step does to the key hint delay ("Key hints", in the module docs),
+for its host to carry out on the job clock. -/
+inductive Loop.HintDelayChange where
+  /-- Leave what is armed as it is. -/
+  | keep
+  /-- Withdraw what is armed, and arm a wait of `ms` milliseconds after
+  which the hints of `generation` are due (`Loop.keyHintsDue`). -/
+  | arm (generation ms : Nat)
+  /-- Withdraw what is armed. -/
+  | disarm
+  deriving DecidableEq, Repr
+
 /-- The pauses the loop last asked its host to arm: the view, and each
 pause's milliseconds. -/
 structure Loop.Pausing where
@@ -1325,6 +1384,13 @@ every window's text is inset by from its edges, and the bottom row at least
 handed no padding (`Loop.Keys.padding`) has none. -/
 def Loop.padding : Nat :=
   8
+
+/-- The editor's key hint delay when config sets none, in milliseconds: how
+long a prefix is pending before the keys that can follow it are shown
+("Key hints", in the module docs). The host applies it (`Headless.keys`);
+a loop handed none (`Loop.Keys.keyHintDelay`) never shows them. -/
+def Loop.keyHintDelay : Nat :=
+  500
 
 /-- How many candidates a prompt may have to match for the loop to list it
 on the editor thread, in the scene of the step ("Prompts", in the module
@@ -1401,6 +1467,12 @@ structure Loop.Keys (scheme : InputScheme) where
   for each step and never kept in the state, so a reload changes it from
   the next scene. -/
   displaying : Completion.Displaying := Completion.Displaying.standard
+  /-- How long a prefix is pending before its key hints are shown ("Key
+  hints", in the module docs). The host hands config's setting
+  (`keyHintDelay`, `Editor/Setup.lean`) or the editor's own,
+  `Loop.keyHintDelay` (`Headless.Running.keys`); a loop handed none never
+  shows them, as a loop handed no padding has none. -/
+  keyHintDelay : Completion.Keys.Delay := .never
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -1498,6 +1570,10 @@ structure Loop.Stepped (scheme : InputScheme) where
   /-- What the host is to do with the pause of completion at point: what
   `atPointAsks` said of the step's key, once its scene is published. -/
   pause : Loop.PauseChange := .keep
+  /-- What the host is to do with the key hint delay: what `armedHints`
+  said of the state the step's scene shows ("Key hints", in the module
+  docs). -/
+  hintDelay : Loop.HintDelayChange := .keep
 
 namespace EditorState
 
@@ -1602,12 +1678,14 @@ def statusOf (modeLine : ModeLine) (state : EditorState) (id : ViewId)
 of `state`, whose text is shown at `snapshot` and of which the scheme
 reports the fields `reported` (`ModeLine.Context`): its buffer; its cursor,
 the head of the primary range of its selection, as a row and a column in
-cells of the snapshot; the snapshot's lines (`SnapshotId.lineCount`); and
+cells of the snapshot; the snapshot's lines (`SnapshotId.lineCount`);
 whether it is the selected view
-(`EditorState.selectedView`). It is not refused: when the selection marker
-or the snapshot does not answer, there is no cursor and no row. -/
+(`EditorState.selectedView`); and, for the selected view only, `pending`,
+the keys pending (`pending`), which the `pending-keys` segment draws. It is
+not refused: when the selection marker or the snapshot does not answer,
+there is no cursor and no row. -/
 def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : SnapshotId)
-    (reported : Array StatusField) : TextM ModeLine.Context := do
+    (reported : Array StatusField) (pending : String := "") : TextM ModeLine.Context := do
   let marker := target.window.selection
   let read : TextM (Point × Nat) := do
     let .selection selection ← marker.text.marker marker | throw .noSuchMarker
@@ -1618,7 +1696,10 @@ def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : 
     match ← (observing read : TextM (Except TextError (Point × Nat))) with
     | .ok (point, lines) => (some point, lines)
     | .error _ => (none, 0)
-  return { buffer := target.buffer, reported, cursor, lines, selected := id == state.selectedView }
+  let selected := id == state.selectedView
+  return {
+      buffer := target.buffer, reported, cursor, lines, selected
+      pending := if selected then pending else "" }
 
 /-- The views of the loop's state, in drawing order, and the snapshots they
 name: its windows, and the minibuffer's view in the minibuffer's place
@@ -1655,7 +1736,8 @@ def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
       unless shown.any (·.text == text) do
         shown := shown.push { text, revision, snapshot }
       let report := scheme.report loop.input id
-      let context ← contextOf state id target snapshot report.status
+      let context ←
+        contextOf state id target snapshot report.status (Key.notations (scheme.pending loop.input))
       let (status, statusFace) := statusOf modeLine state id context
       -- An excerpt buffer's headers, placed by the snapshot shown, so the
       -- follow asks with them (`ExcerptView.blocksOf`).
@@ -1785,6 +1867,60 @@ def keyHints (keys : Keys scheme) (loop : Loop scheme) : Array KeyHint :=
   (scheme.continuations (keys.maps loop.state) keys.prefixNames loop.state.frame.focused
         loop.input).toArray.map
     (·.hint)
+
+/-- The loop with its key hints opened or closed for `hints`, the keys that
+can follow now, and what the host is to do with the delay ("Key hints", in
+the module docs). The hints are wanted while some key can follow, nothing
+is completing and the delay `keys` hands is not `.never`:
+
+- open and no longer wanted: closed, and the delay withdrawn;
+- not open and wanted: opened at a new generation, due at once with a
+  delay of 0, and otherwise not due, with a wait of the delay armed for
+  that generation;
+- otherwise as they are, so a further prefix keeps hints that are due and
+  arms no new delay.
+
+It is pure. -/
+def armedHints (keys : Keys scheme) (loop : Loop scheme) (hints : Array KeyHint) :
+    Loop scheme × HintDelayChange :=
+  let state := loop.state
+  let wanted := !hints.isEmpty && state.completing?.isNone && keys.keyHintDelay != .never
+  match state.keyHints, keys.keyHintDelay with
+  | some _, _ =>
+    if wanted then (loop, .keep)
+    else ({ loop with state := { state with keyHints := none } }, .disarm)
+  | none, .after ms =>
+    if wanted then
+      let generation := state.keyHintGeneration + 1
+      let due := ms == 0
+      ({ loop with
+          state :=
+            { state with
+              keyHints := some { generation, due }, keyHintGeneration := generation } },
+        if due then .keep else .arm generation ms)
+    else (loop, .keep)
+  | none, .never => (loop, .keep)
+
+/-- The loop with its key hints opened or closed for the keys that can follow
+now (`keyHints`, `armedHints`), and, when they are due and shown, listed:
+the `key` source of those keys (`Completion.Keys.source`) asked with no
+typed text, from the focused view. What the host is to do with the delay
+comes with it. -/
+def keyHinted (keys : Keys scheme) (loop : Loop scheme) : EditorM (Loop scheme × HintDelayChange) :=
+  do
+  let hints := loop.keyHints keys
+  let (loop, change) := loop.armedHints keys hints
+  if loop.state.hinting?.isNone then
+    return (loop, change)
+  let candidates ←
+    (Completion.Keys.source hints).candidates { text := "", view := loop.state.frame.focused }
+  return ({ loop with state := loop.state.listKeyHints candidates }, change)
+
+/-- The key hints the scene shows: the keys that can follow (`keyHints`)
+while the hints are shown (`EditorState.hinting?`), and none before their
+delay has passed. -/
+def shownHints (keys : Keys scheme) (loop : Loop scheme) : Array KeyHint :=
+  if loop.state.hinting?.isSome then loop.keyHints keys else #[]
 
 /-- The buffers in an insert session: the buffer of each window whose view
 the scheme reports as in one (`InputScheme.Report.session`), in the scheme's
@@ -2156,20 +2292,22 @@ def tabBarView (state : EditorState) (shown : Array Shown) :
   generatedView state state.tabBar (fun state drawn => { state with tabBar := some drawn }) rect
       line decorations shown
 
-/-- The candidate list's view of `state` while a prompt is open and its list
-has shown a row (`EditorState.candidateListRect?`), what it shows, and the
-state with the list drawn: a view over generated text (`generatedView`)
-kept in `EditorState.candidateList`, whose content is the text of the sheet
-the display answered at this publish (`Prompt.sheet`,
-`Completion.Sheet.text`) with the sheet's decorations, and the list's
-padding. Its anchor stays at 0: the sheet holds only the rows shown. -/
+/-- The candidate list's view of `state` while a prompt, a session at point
+or the key hints shown have a list that has shown a row
+(`EditorState.candidateListRect?`), what it shows, and the state with the
+list drawn: a view over generated text (`generatedView`) kept in
+`EditorState.candidateList`, whose content is the text of the sheet the
+display answered at this publish (`EditorState.candidateSheet?`: the
+prompt's, the session's or the hints', `Completion.Sheet.text`) with the
+sheet's decorations, and the list's padding. Its anchor stays at 0: the
+sheet holds only the rows shown. -/
 def candidateListView (state : EditorState) (shown : Array Shown) :
     TextM (EditorState × Option (View × Shown) × Option TextError) := do
   let some rect := state.candidateListRect? | return (state, none, none)
-  let some completing := state.completing? | return (state, none, none)
+  let some (sheet, _) := state.candidateSheet? | return (state, none, none)
   generatedView state state.candidateList
-      (fun state drawn => { state with candidateList := some drawn }) rect completing.sheet.text
-      completing.sheet.decorations shown
+      (fun state drawn => { state with candidateList := some drawn }) rect sheet.text
+      sheet.decorations shown
 
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
@@ -2183,9 +2321,11 @@ each view but the floats follow its cursor (`followed`), places the floats
 anchored at a position where the display drew it and closes a transient
 one whose anchor is not drawn (`spots`, `EditorState.located`), has the
 floats follow their cursors, appends the candidate list's view while a
-prompt's list has shown a row (`candidateListView`) and the tab bar's view
+prompt's, a session's or the key hints' list has shown a row
+(`candidateListView`; the hints are shown by the display `displaying`
+chooses for the category `key`) and the tab bar's view
 while the bar is shown (`tabBarView`), publishes a scene
-of the state, with `keyHints` as its key hints (`keyHints`), releases each
+of the state, with `keyHints` as its key hints (`shownHints`), releases each
 snapshot the last scene named that this one does not, and gives up what
 the floats it closed held, telling the scheme they closed. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
@@ -3008,13 +3148,17 @@ cancels and spawns (`completionJobs`), then the version-control gutter's
 (`VersionControl.reconcile`), handed the git program of the workspace
 settings `keys` was told of (`Registered.workspaceSettings`, what the
 version-control commands ask for), and it says stop when the editor then
-leaves (`nextOf`) and to go on otherwise. The scene comes first, so the
+leaves (`nextOf`) and to go on otherwise. Before the publish the key hints
+are opened, closed and listed for the keys that can follow now
+(`keyHinted`), and the step hands what the host is to do with their delay
+(`Stepped.hintDelay`). The scene comes first, so the
 scene of the step that says stop is the last one. -/
 def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
   do
+  let (hinted, hintDelay) ← stepped.loop.keyHinted keys
   let loop ←
-    stepped.loop.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
-        keys.inlineMatches keys.displaying (keyHints := stepped.loop.keyHints keys)
+    hinted.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
+        keys.inlineMatches keys.displaying (keyHints := hinted.shownHints keys)
   let (loop, starts, cancels) := loop.fileJobs keys
   let (loop, sourceStarts, sourceCancels, spawns) := loop.completionJobs keys
   let (state, gutterStarts, gutterCancels) ←
@@ -3033,7 +3177,19 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
       loop, next := nextOf loop
       starts := stepped.starts ++ starts ++ sourceStarts ++ gutterStarts
       cancels := stepped.cancels ++ cancels ++ sourceCancels ++ gutterCancels
-      spawns := stepped.spawns ++ spawns, answered := stepped.answered ++ asked, pause }
+      spawns := stepped.spawns ++ spawns, answered := stepped.answered ++ asked, pause, hintDelay }
+
+/-- The step the key hint delay of `generation` firing is: the loop with its
+key hints due when they are of that generation (`EditorState.keyHintsDue`),
+and a scene published, which lists and shows them. It runs no command:
+the echo area, the scheme's state and everything else are as they were. A
+delay for hints since closed, or for others, changes nothing, and its scene
+is the same as the last. -/
+def keyHintsDue (keys : Keys scheme) (loop : Loop scheme) (generation : Nat) :
+    EditorM (Stepped scheme) :=
+  let loop := loop.keyedBy keys
+  ({      loop := { loop with state := loop.state.keyHintsDue generation }
+          next := .continue } : Stepped scheme).published keys
 
 /-- Hands the answer `invocation` carries, its first argument, to the input
 scheme, for the focused view (`InputScheme.answered`), and runs the

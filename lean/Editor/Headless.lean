@@ -452,12 +452,13 @@ cursor is. After the views comes one `divider` line for each divider
 between the tiled windows (`Scene.dividers`), in the scene's order: its
 top left, its size and its face, `divider 318,0 2x464 in window-divider`.
 A scene with no divider, one window's, prints none. Last comes one `hint`
-line for each key that can follow the pending keymap prefix
-(`Scene.keyHints`), in the scheme's order: the key, and the binding it
+line for each key hint shown (`Scene.keyHints`): the keys that can follow
+the pending keymap prefix once the key hint delay has passed, in the
+scheme's order: the key, and the binding it
 completes, with its description, or the prefix it leads to, with its name
 and how many bindings lie under it, `-` for one it has none of
-(`hint f: prefix "file" 1`). A scene with no keymap prefix pending prints
-none.
+(`hint f: prefix "file" 1`). A scene with no keymap prefix pending, or
+before the delay has passed, prints none.
 
 A command a key runs prints nothing: what became of it is in the echo area
 of the scene, `<name>: no such command`, `<name>: refused: <error>`,
@@ -482,15 +483,18 @@ registered it; a job that throws is `failed`.
 ## Headless time
 
 The headless mode's job clock is fake (`Collaborators.clock`, a
-`Job.FakeClock`): every job's wait, every time limit and the pause of
-completion at point wait on it, and real time never moves it. A script
+`Job.FakeClock`): every job's wait, every time limit, the pause of
+completion at point and the key hint delay wait on it, and real time never
+moves it. A script
 moves it with `advance <milliseconds>`, which waits until the clock holds a
 wait due within them and then moves it, completing every wait then due. It
 sends nothing to the editor thread and prints nothing. So a job that sleeps
-ends only when a script advances, a pause fires only when a script
-advances, and saved outputs stay deterministic. The pause's wait posts its
-event from the clock's completion, before the move returns, so a `join`
-after an `advance` finds it queued. `idle <milliseconds>` still waits real
+ends only when a script advances, a pause and the key hints fire only when
+a script advances, and saved outputs stay deterministic. The pause's and
+the hint delay's waits post their events from the clock's completion,
+before the move returns, so a `join` after an `advance` finds them queued.
+The hint delay is a wait like the pause's, not a job: it prints nothing
+and takes no job id (`Running.delayHints`). `idle <milliseconds>` still waits real
 time, for the render loop. The window mode passes no clock and keeps the
 library's timers.
 
@@ -852,7 +856,8 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   (`Running.mailbox`). -/
   posts : UInt64
   /-- The Lean source id a pause of completion at point that fired is posted
-  under, with its wait's id as its code (`Running.pause`). -/
+  under, with its wait's id as its code (`Running.pause`), and the key hint
+  delay too (`Running.delayHints`). -/
   pauseEvents : UInt64
   /-- The compiled commands: registered for the owner `compiled` when the
   loop starts, before any config. -/
@@ -1135,6 +1140,9 @@ structure Running (σ : Type) (scheme : InputScheme) where
   /-- The pauses of completion at point armed on the job clock, each its
   wait's id, its view and its milliseconds (`pause`). -/
   pauses : Array (UInt64 × ViewId × Nat) := #[]
+  /-- The key hint delay armed on the job clock, if one is: its wait's id
+  and the generation of the hints it makes due (`delayHints`). -/
+  hintWait : Option (UInt64 × Nat) := none
 
 namespace Running
 
@@ -1331,6 +1339,45 @@ def pause (collaborators : Collaborators σ scheme) (running : Running σ scheme
       held := held.push (id, view, ms)
     return { running with pauses := held }
 
+/-- Withdraws the key hint delay armed, if one is, as `withdrawPauses`
+withdraws a pause: its wait is withdrawn from the clock and ended as
+cancelled, so it posts nothing. -/
+def withdrawHints (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
+    BaseIO (Running σ scheme) := do
+  if let some (id, _) := running.hintWait then
+    collaborators.services.timers.cancel id
+    collaborators.services.completions.finish id .cancelled
+  return { running with hintWait := none }
+
+/-- Carries out what a step said of the key hint delay
+(`Loop.Stepped.hintDelay`, "Key hints" in `Editor/Loop.lean`), as `pause`
+carries out a pause: to keep it, nothing; to disarm it, the delay armed is
+withdrawn (`withdrawHints`); to arm it, that is withdrawn, and a wait is
+started on the job clock, due that many milliseconds from now, whose
+completion posts an event under `pauseEvents` with the wait's id as its
+code (`paused` tells it from a pause by its id). It prints nothing, and
+takes no job id. -/
+def delayHints (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+    (change : Loop.HintDelayChange) : BaseIO (Running σ scheme) := do
+  match change with
+  | .keep =>
+    return running
+  | .disarm =>
+    running.withdrawHints collaborators
+  | .arm generation ms =>
+    let running ← running.withdrawHints collaborators
+    let services := collaborators.services
+    let now ← services.timers.now
+    let (id, wait) ← services.completions.register
+    let fired (completion : Option Job.Completion) : BaseIO Unit :=
+      if completion == some .completed then
+        (discard <| Ffi.postEvent .editor collaborators.pauseEvents id "" : IO Unit).catchExceptions
+          fun _ => pure ()
+      else pure ()
+    discard <| BaseIO.mapTask fired wait.result? (sync := true)
+    services.timers.start id (now + ms)
+    return { running with hintWait := some (id, generation) }
+
 /-- Starts the job registered under `name`, with no arguments, as the driver
 asks, and prints its id. -/
 def spawn (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String) :
@@ -1394,8 +1441,9 @@ completion styles config chose by category over the registry's styles, or
 the fuzzy style (`Config.Registry.matching`); and the completion displays
 config chose by category over the registry's displays, or the minibuffer
 display (`Config.Registry.displaying`); and the registry's prefix names,
-for the key hints (`Config.Registry.prefixName?`). It is made for
-each window event, so a reload changes it between two events. -/
+for the key hints (`Config.Registry.prefixName?`), and the key hint delay
+config set, or the editor's 500 milliseconds (`Loop.keyHintDelay`). It is
+made for each window event, so a reload changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
     slowAfter := collaborators.slowAfter, registered := running.config.registry.registered
@@ -1406,7 +1454,8 @@ def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     menu := collaborators.menu.map running.config.registry.menuOf
     matching := running.config.registry.matching, inlineMatches := collaborators.inlineMatches
     displaying := running.config.registry.displaying
-    prefixNames := running.config.registry.prefixName? scheme }
+    prefixNames := running.config.registry.prefixName? scheme
+    keyHintDelay := running.config.keyHintDelay.getD (.after Loop.keyHintDelay) }
 
 /-- Publishes a scene of the frame's state, if there is a frame, its status
 lines drawn by the mode line the registry and config make (`keys`): what
@@ -1419,17 +1468,28 @@ Then the open prompt's jobs are reconciled with the same keys
 install, a theme switch and every other event the loop does not take, so a
 match that an install ended, stamped with the old config generation, is
 spawned again here with the new config's style, with no key typed. A
-publish that changes nothing reconciles to nothing. -/
+publish that changes nothing reconciles to nothing.
+
+The key hints are opened, closed and listed for the keys that can follow
+now before the publish (`Loop.keyHinted`), as a step's publish does them,
+and what that says of their delay is carried out (`delayHints`): so an
+install that sets `.never`, or rebinds the keys under a pending prefix,
+closes or opens the hints with no key typed. -/
 def publish (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
     IO (Running σ scheme) := do
   let some frame := running.frame | return running
   let keys := running.keys collaborators
   let (published, running) ←
-    running.attempt collaborators
-        (frame.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
-          keys.inlineMatches keys.displaying (keyHints := frame.keyHints keys))
-  let (frame, starts, cancels, spawns) := (published.getD frame).completionJobs keys
-  { running with frame := some frame }.launch collaborators starts cancels spawns
+    running.attempt collaborators do
+        let (hinted, change) ← frame.keyHinted keys
+        let published ←
+          hinted.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
+              keys.inlineMatches keys.displaying (keyHints := hinted.shownHints keys)
+        return (published, change)
+  let (published, change) := published.getD (frame, .keep)
+  let (frame, starts, cancels, spawns) := published.completionJobs keys
+  let running ← { running with frame := some frame }.delayHints collaborators change
+  running.launch collaborators starts cancels spawns
 
 /-- The loop's frame, made if there is none (`Collaborators.start`): the
 frame is made when the loop is first needed, for a window event, a command
@@ -1489,7 +1549,9 @@ reloaded (`Loop.Stepped.reload`) feeds the reload reducer a request, as the
 driver's `reload` does. A step whose command asked for a theme to be loaded
 (`Loop.Stepped.theme`) feeds the reducer a choice of it, which hands the
 display the theme (`Config.retheme`), and publishes a scene, drawn in it. A
-step that said stop ends the loop.
+step that said stop ends the loop. What the step said of the pause of
+completion at point and of the key hint delay is carried out on the job
+clock (`pause`, `delayHints`).
 
 Then each invocation the step answered, the continuation of a prompt its
 command accepted, is run as a step of its own (`Loop.invoke`), with keys
@@ -1516,6 +1578,7 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
             stopped := running.stopped || stepped.next == Loop.Next.stop }).launch
         collaborators stepped.starts stepped.cancels stepped.spawns
   running ← running.pause collaborators stepped.pause
+  running ← running.delayHints collaborators stepped.hintDelay
   if stepped.reload then
     -- What the driver's `reload` request does: one job at a time.
     running ← running.reduce collaborators .requested
@@ -1648,9 +1711,21 @@ def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme
 editor thread: when it is still armed, it is no longer, and the loop runs
 `at-point-paused` with its view and milliseconds (`Loop.invoke`), as it
 runs a prompt's answered continuation, printing nothing. A pause withdrawn
-since its wait completed is passed over. -/
+since its wait completed is passed over.
+
+The key hint delay's wait posts under the same source: when `id` is the
+delay armed (`hintWait`), it is no longer, and the loop makes its
+generation's hints due and publishes them (`Loop.keyHintsDue`), printing
+nothing. -/
 def paused (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : UInt64) :
     IO (Running σ scheme) := do
+  if let some (_, generation) := running.hintWait.filter (·.1 == id) then
+    let running := { running with hintWait := none }
+    let some frame := running.frame | return running
+    let (stepped, running) ←
+      running.attempt collaborators (frame.keyHintsDue (running.keys collaborators) generation)
+    let some stepped := stepped | return running
+    return ← running.took collaborators stepped
   let some (_, view, ms) := running.pauses.find? (·.1 == id) | return running
   let running := { running with pauses := running.pauses.filter (·.1 != id) }
   let (made, running) ← running.framed collaborators
@@ -1999,7 +2074,8 @@ def loop {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ sc
   -- Nothing will deal with a result any more: no job runs on unowned, and
   -- no pause waits.
   running.jobs.cancelAll
-  discard <| running.withdrawPauses collaborators
+  running ← running.withdrawPauses collaborators
+  discard <| running.withdrawHints collaborators
   -- Nor will anything take a key off the queue, so none is to raise the flag.
   discard <| Event.setInterruptKey none
 

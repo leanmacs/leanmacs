@@ -96,6 +96,13 @@ the model tests run it with outcomes built by hand
   editor's 8 (`Loop.padding`), so a reload that sets none goes back to it.
   The host hands it to the loop for each step (`Headless.keys`), so it
   changes with no restart. A rejected outcome changes none of it.
+- **The key hint delay follows config.** An install sets the delay in
+  force (`State.keyHintDelay`) to the one the config set, or none for the
+  editor's 500 milliseconds (`Loop.keyHintDelay`), so a reload that sets
+  none goes back to it. The host hands it to the loop for each step and
+  for the publish after the install (`Headless.Running.keys`), so a reload
+  that turns the hints off closes hints that are open. A rejected outcome
+  changes none of it.
 - **The layout follows config.** An install sets the layout in force
   (`State.layout`) to the one the config chose, or none for the editor's
   (`Layout.default`), so a reload that chooses none goes back to it. The
@@ -276,6 +283,10 @@ structure State (σ : Type) where
   editor's own (`Loop.padding`): set at every install, so a config that
   sets none goes back to it. -/
   framePadding : Option Nat := none
+  /-- The key hint delay the installed config set (`keyHintDelay`), or none
+  for the editor's own (`Loop.keyHintDelay`): set at every install, so a
+  config that sets none goes back to it. -/
+  keyHintDelay : Option Completion.Keys.Delay := none
   /-- The layout the installed config chose (`layout`), or none for the
   editor's own (`Layout.default`): set at every install, so a config that
   chooses none goes back to it. -/
@@ -431,6 +442,7 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
     let unknownAtPoints := state.registry.unknownAtPoints
     ({ state with
         themeName, modeLine, framePadding := built.registrations.framePadding
+        keyHintDelay := built.registrations.keyHintDelay
         layout := built.registrations.layout, tabBar := built.registrations.tabBar
         titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,

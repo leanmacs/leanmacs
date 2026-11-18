@@ -228,6 +228,17 @@ def reloadChecks : List Check :=
             dropped.framePadding == none &&
             kept.framePadding == some 12) },
     { name :=
+        "an install sets the key hint delay config sets, a later install that sets none goes back to none, the editor's own, and a rejected one changes nothing"
+      run :=
+        let (state, _) :=
+          reduceFrom themed [.requested, .finished (accepted ["a"] (keyHintDelay .never))]
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a")]
+        pure
+          (themed.keyHintDelay == none && state.keyHintDelay == some .never &&
+            dropped.keyHintDelay == none &&
+            kept.keyHintDelay == some .never) },
+    { name :=
         "an install sets when the tab bar is shown as config chooses, a later install that chooses none goes back to none, the editor's own, and a rejected one changes nothing"
       run :=
         let (state, _) := reduceFrom themed [.requested, .finished (accepted ["a"] (tabBar .never))]
