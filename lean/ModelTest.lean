@@ -20528,6 +20528,24 @@ def apiStateChecks : List Check :=
   let one : BufferId := ⟨1⟩
   let absent : BufferId := ⟨9⟩
   [{  name :=
+        "a prompt asks its sources with the place of the asking view: a source that answers its query's place lists the editor's working directory, for a buffer with no file, and the home, and the prompt's candidates keep the place"
+      run :=
+        pure <|
+          let start : TextM EditorState := do
+            return { (← twoBuffers) with
+                workingDirectory := "/work", home := some "/home/me" }
+          match
+            dispatchedFrom (start := start) do
+              discard <|
+                  prompt "Place: " { command := "placed" } ""
+                    [.given (Completion.Fake.placed "placed" "place")] with
+          | some (_, state) =>
+            state.prompt.map (·.candidates.all.map (·.text)) ==
+                some #["directory /work", "home /home/me"] &&
+              state.prompt.map (·.candidates.place) ==
+                some { directory := some "/work", home := some "/home/me" }
+          | none => false },
+    { name :=
         "a buffer-local value set from a command is read back by its name, a second value of the name replaces the first, another buffer has none, and setting one on a buffer there is none of is refused with noSuchBuffer"
       run :=
         pure <|
@@ -20715,7 +20733,7 @@ def apiStateChecks : List Check :=
             state.prompt.map (·.candidates) ==
                 some
                   { all := (offered #["wq", "edit", "w"]).map (·.inGroup "made")
-                    category := some "test" } &&
+                    category := some "test", place := { directory := some "/" } } &&
               state.prompt.map (·.view) == some view &&
               (texts.filter (· == made)).size == 1 &&
               texts.contains "w" &&
@@ -20741,7 +20759,7 @@ def apiStateChecks : List Check :=
             some (_, _, before) =>
             state.prompt.map (·.candidates) ==
                 some
-                  { category := some "pick"
+                  { category := some "pick", place := { directory := some "/" }
                     asking :=
                       #[{ source := "later", later := { job := "later-pick" },
                           askedFor := "w" }] } &&
@@ -22241,12 +22259,19 @@ and the choice. -/
 def candidatesOf (driver : TestDriver) : Option Candidates :=
   driver.loop.state.prompt.map (·.candidates)
 
+/-- The place a prompt of these checks is asked with: the editor's working
+directory, `/` until a host sets it, for a buffer with no file, and no
+home. -/
+def rootPlace : Completion.Place :=
+  { directory := some "/" }
+
 /-- What a prompt asked with `pickCandidates` holds once they are listed
 for `pattern`, with `chosen` as its choice: its category is `pick`, and the
 listing is what the fuzzy model answers for the pattern, each with its
 in-order spans, so no order is written out here. -/
 def pickListed (pattern : String) (chosen : Option Nat := none) : Candidates :=
   { all := pickOffered, category := some pickSource.category, listedFor := some pattern
+    place := rootPlace
     listed :=
       (FuzzyModel.rank pattern pickCandidates).filterMap fun index =>
         (pickOffered[index]?).map fun candidate =>
@@ -22486,7 +22511,7 @@ def candidateChecks : List Check :=
             let passed := (offered #["zz", "w"]).map (·.inGroup filteredSource.name)
             let listing (pattern : String) : Candidates :=
               { passed, category := some filteredSource.category, listedFor := some pattern
-                listed := passed.map Completion.Listed.of }
+                listed := passed.map Completion.Listed.of, place := rootPlace }
             candidatesOf asking == some (listing "") &&
               (candidatesOf asking).map (·.all) == some #[] &&
               (candidatesOf asking).map (·.category) == some (some "other") &&
@@ -22873,6 +22898,24 @@ its order and its batches as arguments, its job on the job model, and the
 command that takes a batch into the open prompt. -/
 def laterChecks : List Check :=
   [{  name :=
+        "an order round-trips with a place: a directory alone, a home alone, both and neither, with a region and texts after them; and the six arguments of an order still decode, with no place"
+      run :=
+        pure <|
+          let placed (place : Completion.Place) : Completion.Order :=
+            { laterOrder with
+              query :=
+                { laterOrder.query with
+                  place, region := some { start := 1, stop := 2 }, texts := #[⟨5⟩] } }
+          [({} : Completion.Place), { directory := some "/w" }, { home := some "/home/me" },
+                  { directory := some "/w/src", home := some "/home/me" }].all
+              (fun place =>
+                Completion.Order.ofArguments? (placed place).arguments == some (placed place)) &&
+            Completion.Order.ofArguments? [.nat 3, .nat 1, .nat 2, .str "w", .nat 0, .nat 30] ==
+              some laterOrder &&
+            (Completion.Order.ofArguments? [.nat 3, .nat 1, .nat 2, .str "w", .nat 0, .nat 30]).map
+                (·.query.place) ==
+              some {} },
+    { name :=
         "an order and a batch round-trip through their arguments: an order with a region and texts, one with texts alone, and the six arguments of one with neither; a candidate with nothing beside its text, one with each optional field, all of them, and empty strings among them; malformed lists decode to none"
       run :=
         pure <|
@@ -23004,7 +23047,21 @@ def completionJobChecks : List Check :=
   let later : Completion.Later := { job := "later-pick" }
   let source (reask : Completion.Reask := .never) : Completion.Asking :=
     { source := "later", later := { later with reask }, askedFor := "a" }
-  [{  name :=
+  [{  name := "a source's order carries the place the prompt's candidates hold"
+      run :=
+        pure <|
+          let place : Completion.Place := { directory := some "/w", home := some "/home/me" }
+          match promptLoop { asking := #[source], place } (some "a") with
+          | none => false
+          | some (loop, view) =>
+            let (_, starts, _, _) := loop.completionJobs (jobKeys)
+            let order : Completion.Order :=
+              { view, index := 0, generation := 1, query := { text := "a", view := ⟨0⟩, place } }
+            starts.map (·.arguments) == #[order.arguments] &&
+              (starts.map (Completion.Order.ofArguments? ·.arguments)).map
+                  (·.map (·.query.place)) ==
+                #[some place] },
+    { name :=
         "a source not yet asked has its job started once, under `completion <view> <source>`, with the order of the first generation for the text it was asked with and no pause, and its key recorded; asked again with the text unchanged, or by a source asked once with the text changed, nothing is started"
       run :=
         pure <|
@@ -25405,7 +25462,7 @@ def exListed (pattern : String) (chosen : Option Nat := none)
     (bindings : Array Ex.Binding := exTestBindings) : Candidates :=
   let names := exNamesOf bindings
   let all := (offered names).map (·.inGroup Ex.namesSource.name)
-  { all, category := some Ex.namesSource.category, listedFor := some pattern
+  { all, category := some Ex.namesSource.category, listedFor := some pattern, place := rootPlace
     listed :=
       (FuzzyModel.rank pattern names).filterMap fun index =>
         (all[index]?).map fun candidate =>
@@ -35736,6 +35793,35 @@ def workspaceStateChecks : List Check :=
       (.recordWorkspace "/w/src" 0 (some worktree))
   let one : BufferId := ⟨1⟩
   [{  name :=
+        "the directory a view's names are read from is its buffer's file's directory, else its local workspace's root, else the editor's working directory; and its place adds the home"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let state :=
+              { state with
+                workingDirectory := "/work", home := some "/home/me" }
+            let withFile :=
+              { state with
+                buffers :=
+                  state.buffers.modify 1 fun buffer =>
+                    buffer.map fun (buffer : Buffer) =>
+                      { buffer with
+                        file :=
+                          some
+                            { path := "/w/src/a.lean"
+                              stamp := { seconds := 0, nanoseconds := 0, size := 0 } } } }
+            let inWorkspace :=
+              request (request state (.recordWorkspace "/r/src" 0 (some main)))
+                (.setValue ⟨0⟩ Workspace.bufferLocal (Location.local "/r").encode)
+            state.directoryOf ⟨0⟩ == ("/work" : System.FilePath) &&
+              withFile.directoryOf ⟨1⟩ == ("/w/src" : System.FilePath) &&
+              withFile.directoryOf ⟨0⟩ == ("/work" : System.FilePath) &&
+              inWorkspace.directoryOf ⟨0⟩ == ("/r" : System.FilePath) &&
+              state.placeOf ⟨0⟩ == { directory := some "/work", home := some "/home/me" } &&
+              EditorState.none.home == none },
+    { name :=
         "a workspace registered with a location known only by its branch and one reachable through kube belong to the project of their remote, whichever form it is in, and neither can run commands or read files; registering a local location is refused, with the state as it was"
       run :=
         let branchOnly := Location.branchOnly origin "agent/x"
@@ -40166,7 +40252,19 @@ def atPointRepeatChecks : List Check :=
 /-- The checks of completion at point through the loop (`Editor/Loop.lean`,
 "Completion at point"), on the evil driver over the models. -/
 def atPointLoopChecks : List Check :=
-  [{  name :=
+  [{  name := "a session at point is asked with the place of its view, which its candidates keep"
+      run :=
+        pure <|
+          match atPointDriver "say h|e" #["line"] [lineAtPoint] with
+          | none => false
+          | some driver =>
+            let opened := evilFed driver "a C-n"
+            match opened.loop.state.atPoint with
+            | none => false
+            | some session =>
+              session.candidates.place == opened.loop.state.placeOf session.view &&
+                session.candidates.place.directory == some "/" },
+    { name :=
         "a previewed candidate accepted with RET is what the region the source named now holds, and one undo restores the text from before the first preview"
       run :=
         pure <|

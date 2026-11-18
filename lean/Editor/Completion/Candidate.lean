@@ -16,7 +16,9 @@ no program.
   and not drawn (`docs/design/keymaps-and-modes.md`, "A prompt's
   sources").
 - **A query** is the text typed so far and the view the prompt was asked
-  from. What is added to it is a field here, never a new type.
+  from, with the place names are read from (`Place`): the directory a
+  name that is not absolute is read under, and the home directory. What is
+  added to it is a field here, never a new type.
 - **What matching answers** (`Editor/Completion/Style.lean`): a `Hit`, the
   index of a candidate a style matched and the ranges of its text that
   matched (`Span`, byte offsets), and a `Listed`, a candidate as a
@@ -70,6 +72,16 @@ structure Span where
   stop : Nat
   deriving DecidableEq, Repr
 
+/-- Where a name that is not absolute is read from, for a source that reads
+paths: the asking view's directory (`EditorState.directoryOf`), and the home
+directory, which a host may not know. -/
+structure Place where
+  /-- What a name that is not absolute is read under. -/
+  directory : Option System.FilePath := none
+  /-- The home directory, which `~` names. -/
+  home : Option System.FilePath := none
+  deriving DecidableEq, Repr
+
 /-- What a source is asked. -/
 structure Query where
   /-- The text typed so far. -/
@@ -83,6 +95,9 @@ structure Query where
   source that answers later reads them (`Later.readsTexts`); none
   otherwise. -/
   texts : Array SnapshotId := #[]
+  /-- Where a name that is not absolute is read from (`Place`), filled where
+  the query is made from the state. -/
+  place : Place := {}
   deriving DecidableEq, Repr
 
 /-- A source an at-point source names to complete its region from: by its
@@ -266,6 +281,9 @@ structure Collected where
   /-- The snapshots taken for the sources that read the open buffers'
   texts, the asking view's first; none when no source does. -/
   texts : Array SnapshotId := #[]
+  /-- The place the sources were asked with (`Query.place`), for the jobs of
+  the sources that answer later. -/
+  place : Place := {}
   deriving DecidableEq, Repr
 
 end Editor.Completion

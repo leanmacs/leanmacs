@@ -2773,7 +2773,7 @@ def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
                   { view, index, generation, pause
                     query :=
                       { text, view := completing.asker, region := candidates.region
-                        texts := candidates.texts } }
+                        texts := candidates.texts, place := candidates.place } }
               key := some key }
             if !keys.registered.jobs source.later.job then (asking, starts, cancels, wanted)
           else

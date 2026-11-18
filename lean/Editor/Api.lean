@@ -1012,7 +1012,7 @@ def collectSources (sources : List Completion.SourceRef) (query : Completion.Que
         match sources.head? with
         | some (.category category _) => some category
         | _ => none
-      region := query.region }
+      region := query.region, place := query.place }
   for source in resolved do
     let (name, answer) : String × Completion.Answer ←
       match source with
@@ -1096,7 +1096,8 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
   if let some asked := state.prompt then
     return .error (.alreadyOpen asked.view)
   let some asker := state.focusedTarget? | return .error .noWindow
-  let query : Completion.Query := { text := initial, view := asker.window.id }
+  let query : Completion.Query :=
+    { text := initial, view := asker.window.id, place := state.placeOf asker.window.id }
   let collected ←
     match ← collectSources sources query with
     | .ok collected =>
@@ -1993,7 +1994,8 @@ def completeAtPoint (occasion : Completion.Occasion) (silent : Bool := false) :
     | refusal =>
       throw refusal
   let query : Completion.Query :=
-    { text := typed, view, region := some { start := region.start, stop := region.stop } }
+    { text := typed, view, region := some { start := region.start, stop := region.stop }
+      place := (← editorState).placeOf view }
   match ← collectSources (region.sources.map Completion.Named.ref) query with
   | .error refusal =>
     return .error (.source refusal)

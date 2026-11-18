@@ -916,6 +916,11 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   window mode's is the process's working directory, read at the edge, and
   so is the headless mode's. -/
   workingDirectory : System.FilePath := "/"
+  /-- The home directory, which `start` writes into the editor state
+  (`EditorState.home`): what `~` names in a typed path. The window mode's
+  is `HOME`, read at the edge; the headless mode reads nothing from the
+  environment, so its is none, and a `~` there says the home is not known. -/
+  home : Option System.FilePath := none
   /-- How the host makes its display, over the read half of the table of
   snapshots the text binding publishes (`published`). The headless mode's
   is a recorder in `cells`; a host that draws is handed the real binding. -/
@@ -1953,7 +1958,8 @@ structure Host where
 
 /-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`.
 The loop it makes, when it is first needed, has the collaborators' working
-directory in its state (`Collaborators.workingDirectory`). -/
+directory and home directory in its state (`Collaborators.workingDirectory`,
+`Collaborators.home`). -/
 def start {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) : IO Host := do
   let made := collaborators.start
   let collaborators :=
@@ -1961,7 +1967,9 @@ def start {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ s
       start := do
         let loop ← made
         return { loop with
-            state := { loop.state with workingDirectory := collaborators.workingDirectory } } }
+            state :=
+              { loop.state with
+                workingDirectory := collaborators.workingDirectory, home := collaborators.home } } }
   let progress ← IO.mkRef {}
   let thread ← IO.asTask (prio := .dedicated) (loop collaborators progress)
   return { requests := collaborators.requests, posted := ← IO.mkRef 0, progress, thread }

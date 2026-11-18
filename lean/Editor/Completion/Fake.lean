@@ -13,6 +13,9 @@ nothing the editor runs does.
 - `Fake.echo name category` answers one candidate, whose text is the
   query's text and whose annotation is the number of the view the query
   is asked from, so a check sees what was asked.
+- `Fake.placed name category` answers two candidates that say its query's
+  place, `directory <path>` and `home <path>` (`none` for either it has
+  not), so a check sees where the source was asked to read names from.
 - `Fake.refusing name category` is refused with `TextError.badRange`
   before it answers, so a check sees what a refused source does to the
   command that asked it.
@@ -30,6 +33,17 @@ def echo (name category : String) : Source :=
   { name, category
     candidates := fun query =>
       pure #[{ text := query.text, annotation := some (toString query.view.index) }] }
+
+/-- A source called `name`, of `category`, that answers its query's place:
+`directory <path>` and `home <path>`, each `none` when the place has not
+that directory. It asks the port nothing. -/
+def placed (name category : String) : Source :=
+  { name, category
+    candidates := fun query =>
+      let said (path : Option System.FilePath) := (path.map (·.toString)).getD "none"
+      pure
+        #[.ofText s!"directory {said query.place.directory}",
+          .ofText s!"home {said query.place.home}"] }
 
 /-- A source called `name`, of `category`, that is refused with
 `badRange` before it answers. -/

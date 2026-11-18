@@ -74,17 +74,24 @@ structure Order where
   pause : Nat := 0
   deriving DecidableEq, Repr
 
+/-- A path of a place as an argument: its text, or `false` for none. -/
+def pathArgument : Option System.FilePath → Argument
+  | some path => .str path.toString
+  | none => .bool false
+
 /-- `order` as the plain arguments a job is started with: the view, the
 index, the generation, the query's text and view and the pause, then the
-query's region, its two ends or `false` for none, then each snapshot id of
-its texts. -/
+query's place, its directory and its home, each a string or `false` for
+none, then its region, its two ends or `false` for none, then each snapshot
+id of its texts. -/
 def Order.arguments (order : Order) : List Argument :=
   let region :=
     match order.query.region with
     | some span => [.nat span.start, .nat span.stop]
     | none => [.bool false]
   [.nat order.view.index, .nat order.index, .nat order.generation, .str order.query.text,
-      .nat order.query.view.index, .nat order.pause] ++
+      .nat order.query.view.index, .nat order.pause, pathArgument order.query.place.directory,
+      pathArgument order.query.place.home] ++
     region ++
     order.query.texts.toList.map fun snapshot => .nat snapshot.index
 
@@ -95,21 +102,38 @@ def snapshotsOfArguments? (arguments : List Argument) : Option (Array SnapshotId
     | .nat index => some ⟨index⟩
     | _ => none
 
+/-- The path of a place an argument holds: its text, or none for `false`;
+`none` for an argument that is neither. -/
+def pathOfArgument? : Argument → Option (Option System.FilePath)
+  | .str path => some (some path)
+  | .bool false => some none
+  | _ => none
+
 /-- The order `arguments` hold; `none` for arguments that are not one. The
-six arguments of an order with no region and no texts are taken too. -/
+six arguments of an order with no place, no region and no texts are taken
+too. -/
 def Order.ofArguments? : List Argument → Option Order
   | [.nat view, .nat index, .nat generation, .str text, .nat asker, .nat pause] =>
     some { view := ⟨view⟩, index, generation, query := { text, view := ⟨asker⟩ }, pause }
-  | .nat view :: .nat index :: .nat generation :: .str text :: .nat asker :: .nat pause :: rest =>
-    let parsed : Option (Option Span × List Argument) :=
+  |
+  .nat view ::
+      .nat index ::
+      .nat generation :: .str text :: .nat asker :: .nat pause :: directory :: home :: rest =>
+    do
+    let place : Place :=
+      { directory := ← pathOfArgument? directory, home := ← pathOfArgument? home }
+    let (region, rest) : Option Span × List Argument ←
       match rest with
-      | .bool false :: rest => some (none, rest)
-      | .nat start :: .nat stop :: rest => some (some { start, stop }, rest)
-      | _ => none
-    parsed.bind fun (region, rest) =>
-      (snapshotsOfArguments? rest).map fun texts =>
-        { view := ⟨view⟩, index, generation, query := { text, view := ⟨asker⟩, region, texts }
-          pause }
+      | .bool false :: rest =>
+        some (none, rest)
+      | .nat start :: .nat stop :: rest =>
+        some (some { start, stop }, rest)
+      | _ =>
+        none
+    let texts ← snapshotsOfArguments? rest
+    return {
+        view := ⟨view⟩, index, generation, query := { text, view := ⟨asker⟩, region, texts, place }
+        pause }
   | _ => none
 
 /-- An optional field of a candidate as an argument: its text, or `false`

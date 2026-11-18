@@ -947,6 +947,13 @@ leaves them.
   buffer's own answer (`BufferId.workingDirectory`, `Editor/Api.lean`)
   is still `none` for such a buffer: the command that runs something
   falls back to this.
+- **The directory a view reads names from** (`directoryOf`) is Emacs's
+  `default-directory` for `find-file`: the directory of its buffer's file,
+  else the root of its buffer's workspace when that is on this machine,
+  else the editor's working directory. With the home directory (`home`,
+  which a host sets when it knows it, and the headless host never does) it
+  is the place a prompt's sources read paths from (`placeOf`,
+  `Completion.Place`).
 
 ## Where a new field goes
 
@@ -1399,6 +1406,9 @@ structure Candidates where
   texts (`Completion.Later.readsTexts`), the asking view's first: released
   when the prompt or the session closes. -/
   texts : Array SnapshotId := #[]
+  /-- The place the sources were asked with (`Completion.Query.place`): what
+  the orders of the sources that answer later carry. -/
+  place : Completion.Place := {}
   deriving DecidableEq, Repr
 
 namespace Candidates
@@ -1732,6 +1742,10 @@ structure EditorState where
   no workspace and no file runs ("Workspaces", in the module docs). A host
   sets it once, from its own; `/` until it does. -/
   workingDirectory : System.FilePath := "/"
+  /-- The home directory, which `~` names in a path typed in a prompt
+  (`Editor/TypedPath.lean`). A host that knows it sets it once, with the
+  working directory; none until then. -/
+  home : Option System.FilePath := none
   /-- When the tab bar is shown (`Editor/TabBar.lean`): config's choice, as
   the last publish was handed it (`Loop.publish`); while there are two tabs
   or more before any. -/
@@ -2926,6 +2940,25 @@ def workspaceOf? (state : EditorState) (id : BufferId) : Option (Workspace × Pr
   let workspace ← state.workspaces.workspace? location
   return (workspace, (← state.workspaces.project? workspace.project.identity))
 
+/-- The directory the view `view` reads names from ("Workspaces", in the
+module docs): the directory of its buffer's file, else the root of its
+buffer's workspace when that is on this machine, else the editor's working
+directory. -/
+def directoryOf (state : EditorState) (view : ViewId) : System.FilePath :=
+  let buffer := (state.window? view).map (·.buffer)
+  let fileDirectory := ((buffer.bind state.buffer?).bind (·.file)).bind (·.path.parent)
+  let workspaceRoot :=
+    (buffer.bind state.workspaceOf?).bind fun (workspace, _) =>
+      match workspace.location with
+      | .local root => some root
+      | _ => none
+  (fileDirectory <|> workspaceRoot).getD state.workingDirectory
+
+/-- The place the view `view`'s prompts read paths from: its directory
+(`directoryOf`) and the home directory, if the host set it. -/
+def placeOf (state : EditorState) (view : ViewId) : Completion.Place :=
+  { directory := some (state.directoryOf view), home := state.home }
+
 /-- `state` once the finder answered `found` for `directory` under the config
 generation `generation` (`Workspace.Table.record`). Never refused. -/
 def recordWorkspace (directory : System.FilePath) (generation : Nat)
@@ -3696,7 +3729,8 @@ def setCandidates (collected : Completion.Collected) (state : EditorState) :
     Except PromptRefusal Unit × EditorState :=
   state.changeCandidates fun _ =>
     { all := collected.all, passed := collected.passed, category := collected.category
-      asking := collected.asking, region := collected.region, texts := collected.texts }
+      asking := collected.asking, region := collected.region, texts := collected.texts
+      place := collected.place }
 
 /-- What is completing now ("A session at point", in the module docs): the
 open prompt's, else the open session's, else none. -/
@@ -3893,7 +3927,8 @@ def openAtPoint (session : AtPointSession) (collected : Completion.Collected)
                   candidates :=
                     { all := collected.all, passed := collected.passed
                       category := collected.category, asking := collected.asking
-                      region := collected.region, texts := collected.texts }
+                      region := collected.region, texts := collected.texts
+                      place := collected.place }
                   sheet := {}, tallest := 0 } })
 
 /-- Closes the open session, and hands it back: its markers and its
