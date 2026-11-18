@@ -742,7 +742,10 @@ with that directory written `@DIR@`, must be exactly
 directories first and `.hidden` left out, lists `.hidden` once a `.` is
 typed with no new job, goes into `notes/` with `<Tab>`, opens `todo.md`
 with `C-n` and `<Enter>`, and says why a missing directory lists nothing.
-Every job is joined, so its lines are fixed.
+Every job is joined, so its lines are fixed. Its temporary directory is
+made from the template `/tmp/open-file.XXXXXXXX`, not under `$TMPDIR`,
+so its path has the same length on every machine: the prompt's cursor
+offset is counted over that path, and the scrub cannot rewrite it.
 
 Two more entries of the task run the executable on a real file, and read
 what a fixture's output cannot show: the process's exit status and the
