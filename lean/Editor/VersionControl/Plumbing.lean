@@ -59,7 +59,10 @@ be read and content cut short are refused.
 
 namespace Editor.VersionControl.Plumbing
 
-/-- Reads the worktree records `records`, each a list of attributes. -/
+/-- Reads one worktree record `record`, a list of attributes: its worktree,
+`none` for a record that is skipped (a bare main repository), or why it
+cannot be read (empty, no `worktree` path first, no branch or
+`detached`). -/
 def readWorktree (record : List String) : Except String (Option Worktree) := do
   let first :: rest := record | throw "an empty worktree record"
   unless first.startsWith "worktree " do

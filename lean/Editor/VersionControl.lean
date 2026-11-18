@@ -442,7 +442,9 @@ instance : DecidableEq (Except Error Changes)
   | .error _, .ok _ => isFalse fun e => by cases e
 
 /-- The type of the reply to each request: the status, nothing for a write,
-a file's content or none, or what to watch; each refused with an `Error`. -/
+a file's content or none, what to watch, the worktree list, the branch
+names, or a branch's change against its base (`Changes`); each refused with
+an `Error`. -/
 def Request.Reply : Request → Type
   | .status => Except Error Status
   | .stage _ => Except Error Unit
