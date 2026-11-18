@@ -39040,7 +39040,9 @@ checks', and `C-v s` (`vc-status`), `C-v g` (`vc-stage-hunk`), `C-v G`
 (`vc-unstage-hunk`), `C-v c` (`vc-commit`), `C-v y` (`vc-commit-accept`),
 `C-v q` (`vc-commit-abort`), `C-v z`, which puts `0\n` at the start of the
 window's text, `C-v m` and `C-v n`, which make the window's text the
-messages `stagingMessage` and `edited\n`, and `C-r 0` to `C-r 9`, which
+messages `stagingMessage` and `edited\n`, `C-v d` and `C-v D`, which hand
+the loop what a check of the window's file finds when another program has
+changed it or removed it (`Files.checked`), and `C-r 0` to `C-r 9`, which
 put the window's cursor at the start of that row, and `C-r t` of row 10. -/
 def stagingBindings : List (String × Invocation) :=
   workspaceBindings ++
@@ -39051,7 +39053,9 @@ def stagingBindings : List (String × Invocation) :=
       ("C-v m",
         { command := "set-text",
           arguments := [.str "Subject line\n\n# kept, as git's own cleanup keeps it\n"] }),
-      ("C-v n", { command := "set-text", arguments := [.str "edited\n"] })] ++
+      ("C-v n", { command := "set-text", arguments := [.str "edited\n"] }),
+      ("C-v d", invoke "disk-changed"),
+      ("C-v D", { command := "disk-changed", arguments := [.bool true] })] ++
     (List.range 10).map
       (fun row => (s!"C-r {row}", { command := "to-row", arguments := [.nat row] })) ++
     [("C-r t", { command := "to-row", arguments := [.nat 10] })]
@@ -39073,6 +39077,14 @@ def stagingKeys : Loop.Keys TestScheme.scheme :=
             if let .str text :: _ := call.arguments then
               let target := call.target.buffer.text
               target.replaceRange 0 (← target.byteLength) text
+            return none),
+          ("disk-changed", fun call => do
+            let buffer := call.target.window.buffer
+            if let some file := ((← editorState).buffer? buffer).bind (·.file) then
+              Files.checked
+                  #[({ buffer, path := file.path, stamp := file.stamp },
+                      if call.arguments == [.bool true] then .error .notFound
+                      else .ok { file.stamp with size := file.stamp.size + 1 })]
             return none)])
   { keys with
     registered :=
@@ -39196,6 +39208,42 @@ def stageHunkChecks : List Check :=
             echoOf asked == some "vc-stage-hunk: no change on this line" &&
               asked.jobs.processes.fed.isEmpty &&
               liveSnapshots asked == liveSnapshots opened },
+    { name :=
+        "a buffer with no unsaved changes whose file changed on disk says to reload it, starts no fetch, and feeds git nothing; one whose file is gone says so; vc-unstage-hunk, which takes nothing from the buffer's text, goes on"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let changed := settledAfter (settledAfter driver "C-o a") "C-v d"
+            let asked := settledAfter changed "C-r 8 C-v g"
+            let gone :=
+              settledAfter (settledAfter (settledAfter driver "C-o a") "C-v D") "C-r 8 C-v g"
+            echoOf asked ==
+                some "vc-stage-hunk: src/a.lean changed on disk; reload it (:e) and try again" &&
+              !(gitStarted asked).contains fetchRun &&
+              asked.jobs.processes.fed.isEmpty &&
+              liveSnapshots asked == liveSnapshots changed &&
+              echoOf gone == some "vc-stage-hunk: src/a.lean is gone from disk; nothing staged" &&
+              gone.jobs.processes.fed.isEmpty &&
+              echoOf (settledAfter changed "C-r 8 C-v G") ==
+                some "vc-unstage-hunk: nothing staged on this line" },
+    { name :=
+        "a file found changed on disk while its index is fetched says to reload it, feeds git nothing and holds no snapshot"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let (asked, _) := fedTo opened (presses "C-r 8 C-v g")
+            let (changed, _) := fedTo asked (presses "C-v d")
+            let fetched := settledOn (finishNamed changed VersionControl.hunkFetchJob) []
+            asked.pending.map (·.name) == #[VersionControl.hunkFetchJob] &&
+              echoOf fetched ==
+                some "vc-stage-hunk: src/a.lean changed on disk; reload it (:e) and try again" &&
+              fetched.jobs.processes.fed.isEmpty &&
+              liveSnapshots fetched == liveSnapshots opened },
     { name :=
         "a file the index does not hold says to stage the whole file; a file in no repository and a buffer with no file say so, and start no job"
       run :=

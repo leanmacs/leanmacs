@@ -416,6 +416,17 @@ names run them, and no key binds them: binding one is config's.
   (`Files.save`'s `after`), started once the file is written, and a
   refused save starts nothing. A buffer edited after its save, before its
   hunks are taken, stages nothing and says so.
+- **A buffer with no unsaved changes is the saved file only while its
+  file has not changed on disk.** When a check has found the file changed
+  (`Buffer.File.changed`) and auto-reload has not reloaded it, the
+  buffer's text is not what the working tree holds, and a hunk taken from
+  it would put into the index lines no file has. Staging is then refused,
+  `<path> changed on disk; reload it (:e) and try again` (`<path> is gone
+  from disk; nothing staged` for a file that is gone), when the command
+  runs and again when the index has been fetched, before anything is
+  snapshotted. A buffer with unsaved changes over a changed file is
+  refused by its save instead. Unstaging is not refused: its hunk is of
+  the index against `HEAD`, and the buffer only places the cursor.
 - **An unstageable hunk** is a hunk of the index against `HEAD`. The
   cursor's line of the buffer is carried to a line of the index across
   the hunks of the index against the buffer, and the hunk picked there.

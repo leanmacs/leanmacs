@@ -39,6 +39,15 @@ said as `vc-stage-hunk: <why>` (`vc-unstage-hunk: ` for the other): a buffer
 with no file, a buffer that is not in a repository, a save in flight (`is
 being saved; try again`).
 
+To stage, a buffer with no unsaved changes whose file a check found changed
+on disk, or gone (`Buffer.File.changed`), is refused too (`staleOnDisk?`):
+its text is not the saved file, so a hunk of it would put into the index
+lines the working tree does not hold. It says `<path> changed on disk;
+reload it (:e) and try again`, or `<path> is gone from disk; nothing
+staged`. A buffer with unsaved changes is saved first, and its save is
+refused over a changed file. Unstaging takes nothing from the buffer's
+text, so it is not refused.
+
 ## The pipeline
 
 A command may not wait and a job may, so each step that asks git or the
@@ -56,7 +65,9 @@ diff service is a job, and each job's command does the next step:
    (untracked, in conflict) says `<path> has no version in the index`, and
    to stage the whole file; a path `HEAD` lacks, to unstage the whole file.
 3. **`hunksFetched`**: to stage, a buffer edited since its save says
-   `<path> changed while staging; nothing staged`. Otherwise each content
+   `<path> changed while staging; nothing staged`, and a file found changed
+   on disk since the command ran is refused as the gate refuses it.
+   Otherwise each content
    fetched is made a text, snapshotted, and the text released, as the
    gutter's head fetch does; the buffer is snapshotted, and `vc-hunk-diff`
    started with the snapshots. A refused start releases every one.
@@ -321,6 +332,17 @@ def hunkDiffWork (arguments : List Argument) : Work := fun _ => do
       pure none
   return hunksDiffed order buffer head
 
+/-- Why the hunks of `buffer` cannot be staged from its text, if they cannot:
+its file changed on disk, or is gone, since it was last loaded or saved, so
+its text is not the saved file a stageable hunk is of ("The gate", in the
+module docs). The command `name` says it, about `path`. -/
+def staleOnDisk? (name path : String) (buffer : Buffer) : Option String :=
+  match buffer.file.bind (·.changed) with
+  | some { found := some _, .. } =>
+    some s!"{name}: {path} changed on disk; reload it (:e) and try again"
+  | some { found := none, .. } => some s!"{name}: {path} is gone from disk; nothing staged"
+  | none => none
+
 /-- A snapshot of a new text holding `content`, the text released. -/
 def snapshotOf (content : String) : EditorM SnapshotId := do
   let text ← createText content
@@ -361,6 +383,10 @@ def hunksFetched (order : HunkOrder) (index : Except Error (Option String))
   if !order.unstage && (← order.buffer.hasUnsavedChanges) matches .ok true then
     message s!"{name}: {order.path} changed while staging; nothing staged"
     return
+  if !order.unstage then
+    if let some sentence := staleOnDisk? name order.path buffer then
+      message sentence
+      return
   let diff : HunkDiffOrder :=
     { order, index := ← snapshotOf index, taken := ← buffer.text.snapshot
       head := ← head.mapM snapshotOf }
@@ -405,9 +431,10 @@ def hunkCommand (unstage : Bool) (call : Call) : EditorM Unit := do
   let fetch : JobStart := { name := hunkFetchJob, arguments := order.arguments }
   if !unstage && (← id.hasUnsavedChanges) matches .ok true then
     Files.save id (after := some fetch)
-  else
-    if let .error refusal← startJob fetch.name fetch.arguments then
-      message s!"{name}: {refusal.describe}"
+  else if let some sentence := if unstage then none else staleOnDisk? name path buffer then
+    message sentence
+  else if let .error refusal← startJob fetch.name fetch.arguments then
+    message s!"{name}: {refusal.describe}"
 
 /-- `vc-stage-hunk` ("The pipeline", in the module docs). -/
 def stageHunkCommand (call : Call) : EditorM Unit :=
