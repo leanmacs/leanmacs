@@ -2,9 +2,9 @@
 # Model tests: the check
 
 The type of one model test, `Check`, and `failures`, which runs a list of
-them. Every module of the model tests (`ModelTest/*.lean`) imports this one,
-through the chain of imports the root module `ModelTest` describes. This
-module needs nothing of the editor.
+them. Every module of the model tests that writes a check imports this one
+directly (the root module `ModelTest` describes the layout). This module
+needs nothing of the editor.
 -/
 
 namespace ModelTest

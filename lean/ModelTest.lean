@@ -1,16 +1,113 @@
-import ModelTest.Buffers
+import Editor.Api.Cases
+import Editor.Clipboard.Contract
+import Editor.Display
+import Editor.Display.Contract
+import Editor.File.Cases
+import Editor.Fuzzy.Contract
+import Editor.Job.Contract
+import Editor.SyntaxTree.Contract
+import Editor.Text.Contract
+import Editor.UndoTree.Cases
+import Editor.Watch.Contract
+import Editor.Workspace.Contract
 import ModelTest.Check
-import ModelTest.Compile
-import ModelTest.Config
-import ModelTest.Dispatch
-import ModelTest.Driver
-import ModelTest.Evil
-import ModelTest.Jobs
-import ModelTest.Layout
-import ModelTest.Modes
-import ModelTest.Ports
-import ModelTest.Views
-import ModelTest.Workspace
+import ModelTest.Editor.Api
+import ModelTest.Editor.Api.Cases
+import ModelTest.Editor.Appearance
+import ModelTest.Editor.Buffers
+import ModelTest.Editor.Clipboard.Contract
+import ModelTest.Editor.Clipboard.Model
+import ModelTest.Editor.Command
+import ModelTest.Editor.Command.Append
+import ModelTest.Editor.Command.Dispatch
+import ModelTest.Editor.Compile
+import ModelTest.Editor.Compile.Errors
+import ModelTest.Editor.Compile.Listing
+import ModelTest.Editor.Compile.Shipped
+import ModelTest.Editor.Config.Registry
+import ModelTest.Editor.Config.Reload
+import ModelTest.Editor.Config.Session
+import ModelTest.Editor.Config.Stores
+import ModelTest.Editor.Display.Contract
+import ModelTest.Editor.Display.Model
+import ModelTest.Editor.DisplayRules
+import ModelTest.Editor.Evil
+import ModelTest.Editor.Evil.Clipboard
+import ModelTest.Editor.Evil.Motions
+import ModelTest.Editor.Evil.Objects
+import ModelTest.Editor.Evil.Operators
+import ModelTest.Editor.Evil.Registers
+import ModelTest.Editor.Evil.Repeat
+import ModelTest.Editor.Evil.TreeObjects
+import ModelTest.Editor.Evil.Undo
+import ModelTest.Editor.Ex
+import ModelTest.Editor.Ex.Line
+import ModelTest.Editor.ExcerptView
+import ModelTest.Editor.Executable
+import ModelTest.Editor.Face
+import ModelTest.Editor.Face.Vocabulary
+import ModelTest.Editor.File.Cases
+import ModelTest.Editor.File.Model
+import ModelTest.Editor.FileWatch.Model
+import ModelTest.Editor.Files
+import ModelTest.Editor.Floating
+import ModelTest.Editor.FrameCommands
+import ModelTest.Editor.Fuzzy.Contract
+import ModelTest.Editor.Fuzzy.Model
+import ModelTest.Editor.Headless.CommandLine
+import ModelTest.Editor.Highlight
+import ModelTest.Editor.Indent
+import ModelTest.Editor.InputScheme
+import ModelTest.Editor.InputScheme.Contract
+import ModelTest.Editor.InputScheme.Vim
+import ModelTest.Editor.InputScheme.Vim.Default
+import ModelTest.Editor.Invocation
+import ModelTest.Editor.Job.Contract
+import ModelTest.Editor.Job.Jobs
+import ModelTest.Editor.Job.Model
+import ModelTest.Editor.Job.Pool
+import ModelTest.Editor.Job.Runner
+import ModelTest.Editor.Job.Table
+import ModelTest.Editor.Json
+import ModelTest.Editor.Key.Notation
+import ModelTest.Editor.Keymap
+import ModelTest.Editor.Language
+import ModelTest.Editor.Layout
+import ModelTest.Editor.Loop
+import ModelTest.Editor.Loop.Driver
+import ModelTest.Editor.Menu
+import ModelTest.Editor.Mode
+import ModelTest.Editor.ModeLine
+import ModelTest.Editor.ModuleLookup
+import ModelTest.Editor.Process.Environment
+import ModelTest.Editor.Process.Model
+import ModelTest.Editor.Program
+import ModelTest.Editor.Scene
+import ModelTest.Editor.Scroll
+import ModelTest.Editor.Setup
+import ModelTest.Editor.Shell
+import ModelTest.Editor.State
+import ModelTest.Editor.State.Request
+import ModelTest.Editor.SyntaxTree.Contract
+import ModelTest.Editor.SyntaxTree.Model
+import ModelTest.Editor.TabBar
+import ModelTest.Editor.TabCommands
+import ModelTest.Editor.Text
+import ModelTest.Editor.Text.Contract
+import ModelTest.Editor.Text.Model
+import ModelTest.Editor.Themes
+import ModelTest.Editor.Themes.FairyFloss
+import ModelTest.Editor.Themes.Solarized
+import ModelTest.Editor.UndoTree
+import ModelTest.Editor.Version
+import ModelTest.Editor.Watch.Contract
+import ModelTest.Editor.Watch.Model
+import ModelTest.Editor.Window
+import ModelTest.Editor.WindowCheck
+import ModelTest.Editor.WindowCommands
+import ModelTest.Editor.Workspace
+import ModelTest.Editor.Workspace.Attach
+import ModelTest.Editor.Workspace.Contract
 
 /-!
 # The model tests
@@ -21,11 +118,18 @@ hand-written fakes and the pure models of the editor's ports. With no
 arguments it runs every check in `checks`, names the ones that failed, and
 exits non-zero if any did.
 
-The checks themselves live in modules by area under `ModelTest/`, each
-importing the one before it, from `ModelTest.Check` (the `Check` type and
-`failures`) through `ModelTest.Compile`. Each area keeps its helpers next to
-its checks; a later area reaches an earlier one's helpers through the chain.
-This module keeps `checks`, the runs of the ports' contracts and `main`.
+The checks themselves live in test modules that mirror the module they
+test: the checks of `Editor/State.lean` are in `ModelTest/Editor/State.lean`
+(`ModelTest.Editor.State`), and a run of a port's contract against its model
+is in the test module of that contract, such as `displayFailures` in
+`ModelTest/Editor/Display/Contract.lean`. A test module keeps the helpers
+only its checks use. Helpers and fakes that several test modules use are in
+small support modules under `ModelTest/Support/`, each of one kind of
+fixture, and `ModelTest.Check` holds the `Check` type and `failures`. Each
+module imports the editor's modules and the model test modules it uses, and
+no others. Everything is in the namespace `ModelTest`, so a list is
+`ModelTest.<name>Checks` whichever module holds it. This module keeps only
+`checks`, which runs them in order, and `main`.
 
 The checks of the program type run programs over a small port of their own
 (`Ask`) against a fake that records the requests it receives.
@@ -579,45 +683,6 @@ namespace ModelTest
 
 open Editor
 
-/-- The names of the workspace finder's contract properties
-(`Editor/Workspace/Contract.lean`) that do not hold of the pure model
-(`World.find`), or of the real finder run on the job model of the
-property's world (`World.jobModel`); and, for a property that must not ask
-git, of a run that started a process. -/
-def workspaceFinderFailures : IO (List String) :=
-  pure <|
-    (Workspace.FinderContract.properties "/").flatMap fun property =>
-      let settings := property.settings "git"
-      let directories := property.asked.map (·.1)
-      let byModel := property.asked.map fun (directory, _) => property.world.find settings directory
-      let (outcome, after) :=
-        (property.answers "git").runModel (property.world.jobModel "git" directories)
-      (if byModel == property.expected then []
-        else [s!"the workspace finder's model: {property.name}"]) ++
-        (if outcome == .finished property.expected then []
-        else [s!"the workspace finder on the job model: {property.name}"]) ++
-        if property.asksGit || after.processes.started.isEmpty then []
-        else [s!"the workspace finder on the job model starts no process: {property.name}"]
-
-/-- The names of the mode marker search's contract properties
-(`Editor/Workspace/Contract.lean`, `Workspace.MarkerContract`) that do not
-hold of the pure model (`World.presentMarkers`), or of the real search run
-on the job model of the property's world (`World.jobModel`); and of a run
-that started a process, which the search never does. -/
-def modeMarkerFailures : IO (List String) :=
-  pure <|
-    (Workspace.MarkerContract.properties "/").flatMap fun property =>
-      let byModel :=
-        property.asked.map fun (directory, bound, _) =>
-          property.world.presentMarkers property.markers directory bound
-      let (outcome, after) := property.answers.runModel (property.world.jobModel "git" #[])
-      (if byModel == property.expected then []
-        else [s!"the mode marker search's model: {property.name}"]) ++
-        (if outcome == .finished property.expected then []
-        else [s!"the mode marker search on the job model: {property.name}"]) ++
-        if after.processes.started.isEmpty then []
-        else [s!"the mode marker search on the job model starts no process: {property.name}"]
-
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -761,107 +826,6 @@ def checks : List Check :=
     jsonChecks ++
     listingChecks ++
     projectModeChecks
-
-/-- What the editor's commands do, observed against the text model. -/
-def commandProperties : List TextContract.Property :=
-  [{ name := "append adds to the end of a text, after its last character",
-     holds := do
-       let text ← createText "héllo"
-       append text " wörld"
-       return (← text.read) == "héllo wörld" }]
-
-/-- The properties run against the text model: the text port's contract,
-those of the commands, and the cases of the undo tree, which is plain Lean
-over the port. -/
-def textProperties : List TextContract.Property :=
-  TextContract.properties ++ commandProperties ++ UndoTreeCases.cases
-
-/-- The names of the `textProperties` that do not hold of the text model, each
-run from a model with no texts. -/
-def textFailures : IO (List String) := do
-  let failed ← TextContract.failures (fun command => pure (command.runModel {}).1) textProperties
-  return failed.map (s!"the text model: {·}")
-
-/-- The names of the properties of taking a job's snapshot into the store
-that do not hold of the text model. Each is run from a model with no texts
-that was handed, as what a job held, the strings the property names. -/
-def adoptFailures : IO (List String) := do
-  let failed ←
-    TextContract.adoptFailures
-        (fun arrived command =>
-          pure
-            (command.runModel
-                { arrived := arrived.map fun (id, text) => (id, { contents := text }) }).1)
-        TextContract.adoptProperties
-  return failed.map (s!"the text model: {·}")
-
-/-- The names of the job port's contract properties that do not hold of the
-job model, each run from a clock at 0 that nothing cancels. -/
-def jobModelFailures : IO (List String) := do
-  let failed ← JobContract.failures (fun job => pure (job.runModel {}).1) JobContract.properties
-  return failed.map (s!"the job model: {·}")
-
-/-- The cell sizes the display interface's contract is run at against the
-model: one pixel each way, and 8 by 16. -/
-def displayCells : List Display.Cells :=
-  [{ advance := 1, lineHeight := 1 }, { advance := 8, lineHeight := 16 }]
-
-/-- Runs a property of the display interface's contract against a display
-model in `cells` that holds the property's texts, as the snapshots 0, 1, 2
-and so on. -/
-def runOnDisplayModel (cells : Display.Cells) (property : DisplayContract.Property) :
-    IO (Except DisplayError Bool) :=
-  let model := displayOver property.texts.toList cells
-  pure ((property.holds (model.texts.map (·.1))).runModel model).1
-
-/-- The names of the display interface's contract properties that do not
-hold of the display model, at each of `displayCells`. -/
-def displayFailures : IO (List String) := do
-  let failed ←
-    displayCells.flatMapM fun cells => do
-        let failed ←
-          DisplayContract.failures (runOnDisplayModel cells) (DisplayContract.properties cells)
-        return failed.map
-            (s!"the display model in cells of {cells.advance} by {cells.lineHeight}: {·}")
-  return failed
-
-/-- The names of the watch port's contract properties that do not hold of
-the watch model, each run from a model in which the property's interrupt
-keys have arrived. -/
-def watchFailures : IO (List String) := do
-  let failed ←
-    WatchContract.failures
-        (fun property => pure (watched property.holds { arrived := property.arrived }).1)
-        WatchContract.properties
-  return failed.map (s!"the watch model: {·}")
-
-/-- The names of the clipboard interface's contract properties that do not
-hold of the clipboard model, each run from a model that is available and
-holds nothing. -/
-def clipboardFailures : IO (List String) := do
-  let failed ←
-    ClipboardContract.failures (fun property => pure (clipped property.holds).1)
-        ClipboardContract.properties
-  return failed.map (s!"the clipboard model: {·}")
-
-/-- The names of the fuzzy matching interface's contract properties that do
-not hold of the fuzzy model. -/
-def fuzzyFailures : IO (List String) := do
-  let failed ← fuzzyBroken FuzzyModel.handle
-  return failed.map (s!"the fuzzy model: {·}")
-
-/-- The names of the syntax tree interface's contract properties that do
-not hold of its model. -/
-def syntaxTreeFailures : IO (List String) := do
-  let failed ← syntaxTreeBroken SyntaxTreeModel.handle
-  return failed.map (s!"the syntax tree model: {·}")
-
-/-- The names of the cases of the editor API (`Editor/Api/Cases.lean`) that
-do not hold of the editor's models, each played from models with no
-text. -/
-def apiCaseFailures : IO (List String) := do
-  let failed ← ApiCases.failures (fun play => pure (play.runModel editorModel).1) ApiCases.cases
-  return failed.map (s!"the editor's models: {·}")
 
 end ModelTest
 

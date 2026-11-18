@@ -534,12 +534,15 @@ compiler. It starts at Lean's `main`. -/
   root := `ModelTest
   moreLinkArgs := #["-L", leanSystemLibDir.toString]
 
-/-- The model tests' modules (`ModelTest/*.lean`), which the `model-test`
-executable's root `ModelTest.lean` imports. Lake resolves an import only to
-a module of a library, never to one of an executable's, so these need a
-library of their own. It is not a default target: `lake test` builds it for
-the test driver. `.submodules` takes `ModelTest.X` and not `ModelTest`
-itself, so the executable's root belongs to no library. -/
+/-- The model tests' modules (`ModelTest/**/*.lean`: the test modules under
+`ModelTest/Editor/`, the support modules under `ModelTest/Support/` and
+`ModelTest/Check.lean`), which the `model-test` executable's root
+`ModelTest.lean` imports. Lake resolves an import only to a module of a
+library, never to one of an executable's, so these need a library of their
+own. It is not a default target: `lake test` builds it for the test driver.
+`.submodules` takes every module under `ModelTest`, at any depth
+(`ModelTest.Editor.Job.Contract`), and not `ModelTest` itself, so the
+executable's root belongs to no library. -/
 lean_lib ModelTests where globs := #[.submodules `ModelTest]
 
 /-- The contract checks of the text port and of the job port against their
