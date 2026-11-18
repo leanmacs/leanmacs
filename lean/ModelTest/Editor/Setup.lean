@@ -267,8 +267,95 @@ def setupChecks : List Check :=
         | .ok collected =>
           pure
             (collected.bindings.map (fun binding => (binding.keys, binding.command)) ==
-                #[(keys "C-x C-s", "save"), (keys "<Escape>", "quit"), (keys "A", "save")] &&
+                #[(strokes "C-x C-s", "save"), (strokes "<Escape>", "quit"),
+                  (strokes "A", "save")] &&
+              collected.bindings.all (·.states.isEmpty) &&
               collected.commands.isEmpty) },
+    { name :=
+        "a setup that binds a key string written with <leader> and <localleader> collects its strokes, placeholders in place, and the states a binding is given, none unless it says"
+      run :=
+        let setup : SetupM Unit := do
+          bindKey "<leader> f f" "find"
+          bindKey "<localleader> x" "run" (states := [⟨"insert"⟩, ⟨"visual"⟩])
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.bindings ==
+              #[{ keys := [.leader, .key (charKey "f"), .key (charKey "f")], command := "find" },
+                { keys := [.localLeader, .key (charKey "x")], command := "run"
+                  states := ["insert", "visual"] }]) },
+    { name :=
+        "a setup that sets the leader and the localleader collects them, the localleader as strokes over the leader, and one that sets neither has none"
+      run :=
+        let setup : SetupM Unit := do
+          leaderKey "C-x"
+          localLeaderKey "<leader> m"
+        match Config.Registrations.ofSetup setup, Config.Registrations.ofSetup (pure ()) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.leader == some (keys "C-x") &&
+              collected.localLeader == some [.leader, .key (charKey "m")] &&
+              plain.leader == none &&
+              plain.localLeader == none)
+        | _, _ => pure false },
+    { name :=
+        "a setup that sets the leader twice, or the localleader twice, is refused, naming which"
+      run :=
+        let leaders : SetupM Unit := do
+          leaderKey "C-x"
+          leaderKey "C-c"
+        let locals : SetupM Unit := do
+          localLeaderKey "C-l"
+          localLeaderKey "<leader> m"
+        pure
+          (refusal leaders == some Config.Registrations.leaderTwice &&
+            refusal locals == some Config.Registrations.localLeaderTwice) },
+    { name :=
+        "a setup that sets the leader to no keys, or writes it with a placeholder, is refused; one that sets the localleader to no keys, or writes it with <localleader>, is refused, and <leader> in it is not; a key string that is not keys is refused with the parser's reason"
+      run :=
+        let parsed : Option String :=
+          match Key.parseStrokes "C-<leader>" with
+          | .error message => some message
+          | .ok _ => none
+        pure
+          (refusal (leaderKey "") == some leaderNoKeys &&
+            refusal (leaderKey "<leader> x") == some leaderWrittenWithLeader &&
+            refusal (leaderKey "<localleader>") == some leaderWrittenWithLeader &&
+            refusal (localLeaderKey " ") == some localLeaderNoKeys &&
+            refusal (localLeaderKey "<localleader>") == some localLeaderWrittenWithItself &&
+            refusal (localLeaderKey "<leader>") == none &&
+            parsed.isSome &&
+            refusal (bindKey "C-<leader>" "find") == parsed &&
+            refusal (leaderKey "C-<leader>") == parsed &&
+            refusal (localLeaderKey "C-<leader>") == parsed) },
+    { name :=
+        "a setup that binds one key string with <leader> twice is refused, naming the keys as written; the same keys bound once plain and once for some states are bound twice too"
+      run :=
+        let twice : SetupM Unit := do
+          bindKey "<leader> f" "find"
+          bindKey "<leader> f" "find-again"
+        let stated : SetupM Unit := do
+          bindKey "C-a" "start"
+          bindKey "C-a" "start" (states := [⟨"insert"⟩])
+        pure
+          (refusal twice == some "the keys `<leader> f` are bound twice" &&
+            refusal stated == some "the keys `C-a` are bound twice") },
+    { name :=
+        "the order of a setup's calls does not matter: a binding with <leader> made before the leader is set collects as one made after it"
+      run :=
+        let before : SetupM Unit := do
+          bindKey "<leader> f" "find"
+          leaderKey "C-x"
+        let after : SetupM Unit := do
+          leaderKey "C-x"
+          bindKey "<leader> f" "find"
+        match Config.Registrations.ofSetup before, Config.Registrations.ofSetup after with
+        | .ok first, .ok second =>
+          pure
+            (first.bindings == second.bindings && first.leader == second.leader &&
+              first.leader == some (keys "C-x"))
+        | _, _ => pure false },
     { name :=
         "a setup that binds a key string that is not keys is refused with the key parser's message, which names the stroke, and one that names no keys with a message that names the command"
       run :=

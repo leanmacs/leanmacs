@@ -1,4 +1,5 @@
 import Editor.Invocation
+import Editor.Key.Notation
 import Editor.Keymap
 import Editor.Role
 import Editor.Scene
@@ -116,14 +117,24 @@ field of it, with a default.
 A mode names roles and suffixes, never keys (`Editor/Role.lean`,
 `docs/design/keymaps-and-modes.md`, "Modes"). Each scheme says once where
 they go: its role table (`roles`, read through `roleKey`), the keys each
-registered role is on, and its leader (`leader`), the prefix a mode's
-suffixes are bound under. Both default to empty, which the scheme contract
-reports for a scheme that is run: every registered role has a key, and the
-leader and the roles are apart.
+registered role is on, its leader (`leader`), the prefix of config's
+bindings written `<leader>`, and its localleader (`localLeader`), the
+prefix a mode's suffixes are bound under and config's bindings written
+`<localleader>`. The localleader is written over the leader, as strokes
+(`Key.Stroke`), so it may begin with `<leader>`: the Vim scheme's is
+`<leader> m`. Config may set either in place of the scheme's; `leaders`
+resolves the two in force, as chords. All three default to empty, which
+the scheme contract reports for a scheme that is run: every registered
+role has a key, and the leader, the localleader and the roles are apart.
 
 A scheme also says what a key a mode binds is bound to (`modeCommand`),
 which is `command` unless the scheme treats a mode's keys apart: the Vim
-scheme marks them, so that they do not hold where typing is text.
+scheme marks them, so that they do not hold where typing is text. The
+registry binds config's bindings under the leader or the localleader to it
+too, so they do not hold there either. And a scheme says what a key bound
+to hold only in some of its states is bound to (`stateCommand`, given the
+states' names, `SchemeState`), which is `command` for a scheme with no
+states of its own, so such a binding holds everywhere.
 
 A scheme may tune keys for a mode by hand (`tuned`: a mode's name, a key
 sequence and a binding of its own type), which the mode's keymaps consult
@@ -156,6 +167,8 @@ the test scheme, published for other modules' tests.
 | Something a scheme says of one view, for the scene, the loop or a command | A field of `InputScheme.Report`, with the default a scheme that says nothing reports |
 | Something one scheme remembers between keys | That scheme's `State`; nothing here |
 | A fact about a key that more than one scheme reads | A function of `Key` here, as `Key.printed?` is |
+| A new prefix config's bindings are written under | A field beside `leader` and `localLeader`, a placeholder in `Editor/Key/Notation.lean`, and its keys in `leaders` |
+| A new kind of place a binding may hold in | A field beside `modeCommand` and `stateCommand`, with `command` as its default |
 
 Pinned by `ModelTest.schemeChecks`, on the test scheme.
 -/
@@ -206,14 +219,25 @@ structure InputScheme where
   /-- The role table: the keys, as chords, each role is on under this
   scheme (`Editor/Role.lean`). A mode that fills a role is bound there. -/
   roles : List (Role × List Key) := []
-  /-- The leader, as chords: the prefix a mode's suffixes are bound
-  under. -/
+  /-- The leader, as chords: the prefix of config's bindings written with
+  `<leader>`, when config sets no leader of its own. -/
   leader : List Key := []
+  /-- The localleader, as strokes over the leader: the prefix a mode's
+  suffixes are bound under, and config's bindings written with
+  `<localleader>`, when config sets no localleader of its own. It may hold
+  `.leader`, which stands for the leader in force. -/
+  localLeader : List Key.Stroke := []
   /-- The binding a key a mode binds (a role, a suffix) is bound to, to run
   the command of this name: `command`, unless the scheme treats a mode's
   keys apart. Completing a sequence bound to it yields an invocation of
   that command. -/
   modeCommand : String → Binding := command
+  /-- The binding a key bound to run the command of this name only in the
+  scheme's states of these names is bound to (`bindKey`'s `states`):
+  `command`, which holds everywhere, unless the scheme has states of its
+  own. Completing a sequence bound to it yields an invocation of that
+  command. -/
+  stateCommand : List String → String → Binding := fun _ name => command name
   /-- The scheme's own keymaps, in precedence order (the Vim scheme's are
   every state's): what a mode's hand-tuned key is checked against for
   shadowing. -/
@@ -259,6 +283,23 @@ def InputScheme.answerName : String :=
 /-- The keys `role` is on in `scheme`'s role table, if it has a row. -/
 def InputScheme.roleKey (scheme : InputScheme) (role : Role) : Option (List Key) :=
   (scheme.roles.find? (·.1 == role)).map (·.2)
+
+/-- The leaders in force under `scheme`, as chords: `leader`, or the
+scheme's when it is `none`, and `localLeader`, or the scheme's when it is
+`none`, with that leader in place of its `<leader>`. -/
+def InputScheme.leaders (scheme : InputScheme) (leader : Option (List Key) := none)
+    (localLeader : Option (List Key.Stroke) := none) : Key.Leaders :=
+  let leader := leader.getD scheme.leader
+  { leader, localLeader := Key.expand { leader } (localLeader.getD scheme.localLeader) }
+
+/-- A state of a scheme, by its name, as config names one for a binding
+that holds only there (`bindKey`'s `states`). The scheme says which states
+it has: the Vim scheme's are constants of `Editor/InputScheme/Vim/Default.lean`
+(`SchemeState.insert`). -/
+structure SchemeState where
+  /-- The state's name, as the scheme registers it. -/
+  name : String
+  deriving DecidableEq, Repr
 
 /-- The text `key` prints, if it is printable: its logical key is a
 character, and none of control, alt and super is held. It is the key's own,

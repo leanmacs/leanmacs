@@ -26,6 +26,13 @@ def keys (text : String) : List Key :=
   | .ok named => named
   | .error _ => []
 
+/-- The strokes the key string `text` is written as, placeholders in place,
+for a fixture; none when it is refused. -/
+def strokes (text : String) : List Key.Stroke :=
+  match Key.parseStrokes text with
+  | .ok read => read
+  | .error _ => []
+
 /-- The invocation of the command `name` with no arguments. -/
 def invoke (name : String) : Invocation :=
   { command := name }

@@ -167,7 +167,7 @@ checks' bindings as config's. -/
 def minibufferRegistry : Config.Registry :=
   ((({} : Config.Registry).replace .compiled Minibuffer.commands).replaceModes .compiled
         Minibuffer.modes).replaceBindings
-    .config (minibufferBindings.toArray.map fun (text, command) => { keys := keys text, command })
+    .config (minibufferBindings.toArray.map fun (text, command) => .ofKeys (keys text) command)
 
 /-- What a step of the minibuffer checks is handed: the active keymaps the
 registry makes for the test scheme from the loop's state, so the

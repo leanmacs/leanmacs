@@ -166,6 +166,7 @@ def switching : InputScheme :=
     command := fun name => { command := name }
     roles := TestScheme.roles
     leader := TestScheme.leader
+    localLeader := TestScheme.localLeader
     closeView := fun view state => (state.1, state.2.filter (·.1 != view))
     openMinibuffer := fun view state => (state.1, (view, askedReport) :: state.2)
     report := fun state view => ((state.2.find? (·.1 == view)).map (·.2)).getD {} }
@@ -3293,12 +3294,12 @@ def modeDispatchChecks : List Check :=
               some #[some "base-refresh", some "other"] &&
             roleTyped modeRegistry start (roleKeys Role.mark) ==
               some #[some "child-mark", some "other"]) },
-    { name := "the scheme's leader followed by a mode's suffix runs that mode's local command"
+    { name := "the scheme's localleader followed by a mode's suffix runs that mode's local command"
       run :=
         let registry :=
           modeRegistry.replaceModes .config
             #[{ filling "major" [Role.nextItem] with locals := [("C-x", "major-local")] }]
-        let typed := TestScheme.scheme.leader ++ keys "C-x"
+        let typed := TestScheme.scheme.leaders.localLeader ++ keys "C-x"
         pure
           (roleTyped registry (withModes "major" []) typed ==
               some #[some "major-local", some "other"] &&

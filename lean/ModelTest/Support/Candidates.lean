@@ -214,7 +214,7 @@ def pickRegistry : Config.Registry :=
     .config
     ([("C-c a", "ask-pick"), ("C-c p", "ask-plain"), ("C-c 3", Minibuffer.nextName),
           ("C-c 4", Minibuffer.previousName)].toArray.map
-      fun (text, command) => { keys := keys text, command })
+      fun (text, command) => .ofKeys (keys text) command)
 
 /-- What a step of those checks is handed: the active keymaps `pickRegistry`
 makes for the test scheme from the loop's state, so the minibuffer's mode

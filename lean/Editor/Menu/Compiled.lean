@@ -90,12 +90,10 @@ private def chord (text : String) : Key :=
 registers them for the owner `compiled`. The clipboard commands' names are
 `Editor/Evil/Clipboard.lean`'s. -/
 def bindings : Array Config.KeyBinding :=
-  #[{ keys := [chord "o"], command := Files.openName },
-    { keys := [chord "s"], command := Files.saveName }, { keys := [chord "z"], command := "undo" },
-    { keys := [chord "Z"], command := "redo" }, { keys := [chord "x"], command := Evil.cutName },
-    { keys := [chord "c"], command := Evil.copyName },
-    { keys := [chord "v"], command := Evil.pasteName },
-    { keys := [chord "a"], command := Evil.selectAllName }]
+  #[.ofKeys [chord "o"] Files.openName, .ofKeys [chord "s"] Files.saveName,
+    .ofKeys [chord "z"] "undo", .ofKeys [chord "Z"] "redo", .ofKeys [chord "x"] Evil.cutName,
+    .ofKeys [chord "c"] Evil.copyName, .ofKeys [chord "v"] Evil.pasteName,
+    .ofKeys [chord "a"] Evil.selectAllName]
 
 end Menu
 

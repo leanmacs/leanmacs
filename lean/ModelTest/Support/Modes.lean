@@ -60,8 +60,8 @@ roles over one another, and a derived mode whose parent derives from a
 root. -/
 def modeRegistry : Config.Registry :=
   (({} : Config.Registry).replaceBindings .compiled
-        #[{ keys := roleKeys Role.quit, command := "global-quit" },
-          { keys := roleKeys Role.nextItem, command := "global-next" }]).replaceModes
+        #[.ofKeys (roleKeys Role.quit) "global-quit",
+          .ofKeys (roleKeys Role.nextItem) "global-next"]).replaceModes
     .compiled
     #[filling "m1" [Role.nextItem, Role.previousItem], filling "m2" [Role.nextItem],
       filling "major" [Role.nextItem, Role.previousItem, Role.activate],

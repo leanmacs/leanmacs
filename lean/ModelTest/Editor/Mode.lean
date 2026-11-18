@@ -57,13 +57,27 @@ def modeRecordChecks : List Check :=
           (modeLookup listing (roleKeys Role.nextItem) == .bound (invoke "listing-next") &&
             modeLookup listing (roleKeys Role.previousItem) == .bound (invoke "listing-previous") &&
             modeLookup listing (roleKeys Role.quit) == .unbound) },
-    { name := "a mode's suffix is bound under the scheme's leader to the mode's command"
+    { name := "a mode's suffix is bound under the scheme's localleader to the mode's command"
       run :=
+        let localLeader := TestScheme.scheme.leaders.localLeader
         pure
-          (modeLookup listing (TestScheme.scheme.leader ++ keys "x") ==
-              .bound (invoke "listing-execute") &&
-            modeLookup listing TestScheme.scheme.leader == .pending &&
+          (modeLookup listing (localLeader ++ keys "x") == .bound (invoke "listing-execute") &&
+            modeLookup listing localLeader == .pending &&
             modeLookup listing (keys "x") == .unbound) },
+    { name :=
+        "a mode's suffix is bound under the localleader of the leaders it is given, and only there"
+      run :=
+        let leaders : Key.Leaders := { leader := keys "C-x", localLeader := keys "C-x m" }
+        let lookup (keys : List Key) : Lookup Invocation :=
+          Keymap.resolve (listing.keymaps TestScheme.scheme leaders) keys
+        pure
+          (lookup (keys "C-x m x") == .bound (invoke "listing-execute") &&
+            lookup (keys "C-x m") == .pending &&
+            lookup (TestScheme.scheme.leaders.localLeader ++ keys "x") == .unbound) },
+    { name := "a suffix written with <leader> is not keys, and is reported so"
+      run :=
+        let leading : Mode := { name := "leading", locals := [("<leader> x", "leading-x")] }
+        pure (leading.problems == [.unreadableSuffix "<leader> x"]) },
     { name := "a role the scheme has no key for binds nothing"
       run :=
         let marking : Mode := { name := "marking", roles := [(Role.mark, "marking-mark")] }

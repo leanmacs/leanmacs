@@ -72,6 +72,25 @@ text model with none; `none` if there is no such plain command. -/
 def registeredTexts (registry : Config.Registry) (name : String) : Option (Array String) :=
   (registry.find? name).bind (plainTexts ·.registration.action)
 
+/-- What `apartScheme` binds a mode's key that runs `name` to: the
+invocation of `name` with the argument `mode`. -/
+def apartMode (name : String) : Invocation :=
+  { command := name, arguments := [.str "mode"] }
+
+/-- What `apartScheme` binds a key that runs `name` only in `states` to:
+the invocation of `name` with the states' names as its arguments. -/
+def apartState (states : List String) (name : String) : Invocation :=
+  { command := name, arguments := states.map .str }
+
+/-- The test scheme, with its localleader on `C-l`, apart from its leader,
+and with a mode's key and a key bound for some states each bound to an
+invocation told apart from the command's (`apartMode`, `apartState`). -/
+def apartScheme : InputScheme :=
+  { TestScheme.scheme with
+    localLeader := [.key (controlKey "l")]
+    modeCommand := apartMode
+    stateCommand := apartState }
+
 /-- The checks of the registry (`Editor/Config/Registry.lean`). -/
 def registryChecks : List Check :=
   [{  name :=
@@ -250,6 +269,41 @@ def registryChecks : List Check :=
             boundTo registry "C-c u" == some (invoke "kept") &&
             boundTo (registry.replaceBindings .config #[]) "C-c t" == some (invoke "compiled") &&
             (registry.keymap TestScheme.scheme).continues (keys "C-c")) },
+    { name :=
+        "the registry's keymap expands a binding written with <leader> to the scheme's leader while the registry sets none, and to the leader the registry sets when it sets one"
+      run :=
+        let registry : Config.Registry :=
+          ({} : Config.Registry).replaceBindings .config #[binding "<leader> f f" "find"]
+        let led := { registry with leader := some (keys "C-x") }
+        pure
+          (boundTo registry "C-c f f" == some (invoke "find") &&
+            boundTo led "C-x f f" == some (invoke "find") &&
+            boundTo led "C-c f f" == none) },
+    { name :=
+        "a binding whose keys begin with the leader or the localleader in force, however written, is bound to what the scheme binds a mode's key to; one that begins with neither, to the command; one given states, to what the scheme binds a key for those states to, under a leader too"
+      run :=
+        let registry : Config.Registry :=
+          ({} : Config.Registry).replaceBindings .config
+            #[binding "<leader> a" "a", binding "<localleader> b" "b", binding "C-l c" "c",
+              binding "C-c d" "d", binding "C-x e" "e",
+              { binding "<leader> s" "s" with states := ["insert"] }]
+        let bound (text : String) : Option Invocation :=
+          (registry.keymap apartScheme).find? (keys text)
+        pure
+          (bound "C-c a" == some (apartMode "a") && bound "C-l b" == some (apartMode "b") &&
+            bound "C-l c" == some (apartMode "c") &&
+            bound "C-c d" == some (apartMode "d") &&
+            bound "C-x e" == some (invoke "e") &&
+            bound "C-c s" == some (apartState ["insert"] "s")) },
+    { name :=
+        "the menu bar's key equivalent of a command is never a binding written with a placeholder, whatever the leader is on"
+      run :=
+        let led (bindings : Array Config.KeyBinding) : Config.Registry :=
+          { ({} : Config.Registry).replaceBindings .config bindings with
+            leader := some (keys "s-o") }
+        pure
+          ((led #[binding "<leader>" "open"]).keyEquivalent? "open" == none &&
+            ((led #[binding "s-o" "open"]).keyEquivalent? "open").isSome) },
     { name :=
         "replacing an owner's modes leaves the others', and the latest mode of a name is the one found"
       run :=
@@ -646,6 +700,24 @@ def modeRegistryChecks : List Check :=
               lookup Role.refresh == .bound (filled "base" Role.refresh) &&
               lookup Role.toggle == .bound (filled "root" Role.toggle) &&
               lookup Role.quit == .bound (invoke "global-quit") },
+    { name :=
+        "the active keymaps bind a mode's suffix under the localleader the registry sets, over the leader it sets, and under the scheme's while it sets none"
+      run :=
+        let listing : Mode := { name := "listing", locals := [("x", "listing-run")] }
+        let registry := ({} : Config.Registry).replaceModes .config #[listing]
+        let led :=
+          { registry with
+            leader := some (keys "C-x"), localLeader := some [.leader, .key (charKey "m")] }
+        let lookup (registry : Config.Registry) (state : EditorState) (text : String) :
+          Lookup Invocation :=
+          Keymap.resolve (registry.activeMaps TestScheme.scheme state ⟨0⟩) (keys text)
+        pure <|
+          match onTextModel (withModes "listing" []) with
+          | none => false
+          | some state =>
+            lookup led state "C-x m x" == .bound (invoke "listing-run") &&
+              lookup led state "C-c x" == .unbound &&
+              lookup registry state "C-c x" == .bound (invoke "listing-run") },
     { name := "a mode name no mode is registered under contributes nothing"
       run :=
         pure <|

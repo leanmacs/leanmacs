@@ -928,6 +928,31 @@ def reloadChecks : List Check :=
             boundTo kept.registry "C-c t" == some (invoke "one") &&
             boundTo kept.registry "C-c o" == some (invoke "old")) },
     { name :=
+        "an accepted outcome that sets the leader expands config's <leader> bindings to it, and a later one that sets none expands them to the scheme's leader again"
+      run :=
+        let leading : SetupM Unit := do
+          leaderKey "C-x"
+          bindKey "<leader> f" "find"
+        let (loaded, _) := reduceFrom {} [.requested, .finished (accepted ["a"] leading)]
+        let (reloaded, _) :=
+          reduceFrom loaded [.requested, .finished (accepted ["a"] (bindKey "<leader> f" "find"))]
+        pure
+          (loaded.registry.leader == some (keys "C-x") &&
+            boundTo loaded.registry "C-x f" == some (invoke "find") &&
+            boundTo loaded.registry "C-c f" == none &&
+            reloaded.registry.leader == none &&
+            boundTo reloaded.registry "C-c f" == some (invoke "find") &&
+            boundTo reloaded.registry "C-x f" == none) },
+    { name :=
+        "an accepted outcome that sets the localleader puts it in the registry, and one that sets none clears it"
+      run :=
+        let (loaded, _) :=
+          reduceFrom {} [.requested, .finished (accepted ["a"] (localLeaderKey "<leader> m"))]
+        let (reloaded, _) := reduceFrom loaded [.requested, .finished (accepted ["a"] (pure ()))]
+        pure
+          (loaded.registry.localLeader == some [.leader, .key (charKey "m")] &&
+            reloaded.registry.localLeader == none) },
+    { name :=
         "an accepted outcome replaces the config's modes and leaves compiled ones; a rejected outcome keeps config's"
       run :=
         let compiled : Config.State Elaborated :=

@@ -61,6 +61,34 @@ owners that bind one sequence the later owner's binding is the keymap's, as
 nobody registered is kept, and the name is looked up when the keys are
 typed.
 
+**A binding's keys are held as written** (`Key.Stroke`), `<leader>` and
+`<localleader>` in place, and expanded when `keymap` makes the keymap,
+against the leaders in force (`Registry.leaders`): the leader and the
+localleader the installed config set (`leader`, `localLeader`, which an
+install sets, `none` when config set none), or the scheme's
+(`InputScheme.leaders`). The registry's leaders change only at an install,
+so this is the same as expanding at the install, which could not: an
+install knows no scheme, and compiled bindings are made before any config.
+So the order of a `setup`'s calls does not matter, and a reload with a new
+leader moves every binding written with it, and every mode's suffix
+(`modeKeymaps`, `activeMaps`).
+
+**What a binding is bound to** under the scheme:
+
+- with `states`, what the scheme binds a key that holds only in those of
+  its states to (`InputScheme.stateCommand`), under a leader or not;
+- otherwise, when its expanded keys begin with the leader or the
+  localleader in force, whichever is not empty, what the scheme binds a
+  mode's key to (`InputScheme.modeCommand`), which under the Vim scheme
+  does not hold where typing is text. The rule reads the expanded keys,
+  so a binding written out as `SPC x` under the `SPC` leader is one too;
+- otherwise, what it binds a key bound to a command name to
+  (`InputScheme.command`).
+
+`Registrations.problem?` compares bindings' keys as written, so
+`<leader> f` bound twice is bound twice, and so are the same keys bound
+once plain and once with `states`.
+
 **The menu bar shows a command's key from these bindings**
 (`keyEquivalent?`): of the sequences the bindings, as one keymap, bind to
 the command's name, the one bound last that is a single chord of one
@@ -72,9 +100,10 @@ command bound only to a longer sequence, a named key or a chord without
 the system key shows none. A chord one of the menu's system items already
 shows (`s-q` Quit, `s-h` Hide, `M-s-h` Hide Others) is skipped: AppKit
 matches the system item first, so the command would never run by it, and
-the command shows its next chord, or none. Mode-local bindings and an
-input scheme's own keys are not looked at: the menu bar is the
-application's.
+the command shows its next chord, or none. Mode-local bindings, an input
+scheme's own keys and a binding written with a placeholder are not looked
+at: the menu bar is the application's, and a sequence under the leader is
+never a key equivalent.
 
 ## Modes
 
@@ -89,8 +118,9 @@ is used in its place until a reload drops it.
   a mode already in it, so a cycle ends.
 - **The keymaps a mode contributes** for a scheme (`modeKeymaps`) are its
   lineage's, nearest first, each mode's tuned keymap then its roles and
-  suffixes (`Mode.keymaps`): a derived mode's own role wins, and a role it
-  does not fill falls to the nearest parent that fills it.
+  suffixes (`Mode.keymaps`), the suffixes under the localleader in force
+  (`leaders`): a derived mode's own role wins, and a role it does not fill
+  falls to the nearest parent that fills it.
 - **The active keymaps of a view** (`activeMaps`) are its buffer's minor
   modes', the one added last first, then its major mode's, then the global
   keymap (`keymap`). A name no mode is registered under contributes
@@ -366,12 +396,23 @@ structure JobEntry where
 
 /-- A key sequence bound to a command's name. -/
 structure KeyBinding where
-  /-- The keys, in order, as chords. -/
-  keys : List Key
+  /-- The keys, in order, as written: chords, and `<leader>` and
+  `<localleader>` in place, expanded when the registry makes its
+  keymap. -/
+  keys : List Key.Stroke
   /-- The name of the command the keys run, looked up when they are
   typed. -/
   command : String
+  /-- The names of the scheme's states the binding holds in; none for a
+  binding that holds as the leader rule says ("Key bindings", in the
+  module docs). -/
+  states : List String := []
   deriving DecidableEq, Repr
+
+/-- The binding of the keys `keys`, as chords, to the command called
+`command`, in every state: what compiled code binds. -/
+def KeyBinding.ofKeys (keys : List Key) (command : String) : KeyBinding :=
+  { keys := keys.map .key, command }
 
 /-- A binding entry of the registry: a key binding and its owner. -/
 structure BindingEntry where
@@ -525,6 +566,14 @@ it did not, which a host reads as `auto`. -/
   `Editor/Setup.lean`); `none` when it did not, which a mode's entry reads
   as its default. -/
   syntaxRefreshDelay : Option Nat := none
+  /-- The leader, as chords, as config set it (`leaderKey`,
+  `Editor/Setup.lean`); `none` when it did not, which reads as the
+  scheme's. -/
+  leader : Option (List Key) := none
+  /-- The localleader, as strokes over the leader, as config set it
+  (`localLeaderKey`, `Editor/Setup.lean`); `none` when it did not, which
+  reads as the scheme's. -/
+  localLeader : Option (List Key.Stroke) := none
   /-- The compile contribution entries ("Compile contributions", in the
   module docs). -/
   contributions : Array ContributionEntry := #[]
@@ -834,25 +883,44 @@ def replaceBindings (registry : Registry) (owner : Owner) (bindings : Array KeyB
       registry.bindings.filter (·.owner != owner) ++
         bindings.map fun binding => { owner, binding } }
 
-/-- The keymap of every owner's bindings for `scheme`: each key sequence
-bound to what the scheme says runs the command of its name. The entries are
-bound oldest first, so of two owners that bind one sequence the later
-owner's is the keymap's. -/
+/-- The leaders in force under `scheme`: the leader and the localleader the
+installed config set, each the scheme's where it set none, with the
+localleader's `<leader>` the leader in force. -/
+def leaders (registry : Registry) (scheme : InputScheme) : Key.Leaders :=
+  scheme.leaders registry.leader registry.localLeader
+
+/-- The keymap of every owner's bindings for `scheme`: each key sequence,
+expanded against the leaders in force, bound to what the scheme says runs
+the command of its name: in the binding's states when it names any, as a
+mode's key when the expanded keys begin with the leader or the localleader,
+and as a command otherwise ("Key bindings", in the module docs). The
+entries are bound oldest first, so of two owners that bind one sequence the
+later owner's is the keymap's. -/
 def keymap (registry : Registry) (scheme : InputScheme) : Keymap scheme.Binding :=
+  let leaders := registry.leaders scheme
+  let underLeader (keys : List Key) : Bool :=
+    [leaders.leader, leaders.localLeader].any fun leader =>
+      !leader.isEmpty && leader.isPrefixOf keys
   Keymap.ofList
     (registry.bindings.toList.map fun entry =>
-      (entry.binding.keys, scheme.command entry.binding.command))
+      let keys := Key.expand leaders entry.binding.keys
+      let command := entry.binding.command
+      let bound :=
+        if !entry.binding.states.isEmpty then scheme.stateCommand entry.binding.states command
+        else if underLeader keys then scheme.modeCommand command else scheme.command command
+      (keys, bound))
 
 /-- The key equivalent the menu bar shows for the command `command`: the
 last chord the bindings bind to it alone that is one character with the
 system key held and is none of `taken`, the keys the menu's system items
 already show ("Key bindings", in the module docs); `none` when no binding
-is such a chord. -/
+is such a chord. A binding written with a placeholder is not looked at. -/
 def keyEquivalent? (registry : Registry) (command : String) (taken : List KeyEquivalent := []) :
     Option KeyEquivalent :=
   let keymap : Keymap String :=
     Keymap.ofList
-      (registry.bindings.toList.map fun entry => (entry.binding.keys, entry.binding.command))
+      (registry.bindings.toList.filterMap fun entry =>
+        (Key.Stroke.keys? entry.binding.keys).map (·, entry.binding.command))
   (keymap.keysFor (· == command)).reverse.findSome? fun
     | [chord] =>
       match chord.logical, chord.modifiers.superKey with
@@ -921,10 +989,12 @@ where
 
 /-- The keymaps the mode called `name` contributes for `scheme`, in
 precedence order: for each mode of its lineage, nearest first, its keymaps
-(`Mode.keymaps`). None for a name no mode is registered under. -/
+(`Mode.keymaps`), its suffixes under the localleader in force
+(`leaders`). None for a name no mode is registered under. -/
 def modeKeymaps (registry : Registry) (scheme : InputScheme) (name : String) :
     List (Keymap scheme.Binding) :=
-  (registry.lineage name).flatMap (Mode.keymaps scheme)
+  let leaders := registry.leaders scheme
+  (registry.lineage name).flatMap fun mode => mode.keymaps scheme leaders
 
 /-- The active keymaps of `view` in `state` for `scheme`, in precedence
 order: the keymaps of each minor mode of the view's buffer, the one added
@@ -1010,8 +1080,15 @@ structure Registrations where
   stores : Array StoreDeclaration := #[]
   /-- The jobs, in the order they were registered. -/
   jobs : Array JobRegistration := #[]
-  /-- The key bindings, in the order they were made, their keys as chords. -/
+  /-- The key bindings, in the order they were made, their keys as written,
+  each key as a chord. -/
   bindings : Array KeyBinding := #[]
+  /-- The leaders `setup` set (`leaderKey`), in order: one at most, in a
+  `setup` that is not refused. -/
+  leaders : Array (List Key) := #[]
+  /-- The localleaders `setup` set (`localLeaderKey`), in order: one at
+  most, in a `setup` that is not refused. -/
+  localLeaders : Array (List Key.Stroke) := #[]
   /-- The modes, in the order they were defined. -/
   modes : Array Mode := #[]
   /-- The ex bindings, in the order they were made. -/
@@ -1130,6 +1207,23 @@ def syntaxRefreshDelay (collected : Registrations) : Option Nat :=
 def syntaxRefreshDelayTwice : String :=
   "the syntax refresh delay is set twice"
 
+/-- The leader a `setup` set, as chords, if it set one. -/
+def leader (collected : Registrations) : Option (List Key) :=
+  collected.leaders[0]?
+
+/-- What a `setup` that sets the leader twice is refused with. -/
+def leaderTwice : String :=
+  "the leader is set twice"
+
+/-- The localleader a `setup` set, as strokes over the leader, if it set
+one. -/
+def localLeader (collected : Registrations) : Option (List Key.Stroke) :=
+  collected.localLeaders[0]?
+
+/-- What a `setup` that sets the localleader twice is refused with. -/
+def localLeaderTwice : String :=
+  "the localleader is set twice"
+
 /-- The handler of the setup port that collects: its answer to each request,
 and what has been registered after it. -/
 def collect : (request : SetupRequest) → Registrations → request.Reply × Registrations
@@ -1143,10 +1237,16 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((),
       { collected with commands := collected.commands.push { name, action := .store store step } })
   | .job name work, collected => ((), { collected with jobs := collected.jobs.push { name, work } })
-  | .bind keys command, collected =>
-    ((),
-      { collected with
-        bindings := collected.bindings.push { keys := keys.map Key.chord, command } })
+  | .bind keys command states, collected =>
+    let keys :=
+      keys.map fun
+        | .key pressed => .key pressed.chord
+        | placeholder => placeholder
+    ((), { collected with bindings := collected.bindings.push { keys, command, states } })
+  | .leader keys, collected =>
+    ((), { collected with leaders := collected.leaders.push (keys.map Key.chord) })
+  | .localLeader keys, collected =>
+    ((), { collected with localLeaders := collected.localLeaders.push keys })
   | .mode mode, collected => ((), { collected with modes := collected.modes.push mode })
   | .ex binding, collected => ((), { collected with ex := collected.ex.push binding })
   | .face name attributes, collected =>
@@ -1272,7 +1372,7 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
 twice, a command name or a job name registered twice, a face set twice, a
 theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
-twice, the layout chosen twice, the tab bar chosen twice, the title bar chosen twice, a key sequence bound twice, a binding of
+twice, the layout chosen twice, the tab bar chosen twice, the title bar chosen twice, the leader set twice (`leaderTwice`), the localleader set twice (`localLeaderTwice`), a key sequence bound twice (compared as written, so the same keys bound once plain and once with states are bound twice), a binding of
 no keys, an ex name bound twice, the process environment set twice,
 auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a compile contribution registered twice or naming a command twice, project commands given twice for one project and mode or naming a command twice, a command over a store that is not declared, a mode name defined twice, a
 mode with a problem under any scheme (`Mode.problems`), of which the first
@@ -1343,11 +1443,15 @@ def problem? (collected : Registrations) : Option String := do
   for entry in collected.projectCommands do
     if let some name := repeated? (entry.commands.map (·.name)) then
       return projectCommandTwice entry.mode entry.project name
+  if collected.leaders.size > 1 then
+    return leaderTwice
+  if collected.localLeaders.size > 1 then
+    return localLeaderTwice
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command
   if let some keys := repeated? (collected.bindings.map (·.keys)) then
-    return s!"the keys `{Key.notations keys}` are bound twice"
+    return s!"the keys `{Key.strokeNotations keys}` are bound twice"
   if let some name := repeated? (collected.ex.map (·.name)) then
     return s!"the ex name `{name}` is bound twice"
   for registration in collected.commands do

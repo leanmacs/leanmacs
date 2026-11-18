@@ -42,10 +42,12 @@ the pending keys the scheme reports. Nothing here knows what a binding is.
   under a scheme whose binding type it does not know.
 - `everyRoleHasKey`: every registered role (`Role.registered`) has a key
   sequence, not empty, in the scheme's role table.
-- `leaderAndRolesApart`: the leader is not empty, no two roles are on one
-  key sequence, and no role's keys begin with the leader or are a prefix of
-  it. A role key that collided with a leader suffix would make one of them
-  unreachable, and no check of one mode can see it.
+- `leaderAndRolesApart`: the leader and the localleader in force by default
+  (`InputScheme.leaders`) are not empty, no two roles are on one key
+  sequence, and no role's keys begin with the leader or the localleader or
+  are a prefix of either. A role key that collided with a suffix under
+  either would make one of them unreachable, and no check of one mode can
+  see it.
 - `modeCommandRuns`: as `namedCommandRuns`, for `scheme.modeCommand`, what
   a key a mode binds (a role, a suffix) is bound to.
 - `unaskedAnswerYieldsNothing`: an answer to a scheme that asks nothing
@@ -201,19 +203,22 @@ def everyRoleHasKey : Property :=
         | some keys => !keys.isEmpty
         | none => false }
 
-/-- The leader is not empty, no two rows of the role table are on one key
-sequence, and no role's keys begin with the leader or are a prefix of it. A
-role key that collided with a leader suffix would make one of them
+/-- The leader and the localleader in force by default are not empty, no
+two rows of the role table are on one key sequence, and no role's keys
+begin with the leader or the localleader or are a prefix of either. A role
+key that collided with a suffix under either would make one of them
 unreachable. -/
 def leaderAndRolesApart : Property :=
   { name :=
-      "the scheme has a leader, no two roles are on one key sequence, and no role's keys begin with the leader or begin it"
+      "the scheme has a leader and a localleader, no two roles are on one key sequence, and no role's keys begin with the leader or the localleader or begin either"
     holds := fun subject =>
-      let leader := subject.scheme.leader.map Key.chord
+      let leaders := subject.scheme.leaders
+      let prefixes := [leaders.leader.map Key.chord, leaders.localLeader.map Key.chord]
       let sequences :=
         (subject.scheme.roles.map fun (_, keys) => keys.map Key.chord).filter (!·.isEmpty)
-      !leader.isEmpty && sequences.eraseDups.length == sequences.length &&
-        sequences.all fun keys => !leader.isPrefixOf keys && !keys.isPrefixOf leader }
+      prefixes.all (!·.isEmpty) && sequences.eraseDups.length == sequences.length &&
+        sequences.all fun keys =>
+          prefixes.all fun leader => !leader.isPrefixOf keys && !keys.isPrefixOf leader }
 
 /-- With the unbound key bound to `scheme.modeCommand` of a name in a keymap
 put before the subject's, that key, typed from the initial state, yields an

@@ -111,6 +111,11 @@ show:
   not run; a `q` that is refused leaves the script running; and a wait on
   a host whose loop a command ended answers `ended`. They are apart from
   `scriptChecks`, which are defined before what these hosts are handed;
+- `leaderChecks`: the leader through a host of the Vim scheme that ships:
+  a config's `<leader> f f` binding runs on `SPC f f` while config sets no
+  leader, on `\ f f` once a reload sets the leader to `\` (and `SPC f f`
+  then does not run it), and `SPC` typed in insert state is a space while
+  `SPC f f` after `<Escape>` runs the binding;
 - `indentChecks`: `=` and the indented new lines through a host of the Vim
   scheme that ships, over the library's Rust grammar: `gg=G` on the
   mangled Rust indent fixture (`tests/syntax/rust/indent.rs`, read from the
@@ -2311,7 +2316,7 @@ def spinCommand : Config.Registration :=
 /-- The binding of the keys the key string `text` names to the command
 `command`. -/
 def bound (text command : String) : Config.KeyBinding :=
-  { keys := keysOf text, command }
+  .ofKeys (keysOf text) command
 
 /-- What compiled code hands the hosts of the dispatch checks: `stamp`, which
 inserts `!` at the cursor, on `C-c s`; `boom` on `C-c b`; and `spin` on
@@ -2617,7 +2622,7 @@ makes a text holding `compiled`, bound to the keys of `next-item`, and the
 scratch buffer in the major mode `listing`, which only config defines. -/
 def listingCompiled : Compiled :=
   { commands := #[making "global" "compiled"]
-    bindings := #[{ keys := nextItemKeys, command := "global" }]
+    bindings := #[.ofKeys nextItemKeys "global"]
     major := some "listing" }
 
 /-- What compiled code hands the host of the compiled mode's check: `global`
@@ -6556,6 +6561,61 @@ def filePromptChecks (context : Context) : List Check :=
               open_ fallback &&
               !(← session.output.get).any (·.startsWith "loop: refused") }]
 
+/-- A chunk whose `setup` registers `leader-find`, which says `leader find`
+in the echo area, and `other`, which says `other`, binds `<leader> f f` to
+`leader-find`, and, given `leader`, sets the leader to the key string
+`leader`. -/
+def leaderChunk (leader : Option String := none) : String :=
+  "def setup : SetupM Unit := do
+  command \"leader-find\" (message \"leader find\")
+  command \"other\" (message \"other\")
+  bindKey \"<leader> f f\" \"leader-find\"
+" ++
+    (leader.map fun keys => s!"  leaderKey {keys.quote}\n").getD ""
+
+/-- The checks of the leader through a host of the Vim scheme that ships
+(`withVimHost`), with the real elaborator and the recorder: a config's
+binding written with `<leader>` is reached under the scheme's leader, `SPC`,
+under the leader config sets once it is reloaded, and is kept out of
+insert state, where `SPC` types a space (`Editor/Setup.lean`, the leader;
+`docs/design/keymaps-and-modes.md`, "Extending from config"). How the
+placeholders expand and where a binding holds is pinned by `ModelTest`'s
+checks of the notation, the registry and the Vim scheme. -/
+def leaderChecks (context : Context) : List Check :=
+  [{  name :=
+        "under the Vim scheme with no leader set by config, a config binding of <leader> f f runs its command on SPC f f in normal state"
+      run :=
+        withVimHost context [("10-leader.lean", leaderChunk)] fun session => do
+          session.ask [.reload]
+          session.typed "SPC f f"
+          return (← session.echo) == "leader find".quote },
+    { name :=
+        "a config that sets the leader to \\ reaches its <leader> f f binding on \\ f f after a reload, and SPC f f no longer runs it"
+      run :=
+        withVimHost context [("10-leader.lean", leaderChunk)] fun session => do
+          session.ask [.reload]
+          session.write "10-leader.lean" (leaderChunk (some "\\"))
+          session.ask [.reload]
+          session.typed "\\ f f"
+          let moved ← session.echo
+          session.ask [.run "other"]
+          session.typed "SPC f f"
+          let spaced ← session.echo
+          return moved == "leader find".quote && spaced != "leader find".quote },
+    { name :=
+        "SPC typed in insert state inserts a space in a config that binds keys under <leader>, and SPC f f after <Escape> still runs the binding"
+      run :=
+        withVimHost context [("10-leader.lean", leaderChunk)] fun session => do
+          session.ask [.reload]
+          session.typed "i a SPC b <Escape>"
+          let line := lastViewLine (← session.sceneLines)
+          let before ← session.echo
+          session.typed "SPC f f"
+          let after ← session.echo
+          return (line.splitOn s!"{"a b".quote}, scroll").length == 2 &&
+              before != "leader find".quote &&
+              after == "leader find".quote }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
@@ -6584,7 +6644,8 @@ def checks (context : Context) : List Check :=
     reloadChecks context ++
     autoReloadChecks context ++
     gutterChecks context ++
-    exScriptChecks context
+    exScriptChecks context ++
+    leaderChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

@@ -274,7 +274,7 @@ def clipboardCommandChecks : List Check :=
           let greet : Dispatched := fun _ => do
             message "hello"
             return none
-          let rebound := clipHanded #[{ keys := keys "s-c", command := "greet" }] [("greet", greet)]
+          let rebound := clipHanded #[.ofKeys (keys "s-c") "greet"] [("greet", greet)]
           let overridden :=
             (clipDriver "foo |bar baz" { held := some "before" } rebound).map fun driver =>
               let after := evilFed driver "v l l s-c"

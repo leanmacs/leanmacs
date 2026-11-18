@@ -60,8 +60,7 @@ def quitChord : Key :=
 /-- The frame's default key bindings, as a host registers them for the
 owner `compiled`. -/
 def bindings : Array Config.KeyBinding :=
-  #[{ keys := [fullscreenChord], command := toggleFullscreenName },
-    { keys := [minimiseChord], command := minimiseName },
-    { keys := [quitChord], command := Ex.quitName }]
+  #[.ofKeys [fullscreenChord] toggleFullscreenName, .ofKeys [minimiseChord] minimiseName,
+    .ofKeys [quitChord] Ex.quitName]
 
 end Editor.FrameCommands

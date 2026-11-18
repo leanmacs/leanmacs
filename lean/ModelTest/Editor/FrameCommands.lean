@@ -76,13 +76,12 @@ def frameCommandChecks : List Check :=
     { name :=
         "the compiled bindings are C-s-f to toggle-fullscreen, s-m to minimise-window and s-q to quit, and config's binding of C-s-f is the one that runs while config binds it"
       run :=
-        let rebound :=
-          frameRegistry #[{ keys := keys "C-s-f", command := FrameCommands.minimiseName }]
+        let rebound := frameRegistry #[.ofKeys (keys "C-s-f") FrameCommands.minimiseName]
         pure
           (FrameCommands.bindings ==
-              #[{ keys := keys "C-s-f", command := FrameCommands.toggleFullscreenName },
-                { keys := keys "s-m", command := FrameCommands.minimiseName },
-                { keys := keys "s-q", command := Ex.quitName }] &&
+              #[.ofKeys (keys "C-s-f") FrameCommands.toggleFullscreenName,
+                .ofKeys (keys "s-m") FrameCommands.minimiseName,
+                .ofKeys (keys "s-q") Ex.quitName] &&
             FrameCommands.toggleFullscreenName == "toggle-fullscreen" &&
             FrameCommands.minimiseName == "minimise-window" &&
             FrameCommands.commands.map (·.name) == #["toggle-fullscreen", "minimise-window"] &&

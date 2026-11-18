@@ -43,12 +43,38 @@ def typedInto (view : ViewId) (typed : List Key) : TestScheme.State × List (Opt
 def fed (view : ViewId) (text : String) : TestScheme.State × List (Option Invocation) :=
   typedInto view (keys text)
 
+/-- What the test scheme binds a key that holds only in the state `insert`
+to, to run `x`, at its own type. -/
+def schemeStateBinding : Invocation :=
+  TestScheme.scheme.stateCommand ["insert"] "x"
+
+/-- What the test scheme binds a key bound to the command name `x` to, at
+its own type. -/
+def schemeCommandBinding : Invocation :=
+  TestScheme.scheme.command "x"
+
 /-- The checks of input schemes (`Editor/InputScheme.lean`) on the test
 scheme (`Editor/InputScheme/Test.lean`): what the keys of a bound sequence
 yield, what an unbound key does, which keymap wins, the pending keys, and
 the test scheme's self-insert. -/
 def schemeChecks : List Check :=
-  [{  name := "every key string the scheme fixtures are written with names keys"
+  [{  name :=
+        "the leaders in force are the scheme's leader and its localleader expanded over it, or the leader given in its place, with the localleader over that, or both given"
+      run :=
+        let scheme : InputScheme :=
+          { TestScheme.scheme with localLeader := [.leader, .key (charKey "m")] }
+        let backslash := [charKey "\\"]
+        pure
+          (scheme.leaders == { leader := keys "C-c", localLeader := keys "C-c m" } &&
+            scheme.leaders (some backslash) ==
+              { leader := backslash, localLeader := backslash ++ [charKey "m"] } &&
+            scheme.leaders (some backslash) (some [.key (charKey "z")]) ==
+              { leader := backslash, localLeader := [charKey "z"] } &&
+            TestScheme.scheme.leaders == { leader := keys "C-c", localLeader := keys "C-c" }) },
+    { name :=
+        "a scheme that holds no binding to states of its own binds a key given states as it binds one to the command name"
+      run := pure (schemeStateBinding == schemeCommandBinding) },
+    { name := "every key string the scheme fixtures are written with names keys"
       run := pure (schemeKeyStrings.all fun text => !(keys text).isEmpty) },
     { name :=
         "the keys of a bound sequence stepped through the test scheme: the last yields the bound invocation and each earlier key yields none"

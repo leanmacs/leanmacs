@@ -119,7 +119,7 @@ def keyShown (menu : Menu) (command : String) : Option (Option KeyEquivalent) :=
 
 /-- The registry of nothing but the binding of `text` to `open-file`. -/
 def openBoundTo (text : String) : Config.Registry :=
-  ({} : Config.Registry).replaceBindings .compiled #[{ keys := keys text, command := "open-file" }]
+  ({} : Config.Registry).replaceBindings .compiled #[.ofKeys (keys text) "open-file"]
 
 /-- The checks of the menu bar (`Editor/Menu.lean`, `Editor/Menu/Compiled.lean`):
 a command item chosen runs its command as an invocation, and the key
@@ -230,8 +230,7 @@ def menuChecks : List Check :=
                 .item "Select All" (equivalent 'a') (.command "select-all")]) },
     { name := "after config binds toggle-fullscreen to M-s-f, Enter Full Screen shows M-s-f"
       run :=
-        let rebound :=
-          frameRegistry #[{ keys := keys "M-s-f", command := FrameCommands.toggleFullscreenName }]
+        let rebound := frameRegistry #[.ofKeys (keys "M-s-f") FrameCommands.toggleFullscreenName]
         let shown := equivalent 'f' { alt := true, superKey := true }
         pure
           (rebound.keyEquivalent? "toggle-fullscreen" == shown &&
@@ -239,7 +238,7 @@ def menuChecks : List Check :=
     { name :=
         "an item whose command has no single chord with the system key shows none: s-o rebound by config to another command, only C-x C-f, only C-o"
       run :=
-        let taken := frameRegistry #[{ keys := keys "s-o", command := "save-buffer" }]
+        let taken := frameRegistry #[.ofKeys (keys "s-o") "save-buffer"]
         let registries := [taken, openBoundTo "C-x C-f", openBoundTo "C-o"]
         pure <|
           registries.all fun registry =>
@@ -249,9 +248,8 @@ def menuChecks : List Check :=
         "a chord a system item shows is no command item's, as AppKit runs the system item: config's s-q, s-h or M-s-h alone to save-buffer shows none on Save, and beside the compiled s-s Save shows s-s"
       run :=
         let bound := fun text =>
-          ({} : Config.Registry).replaceBindings .config
-            #[{ keys := keys text, command := Files.saveName }]
-        let beside := frameRegistry #[{ keys := keys "s-q", command := Files.saveName }]
+          ({} : Config.Registry).replaceBindings .config #[.ofKeys (keys text) Files.saveName]
+        let beside := frameRegistry #[.ofKeys (keys "s-q") Files.saveName]
         pure
           (["s-q", "s-h", "M-s-h"].all
               (fun text =>

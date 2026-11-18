@@ -11,8 +11,8 @@ local commands under suffixes, and what runs when it becomes a buffer's
 major mode (`Mode`; `docs/design/keymaps-and-modes.md`, "Modes"). It names
 no key of a top-level binding and no scheme's binding type, so it works
 under any scheme: each scheme says once where the roles and the suffixes go
-(`InputScheme.roles`, `InputScheme.leader`), and the mode's keymaps for a
-scheme are made from that (`Mode.keymaps`).
+(`InputScheme.roles`, `InputScheme.localLeader`), and the mode's keymaps
+for a scheme are made from that (`Mode.keymaps`).
 
 ## The record
 
@@ -62,11 +62,17 @@ scheme are made from that (`Mode.keymaps`).
 `Mode.keymaps scheme mode` is two keymaps, in precedence order: the
 scheme's hand-tuned keys for the mode (`InputScheme.tuned`, filtered on the
 mode's name), then the mode's roles and suffixes, each role at the scheme's
-key for it (`InputScheme.roleKey`) and each suffix under the scheme's
-leader, bound to what the scheme says a mode's key is bound to
+key for it (`InputScheme.roleKey`) and each suffix under the localleader,
+bound to what the scheme says a mode's key is bound to
 (`InputScheme.modeCommand`). A role the scheme's table lacks, and an
 unreadable suffix, bind nothing. So a tuned key wins over a role on the
 same keys.
+
+The localleader is the one in force: the leaders it is given, which the
+registry resolves from config's and the scheme's
+(`Config.Registry.leaders`), and by default the scheme's own
+(`InputScheme.leaders`). A suffix is keys typed after it, so a suffix
+written with `<leader>` is not keys and is reported (`unreadableSuffix`).
 
 ## What a mode cannot mean
 
@@ -132,7 +138,7 @@ structure Mode where
   role's key runs. -/
   roles : List (Role × String) := []
   /-- Its local commands: each suffix, as a key string typed after the
-  scheme's leader, and the name of the command it runs. -/
+  localleader, and the name of the command it runs. -/
   locals : List (String × String) := []
   /-- How its text is parsed and drawn, if it says: none for a mode of
   plain text, or one that takes its parent's (`Mode.syntaxTreeOf`). -/
@@ -183,14 +189,17 @@ def tunedFor (scheme : InputScheme) (name : String) : List (List Key × scheme.B
 
 /-- The keymaps of `mode` for `scheme`, in precedence order: the scheme's
 hand-tuned keys for the mode, then the mode's roles, each at the scheme's
-key for it, and its suffixes, each under the scheme's leader, bound to
-`scheme.modeCommand` of the command's name. -/
-def keymaps (scheme : InputScheme) (mode : Mode) : List (Keymap scheme.Binding) :=
+key for it, and its suffixes, each under the localleader of `leaders`, the
+scheme's own by default, bound to `scheme.modeCommand` of the command's
+name. -/
+def keymaps (scheme : InputScheme) (mode : Mode) (leaders : Key.Leaders := scheme.leaders) :
+    List (Keymap scheme.Binding) :=
   let roles :=
     mode.roles.filterMap fun (role, command) =>
       (scheme.roleKey role).map fun keys => (keys, scheme.modeCommand command)
   let suffixes :=
-    mode.suffixes.map fun (keys, command) => (scheme.leader ++ keys, scheme.modeCommand command)
+    mode.suffixes.map fun (keys, command) =>
+      (leaders.localLeader ++ keys, scheme.modeCommand command)
   [Keymap.ofList (tunedFor scheme mode.name), Keymap.ofList (roles ++ suffixes)]
 
 /-- What a mode cannot mean. -/

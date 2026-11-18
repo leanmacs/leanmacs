@@ -109,15 +109,17 @@ strings. -/
 def vimSequences : List String :=
   ["g g", "w", "d w", "d d", "d 2 w", "2 d 3 w", "\" + y w"]
 
-/-- The role table and leader the Vim checks give the scheme, written here
-so that no check names a default: each registered role on a key of its own,
-and the leader on `SPC`. -/
+/-- The role table, leader and localleader the Vim checks give the scheme,
+written here so that no check names a default: each registered role on a
+key of its own, the leader on `SPC`, and the localleader on the leader and
+then `m`. -/
 def vimModeKeys : Vim.ModeKeys :=
   { roles :=
       Role.registered.zip
         ([["n"], ["N"], ["RET"], ["Q"], ["z", "r"], ["TAB"], ["M"]].map fun strokes =>
           keys (" ".intercalate strokes))
-    leader := keys "SPC" }
+    leader := keys "SPC"
+    localLeader := [.leader, .key (charKey "m")] }
 
 /-- The default Vim scheme's grammar folded from its initial state through
 the keys the key string `text` names, keys for view 0 with no active

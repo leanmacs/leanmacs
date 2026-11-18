@@ -324,25 +324,37 @@ the text store, and the scheme holds only which Vim state the view is in.
 
 ## Mode keys
 
-The scheme is given a role table, a leader and hand-tuned keys beside its
-states (`ModeKeys`), and reports them to the core (`InputScheme.roles`,
-`InputScheme.leader`, `InputScheme.tuned`, each tuned binding wrapped in
-`Bound.mode`), with every state's keymaps as its own
-(`InputScheme.defaults`). The grammar reads neither: a mode's keys reach it as
-active keymaps. The tables that ship are data in
-`Editor/InputScheme/Vim/Default.lean`.
+The scheme is given a role table, a leader, a localleader and hand-tuned
+keys beside its states (`ModeKeys`), and reports them to the core
+(`InputScheme.roles`, `InputScheme.leader`, `InputScheme.localLeader`,
+`InputScheme.tuned`, each tuned binding wrapped in `Bound.mode`), with every
+state's keymaps as its own (`InputScheme.defaults`). The grammar reads
+none of them: a mode's keys reach it as active keymaps. The tables that ship
+are data in `Editor/InputScheme/Vim/Default.lean`.
 
 A key a mode binds is bound to `Bound.mode` of what it runs
-(`InputScheme.modeCommand`: `.mode (.command { name })`). The grammar
+(`InputScheme.modeCommand`: `.mode (.command { name })`), and so is a
+binding of config's under the leader or the localleader, which the registry
+binds with `modeCommand` (`Editor/Config/Registry.lean`). The grammar
 reaches a `.mode` binding as the binding it wraps, so a mode's motion is a
 move like any other.
 
-**A mode's keys hold only where typing is not text.** For a view whose Vim
-state inserts text (`StateRecord.insertsText`, the field that already says
-a digit is not a count), `parse` leaves the `.mode` bindings out of the
-active keymaps (`Keymap.filter`), so a key a mode binds is typed text there.
-A binding of the active keymaps that is no mode's, such as one from
-config's `bindKey`, holds in every state.
+A key bound to hold only in some Vim states is bound to `Bound.within` of
+those states' names and what it runs (`InputScheme.stateCommand`:
+`.within states (.command { name })`, config's `bindKey … (states := …)`).
+The grammar reaches it as the binding it wraps too.
+
+**Where a binding of the active keymaps holds** is one predicate,
+`Bound.holdsIn`, of the record of the view's Vim state, and `parse` leaves
+the bindings that do not hold out of the active keymaps (`Keymap.filter`),
+so the keys are walked on to the state's own keymaps:
+
+- `.mode` holds only where typing is not text (`StateRecord.insertsText`,
+  the field that already says a digit is not a count), so a key a mode
+  binds, or one under the leader, is typed text where it is.
+- `.within names` holds only in a state whose name is one of `names`.
+- Every other binding, such as one from config's `bindKey` with no
+  `states` and not under a leader, holds in every state.
 
 ## Where an addition goes
 
@@ -355,6 +367,7 @@ config's `bindKey`, holds in every state.
 | A command name that runs as another edit in a state | An entry of that state's run table (`StateRecord.runs`) |
 | A new fact about a Vim state that the loop, the scene or a command reads | A field of `StateRecord`, and how `State.report` reads it into the report |
 | A new part of speech | A variant of `Bound`, and its case in `State.reached` |
+| A new fact about where a binding holds | A variant of `Bound` that wraps the binding, its case in `State.reached`, and its case in `Bound.holdsIn` |
 | Something the scheme remembers between keys | A field of `State`, with what a reset does to it (`State.reset`) |
 | A new default key or default Vim state | A row of a table in `Editor/InputScheme/Vim/Default.lean`; nothing here |
 
@@ -443,15 +456,14 @@ inductive Bound where
   | register
   /-- The repeat key: it yields the last change, to replay. -/
   | repeat
-  /-- A binding a mode contributes: the grammar reaches it as `bound`, and
-  it does not hold where typing is text. -/
+  /-- A binding a mode contributes, or one of config's under the leader or
+  the localleader: the grammar reaches it as `bound`, and it does not hold
+  where typing is text. -/
   | mode (bound : Bound)
+  /-- A binding that holds only in the Vim states of these names: the
+  grammar reaches it as `bound`. -/
+  | within (states : List String) (bound : Bound)
   deriving DecidableEq, Repr
-
-/-- Whether the binding is one a mode contributes. -/
-def Bound.isMode : Bound → Bool
-  | .mode _ => true
-  | _ => false
 
 /-- What an operator acts on. -/
 inductive Over where
@@ -586,6 +598,15 @@ structure StateRecord where
   completed as the edit beside it ("Vim states", in the module docs). -/
   runs : List (String × Edit) := []
   deriving Repr
+
+/-- Whether the binding holds in a view whose Vim state has the record
+`record` ("Mode keys", in the module docs): a `.mode` binding only where
+typing is not text, a `.within` binding only in a state it names, and any
+other binding everywhere. -/
+def Bound.holdsIn (record : StateRecord) : Bound → Bool
+  | .mode _ => !record.insertsText
+  | .within states _ => states.contains record.name
+  | _ => true
 
 /-- An edit that waits for the answer to a prompt ("Motions that ask", in
 the module docs): the motion that takes the answer as its argument, and
@@ -968,6 +989,7 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
       ({ next with lastChange := some change }, parsed)
     | _, _ => (state.reset, .nothing)
   | .mode bound => State.reached states view state typed bound
+  | .within _ bound => State.reached states view state typed bound
 
 /-- One key of the grammar, a key for `view`: the state it leaves, and what
 it parsed to (the rules in the module docs). A digit of a count is taken
@@ -1008,8 +1030,7 @@ def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : View
             typed, digits := some (state.digits.getD 0 * 10 + digit) },
           .nothing)
       | none =>
-        let active :=
-          if record.insertsText then (maps view).map (·.filter (!·.isMode)) else maps view
+        let active := (maps view).map (·.filter (·.holdsIn record))
         let own :=
           if state.operator.isSome && !record.pending.isEmpty then record.pending
           else record.keymaps
@@ -1076,23 +1097,27 @@ def State.invoked (states : States) (view : ViewId) (state : State) (invocation 
   | [], some edit => ((state.complete states view edit).1, edit.compile)
   | _, _ => (state, invocation)
 
-/-- What the Vim scheme says of modes' keys: its role table and its leader,
-each as chords. The grammar reads none of it. -/
+/-- What the Vim scheme says of modes' keys: its role table, its leader and
+localleader, each as chords or strokes. The grammar reads none of it. -/
 structure ModeKeys where
   /-- The keys each role is on. -/
   roles : List (Role × List Key) := []
-  /-- The prefix a mode's suffixes are bound under. -/
+  /-- The prefix of config's bindings written `<leader>`. -/
   leader : List Key := []
+  /-- The prefix a mode's suffixes are bound under, and config's bindings
+  written `<localleader>`, written over the leader. -/
+  localLeader : List Key.Stroke := []
   /-- The hand-tuned keys: a mode's name, a key sequence and what it is
   bound to. -/
   tuned : List (String × List Key × Bound) := []
 
-/-- The Vim scheme over the registry `states`, with the role table, leader
-and hand-tuned keys `modes`. Its bindings are parts of speech, and it
-reports every key of the edit begun as pending. A key bound to a command
-name is bound to the command of that name, which changes no text and enters
-no state: the grammar cannot look either up. A key a mode binds, and a
-hand-tuned key, is marked as a mode's (`Bound.mode`). Its own keymaps are
+/-- The Vim scheme over the registry `states`, with the role table, leader,
+localleader and hand-tuned keys `modes`. Its bindings are parts of speech,
+and it reports every key of the edit begun as pending. A key bound to a
+command name is bound to the command of that name, which changes no text
+and enters no state: the grammar cannot look either up. A key a mode binds,
+and a hand-tuned key, is marked as a mode's (`Bound.mode`), and a key bound
+for some states holds only in those (`Bound.within`). Its own keymaps are
 every state's. A view that is closed has its Vim state forgotten, and a
 view that is opened as the minibuffer's is put in the state the registry
 names for it. A text it is told was committed in a view is typed text
@@ -1107,7 +1132,9 @@ def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
     command := fun name => .command { name }
     roles := modes.roles
     leader := modes.leader
+    localLeader := modes.localLeader
     modeCommand := fun name => .mode (.command { name })
+    stateCommand := fun states name => .within states (.command { name })
     defaults :=
       states.initial.keymaps ++ states.initial.pending ++
         states.others.flatMap fun record => record.keymaps ++ record.pending

@@ -97,6 +97,45 @@ command and is not counted as one. It is called `bindKey` and not `bind`,
 which would shadow the monad's inside `namespace Editor` and for config,
 which opens it.
 
+A key string may be written with `<leader>` and `<localleader>`
+(`Editor/Key/Notation.lean`, "The placeholders"), and config may set the
+keys they stand for with `leaderKey` and `localLeaderKey`:
+
+```lean
+def setup : SetupM Unit := do
+  command "find" (message "find")
+  bindKey "<leader> f f" "find"
+  leaderKey "\\"
+  localLeaderKey "<leader> m"
+```
+
+- **The placeholders are expanded against the leaders in force** when the
+  registry makes its keymaps (`Editor/Config/Registry.lean`): config's, or
+  the input scheme's while config sets none (the Vim scheme's are `SPC` and
+  `<leader> m`). So the order of the calls in `setup` does not matter, and a
+  reload that sets another leader moves every binding written with it, and
+  every mode's suffix, which is under the localleader. Changing the leader
+  without a reload is not supported.
+- **A binding under the leader or the localleader holds only where typing
+  is not text**, as a mode's keys do: under the Vim scheme, `SPC` is still
+  a space in insert state. The rule looks at the keys the binding expands
+  to, so `SPC x` written out under the `SPC` leader is kept out too.
+- **`bindKey … (states := [.insert])` says which of the scheme's states a
+  binding holds in** (`SchemeState`; the Vim scheme's are `.normal`,
+  `.insert`, `.visual`, `.visualLine` and `.minibuffer`). Given states, the
+  binding holds there and nowhere else, under a leader or not. With none,
+  the default, it holds in every state unless the rule above keeps it out.
+  The same keys bound once plain and once with states are bound twice.
+- A key that reaches the leader from insert state, as general.el's
+  `:non-normal-prefix` does, is not built.
+
+`leaderKey` refuses a key string that is not keys, one that names no keys
+(`leaderNoKeys`) and one written with a placeholder
+(`leaderWrittenWithLeader`). `localLeaderKey` refuses a key string that is
+not keys, one that names no keys (`localLeaderNoKeys`) and one written with
+`<localleader>` (`localLeaderWrittenWithItself`); `<leader>` is allowed in
+it. Each may be called once in a `setup`: a second call is refused.
+
 An ex name is bound to a command's name (`exCommand`): a line of the ex
 command line whose first word is the name runs that command
 (`docs/design/keymaps-and-modes.md`, "The ex command line"). By default the
@@ -135,7 +174,8 @@ with that message, and the config that was loaded before stays.
 The editor refuses a `setup` too, the same way, when what it registered
 cannot be meant: a command name or a job name registered twice (the first
 could never run), a key sequence bound twice (the first binding could never
-run), an ex name bound twice, a store name declared twice, a theme defined
+run; compared as written, so `<leader> f` twice is), the leader or the
+localleader set twice, an ex name bound twice, a store name declared twice, a theme defined
 twice or named twice, a segment defined twice, the mode line listed twice,
 a completion source defined twice, a completion style defined twice, the
 style of one category or the default style chosen twice, a completion
@@ -439,9 +479,15 @@ inductive SetupRequest where
   started with, a job that finishes with the command that takes its result
   to the editor (`Editor/Job.lean`). -/
   | job (name : String) (work : List Argument → Work)
-  /-- Bind the key sequence `keys` to the command called `command`. The
-  name is looked up when the keys are typed. -/
-  | bind (keys : List Key) (command : String)
+  /-- Bind the key sequence `keys`, as written, placeholders in place, to
+  the command called `command`, holding in the scheme's states named in
+  `states`, or as the leader rule says when it names none. The name is
+  looked up when the keys are typed. -/
+  | bind (keys : List Key.Stroke) (command : String) (states : List String)
+  /-- Set the leader to `keys`, as chords. -/
+  | leader (keys : List Key)
+  /-- Set the localleader to `keys`, as strokes over the leader. -/
+  | localLeader (keys : List Key.Stroke)
   /-- Define the mode `mode`. -/
   | mode (mode : Mode)
   /-- Bind an ex name to a command's name (`Ex.Binding`,
@@ -533,6 +579,8 @@ def SetupRequest.Reply : SetupRequest → Type
   | .storeCommand .. => Unit
   | .job .. => Unit
   | .bind .. => Unit
+  | .leader _ => Unit
+  | .localLeader _ => Unit
   | .mode _ => Unit
   | .ex _ => Unit
   | .face .. => Unit
@@ -633,20 +681,83 @@ refused with. -/
 def boundToNoKeys (command : String) : String :=
   s!"the command `{command}` is bound to no keys"
 
-/-- Binds the key sequence the key string `keys` names (`Key.parse`:
-`"C-x C-s"`) to the command called `command`. The name is looked up when
-the keys are typed, so the command need not be one this `setup` registers.
+/-- Binds the key sequence the key string `keys` names (`Key.parseStrokes`:
+`"C-x C-s"`, `"<leader> f f"`) to the command called `command`. The name is
+looked up when the keys are typed, so the command need not be one this
+`setup` registers. `<leader>` and `<localleader>` are expanded against the
+leaders in force when the registry makes its keymaps. With `states`, the
+binding holds only in the scheme's states named there; with none, it holds
+everywhere, except that one under the leader or the localleader does not
+hold where typing is text.
 
 Refuses the `setup` for a key string that is not keys, with the key
 parser's reason, which names the stroke, and for one that names no keys. -/
-def bindKey (keys : String) (command : String) : SetupM Unit := do
-  match Key.parse keys with
+def bindKey (keys : String) (command : String) (states : List SchemeState := []) : SetupM Unit := do
+  match Key.parseStrokes keys with
   | .error reason =>
     throw reason
   | .ok [] =>
     throw (boundToNoKeys command)
-  | .ok chords =>
-    ExceptT.lift (Program.request (port := setupPort) (.bind chords command))
+  | .ok strokes =>
+    ExceptT.lift (Program.request (port := setupPort) (.bind strokes command (states.map (·.name))))
+
+/-- The message a leader of no keys is refused with. -/
+def leaderNoKeys : String :=
+  "the leader is set to no keys"
+
+/-- The message a leader written with a placeholder is refused with. -/
+def leaderWrittenWithLeader : String :=
+  "the leader is written with `<leader>` or `<localleader>`: write the keys it is on"
+
+/-- The message a localleader of no keys is refused with. -/
+def localLeaderNoKeys : String :=
+  "the localleader is set to no keys"
+
+/-- The message a localleader written with `<localleader>` is refused
+with. -/
+def localLeaderWrittenWithItself : String :=
+  "the localleader is written with `<localleader>`: write the keys it is on, with `<leader>` for the leader's"
+
+/-- Sets the leader, the keys `<leader>` stands for in a key binding, to the
+keys the key string `keys` names, in place of the input scheme's (`SPC`
+under the Vim scheme). A reload moves every binding written with
+`<leader>`, and the localleader when it is written with it.
+
+Refuses the `setup` for a key string that is not keys, with the key
+parser's reason, for one that names no keys, and for one written with
+`<leader>` or `<localleader>`. A second call in one `setup` is refused. -/
+def leaderKey (keys : String) : SetupM Unit := do
+  match Key.parseStrokes keys with
+  | .error reason =>
+    throw reason
+  | .ok strokes =>
+    match Key.Stroke.keys? strokes with
+    | none =>
+      throw leaderWrittenWithLeader
+    | some [] =>
+      throw leaderNoKeys
+    | some chords =>
+      ExceptT.lift (Program.request (port := setupPort) (.leader chords))
+
+/-- Sets the localleader, the keys `<localleader>` stands for in a key
+binding and the prefix of every mode's suffixes, to the key string `keys`,
+which may begin with `<leader>`, in place of the input scheme's
+(`<leader> m` under the Vim scheme).
+
+Refuses the `setup` for a key string that is not keys, with the key
+parser's reason, for one that names no keys, and for one written with
+`<localleader>`. A second call in one `setup` is refused. -/
+def localLeaderKey (keys : String) : SetupM Unit := do
+  match Key.parseStrokes keys with
+  | .error reason =>
+    throw reason
+  | .ok strokes =>
+    if strokes.contains .localLeader then
+      throw localLeaderWrittenWithItself
+    else if strokes.isEmpty then
+      throw localLeaderNoKeys
+    else
+      ExceptT.lift (Program.request (port := setupPort) (.localLeader strokes))
 
 /-- The message a binding of the ex name `name` to the command called
 `command` is refused with when the ex line cannot read the name back as

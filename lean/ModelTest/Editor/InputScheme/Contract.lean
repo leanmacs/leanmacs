@@ -41,7 +41,8 @@ def eager : InputScheme :=
     pending := id
     command := fun name => { command := name }
     roles := TestScheme.roles
-    leader := TestScheme.leader }
+    leader := TestScheme.leader
+    localLeader := TestScheme.localLeader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that an unbound key leaves the pending keys as they were. -/
@@ -56,7 +57,8 @@ def sticky : InputScheme :=
     pending := (·.pending)
     command := fun name => { command := name }
     roles := TestScheme.roles
-    leader := TestScheme.leader }
+    leader := TestScheme.leader
+    localLeader := TestScheme.localLeader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that it reports no pending keys. -/
@@ -68,7 +70,8 @@ def silent : InputScheme :=
     pending := fun _ => []
     command := fun name => { command := name }
     roles := TestScheme.roles
-    leader := TestScheme.leader }
+    leader := TestScheme.leader
+    localLeader := TestScheme.localLeader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that an unbound key after a prefix hides the prefix and does not drop
@@ -89,7 +92,8 @@ def masking : InputScheme :=
     pending := fun state => if state.2 then [] else state.1.pending
     command := fun name => { command := name }
     roles := TestScheme.roles
-    leader := TestScheme.leader }
+    leader := TestScheme.leader
+    localLeader := TestScheme.localLeader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that an unbound key after a prefix yields an invocation. -/
@@ -106,7 +110,8 @@ def noisy : InputScheme :=
     pending := (·.pending)
     command := fun name => { command := name }
     roles := TestScheme.roles
-    leader := TestScheme.leader }
+    leader := TestScheme.leader
+    localLeader := TestScheme.localLeader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that after a key that yields an invocation it reports the keys of the
@@ -123,7 +128,8 @@ def lingering : InputScheme :=
     pending := (·.2)
     command := fun name => { command := name }
     roles := TestScheme.roles
-    leader := TestScheme.leader }
+    leader := TestScheme.leader
+    localLeader := TestScheme.localLeader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that what it says runs a named command runs a command of another
@@ -159,7 +165,8 @@ def mute : InputScheme :=
     pending := (·.pending)
     command := fun name => { command := name }
     roles := TestScheme.roles
-    leader := TestScheme.leader }
+    leader := TestScheme.leader
+    localLeader := TestScheme.localLeader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that it reports a view as in an insert session while keys are
@@ -184,6 +191,7 @@ def startled : InputScheme :=
     command := fun name => { command := name }
     roles := TestScheme.roles
     leader := TestScheme.leader
+    localLeader := TestScheme.localLeader
     report := fun state _ => { session := state.2 } }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
@@ -209,6 +217,7 @@ def menuStartled : InputScheme :=
     command := fun name => { command := name }
     roles := TestScheme.roles
     leader := TestScheme.leader
+    localLeader := TestScheme.localLeader
     report := fun state _ => { session := state.2 }
     invoked := fun _ state invocation => ((state.1, true), invocation) }
 
@@ -342,6 +351,30 @@ def schemeContractChecks : List Check :=
                   roles, leader }
                 schemeMaps)
               [SchemeContract.leaderAndRolesApart]) },
+    { name :=
+        "the scheme contract reports a scheme with no localleader, and one with a role on keys that begin with the localleader or begin it, for the leader's property alone"
+      run :=
+        let localLeader : List Key.Stroke := [.key (controlKey "l")]
+        let localKeys := [controlKey "l"]
+        let quit := (TestScheme.scheme.roleKey Role.quit).getD []
+        let underLocal :=
+          TestScheme.roles.map fun (role, keys) =>
+            if role == Role.quit then (role, localKeys ++ keys) else (role, keys)
+        let beginsLocal :=
+          TestScheme.roles.map fun (role, keys) =>
+            if role == Role.quit then (role, localKeys) else (role, keys)
+        let tables : List (List (Role × List Key) × List Key.Stroke) :=
+          [(TestScheme.roles, []), (underLocal, localLeader),
+            (beginsLocal, [.key (controlKey "l"), .key (charKey "x")])]
+        pure
+          (!quit.isEmpty &&
+            tables.all fun (roles, localLeader) =>
+              failsOnly
+                (subjectOf
+                  { TestScheme.scheme with
+                    roles, localLeader }
+                  schemeMaps)
+                [SchemeContract.leaderAndRolesApart]) },
     { name :=
         "the scheme contract reports a scheme whose report of a view changes while keys are pending, for that property alone"
       run :=

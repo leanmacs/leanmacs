@@ -122,11 +122,22 @@ puts a view in it when it is told the view is the minibuffer's
 - **The interrupt key is not bound there**, as it is not in Vim's command
   line.
 
-## The role table and the leader
+## The role table, the leader and the localleader
 
 `roles` puts each registered role (`Editor/Role.lean`) on evil-collection's
-usual key for list buffers, and `leader` is `\`, Vim's own default
-`maplocalleader`, which begins no binding of any default state:
+usual key for list buffers. `leader` is `SPC`, Doom's leader, which begins
+no binding of any default state, and `localLeader` is `<leader> m`, Doom's
+localleader, so a mode's suffixes are under `SPC m` while config sets no
+leader, and under the leader config sets followed by `m` when it sets one.
+Under them are config's bindings written `<leader>` and `<localleader>`,
+and a mode's suffixes; none of them holds where typing is text, so `SPC`
+is a space in insert state (`Editor/InputScheme/Vim.lean`, "Mode keys").
+The role `mark` is on `m`, apart from both, since neither begins with it.
+
+`SchemeState.normal`, `insert`, `visual`, `visualLine` and `minibuffer`
+are the names of the five states, as config names one for a binding that
+holds only there (`bindKey … (states := [.insert])`). The records of
+`states` take their names from them, so the two cannot drift.
 
 | Role | Key |
 |---|---|
@@ -158,6 +169,32 @@ the grammar and restate no table, and the scheme contract is run on
 what the clipboard commands do in each state
 (`ModelTest.clipboardCommandChecks`).
 -/
+
+namespace Editor
+
+/-- Normal state, the initial one, as config names it for a binding. -/
+def SchemeState.normal : SchemeState :=
+  ⟨"normal"⟩
+
+/-- Insert state, where typing is text, as config names it for a
+binding. -/
+def SchemeState.insert : SchemeState :=
+  ⟨"insert"⟩
+
+/-- Visual state, as config names it for a binding. -/
+def SchemeState.visual : SchemeState :=
+  ⟨"visual"⟩
+
+/-- Visual line state, as config names it for a binding. -/
+def SchemeState.visualLine : SchemeState :=
+  ⟨"visual-line"⟩
+
+/-- The state of the minibuffer's view, as config names it for a
+binding. -/
+def SchemeState.minibuffer : SchemeState :=
+  ⟨"minibuffer"⟩
+
+end Editor
 
 namespace Editor.Vim.Default
 
@@ -373,30 +410,30 @@ def keymap (table : List (String × Bound)) : Keymap Bound :=
 /-- The default registry of Vim states (the table in the module docs). -/
 def states : States :=
   { initial :=
-      { name := "normal"
+      { name := SchemeState.normal.name
         keymaps :=
           [normalCommands, windowCommands, tabCommands, scrollCommands, operators, motions].map
             keymap
         pending := [objects, scrollCommands, operators, motions].map keymap
         runs := normalRuns }
     others :=
-      [{  name := "insert"
+      [{  name := SchemeState.insert.name
           keymaps := [keymap insertCommands]
           cursor := .bar
           insertsText := true
           shape := .exclusive
           runs := insertRuns },
-        { name := "visual"
+        { name := SchemeState.visual.name
           keymaps := [visualCommands, scrollCommands, operators, motions, objects].map keymap
           operatesOnSelection := true
           runs := visualRuns },
-        { name := "visual-line"
+        { name := SchemeState.visualLine.name
           keymaps := [visualLineCommands, scrollCommands, operators, motions, objects].map keymap
           operatesOnSelection := true
           shape := .line
           objectEnters := some "visual"
           runs := visualRuns },
-        { name := "minibuffer"
+        { name := SchemeState.minibuffer.name
           keymaps := [keymap minibufferCommands]
           cursor := .bar
           insertsText := true
@@ -408,18 +445,24 @@ def roles : List (Role × String) :=
   [(Role.nextItem, "j"), (Role.previousItem, "k"), (Role.activate, "RET"), (Role.quit, "q"),
     (Role.refresh, "g r"), (Role.toggle, "TAB"), (Role.mark, "m")]
 
-/-- The leader, as a key string: `\`. -/
+/-- The leader, as a key string: `SPC`, Doom's. -/
 def leader : String :=
-  "\\"
+  "SPC"
+
+/-- The localleader, as a key string over the leader: `<leader> m`,
+Doom's. -/
+def localLeader : String :=
+  "<leader> m"
 
 /-- The hand-tuned keys: a mode's name, a key string and what it is bound
 to. None: no mode ships. -/
 def tuned : List (String × String × Bound) :=
   []
 
-/-- The role table, the leader and the hand-tuned keys as the scheme takes
-them, as chords. A string `Key.parse` refuses puts its role on no key, and
-binds no tuned key. -/
+/-- The role table, the leader, the localleader and the hand-tuned keys as
+the scheme takes them, as chords, and the localleader as strokes
+(`Key.parseStrokes`). A string `Key.parse` refuses puts its role on no key,
+and binds no tuned key. -/
 def modeKeys : ModeKeys :=
   { roles :=
       roles.filterMap fun (role, text) =>
@@ -427,6 +470,7 @@ def modeKeys : ModeKeys :=
         | .ok keys => some (role, keys)
         | .error _ => none
     leader := (Key.parse leader).toOption.getD []
+    localLeader := (Key.parseStrokes localLeader).toOption.getD []
     tuned :=
       tuned.filterMap fun (mode, text, bound) =>
         match Key.parse text with
@@ -434,7 +478,7 @@ def modeKeys : ModeKeys :=
         | .error _ => none }
 
 /-- The Vim scheme that ships: the grammar over the default states, with the
-default role table and leader. -/
+default role table, leader and localleader. -/
 def scheme : InputScheme :=
   Vim.scheme states modeKeys
 

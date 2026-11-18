@@ -102,10 +102,10 @@ def registration (name text : String) : Config.Registration :=
 def other : Config.Owner :=
   { name := "other" }
 
-/-- The binding of the keys the key string `text` names to the command
-`command`. -/
+/-- The binding of the key string `text`, as it is written, placeholders
+in place, to the command `command`. -/
 def binding (text command : String) : Config.KeyBinding :=
-  { keys := keys text, command }
+  { keys := strokes text, command }
 
 /-- What the keys the key string `text` names are bound to in the keymap
 `registry` makes for the test scheme, whose binding is an invocation. -/

@@ -1216,6 +1216,38 @@ def vimStateChecks : List Check :=
           ((vimFed "z" maps).2 == [some (vimRun "mode-thing")] &&
             (vimFedFrom inserting "z Z" maps).2 ==
               [some (Vim.selfInsert "z"), some (vimRun "global-thing")]) },
+    { name :=
+        "a key bound to hold only in insert state is unbound in normal state, where it yields nothing and leaves nothing pending, and in insert state it runs its command and is not typed text"
+      run :=
+        let scheme := Vim.scheme vimStates
+        let maps (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [Keymap.ofList [(keys "z", scheme.stateCommand ["insert"] "insert-only")]]
+        let (normal, yielded) := vimFed "z" maps
+        let (inserting, _) := vimFed "i"
+        pure
+          (yielded == [none] && scheme.pending normal == [] &&
+            (vimFedFrom inserting "z" maps).2 == [some (vimRun "insert-only")]) },
+    { name :=
+        "a motion bound to hold only in normal and visual state moves in both, is an operator's target in normal state, and is typed text in insert state"
+      run :=
+        let maps (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("z", .within ["normal", "visual"] (.motion "zed"))]]
+        let (inserting, _) := vimFed "i"
+        pure
+          ((vimFed "z" maps).2 == [some (vimMove "zed")] &&
+            (vimFed "d z" maps).2 == [none, some (vimOperate "delete" "motion" "zed")] &&
+            ((vimFed "v z" maps).2.getLast?).join == some (vimMove "zed") &&
+            (vimFedFrom inserting "z" maps).2 == [some (Vim.selfInsert "z")]) },
+    { name :=
+        "a key bound to hold only in states it does not name is unbound there, so the state's own binding of those keys is reached"
+      run :=
+        let scheme := Vim.scheme vimStates
+        let maps (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [Keymap.ofList [(keys "w", scheme.stateCommand ["insert"] "insert-w")]]
+        let (inserting, _) := vimFed "i"
+        pure
+          ((vimFed "w" maps).2 == [some (vimMove "word")] &&
+            (vimFedFrom inserting "w" maps).2 == [some (vimRun "insert-w")]) },
     { name := "a mode's binding that wraps a motion moves, and is an operator's target"
       run :=
         let maps (_ : ViewId) : List (Keymap Vim.Bound) :=

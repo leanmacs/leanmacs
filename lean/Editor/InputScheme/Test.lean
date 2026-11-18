@@ -27,11 +27,15 @@ Its rules:
   logical key is a character and none of control, alt and super is held.
 - **A key bound to a command name is bound to its invocation with no
   arguments** (`scheme.command`).
-- **Its role table and leader** (`roles`, `leader`) put every registered
-  role on a key that prints nothing, so none is ever a self-insert, and the
-  leader on `C-c`, Emacs's prefix for a mode's keys. A mode's tests read
-  them through the scheme (`InputScheme.roleKey`, `InputScheme.leader`)
-  and name none of these keys.
+- **Its role table, leader and localleader** (`roles`, `leader`,
+  `localLeader`) put every registered role on a key that prints nothing, so
+  none is ever a self-insert, the leader on `C-c`, Emacs's prefix for a
+  mode's keys, and the localleader on the leader itself (`<leader>`), so a
+  mode's suffixes are under `C-c`. A mode's tests read them through the
+  scheme (`InputScheme.roleKey`, `InputScheme.leaders`) and name none of
+  these keys.
+- **A key bound for some states is bound as one to the command name**
+  (`stateCommand`, the default): the scheme has no states of its own.
 
 ## Where an addition goes
 
@@ -90,11 +94,17 @@ def roles : List (Role × List Key) :=
 def leader : List Key :=
   parsed "C-c"
 
+/-- The test scheme's localleader: the leader itself, so a mode's suffixes
+are under `C-c`. -/
+def localLeader : List Key.Stroke :=
+  [.leader]
+
 /-- The test scheme. -/
 def scheme : InputScheme :=
   { State, Binding, init := {}, step, pending := (·.pending)
     command := fun name => { command := name }
     roles
-    leader }
+    leader
+    localLeader }
 
 end Editor.TestScheme

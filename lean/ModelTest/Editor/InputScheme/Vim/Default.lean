@@ -43,12 +43,46 @@ def vimDefaultCommands (texts : List String) : Bool :=
   let names := (texts.filterMap vimDefaultCommand).map (·.name)
   names.length == texts.length && names.eraseDups.length == texts.length
 
+/-- A mode with one suffix, `x`, for the leader checks. -/
+def vimListing : Mode :=
+  { name := "listing", locals := [("x", "listing-run")] }
+
+/-- The active keymaps of a view whose buffer has `vimListing`, under the
+Vim scheme that ships: the mode's keymaps for it. -/
+def vimListingMaps (_ : ViewId) : List (Keymap Vim.Bound) :=
+  vimListing.keymaps Vim.Default.scheme
+
 /-- The checks of the Vim scheme's default states and bindings
 (`Editor/InputScheme/Vim/Default.lean`). They observe the defaults through
 the grammar, by what the default keys parse to, and restate no table: a
 check names a key, and no vocabulary or command name. -/
 def vimDefaultChecks : List Check :=
   [{  name :=
+        "under the Vim scheme that ships, a mode's suffix is reached at SPC m and the suffix in normal state, SPC m alone is pending, and in insert state SPC m and the suffix are typed text"
+      run :=
+        let parsed := vimParsed "SPC m x" vimListingMaps (states := Vim.Default.states)
+        let begun := vimParsed "SPC m" vimListingMaps (states := Vim.Default.states)
+        let inserted :=
+          vimParsedFrom (vimDefault "i").1 "SPC m x" vimListingMaps (states := Vim.Default.states)
+        pure
+          (parsed.2 == [.nothing, .nothing, .edit (.run { name := "listing-run" } none none)] &&
+            begun.1.typed == keys "SPC m" &&
+            inserted.2 == [.text " ", .text "m", .text "x"]) },
+    { name :=
+        "the Vim scheme that ships has its leader on SPC and its localleader on SPC m, and a config's leader moves the localleader with it"
+      run :=
+        pure
+          (Vim.Default.scheme.leader == keys "SPC" &&
+            Vim.Default.scheme.leaders == { leader := keys "SPC", localLeader := keys "SPC m" } &&
+            Vim.Default.scheme.leaders (some (keys "\\")) ==
+              { leader := keys "\\", localLeader := keys "\\ m" }) },
+    { name := "each state config can name for a binding is a state of the Vim scheme that ships"
+      run :=
+        let records := Vim.Default.states.initial :: Vim.Default.states.others
+        pure <|
+          [SchemeState.normal, .insert, .visual, .visualLine, .minibuffer].all fun state =>
+            records.any (·.name == state.name) },
+    { name :=
         "after an operator's key, i or a and the key after it are a text object, the operator's target: i alone still runs the command that enters insert, d i <Escape> and d i x reset and leave nothing pending, the counts of 2 d 3 i w multiply, a register named before the operator is kept, and d z t still yields nothing and leaves nothing pending"
       run :=
         let objectOver (text : String) : Option (String × Option Nat × Option String) :=

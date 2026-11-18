@@ -28,11 +28,87 @@ def refusesKey (text token : String) : Bool :=
   | .ok _ => false
   | .error reason => (reason.splitOn token).length > 1
 
+/-- The leaders the leader checks expand against: `SPC`, and `SPC m`. -/
+def spaceLeaders : Key.Leaders :=
+  { leader := [charKey " "], localLeader := [charKey " ", charKey "m"] }
+
+/-- Whether `text` is read as exactly the strokes `strokes`. -/
+def parsesStrokes (text : String) (strokes : List Key.Stroke) : Bool :=
+  match Key.parseStrokes text with
+  | .ok read => read == strokes
+  | .error _ => false
+
+/-- Whether `text` is refused as strokes, with a reason that names
+`token`. -/
+def refusesStrokes (text token : String) : Bool :=
+  match Key.parseStrokes text with
+  | .ok _ => false
+  | .error reason => (reason.splitOn token).length > 1
+
+/-- Whether `text`, read against `leaders`, names exactly `keys`. -/
+def parsesUnder (leaders : Key.Leaders) (text : String) (keys : List Key) : Bool :=
+  match Key.parse text (some leaders) with
+  | .ok named => named == keys
+  | .error _ => false
+
 /-- The checks of key strings (`Editor/Key/Notation.lean`): the keys a
 string names, the strings that are refused, and that a chord's notation
 names it. -/
 def keyNotationChecks : List Check :=
-  [{  name := "a key string names its strokes in order, each with the modifiers written before it"
+  [{  name :=
+        "a key string is read as strokes: <leader> and <localleader> are the placeholders, in place, and every other stroke is its key"
+      run :=
+        pure
+          (parsesStrokes "<leader> f <localleader> x"
+              [.leader, .key (charKey "f"), .localLeader, .key (charKey "x")] &&
+            parsesStrokes "C-x <Escape>" [.key (controlKey "x"), .key (namedKey .escape)] &&
+            parsesStrokes "" []) },
+    { name :=
+        "the placeholders are lowercase and exact: <Leader> and <LocalLeader> are named keys of those names"
+      run :=
+        pure
+          (parsesStrokes "<Leader>" [.key (namedKey ⟨"Leader"⟩)] &&
+            parsesStrokes "<LocalLeader>" [.key (namedKey ⟨"LocalLeader"⟩)]) },
+    { name :=
+        "a modifier prefix on a placeholder is refused, naming the stroke, and a stroke that is not a key is refused as Key.parse refuses it"
+      run :=
+        pure
+          (refusesStrokes "C-<leader>" "C-<leader>" &&
+            refusesStrokes "x M-<localleader>" "M-<localleader>" &&
+            refusesStrokes "C-x nope" "nope") },
+    { name :=
+        "a key string with placeholders, read against leaders, names the leaders' keys in their place, and the other keys as chords"
+      run :=
+        pure
+          (parsesUnder spaceLeaders "<leader> f f" [charKey " ", charKey "f", charKey "f"] &&
+            parsesUnder spaceLeaders "<localleader> x" [charKey " ", charKey "m", charKey "x"] &&
+            parsesUnder { leader := [controlKey "c"] } "C-x <leader>"
+              [controlKey "x", controlKey "c"]) },
+    { name :=
+        "a key string with a placeholder read with no leaders is refused, with a message that names the placeholder and says only a key binding expands it"
+      run :=
+        pure
+          (refusesKey "<leader> f" "<leader>" && refusesKey "<leader> f" "bindKey" &&
+            refusesKey "x <localleader>" "<localleader>" &&
+            parses "<Leader>" [namedKey ⟨"Leader"⟩]) },
+    { name :=
+        "strokes are written back as key strings, the placeholders as <leader> and <localleader>, and a sequence with no placeholder gives its keys"
+      run :=
+        let strokes : List Key.Stroke := [.leader, .key (controlKey "x"), .localLeader]
+        pure
+          (Key.strokeNotations strokes == "<leader> C-x <localleader>" &&
+            Key.strokeNotations [] == "" &&
+            Key.Stroke.keys? strokes == none &&
+            Key.Stroke.keys? [.key (controlKey "x"), .key (charKey "s")] ==
+              some [controlKey "x", charKey "s"]) },
+    { name :=
+        "expanding strokes puts the leaders' keys in place of the placeholders, and an empty leader expands to nothing"
+      run :=
+        pure
+          (Key.expand spaceLeaders [.localLeader, .key (charKey "x"), .leader] ==
+              [charKey " ", charKey "m", charKey "x", charKey " "] &&
+            Key.expand {} [.leader, .key (charKey "x")] == [charKey "x"]) },
+    { name := "a key string names its strokes in order, each with the modifiers written before it"
       run := pure (parses "C-x C-s" [controlKey "x", controlKey "s"]) },
     { name :=
         "a stroke of one character is that character, whatever it is: a capital, the minus sign, an angle bracket"

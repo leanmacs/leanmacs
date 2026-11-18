@@ -28,7 +28,10 @@ the model tests run it with outcomes built by hand
   `Registry.replaceLanguages`, `Registry.replaceContributions`,
   `Registry.replaceSources`, `Registry.replaceStyles`, never an append),
   sets config's choices of completion style (`Registry.styleChoices`),
-  sets the registry's process
+  sets the registry's leader and localleader to the ones the config set,
+  `none` for the scheme's when it set none (`Registry.leader`,
+  `Registry.localLeader`), so its bindings written with `<leader>` and
+  every mode's suffixes move from the next key, sets the registry's process
   environment to the one the config set, `none` when it set none
   (`Registry.environment`), and meets the config's stores with the cells
   there are (`Cells.install`). A rejected outcome changes none of them: the config that
@@ -409,6 +412,8 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
             generation := state.registry.generation + 1
             displayRules
             shellTimeLimit := built.registrations.shellTimeLimit
+            leader := built.registrations.leader
+            localLeader := built.registrations.localLeader
             syntaxRefreshDelay := built.registrations.syntaxRefreshDelay
             projectCommands := built.registrations.projectCommands },
         cells }

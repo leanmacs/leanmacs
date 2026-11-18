@@ -542,9 +542,12 @@ service.
 The config session's decisions are tested here too, with no elaborator:
 
 - `setupChecks`: what a `setup` registers, commands, stores, jobs, key
-  bindings, modes, ex bindings and faces, and when it is refused;
+  bindings, the leader and the localleader, modes, ex bindings and faces,
+  and when it is refused;
 - `registryChecks`: the registry, its commands, its jobs, its key
-  bindings, its modes, its ex bindings and its faces, replaced by owner;
+  bindings, its modes, its ex bindings and its faces, replaced by owner,
+  and the keymap it makes, its bindings expanded against the leaders in
+  force and bound by where they hold;
 - `storeChecks`: the rule that meets a new config's stores with the cells
   there are, one check for each case;
 - `sessionChecks`: one reload (`Config.build`), on a fake elaborator that
@@ -568,8 +571,9 @@ need no model and no fake of a collaborator:
   chord a binding names a key by, and the walk through a list of keymaps
   in precedence order;
 - `keyNotationChecks`: key strings (`Editor/Key/Notation.lean`): the keys
-  a string names, the strings that are refused, and that the notation of a
-  chord names it back;
+  a string names, the strokes it is written as with `<leader>` and
+  `<localleader>` and their expansion against leaders, the strings that are
+  refused, and that the notation of a chord names it back;
 - `invocationChecks`: an invocation (`Editor/Invocation.lean`): two are
   compared by their command names and their arguments;
 - `exLineChecks`: an ex line (`Editor/Ex/Line.lean`): the name and the
@@ -579,7 +583,7 @@ need no model and no fake of a collaborator:
   test scheme (`Editor/InputScheme/Test.lean`), with keymaps written as key
   strings: what the keys of a bound sequence yield, that an unbound key
   resets the scheme, which of two keymaps wins, the pending keys it
-  reports, and its self-insert;
+  reports, its self-insert, and the leaders in force;
 - `schemeContractChecks`: the scheme contract
   (`Editor/InputScheme/Contract.lean`) holds of the test scheme, and
   reports schemes written here that each break one property of it, `eager`
@@ -696,7 +700,7 @@ names a scheme's key:
 
 - `modeRecordChecks`: the registered roles (`Editor/Role.lean`), and the
   keymaps a mode makes for a scheme (`Editor/Mode.lean`): its roles at the
-  scheme's keys for them, its suffixes under the leader, and the scheme's
+  scheme's keys for them, its suffixes under the localleader, and the scheme's
   hand-tuned keys for it ahead of both; and what `Mode.check` reports;
 - `modeRegistryChecks`: modes in the registry
   (`Editor/Config/Registry.lean`): a mode's lineage, and the active keymaps
