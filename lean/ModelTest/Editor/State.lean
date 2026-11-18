@@ -1874,7 +1874,8 @@ def stateChecks : List Check :=
               match onTextModel (EditorState.initial ⟨640, 480⟩) with
               | none => false
               | some state =>
-                state.registers.isEmpty && ["", "\"", "a", "+"].all (state.register? · == none) },
+                state.remembered.registers.isEmpty &&
+                  ["", "\"", "a", "+"].all (state.register? · == none) },
         { name :=
             "a register set under a name is read back under that name with its text and whether it is line-wise, and under no other; a second one set under the name replaces it, and a register under another name stays; nothing else of the state changes"
           run :=
@@ -1894,8 +1895,8 @@ def stateChecks : List Check :=
                   both.register? "b" == some line &&
                   again.register? "a" == some line &&
                   again.register? "b" == some line &&
-                  again.registers.size == 2 &&
-                  { again with registers := #[] } == state &&
+                  again.remembered.registers.size == 2 &&
+                  { again with remembered.registers := #[] } == state &&
                   (state.setRegister "" word).register? "" == some word },
         { name :=
             "a new state's scroll margin is no rows; a margin set is the state's, a second one set replaces it, and nothing else of the state changes"

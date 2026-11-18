@@ -483,7 +483,16 @@ crossing a shorter line (`Window.wanted`, a `Window.Wanted`;
 - It is a field of the state, so a command that does not run to its end
   leaves it as it was.
 
-## Registers
+## What commands remember
+
+What the editor keeps from one command to the next, for Vim's commands to
+put back or repeat, is one field of the state (`EditorState.remembered`,
+an `EditorState.Remembered`): the registers, the last character find and
+the last search. Each part is set by one operation and read by one, is
+never refused, and is rolled back with a command that does not run to its
+end, since it is a field of the state.
+
+### Registers
 
 A register is a text a command set aside, to put back later
 (`Register`; `docs/design/keymaps-and-modes.md`, "Registers").
@@ -492,12 +501,12 @@ A register is a text a command set aside, to put back later
   what puts it back reads the flag to choose between the cursor and the
   line. The state does not check that a line-wise text ends in a line
   break: that is the rule of whoever sets it.
-- **Registers are kept by name** (`EditorState.registers`), for the whole
-  editor and not for a buffer or a view. `register?` reads one, and
-  `setRegister` sets one in place of the register the name had. A name is
-  any string: which names mean something, the unnamed register among
-  them, is the rule of the commands that set and read them, so one more
-  register is one more name and nothing here changes.
+- **Registers are kept by name** (`EditorState.Remembered.registers`),
+  for the whole editor and not for a buffer or a view. `register?` reads
+  one, and `setRegister` sets one in place of the register the name had.
+  A name is any string: which names mean something, the unnamed register
+  among them, is the rule of the commands that set and read them, so one
+  more register is one more name and nothing here changes.
 - **The state starts with none.** A name nothing was set under reads as
   no register, which is another thing than a register whose text is
   empty.
@@ -505,23 +514,24 @@ A register is a text a command set aside, to put back later
   end leaves them as they were.** The clipboard is not here: it is
   outside the editor, behind a port of its own.
 
-## The last search
+### The last search
 
-The last search (`Search`, `EditorState.lastSearch`) is what `n` and `N`
-repeat and what an empty pattern reuses: the pattern as it was typed, and
-whether it went forward. It is kept for the whole editor, as Vim keeps it,
-and set and kept as the last find is (below): `setLastSearch` sets it, a
-motion hands it back as data (`Vocabulary.To.search`), the command that ran
-the motion keeps it, and a command that does not run to its end leaves it
-as it was. The loop reads it too, for the matches it draws.
+The last search (`Search`, `EditorState.Remembered.lastSearch`, read by
+`EditorState.lastSearch`) is what `n` and `N` repeat and what an empty
+pattern reuses: the pattern as it was typed, and whether it went forward.
+It is kept for the whole editor, as Vim keeps it, and set and kept as the
+last find is (below): `setLastSearch` sets it, a motion hands it back as
+data (`Vocabulary.To.search`), the command that ran the motion keeps it,
+and a command that does not run to its end leaves it as it was. The loop
+reads it too, for the matches it draws.
 
-## The last find
+### The last find
 
-The last character find (`Find`, `EditorState.lastFind`) is what Vim's `;`
-and `,` repeat: the character an `f`, `t`, `F` or `T` looked for, and which
-of the four it was (`docs/design/keymaps-and-modes.md`, "Motions as
-built"). It is kept for the whole editor, as Vim keeps it and as the
-registers are kept.
+The last character find (`Find`, `EditorState.Remembered.lastFind`, read
+by `EditorState.lastFind`) is what Vim's `;` and `,` repeat: the
+character an `f`, `t`, `F` or `T` looked for, and which of the four it was
+(`docs/design/keymaps-and-modes.md`, "Motions as built"). It is kept for
+the whole editor, as Vim keeps it and as the registers are kept.
 
 - **The state starts with none**, and `setLastFind` sets it in place of
   the one it had. It is never refused.
@@ -1865,6 +1875,21 @@ structure Find where
   till : Bool
   deriving DecidableEq, Repr
 
+/-- What the editor remembers from one command to the next, for Vim's
+commands to put back or repeat: the registers, the last character find
+and the last search ("What commands remember", in the module docs). -/
+structure EditorState.Remembered where
+  /-- The registers, each under its name, in the order each name was first
+  set ("Registers", in the module docs). No name is here twice. -/
+  registers : Array (String × Register) := #[]
+  /-- The last character find, if one was made ("The last find", in the
+  module docs). -/
+  lastFind : Option Find := none
+  /-- The last search, if one was made ("The last search", in the module
+  docs). -/
+  lastSearch : Option Search := none
+  deriving DecidableEq, Repr
+
 /-- Everything the editor is showing and editing. -/
 structure EditorState where
   /-- The buffers, one a slot; a `BufferId` is an index here, and the slot of
@@ -1901,15 +1926,9 @@ structure EditorState where
   /-- Whether the system asked the program to quit and has not been
   answered (`Event.quitRequested`; "Quit", in the module docs). -/
   systemQuit : Bool := false
-  /-- The registers, each under its name, in the order each name was first
-  set ("Registers", in the module docs). No name is here twice. -/
-  registers : Array (String × Register) := #[]
-  /-- The last character find, if one was made ("The last find", in the
-  module docs). -/
-  lastFind : Option Find := none
-  /-- The last search, if one was made ("The last search", in the module
-  docs). -/
-  lastSearch : Option Search := none
+  /-- What commands remember from one to the next: the registers, the last
+  find and the last search ("What commands remember", in the module docs). -/
+  remembered : EditorState.Remembered := {}
   /-- How many rows every view keeps between its cursor's row and the first
   and the last row it shows ("The scroll margin", in the module docs). -/
   scrollMargin : Nat := 0
@@ -3257,30 +3276,41 @@ def setExcerptHistory (id : BufferId) (excerpts : Buffer.Excerpts) (state : Edit
 
 /-- The register kept under `name`, if one was set under it. -/
 def register? (state : EditorState) (name : String) : Option Register :=
-  (state.registers.find? (·.1 == name)).map (·.2)
+  (state.remembered.registers.find? (·.1 == name)).map (·.2)
 
 /-- `state` with `register` kept under `name`, in place of the register the
 name had, where that one was; a name nothing was set under is added
 last. Nothing else changes, and it is never refused: a name is any
 string. -/
 def setRegister (name : String) (register : Register) (state : EditorState) : EditorState :=
+  let registers := state.remembered.registers
   { state with
-    registers :=
-      if state.registers.any (·.1 == name) then
-        state.registers.map fun entry => if entry.1 == name then (name, register) else entry
-      else state.registers.push (name, register) }
+    remembered.registers :=
+      if registers.any (·.1 == name) then
+        registers.map fun entry => if entry.1 == name then (name, register) else entry
+      else registers.push (name, register) }
+
+/-- The last character find, if one was made: what `;` and `,` repeat ("The
+last find", in the module docs). -/
+def lastFind (state : EditorState) : Option Find :=
+  state.remembered.lastFind
+
+/-- The last search, if one was made: what `n` and `N` repeat ("The last
+search", in the module docs). -/
+def lastSearch (state : EditorState) : Option Search :=
+  state.remembered.lastSearch
 
 /-- `state` with `find` as its last character find, in place of the one it
 had ("The last find", in the module docs). Nothing else changes, and it is
 never refused. -/
 def setLastFind (find : Find) (state : EditorState) : EditorState :=
-  { state with lastFind := some find }
+  { state with remembered.lastFind := some find }
 
 /-- `state` with `search` as its last search, in place of the one it had
 ("The last search", in the module docs). Nothing else changes, and it is
 never refused. -/
 def setLastSearch (search : Search) (state : EditorState) : EditorState :=
-  { state with lastSearch := some search }
+  { state with remembered.lastSearch := some search }
 
 /-- `state` with `rows` as its scroll margin, in place of the one it had
 ("The scroll margin", in the module docs). Nothing else changes, and it is

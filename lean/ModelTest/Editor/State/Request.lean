@@ -962,7 +962,7 @@ def stateRequestChecks : List Check :=
             state.register? "a" == none && set.register? "a" == some word &&
               set == state.setRegister "a" word &&
               replaced.register? "a" == some line &&
-              { replaced with registers := #[] } == state },
+              { replaced with remembered.registers := #[] } == state },
     { name :=
         "the request to set the scroll margin sets the state's margin, in place of the one it had, and changes nothing else of the state: with no prompt open and with one open, and in the state with nothing in it"
       run :=
