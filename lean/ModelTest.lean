@@ -22,6 +22,7 @@ import ModelTest.Editor.Clipboard.Model
 import ModelTest.Editor.Command
 import ModelTest.Editor.Command.Append
 import ModelTest.Editor.Command.Dispatch
+import ModelTest.Editor.Command.Registry
 import ModelTest.Editor.Compile
 import ModelTest.Editor.Compile.Errors
 import ModelTest.Editor.Compile.Listing
@@ -839,6 +840,7 @@ def checks : List Check :=
     displayChecks ++
     frameDisplayChecks ++
     commandPortChecks ++
+    registryRequestChecks ++
     watchChecks ++
     clipboardChecks ++
     fuzzyChecks ++

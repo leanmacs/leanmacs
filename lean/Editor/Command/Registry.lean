@@ -1,0 +1,162 @@
+import Editor.Compile.Contribution
+import Editor.Completion.Candidate
+import Editor.DisplayRules
+import Editor.Ex.Line
+import Editor.Language.IndentUnit
+import Editor.Workspace
+
+/-!
+# Questions to the registry and config
+
+What a command asks of what the loop was told of the registry and config
+(`Loop.Registered`, `Editor/Command/Dispatch.lean`): which command an ex
+name runs, which themes there are, config's settings, the language table,
+the jobs and the completion sources registered. A `RegistryRequest` is a
+request of the editor's port (`EditorRequest.registry`,
+`Editor/Command.lean`), and a command asks it with `RegistryRequest.ask`
+(`Editor/Api.lean`).
+
+## The rules
+
+- **A question's reply is plain data.** A reply cannot hold a mode, a
+  command or a source, which are programs over the port this request is
+  part of: a reply that held one would be a type that refers to itself.
+  So a question about a source is answered its names (`categorySources`,
+  `atPointSources`), and the source is run by a control request
+  (`Editor/Command/Control.lean`).
+- **The loop answers every question with one pure function of what it was
+  told** (`Loop.Registered.answer`, `Editor/Command/Dispatch.lean`). It
+  reads no state and changes none, so a question about a buffer is handed
+  what the asking command read of it (`atPointSources` takes the buffer's
+  modes, not a view).
+- **A question is not guarded.** It is pure Lean, not a call into the
+  library, as a state request is (`Editor/Command/Dispatch.lean`, "The
+  guard").
+- **Where no loop dispatched the command, a runner answers it `bare`**
+  (`RegistryRequest.bare`): as with nothing registered, except that any job
+  name is taken, as a start of any name is where no loop gates it. Every
+  command a host runs goes through the loop; only a test runs one bare.
+- `ex` is answered the binding the registry has for an ex name
+  (`Editor/Ex/Line.lean`), `exNames` the ex names that are bound, and
+  `themeNames` the names themes are registered under.
+- `autoReload` is answered config's setting alone. Whether auto-reload is
+  in effect is a command's choice, which is state (`EditorState.autoReload`),
+  or else this.
+- `workspaceSettings` is answered config's workspace roots and the config
+  generation: what the finder is handed.
+- `displayRules` is answered config's display rules, in order
+  (`Editor/DisplayRules.lean`).
+- `shellTimeLimit` and `syntaxRefreshDelay` are answered config's shell
+  time limit and its syntax refresh delay.
+- `languageOf` is answered the name of the language the table chooses for
+  a path (`Language.forPath`), and `indentUnitOf` the unit of the table's
+  first entry of a name.
+- `compileHook` is answered the registered compile contributions in
+  registration order and config's project commands (`Compile.Hook`).
+- `hasJob` is answered whether a job is registered under a name, as a
+  start is checked.
+- `categorySources` is answered the names of the completion sources
+  registered in a category, and `atPointSources` the names of the
+  at-point sources of the chain of a buffer with the modes it is handed,
+  that ask on an occasion.
+
+There is no single read of config's readings, as `StateRequest.read` is
+for the state: the language table cannot be in a reply, since a language
+holds a `Mode.SyntaxTree`, defined in `Editor/Mode.lean`, which imports the
+editor's port, and `ex`, `hasJob`,
+`categorySources` and `atPointSources` are lookups over what the registry
+holds as functions. `docs/design/lean-runtime.md` ("The editor's port is a
+composite") records the choice.
+
+## Where an addition goes
+
+A new question to the registry or config is: a field of `Loop.Registered`
+(`Editor/Command/Dispatch.lean`) if the loop is not told it yet, a
+constructor here with its `Reply` case and its `bare` case, its case in
+`Loop.Registered.answer`, and the operation a command calls in
+`Editor/Api.lean` if commands outside the editor ask it.
+
+Pinned by `ModelTest.registryRequestChecks` (the bare answers) and
+`ModelTest.dispatchRegistryChecks` (the loop's).
+-/
+
+namespace Editor
+
+/-- What a command may ask of the registry and config, which the loop that
+runs the command answers. -/
+inductive RegistryRequest where
+  /-- Which command the ex name `name` is bound to, and what it takes. -/
+  | ex (name : String)
+  /-- Which ex names are bound. -/
+  | exNames
+  /-- Which names themes are registered under. -/
+  | themeNames
+  /-- Whether config's setting turns auto-reload on. A command's choice is
+  the state's (`EditorState.autoReload`). -/
+  | autoReload
+  /-- What the finder is to be handed, config's roots among it, and the
+  config generation. -/
+  | workspaceSettings
+  /-- Config's display rules, in order. -/
+  | displayRules
+  /-- How long a `:!` or a filter may run, in milliseconds, as config set
+  it. -/
+  | shellTimeLimit
+  /-- How long a text goes unchanged after an edit before it is parsed
+  whole again, in milliseconds, as config set it. -/
+  | syntaxRefreshDelay
+  /-- The name of the language the registry's table chooses for `path`. -/
+  | languageOf (path : System.FilePath)
+  /-- The indent unit of the language called `language`, from the
+  registry's table. -/
+  | indentUnitOf (language : String)
+  /-- The compile contributions, in registration order, and config's
+  project commands. -/
+  | compileHook
+  /-- Whether a job is registered under `name`. -/
+  | hasJob (name : String)
+  /-- Which completion sources are registered in `category`, by name, in
+  registration order. -/
+  | categorySources (category : String)
+  /-- The names of the at-point sources of the chain of a buffer whose major
+  mode is `major` and whose minor modes are `minors`, in the order they
+  were added, that ask on `occasion`, in order. -/
+  | atPointSources (major : Option String) (minors : Array String) (occasion : Completion.Occasion)
+
+/-- The type of the reply to each question. -/
+abbrev RegistryRequest.Reply : RegistryRequest → Type
+  | .ex _ => Option Ex.Binding
+  | .exNames => Array String
+  | .themeNames => Array String
+  | .autoReload => Bool
+  | .workspaceSettings => Workspace.Settings × Nat
+  | .displayRules => Array DisplayRule
+  | .shellTimeLimit => Option Nat
+  | .syntaxRefreshDelay => Option Nat
+  | .languageOf _ => Option String
+  | .indentUnitOf _ => Option Language.IndentUnit
+  | .compileHook => Compile.Hook
+  | .hasJob _ => Bool
+  | .categorySources _ => Array String
+  | .atPointSources .. => Array String
+
+/-- The answer to `request` where no loop dispatched the command: as with
+nothing registered and config's defaults, except that any job name is
+taken, as a start of any name is where no loop gates it. -/
+def RegistryRequest.bare : (request : RegistryRequest) → request.Reply
+  | .ex _ => none
+  | .exNames => #[]
+  | .themeNames => #[]
+  | .autoReload => false
+  | .workspaceSettings => ({}, 0)
+  | .displayRules => #[]
+  | .shellTimeLimit => none
+  | .syntaxRefreshDelay => none
+  | .languageOf _ => none
+  | .indentUnitOf _ => none
+  | .compileHook => {}
+  | .hasJob _ => true
+  | .categorySources _ => #[]
+  | .atPointSources .. => #[]
+
+end Editor
