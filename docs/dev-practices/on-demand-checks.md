@@ -211,11 +211,14 @@ each, in microseconds:
 | 100,000 inline (limit lifted) | The path before matching moved off the editor thread. |
 | 100,000 on the worker | Matched by a match job, each key joined: the next key finds no match in flight. Also printed: the listing's latency, from the key to the editor thread having run the match job's command. |
 | 100,000 on the worker, keys 20 ms apart | Matched by a match job, nothing joined: each key arrives while a match runs or while its delivery is handled. |
+| open-file, 10,000 entries | `open-file`'s prompt (completion's phase 6) on a host of the test scheme whose jobs reach a fake file service holding one directory of 10,000 files, the host's working directory: the prompt lists it once, joined and untimed; each timed key is typed within the directory, so no listing is started for it and the match job runs the `path` style off the editor thread; each key is joined. The keys are `f`, `1` to `5`. |
 | insert, no at-point | Completion at point's baseline (completion's phase 5): a host of the Vim scheme that ships, as `ConfigTest.withVimHost` builds one, on a fake job clock of its own and the real library, queue and recorder, with no at-point source used, so nothing is armed. Each sample types two word keys, then four more, in insert state, each timed, then `<Escape>` and `u`, untimed. |
 | insert, auto popup, 20 buffers | The same host with the shipped `words` used in every buffer, over 20 open buffers of about 50 KB of generated words each (`word<i % 4999>_<i % 4999 % 97>`, about 5,000 distinct): each typed key re-arms the pause. After the first two keys the clock is moved 240 ms and the `words` job joined, untimed, so the next four keys are typed with the session open, its listing matched off the thread. |
 
-It says whether the two rows on the worker are within bound: median at
-most twice the no-candidates median and 99th percentile under 1 ms. On a
+It says whether the two rows on the worker and the `open-file` row are
+within bound: median at most twice the no-candidates median and 99th
+percentile under 1 ms. **The `open-file` row out of bound fails completion
+phase 6's performance budget**, as a worker row fails phase 3's. On a
 line of its own it says whether the auto-popup row is: median at most twice
 the `insert, no at-point` median, the same key with no at-point source, and
 99th percentile under 1 ms. **A worker row out of bound fails completion phase

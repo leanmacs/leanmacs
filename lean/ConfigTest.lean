@@ -6897,6 +6897,13 @@ the editor thread printing that the match job's command ran; then the row
 joins, so the next key finds no match in flight. After the sixth key the
 prompt is cancelled and asked again, untimed.
 
+The file row is `open-file`'s prompt over a fake file service holding one
+directory of 10,000 files, its host's working directory: the prompt lists
+it once, joined and untimed, and each timed key is typed within the
+directory, so no listing is started for it and the match runs off the
+editor thread with the path style; each key is joined, as the worker row's
+are. It is judged by the same bound.
+
 The row at typing cadence joins nothing: the keys are sent `cadence` ms
 apart whatever the match is doing, so a key arrives while a match runs or
 while its delivery is handled, which a key typed fast meets. The bound is
@@ -6951,7 +6958,8 @@ def makeWordBuffers : EditorM Unit := do
 over 100,000 matched off the editor thread, keys joined and back to back;
 and what a word key costs in insert state under the Vim scheme that ships,
 with no at-point source, and with the shipped `words` popping up by itself
-over 20 open buffers; `samples` keys a row. -/
+over 20 open buffers; and what a key costs in `open-file`'s prompt over a
+directory of 10,000 files; `samples` keys a row. -/
 def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let pool := (← Job.Pool.warm Job.Pool.size 200).size
   let completions ← Job.Completions.new
@@ -7104,11 +7112,65 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     finally
       discard <| host.halt patience
       discard <| Job.Pool.warm pool 5000
+  -- The file row: a host of the test scheme whose jobs reach a fake file
+  -- service over one directory of `count` files, `/big`, its working
+  -- directory, with the file prompt's commands, source, job and style.
+  -- `open-file` asks with `/big/` and lists it, joined, untimed; the timed
+  -- keys are typed within the directory, as the worker row times them, each
+  -- joined.
+  let fileRow (count : Nat) : IO (Array Nat) := do
+    let requests ← ids.modifyGet fun next => (next, next + 6)
+    let model :=
+      (List.range count).foldl
+        (fun (model : FileModel) index => model.withFile ("/big" / s!"f{10000 + index}") .empty)
+        (({} : FileModel).withDirectory "/big")
+    let files ← Job.FakeFiles.new completions model
+    let host ←
+      Headless.start (scheme := TestScheme.scheme)
+          { elaborator, source := { chunks := pure #[] }, emit,
+            services := { completions, timers, fuzzy := Fuzzy.real, files := files.files }
+            published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
+            wakeups := requests + 1, jobs := requests + 2, environment := requests + 3,
+            posts := requests + 4, pauseEvents := requests + 5,
+            commands :=
+              (Files.commands ++ Minibuffer.commands).push
+                { name := "noop", action := .plain (pure ()) }
+            compiledJobs := Files.jobs, sources := Files.sources
+            styleDefaults := Files.styleDefaults, modes := Minibuffer.modes
+            workingDirectory := "/big" }
+    try
+      let ask : IO Unit := do
+        host.send (.run Files.openName)
+        unless (← host.join patience) == .settled do
+          throw (IO.userError "the file prompt did not list its directory")
+      ask
+      let fileKeys := ["f", "1", "2", "3", "4", "5"]
+      let mut keyTimes := #[]
+      for sample in [0:samples] do
+        let index := sample % fileKeys.length
+        if index == 0 && sample > 0 then
+          host.send (.run Minibuffer.cancelName)
+          ask
+        let ran ← IO.Promise.new
+        ranSlot.set (some ran)
+        listedSlot.set none
+        let asked ← IO.monoNanosNow
+        host.commit (fileKeys[index]?.getD "x")
+        host.send (.run "noop")
+        let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
+        keyTimes := keyTimes.push (handled - asked)
+        unless (← host.join patience) == .settled do
+          throw (IO.userError "a listing was not delivered")
+      return keyTimes
+    finally
+      discard <| host.halt patience
+      discard <| Job.Pool.warm pool 5000
+  let fileTenThousand := Row.of "open-file, 10,000 entries" (← fileRow 10000)
   let plainInsert := Row.of "insert, no at-point" (← insertRow false)
   let autoPopup := Row.of "insert, auto popup, 20 buffers" (← insertRow true)
   let rows :=
     [idle, hundred, quarter, half, thousand, tenThousand, inline, worker, listed, backToBack,
-      plainInsert, autoPopup]
+      fileTenThousand, plainInsert, autoPopup]
   let inlineRows := [(100, hundred), (250, quarter), (500, half), (1000, thousand)]
   IO.println
       s!"pool: {pool} threads; {samples} keys a row, each of `src/f1` committed into the prompt; inline limit {Loop.inlineMatches}"
@@ -7119,7 +7181,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   IO.println
       ("within bound (median within twice the no-candidates median, 99th percentile under 1 ms): " ++
         "; ".intercalate
-          ([worker, backToBack].map fun row =>
+          ([worker, backToBack, fileTenThousand].map fun row =>
             s!"{row.name}: {if row.keyWithinBound idle then "yes" else "no"}"))
   -- What auto popup adds to a typed key in insert state is judged against
   -- the same key with no at-point source, not against a key of the prompt.
