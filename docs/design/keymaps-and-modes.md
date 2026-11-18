@@ -15,6 +15,8 @@ registers, undo and dot repeat, on the editor API:
 | Key strings, and the strokes `<leader>` and `<localleader>` (`Key.Stroke`, `Key.parseStrokes`, `Key.expand`) | `lean/Editor/Key/Notation.lean` |
 | The leader and the localleader: each scheme's (`InputScheme.leader`, `localLeader`, `leaders`), config's (`leaderKey`, `localLeaderKey`), the leaders in force and the keymap of bindings written with them | `lean/Editor/InputScheme.lean`, `lean/Editor/Setup.lean`, `lean/Editor/Config/Registry.lean` (`Registry.leaders`, `Registry.keymap`) |
 | A binding that holds only in some of a scheme's states (`bindKey … (states := …)`, `SchemeState`, `InputScheme.stateCommand`, `Vim.Bound.within`, `Vim.Bound.holdsIn`) | `lean/Editor/Setup.lean`, `lean/Editor/InputScheme.lean`, `lean/Editor/InputScheme/Vim.lean`; the Vim scheme's state names in `lean/Editor/InputScheme/Vim/Default.lean` |
+| Descriptions on bindings and names of prefixes, for the key hints (`Keymap.descriptions`, `bindKey`'s `desc`, `prefixName`, `Registry.prefixName?`, `Mode.roleDescs`, `Mode.localDescs`, `Vim.Default.keymap`'s `descs`) | `lean/Editor/Keymap.lean`, `lean/Editor/Setup.lean`, `lean/Editor/Config/Registry.lean`, `lean/Editor/Mode.lean`, `lean/Editor/InputScheme/Vim/Default.lean` |
+| What can follow a pending prefix, and its agreement with the walk (`Keymap.continuations`, `Keymap.continuationsOver`, `InputScheme.continuations`, `Vim.State.continuations`, `Scene.keyHints`, `Loop.keyHints`) | `lean/Editor/Keymap.lean`, `lean/Editor/InputScheme.lean`, `lean/Editor/InputScheme/Vim.lean`, `lean/Editor/Scene.lean`, `lean/Editor/Loop.lean` |
 | Invocations | `lean/Editor/Invocation.lean` |
 | The scheme interface, and what a key prints | `lean/Editor/InputScheme.lean` |
 | The test scheme | `lean/Editor/InputScheme/Test.lean` |
@@ -124,11 +126,28 @@ a sequence and what it is bound to:
 
 ```lean
 structure Keymap (β : Type) where
-  bindings : List (List Key × β)
+  bindings     : List (List Key × β)
+  descriptions : List (List Key × String)  -- for the key hints
 ```
 
 A sequence is a prefix when some binding begins with it and is longer; no
 entry stands for a prefix by itself.
+
+**A description is on the entry it describes; a prefix's name is a table
+of its own.** A keymap's `descriptions` label bound sequences, at most one
+a sequence, each one `bindings` binds: `Keymap.bind … (desc := …)` sets it
+with the binding, binding the sequence again without one drops it, and
+`Keymap.filter` drops it with its binding. It is not a table keyed by the
+keys, because one sequence can be bound differently in two keymaps: normal
+state's `C-w` is a prefix and insert state's a binding, and an active
+keymap may bind what a state binds. On the entry, the description read is
+always that of the binding the walk reaches. A prefix has no entry, so it
+cannot carry one: its name is held apart, by the registry, keyed by the
+prefix's keys as written and expanded against the leaders in force
+(`Registry.prefixName?`), and handed to the query below as a function of
+the keys. Keymaps stay flat lists. The owner chose labels on bindings, not
+on commands (2026-11-17), so one command bound twice may be described
+twice.
 
 Why a flat list, and not a tree of submaps:
 
@@ -208,6 +227,47 @@ which the prefix now shadows. The reset is proved for it too
 sequence, nothing is pending and nothing is given. `Keymap.resolve` and
 `Mode.check`, which resolves over one list, are unchanged.
 
+#### What can follow a pending prefix
+
+The key hints need the keys that can follow a pending prefix, and what each
+leads to. `Keymap.continuations maps pending names` lists them for a list
+of keymaps, and `Keymap.continuationsOver specific defaults pending names`
+for two tiers. Each listed key is a `Keymap.Continuation`: the key, and
+either the binding the walk reaches, with the description of the keymap
+that binds it (for two tiers, the deciding tier's), or a further prefix,
+with its name (`names` of its keys, `none` by default) and how many
+bindings under it the walk can reach.
+
+- **Both are one function over the walk's own lookup**, `resolve` or
+  `resolveOver`, applied to the pending keys followed by each candidate
+  key, so a listed key is what `walk` or `walkOver` computes for it. The
+  candidates are the keys that come next in some bound sequence. The query
+  reads `bindings` and `descriptions` and adds nothing.
+- **The order is the order first seen**: the keymaps in precedence order,
+  so the specific tier's keys first, then each keymap's bindings in order.
+- **A prefix's count leaves out what the walk cannot reach**: a binding
+  under a shorter bound sequence, and one the specific tier hides.
+- **Nothing pending lists every first key.** The function makes no
+  exception; a scheme that shows hints only while a prefix is pending says
+  so itself.
+
+With `g r` bound in an active keymap and `g g` in the Vim state's, the keys
+after `g` are `r` and then `g`, both bindings. With `C-w l` bound in an
+active keymap over insert state's `C-w`, the only key after `C-w` is `l`:
+the active prefix shadows the state's binding, as the walk does, so none of
+normal state's keys under `C-w` is listed. With normal state's `C-w h` and
+`C-w l` under that same active `C-w l`, the list is `l`, once and the active
+binding, and `h`, which the walk reaches in the state's keymaps.
+
+**The list agrees with the walk both ways, and it is proved.** Every key
+`continuations` lists, walked after the pending keys, gives what the list
+says it leads to (`Keymap.walk_listed`), and a key it leaves out resets the
+walk (`Keymap.walk_unlisted`, through `walk_unbound`); the same for two
+tiers (`Keymap.walkOver_listed`, `Keymap.walkOver_unlisted`). The theorems
+cannot see whether a scheme hands the query the tiers it walks, so the Vim
+scheme's agreement over its default states is a `lake test` sweep too
+("Who tests what").
+
 ### Input schemes
 
 A scheme is a state machine over keys, packaged with its own state and
@@ -238,7 +298,22 @@ structure InputScheme where
   committed      : ViewId → String → State → State := fun _ _ s => s
   -- the answer to a prompt the scheme asked for, and what it completes
   answered : ViewId → String → State → State × Option Invocation := fun _ _ s => (s, none)
+  -- what can follow the keymap prefix pending for a view, for the key hints
+  continuations : (ViewId → List (Keymap Binding)) → (List Key → Option String)
+                    → ViewId → State → List (Keymap.Continuation Binding) := fun _ _ _ _ => []
 ```
+
+- **`continuations` is what can follow a pending prefix**, given the active
+  keymaps and the prefix names. Only the scheme knows which of its pending
+  keys are a keymap prefix (the Vim scheme's counts and register are not)
+  and which tiers it walks, so the core cannot compute it from `pending`.
+  It lists nothing at rest, the default, and the contract holds every
+  scheme to its walk (`continuationsWalk`). The loop turns the list into
+  the scene's key hints (`Loop.keyHints`, `Scene.keyHints`), dropping the
+  bindings, which are the scheme's own type: a `KeyHint` is the key as a
+  key string and what it leads to. The hints are a Lean-only readout, not
+  drawn yet: the leader-and-key-hints roadmap's phase 4 draws them through
+  the completion display.
 
 - **`answered` is how a scheme is answered.** A key whose edit needs a text
   typed in the minibuffer (Vim's `/`) yields `minibuffer-ask`, which opens
@@ -1149,6 +1224,13 @@ command.
   `Bound.within states (.command { name })`, which holds only in a state
   whose record's name is one of `states`, whatever the leader rule would
   say, and which the grammar reaches as what it wraps.
+- **The key hints are listed from the same tiers** (built).
+  `Vim.State.tiers` is the pair `parse` walks, the active keymaps filtered
+  by `Bound.holdsIn` over the state's own or pending keymaps, and
+  `Vim.State.continuations` lists from it (`Keymap.continuationsOver`), so
+  the hints cannot drift from the walk. After an operator they come from
+  the pending keymaps. A count, the register prefix or an operator alone
+  lists nothing: none is a keymap prefix (`State.walked` is empty).
 
 ### Motions that ask
 
@@ -2760,6 +2842,12 @@ the motions, operators and commands are registered under. A name is
 changed in its row and in its registration together. No grammar check names
 a default, so renaming one breaks none.
 
+A table may be given descriptions for the key hints: `Vim.Default.keymap
+table descs` describes each row by the row of `descs`, a key string and a
+label, whose key string parses to the same chords. They are a side table,
+so no row of a table changes. No table that ships has any yet; the starter
+leader map (the leader-and-key-hints roadmap's phase 3) writes the first.
+
 Which names have something behind them:
 
 | Names | State |
@@ -3016,7 +3104,11 @@ force: the registry passes the leaders config set, or the scheme's
 (`Mode.keymaps scheme mode leaders`, `Registry.modeKeymaps`), so a reload
 that sets another leader moves every mode's suffixes. A role the scheme's
 table lacks, and an unreadable suffix, bind nothing; a suffix written with
-`<leader>` is unreadable.
+`<leader>` is unreadable. A mode may describe its roles and suffixes for
+the key hints (`roleDescs : List (Role × String)`, `localDescs : List
+(String × String)`, a suffix matched as parsed chords, so `TAB` is
+described by `<Tab>`): side tables, so no existing `roles` or `locals`
+literal changes, and `Mode.keymaps` puts each description on its binding.
 
 ### Hand-tuned keys
 
@@ -4658,6 +4750,23 @@ which run the executable on a real file.
     is not built.
   - **Deferred**: a key that reaches the leader from insert state, as
     general.el's `:non-normal-prefix` does.
+- Built: labels for the key hints from config. `bindKey "<leader> f f"
+  "find" (desc := "Find file")` describes the binding, and `prefixName
+  "<leader> f" "file"` names the prefix. Labels are on bindings, not on
+  commands (the owner, 2026-11-17).
+  - **Both follow the leaders in force.** The description rides on the
+    binding (`KeyBinding.desc`) and is put on the registry's keymap with
+    it. The name is held by its keys as written (`PrefixName`, by owner)
+    and expanded when it is looked up (`Registry.prefixName?`), so a reload
+    with a new leader moves it with the bindings.
+  - **A reload replaces both**, as it replaces the bindings
+    (`Registry.replacePrefixNames` at install): a config that no longer
+    names a prefix leaves it unnamed.
+  - **Refusals**: `prefixName` refuses a key string that is not keys, with
+    the parser's reason, and one that names no keys (`prefixNamedNoKeys`).
+    One prefix named twice is refused as written (`prefixNamedTwice`) and
+    as expanded under the scheme's leaders (`prefixNamedTwiceAs`, by
+    `Registrations.problemUnder?`), as two bindings of one sequence are.
 - Built: completion at point from config ("Completion at point").
   `defineAtPoint` registers an at-point source by its name, and config's of
   a shipped name replaces it, so `defineAtPoint (Completion.AtPoint.words
@@ -5042,7 +5151,7 @@ on a real file in the headless executable (`tests/headless/session/`,
     the scheme, keymaps, a view, inputs the author says are complete, a key
     that goes on with none of them and a key that prints and that nothing
     binds, and it answers the names of the properties that do not hold.
-    There are eleven: some input has two keys or
+    Among them: some input has two keys or
     more, so the others are not vacuous; a strict prefix of a complete
     input emits nothing; after a strict prefix the scheme reports its keys
     as pending; the last key emits, and nothing is then pending; an unbound
@@ -5060,7 +5169,11 @@ on a real file in the headless executable (`tests/headless/session/`,
     invocation and leaves nothing pending (`minibufferTakesText`); and a
     key that yields nothing leaves the scheme's report of its view as it
     was, after a strict prefix and after the unbound key that resets it
-    (`quietKeyKeepsReport`). It is pure and compares no states.
+    (`quietKeyKeepsReport`); and what the scheme says can follow agrees
+    with its walk: nothing at rest, and after a strict prefix each key it
+    lists as leading to a prefix, typed next, yields nothing and leaves
+    the keys so far pending (`continuationsWalk`). It is pure and compares
+    no states.
   - The model tests run it on the test scheme, on schemes written there
     that each break one property and are reported (a scheme whose role
     table lacks a role, one that never yields a self-insert, and two whose
@@ -5069,6 +5182,20 @@ on a real file in the headless executable (`tests/headless/session/`,
   - For modes, built: `Mode.check mode scheme : List Mode.Problem` reports
     unregistered roles, duplicate suffixes, unreadable suffixes, and
     hand-tuned keys that shadow a scheme binding.
+- **The key hints are pinned at each layer.** `keymapChecks` pin the
+  descriptions and the query on keymaps built in code: the order, the
+  description of the deciding tier, the prefix's name and count, and that
+  each listed key walks as listed and a key left out walks to nothing.
+  `vimHintChecks` pin the Vim scheme's list through its own tiers (an
+  active `C-w l` over insert state's `C-w`, the pending keymaps after an
+  operator, nothing after a count, an operator or the register prefix
+  alone), and `vimDefaultHintChecks` sweep every default state, with and
+  without a mode's keymaps and an operator, feeding each listed key to
+  `Vim.parse`. `setupHintChecks`, `registryHintChecks` and
+  `reloadHintChecks` pin config's labels, `dispatchHintChecks` the scene
+  the loop publishes, and `config-test`'s `hintChecks` the whole path from
+  a config's `desc` and `prefixName` to the headless host's `hint` lines,
+  and a reload that drops a name.
 
 ### Config
 
@@ -5081,7 +5208,12 @@ and a failing one keeps the old config.
 Stated where they earn their keep: an unbound key always resets pending
 state; `x` then `u` restores the buffer. The first is proved for the keymap
 walk, which needs no model (`Keymap.walk_unbound`, checked by the kernel on
-every build). The second is proved on the text model
+every build). What can follow a pending prefix agrees with the walk both
+ways, proved the same way: a listed key walks to what the list says
+(`Keymap.walk_listed`, `Keymap.walkOver_listed`), and a key left out
+resets the walk (`Keymap.walk_unlisted`, `Keymap.walkOver_unlisted`), over
+the shared lemmas `Keymap.resolve_ne_unbound` and
+`Keymap.resolveOver_ne_unbound`. The second is proved on the text model
 (`Evil.deleteChar_undo`, `lean/Editor/Evil/Theorems.lean`):
 
 - **What it says.** For every model in which a text holds some content,

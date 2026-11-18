@@ -2418,6 +2418,7 @@ The scene is plain Lean data (`lean/Editor/Scene.lean`, `Scene`):
 | `echo` | The echo area's text |
 | `echoPadding` | How far the echo is inset from the frame's left and right edges, in whole points, when layout draws it in the bottom row: the bottom row's inset (`EditorState.bottomInset`), the frame padding and at least the window's corner clearance outside fullscreen. 0 by default |
 | `pending` | The pending key prefix, rendered by Lean into a string |
+| `keyHints` | The keys that can follow the pending keymap prefix, for the key hints (`KeyHint`: the key as a key string, and the binding it completes, with its description, or the prefix it leads to, with its name and count); empty when none is pending. A Lean-only readout: it does not cross to the Rust scene, and it is not drawn yet (the leader-and-key-hints roadmap's phase 4 draws it through the completion display, a view Lean makes) |
 | `preedit` | The input method's preedit text in the focused view, if it is composing |
 | `title` | The window's title: the selected buffer's name (`EditorState.title`), the focused window's, or the asking window's while a prompt is open, so it does not become the minibuffer's while a prompt is typed into |
 
@@ -3909,7 +3910,8 @@ frame journal and the renderer's counters.
   closes until a command says something; a key's command clears it too
   before it runs, so what a job's command said while the prompt was open
   shows only if the prompt is closed by something other than a key. The
-  pending prefix and the preedit are still drawn nowhere: tasks
+  pending prefix, the keys that can follow it, and the preedit are still
+  drawn nowhere: tasks
   `show-pending-key-prefix` and `draw-input-method-preedit`.
 - **The height of a view's text area, for the rows query** (answered, as
   built): the display answers one more question, `heights` (text, status
