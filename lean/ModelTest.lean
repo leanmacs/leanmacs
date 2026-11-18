@@ -21038,7 +21038,8 @@ is called with, `undo` (`C-o u`) undoes one step of its buffer's history,
 `save-absent` (`C-o x`) saves a buffer there is none of. Two more visit a
 file in the view 0, focusing it (`Files.visit`): `visit-note` (`C-o g`)
 `note.txt` at row 0, character column 2, and `visit-missing` (`C-o G`)
-`missing.txt`. -/
+`missing.txt`. And `save-then` (`C-o t`) saves its buffer with the follow-up
+job `follow`, keyed `k`, with the argument `x`. -/
 def fileKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     (openKeys.map (fun (text, path) => (text, opens path)) ++
@@ -21050,6 +21051,7 @@ def fileKeys : Loop.Keys TestScheme.scheme :=
         ("C-o v", { command := Files.saveName, arguments := [.nat 0, .str ""] }),
         ("C-o u", invoke "undo"), ("C-o d", invoke "drop"), ("C-o x", invoke "save-absent"),
         ("C-o g", invoke "visit-note"), ("C-o G", invoke "visit-missing"),
+        ("C-o t", invoke "save-then"),
         ("C-o 2",
           { command := Files.openName
             arguments :=
@@ -21072,6 +21074,10 @@ def fileKeys : Loop.Keys TestScheme.scheme :=
         return none),
       ("save-absent", fun _ => do
         Files.save ⟨9⟩
+        return none),
+      ("save-then", fun call => do
+        Files.save call.target.window.buffer
+            (after := some { name := "follow", arguments := [.str "x"], key := some "k" })
         return none),
       ("scratch", fun call => do
         discard <| call.target.window.id.show ⟨0⟩
@@ -22200,6 +22206,33 @@ def fileCommandChecks : List Check :=
                 echoOf saved == some (Files.wrote path) &&
                 (showing saved).map (·.buffer.isModified) == some false },
     { name :=
+        "a save with a follow-up starts it, with its arguments and its key, once the file is written, and a refused save starts nothing"
+      run :=
+        pure <|
+          let registered (name : String) : Option (List Argument → Work) :=
+            if name == "follow" then
+              some fun arguments _ =>
+                pure <|
+                  match arguments with
+                  | [.str said] => message s!"followed {said}"
+                  | _ => message "followed nothing"
+            else fileJobs Files.limit name
+          match (filesDriver registered).map fun driver =>
+              ((fedTo driver (presses "C-o n")).1.finish 1).1 with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let (saving, _) := fedTo opened (presses "C-o t")
+            let (saved, _) := saving.finish 2
+            let (followed, _) := saved.finish 3
+            let changed := rewritten opened path JobContract.otherFile
+            let (refused, _) := (fedTo changed (presses "C-o t")).1.finish 2
+            saving.pending.map (·.name) == #[Files.saveJob] &&
+                saved.pending.map (fun job => (job.name, job.key)) == #[("follow", some "k")] &&
+                echoOf followed == some "followed x" &&
+              refused.pending.isEmpty &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) },
+    { name :=
         "a save order's arguments are read back as the order, for each thing a save can expect and for a stamp from before 1970, and arguments that are no order as none; the save job started with arguments that are no order fails"
       run :=
         pure <|
@@ -22207,11 +22240,15 @@ def fileCommandChecks : List Check :=
             [{ seconds := 5, nanoseconds := 7, size := 9 },
               { seconds := -3, nanoseconds := 999999999, size := 0 }]
           let expects : List File.Expect := stamps.map .unchanged ++ [.absent, .whatever]
+          let afters : List (Option JobStart) :=
+            [none, some { name := "follow" },
+              some { name := "follow", arguments := [.str "x", .nat 2, .bool false], key := some "k" }]
           expects.all
                 (fun expect =>
-                  let order : Files.SaveOrder :=
-                    { buffer := ⟨3⟩, snapshot := ⟨11⟩, path := "/a b/é.txt", expect }
-                  Files.SaveOrder.ofArguments? order.arguments == some order) &&
+                  afters.all fun after =>
+                    let order : Files.SaveOrder :=
+                      { buffer := ⟨3⟩, snapshot := ⟨11⟩, path := "/a b/é.txt", expect, after }
+                    Files.SaveOrder.ofArguments? order.arguments == some order) &&
               [[], [.nat 1], [.nat 1, .nat 2, .str "/a"],
                     [.nat 1, .nat 2, .str "/a", .str "sometimes"],
                     [.nat 1, .nat 2, .str "/a", .str "absent", .nat 1],
