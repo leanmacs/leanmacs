@@ -238,7 +238,10 @@ which gives the window's buffer a review record
 with no hunk; `z`, which does nothing, so its step only publishes; `e`,
 which puts `0\n` at the start of the buffer of `/r/lean/Pkg/B.lean`; and `0`
 to `9`, which put the cursor at the start of that excerpt of the window's
-text. -/
+text. Under `C-y`: `s`, `vc-review-since`; `c`, `z`, `h` and `0`, which
+write the workspace at `/r` a review store of one round against `base`
+whose head is `C`, `Z`, `head` or empty; and `m` and `b`, which open the
+review of the commit `C` or `B` (`startCommitReview`). -/
 def reviewBindings : List (String × Invocation) :=
   stagingBindings ++
     [("C-t r", { command := VersionControl.reviewName, arguments := [.str "base"] }),
@@ -250,8 +253,15 @@ def reviewBindings : List (String × Invocation) :=
       ("C-t f", invoke VersionControl.reviewRefreshName), ("C-t u", invoke "undo-here"),
       ("C-t i", invoke "insert-x"), ("C-t x", invoke "no-hunks"), ("C-t z", invoke "noop"),
       ("C-t e", invoke "edit-b")] ++
-    (List.range 10).map fun index =>
-      (s!"C-t {index}", { command := "to-excerpt", arguments := [.nat index] })
+    (List.range 10).map
+      (fun index => (s!"C-t {index}", { command := "to-excerpt", arguments := [.nat index] })) ++
+    [("C-y s", invoke VersionControl.reviewSinceName),
+      ("C-y c", { command := "seed-round", arguments := [.str "C"] }),
+      ("C-y z", { command := "seed-round", arguments := [.str "Z"] }),
+      ("C-y h", { command := "seed-round", arguments := [.str "head"] }),
+      ("C-y 0", { command := "seed-round", arguments := [.str ""] }),
+      ("C-y m", { command := "review-commit", arguments := [.str "C"] }),
+      ("C-y b", { command := "review-commit", arguments := [.str "B"] })]
 
 /-- The mode line of the review buffer checks: the default order resolved over
 the shipped segments and version control's, as a host's registry holds them
@@ -289,6 +299,17 @@ def reviewKeys : Loop.Keys TestScheme.scheme :=
               if let some excerpt := (← call.target.buffer.text.excerpts)[index]? then
                 discard <|
                     call.target.window.id.select { ranges := #[⟨excerpt.start, excerpt.start⟩] }
+            return none),
+          ("seed-round", fun call => do
+            if let .str head :: _ := call.arguments then
+              discard <|
+                  Workspace.set VersionControl.reviewStore (.local "/r")
+                    { rounds := #[{ against := "base", base := "B", head, hunks := #[] }] }
+            return none),
+          ("review-commit", fun call => do
+            if let .str id :: _ := call.arguments then
+              if let some read← VersionControl.readOrder "review-commit" call then
+                VersionControl.startCommitReview read.root read.git read.label read.view id
             return none)])
   { keys with
     registered :=

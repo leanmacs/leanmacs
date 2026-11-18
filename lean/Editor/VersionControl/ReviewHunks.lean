@@ -76,9 +76,13 @@ steps.
   reverted. Its header text (`ReviewHunk.headerText`) is the header and,
   once decided, two spaces and the decision.
 - **A record** (`ReviewRecord`) is the root, the branch reviewed against,
-  the merge base, the hunks and the old buffers. It is a value of the
-  review buffer, `vc-review` (`ReviewRecord.localName`), and a tree
-  (`ReviewRecord.encode`).
+  the merge base, the hunks, the read-only buffers the round made that a
+  hunk reads (the old buffers, and a commit's new ones), what the review is
+  of (`ReviewScope`: a branch against its base, `HEAD` since a recorded
+  commit, or one commit against its first parent) and the commit it was
+  made at (`head`: the id `HEAD`, or the commit, resolved to when the change
+  was read). It is a value of the review buffer, `vc-review`
+  (`ReviewRecord.localName`), and a tree (`ReviewRecord.encode`).
 - **A hunk is examined** (`ReviewHunk.examined`) when each excerpt it
   names has an entry a scene has shown (`Buffer.Viewed.examined`); an
   entry that is not tracked never was.
@@ -365,6 +369,32 @@ scene has shown ("The record", in the module docs). -/
 def ReviewHunk.examined (hunk : ReviewHunk) (entries : Array Buffer.ExcerptEntry) : Bool :=
   hunk.excerpts.all fun index => ((entries[index]?.bind (·.viewed)).map (·.examined)).getD false
 
+/-- What a review is of ("The record", in the module docs). -/
+inductive ReviewScope where
+  /-- `HEAD` against its merge base with the branch reviewed against, its new
+  side the working files. -/
+  | branch
+  /-- `HEAD` against `commit`, the commit an earlier review recorded, its new
+  side the working files. -/
+  | since (commit : String)
+  /-- The commit `id` against its first parent, its new side read-only
+  buffers of the commit's content. -/
+  | commit (id : String)
+  deriving DecidableEq, Repr
+
+/-- A scope as a tree. -/
+def ReviewScope.encode : ReviewScope → Value
+  | .branch => .str "branch"
+  | .since recorded => .record [("since", .str recorded)]
+  | .commit id => .record [("commit", .str id)]
+
+/-- The scope a tree is (`ReviewScope.encode`), if it is one. -/
+def ReviewScope.decode? : Value → Option ReviewScope
+  | .str "branch" => some .branch
+  | .record [("since", .str recorded)] => some (.since recorded)
+  | .record [("commit", .str id)] => some (.commit id)
+  | _ => none
+
 /-- The record of a review ("The record", in the module docs). -/
 structure ReviewRecord where
   /-- The repository's root. -/
@@ -375,8 +405,14 @@ structure ReviewRecord where
   base : String
   /-- The hunks, in the buffer's order. -/
   hunks : Array ReviewHunk := #[]
-  /-- The old buffers' numbers. -/
+  /-- The numbers of the read-only buffers the round made that a hunk
+  reads: the old buffers, and a commit's new ones. -/
   olds : Array Nat := #[]
+  /-- What the review is of. -/
+  scope : ReviewScope := .branch
+  /-- The commit `HEAD`, or the commit reviewed, was when its change was
+  read; empty for none recorded. -/
+  head : String := ""
   deriving DecidableEq, Repr
 
 /-- The name of the review buffer's value that holds its record. -/
@@ -421,21 +457,22 @@ def ReviewRecord.encode (record : ReviewRecord) : Value :=
   .record
     [("root", .str record.root), ("against", .str record.against), ("base", .str record.base),
       ("hunks", .list (record.hunks.toList.map (·.encode))),
-      ("olds", .list (record.olds.toList.map .nat))]
+      ("olds", .list (record.olds.toList.map .nat)), ("scope", record.scope.encode),
+      ("head", .str record.head)]
 
 /-- The record a tree is (`ReviewRecord.encode`), if it is one. -/
 def ReviewRecord.decode? : Value → Option ReviewRecord
   |
   .record
       [("root", .str root), ("against", .str against), ("base", .str base), ("hunks", .list hunks),
-        ("olds", .list olds)] =>
+        ("olds", .list olds), ("scope", scope), ("head", .str head)] =>
     do
     let hunks ← hunks.toArray.mapM ReviewHunk.decode?
     let olds ←
       olds.toArray.mapM fun
           | .nat index => some index
           | _ => none
-    return { root, against, base, hunks, olds }
+    return { root, against, base, hunks, olds, scope := ← ReviewScope.decode? scope, head }
   | _ => none
 
 /-- The hunks of `record` kept, reverted and not examined, by `entries`

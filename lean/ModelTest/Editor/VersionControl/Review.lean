@@ -101,6 +101,10 @@ def shownHeaders (driver : TestDriver) : Array String :=
         (excerpts.entries.map (·.header)).filter (!·.isEmpty)).getD
     #[]
 
+/-- What the text model holds of `buffer` in `driver`. -/
+def fileTextOf (driver : TestDriver) (buffer : Buffer) : Option String :=
+  (driver.model.texts.texts[buffer.text.index]?).join.map (·.contents)
+
 /-- What the text model holds of the buffer holding the file `path` in
 `driver`. -/
 def fileText (driver : TestDriver) (path : System.FilePath) : Option String := do
@@ -161,6 +165,34 @@ def keptReviews (driver : TestDriver) : ReviewStore :=
 /-- A repository whose branch changes one line of `x.txt`: one hunk. -/
 def oneHunkRepository : Model.Repository :=
   VersionControlContract.forked #[("x.txt", "x\n")] #[("x.txt", "y\n")] #[] #[("base", "B")]
+
+/-- The repository of the checks of a review since a commit and of a
+commit's review: on `main`, `HEAD` changes `y.txt` over `C`, which changed
+`x.txt` over `B`, which the branch `base` names; `Z`, off the branch, is `C`
+amended, its subject `C` and its `x.txt` another line. -/
+def sinceRepository : Model.Repository :=
+  { VersionControlContract.clean
+      #[("x.txt", "X\n"),
+        ("y.txt",
+          "Y\n")] with
+    commits :=
+      #[("B", { files := #[("x.txt", "x\n"), ("y.txt", "y\n")] }),
+        ("C", { parents := #["B"], files := #[("x.txt", "X\n"), ("y.txt", "y\n")] }),
+        ("Z",
+          { parents := #["B"], files := #[("x.txt", "X2\n"), ("y.txt", "y\n")]
+            authored := { Model.fixedAuthored with subject := "C" } })]
+    parents := #["C"], branches := #[("base", "B")] }
+
+/-- The name of the buffer holding `text` among `driver`'s that is the
+source of an entry of the excerpt buffer its focused view shows, and
+whether it is read-only, for each entry. -/
+def entrySources (driver : TestDriver) : Array (String × Bool) :=
+  let buffers := driver.loop.state.buffers.filterMap id
+  (((focusedShowing driver).bind (·.buffer.excerpts)).map fun excerpts =>
+        excerpts.entries.filterMap fun entry =>
+          (buffers.find? (·.text == entry.source)).map fun buffer =>
+            (buffer.name, buffer.readOnly)).getD
+    #[]
 
 /-- `reviewRepository`'s driver with `/r/src/a.lean` open in view 0, so the
 window's buffer is in the workspace at `/r`. -/
@@ -475,6 +507,115 @@ def reviewBufferChecks : List Check :=
                 kept.rounds.map (·.against) ==
                     ((List.range 20).map fun round => s!"b{round + 1}").toArray &&
                   kept.buffer == some 0 },
+    { name :=
+        "criterion 4's record: after vc-review the record and the store's round hold the commit HEAD was at, the model's HEAD id, and keep keeps it"
+      run :=
+        pure <|
+          match reviewOpened with
+          | none => false
+          | some opened =>
+            let reviewed := reviewAfter opened "C-t r"
+            let kept := reviewAfter reviewed "C-t 0 C-t k"
+            (reviewShown reviewed).map (·.2.head) == some "head" &&
+              (reviewShown reviewed).map (·.2.scope) == some .branch &&
+              (keptReviews reviewed).rounds.map (·.head) == #["head"] &&
+              (keptReviews kept).rounds.map (·.head) == #["head"] },
+    { name :=
+        "a round decodes to what it encodes, the commit it was made at kept; the store is at version 2, and migrates a version-1 tree to one whose rounds recorded no commit"
+      run :=
+        pure <|
+          let round : ReviewStore.Round :=
+            { against := "base", base := "B", head := "H"
+              hunks :=
+                #[{ path := "a", header := "a @@ -1 +1 @@", decision := .kept, viewed := #[{}] }] }
+          let older : Value :=
+            .record
+              [("buffer", .nat 3),
+                ("rounds",
+                  .list
+                    [.record
+                        [("against", .str "base"), ("base", .str "B"),
+                          ("hunks", .list (round.hunks.toList.map (·.encode)))]])]
+          ReviewStore.Round.decode? round.encode == some round && reviewStore.version == 2 &&
+            ((reviewStore.migrate 1 older).bind reviewStore.decode) ==
+              some { buffer := some 3, rounds := #[{ round with head := "" }] } &&
+            reviewStore.migrate 2 older == none },
+    { name :=
+        "visiting a commit opens its change as a review buffer: its hunks against its first parent alone, its new side read-only buffers of the commit's content and the working file never taken in, keep recorded and no round written, revert refused; a root commit's files are each added"
+      run :=
+        pure <|
+          match reviewOpened sinceRepository with
+          | none => false
+          | some opened =>
+            let reviewed := reviewAfter opened "C-y m"
+            let kept := reviewAfter reviewed "C-t 1 C-t k"
+            let reverted := reviewAfter reviewed "C-t 1 C-t v"
+            let root := reviewAfter opened "C-y b"
+            (focusedShowing reviewed).map (·.buffer.name) == some "*vc-review: r@main C*" &&
+              shownHeaders reviewed == #["x.txt @@ -1 +1 @@"] &&
+              entrySources reviewed == #[("x.txt@B", true), ("x.txt@C", true)] &&
+              (reviewShown reviewed).map (fun (_, record) => (record.scope, record.head)) ==
+                some (.commit "C", "C") &&
+              echoOf kept == some "kept a hunk of x.txt" &&
+              (keptReviews kept).rounds.isEmpty &&
+              echoOf reverted ==
+                some "vc-review-revert: this review is of commit C; nothing to revert" &&
+              -- The working file is never taken in.
+              fileText reverted "/r/x.txt" == none &&
+              (focusedShowing root).map (·.buffer.name) == some "*vc-review: r@main B*" &&
+              shownHeaders root == #["x.txt @@ -0,0 +1 @@", "y.txt @@ -0,0 +1 @@"] &&
+              entrySources root == #[("x.txt@B", true), ("y.txt@B", true)] &&
+              strayShots reviewed == 0 },
+    { name :=
+        "criterion 4 on the models: with the last round at an earlier commit of the branch, vc-review-since opens the change since it, the later commits' hunks alone, and records a round against the same branch at the new HEAD"
+      run :=
+        pure <|
+          match reviewOpened sinceRepository with
+          | none => false
+          | some opened =>
+            let since := reviewAfter (reviewAfter opened "C-y c") "C-y s"
+            (focusedShowing since).map (·.buffer.name) == some "*vc-review: r@main since C*" &&
+              shownHeaders since == #["y.txt @@ -1 +1 @@"] &&
+              (reviewShown since).map
+                  (fun (_, record) => (record.scope, record.base, record.head)) ==
+                some (.since "C", "C", "head") &&
+              (keptReviews since).rounds.map (fun round => (round.against, round.head)) ==
+                #[("base", "C"), ("base", "head")] &&
+              (entrySources since).map (·.1) == #["y.txt@C", "y.txt"] &&
+              strayShots since == 0 },
+    { name :=
+        "with the last round at a commit HEAD was rewritten past, vc-review-since opens the range-diff of the branch's commits since then as text, read-only, and focused"
+      run :=
+        pure <|
+          match reviewOpened sinceRepository with
+          | none => false
+          | some opened =>
+            let since := reviewAfter (reviewAfter opened "C-y z") "C-y s"
+            match focusedShowing since with
+            | none => false
+            | some shown =>
+              shown.buffer.name == "*vc-range-diff: r@main*" && shown.buffer.readOnly &&
+                fileTextOf since shown.buffer ==
+                  some
+                    ("r@main: HEAD was rewritten since Z; its commits against base\n" ++
+                      "1:  Z ! 1:  C C\n" ++
+                      "-:  ------- > 2:  head head\n") },
+    { name :=
+        "vc-review-since with no round, with a round that recorded no commit, and with HEAD still at the recorded commit says so and opens nothing"
+      run :=
+        pure <|
+          match reviewOpened sinceRepository with
+          | none => false
+          | some opened =>
+            let none_ := reviewAfter opened "C-y s"
+            let empty := reviewAfter (reviewAfter opened "C-y 0") "C-y s"
+            let still := reviewAfter (reviewAfter opened "C-y h") "C-y s"
+            echoOf none_ == some "vc-review-since: no review of r@main is recorded" &&
+              echoOf empty ==
+                some "vc-review-since: the last review of r@main recorded no commit" &&
+              echoOf still == some "vc-review-since: no change since head" &&
+              [none_, empty, still].all fun driver =>
+                (focusedShowing driver).map (·.buffer.name) == some "a.lean" },
     { name :=
         "an edit typed in a new excerpt changes the file's buffer, and one typed in an old excerpt is refused as read-only"
       run :=

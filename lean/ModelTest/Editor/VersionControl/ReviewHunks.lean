@@ -233,6 +233,21 @@ def reviewRecordChecks : List Check :=
           ReviewRecord.decode? threeHunks.encode == some threeHunks &&
             ReviewRecord.decode? (.str "x") == none },
     { name :=
+        "a record keeps what it is of and the commit it was made at: a branch's, a review since a commit, and one commit's each decode to what they encode, and a record with no head is the branch's with none"
+      run :=
+        pure <|
+          let ofScope (scope : ReviewScope) : ReviewRecord :=
+            { threeHunks with
+              scope, head := "H" }
+          [ReviewScope.branch, .since "C", .commit "K"].all
+              (fun scope =>
+                ReviewRecord.decode? (ofScope scope).encode == some (ofScope scope) &&
+                  ((ReviewRecord.decode? (ofScope scope).encode).map fun record =>
+                      (record.scope, record.head)) ==
+                    some (scope, "H")) &&
+            (threeHunks.scope, threeHunks.head) == (.branch, "") &&
+            ReviewScope.decode? (.str "since") == none },
+    { name :=
         "the counts are the kept hunks, the reverted ones, and those an excerpt of which no scene has shown, said as the status line says them"
       run :=
         pure <|

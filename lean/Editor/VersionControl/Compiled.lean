@@ -89,7 +89,8 @@ def commands : Array Config.Registration :=
     { name := reviewName, action := .call reviewCommand },
     { name := reviewRefreshName, action := .call reviewRefreshCommand },
     { name := reviewKeepName, action := .call reviewKeepCommand },
-    { name := reviewRevertName, action := .call reviewRevertCommand }]
+    { name := reviewRevertName, action := .call reviewRevertCommand },
+    { name := reviewSinceName, action := .call reviewSinceCommand }]
 
 /-- The status buffer's jobs, as a host registers them for the owner
 `compiled`. -/

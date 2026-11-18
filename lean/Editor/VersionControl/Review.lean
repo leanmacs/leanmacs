@@ -176,6 +176,11 @@ for, and its job key's prefix. -/
 def reviewName : String :=
   "vc-review"
 
+/-- The name of the command that opens the change since the commit the last
+review recorded, and the opener its buffers are shown for. -/
+def reviewSinceName : String :=
+  "vc-review-since"
+
 /-- The name of the command that reads the change again into the review
 buffer. -/
 def reviewRefreshName : String :=
@@ -205,9 +210,31 @@ def reviewModeName : String :=
 def Review.keptRounds : Nat :=
   20
 
-/-- The name of the review buffer of the workspace labelled `label`. -/
-def reviewBufferName (label : String) : String :=
-  s!"*{reviewName}: {label}*"
+/-- The first 8 characters of the commit id `id`, as a review names it. -/
+def shortId (id : String) : String :=
+  (id.take 8).toString
+
+/-- The name of the review buffer of `scope` in the workspace labelled
+`label`: `*vc-review: <label>*`, with ` since <c8>` for a review since a
+commit and ` <id8>` for a commit's. -/
+def reviewBufferName (label : String) (scope : ReviewScope := .branch) : String :=
+  match scope with
+  | .branch => s!"*{reviewName}: {label}*"
+  | .since recorded => s!"*{reviewName}: {label} since {shortId recorded}*"
+  | .commit id => s!"*{reviewName}: {label} {shortId id}*"
+
+/-- The command that says what goes wrong with a review of `scope`:
+`vc-review-since` for a review since a commit, `vc-review` otherwise. -/
+def ReviewScope.commandName : ReviewScope → String
+  | .since _ => reviewSinceName
+  | _ => reviewName
+
+/-- What a review of `scope` against `against` with no change says. -/
+def ReviewScope.noChange (scope : ReviewScope) (against : String) : String :=
+  match scope with
+  | .branch => s!"{reviewName}: no change against {against}"
+  | .since recorded => s!"{reviewSinceName}: no change since {shortId recorded}"
+  | .commit id => s!"{reviewName}: {shortId id} changes no file"
 
 /-- The job key of the reads of the repository at `root`. -/
 def reviewKey (root : System.FilePath) : String :=
@@ -233,6 +260,9 @@ structure ReviewStore.Round where
   against : String
   /-- The merge base. -/
   base : String
+  /-- The commit `HEAD` was at when the round's change was read; empty when
+  none was recorded. -/
+  head : String := ""
   /-- Its hunks. -/
   hunks : Array ReviewStore.Hunk
   deriving DecidableEq, Repr
@@ -279,13 +309,17 @@ def ReviewStore.Hunk.decode? : Value → Option ReviewStore.Hunk
 /-- A round as a tree. -/
 def ReviewStore.Round.encode (round : ReviewStore.Round) : Value :=
   .record
-    [("against", .str round.against), ("base", .str round.base),
+    [("against", .str round.against), ("base", .str round.base), ("head", .str round.head),
       ("hunks", .list (round.hunks.toList.map (·.encode)))]
 
 /-- The round a tree is, if it is one. -/
 def ReviewStore.Round.decode? : Value → Option ReviewStore.Round
-  | .record [("against", .str against), ("base", .str base), ("hunks", .list hunks)] => do
-    return { against, base, hunks := ← hunks.toArray.mapM ReviewStore.Hunk.decode? }
+  |
+  .record
+      [("against", .str against), ("base", .str base), ("head", .str head),
+        ("hunks", .list hunks)] =>
+    do
+    return { against, base, head, hunks := ← hunks.toArray.mapM ReviewStore.Hunk.decode? }
   | _ => none
 
 /-- What a workspace keeps of its reviews as a tree. -/
@@ -300,15 +334,31 @@ def ReviewStore.decode? : Value → Option ReviewStore
              rounds := ← rounds.toArray.mapM ReviewStore.Round.decode? }
   | _ => none
 
-/-- A workspace's record of its reviews. -/
+/-- A version-1 tree of what a workspace keeps of its reviews as the
+version-2 tree: each round with an empty `head`, as recording no commit;
+`none` for a tree that is not a version-1 one. -/
+def ReviewStore.migrateFirst : Value → Option Value
+  | .record [("buffer", buffer), ("rounds", .list rounds)] => do
+    let rounds ←
+      rounds.mapM fun
+          | .record [("against", against), ("base", base), ("hunks", hunks)] =>
+            some
+              (.record [("against", against), ("base", base), ("head", .str ""), ("hunks", hunks)])
+          | _ => none
+    return .record [("buffer", buffer), ("rounds", .list rounds)]
+  | _ => none
+
+/-- A workspace's record of its reviews: version 2, whose rounds hold the
+commit they were made at, migrated from version 1's (`migrateFirst`). -/
 def reviewStore : Store ReviewStore :=
-  { name := "vc-review", version := 1, initial := {}, encode := ReviewStore.encode
-    decode := ReviewStore.decode? }
+  { name := "vc-review", version := 2, initial := {}, encode := ReviewStore.encode
+    decode := ReviewStore.decode?
+    migrate := fun version tree => if version == 1 then ReviewStore.migrateFirst tree else none }
 
 /-- The round `record` is, with what `entries` say was viewed. -/
 def ReviewStore.roundOf (record : ReviewRecord) (entries : Array Buffer.ExcerptEntry) :
     ReviewStore.Round :=
-  { against := record.against, base := record.base
+  { against := record.against, base := record.base, head := record.head
     hunks :=
       record.hunks.map fun hunk =>
         { path := hunk.path, header := hunk.header, decision := hunk.decision
@@ -317,8 +367,11 @@ def ReviewStore.roundOf (record : ReviewRecord) (entries : Array Buffer.ExcerptE
 /-- Writes the round of the review buffer `id`, whose record is `record`, to
 its workspace's store: a new round when `fresh`, and otherwise in place of
 the last when the store's last review is this buffer's; the oldest dropped
-past `Review.keptRounds`. -/
+past `Review.keptRounds`. A commit's review writes none: rounds are reviews
+of a branch's work. -/
 def writeRound (id : BufferId) (record : ReviewRecord) (fresh : Bool) : EditorM Unit := do
+  if record.scope matches .commit _ then
+    return
   let state ← editorState
   let location := Location.local (System.FilePath.mk record.root)
   let entries := (((state.buffer? id).bind (·.excerpts)).map (·.entries)).getD #[]
@@ -355,18 +408,38 @@ structure ReviewOrder where
   against : String
   /-- The review buffer to read into, for a refresh; none to make one. -/
   into : Option BufferId := none
+  /-- What the review is of. -/
+  scope : ReviewScope := .branch
   deriving DecidableEq, Repr
+
+/-- A scope as two arguments: its kind and its commit. -/
+def ReviewScope.arguments : ReviewScope → List Argument
+  | .branch => [.str "branch", .str ""]
+  | .since recorded => [.str "since", .str recorded]
+  | .commit id => [.str "commit", .str id]
+
+/-- The scope two arguments are (`ReviewScope.arguments`), if they are one. -/
+def ReviewScope.ofArguments? : String → String → Option ReviewScope
+  | "branch", "" => some .branch
+  | "since", recorded => some (.since recorded)
+  | "commit", id => some (.commit id)
+  | _, _ => none
 
 /-- The order as the arguments a job is started with. -/
 def ReviewOrder.arguments (order : ReviewOrder) : List Argument :=
   [.str order.root.toString, .str order.git, .str order.label, .nat order.view.index,
-    .str order.against, .nat (bufferNumber order.into)]
+      .str order.against, .nat (bufferNumber order.into)] ++
+    order.scope.arguments
 
 /-- The order at the start of `arguments`, if they start with one, and the
 arguments after it. -/
 def ReviewOrder.split? : List Argument → Option (ReviewOrder × List Argument)
-  | .str root :: .str git :: .str label :: .nat view :: .str against :: .nat into :: rest =>
-    some ({ root, git, label, view := ⟨view⟩, against, into := numberBuffer into }, rest)
+  |
+  .str root ::
+      .str git ::
+      .str label :: .nat view :: .str against :: .nat into :: .str kind :: .str recorded :: rest =>
+    (ReviewScope.ofArguments? kind recorded).map fun scope =>
+      ({ root, git, label, view := ⟨view⟩, against, into := numberBuffer into, scope }, rest)
   | _ => none
 
 /-- The order `arguments` are, if they are one (`ReviewOrder.arguments`). -/
@@ -395,12 +468,15 @@ structure ReviewFile where
   deriving DecidableEq, Repr
 
 /-- What a review's diff is started with: the read's order, its branch
-resolved, the merge base, the paths left out, and the files. -/
+resolved, the merge base, the commit the change was read at, the paths left
+out, and the files. -/
 structure ReviewDiffOrder where
   /-- The read's order, its `against` the branch reviewed against. -/
   order : ReviewOrder
   /-- The merge base's id. -/
   base : String
+  /-- The id the change's revision resolved to (`Changes.tip`). -/
+  head : String
   /-- The paths whose load was refused. -/
   missing : Array String
   /-- The files to diff. -/
@@ -408,9 +484,9 @@ structure ReviewDiffOrder where
   deriving DecidableEq, Repr
 
 /-- The order as the arguments a job is started with: the read's, the base,
-how many paths are left out and each, then six for each file. -/
+the head, how many paths are left out and each, then six for each file. -/
 def ReviewDiffOrder.arguments (order : ReviewDiffOrder) : List Argument :=
-  order.order.arguments ++ [.str order.base, .nat order.missing.size] ++
+  order.order.arguments ++ [.str order.base, .str order.head, .nat order.missing.size] ++
     order.missing.toList.map .str ++
     order.files.toList.flatMap fun file =>
       [.str file.path, .nat file.old.index, .nat file.new.index, .nat (bufferNumber file.oldBuffer),
@@ -429,13 +505,13 @@ def reviewFiles? : List Argument → Option (Array ReviewFile)
 /-- The order `arguments` are, if they are one (`ReviewDiffOrder.arguments`). -/
 def ReviewDiffOrder.ofArguments? (arguments : List Argument) : Option ReviewDiffOrder := do
   let (order, rest) ← ReviewOrder.split? arguments
-  let .str base :: .nat count :: rest := rest | none
+  let .str base :: .str head :: .nat count :: rest := rest | none
   let missing ←
     (rest.take count).toArray.mapM fun
         | .str path => some path
         | _ => none
   guard (missing.size == count)
-  return { order, base, missing, files := ← reviewFiles? (rest.drop count) }
+  return { order, base, head, missing, files := ← reviewFiles? (rest.drop count) }
 
 /-- The snapshots `order` names, each released once. -/
 def ReviewDiffOrder.release (order : ReviewDiffOrder) : EditorM Unit := do
@@ -450,7 +526,15 @@ said. -/
 def startReview (order : ReviewOrder) : EditorM Unit := do
   if let .error refusal←
       startJob reviewReadJob order.arguments (key := some (reviewKey order.root)) then
-    message s!"{reviewName}: {refusal.describe}"
+    message s!"{order.scope.commandName}: {refusal.describe}"
+
+/-- Starts the review of the commit `id` against its first parent, in the
+workspace at `root` labelled `label`, shown from `view`: the one entry
+point the log's and the blame's visits call ("A commit's change", in the
+module docs). -/
+def startCommitReview (root : System.FilePath) (git label : String) (view : ViewId) (id : String) :
+    EditorM Unit :=
+  startReview { root, git, label, view, against := "", scope := .commit id }
 
 /-- The record of the review buffer `id` in `state`, if it is one. -/
 def reviewRecordOf (state : EditorState) (id : BufferId) : Option ReviewRecord :=
@@ -466,13 +550,13 @@ def reviewHeaders (record : ReviewRecord) (count : Nat) : Array String :=
       | none => headers)
     (Array.replicate count "")
 
-/-- Makes the old buffer of `path` at `base`, holding `content` ("The
-pipeline", in the module docs). -/
-def oldBufferOf (root : System.FilePath) (path base content : String) : EditorM (Option BufferId) :=
-  do
+/-- Makes a read-only buffer of `path` at the commit `revision`, holding
+`content`: an old buffer, or a commit's new side ("The pipeline", in the
+module docs). -/
+def revisionBufferOf (root : System.FilePath) (path revision content : String) :
+    EditorM (Option BufferId) := do
   let .ok id ←
-    createBuffer ((← editorState).freeName s!"{path}@{(base.take 8).toString}")
-        content | return none
+    createBuffer ((← editorState).freeName s!"{path}@{shortId revision}") content | return none
   discard <| id.setReadOnly true
   Workspace.setBufferWorkspace id (.local root)
   if let some language← languageOf (root / path) then
@@ -493,7 +577,7 @@ def reviewSpansOf (order : ReviewDiffOrder) (diffs : Array (Except DiffError Dif
       | .ok hunks =>
         pure hunks
       | .error error =>
-        return .error s!"{reviewName}: {error.describe}"
+        return .error error.describe
     let old ← snapshotLines file.old
     let new ← snapshotLines file.new
     let spans ← ReviewSpan.group old new hunks
@@ -583,11 +667,17 @@ def removeUnshown (olds : Array BufferId) : EditorM Unit := do
     unless state.windows.any (·.buffer == id) do
       discard <| id.remove
 
-/-- Removes the old buffers `order` made that no window shows: what a round
-that ends before its review buffer is built does with them ("The pipeline",
-in the module docs). -/
+/-- The read-only buffers `order` made: each file's old buffer, and, for a
+commit's review, each new side's. -/
+def ReviewDiffOrder.made (order : ReviewDiffOrder) : Array BufferId :=
+  order.files.filterMap (·.oldBuffer) ++
+    if order.order.scope matches .commit _ then order.files.filterMap (·.working) else #[]
+
+/-- Removes the read-only buffers `order` made that no window shows: what a
+round that ends before its review buffer is built does with them ("The
+pipeline", in the module docs). -/
 def ReviewDiffOrder.removeOlds (order : ReviewDiffOrder) : EditorM Unit :=
-  removeUnshown (order.files.filterMap (·.oldBuffer))
+  removeUnshown order.made
 
 /-- Builds the review buffer of `order` from `diffs`, or says why there is
 none (`reviewDiffed`): whether it was built. -/
@@ -601,7 +691,7 @@ def reviewBuilt (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff.
   let read ←
     match read with
     | .error sentence =>
-      message sentence
+      message s!"{order.order.scope.commandName}: {sentence}"
       return false
     | .ok read =>
       pure read
@@ -613,9 +703,10 @@ def reviewBuilt (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff.
               s!"{reviewName}: {file.path} changed while the review was read; run {reviewName} again"
           return false
   let against := order.order.against
+  let scope := order.order.scope
   let (list, hunks, marks) := reviewBuild read
   if list.isEmpty then
-    message ((leftOut order.missing).getD s!"{reviewName}: no change against {against}")
+    message ((leftOut order.missing).getD (scope.noChange against))
     return false
   let root := order.order.root
   let location := Location.local root
@@ -628,17 +719,18 @@ def reviewBuilt (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff.
       pure id
     | none =>
       let .ok id ←
-        createExcerptBuffer (state.freeName (reviewBufferName order.order.label))
+        createExcerptBuffer (state.freeName (reviewBufferName order.order.label scope))
             list | return false
       Workspace.setBufferWorkspace id location
       discard <| id.setMajorMode reviewModeName
       pure id
   let .ok text ← id.text | return false
   discard <| id.setGutter (some (← reviewGutter text marks))
-  let used := hunks.filterMap (·.oldBuffer?)
-  let olds := (order.files.filterMap (·.oldBuffer)).map (·.index)
+  let used := hunks.filterMap (·.oldBuffer?) ++ list.map (·.buffer.index)
+  let olds := order.made.map (·.index)
   let record : ReviewRecord :=
-    { root := root.toString, against, base := order.base, hunks, olds := olds.filter used.contains }
+    { root := root.toString, against, base := order.base, hunks, olds := olds.filter used.contains
+      scope, head := order.head }
   discard <| id.setValue ReviewRecord.localName record.encode
   writeRound id record true
   -- An old buffer no hunk reads, and, for a refresh, the last round's, go
@@ -649,7 +741,7 @@ def reviewBuilt (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff.
     let state ← editorState
     let view := order.order.view
     let asking := if (state.window? view).isSome then view else state.frame.focused
-    discard <| id.display asking reviewName
+    discard <| id.display asking scope.commandName
   if let some sentence := leftOut order.missing then
     message sentence
   return true
@@ -686,20 +778,23 @@ def reviewRead (order : ReviewOrder) (reply : Except String (String × Changes))
   let (against, changes) ←
     match reply with
     | .error why =>
-      message s!"{reviewName}: {why}"
+      message s!"{order.scope.commandName}: {why}"
       return
     | .ok read =>
       pure read
   if changes.files.isEmpty then
-    message s!"{reviewName}: no change against {against}"
+    message (order.scope.noChange against)
     return
   let mut files := #[]
   let mut missing := #[]
   for change in changes.files do
     let working ←
-      if change.new.isNone then
+      match change.new, order.scope with
+      | none, _ =>
         pure none
-      else
+      | some content, .commit id =>
+        revisionBufferOf order.root change.path id content
+      | some _, _ =>
         match
           ((loads.find? (·.1 == change.path)).map (·.2) :
             Option (Except FileError File.Loaded)) with
@@ -713,7 +808,7 @@ def reviewRead (order : ReviewOrder) (reply : Except String (String × Changes))
     let oldBuffer ←
       match change.old with
       | some content =>
-        oldBufferOf order.root change.path changes.base content
+        revisionBufferOf order.root change.path changes.base content
       | none =>
         pure none
     if change.old.isSome && oldBuffer.isNone then
@@ -741,11 +836,32 @@ def reviewRead (order : ReviewOrder) (reply : Except String (String × Changes))
         pure (← snapshotOf "", 0)
     files := files.push { path := change.path, old, new, oldBuffer, working, revision }
   let diff : ReviewDiffOrder :=
-    { order := { order with against }, base := changes.base, missing, files }
+    { order := { order with against }, base := changes.base, head := changes.tip, missing, files }
   if let .error refusal← startJob reviewDiffJob diff.arguments then
     diff.release
     diff.removeOlds
-    message s!"{reviewName}: {refusal.describe}"
+    message s!"{order.scope.commandName}: {refusal.describe}"
+
+/-- The command a review since a commit hands the loop when `HEAD` was
+rewritten past `commit` ("Since the last review", in the module docs): the
+range-diff of the branch's commits since then shown as text, or the refusal
+said. -/
+def rangeShown (order : ReviewOrder) (commit : String) (reply : Except Error RangeDiff) :
+    EditorM Unit := do
+  match reply with
+  | .error error =>
+    message s!"{reviewSinceName}: {error.describe}"
+  | .ok diff =>
+    let content :=
+      s!"{order.label}: HEAD was rewritten since {shortId commit}; its commits against {order.against}\n" ++
+        diff.text
+    let .ok id ←
+      createBuffer ((← editorState).freeName s!"*vc-range-diff: {order.label}*") content | return
+    discard <| id.setReadOnly true
+    Workspace.setBufferWorkspace id (.local order.root)
+    let state ← editorState
+    let asking := if (state.window? order.view).isSome then order.view else state.frame.focused
+    discard <| id.display asking reviewSinceName
 
 /-- The read job: the branch to review against, the change of `HEAD` against
 it and each changed file's load, asked of the implementation `connect`
@@ -758,6 +874,35 @@ def reviewReadWork (connect : String → System.FilePath → Handler := Git.hand
     ReviewOrder.ofArguments?
       arguments | throw s!"{reviewReadJob}: its arguments are not a review order"
   let handler := connect order.git order.root
+  let loadsOf (changes : Changes) : JobM (Array (String × Except FileError File.Loaded)) := do
+    let mut loads := #[]
+    for file in changes.files do
+      if file.new.isSome then
+        loads := loads.push (file.path, ← File.load (order.root / file.path) Files.limit)
+    return loads
+  if let .commit id := order.scope then
+    let parent ←
+      match ← Program.runM handler (log id 1) with
+      | .error error =>
+        return reviewRead order (.error error.describe) #[]
+      | .ok entries =>
+        pure ((entries[0]?.bind (·.parents[0]?)).getD "")
+    match ← Program.runM handler (changes id parent) with
+    | .error error =>
+      return reviewRead order (.error error.describe) #[]
+    | .ok changes =>
+      return reviewRead order (.ok (order.against, changes)) #[]
+  if let .since recorded := order.scope then
+    match ← Program.runM handler (changes "HEAD" recorded) with
+    | .error error =>
+      return reviewRead order (.error error.describe) #[]
+    | .ok changes =>
+      if changes.tip == recorded then
+        return reviewRead order (.error s!"no change since {shortId recorded}") #[]
+      if changes.base == recorded then
+        return reviewRead order (.ok (order.against, changes)) (← loadsOf changes)
+      return rangeShown order recorded
+          (← Program.runM handler (rangeDiff order.against recorded "HEAD"))
   let against : Except String String ←
     if order.against.isEmpty then
       match ← Program.runM handler worktrees with
@@ -781,11 +926,7 @@ def reviewReadWork (connect : String → System.FilePath → Handler := Git.hand
   | .error error =>
     return reviewRead order (.error error.describe) #[]
   | .ok changes =>
-    let mut loads := #[]
-    for file in changes.files do
-      if file.new.isSome then
-        loads := loads.push (file.path, ← File.load (order.root / file.path) Files.limit)
-    return reviewRead order (.ok (against, changes)) loads
+    return reviewRead order (.ok (against, changes)) (← loadsOf changes)
 
 /-! ## The commands -/
 
@@ -851,6 +992,9 @@ def reviewKeepCommand (call : Call) : EditorM Unit := do
 /-- `vc-review-revert` ("Keep and revert", in the module docs). -/
 def reviewRevertCommand (call : Call) : EditorM Unit := do
   let some (id, record) ← reviewOf call reviewRevertName | return
+  if let .commit reviewed := record.scope then
+    message s!"{reviewRevertName}: this review is of commit {shortId reviewed}; nothing to revert"
+    return
   let some (index, placed) ← cursorHunk call record | return
   let some hunk := record.hunks[index]? | return
   let some excerpt :=
@@ -879,7 +1023,20 @@ def reviewRefreshCommand (call : Call) : EditorM Unit := do
   let some read ← readOrder reviewRefreshName call | return
   startReview
       { root := read.root, git := read.git, label := read.label, view := read.view
-        against := record.against, into := some id }
+        against := record.against, into := some id, scope := record.scope }
+
+/-- `vc-review-since` ("Since the last review", in the module docs). -/
+def reviewSinceCommand (call : Call) : EditorM Unit := do
+  let some read ← readOrder reviewSinceName call | return
+  let kept := (← editorState).workspaces.get reviewStore (.local read.root)
+  let some round :=
+    kept.rounds.back? | message s!"{reviewSinceName}: no review of {read.label} is recorded"
+  if round.head.isEmpty then
+    message s!"{reviewSinceName}: the last review of {read.label} recorded no commit"
+    return
+  startReview
+      { root := read.root, git := read.git, label := read.label, view := read.view
+        against := round.against, scope := .since round.head }
 
 /-- The review buffer's mode ("The mode and the status line", in the module
 docs). -/
