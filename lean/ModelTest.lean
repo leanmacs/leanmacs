@@ -39098,11 +39098,12 @@ def stagingWrites : Array VersionControl.Request :=
   #[.stageHunk "" none, .unstageHunk "" none, .commit ""]
 
 /-- A driver of the hunk and message buffer checks over `repository`
-(`statusDriverOf`), whose git says the index has no `src/b.lean`, and whose
-files may be saved in `/r/src`. -/
-def stagingDriverOf (repository : VersionControl.Model.Repository) : Option TestDriver :=
-  (statusDriverOf repository stagingWrites #[("", "src/b.lean")] stagingJobs stagingKeys).map
-    fun driver =>
+(`statusDriverOf`), whose git says each revision and path of `missing` is
+not there, by default that the index has no `src/b.lean`, and whose files
+may be saved in `/r/src`. -/
+def stagingDriverOf (repository : VersionControl.Model.Repository)
+    (missing : Array (String × String) := #[("", "src/b.lean")]) : Option TestDriver :=
+  (statusDriverOf repository stagingWrites missing stagingJobs stagingKeys).map fun driver =>
     { driver with
       jobs :=
         { driver.jobs with
@@ -39289,6 +39290,69 @@ def stageHunkChecks : List Check :=
               fed == some edited.jobs.processes.fed &&
               !(edited.pending.any (·.name == Files.saveJob)) &&
               liveSnapshots unstaged == liveSnapshots opened },
+    { name :=
+        "an apply git refuses says git's refusal, reads the status again into no buffer, and holds no snapshot"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let shown := settledAfter (settledAfter driver "C-o a") "C-v s"
+            let refusing :=
+              withScript shown
+                { command := gitApplyRun false
+                  reply :=
+                    .ok {
+                        exit := .code 1, stdout := .empty
+                        stderr :=
+                          "error: patch failed: src/a.lean:6\nerror: src/a.lean: patch does not apply\n".toUTF8 } }
+            let reopened := settledAfter refusing "C-o a"
+            let refused := settledAfter reopened "C-r 8 C-v g"
+            let statusRead := gitRun VersionControl.Git.statusArguments
+            echoOf refused ==
+                some "vc-stage-hunk: exited with status 1: error: patch failed: src/a.lean:6" &&
+              refused.jobs.processes.fed.map (·.1) == #[gitApplyRun false] &&
+              ((gitStarted refused).filter (· == statusRead)).size == 1 &&
+              refused.pending.isEmpty &&
+              liveSnapshots refused == liveSnapshots reopened },
+    { name :=
+        "vc-stage-hunk pressed again while the buffer's save runs says it is being saved, and one save, one fetch and one apply run"
+      run :=
+        pure <|
+          match stagingDriverOf stagingRepository with
+          | none => false
+          | some driver =>
+            let edited := settledAfter (settledAfter driver "C-o a") "C-v z"
+            let (asked, _) := fedTo edited (presses "C-r 9 C-v g")
+            let (again, _) := fedTo asked (presses "C-v g")
+            let staged := settledOn again []
+            asked.pending.map (·.name) == #[Files.saveJob] &&
+              echoOf again == some "vc-stage-hunk: src/a.lean is being saved; try again" &&
+              again.pending.map (·.name) == #[Files.saveJob] &&
+              ((gitStarted staged).filter (· == fetchRun)).size == 1 &&
+              staged.jobs.processes.fed.size == 1 &&
+              echoOf staged == some "staged a hunk of src/a.lean" },
+    { name :=
+        "vc-unstage-hunk on a file the index holds and HEAD does not says to unstage the whole file, and feeds git nothing"
+      run :=
+        pure <|
+          match
+            stagingDriverOf
+              { committed := #[("src/c.lean", "c\n")]
+                index :=
+                  #[("src/c.lean", .file "c\n"),
+                    ("src/a.lean", .file VersionControlContract.tenLines)]
+                worktree :=
+                  #[("src/c.lean", "c\n"), ("src/a.lean", VersionControlContract.tenLines)] }
+              #[("HEAD", "src/a.lean")] with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let asked := settledAfter opened "C-r 1 C-v G"
+            echoOf asked ==
+                some "vc-unstage-hunk: src/a.lean is not in HEAD; unstage the whole file" &&
+              asked.jobs.processes.fed.isEmpty &&
+              liveSnapshots asked == liveSnapshots opened },
     { name := "a hunk staged with the workspace's status buffer kept reads the status again into it"
       run :=
         pure <|

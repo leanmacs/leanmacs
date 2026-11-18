@@ -461,7 +461,9 @@ Pinned by `ModelTest.hunkChecks` (the pure core and the exact patch text),
 `ModelTest.stageHunkChecks` on the models, and
 `ContractTest.statusBufferChecks` over real git and the library's diff
 engine: on a line of the second of two hunks, in a buffer with unsaved
-changes, the buffer is saved and that hunk alone is staged.
+changes, the buffer is saved and that hunk alone is staged; and pressed
+twice on one line before the first has staged, the first stages the hunk
+and git refuses the second, which is said.
 
 ## The message buffer: `vc-commit`
 

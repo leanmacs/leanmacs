@@ -3036,6 +3036,52 @@ partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
     texts := after
   return some (loop, texts)
 
+/-- `loop`, over `texts`, once each job of `queue` has run, and every job
+their commands start, oldest first, as the model's driver settles
+(`ModelTest.settledOn`): each spawned on the rig's services with its posts
+collected, waited for, then each post delivered and then its command, with
+`keys`, and the jobs those start queued behind the rest. So two commands'
+pipelines run interleaved, a step of each in turn, where `settleProjects`
+runs each to its end. `none` when a job did not end in time or ended
+otherwise than finished, a delivery answered a prompt or was refused, or
+more than `depth` jobs ran. -/
+partial def settleQueued (rig : ProjectRig) (texts : RealTexts) (loop : Loop TestScheme.scheme)
+    (queue : List JobStart) (keys : Loop.Keys TestScheme.scheme)
+    (jobs : Array Config.JobRegistration) (depth : Nat := 32) :
+    IO (Option (Loop TestScheme.scheme × RealTexts)) := do
+  match queue with
+  | [] =>
+    return some (loop, texts)
+  | start :: rest =>
+    if depth == 0 then
+      return none
+    let some work := (jobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
+    let posts ← IO.mkRef (#[] : Array Invocation)
+    let handle ←
+      Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
+    unless ← eventually handle.ended do
+      handle.cancel
+      return none
+    let label := s!"job {start.name}"
+    let mut loop := loop
+    let mut texts := texts
+    let mut queued := rest
+    for invocation in ← posts.get do
+      let (next, after) ← (loop.deliver keys label (runPosted invocation)).runReal texts rig.display
+      let .ok next := next | return none
+      unless next.answered.isEmpty do
+        return none
+      loop := next.loop
+      texts := after
+      queued := queued ++ next.starts.toList
+    let some (.finished command) ← handle.outcome? | return none
+    let (next, after) ←
+      Job.finishWith rig.held handle (loop.deliver keys label command) texts rig.display
+    let .ok next := next | return none
+    unless next.answered.isEmpty do
+      return none
+    settleQueued rig after next.loop (queued ++ next.starts.toList) keys jobs (depth - 1)
+
 /-- `loop`, over `texts`, once each of `invocations` has run with `keys` and
 settled with `jobs` (`settleProjects`), in order. -/
 def runSettledFrom (rig : ProjectRig) (loop : Loop TestScheme.scheme) (texts : RealTexts)
@@ -3679,6 +3725,31 @@ def statusBufferChecks (services : Job.Services) : List Check :=
                 VersionControlContract.lineSet VersionControlContract.tenLines 8 "nine\n" &&
               written == VersionControlContract.twoChanged &&
               state },
+    { name :=
+        "vc-stage-hunk pressed twice on a line before the first has staged, over real git: both take the same hunk, the first stages it, git refuses the second, which is said, and the index holds the hunk once"
+      run :=
+        withConfiguredRepository
+          (VersionControlContract.writing
+            (VersionControlContract.clean #[("a.txt", VersionControlContract.tenLines)]) "a.txt"
+            VersionControlContract.twoChanged)
+          fun home config directory => do
+          let rig ← ProjectRig.over (onIsolatedGit services home config)
+          let some (opened, texts) ←
+            runSettled rig directory [openFile (directory / "a.txt"), toRow 8] statusKeys
+                statusJobs | return false
+          let press : Invocation := { command := VersionControl.stageHunkName }
+          let (first, texts) ← (opened.invoke statusKeys press).runReal texts rig.display
+          let .ok first := first | return false
+          let (second, texts) ← (first.loop.invoke statusKeys press).runReal texts rig.display
+          let .ok second := second | return false
+          let some (settled, _) ←
+            settleQueued rig texts second.loop (first.starts.toList ++ second.starts.toList)
+                statusKeys statusJobs | return false
+          let index ← gitIn home directory #["show", ":a.txt"]
+          return first.starts.size == 1 && second.starts.size == 1 &&
+              index == VersionControlContract.lineSet VersionControlContract.tenLines 8 "nine\n" &&
+              settled.state.echo.startsWith
+                "vc-stage-hunk: exited with status 1: error: patch failed: a.txt" },
     { name :=
         "criterion 2 over real git: vc-commit, the message typed, vc-commit-accept makes a commit whose message is the buffer's text, and the message buffer is gone"
       run :=
