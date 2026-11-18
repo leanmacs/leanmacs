@@ -3760,6 +3760,30 @@ def registryChecks : List Check :=
               registry.registered.categorySources category == registry.sourcesIn category &&
                 moved.registered.categorySources category == moved.sourcesIn category) },
     { name :=
+        "a category's compiled default sits between config's two choices: the category gets it, owned by compiled, and other categories the fuzzy style; config's default leaves it and moves the others; config's choice for the category overrides it; a default naming no style falls through to the next"
+      run :=
+        let shipped : Config.Registry :=
+          { ({} : Config.Registry).replaceStyles .compiled Completion.Styles.shipped with
+            styleDefaults := #[("file", "path")] }
+        let entryOf (registry : Config.Registry) (category : String) : String × Config.Owner :=
+          let entry := registry.styleEntry (some category)
+          (entry.style.name, entry.owner)
+        let defaulted := { shipped with styleChoices := #[(none, "orderless")] }
+        let overridden :=
+          { shipped with styleChoices := #[(some "file", "fuzzy"), (none, "orderless")] }
+        let nameless := { shipped with styleDefaults := #[("file", "nope")] }
+        pure
+          (entryOf shipped "file" == ("path", .compiled) &&
+            entryOf shipped "buffer" == ("fuzzy", .compiled) &&
+            (entryOf defaulted "file").1 == "path" &&
+            (entryOf defaulted "buffer").1 == "orderless" &&
+            (entryOf overridden "file").1 == "fuzzy" &&
+            (entryOf nameless "file").1 == "fuzzy" &&
+            ({ nameless with styleChoices := #[(none, "orderless")] } |> (entryOf · "file")).1 ==
+              "orderless" &&
+            (shipped.matching.styleFor (some "file")).name == "path" &&
+            shipped.matching.ownerFor (some "file") == .compiled) },
+    { name :=
         "the matching follows config's choices over the registered styles: a category's chosen style, the chosen default for a category with none, and the fuzzy style with no choice; a choice of a name nobody registered falls to the default and is reported once; config's style of a shipped name is the one found until config's styles are replaced, and with no choice config's style named fuzzy is the default, on a host that ships the fuzzy style and on one that ships none"
       run :=
         let shipped : Config.Registry :=

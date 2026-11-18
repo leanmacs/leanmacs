@@ -220,16 +220,20 @@ A completion style (`Completion.Style`, `Editor/Completion/Style.lean`) is
 held by owner like a source, in a `StyleEntry`, and replaced as a set
 (`replaceStyles`). The latest entry of a name is the one found (`style?`),
 so config's style of a shipped style's name is used in its place until a
-reload drops it. Every host registers the shipped styles, `fuzzy` and
-`orderless`, for the owner `compiled` (`Headless.Collaborators.styles`);
+reload drops it. Every host registers the shipped styles, `fuzzy`,
+`orderless` and `path`, for the owner `compiled` (`Headless.Collaborators.styles`);
 `setup` registers more with `defineStyle` (`Editor/Setup.lean`).
 
 Which style a prompt is matched with is config's choice, by category, with a
 default for the rest (`useStyleFor`, `useStyle`): the choices are config's
 alone, set by each install (`styleChoices`), as its project commands are.
-`styleEntry` resolves them to the one style entry a category is matched
-with: the entry of the style chosen for it when one is registered under
-that name, else the chosen default's, else the style registered under
+Compiled code may give a category a style of its own (`styleDefaults`, as
+Emacs's `completion-category-defaults`), set when the host starts and never
+by an install: it sits between config's two choices, so `useStyleFor`
+overrides it and `useStyle` does not reach it. `styleEntry` resolves them to
+the one style entry a category is matched with: the entry of the style
+chosen for it when one is registered under that name, else the compiled
+default's for it, else the chosen default's, else the style registered under
 `fuzzy` (config's, when it registers one of that name), else the compiled
 fuzzy style, for a registry where no style of that name is. A chosen name
 no style is registered under is reported at install (`unknownStyles`,
@@ -535,6 +539,11 @@ it did not, which a host reads as `auto`. -/
   `Editor/Setup.lean`), each a category, or `none` for the default, and a
   style's name, in the order it made them: set at every install. -/
   styleChoices : Array (Option String × String) := #[]
+  /-- Compiled code's style for a category, each a category and a style's
+  name, as Emacs's `completion-category-defaults`: set when the host starts
+  (`Headless.compiled`) and never by an install ("Styles", in the module
+  docs). -/
+  styleDefaults : Array (String × String) := #[]
   /-- The completion display entries ("Displays", in the module docs). -/
   displays : Array DisplayEntry := #[]
   /-- Config's choices of completion display (`useDisplay`,
@@ -580,7 +589,8 @@ def style? (registry : Registry) (name : String) : Option Completion.Style :=
 /-- The style entry a prompt of `category` (`none` for one with no
 category) is matched with ("Styles", in the module docs): the latest entry
 registered under the name config chose for the category, when one is; else
-under the name chosen for the default, when one is; else under `fuzzy`, so
+under the name compiled code gives the category (`styleDefaults`), when one
+is; else under the name chosen for the default, when one is; else under `fuzzy`, so
 config's style of that name is used in the shipped one's place; else, for
 a registry where none is, the compiled fuzzy style, as compiled's. The one
 lookup both the style and its owner are read from (`matching`). -/
@@ -588,8 +598,10 @@ def styleEntry (registry : Registry) (category : Option String) : StyleEntry :=
   let named (name : String) : Option StyleEntry := registry.styles.findRev? (·.style.name == name)
   let chosen (category : Option String) : Option StyleEntry :=
     (registry.styleChoices.find? (·.1 == category)).bind fun (_, name) => named name
+  let defaulted (category : String) : Option StyleEntry :=
+    (registry.styleDefaults.find? (·.1 == category)).bind fun (_, name) => named name
   ((category.bind fun category => chosen (some category)) <|>
-        chosen none <|> named Completion.Styles.fuzzy.name).getD
+        category.bind defaulted <|> chosen none <|> named Completion.Styles.fuzzy.name).getD
     { owner := .compiled, style := Completion.Styles.fuzzy }
 
 /-- The styles a prompt is matched with ("Styles", in the module docs), each

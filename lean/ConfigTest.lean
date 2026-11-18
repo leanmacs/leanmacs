@@ -484,6 +484,8 @@ structure Compiled where
   languages : Array Language := #[]
   /-- The compiled completion sources. -/
   sources : Array Completion.Source := #[]
+  /-- Compiled code's style for a category (`Headless.Collaborators.styleDefaults`). -/
+  styleDefaults : Array (String × String) := #[]
   /-- How long a command may take before it is logged, in milliseconds. -/
   slowAfter : Nat := Loop.slowAfter
   /-- The major mode the scratch buffer starts in, if any: the host's frame
@@ -529,6 +531,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           commands := compiled.commands, compiledJobs := compiled.jobs,
           bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
           themes := compiled.themes, languages := compiled.languages, sources := compiled.sources,
+          styleDefaults := compiled.styleDefaults
           log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter
           clock := some clock,
           start := do
@@ -3451,6 +3454,33 @@ def promptChecks (context : Context) : List Check :=
                 exactFirst unchosen &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
+    { name :=
+        "a category's compiled default sits between config's two choices, through the real elaborator: with compiled code giving pick the orderless style and config choosing nothing, the pick prompt lists `wq`, `rewrite` and `w` and another prompt `w` first; config's `useStyle \"fuzzy\"` leaves pick on orderless; config's `useStyleFor \"pick\" \"fuzzy\"` lists `w` first"
+      run :=
+        withHost context [("10-style.lean", styleChunk [])]
+          (fun session => do
+            let asked (command : String) : IO (Array String) := do
+              session.ask [.reload]
+              session.ask [.run command]
+              unless ← Event.post (.commit "w") do
+                return #[]
+              let asking ← session.sceneLines
+              session.pressKeys cancelKeys
+              return asking
+            let exactFirst (lines : Array String) : Bool :=
+              listsAfter lines "Pick: " ["w", "wq", "rewrite"] ||
+                listsAfter lines "Pick: " ["w", "rewrite", "wq"]
+            let pick ← asked "pick"
+            let other ← asked "other"
+            session.write "10-style.lean" (styleChunk ["useStyle \"fuzzy\""])
+            let defaulted ← asked "pick"
+            session.write "10-style.lean" (styleChunk ["useStyleFor \"pick\" \"fuzzy\""])
+            let chosen ← asked "pick"
+            return listsAfter pick "Pick: " ["wq", "rewrite", "w"] && exactFirst other &&
+                listsAfter defaulted "Pick: " ["wq", "rewrite", "w"] &&
+                exactFirst chosen &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
+          { minibufferCompiled with styleDefaults := #[("pick", "orderless")] } },
     { name :=
         "a style config defines and chooses as the default lists every prompt: after `w` both prompts list `wq` and `w`, the candidates that begin with it; a config that also chooses a style nobody registered for pick says so in the echo area and on a report line, and pick falls to the default"
       run :=

@@ -876,6 +876,10 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   config. The default is the shipped set (`Completion.Styles.shipped`), so
   every host's config can choose `fuzzy` and `orderless`. -/
   styles : Array Completion.Style := Completion.Styles.shipped
+  /-- Compiled code's style for a category, each a category and a style's
+  name (`Config.Registry.styleDefaults`): applied when the host starts
+  (`compiled`). -/
+  styleDefaults : Array (String × String) := #[]
   /-- The compiled completion displays (`Editor/Completion/Display.lean`):
   registered for the owner `compiled` when the loop starts, before any
   config. The default is the shipped set (`Completion.Displays.shipped`), so
@@ -1884,20 +1888,21 @@ and completion displays, for the owner `compiled`, before any config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
   (((((((((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs
-                                                    .compiled
-                                                    collaborators.compiledJobs).replaceBindings
-                                                .compiled collaborators.bindings).replaceModes
-                                            .compiled collaborators.modes).replaceEx
-                                        .compiled collaborators.ex).replaceThemes
-                                    .compiled collaborators.themes).replaceSegments
-                                .compiled collaborators.segments).replaceLanguages
-                            .compiled collaborators.languages).replaceContributions
-                        .compiled collaborators.contributions).replaceSources
-                    .compiled collaborators.sources).replaceStyles
-                .compiled collaborators.styles).replaceDisplays
-            .compiled collaborators.displays).replaceAtPoints
-        .compiled collaborators.atPoints).replaceAtPointUses
-    .compiled collaborators.atPointUses
+                                                      .compiled
+                                                      collaborators.compiledJobs).replaceBindings
+                                                  .compiled collaborators.bindings).replaceModes
+                                              .compiled collaborators.modes).replaceEx
+                                          .compiled collaborators.ex).replaceThemes
+                                      .compiled collaborators.themes).replaceSegments
+                                  .compiled collaborators.segments).replaceLanguages
+                              .compiled collaborators.languages).replaceContributions
+                          .compiled collaborators.contributions).replaceSources
+                      .compiled collaborators.sources).replaceStyles
+                  .compiled collaborators.styles).replaceDisplays
+              .compiled collaborators.displays).replaceAtPoints
+          .compiled collaborators.atPoints).replaceAtPointUses
+      .compiled collaborators.atPointUses |>
+    fun registry => { registry with styleDefaults := collaborators.styleDefaults }
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, the display its collaborators make over the table of
