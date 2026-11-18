@@ -1,0 +1,158 @@
+import ConfigTest.Check
+import ConfigTest.Support.Configs
+import ConfigTest.Support.Hosts
+import ConfigTest.Support.Keys
+import ConfigTest.Support.Lines
+import ConfigTest.Support.Syntax
+import Editor.Config.Directory
+import Editor.Config.Registry
+import Editor.Headless
+import Editor.InputScheme.Vim.Default
+import Editor.Job.Fake
+
+/-!
+# Config tests: the default config
+
+The tests of the default config `mise run install` ships (`config/default`):
+`defaultConfigChecks`, through a host of the Vim scheme that ships and on the
+registry a host starts with. The default config is config, not a Lean module,
+so this module mirrors none; it sits beside the mirrored ones under
+`ConfigTest/`. The root module `ConfigTest` runs them; its module doc says what
+each shows.
+-/
+
+namespace ConfigTest
+
+open Editor
+
+/-- The registrations of the default config (`config/default`, the
+directory `context.defaultConfig` names), built as a reload builds them
+(`Config.build`), under the Vim scheme that ships, with the real
+elaborator. Throws with the diagnostics when the build is rejected, so a
+check that fails says why. -/
+def defaultBuilt (context : Context) : IO Config.Registrations := do
+  let outcome ←
+    Config.build Vim.Default.scheme context.elaborator
+        (Config.Directory.source context.defaultConfig) (some context.base) #[]
+  match outcome.built with
+  | some built =>
+    return built.registrations
+  | none =>
+    throw <|
+        IO.userError
+          s!"the default config was rejected: {outcome.diagnostics.toList.map (·.message)}"
+
+/-- The registry a host of the executable starts with
+(`Headless.shippedOver`), with the default config's bindings, prefix names
+and leaders installed for the owner `.config`, as a reload installs them
+(`Config.Reload.install`). -/
+def defaultRegistry (registrations : Config.Registrations) : IO Config.Registry := do
+  let completions ← Job.Completions.new
+  let clock ← Job.FakeClock.new completions
+  let shipped :=
+    Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+      (← Snapshots.new) (← Job.HeldSnapshots.new)
+  let registry :=
+    ((Headless.compiled shipped).replaceBindings .config registrations.bindings).replacePrefixNames
+      .config registrations.prefixNames
+  return { registry with
+      leader := registrations.leader, localLeader := registrations.localLeader }
+
+/-- The checks of the default config `mise run install` ships
+(`config/default`), read from the directory the fourth argument names: it
+loads with no reload error and `SPC f f` opens a file, each binding names a
+registered command, and each prefix it binds under the leader is named. -/
+def defaultConfigChecks (context : Context) : List Check :=
+  [{  name :=
+        "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, once that is cancelled SPC : opens the command prompt, and once that is cancelled SPC ? opens the binding search, which, once open is typed, lists SPC f f  open-file"
+      run := do
+        let files ← chunksOf context.defaultConfig
+        withVimHost context files.toList fun session => do
+            session.ask [.reload]
+            let output ← session.output.get
+            let installed := output.any (·.startsWith "reload 1: installed")
+            let clean := !output.any (·.startsWith "diagnostic:")
+            let before ← session.sceneLines
+            session.typed "SPC f f"
+            let joined := (← session.host.join patience) == .settled
+            let after ← session.sceneLines
+            session.typed "<Escape>"
+            let cancelled ← session.sceneLines
+            session.typed "SPC :"
+            let rejoined := (← session.host.join patience) == .settled
+            let commanding ← session.sceneLines
+            session.typed "<Escape>"
+            session.typed "SPC ?"
+            let searched := (← session.host.join patience) == .settled
+            let searching ← session.sceneLines
+            -- The list shows only its first rows: typing `open` narrows it
+            -- to the bindings that match.
+            session.typed "o p e n"
+            let narrowed := (← session.host.join patience) == .settled
+            let opening ← session.sceneLines
+            -- Each prompt opens a minibuffer view of its own, so a prompt's
+            -- status line is compared from its view's id on.
+            let promptOf (label : String) (lines : Array String) : Bool :=
+              lines.any fun line =>
+                line.startsWith "status " && afterId line == afterId (promptStatus label)
+            return installed && clean && joined && rejoined && searched && narrowed &&
+                !before.contains (promptStatus Files.openPrompt) &&
+                after.contains (promptStatus Files.openPrompt) &&
+                !cancelled.contains (promptStatus Files.openPrompt) &&
+                !promptOf ExecuteCommand.label cancelled &&
+                promptOf ExecuteCommand.label commanding &&
+                !promptOf BindingSearch.label commanding &&
+                promptOf BindingSearch.label searching &&
+                opening.any fun line =>
+                  line.startsWith "view " && (afterId line).contains "SPC f f  open-file" },
+    { name :=
+        "the default config: every binding names a command registered compiled or by the config, <leader> f f is bound to open-file, <leader> : to execute-command, described Execute command, and <leader> ? to search-bindings, described Search bindings"
+      run := do
+        let registrations ← defaultBuilt context
+        let registry ← defaultRegistry registrations
+        let unregistered :=
+          registrations.bindings.filter fun binding =>
+            (registry.find? binding.command).isNone &&
+              !registrations.commands.any (·.name == binding.command)
+        unless unregistered.isEmpty do
+          throw <| IO.userError s!"unregistered commands: {unregistered.toList.map (·.command)}"
+        return !registrations.bindings.isEmpty &&
+            registrations.bindings.any
+              (fun binding =>
+                Key.strokeNotations binding.keys == "<leader> f f" &&
+                  binding.command == Files.openName) &&
+            registrations.bindings.any
+              (fun binding =>
+                Key.strokeNotations binding.keys == "<leader> :" &&
+                  binding.command == ExecuteCommand.name &&
+                  binding.desc == some "Execute command") &&
+            registrations.bindings.any fun binding =>
+              Key.strokeNotations binding.keys == "<leader> ?" &&
+                binding.command == BindingSearch.name &&
+                binding.desc == some "Search bindings" },
+    { name :=
+        "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are SPC f, SPC b, SPC w, SPC TAB and SPC h"
+      run := do
+        let registrations ← defaultBuilt context
+        let registry ← defaultRegistry registrations
+        let leaders := registry.leaders Vim.Default.scheme
+        let leader := leaders.leader.map Key.chord
+        let mut prefixes : Array (List Key) := #[]
+        for binding in registrations.bindings do
+          let keys := (Key.expand leaders binding.keys).map Key.chord
+          unless keys.take leader.length == leader do
+            continue
+          for n in [leader.length + 1:keys.length] do
+            let begun := keys.take n
+            unless prefixes.contains begun do
+              prefixes := prefixes.push begun
+        let unnamed :=
+          prefixes.filter fun begun => (registry.prefixName? Vim.Default.scheme begun).isNone
+        unless unnamed.isEmpty do
+          throw <| IO.userError s!"unnamed prefixes: {unnamed.toList.map Key.notations}"
+        let expected :=
+          ["SPC f", "SPC b", "SPC w", "SPC TAB", "SPC h"].map fun text =>
+            (keysOf text).map Key.chord
+        return prefixes.size == expected.length && expected.all prefixes.contains }]
+
+end ConfigTest

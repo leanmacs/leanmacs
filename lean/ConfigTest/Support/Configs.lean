@@ -36,14 +36,27 @@ import Editor.Value
 # Config tests: support: Configs
 
 Chunks and what compiled code hands a host: the chunks the checks elaborate, the
-compiled commands they dispatch, the collaborators of a host of the test scheme,
-and the note file's text. Shared by several test modules; it holds no checks of
-its own.
+chunks a config directory holds (`chunksOf`), the compiled commands they
+dispatch, the minibuffer's commands and mode (`minibufferCompiled`), the
+collaborators of a host of the test scheme, and the note file's text. Shared by
+several test modules; it holds no checks of its own.
 -/
 
 namespace ConfigTest
 
 open Editor
+
+/-- The names and texts of the chunks the directory source reads from
+`directory`. -/
+def chunksOf (directory : System.FilePath) : IO (Array (String × String)) := do
+  let chunks ← (Config.Directory.source directory).chunks
+  return chunks.map fun chunk => (chunk.name, chunk.text)
+
+/-- What compiled code hands every host of the prompt checks: the
+minibuffer's commands and its mode, as the executable is handed them
+(`Editor/Minibuffer/Compiled.lean`). -/
+def minibufferCompiled : Compiled :=
+  { commands := Minibuffer.commands, modes := Minibuffer.modes }
 
 /-- Whether `message` is one line and names `path`. A message that will be
 printed as one diagnostic line must hold the path on its first line. -/

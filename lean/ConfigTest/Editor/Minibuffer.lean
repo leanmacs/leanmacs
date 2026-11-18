@@ -20,24 +20,19 @@ import Editor.Config.Registry
 import Editor.Display
 import Editor.Event
 import Editor.Event.Queue
-import Editor.Ex.Line
 import Editor.Face
 import Editor.Fuzzy
 import Editor.Fuzzy.Real
 import Editor.Headless
-import Editor.InputScheme
-import Editor.InputScheme.Test
 import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Fake
 import Editor.Job.Real
 import Editor.Job.Runner
-import Editor.Language
 import Editor.Loop
 import Editor.Minibuffer.Compiled
 import Editor.Program
-import Editor.Role
 import Editor.Scene
 import Editor.State
 import Editor.Text
@@ -54,17 +49,6 @@ The tests of `Editor/Minibuffer.lean`: `promptChecks`, the prompts of
 namespace ConfigTest
 
 open Editor
-
-/-- The keys of the role `quit` under the test scheme: the minibuffer's
-cancel key. -/
-def cancelKeys : List Key :=
-  (TestScheme.scheme.roleKey Role.quit).getD []
-
-/-- What compiled code hands every host of the prompt checks: the
-minibuffer's commands and its mode, as the executable is handed them
-(`Editor/Minibuffer/Compiled.lean`). -/
-def minibufferCompiled : Compiled :=
-  { commands := Minibuffer.commands, modes := Minibuffer.modes }
 
 /-- What compiled code hands the hosts of the prompt checks that load no
 config: the minibuffer's commands and its mode, and commands written here.
@@ -185,15 +169,6 @@ def bufferStyleChunk (defines : List String) (names : List String := ["alpha", "
     "  command \"make\" do\n" ++
     String.join (names.map (s!"    discard <| createBuffer {·.quote}\n")) ++
     String.join (defines.map (s!"  {·}\n"))
-
-/-- Whether `lines` show a prompt labelled `label` listing `fields`: a
-status line that is the label alone, in the prompt's face, and the
-candidate list's view showing the fields, one a row, whichever views they
-are of: each prompt opens a minibuffer view of its own. -/
-def listsAfter (lines : Array String) (label : String) (fields : List String) : Bool :=
-  let status := Headless.statusLine ⟨0⟩ #[{ text := label, face := Loop.promptFace }]
-  lines.any (fun line => line.startsWith "status " && afterId line == afterId status) &&
-    listViewShows lines fields
 
 /-- What compiled code hands the hosts of the checks of a source that
 answers later: the minibuffer's commands and its mode; `ask-later`, which

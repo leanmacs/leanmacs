@@ -15,7 +15,8 @@ import Editor.Value
 
 What a printed scene's lines say: offsets, a view's line and its status line, a
 line after its view's id, a list view's lines and rectangle, a prompt's line and
-status, and which view has the focus; and the order the library's matcher ranks
+status, a prompt that lists given fields (`listsAfter`), and which view has the
+focus; and the order the library's matcher ranks
 texts in (`realOrder`), which a list view shows. Shared by several test modules;
 it holds no checks of its own.
 -/
@@ -89,6 +90,15 @@ def listViewShows (lines : Array String) (rows : List String) : Bool :=
   lines.any fun line =>
     line.startsWith "view " &&
       (afterId line).startsWith s!": {text.quote}, scroll 0, selections , padding"
+
+/-- Whether `lines` show a prompt labelled `label` listing `fields`: a
+status line that is the label alone, in the prompt's face, and the
+candidate list's view showing the fields, one a row, whichever views they
+are of: each prompt opens a minibuffer view of its own. -/
+def listsAfter (lines : Array String) (label : String) (fields : List String) : Bool :=
+  let status := Headless.statusLine ⟨0⟩ #[{ text := label, face := Loop.promptFace }]
+  lines.any (fun line => line.startsWith "status " && afterId line == afterId status) &&
+    listViewShows lines fields
 
 /-- The texts of `texts` that the library's matcher (`Fuzzy.real`) answers
 for `pattern`, in its order: what a prompt of the fuzzy style lists, so a

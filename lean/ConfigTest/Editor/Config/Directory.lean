@@ -1,8 +1,6 @@
 import ConfigTest.Check
 import ConfigTest.Support.Configs
 import ConfigTest.Support.Hosts
-import Editor.Config.Directory
-import Editor.Config.Session
 
 /-!
 # Config tests: `Editor/Config/Directory.lean`
@@ -14,12 +12,6 @@ The tests of `Editor/Config/Directory.lean`: `directoryChecks`. The root module
 namespace ConfigTest
 
 open Editor
-
-/-- The names and texts of the chunks the directory source reads from
-`directory`. -/
-def chunksOf (directory : System.FilePath) : IO (Array (String × String)) := do
-  let chunks ← (Config.Directory.source directory).chunks
-  return chunks.map fun chunk => (chunk.name, chunk.text)
 
 /-- The checks of the directory source (`Editor/Config/Directory.lean`), each
 in a fresh temporary directory of its own, which is removed with the check. -/

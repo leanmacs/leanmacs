@@ -12,8 +12,8 @@ import Editor.Role
 
 Keys typed into a session: the keys a key string names, typing and pressing them
 (`Session.type`, `Session.typed`, `Session.pressKeys`), a binding of them, and
-the keys of the roles `next-item` and `activate` under the test scheme. Shared
-by several test modules; it holds no checks of its own.
+the keys of the roles `next-item`, `activate` and `quit` under the test scheme.
+Shared by several test modules; it holds no checks of its own.
 -/
 
 namespace ConfigTest
@@ -61,5 +61,10 @@ def nextItemKeys : List Key :=
 accept key, since its mode fills that role with the accept command. -/
 def acceptKeys : List Key :=
   (TestScheme.scheme.roleKey Role.activate).getD []
+
+/-- The keys of the role `quit` under the test scheme: the minibuffer's
+cancel key. -/
+def cancelKeys : List Key :=
+  (TestScheme.scheme.roleKey Role.quit).getD []
 
 end ConfigTest

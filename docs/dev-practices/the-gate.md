@@ -492,8 +492,10 @@ against its real binding is in the mirror of that contract
 (`lean/ContractTest/Editor/Display/Contract.lean`). The helpers several
 test modules share are in `<Root>/Support/`; `Check` (and `failures`,
 `run` and `usage`, and config-test's `Context`, where the root has them)
-are in `<Root>/Check.lean`; and the benchmark is in
-`lean/ConfigTest/Bench.lean`. Each root keeps its imports, its `checks`
+are in `<Root>/Check.lean`; the benchmark is in
+`lean/ConfigTest/Bench.lean`; and the checks of the default config
+(`config/default`), which is no Lean module to mirror, are in
+`lean/ConfigTest/DefaultConfig.lean`. Each root keeps its imports, its `checks`
 aggregator (contract-test's is `main`) and `main`, and every list stays in
 its root's namespace, so `FfiTest.<name>Checks`, `ConfigTest.<name>Checks`
 and `ContractTest.<name>Checks` name it wherever it lives. Put a new check
