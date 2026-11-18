@@ -143,8 +143,8 @@ dispatch runs this module's steps. -/
 private def say (text : String) : EditorM Unit :=
   ExceptT.lift (Program.request (port := editorPort) (.state (.message text)))
 
-/-- Config's syntax refresh delay, asked of the state as the API's
-`EditorState.ask` asks it, here below the API. -/
+/-- Config's syntax refresh delay, asked of the registry as the API's
+`RegistryRequest.ask` asks it, here below the API. -/
 private def refreshDelay : EditorM (Option Nat) :=
   ExceptT.lift (Program.request (port := editorPort) (.registry .syntaxRefreshDelay))
 

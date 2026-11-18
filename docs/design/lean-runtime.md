@@ -551,7 +551,7 @@ elaborator.
   registry (`Registry.displayRules`), set at every install, so a config
   that makes none clears them, and handed to the loop for each step as
   `Loop.Registered.displayRules`, which answers a command's
-  `.displayRules` request (`BufferId.display`). Checking at install is
+  `RegistryRequest.displayRules` question (`BufferId.display`). Checking at install is
   enough because commands never add or drop an edge; a state handed a rule
   for an edge it lacks still places the buffer, in the stack.
 - **The title bar is config's, at the next start**: `titleBar .standard`
