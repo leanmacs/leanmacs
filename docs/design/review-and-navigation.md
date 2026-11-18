@@ -44,6 +44,23 @@ the origin its transaction was applied with, a number. The second half is
 not: the table that says which agent session, tool call and transcript step
 a number stands for arrives with the command loop and agent hosting.
 
+Of the review itself, the first four rows' mechanisms are built for a
+branch's change (2026-11-18, the excerpts roadmap's phase 4;
+[version-control.md](version-control.md), "The review buffer:
+`vc-review`"): `vc-review` opens the change of a worktree's `HEAD` against
+a branch as an excerpt buffer of its hunks across files, each under a
+header, editable in place; `vc-review-keep` and `vc-review-revert` decide
+the hunk at the cursor, a revert one transaction on the working file's
+buffer; the hunks are ordered by Lean's policy, tests first and then by
+dependency, never alphabetically; and which hunks were on screen, how
+often and for how long is tracked per excerpt, a hunk never shown drawn in
+`review-unexamined` and counted in the status line as not examined
+([text-and-display.md](text-and-display.md), "As built: the review
+buffer"). The decisions and what was viewed of each round are kept, so the
+design can later be checked against use. Accept and reject are commands
+on the cursor's hunk, not controls in blocks; plan-step order waits for
+rdm:roadmap/acp-agents.
+
 ### Anchoring comments
 
 Two models exist and the editor needs both.
@@ -172,7 +189,13 @@ when the code has moved out from under it.
 ## Open questions
 
 - **Hunk ordering**: nothing in the research says which order is best, only
-  that alphabetical is bad. Start with plan-step order and measure.
+  that alphabetical is bad. Start with plan-step order and measure. As
+  built, the order is tests first, then by file dependency, among files
+  that are ready the one that changes more lines first
+  (`orderFiles`, `lean/Editor/VersionControl/ReviewHunks.lean`), until
+  rdm:roadmap/acp-agents can order by plan step. The rounds the review
+  keeps, each hunk's decision and what was viewed of it, are what the
+  order will be measured from.
 - **Provenance storage**: the edit log is in memory. How is per-edit origin
   persisted and tied to commits? Agent Trace and git notes are existing
   formats; neither attributes at edit granularity. As built, the log is

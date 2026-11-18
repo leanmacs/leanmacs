@@ -4,7 +4,7 @@ What the editor asks of a version-control system, the status buffer that
 shows it, a file at a revision, the gutter that marks a tracked file's
 lines against `HEAD`, staging a hunk, the message buffer that commits, and
 the worktrees, the branches and a branch's change against its base, with
-the worktree list. The model is magit: every operation is a git command and its
+the worktree list, and the review buffer of a branch's change. The model is magit: every operation is a git command and its
 parsed output, run as a job over the process service
 ([review-and-navigation.md](review-and-navigation.md), "Version control").
 Git is one implementation of a small interface in the editor's own terms,
@@ -23,7 +23,9 @@ list, branches, raw diff and blobs),
 `lean/Editor/VersionControl/Hunk.lean` and
 `lean/Editor/VersionControl/Stage.lean` (staging a hunk),
 `lean/Editor/VersionControl/Commit.lean` (the message buffer),
-`lean/Editor/VersionControl/Worktrees.lean` (the worktree list) and
+`lean/Editor/VersionControl/Worktrees.lean` (the worktree list),
+`lean/Editor/VersionControl/ReviewHunks.lean` and
+`lean/Editor/VersionControl/Review.lean` (the review buffer) and
 `lean/Editor/VersionControl/Compiled.lean` (their registrations).
 
 ## The interface
@@ -674,6 +676,77 @@ on the models, and `ContractTest.statusBufferChecks` over real git: the
 list of a repository with a worktree on `feature` holding a changed file,
 and visiting its row opens `*vc-status: repo@feature*` naming that file.
 
+## The review buffer: `vc-review`
+
+`vc-review` (the ex name, which takes text) opens a branch's change
+against its base as an excerpt buffer
+([text-and-display.md](text-and-display.md), "Buffers and excerpt
+buffers"), hunk by hunk, each kept or reverted, with what was never on
+screen drawn so ([review-and-navigation.md](review-and-navigation.md),
+"What review needs"). It is the first consumer of `changes revision
+against`.
+
+- **The command.** The text is the branch to review the focused buffer's
+  repository's `HEAD` against; with none, the main worktree's branch
+  (`worktrees`), and a detached main worktree is refused. Its gate is
+  `vc-status`'s; a name that starts with `-` is refused before any job, as
+  the interface refuses it (`Request.invalid?`).
+- **The pipeline**: a job keyed by the workspace (`vc-review-read`) asks
+  `changes "HEAD" <branch>` and loads each changed file with a new side;
+  its command takes each file into its buffer without showing it
+  (`Files.adopt`), leaving out and later naming a file whose load was
+  refused, makes a read-only *old buffer* of each file at the merge base
+  (`<path>@<base>`, as `vc-show`'s), snapshots both sides and starts
+  `vc-review-diff`, which asks the diff service for each file's hunks.
+  Its command groups and orders them, checks that no working buffer moved
+  since its snapshot, and builds the buffer, releasing every snapshot on
+  every path.
+- **Hunks and their excerpts.** A hunk is git's: each run of changed lines
+  with 3 rows of context, runs whose context touches merged
+  (`ReviewSpan.group`). It is one or two tracked excerpts under one
+  header, `<path> @@ -a,b +c,d @@` in git's numbers: the base's removed
+  lines, from the old buffer, and the hunk with its context, from the
+  working file's buffer. So the new text is the working file, uncommitted
+  edits included, and an edit typed in a new excerpt is that buffer's. The
+  review buffer's own gutter marks added lines `+` and removed ones `-`.
+- **Keep and revert** (the mode's leader `k` and `r`): keep records the
+  decision; revert replaces the new excerpt with the hunk's old side,
+  context included, as one edit through the excerpt text, so one
+  transaction on the working buffer and one step of the review buffer,
+  which `u` takes back. Each rewrites the header with `  kept` or
+  `  reverted`. An undo of a revert leaves the decision `reverted`: the
+  decision is what was chosen, not the text's state.
+- **The order** is a Lean policy, never alphabetical (`orderFiles`): test
+  files first, then, within each group, a file after every file it depends
+  on, its text naming the other's module as a whole word, by Kahn's order;
+  among files that are ready, the one whose shown hunks change more lines
+  first, then the path. The text it reads is the one the review shows, the
+  working buffer's, and the line counts are the shown hunks', so the order
+  follows the diff the buffer shows whichever engine made it.
+- **The status line**: the segment `review`, which version control
+  registers and the default order lists, says `<k> kept · <r> reverted ·
+  <n> not examined`; a hunk is not examined while one of its excerpts has
+  never been on screen. The core's own `ModeLine.standard`, resolved over
+  the shipped segments alone, leaves it out; a host's registry holds
+  version control's segments, so a host draws it.
+- **The record.** The live record (hunks, excerpts, decisions, branch,
+  base, old buffers) is the review buffer's value `vc-review`. Each round,
+  with each hunk's decision and what was viewed of its excerpts, is copied
+  into the workspace's store (`reviewStore`), the last 20 kept: it outlives
+  the buffer and a config reload, not a restart (task
+  `review-record-on-disk`).
+- **`refresh`** (`vc-review-refresh`) reads the change again against the
+  record's branch into the same buffer, adds a round, and removes the last
+  round's old buffers no window shows.
+
+Pinned by `ModelTest.reviewHunkChecks`, `reviewOrderChecks` and
+`reviewRecordChecks` (the pure core), `ModelTest.reviewBufferChecks` on the
+models, the read run over the interface's model (`Model.readHandler`), and
+`ContractTest.reviewBufferChecks` over real git: from a linked worktree,
+`vc-review` with no text reviews against `main`, and reverting one hunk
+makes that file's buffer hold the base's lines for it and leaves the
+other.
+
 ## Open questions
 
 - **A worktree list per repository.** The list is kept per workspace, as
@@ -682,7 +755,10 @@ and visiting its row opens `*vc-status: repo@feature*` naming that file.
   store) would share it.
 - **Uncommitted work in a change.** `changes` is committed content; an
   agent's uncommitted work is its worktree's status and `fileAt` of the
-  index. A working-tree side may be wanted by the change view.
+  index. The review buffer diffs the base against the working file's
+  buffer, so it shows uncommitted work on the files the branch changed,
+  but not a file changed only in the working tree, which `changes` does
+  not list. A working-tree side of `changes` would show those too.
 - **The change's output limit.** One `cat-file --batch` holds every
   content of a change, under 16 MiB a stream; a larger change could not
   run. A larger named limit, or a read per file, would lift it.

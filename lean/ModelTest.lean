@@ -774,6 +774,11 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
 - `hunkChecks`: the pure core of staging a hunk
   (`Editor/VersionControl/Hunk.lean`) and the patch the git implementation
   feeds `git apply` (`Git.patch`);
+- `reviewHunkChecks`, `reviewOrderChecks` and `reviewRecordChecks`: the
+  pure core of the review buffer (`Editor/VersionControl/ReviewHunks.lean`):
+  a change's hunks with their context and git's numbers, on strings; the
+  order of a change's files, over the change the version-control model
+  gives; and the record, its counts and the hunk at an offset;
 - `statusViewChecks` and `worktreeViewChecks`: the pure views of the status
   buffer (`Editor/VersionControl/Status.lean`) and of the worktree list
   (`Editor/VersionControl/Worktrees.lean`), on values the model gives;
@@ -790,7 +795,17 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   (`Editor/VersionControl/Gutter.lean`) on that driver and the model of
   watches, whose waiting jobs it holds parked: the head fetched, the marks
   of a diff, and what a commit made outside the editor and HEAD moving
-  while a fetch or a diff runs change.
+  while a fetch or a diff runs change;
+- `reviewBufferChecks`: the review buffer
+  (`Editor/VersionControl/Review.lean`) on that driver, its read run over
+  the version-control interface's model (`Model.readHandler`): the four
+  criteria of the excerpts roadmap's phase 4, its refusals, refresh, and
+  edits through its excerpts;
+- `excerptViewedChecks`: what a view shows of a tracked excerpt
+  (`Editor/ExcerptView.lean`) and the marking of what was viewed
+  (`EditorState.markViewed`, `creditViewed`), on hand-built rows and
+  entries; the loop's marking and the face of what was not examined are
+  among `excerptDisplayChecks`, on the loop's driver.
 -/
 
 namespace ModelTest
