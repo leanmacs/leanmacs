@@ -113,11 +113,13 @@ def executeCommand (call : Call) : EditorM Unit := do
     if text.isEmpty then
       return
     match ← resolve text with
-    | some command => invoke { command }
-    | none => message (noMatch text)
+    | some command =>
+      invoke { command }
+    | none =>
+      message (noMatch text)
   | _ =>
-    if let .error refusal← prompt label { command := name } (sources := [.category category [source]])
-    then
+    if let .error refusal←
+        prompt label { command := name } (sources := [.category category [source]]) then
       message (notAsking refusal)
 
 end Editor.ExecuteCommand

@@ -96,7 +96,7 @@ def sourceContractChecks : List Check :=
           pure <|
             !holds writes && !holds (Completion.Fake.refusing "no" "test") &&
               [Ex.namesSource, Buffers.source, TabCommands.source, Themes.source,
-                  ExecuteCommand.source].all fun source =>
-                (sourceRunner "" source).any (!·.1.isEmpty) }]
+                    ExecuteCommand.source].all
+                fun source => (sourceRunner "" source).any (!·.1.isEmpty) }]
 
 end ModelTest

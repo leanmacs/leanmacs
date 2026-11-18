@@ -52,13 +52,13 @@ def executeCommands : List (String × Dispatched) :=
   let compiled : List (String × Dispatched) :=
     (ExecuteCommand.commands ++ Themes.commands ++ Minibuffer.commands).toList.filterMap
       fun registration =>
-        match registration.action with
-        | .call run =>
-          some
-            (registration.name, fun call => do
-              run call
-              return none)
-        | _ => none
+      match registration.action with
+      | .call run =>
+        some
+          (registration.name, fun call => do
+            run call
+            return none)
+      | _ => none
   compiled ++ [("marked", saysMarked)]
 
 /-- What a step of the command prompt's checks is handed: the commands of
@@ -68,12 +68,15 @@ style that keeps the candidates a text starts, in order, for every
 category. No key is bound to `execute-command` or to `load-theme`, as in a
 config that binds nothing: `C-e y` runs the minibuffer's accept alone. -/
 def executeKeys : Loop.Keys TestScheme.scheme :=
-  { dispatchKeys [("C-e y", invoke Minibuffer.acceptName)] executeCommands with
+  { dispatchKeys [("C-e y", invoke Minibuffer.acceptName)]
+      executeCommands with
     registered :=
       { themeNames := #[Theme.defaultName, "second"]
         commandNames := (executeCommands.map (·.1)).toArray }
     matching :=
-      { default := Completion.Style.keeping "starts" fun text candidate => candidate.startsWith text } }
+      {
+        default :=
+          Completion.Style.keeping "starts" fun text candidate => candidate.startsWith text } }
 
 /-- A fake style for the command prompt's checks: it keeps every
 candidate, in reverse order, with no ranges. -/
@@ -129,7 +132,8 @@ def executeCommandChecks : List Check :=
           | none => false
           | some driver =>
             (candidatesOf (calling driver)).map (·.all.map (·.text)) == some names &&
-              names.contains ExecuteCommand.name && names.contains Themes.loadName &&
+              names.contains ExecuteCommand.name &&
+              names.contains Themes.loadName &&
               names.back? == some "marked" },
     { name :=
         "accepting a typed fragment that is no command's name with nothing chosen runs the first command the style lists for it: load-th runs load-theme, which asks"
@@ -164,14 +168,14 @@ def executeCommandChecks : List Check :=
             let again := calling (calling driver)
             promptEcho again == ExecuteCommand.notAsking (.alreadyOpen ⟨1⟩) &&
               again.loop.state.prompt.map (·.label) == some ExecuteCommand.label },
-    { name :=
-        "the command prompt called with a count first, as a Vim key hands it, asks"
+    { name := "the command prompt called with a count first, as a Vim key hands it, asks"
       run :=
         pure <|
           match executeDriver with
           | none => false
           | some driver =>
-            (calling driver { command := ExecuteCommand.name, arguments := [.nat 3] }).loop.state.prompt.map
+            (calling driver
+                    { command := ExecuteCommand.name, arguments := [.nat 3] }).loop.state.prompt.map
                 (·.label) ==
               some ExecuteCommand.label },
     { name :=

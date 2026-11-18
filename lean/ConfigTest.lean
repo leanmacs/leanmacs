@@ -6014,9 +6014,9 @@ def shippedChecks (_ : Unit) : List Check :=
         let compiled (name : String) : Bool :=
           registry.sources.any fun entry => entry.source.name == name && entry.owner == .compiled
         return [Ex.historySource.name, Ex.namesSource.name, Buffers.source.name,
-                TabCommands.source.name, Themes.source.name, ExecuteCommand.source.name].all
-            (fun name => compiled name && (registry.source? name).isSome) &&
-          (registry.find? ExecuteCommand.name).any (·.owner == .compiled) },
+                  TabCommands.source.name, Themes.source.name, ExecuteCommand.source.name].all
+              (fun name => compiled name && (registry.source? name).isSome) &&
+            (registry.find? ExecuteCommand.name).any (·.owner == .compiled) },
     { name :=
         "the executable's hosts start with the shipped completion styles, fuzzy and orderless, and the shipped completion display, minibuffer, registered for the owner compiled, and with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
       run := do
