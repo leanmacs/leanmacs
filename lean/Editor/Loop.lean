@@ -336,7 +336,10 @@ loop has little of its own to do.
     as config's mode-line segments do: a style is a program over the fuzzy
     port alone, so it cannot be refused, read the state or be interrupted.
     A short list is one with at most `Loop.Keys.inlineMatches` candidates
-    to match (`Loop.inlineMatches`, 250, set by the prompt benchmark).
+    handed the style (`Candidates.listingSize`: those to match, and those
+    passed as given, which it marks) (`Loop.inlineMatches`, 250, set by the
+    prompt benchmark). `listed` and `completionJobs` both count with it, so
+    a long passed list is marked on the pool too.
   - So the first listing of a short list is made by the scene of the asking
     step, for the initial text, and every event ends in a scene: a command
     always finds the listing of the text the last scene showed.
@@ -2009,11 +2012,14 @@ def nextOf (loop : Loop scheme) : Next :=
 /-- The listing of `candidates` for `pattern` with `style`, as a program
 over the fuzzy port: the candidates to match (`Candidates.matchable`) that
 the style answers, in its order, each with the ranges that matched, then
-those listed as given (`Candidates.passing`). No style is asked when there
-is nothing to match. It is the one way a listing is made ("Prompts", in the
-module docs): in the publish for a short list, and in a match job, on a
-pool thread, for a long one, so the editor thread never maps the
-candidates of a long list. -/
+those listed as given (`Candidates.passing`), every one in the order given,
+none dropped, each with the ranges of the style's hit for it where the
+style matches it and none where it does not; the hits' order is ignored.
+No style is asked when there is nothing to match, nor for the passed
+candidates when the pattern is empty. It is the one way a listing is made
+("Prompts", in the module docs): in the publish for a short list, and in a
+match job, on a pool thread, for a long one, so the editor thread never
+maps the candidates of a long list. -/
 def _root_.Editor.Candidates.listing (candidates : Candidates) (pattern : String)
     (style : Completion.Style) : FuzzyM (Array Completion.Listed) := do
   -- As they answer the pattern: no other directory's answer, and no hidden
@@ -2026,14 +2032,29 @@ def _root_.Editor.Candidates.listing (candidates : Candidates) (pattern : String
     else
       style.hits pattern (matchable.map (·.text))
   let matched := hits.filterMap fun hit => (matchable[hit.index]?).map (.of · hit.ranges)
-  return matched ++ candidates.passing.map Completion.Listed.of
+  let passing := candidates.passing
+  let marks ←
+    if passing.isEmpty || pattern.isEmpty then
+      pure #[]
+    else
+      style.hits pattern (passing.map (·.text))
+  -- Each passed candidate's ranges, by its index: the first hit for it.
+  let ranges :=
+    marks.foldl (init :=
+      (Array.replicate passing.size none : Array (Option (Array Completion.Span))))
+      fun ranges hit =>
+      match ranges[hit.index]? with
+      | some none => ranges.set! hit.index (some hit.ranges)
+      | _ => ranges
+  return matched ++
+      passing.mapIdx fun index candidate => .of candidate ((ranges[index]?).join.getD #[])
 
 /-- `state` with the open prompt's listing brought up to date ("Prompts", in
 the module docs), and the minibuffer's text it read: while a prompt is open
 and has candidates, given, passed or to come from a source that answers
 later, the minibuffer's text is read. When the listing is not for that text
 or not at the candidates' revision, a prompt with at most `inlineMatches`
-candidates to match is listed here (`Candidates.listing`, with the style
+candidates handed the style (`Candidates.listingSize`) is listed here (`Candidates.listing`, with the style
 `matching` chooses for the prompt's category, and `Candidates.relist`,
 which keeps the choice on its candidate while the text is the same); one
 with more is listed by a match job (`completionJobs`), and here only
@@ -2075,7 +2096,7 @@ def listed (state : EditorState) (matching : Completion.Matching := .standard)
         return (state.replaceCandidatesIn view { candidates with matching := none }, some pattern,
             none)
       return (state, some pattern, none)
-    if (candidates.current pattern).matchableSize ≤ inlineMatches then
+    if (candidates.current pattern).listingSize ≤ inlineMatches then
       let listing ← candidates.listing pattern (matching.styleFor candidates.category)
       -- A match job that was running is overtaken by this listing.
       return (state.replaceCandidatesIn view
@@ -3134,8 +3155,8 @@ spawn.
   cancelled and its job started again at the next generation, for the
   typed text, after its pause; what it answered stays listed until the new
   generation's first batch.
-- **The match**: a prompt with more candidates to match than
-  `keys.inlineMatches`, whose listing is not for the typed text at the
+- **The match**: a prompt with more candidates handed the style than
+  `keys.inlineMatches` (`Candidates.listingSize`), whose listing is not for the typed text at the
   candidates' revision, and for which no match is in flight and none
   failed for that text and revision (`Candidates.unmatched`), has one
   spawned under `matchKey`, of the owner of its style
@@ -3201,7 +3222,7 @@ def completionJobs (loop : Loop scheme) (keys : Keys scheme) :
       match loop.typed with
       | some typed =>
         if
-            (candidates.current typed).matchableSize > keys.inlineMatches &&
+            (candidates.current typed).listingSize > keys.inlineMatches &&
               (candidates.listedFor != some typed || candidates.listedAt != candidates.revision) &&
               candidates.matching.isNone &&
               candidates.unmatched != some (typed, candidates.revision) then

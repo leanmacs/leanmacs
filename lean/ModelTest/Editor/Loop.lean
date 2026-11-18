@@ -3599,6 +3599,20 @@ loop does when the listing's read is refused. What is listed is compared
 with what the fuzzy model answers for the same pattern and candidates. -/
 def candidateChecks : List Check :=
   [{  name :=
+        "a filtered source's candidates are listed in the order it gave, none dropped, each with the style's ranges where it matches: passed c, ab and xyz for b list c, ab and xyz, with ranges on ab alone; for the empty text no style marks them"
+      run :=
+        pure <|
+          let passed := offered #["c", "ab", "xyz"]
+          let candidates : Candidates := { passed }
+          let listing (pattern : String) :=
+            ranked (candidates.listing pattern Completion.Styles.fuzzy)
+          let hitRanges := ((styled Completion.Styles.fuzzy "b" #["ab"])[0]?).map (·.ranges)
+          let marked := listing "b"
+          marked.map (·.text) == #["c", "ab", "xyz"] &&
+            marked.map (·.ranges) == #[#[], hitRanges.getD #[], #[]] &&
+            hitRanges.any (!·.isEmpty) &&
+            listing "" == passed.map Completion.Listed.of },
+    { name :=
         "the scene lists the candidates one a row in a view of their own, directly above the minibuffer's; the windows above are shorter by its rows while it is open and get them back when it closes"
       run :=
         pure <|
@@ -3714,7 +3728,7 @@ def candidateChecks : List Check :=
                 some #[(Completion.Candidate.ofText "only").inGroup "pick", xw]
           | _, _, _ => false },
     { name :=
-        "a prompt asked with a source and one that has filtered already keeps the first's candidates to match and the filtered one's apart, in its group, and the first source's category; after a text is typed it lists the matches in the fuzzy model's order, each with its in-order spans, then the filtered source's candidates in the order it gave them, though one does not match"
+        "a prompt asked with a source and one that has filtered already keeps the first's candidates to match and the filtered one's apart, in its group, and the first source's category; after a text is typed it lists the matches in the fuzzy model's order, each with its in-order spans, then the filtered source's candidates in the order it gave them, though one does not match, the one that matches with its in-order spans"
       run :=
         pure <|
           match candidateDriver with
@@ -3723,19 +3737,27 @@ def candidateChecks : List Check :=
             let (asking, _) := fedTo driver (presses "C-c 5")
             let (typed, _) := fedTo asking (presses "w")
             let passed := (offered #["zz", "w"]).map (·.inGroup filteredSource.name)
-            let passedListed := passed.map Completion.Listed.of
+            -- For `w`, `zz` is not marked and `w` is; for the empty text
+            -- neither is.
+            let passedListed (pattern : String) : Array Completion.Listed :=
+              passed.map fun candidate =>
+                .of candidate
+                  (if pattern.isEmpty || candidate.text == "zz" then #[]
+                  else Completion.Styles.inOrderSpans pattern candidate.text)
             let withPassed (listed : Candidates) : Candidates :=
+              let pattern := listed.listedFor.getD ""
               { listed with
-                passed, listed := listed.listed ++ passedListed
-                grouped := Completion.grouped (listed.listed ++ passedListed) }
+                passed, listed := listed.listed ++ passedListed pattern
+                grouped := Completion.grouped (listed.listed ++ passedListed pattern) }
             candidatesOf asking == some (withPassed (pickListed "")) &&
               (candidatesOf asking).map (·.all) == some pickOffered &&
               (candidatesOf asking).map (·.category) == some (some "pick") &&
               candidatesOf typed == some (withPassed (pickListed "w")) &&
+              (Completion.Styles.inOrderSpans "w" "w").size == 1 &&
               (candidatesOf typed).map (fun listed => (listed.listed.map (·.text)).toList.drop 3) ==
                 some ["zz", "w"] },
     { name :=
-        "a prompt asked with only a source that has filtered already holds no candidate to match, the filtered one's apart in its group, and that source's category; after a text is typed it lists them in the order the source gave, and the listing asks no style: its step costs the read of the minibuffer and no ranking, shown by a display of no rows"
+        "a prompt asked with only a source that has filtered already holds no candidate to match, the filtered one's apart in its group, and that source's category; after a text is typed it lists them in the order the source gave, the one the style matches with its in-order spans, and the listing asks the style once, for its ranges: its step costs the read of the minibuffer and one ranking, as a prompt with candidates to match does, shown by a display of no rows"
       run :=
         pure <|
           match unshownDriver countingModel with
@@ -3752,13 +3774,19 @@ def candidateChecks : List Check :=
             let passed := (offered #["zz", "w"]).map (·.inGroup filteredSource.name)
             let listing (pattern : String) : Candidates :=
               { passed, category := some filteredSource.category, listedFor := some pattern
-                listed := passed.map Completion.Listed.of, place := rootPlace }
+                listed :=
+                  passed.map fun candidate =>
+                    .of candidate
+                      (if pattern.isEmpty || candidate.text == "zz" then #[]
+                      else Completion.Styles.inOrderSpans pattern candidate.text)
+                place := rootPlace }
             candidatesOf asking == some (listing "") &&
               (candidatesOf asking).map (·.all) == some #[] &&
               (candidatesOf asking).map (·.category) == some (some "other") &&
               candidatesOf typed == some (listing "w") &&
               (candidatesOf typed).map (·.listed.map (·.text)) == some #["zz", "w"] &&
-              cost "C-c 8 w" == cost "C-c p w" + 1 &&
+              (candidatesOf typed).map (·.listed.map (·.ranges.isEmpty)) == some #[true, false] &&
+              cost "C-c 8 w" == cost "C-c p w" + 2 &&
               cost "C-c a w" == cost "C-c p w" + 2 },
     { name :=
         "after the step that asked for a prompt with candidates the listing is for the initial text, the empty one or one given, and nothing is chosen"
@@ -4284,6 +4312,21 @@ def completionJobChecks : List Check :=
                 some
                   ((FuzzyModel.rank "w" #["wq", "edit", "rewrite", "w"]).map fun index =>
                     #["wq", "edit", "rewrite", "w"][index]!) },
+    { name :=
+        "a prompt of filtered candidates alone, more of them than the inline limit, has a match spawned for the typed text, whose delivery lists them in the order given, none dropped, the one the style matches marked; within the limit, none is spawned"
+      run :=
+        pure <|
+          let candidates : Candidates := { passed := offered #["zz", "ab", "w"] }
+          match promptLoop candidates (some "w") with
+          | none => false
+          | some (loop, view) =>
+            let (spawned, _, _, spawns) := loop.completionJobs (jobKeys)
+            let (_, _, _, under) := loop.completionJobs (jobKeys (inline := 3))
+            let listed := (spawns[0]?.bind (matchedBy spawned ·)).map (·.listed)
+            spawns.map (·.key) == #[Loop.matchKey view] &&
+              listed.map (·.map (·.text)) == some #["zz", "ab", "w"] &&
+              listed.map (·.map (·.ranges.isEmpty)) == some #[true, true, false] &&
+              under.isEmpty },
     { name :=
         "a prompt over the inline limit whose listing is for the typed text at an older revision than its candidates', a batch having come, has one match spawned for the text at the candidates' revision; at their revision, none"
       run :=

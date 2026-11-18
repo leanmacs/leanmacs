@@ -629,8 +629,9 @@ A prompt is a request for one string, with a text to show beside the input
   - **the listing**: the candidates the text typed so far matches, in the
     style's order, each with the ranges of its text that matched
     (`Completion.Listed`), then every passed candidate in the order given,
-    whatever the text, and the text the listing was made for (`listed`,
-    `listedFor`). The state does not match: `listCandidates` is handed the
+    whatever the text, none dropped, each with the ranges the style marks
+    where it matches it (`Candidates.listing`, `Editor/Loop.lean`), and the
+    text the listing was made for (`listed`, `listedFor`). The state does not match: `listCandidates` is handed the
     pattern and the hits a style answered for it (`Completion.Hit`), and
     keeps the candidates at those indices, in that order, with their
     ranges. An index that is none of the candidates' is dropped. A filtered
@@ -1602,7 +1603,8 @@ structure Candidates where
   order they came in. -/
   all : Array Completion.Candidate := #[]
   /-- The candidates filtered sources answered, in the order they came in:
-  listed after the matches, whatever the text. -/
+  listed after the matches, whatever the text, each with the style's ranges
+  where it matches (`Candidates.listing`, `Editor/Loop.lean`). -/
   passed : Array Completion.Candidate := #[]
   /-- The prompt's category, which chooses its style: its first source's,
   or none. -/
@@ -1657,7 +1659,9 @@ def matchable (candidates : Candidates) : Array Completion.Candidate :=
     (fun all source => if source.filtered then all else all ++ source.answered) candidates.all
 
 /-- The candidates listed as given, after the matches: the passed ones, then
-what each filtered asking source answered, in the asking order. -/
+what each filtered asking source answered, in the asking order. None is
+dropped and their order is kept; the style only marks the ranges it matches
+(`Candidates.listing`, `Editor/Loop.lean`). -/
 def passing (candidates : Candidates) : Array Completion.Candidate :=
   candidates.asking.foldl
     (fun passed source => if source.filtered then passed ++ source.answered else passed)
@@ -1669,6 +1673,20 @@ def matchableSize (candidates : Candidates) : Nat :=
   candidates.asking.foldl
     (fun size source => if source.filtered then size else size + source.answered.size)
     candidates.all.size
+
+/-- How many candidates are listed as given (`passing`), counted over the
+sources without gathering them. -/
+def passingSize (candidates : Candidates) : Nat :=
+  candidates.asking.foldl
+    (fun size source => if source.filtered then size + source.answered.size else size)
+    candidates.passed.size
+
+/-- How many candidates a listing hands the style: those it matches, and
+those listed as given, which it marks. It is what chooses whether a prompt
+is listed on the editor thread or by a match job (`Loop.listed`,
+`Loop.completionJobs`, `Editor/Loop.lean`). -/
+def listingSize (candidates : Candidates) : Nat :=
+  candidates.matchableSize + candidates.passingSize
 
 /-- The candidates as they answer `typed`, for sizing a listing: each asking
 source whose answer is for another text than `typed` answers by its reask
@@ -1714,8 +1732,9 @@ inductive Step where
 /-- `candidates` with a listing for `pattern`: the candidates of `all` at
 the hits' indices, in that order, each with its hit's ranges, an index that
 is none of theirs dropped; then every passed candidate, in the order given,
-with no ranges; and nothing chosen, the window at its start, and whether
-it holds two groups. -/
+with no ranges, since no style's hits for them are handed here (the match
+job's listing, `Candidates.listing`, marks them); and nothing chosen, the
+window at its start, and whether it holds two groups. -/
 def list (candidates : Candidates) (pattern : String) (hits : Array Completion.Hit) : Candidates :=
   let matchable := candidates.matchable
   let matched :=

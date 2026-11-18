@@ -20,7 +20,9 @@ pure model (`Source.fixed`), a fake for tests
   candidates are matched with (`Editor/Completion/Style.lean`).
 - **Whether it has filtered already** (`filtered`): a source that matched
   the query itself. Its candidates are not matched again: they are listed
-  after the style's matches, in the order it gave.
+  as given, after the matches, in the order it gave, none dropped, with
+  the style's ranges where it matches (`Candidates.listing`,
+  `Editor/Loop.lean`), so they are highlighted as other prompts' are.
 - **A function from a query to candidates** (`Query`, `Candidate`,
   `Editor/Completion/Candidate.lean`): a program over the editor's port,
   so it may ask what a command may, the state and a text, and has no `IO`
@@ -101,8 +103,8 @@ structure Source where
   /-- The candidates it answers `query` with. -/
   candidates : (query : Query) → EditorM (Array Candidate)
   /-- Whether it has filtered for the query already: its candidates are
-  then listed in the order it gave, after the matches, and not matched
-  (`Candidates.list`, `Editor/State.lean`). -/
+  then listed as given, after the matches, with the style's ranges where it
+  matches, and never dropped (`Candidates.listing`, `Editor/Loop.lean`). -/
   filtered : Bool := false
   /-- How it answers later, when it does: then `candidates` is never run,
   and the registered job it names answers, in batches

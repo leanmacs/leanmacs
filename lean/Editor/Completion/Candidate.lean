@@ -174,7 +174,7 @@ structure Listed where
   /-- The candidate. -/
   candidate : Candidate
   /-- The ranges of its text that matched; none for a candidate passed
-  through unmatched. -/
+  through that the style does not match. -/
   ranges : Array Span := #[]
   deriving DecidableEq, Repr
 
@@ -259,7 +259,7 @@ structure Asking where
   /-- The source's name: its candidates' group. -/
   source : String
   /-- Whether it has filtered already: its candidates are then listed as
-  given, after the matches. -/
+  given, after the matches, with the style's ranges where it matches. -/
   filtered : Bool := false
   /-- How it answers. -/
   later : Later
@@ -299,7 +299,8 @@ structure Answer where
   /-- The source's category. -/
   category : String
   /-- Whether the source has filtered for the query already, so its
-  candidates are listed in its order and not matched. -/
+  candidates are listed as given, in its order, none dropped, with the
+  style's ranges where it matches. -/
   filtered : Bool := false
   /-- What it answered. -/
   candidates : Array Candidate
