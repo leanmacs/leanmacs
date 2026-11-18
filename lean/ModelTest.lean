@@ -121,6 +121,7 @@ import ModelTest.Editor.VersionControl.Hunk
 import ModelTest.Editor.VersionControl.Model
 import ModelTest.Editor.VersionControl.Plumbing
 import ModelTest.Editor.VersionControl.Porcelain
+import ModelTest.Editor.VersionControl.ReviewHunks
 import ModelTest.Editor.VersionControl.Show
 import ModelTest.Editor.VersionControl.Stage
 import ModelTest.Editor.VersionControl.Status
@@ -954,6 +955,7 @@ def checks : List Check :=
     readOnlyChecks ++
     excerptBufferChecks ++
     excerptDisplayChecks ++
+    excerptViewedChecks ++
     compileChecks ++
     compileErrorChecks ++
     compileLocationChecks ++
@@ -968,6 +970,9 @@ def checks : List Check :=
     versionControlGitChecks ++
     versionControlWorktreeGitChecks ++
     hunkChecks ++
+    reviewHunkChecks ++
+    reviewOrderChecks ++
+    reviewRecordChecks ++
     versionControlShowChecks ++
     statusViewChecks ++
     statusBufferChecks ++

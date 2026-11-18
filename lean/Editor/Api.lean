@@ -42,7 +42,10 @@ nothing in it.
   `createExcerptBufferOf name list headers` makes one of ranges of texts,
   which a text no buffer holds may be among. `BufferId.setExcerpts id list`
   replaces its list and its headers, which is how an emptied excerpt
-  goes.
+  goes. An excerpt asked for as `tracked` has what the views show of it
+  recorded (`Editor/State.lean`, "Excerpt buffers"), and
+  `BufferId.setExcerptHeaders id headers` replaces only the entries'
+  headers, keeping what was viewed.
 - `findBuffer name` is the buffer of that name, if there is one. Names are
   unique, so there is at most one.
 - `BufferId.remove` removes a buffer no window shows. Its text is released
@@ -1235,11 +1238,14 @@ structure BufferExcerpt where
   stop : Nat
   /-- The header drawn above it; none when empty. -/
   header : String := ""
+  /-- Whether what the views show of it is tracked (`Buffer.ExcerptEntry.viewed`,
+  `Editor/State.lean`, "Excerpt buffers"). -/
+  tracked : Bool := false
   deriving DecidableEq, Repr
 
 /-- The store's excerpts of `list`, each over its buffer's text, and the
-entries the excerpt buffer keeps of them; `noSuchBuffer` and the first
-buffer there is none of. -/
+entries the excerpt buffer keeps of them, a tracked one with nothing viewed
+yet; `noSuchBuffer` and the first buffer there is none of. -/
 def excerptsOf (list : Array BufferExcerpt) :
     EditorM (Except BufferRefusal (Array Excerpt × Array Buffer.ExcerptEntry)) := do
   let state ← editorState
@@ -1248,7 +1254,10 @@ def excerptsOf (list : Array BufferExcerpt) :
   for item in list do
     let some buffer := state.buffer? item.buffer | return .error (.noSuchBuffer item.buffer)
     excerpts := excerpts.push ⟨buffer.text, item.start, item.stop⟩
-    entries := entries.push { source := buffer.text, header := item.header }
+    entries :=
+      entries.push
+        { source := buffer.text, header := item.header
+          viewed := if item.tracked then some {} else none }
   return .ok (excerpts, entries)
 
 /-- Makes an excerpt buffer called `name` over a new excerpt text of the
@@ -1400,6 +1409,21 @@ def setExcerpts (id : BufferId) (list : Array BufferExcerpt) :
     let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
     let some kept := buffer.excerpts | return .error .notExcerpts
     EditorState.ask (.setExcerptHistory id { kept with entries })
+
+/-- Replaces the headers of the excerpt buffer `id`'s entries with
+`headers`, in list order, an entry past their end keeping its own, and keeps
+everything else of them, what was viewed included
+(`EditorState.setExcerptHistory`). Refused with `noSuchBuffer` for a buffer
+there is none of, and `notExcerpts` for one that is not an excerpt
+buffer. -/
+def setExcerptHeaders (id : BufferId) (headers : Array String) :
+    EditorM (Except BufferRefusal Unit) := do
+  let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
+  let some kept := buffer.excerpts | return .error .notExcerpts
+  let entries :=
+    kept.entries.mapIdx fun index entry =>
+      { entry with header := headers[index]?.getD entry.header }
+  EditorState.ask (.setExcerptHistory id { kept with entries })
 
 end BufferId
 

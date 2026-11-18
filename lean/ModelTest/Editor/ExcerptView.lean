@@ -169,4 +169,60 @@ def excerptDisplayChecks : List Check :=
             | some blocked, some plain => blocked == plain + 2
             | _, _ => false }]
 
+/-- A tracked entry of the source `⟨0⟩`, shown by `scenes` scenes. -/
+def trackedEntry (scenes : Nat := 0) : Buffer.ExcerptEntry :=
+  { source := ⟨0⟩, viewed := some { scenes } }
+
+/-- The entries of the excerpt buffer `id` of `state`, if it is one. -/
+def entriesOf (state : EditorState) (id : BufferId) : Option (Array Buffer.ExcerptEntry) :=
+  (state.buffer? id).bind (·.excerpts) |>.map (·.entries)
+
+/-- The checks of what is viewed of a tracked excerpt
+(`Editor/ExcerptView.lean`, "What was not examined"; `Editor/State.lean`,
+"Excerpt buffers"), on hand-built rows and entries. -/
+def excerptViewedChecks : List Check :=
+  let placed : Array Excerpt.Placed := #[⟨0, 4, 0, 4⟩, ⟨5, 11, 0, 6⟩, ⟨12, 12, 3, 3⟩]
+  [{  name :=
+        "the excerpts a view shows are those a row starts in, or an empty one a row starts at; a separator row shows none"
+      run :=
+        pure <|
+          ExcerptView.shown placed #[⟨0, 3⟩] == #[0] && ExcerptView.shown placed #[⟨4, 4⟩] == #[] &&
+            ExcerptView.shown placed #[⟨6, 10⟩] == #[1] &&
+            ExcerptView.shown placed #[⟨12, 12⟩] == #[2] &&
+            ExcerptView.shown placed #[⟨0, 3⟩, ⟨4, 4⟩, ⟨5, 10⟩, ⟨11, 11⟩] == #[0, 1] &&
+            ExcerptView.shown placed #[] == #[] },
+    { name :=
+        "a span in review-unexamined covers each tracked excerpt no scene has shown, and none an untracked, a shown or an empty one"
+      run :=
+        pure <|
+          let four : Array Excerpt.Placed :=
+            #[⟨0, 4, 0, 4⟩, ⟨5, 9, 0, 4⟩, ⟨10, 14, 0, 4⟩, ⟨15, 15, 0, 0⟩]
+          ExcerptView.unexamined four
+                #[trackedEntry, { source := ⟨0⟩ }, trackedEntry 1, trackedEntry, trackedEntry] ==
+              #[⟨0, 4, ExcerptView.unexaminedFace⟩] &&
+            ExcerptView.unexaminedFace == ⟨"review-unexamined"⟩ },
+    { name :=
+        "markViewed counts a scene and keeps the first time, creditViewed adds the time on screen; an untracked entry and an index past the end are left alone"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let state := driver.loop.state
+            let id : BufferId := ⟨state.buffers.size⟩
+            let buffer : Buffer :=
+              { name := "tracked", text := ⟨0⟩, history := UndoTree.new ⟨0⟩ 0
+                excerpts := some { entries := #[trackedEntry, { source := ⟨0⟩ }] } }
+            let state := { state with buffers := state.buffers.push (some buffer) }
+            let after :=
+              ((state.markViewed id #[0, 1, 5] 100).markViewed id #[0] 200).creditViewed id
+                #[0, 1, 7] 50
+            entriesOf after id ==
+                some
+                  #[{ source := ⟨0⟩,
+                      viewed := some { scenes := 2, firstAt := some 100, shownFor := 50 } },
+                    { source := ⟨0⟩ }] &&
+              -- A buffer that is not an excerpt buffer is left alone.
+              (state.markViewed ⟨0⟩ #[0] 1).buffer? ⟨0⟩ == state.buffer? ⟨0⟩ }]
+
 end ModelTest
