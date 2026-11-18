@@ -2740,7 +2740,7 @@ Which names have something behind them:
 | The twenty-eight motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
 | `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (`Evil.commands`) |
 | `self-insert`, which no table names: typed text | Built and registered |
-| `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
+| `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
 | `insert-delete-backward`, `insert-delete-word-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up`, `insert-down` | Built and registered (`Evil.commands`; "Insert state") |
 | The operators (`delete`, `change`, `yank`, `indent`, bound to `d`, `c`, `y` and `=`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
 | The twenty-two text objects of `objects` | Built: entries of `Evil.objects`, Vim's sixteen and the syntax tree's six, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (`Evil.commands`; "Text objects as built") |
@@ -2763,7 +2763,7 @@ Which names have something behind them:
 | `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `C-w` insert-delete-word-backward, `RET` at-point-return, `TAB` at-point-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down, `C-SPC` at-point-complete, `C-n` at-point-next, `C-p` at-point-previous, `S-TAB` at-point-backtab, `C-g` at-point-quit (each enters no state, and none is a change dot repeat replays) |
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
-| `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does, `C-u` minibuffer-delete-to-start, which deletes from the bar to the input's start (each enters no state, and none is a change dot repeat replays); `<ArrowLeft>` the motion left, `<ArrowRight>` the motion right |
+| `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` minibuffer-insert, `C-n` minibuffer-next, `C-p` minibuffer-previous (`S-TAB` is not bound), `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does, `C-u` minibuffer-delete-to-start, which deletes from the bar to the input's start (each enters no state, and none is a change dot repeat replays); `<ArrowLeft>` the motion left, `<ArrowRight>` the motion right |
 | `scrollCommands` | `C-d` scroll-down, `C-u` scroll-up, `C-f` scroll-page-down, `C-b` scroll-page-up, `z t` scroll-line-to-top, `z z` scroll-line-to-center, `z b` scroll-line-to-bottom (each changes no text and enters no state) |
 | `windowCommands` | `windowKeys` as normal state's table, each key running its window command, which changes no text and enters no state: the table under "Window commands as built", `C-w H`, `J`, `K` and `L` among them (window management's phase 3), and `C-w F` (phase 4). It is not in normal state's pending keymaps, so `d C-w s` resets |
 | `tabCommands` | `tabKeys` as normal state's table, tmux's tab keys under `C-w`, each running its tab command, which changes no text and enters no state: the table under "Tab commands as built" (window management's phase 5) |
@@ -3412,10 +3412,17 @@ asked and what accepting gives).
 
 - **A source** (`lean/Editor/Completion.lean`) is a name, a category and a
   function from a query to candidates. The query
-  (`lean/Editor/Completion/Candidate.lean`) is the text typed so far and
-  the view the prompt was asked from; a later field, such as the point, is
-  added to it, never a new type. A candidate is the text accepting it
-  gives, and an optional label, annotation, kind and group. The function
+  (`lean/Editor/Completion/Candidate.lean`) is the text typed so far, the
+  view the prompt was asked from, and the place names are read from
+  (`Query.place`, `Completion.Place`: the asking view's directory,
+  `EditorState.directoryOf`, and the home directory, which a host sets
+  when it knows it), filled where `prompt` and `completeAtPoint` make the
+  query and carried to a later source's job by its order; a later field
+  is added to it, never a new type. A candidate is the text accepting it
+  gives, and an optional label, annotation, kind and group; it may be
+  partial (`Candidate.isPartial`: accepting it goes into it, as a
+  directory is gone into, and keeps the prompt open), and hidden until
+  the typed text reveals it (`Candidate.hiddenUntil`, below). The function
   is a program over the editor's port: it may read the state and a text,
   and has no `IO`. It reads and does not write, which the sources'
   contract holds every source to (`lean/Editor/Completion/Contract.lean`).
@@ -3602,6 +3609,38 @@ asked and what accepting gives).
     what a display answered (`Prompt.sheet`) and where its window started
     (`Candidates.first`), so no code of the old config runs after the
     install, and a display needs no owner stamp.
+- **A source asked again by the part of the text before a separator**
+  (`Reask.beforeLast`, completion's phase 6), as the file source is by
+  the directory part, is asked again at once when that part changes, and
+  its answer for another part is not listed (`Reask.answers`, against
+  `Asking.answeredFor`, the text its listed answer was asked for, which a
+  generation's first batch or its end records). So the scene of the key
+  that types a `/` lists nothing of the old directory, and a quick `TAB`
+  cannot insert a stale entry. A source that waits for a pause keeps its
+  previous answer listed until the next, as phase 3 decided.
+- **A source hides candidates as data** (`Candidate.hiddenUntil`): one with
+  `some p` is listed only while the typed text after its source's
+  separator (`Reask.after`, the whole text for a source with none) starts
+  with `p`. The listing's projection (`Candidates.answering`,
+  `lean/Editor/State.lean`) leaves the others out wherever a listing is
+  made, so a style is handed only what is shown and its contract is
+  unchanged; the size that chooses between listing inline and a match job
+  counts them as shown, per source, so a key costs the editor thread
+  nothing per candidate. The file source hides a dotfile until a `.` is
+  typed, from the one read.
+- **A source's job that throws says why** (`StateRequest.sourceFailed`):
+  it finishes with the command that marks the source done and says
+  `<source>: <message>` in the echo area; a stale job's failure is silent.
+- **`minibuffer-insert` puts a candidate in the input**, as vertico's
+  `TAB` does: the chosen one, or the first listed when nothing is chosen,
+  replaces the whole input, the bar at its end, and the prompt stays open
+  (`insertCandidate`, `Candidates.toInsert`). A listing for another text
+  inserts nothing. It works in every prompt, so any candidate can be
+  edited before it is accepted, and a directory gone into.
+- **`RET` on a chosen partial candidate goes into it**
+  (`Candidates.entered?`, `acceptPrompt`), as Doom's
+  `vertico-directory-enter` does; any other answer closes the prompt as
+  before. With nothing chosen `RET` answers the typed text.
 - **Two commands move a choice through the list**, `minibuffer-next` and
   `minibuffer-previous` (`lean/Editor/Minibuffer.lean`).
   - From nothing chosen, next chooses the first and previous the last;
@@ -3621,20 +3660,22 @@ asked and what accepting gives).
 - **Under the Vim scheme the keys are in the minibuffer state's table**,
   for the reason the accept and cancel keys are: the state inserts text,
   and the Vim keys of the two roles are `j` and `k`, which must be text.
-  `Vim.Default.minibufferCommands` binds `TAB` and `C-n` to
-  `minibuffer-next` and `S-TAB` and `C-p` to `minibuffer-previous`, Vim's
-  own keys in its command line. A window system may report Shift and Tab
-  under another name than `S-TAB`; that has not been checked on a window,
-  and `C-p` is bound beside it.
+  `Vim.Default.minibufferCommands` binds Doom's vertico keys: `C-n` to
+  `minibuffer-next`, `C-p` to `minibuffer-previous`, and `TAB` to
+  `minibuffer-insert`. `S-TAB` is not bound there.
 - **The tab commands ask through it too** (window management's phase 5,
   "Tab commands as built"): `tab-switch` asks labelled `Tab: ` with a
   candidate `"{n} {label}"` for every tab, in order, so `C-w w`, a number
   and `<Enter>` select that tab; `tab-rename` asks labelled `Rename tab: `
   with the tab's name as the initial text, and no candidates.
-- **Set aside**, to the phase of completion that builds it: file paths
-  for `open-file`, to phase 6. Completion at point is built ("Completion at
-  point", below). Putting the chosen candidate's text into the
-  minibuffer stays set aside. Of phase 4's display:
+- **Set aside.** File paths for `open-file` are built (completion's phase
+  6, "`open-file` completes file names", below), and so is putting the
+  chosen candidate's text into the minibuffer (`minibuffer-insert`).
+  Completion at point is built ("Completion at point", below). Deferred
+  by phase 6 to rdm tasks: `DEL` after a `/` deleting the whole component
+  (`minibuffer-path-keys`), tidying or dimming the input as a restart is
+  typed (`minibuffer-path-tidy`), and opening a buffer for a path that
+  does not exist (`open-file-new-file`). Of phase 4's display:
   - **Align-to stops in pixels.** Annotations are aligned in characters,
     exact under the monospace default face; a proportional default face
     would misalign them (rdm task `align-to-stops`).
@@ -3761,6 +3802,15 @@ and orderless choose it.
   candidate. The order is the candidates' own. The ranges are each
   component's first occurrence, sorted, overlapping or touching ones
   merged. It asks the matcher nothing.
+- **The path style** (`Completion.Styles.path`, completion's phase 6)
+  matches a path by its last component with the fuzzy style: the typed
+  text's last component (after its last `/`) against each candidate's
+  (`Styles.lastComponent`, a trailing `/` not counted, so `notes/` is
+  `notes`), each span shifted back onto the candidate's text. The
+  directory part is never matched, and a text ending in `/` lists every
+  candidate in order. The minibuffer display draws the ranges that fall
+  within a label that ends the candidate's text, shifted onto it, so a
+  path's last component is drawn with its match.
 - **A prompt's category is its first reference's**: the category a
   `.category` reference names, or its first source's, as an Emacs
   completion table has one. A prompt with no source has none. The state
@@ -3777,13 +3827,21 @@ and orderless choose it.
   style is asked when every candidate was passed.
 - **Config chooses** (`lean/Editor/Setup.lean`): `defineStyle style`
   registers one, `useStyleFor category name` chooses a category's, and
-  `useStyle name` the default. Every host registers `fuzzy` and
-  `orderless` for the owner `compiled` (`Headless.Collaborators.styles`).
+  `useStyle name` the default. Every host registers `fuzzy`, `orderless`
+  and `path` for the owner `compiled` (`Headless.Collaborators.styles`).
+  Compiled code may give a category a default of its own
+  (`Config.Registry.styleDefaults`, `Headless.Collaborators.styleDefaults`,
+  set when the host starts and never by an install), as Emacs's
+  `completion-category-defaults`: the file prompt's category `file` gets
+  `path` (`Files.styleDefaults`). It sits between config's two choices:
+  `useStyleFor "file" "fuzzy"` overrides it, and `useStyle "orderless"`
+  does not reach it.
   Styles are held by owner and replaced as a set, latest entry of a name
   wins; the choices are config's alone, set at each install
   (`Config.Registry.styleChoices`). `Registry.styleEntry` resolves them
   to one style entry per category: the entry of the style chosen for it
-  when one is registered under that name, else the chosen default's, else
+  when one is registered under that name, else the compiled default's for
+  it, else the chosen default's, else
   the style registered under `fuzzy`, so config's style of that name
   replaces the shipped one as the default too (the compiled one only where
   no style of the name is registered). `Registry.matching` reads both the
@@ -3854,6 +3912,25 @@ model), `dispatchStateChecks` and `stateRequestChecks`
 real matcher). The fixtures `tests/headless/candidates`, `ex` and `tabs`
 are unchanged: criterion 1 on the executable, under the Vim scheme with
 the library's matcher.
+
+Completion's phase 6 (file names in the minibuffer) is pinned by
+`ModelTest.typedPathChecks` (a typed path: split, restart, normalize,
+tidy, expand, abbreviate), `pathsChecks` (the file source's job on the job
+model: its order, batches, hidden names and refusals),
+`fileNameChecks` (the file prompt through the loop's driver over the
+file model: criteria 1 to 4 on the models, the dotfiles from one read,
+`RET` into a directory, relative and `~` names, an unreadable directory,
+and the listing off the editor thread), `directoryChecks` (a source asked
+again by its directory part, stale and hidden candidates left out of the
+listing, a job's failure said), `insertCandidateChecks` (`TAB` and `RET`
+under the Vim scheme), `styleChecks` and `styleContractChecks` (the path
+style), `completionDisplayChecks` (ranges on a label that ends the text),
+`registryChecks` (a category's compiled default), `fileModelChecks` and
+the job contract's listing property (`File.list` on the model, the fake and
+real files), `ConfigTest.filePromptChecks` (criteria 1, 2, 4, 5 and 6 over
+the recorder under the Vim scheme), `ConfigTest.shippedChecks` (the
+shipped file source, its job and style) and the fixture
+`tests/headless/open-file` (the prompt on real files).
 
 ### Completion at point
 
@@ -4318,10 +4395,28 @@ shell-and-compile roadmap's phase 2).
 - **Nothing is chosen unless a key chooses it**, so a typed name and the
   accept key run what was typed, as before: `r` and the accept key is the
   unknown name `r`, not `reload`.
-- **`open-file` has no candidates.** File names depend on the directory
-  typed so far and need the file system: a job, and a list that changes
-  with the text, neither of which is built
-  ([concurrency.md](concurrency.md), "Prompts").
+- **`open-file` completes file names** (completion's phase 6), as Emacs's
+  `find-file` under Doom's vertico does. The prompt starts with the asking
+  buffer's directory as its text (`EditorState.directoryOf`: its file's
+  directory, else its local workspace's root, else the working directory,
+  written with `~` under the home, `TypedPath.directoryText`). It asks the
+  sources of the category `file`, the shipped `files` source
+  (`lean/Editor/Completion/Paths.lean`) by default, which answers later
+  from a job that lists the one directory the text names through the job
+  port's file request (`File.list`), asked again when the directory part
+  changes (`Reask.beforeLast '/'`), so typing within one directory reads
+  it once. Entries are ordered directories first, by name ignoring case,
+  a directory's with a trailing `/`, annotated `directory` and partial; a
+  name that starts with `.` is listed only once the last component typed
+  starts with `.` (`Candidate.hiddenUntil`), from the same read. The
+  `path` style matches the last component alone. `TAB` inserts a
+  candidate and goes into a directory, and `RET` on a chosen directory
+  goes into it. `~`, relative names and the restarts after `//` and `/~/`
+  are read as Emacs reads them (`lean/Editor/TypedPath.lean`), in the
+  listing, the candidates' text and the answer (`Files.resolve`); `~user`
+  is not expanded. A directory that cannot be read lists nothing and the
+  echo area says why (`files: cannot list <dir>: <why>`). A path that does
+  not exist says `nothing is at the path` on `RET`, as before.
 
 **An ex name is a binding to a command's name, held in the registry by
 owner.**

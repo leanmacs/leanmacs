@@ -63,8 +63,9 @@ share (`defineSource`, `Editor/Setup.lean`; `Editor/Config/Registry.lean`,
 
 | Addition | Where |
 |---|---|
-| Something more a source is asked | A field of `Query` (`Editor/Completion/Candidate.lean`), filled where `prompt` asks |
-| Something more a candidate carries | A field of `Candidate`, optional, and what draws it is the display's |
+| Something more a source is asked | A field of `Query` (`Editor/Completion/Candidate.lean`), filled where `prompt` asks, as `Query.place` is |
+| Something more a candidate carries | A field of `Candidate`, optional, and what draws it is the display's; one that crosses from a job is an argument of `Candidate.arguments` (`Editor/Completion/Later.lean`) |
+| A rule for what a source hides until the text reveals it | The source's `Candidate.hiddenUntil`; the listing's projection is `Candidates.answering` (`Editor/State.lean`) |
 | A shipped source | A value beside the rule it lists, a default of the category the prompt that lists it asks for, registered compiled in `Headless.shippedOver`, and run by `ModelTest.sourceContractChecks` |
 | A way to match candidates | A style (`Editor/Completion/Style.lean`), not a source |
 | A rule every source keeps | A property of `Editor/Completion/Contract.lean` |
@@ -79,7 +80,11 @@ inside the asking command, and the names of a category's sources),
 `ConfigTest.promptChecks` (a source from config, on the real elaborator,
 asked by name and added to a shipped prompt by its category). A source that
 answers later is pinned by `ModelTest.laterChecks`, `completionJobChecks`
-and `laterLoopChecks`, and by `ConfigTest.promptChecks` over the recorder.
+and `laterLoopChecks`, and by `ConfigTest.promptChecks` over the recorder;
+one asked again by its directory part, with hidden candidates and a job's
+failure, by `ModelTest.directoryChecks`; the file source by
+`ModelTest.pathsChecks`, `fileNameChecks` and
+`ConfigTest.filePromptChecks`.
 -/
 
 namespace Editor.Completion

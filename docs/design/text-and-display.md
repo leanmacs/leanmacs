@@ -110,7 +110,9 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   changes none; which is the dominant one is Lean's to say from the counts
   (`File.LineEndings.dominant`, `lean/Editor/File.lean`).
   rust-library.md, "Files and watching", has the port, the adapter and the
-  rules as built. From Lean a load and a save are requests a job awaits
+  rules as built. The port also lists a directory (`Fs::list`, with
+  `editor_text::file::list` over it), which the file prompt's source asks
+  for. From Lean a load and a save are requests a job awaits
   ([concurrency.md](concurrency.md)), and a text is made of what was
   loaded by the text port's `adopt` and `copy`.
 
@@ -812,7 +814,7 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
 | The file port, and what an adapter's tests are | `crates/editor-text/src/fs.rs` |
 | The file port's fake | `crates/editor-text/src/fs/fake.rs` |
 | The file port's contract, its ground, and the fakes that break it | `crates/editor-text/src/fs/contract.rs` |
-| Loading a file and saving a snapshot over the port, the stamp, the line endings, and the fixtures | `crates/editor-text/src/file.rs`, with its properties in `tests/properties/files.rs` and its costs in `tests/snapshot_cost.rs` |
+| Loading a file and saving a snapshot over the port, the stamp, a directory's listing, the line endings, and the fixtures | `crates/editor-text/src/file.rs`, with its properties in `tests/properties/files.rs` and its costs in `tests/snapshot_cost.rs` |
 | The lists that keep the logic's tests off the disk | `crates/editor-text/clippy.toml`, `crates/editor-ffi/clippy.toml`, `deny.toml` |
 | The file port's adapter over `std::fs`, held to the contract | `crates/editor-fs-std/` |
 | The file service behind the completion queue, and its wiring test on real files | `crates/editor-ffi/src/files.rs`, `crates/editor-ffi/tests/files.rs` |
@@ -2331,7 +2333,9 @@ decided 2026-11-13 by its phase 2):
     [keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's matching
     styles"), then those a filtered source passed. Each row is in the face
     `minibuffer.candidate`, the chosen one's in `minibuffer.chosen`, with
-    the ranges the text matched in `minibuffer.match`, an annotation in a
+    the ranges the text matched in `minibuffer.match` (drawn on a row with
+    no label, and on a label that ends the candidate's text, shifted onto
+    it, as a path's last component ends the path), an annotation in a
     column in `minibuffer.annotation` and a group's header in
     `minibuffer.group` (`Completion.Displays`). The minibuffer's status
     line is the label alone (`Loop.promptStatus`).

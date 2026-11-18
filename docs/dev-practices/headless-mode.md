@@ -168,7 +168,7 @@ with no config and `show` lists them before config's
 
 | Command | Does |
 |---|---|
-| `open-file` | Opens the file at the path that is its first argument in the window it is called with: it starts the job `load-file`, and when the file is loaded a buffer of its text, called by its base name, is shown there. A path a buffer already holds is shown at once. A file that is not there, or is refused for another reason, is said in the echo area, `cannot open <path>: <why>`, and the window shows what it showed. With no path it asks for one, with the prompt `Open file: `, and opens the answer. |
+| `open-file` | Opens the file at the path that is its first argument in the window it is called with: it starts the job `load-file`, and when the file is loaded a buffer of its text, called by its base name, is shown there. A path a buffer already holds is shown at once. A file that is not there, or is refused for another reason, is said in the echo area, `cannot open <path>: <why>`, and the window shows what it showed. With no path it asks for one, with the prompt `Open file: `, whose text starts as the window's directory (its buffer's file's, else its workspace's root, else the working directory) and which lists that directory's entries, directories first, the directory typed so far listed again as it changes; and opens the answer, read as a typed path: a name that is not absolute under that directory, `~` under the home directory, which the headless mode does not know, and a restart after `//` or `/~/` as Emacs reads it. |
 | `save-buffer` | Saves the buffer of the window it is called with to its file: it starts the job `save-file`, and when the file is written the echo area says `wrote <path>` and the buffer is no longer modified. A file that changed on disk since it was loaded is left as it is, and the echo area says `cannot save <path>: <why>`. With `true` as its first argument it writes whatever is on disk. |
 | `reload-buffer` | Reloads the buffer of the window it is called with from its file: it starts the job `reload-file`, which loads the file and diffs it against the buffer's text off the editor thread, and the buffer then takes the file's text as one edit, with the cursor kept on the lines the diff kept, not modified, which one undo takes back. It is refused while the buffer has unsaved changes, saying `<name> has unsaved changes; :e! discards them`, unless its first argument is `true`. A text edited while the file loaded is reloaded once more, and then left, saying `<path> was edited while it reloaded; :e reloads it`. |
 | `auto-reload-mode` | Turns auto-reload on with `true` first, off with `false`, and toggles it with neither, saying `auto-reload on` or `auto-reload off`. With it on, a job `follow-file` watches each file buffer's file, and another program's change reloads a buffer with no unsaved changes, or marks one with them `[changed on disk]` in face `mode-line.changed`, the mode line's `changed` segment. Off by default; config's `autoReload` in `setup` decides until a command does. |
@@ -179,7 +179,7 @@ with no config and `show` lists them before config's
 the command is written with, `Files.open view path`, as the fifth fixture
 below does; `Files.save buffer` is the save. Or the script runs
 `open-file` with no path, commits the path into the minibuffer and accepts,
-as the sixth fixture does. While a load or a save is in flight the editor
+as the fixture `open-file` does. While a load or a save is in flight the editor
 goes on answering: what is typed meanwhile is handled first.
 
 The editor ships two more commands, compiled in, and one mode
@@ -194,6 +194,7 @@ answer, as its first argument.
 | `minibuffer-cancel` | Cancels the open prompt: it is closed, the focus goes back, and the command it named does not run. With no prompt open it says so. |
 | `minibuffer-next` | Moves the choice to the next of the candidates the open prompt has listed: from nothing chosen to the first, and from the last to nothing chosen. The minibuffer's text is not changed. With nothing listed it does nothing, and with no prompt open it says so. |
 | `minibuffer-previous` | The same, backward: from nothing chosen to the last, and from the first to nothing chosen. |
+| `minibuffer-insert` | Puts a candidate in the input: the chosen one, or the first listed when nothing is chosen, replaces the minibuffer's text, the bar at its end, and the prompt stays open. With nothing listed for the text it does nothing, and with no prompt open it says so. |
 
 One more compiled command switches the theme (`lean/Editor/Themes.lean`):
 
@@ -202,10 +203,12 @@ One more compiled command switches the theme (`lean/Editor/Themes.lean`):
 | `load-theme` | With a name as its first argument, makes the theme registered under it the theme in force, with no reload, and the next scene is drawn in it. With none it asks `Theme: `, with the registered themes' names as its candidates. A name nobody registered is said in the echo area, ``load-theme: no theme is registered as `<name>` ``, and changes nothing. The editor ships four themes, `default`, `solarized-dark`, `solarized-light` and `fairy-floss`; config registers more with `defineTheme` and names the one in force with `useTheme`. |
 
 The mode `minibuffer` is the major mode of the minibuffer's buffer. It
-puts the four commands on the keys the input scheme has for the roles
+puts four of the commands on the keys the input scheme has for the roles
 `activate`, `quit`, `next-item` and `previous-item`; under the Vim scheme,
 where typing in the minibuffer is text, they are on `<Enter>`, `<Escape>`,
-`<Tab>` and `C-n`, and Shift with `<Tab>` and `C-p`.
+`C-n` and `C-p`, and `<Tab>` runs `minibuffer-insert`, as Doom's vertico
+binds them. Shift with `<Tab>` is not bound there. `<Enter>` on a chosen
+candidate that is a directory goes into it, the prompt still open.
 
 A prompt may be asked with candidates, from completion sources given as
 values or registered by name with `defineSource`
@@ -418,12 +421,12 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current greet
+commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current greet
+commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
@@ -432,7 +435,7 @@ text 2: "counted 42"
 Text 0 is the scratch buffer's: the editor loop makes its frame, and that
 buffer, for the first command it runs. `open-file`, `save-buffer`,
 `edit-file`, `reload-buffer` and `auto-reload-mode`, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`,
-`minibuffer-previous`, `minibuffer-delete-backward`,
+`minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward`,
 `minibuffer-delete-to-start` and `minibuffer-ask`, evil's thirty-seven,
 from `move` to `select-all`, the ex line's four, from `ex` to
 `reload-config`, the three buffer commands, from `switch-buffer` to
@@ -578,10 +581,7 @@ the `Ada` the prompt was asked with. `<Enter>` accepts and `<Escape>`
 cancels: the minibuffer's state binds those two keys to the compiled
 commands `minibuffer-accept` and `minibuffer-cancel`. The command that
 receives the answer prints no line of its own: what it said is in the echo
-area. The last part runs the compiled `open-file` with no path: it asks
-for one, and opens the answer, here a committed path that is not absolute,
-which the library refuses before it asks the file system. Its output must
-be exactly `tests/headless/prompt/expected`:
+area. Its output must be exactly `tests/headless/prompt/expected`:
 
 ```console
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/prompt/config ../tests/headless/prompt/script
@@ -600,13 +600,6 @@ status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mo
 run ask-name: ok
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-run open-file: ok
-key arrived: <Enter> Enter -
-job 1 load-file: started
-job 1 load-file: ok
-scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", echo padding 8, preedit -, published 15, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
@@ -660,9 +653,12 @@ scratch buffer has no file. The third line is `e`, and a scene is printed
 with the prompt open: the ex line's candidates are the bound ex names, so
 the candidate list, view 2, lists `e`, which is the text, and then the
 other names `e` matches, at most ten, each with the range `e` matched in
-`minibuffer.match`. `<Tab>` chooses the first and `<Enter>` runs it: `e` with no
-path asks for one, with a prompt of its own that lists none, which
-`<Escape>` cancels. `q` quits the editor. The loop ends at that
+`minibuffer.match`. `<Tab>` puts the first listed in the input, `e`, the
+text already there, and `<Enter>` runs it: `e` with no path asks for one
+with the file prompt, which starts with the executable's working directory
+and lists it, a machine's path, so the script waits for its listing with
+`join`, prints none of it, and `<Escape>` cancels it before the next
+scene. `q` quits the editor. The loop ends at that
 last `<Enter>`, so the `scene` line the script has after it is not run,
 and the exit status is 0. Its output must be exactly
 `tests/headless/ex/expected`:
@@ -690,12 +686,13 @@ decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.candid
 status 2: -
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
-scene 0x0, focused 5, echo "", echo padding 8, preedit -, published 18, theme "default"
+job 1 files: started
+job 1 files: ok
+job 1 files: ok
+key arrived: <Escape> Escape -
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 22, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 5 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
-status 5: minibuffer.prompt "Open file: "
-key arrived: <Escape> Escape -
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 ```
@@ -710,12 +707,14 @@ candidates and chooses one, on the config in
 Config's `pick` asks `Pick: ` with the candidates `wq`, `edit` and `w`.
 With `w` typed, the candidate list, view 2, lists `w` and then `wq`: the
 library scores the two the same and `wq` came first, so only the rule
-that a candidate that is the text is first orders them. `<Tab>` twice
+that a candidate that is the text is first orders them. `C-n` twice
 chooses `wq`, which is then in the face `minibuffer.chosen`, and `<Enter>`
 gives config's `picked` that candidate and not the typed text. With `z`
 typed nothing is listed, so the second prompt's list, which showed three
 rows for the empty initial text, is empty but stays in the scene; `<Tab>`
-chooses nothing, and `picked` receives `z`. Its output must be exactly `tests/headless/candidates/expected`:
+puts nothing in the input, and `picked` receives `z`. Last, with `e`
+typed, `<Tab>` puts the first listed, `edit`, in the input, the bar at its
+end and the prompt still open, and `<Enter>` gives `picked` that text. Its output must be exactly `tests/headless/candidates/expected`:
 
 ```console
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script
@@ -730,8 +729,8 @@ status 1: minibuffer.prompt "Pick: "
 view 2 0,0 0x0: "w\nwq", scroll 0, selections , padding 8 0
 decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.candidate 2..4 minibuffer.match 2..3
 status 2: -
-key arrived: <Tab> Tab -
-key arrived: <Tab> Tab -
+key arrived: n KeyN control
+key arrived: n KeyN control
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 5, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
@@ -756,6 +755,21 @@ status 2: -
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "picked z", echo padding 8, preedit -, published 15, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run pick: ok
+key arrived: e KeyE -
+key arrived: <Tab> Tab -
+scene 0x0, focused 4, echo "", echo padding 8, preedit -, published 19, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 4 0,0 0x0: "edit", scroll 0, selections 4..4, padding 8 0
+status 4: minibuffer.prompt "Pick: "
+view 2 0,0 0x0: "edit", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..4 minibuffer.match 0..4
+status 2: -
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "picked edit", echo padding 8, preedit -, published 22, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
@@ -1509,6 +1523,107 @@ otherwise), the state's badge in the status line (`NORMAL`, `INSERT`,
 `VISUAL`), the cursor's line:col and position, and the echo, which is empty until the save says
 `wrote @DIR@/verse.txt`. And the copy must hold the bytes of
 `tests/headless/session/verse-expected`.
+
+**`open-file`'s prompt over real files** is a process check of the same
+form (`tests/headless/open-file/`): the entry copies the tree `tree/`
+(`alpha.txt`, `beta.txt`, `.hidden` and `notes/todo.md`) into its
+temporary directory and writes the template `script` there with that
+directory's path in place of `@DIR@`. The script loads no config. It runs
+`open-file` and joins: the prompt starts with the executable's working
+directory and lists it, which is never printed. `C-u` deletes the input,
+and the tree's directory is committed and listed: `notes/`, annotated
+`directory`, then `alpha.txt` and `beta.txt`, and not `.hidden`. A `.`
+lists `.hidden` among the names that hold a `.`, in the library's order,
+with no new job line: the directory was read once. `<Backspace>` deletes
+it, `no` lists `notes/` with its match, `<Tab>` puts `notes/` in the input
+and the directory is listed, `todo.md`, and `C-n` and `<Enter>` open it.
+Then `open-file` again, `C-u`, and a directory that is not there: the echo
+area says `files: cannot list @DIR@/tree/missing/: nothing is at the
+path`, and nothing is listed. Every job is waited for with `join`, so its
+lines are fixed. The run must exit with status 0, and its output, with the
+temporary directory's path written `@DIR@`, must be exactly
+`tests/headless/open-file/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config "$dir/script"
+run open-file: ok
+job 1 files: started
+job 1 files: ok
+job 1 files: ok
+key arrived: u KeyU control
+job 2 files: started
+job 2 files: ok
+job 2 files: ok
+job 3 files: started
+job 3 files: ok
+job 3 files: ok
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 12, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 0x0: "@DIR@/tree/", scroll 0, selections 69..69, padding 8 0
+status 1: minibuffer.prompt "Open file: "
+view 2 0,0 0x0: "notes/     directory\nalpha.txt\nbeta.txt", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..20 minibuffer.annotation 11..20 minibuffer.candidate 21..30 minibuffer.candidate 31..39
+status 2: -
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 14, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 0x0: "@DIR@/tree/.", scroll 0, selections 70..70, padding 8 0
+status 1: minibuffer.prompt "Open file: "
+view 2 0,0 0x0: ".hidden\nalpha.txt\nbeta.txt", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..7 minibuffer.match 0..1 minibuffer.candidate 8..17 minibuffer.match 13..14 minibuffer.candidate 18..26 minibuffer.match 22..23
+status 2: -
+key arrived: <Backspace> Backspace -
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 17, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 0x0: "@DIR@/tree/no", scroll 0, selections 71..71, padding 8 0
+status 1: minibuffer.prompt "Open file: "
+view 2 0,0 0x0: "notes/  directory", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..17 minibuffer.match 0..2 minibuffer.annotation 8..17
+status 2: -
+key arrived: <Tab> Tab -
+job 4 files: started
+job 4 files: ok
+job 4 files: ok
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 22, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 0x0: "@DIR@/tree/notes/", scroll 0, selections 75..75, padding 8 0
+status 1: minibuffer.prompt "Open file: "
+view 2 0,0 0x0: "todo.md", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..7
+status 2: -
+key arrived: n KeyN control
+key arrived: <Enter> Enter -
+job 5 load-file: started
+job 5 load-file: ok
+job 6 find-workspace: started
+job 6 find-workspace: ok
+job 7 find-mode-markers: started
+job 7 find-mode-markers: ok
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 31, theme "default"
+view 0 0,0 0x0: "todo: list the files\n", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "todo.md" +4, mode-line.secondary "@DIR@/tree/notes" +4 | mode-line.secondary "code" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run open-file: ok
+job 8 files: started
+job 8 files: ok
+job 8 files: ok
+key arrived: u KeyU control
+job 9 files: started
+job 9 files: ok
+job 9 files: ok
+job 10 files: started
+job 10 files: ok
+scene 0x0, focused 3, echo "files: cannot list @DIR@/tree/missing/: nothing is at the path", echo padding 8, preedit -, published 43, theme "default"
+view 0 0,0 0x0: "todo: list the files\n", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "todo.md" +4, mode-line.secondary "@DIR@/tree/notes" +4 | mode-line.secondary "code" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 3 0,0 0x0: "@DIR@/tree/missing/", scroll 0, selections 77..77, padding 8 0
+status 3: minibuffer.prompt "Open file: "
+view 2 0,0 0x0: "", scroll 0, selections , padding 8 0
+status 2: -
+key arrived: <Escape> Escape -
+```
 
 **A view that follows its cursor** is a fourth process check of the same
 form (`tests/headless/view/`): the entry copies `lines.txt`, 120 lines

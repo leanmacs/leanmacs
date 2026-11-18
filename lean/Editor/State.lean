@@ -630,6 +630,23 @@ A prompt is a request for one string, with a text to show beside the input
     (`Prompt.tallest`). The state keeps the sheet, which is data, and
     never a display. A relisting for the same text keeps `first`, and one
     for another text starts it at 0;
+  - **what the listing is made of** (`Candidates.answering`): the
+    candidates as they answer the typed text, pure, the state never
+    changed by it. An asking source whose listed answer was asked for
+    another part of the text than its reask answers for
+    (`Completion.Reask.answers`, against `Asking.answeredFor`) contributes
+    nothing, so a directory's entries are never listed under another; and
+    a hidden candidate (`Completion.Candidate.hiddenUntil`) is left out
+    until the text after its source's separator reveals it. The size that
+    chooses between listing inline and a match job projects only the
+    stale answers (`Candidates.current`), per source, reading no
+    candidate. A source's job that fails ends the source as `sourceAnswered`
+    does and says why in the echo area (`sourceFailed`);
+  - **what `TAB` and `RET` take from the listing**: `toInsert`, the chosen
+    candidate, or the first listed with none chosen, of a listing for the
+    minibuffer's text, which `minibuffer-insert` puts in the input; and
+    `entered?`, a chosen candidate that is partial, which accepting goes
+    into instead of answering;
   - **the choice**: an index of the listing, or none (`chosen`).
     `chooseCandidate` moves it by one step, `next` or `previous`. From
     nothing chosen, `next` chooses the first and `previous` the last;

@@ -64,11 +64,16 @@ job, is `.answeringLater name category job` (`Editor/Completion/Later.lean`),
 and its job is registered with `sourceJob name answer`, which delivers
 candidates in batches as they come. Which candidates the typed text
 matches is a completion style's (`Editor/Completion/Style.lean`): the
-shipped ones, `fuzzy` and `orderless`, come with `Editor/Setup.lean`
-(`Editor/Completion/Styles.lean`), and config registers one with
-`defineStyle` (`.keeping name keep` for one written as a predicate) and
-chooses the default with `useStyle` and a category's with
-`useStyleFor`. How the listing is drawn is a completion display's
+shipped ones, `fuzzy`, `orderless` and `path`, which matches a path's last
+component, come with `Editor/Setup.lean` (`Editor/Completion/Styles.lean`),
+and config registers one with `defineStyle` (`.keeping name keep` for one
+written as a predicate) and chooses the default with `useStyle` and a
+category's with `useStyleFor`. Compiled code may give a category a style
+of its own, which `useStyleFor` overrides and `useStyle` does not reach:
+the file prompt's category, `file`, is matched with `path`. `open-file`'s
+prompt asks the sources of the category `file`, the shipped `files` source
+by default (`Editor/Completion/Paths.lean`), so config adds to what it
+lists by registering a source in that category. How the listing is drawn is a completion display's
 (`Editor/Completion/Display.lean`): the shipped one, `minibuffer`, which
 lists them one a row above the input, comes with `Editor/Setup.lean`
 (`Editor/Completion/Displays.lean`), and config registers one with
@@ -76,7 +81,8 @@ lists them one a row above the input, comes with `Editor/Setup.lean`
 15))` replaces the shipped one, which sets its rows) and chooses the
 default with `useDisplay` and a category's with `useDisplayFor`. The
 commands that accept and
-cancel a prompt and move through its candidates and the minibuffer's mode
+cancel a prompt, move through its candidates and put one in the input
+(`minibuffer-insert`), and the minibuffer's mode
 are here as well
 (`Editor/Minibuffer.lean`); their registrations
 (`Editor/Minibuffer/Compiled.lean`) are not, for the same reason. The

@@ -1484,9 +1484,31 @@ accepting hands the continuation the chosen candidate.
   first batch. **No source is run in the publish**: what asks again is a
   job, so no rule for config's code inside a scene is needed. **Closing a
   prompt cancels its jobs**, its sources' and its match, by the keys the
-  loop recorded, at the publish of the closing step. File names, which
-  depend on the directory typed so far, are phase 6's: a `Reask`
-  constructor and its case.
+  loop recorded, at the publish of the closing step.
+- **File names** (completion's phase 6) are a source that answers later,
+  asked again when the text through its last `/` changes
+  (`Reask.beforeLast '/'`), at once: typing within a directory starts no
+  job, and the directory is read once, on the library's file service
+  thread, through the job port's file request `File.list`. Its job
+  (`Completion.Paths.gather`) sorts and builds candidates on a pool
+  thread, and delivers them in batches of at most 1,000. A source's
+  answer for another directory is not listed (`Reask.answers`, against
+  `Asking.answeredFor`), so the scene of the key that types a `/` lists
+  nothing of the old directory before the new batch arrives; a source
+  that waits for a pause keeps its previous answer, as phase 3 decided.
+- **The listing's projection** (`Candidates.answering`): where a listing is
+  made, inline or in a match job, an asking source's stale answer and the
+  candidates its typed text does not reveal (`Candidate.hiddenUntil`) are
+  left out; the state is never changed. The size that chooses between the
+  two counts hidden candidates as shown, per source
+  (`Candidates.current`), so a key costs the editor thread nothing per
+  candidate. Over more than the inline limit, a key typed within a large
+  directory costs the editor thread one read of the minibuffer, and the
+  match job lists it with the `path` style off the thread.
+- **A source's job that throws** finishes with `StateRequest.sourceFailed`:
+  the source is marked done and the echo area says `<source>: <message>`,
+  as a match job's failure says `completion-match: …`. A stale job's
+  failure is silent.
 
 **Matching off the editor thread, measured.** `mise run prompt-bench`
 (`config-test bench-prompt`, [on-demand-checks.md](../dev-practices/on-demand-checks.md))
@@ -1533,6 +1555,30 @@ threads), 600 keys a row, in µs, median / 99th percentile / maximum:
   matcher's call, the candidates' texts copied to it, and each hit's
   ranges), which the owner accepted: while typing fast the listing can be
   an earlier text's.
+
+**A key in the file prompt, measured** (completion's phase 6). The row
+`open-file, 10,000 entries` of `mise run prompt-bench` times a key typed
+within a directory of 10,000 files in `open-file`'s prompt, on a host of
+the test scheme whose jobs reach a fake file service, the directory listed
+once and joined before the keys
+([on-demand-checks.md](../dev-practices/on-demand-checks.md)). A key typed
+within the directory starts no listing (`Reask.beforeLast`), and the match
+job lists it with the `path` style off the editor thread, so the key costs
+what a key over 100,000 on the worker does. Three runs, 2026-11-18, at
+`36c8b64`, the commit that adds the row, on the Apple M5 Max above (a pool of 18
+threads), 600 keys a row, in µs, median / 99th percentile / maximum, with
+the run's no-candidates row beside it:
+
+| Run | no candidates | open-file, 10,000 entries | Within bound |
+|---|---|---|---|
+| 1 | 176.8 / 248.7 / 403.9 | 89.0 / 157.3 / 161.5 | yes |
+| 2 | 162.6 / 512.8 / 1898.4 | 91.0 / 157.8 / 211.3 | yes |
+| 3 | 182.1 / 354.2 / 543.6 | 85.3 / 158.9 / 165.6 | yes |
+
+The row is within bound in each run: its median within twice the
+no-candidates median and its 99th percentile under 1 ms. The machine may
+not have been quiet (another worktree's builds were running on it during
+the session), which the no-candidates row's spread in run 2 suggests.
 
 **A typed key with completion at point, measured** (completion's phase 5).
 The two insert rows of `mise run prompt-bench` time a word key in insert
@@ -1601,7 +1647,12 @@ that move through them in [keymaps-and-modes.md](keymaps-and-modes.md),
 **What ships that asks.** `open-file`, run with no path as its first
 argument, asks `Open file: ` with itself as the continuation, so the
 answer is the path it opens, in the view it was asked from ("Getting
-results back"). `ex`, run with no line as its first argument, asks `:`
+results back"). The prompt starts with the asking view's directory as its
+text and completes file names from the source `files`, whose job lists
+the directory typed so far (completion's phase 6,
+[keymaps-and-modes.md](keymaps-and-modes.md), "`open-file` completes file
+names"); the command reads the answer as a typed path, `~` and relative
+names included (`Files.resolve`). `ex`, run with no line as its first argument, asks `:`
 with itself as the continuation and the `:!` history and the bound ex
 names as its candidates, from two sources, so the answer is the line it
 runs
@@ -1789,7 +1840,9 @@ As built:
   no machine word holds is clamped, never wrapped.
 - **The file port** (`Job.Files`) is beside it: start a file request as a
   wait, take the request's reply once the wait has completed, withdraw a
-  wait, and release a snapshot a load's reply named. A completion says only
+  wait, and release a snapshot a load's reply named. Its requests are a
+  load, a save, a stamp and a listing of a directory (`FileRequest.list`,
+  completion's phase 6). A completion says only
   that a wait is over, so a wait's reply is fetched afterwards, on the
   job's thread. Its fake is the pure model of files behind a reference
   (`Job.FakeFiles`), and its real implementation the library's file

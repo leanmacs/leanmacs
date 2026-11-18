@@ -297,8 +297,15 @@ file with a watch yet: a change is found when a save is asked for.
   for nothing and for a link that names nothing alike. `read_link` gives
   the path a link holds, as the link holds it and following nothing, and
   none for what is no link: it is how the core tells a link to nothing from
-  nothing. An error is a kind the core decides on (not found, denied,
-  exists, not a file, other) and the platform's words.
+  nothing. `list` (completion's phase 6) gives what a directory holds, one
+  entry per name, `.` and `..` left out, each with its kind, links
+  followed, a link to nothing as other, in no particular order; nothing
+  there is refused as not found, and what is not a directory as not a file,
+  the port's kind for "not what was asked for", which every operation
+  already used for a path through something that is not a directory, so
+  no kind was added and no existing refusal changed. An error is a kind
+  the core decides on (not found, denied, exists, not a file, other) and
+  the platform's words.
 - **The fake.** `editor_text::fs::FakeFs`, published and not test-only: a
   file system in memory whose time only a test moves, which records every
   call, fails when a test says so, and runs a test's closure between two
@@ -313,8 +320,10 @@ file with a watch yet: a change is found when a save is asked for.
   says of a link to nothing is among the rules: its stat is none, resolving
   it is refused as not found, and it is read as the path it holds. So is
   what a save's stamp rests on: a renamed file keeps its modification time
-  and its size. The check is shown to bite by fifteen fakes written to
-  break one rule each.
+  and its size. So is a listing: a directory holding a file, a directory, a
+  link to a file and a link to nothing lists each once, with the kinds
+  file, directory, file and other, and nothing and a file are refused. The
+  check is shown to bite by eighteen fakes written to break one rule each.
 - **The adapter.** `editor-fs-std`, a crate of its own: `StdFs` over
   `std::fs`, Unix only, made by the one constructor `StdFs::system()`. A
   write is `create_new` with the permissions set on the open file, then
@@ -364,6 +373,13 @@ file with a watch yet: a change is found when a save is asked for.
   over the file. It is checked when a save is asked for and at no other
   time. A change that keeps the size inside one tick of the file system's
   clock is not seen; a test pins that.
+- **A listing** (`editor_text::file::list`, completion's phase 6): a path
+  that is not absolute is refused before the file system is asked; the
+  port's refusals become the listing's own (not found, not a directory),
+  and the entries are sorted by the bytes of their names, so the answer is
+  deterministic and the Lean model answers the same. `std::fs::read_dir`
+  is the library, behind the port, with `std::fs::metadata` of each entry
+  for its kind.
 - **A stamp alone** (`editor_text::file::stamp`): the stamp of the file at
   a path, or none when nothing is there, from one stat, with nothing read;
   a path that is not absolute is refused before the file system is asked,
@@ -372,16 +388,19 @@ file with a watch yet: a change is found when a save is asked for.
   environment keeps a directory's entry by the stamps of mise's config
   files.
 - **The service** (`editor-ffi`, `src/files.rs`), in the timer service's
-  shape: a load, a save or a stamp is started with the caller's id and
+  shape: a load, a save, a stamp or a listing is started with the caller's id and
   returns at once; **one thread works the requests in the order they were started**,
   so two saves of one file land in order; one completion is queued; the
   result is then taken once by its id, as a status, a snapshot handle for a
   load, words and a detail string. Cancelling a request that waits means it
   is never worked; a save being worked reads the flag before it replaces
   the file. The statuses: done, not absolute, not found, not a file,
-  denied, binary, too large, changed, no temporary name, failed. A stamp
-  request's result is done with four words: present or not, then the
-  stamp.
+  denied, binary, too large, changed, no temporary name, failed, not a
+  directory, listed. A stamp request's result is done with four words:
+  present or not, then the stamp. A listing's is listed: the count, then
+  each entry's kind (0 file, 1 directory, 2 other) and the byte length of
+  its name, the names joined as the detail; a name that is not UTF-8 is
+  left out, since Lean cannot name such a file.
 - **How the tests are kept off the disk.** `editor-text`'s tests, and the
   service's unit tests, run on the fake. That is held by the gate, not by
   review: a `clippy.toml` beside each of the two crates lists `std::fs`,

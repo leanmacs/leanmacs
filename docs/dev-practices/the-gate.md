@@ -676,10 +676,8 @@ system, and whose output must be exactly `files/expected`; and with
 executable runs: a command of config's asks for a prompt, a key that
 prints is typed into the minibuffer, whose view the scene prints with the
 prompt text as its status line, `<Enter>` accepts and config's command
-receives the answer, `<Escape>` cancels, and the compiled `open-file`, run
-with no path, asks for one and opens the answer, a committed path the
-library refuses, so the run touches no file; its output must be exactly
-`prompt/expected`; and with `evil-script`, which has no `reload` and so
+receives the answer and `<Escape>` cancels, and the run touches no file;
+its output must be exactly `prompt/expected`; and with `evil-script`, which has no `reload` and so
 loads no config: it sends `i`, the keys of `hello`, `<Escape>` and `0`,
 and its scenes must show the text, the cursor after each, and the state's
 name in the status line, exactly as `evil-expected` has them. That run is
@@ -689,8 +687,10 @@ its own, below (`session/script`). The eighth is `ex/script`, which also
 has no `reload`: it
 runs the ex line four times, with a name nobody bound, with `w` in the
 scratch buffer, with `e`, where the scene lists the ex names the text
-matches, `e` and then `reload`, and `<Tab>` and `<Enter>` run `e`, which
-asks for a path with a prompt that lists none, and with `q`, which ends
+matches, `e` and then `reload`, and `<Tab>`, which puts `e` in the input,
+and `<Enter>` run `e`, which asks for a path with the file prompt, whose
+listing of the working directory is waited for with `join` and not
+printed before `<Escape>` cancels it, and with `q`, which ends
 the loop, so that the `scene` line
 after it prints nothing; its output must be exactly `ex/expected`. The
 ninth is `candidates/script` on the config in `candidates/config`, under
@@ -698,10 +698,22 @@ the Vim scheme and with the library's fuzzy matcher: a command of
 config's asks with the candidates `wq`, `edit` and `w`; `w` is typed and
 the scene lists `w` and then `wq` after the prompt's label, which only
 the rule that a candidate that is the text is first orders, since the
-library scores the two the same; `<Tab>` twice chooses `wq`, which the
+library scores the two the same; `C-n` twice chooses `wq`, which the
 scene shows in the chosen face; `<Enter>` gives config's command `wq`;
-and with `z` typed the scene lists none and the command receives `z`. Its
-output must be exactly `candidates/expected`.
+with `z` typed the scene lists none, `<Tab>` puts nothing in the input,
+and the command receives `z`; and with `e` typed `<Tab>` puts the first
+listed, `edit`, in the input, the prompt still open, and `<Enter>` gives
+the command `edit`. Its output must be exactly `candidates/expected`.
+
+`open-file/script` is a process check on real files, of the session
+check's form (below): its entry copies `open-file/tree` into a temporary
+directory, writes the script there with `@DIR@` replaced, and the output,
+with that directory written `@DIR@`, must be exactly
+`open-file/expected`. The file prompt lists the tree's directory,
+directories first and `.hidden` left out, lists `.hidden` once a `.` is
+typed with no new job, goes into `notes/` with `<Tab>`, opens `todo.md`
+with `C-n` and `<Enter>`, and says why a missing directory lists nothing.
+Every job is joined, so its lines are fixed.
 
 Two more entries of the task run the executable on a real file, and read
 what a fixture's output cannot show: the process's exit status and the

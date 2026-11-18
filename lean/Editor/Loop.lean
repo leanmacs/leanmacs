@@ -289,6 +289,11 @@ loop has little of its own to do.
   else asks a style for a prompt. With nothing chosen by config the style
   is the fuzzy matcher's (`Completion.Styles.fuzzy`), which asks
   `Fuzzy.rank` once (`Editor/Fuzzy.lean`).
+  - **The candidates listed are those that answer the typed text**
+    (`Candidates.answering`, in `Candidates.listing`): an asking source's
+    answer for another directory, and a candidate the text does not
+    reveal, are left out, inline and in a match job alike. The size that
+    chooses between the two is counted per source (`Candidates.current`).
   - **The style is looked up for each step**, from the keys the host
     hands, and never kept in the state: the state holds only the prompt's
     category. So a reload changes it from the next listing, and a listing
