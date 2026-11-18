@@ -168,7 +168,21 @@ job reads as it comes and whose standard input it writes to (phase 2;
   `docs/design/keymaps-and-modes.md`). The contract holds it to two more
   properties: `/bin/cat` fed four pipes' worth, a NUL and a byte that is
   not UTF-8 among it, gives it back whole; and `/usr/bin/true` fed a
-  mebibyte exits 0. An id in use is refused. Cancelling kills the
+  mebibyte exits 0. **A run may keep the head of its standard output**
+  (`Service::start_head`, project navigation's phase 1): it is fed as
+  above, and its standard output's reader, once the stream reaches the
+  run's limit, keeps exactly the first `limit` bytes, kills the group and
+  the run comes to `RunResult::Cut` with them and what was read of
+  standard error; how the child ended is not said, since the service ended
+  it. Standard error keeps the usual rule, and output within the limit is a
+  run to its end. It is a fact about a process with no policy in it: it is
+  how a filter given an empty text, which prints every candidate, still
+  answers ([concurrency.md](concurrency.md), "Prompts": sources a command
+  filters). The contract holds it to one more property, `RUN_HEAD`: a
+  child that never stops writing, fed a few bytes, under a limit of 4,
+  answers `0123` as cut, and its child and grandchild end; a group kill
+  that ends only the child, and a wait that does not reap, each fail it.
+  An id in use is refused. Cancelling kills the
   group of a running child, drops its result and never completes it.
   Shutdown refuses every later start (as shut down, completed at once),
   cancels every run, kills every group and blocks until every child is
@@ -243,16 +257,21 @@ job reads as it comes and whose standard input it writes to (phase 2;
   so neither a cancel nor shutdown can hang on a child that ignores a
   polite signal.
 - **Across the boundary**, `editor-ffi`'s `processes.rs` holds the
-  process's one service, over the real adapter, behind twelve C functions:
+  process's one service, over the real adapter, behind thirteen C functions:
   a run (the command as words and one string, as a list of strings
-  crosses), a fed run (the same, and the bytes of its input), a take (a status, words, a detail and both streams), a cancel,
+  crosses), a fed run (the same, and the bytes of its input), a run that
+  keeps its head (the same as a fed run; a cut run's result is status 9,
+  which runs and streams leave unused, with no words and both streams in
+  the buffers), a take (a status, words, a detail and both streams), a cancel,
   a shutdown and a readout of what is pending; and for a streaming child an
   open (a run's words after its input and its two framings, with the bound
   for the limit), a read, a write, a close of its input, a take of a wait's
   reply (the same record as a run's result, a delivery's two streams in its
   buffers) and a readout of whether it is held, for tests. In Lean a run is
   a request of the job port (`lean/Editor/Process.lean`, `Process.run`),
-  with a pure model that scripts commands; cancelling a job withdraws its
+  with a pure model that scripts commands, and a run that keeps its head
+  is `ProcessRequest.runHead`, answered `Process.Head.whole` or
+  `Process.Head.cut`; cancelling a job withdraws its
   wait, which cancels the run in the library and so kills the child. A run
   with a time limit (`Process.runWithin`) is a run here: Lean's adapter
   arms an alarm on the timer service and cancels the run when the alarm

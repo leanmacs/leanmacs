@@ -3706,7 +3706,10 @@ asked and what accepting gives).
   loop's, over the candidates' texts, by the prompt's style ("A prompt's
   matching styles", below). A source that declares it has filtered already
   (`Source.filtered`) has its candidates kept apart and listed after the
-  matches, as it gave them.
+  matches, as it gave them, none dropped, the style marking the ranges it
+  matches. A source a command filters, a lister's output fed to fzf with
+  the typed text as an argument, is one ([concurrency.md](concurrency.md),
+  "Prompts": sources a command filters).
 - **A prompt may ask for a category.** `.category c defaults`
   (`SourceRef.ofCategory c` for none) is answered by every source
   registered in `c`, compiled and config alike. `prompt` asks the loop for
@@ -3815,7 +3818,8 @@ asked and what accepting gives).
     rows (10, `Completion.Displays.rows`, as vertico's `vertico-count` and
     ivy's `ivy-height`), the best match at the top, one candidate a row in
     the listing's order: the candidates the typed text matches, in the
-    order of the prompt's style, then those a filtered source passed.
+    order of the prompt's style, then those a filtered source passed, in
+    its order, highlighted where the style matches them.
     Under the fuzzy style, the default, a candidate that is the typed text
     is first. A row is the candidate's label, or its text, the whole row
     in `minibuffer.candidate`, or in `minibuffer.chosen` for the chosen
@@ -3962,8 +3966,9 @@ completion's phase 2, a source config registers in `buffer` added to
 replacing it), `apiStateChecks` again (criterion 6: a category with no
 source lists nothing and is not refused), `candidateChecks` again (a
 category's defaults, its other sources after them, and a default
-replaced by name; a filtered source's candidates after the matches, and
-a prompt of filtered sources alone, which asks no style),
+replaced by name; a filtered source's candidates after the matches,
+marked by the style where it matches them, and a prompt of filtered
+sources alone, which asks the style only for those ranges),
 `registryChecks` (`sourcesIn`), `ConfigTest.shippedChecks` (the shipped
 sources in each shipped category, in the defaults' order), and the fixture
 `tests/headless/candidates`, whose config registers its source with
@@ -4080,8 +4085,14 @@ and orderless choose it.
   it gave, whatever is typed. It answered for the text it was asked with
   and the matches are for the text typed now, so the matches come first;
   a source that answers now keeps the list it first answered, and one that
-  depends on the text answers later and is asked again as it changes. No
-  style is asked when every candidate was passed.
+  depends on the text answers later and is asked again as it changes.
+  None is dropped, but the style still marks them: it is asked for the
+  passed candidates too, and each is listed with the ranges of its hit
+  where it matches and none where it does not, the hits' order ignored
+  (`Candidates.listing`), so a filtered source's candidates are
+  highlighted as other prompts' are (project navigation's phase 1). For
+  the empty text no style is asked for them. They count toward the size
+  that sends a long list to a match job (`Candidates.listingSize`).
 - **Config chooses** (`lean/Editor/Setup.lean`): `defineStyle style`
   registers one, `useStyleFor category name` chooses a category's, and
   `useStyle name` the default. Every host registers `fuzzy`, `orderless`
@@ -4155,7 +4166,8 @@ orderless style's rule as a property over every short text and candidate
 of a small alphabet, the model, and the choice by category),
 `styleContractChecks` (the contract on the shipped styles and the model,
 seen to bite), `stateChecks` (hits with their ranges, then the passed
-candidates), `candidateChecks` (criterion 3 on the model: orderless for
+candidates), `candidateChecks` (passed candidates in their order, none
+dropped, each with the style's ranges where it matches; criterion 3 on the model: orderless for
 one category and the fuzzy style for the rest, through the loop; and the
 existing listing checks, criterion 1), `setupChecks`, `registryChecks`
 and `reloadChecks` (registration, the choice, the report),

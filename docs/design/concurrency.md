@@ -1065,8 +1065,9 @@ transaction through. Where those come from is open.
 
 Status: decided 2026-11-14 and built, by the command loop's phase 10; a
 prompt's candidates by its phase 14 ("Candidates", below), the
-sources they come from by completion's phase 1, and sources that answer
-later and matching off the editor thread by completion's phase 3.
+sources they come from by completion's phase 1, sources that answer
+later and matching off the editor thread by completion's phase 3, and
+sources a command filters by project navigation's phase 1.
 
 | Built | Where |
 |---|---|
@@ -1088,6 +1089,9 @@ later and matching off the editor thread by completion's phase 3.
 | Sources that answer later: `Reask`, `Later`, the asking source a prompt holds, its job's order and batches, `sourceJob`, `minibuffer-candidates` | `lean/Editor/Completion/Candidate.lean`, `lean/Editor/Completion/Later.lean`, `lean/Editor/Setup.lean` (`sourceJob`), `lean/Editor/Minibuffer.lean` |
 | The reconciler of a prompt's jobs: a source's job started and started again, the match job spawned, closing cancelling them | `lean/Editor/Loop.lean` ("Prompts": `Loop.completionJobs`, `Loop.matchWork`, `Loop.Spawn`), `lean/Editor/Headless.lean` (`Running.launch`, `Running.publish`) |
 | The match job: the listing made on a pool thread over the job port's matcher, its delivery, a failed match | `lean/Editor/Loop.lean` (`Candidates.listing`, `Loop.inlineMatches`), `lean/Editor/Job.lean` (`JobRequest.fuzzy`, `Job.embedFuzzy`), `lean/Editor/State.lean` (`listMatched`, `matchFailed`) |
+| A filtered source's candidates marked with the style's ranges, in their order, none dropped; the size that chooses inline or a match job counting them | `lean/Editor/Loop.lean` (`Candidates.listing`, `Loop.listed`, `Loop.completionJobs`), `lean/Editor/State.lean` (`Candidates.passingSize`, `Candidates.listingSize`) |
+| Sources a command filters: a lister, a filter fed its output with the typed text as an argument, the first records in one batch | `lean/Editor/Completion/Filtering.lean` |
+| A run that keeps the head of its standard output | `lean/Editor/Process.lean` (`ProcessRequest.runHead`, `Process.Head`), `lean/Editor/Job.lean` (`Process.runHead`), `crates/editor-process/src/service.rs` (`Service::start_head`, `RunResult::Cut`) |
 | Displays: the interface, its model and contract, the minibuffer display and its rows; their registration and config's choice by category | `lean/Editor/Completion/Display.lean`, `lean/Editor/Completion/Displays.lean`, `lean/Editor/Completion/DisplayContract.lean`, `lean/Editor/Config/Registry.lean` ("Displays"), `lean/Editor/Setup.lean` (`defineDisplay`, `useDisplay`, `useDisplayFor`) |
 | The candidate list: the sheet shown in the publish, kept on the prompt, the place that grows and never shrinks, and the list's view above the minibuffer's | `lean/Editor/State.lean` ("The minibuffer's place": `displayed`, `Prompt.tallest`, `cutStrip`, `candidateListRect?`), `lean/Editor/Loop.lean` (`Loop.candidateListView`, `Loop.Keys.displaying`) |
 | The `:!` history and the ex names as the ex line's candidates, from two sources | `lean/Editor/Ex.lean` (`exCommand`, `historySource`, `namesSource`), `lean/Editor/Api.lean` (`exNames`) |
@@ -1107,7 +1111,12 @@ binding by the cases of `lean/Editor/Api/Cases.lean`; through the headless
 host over the real library and the real elaborator by
 `ConfigTest.promptChecks`; and on the executable by the fixtures
 `tests/headless/prompt` and, for candidates with the library's matcher,
-`tests/headless/candidates`.
+`tests/headless/candidates`. Sources a command filters are pinned by
+`ModelTest.filteringChecks` on the job model and the loop's driver, and by
+`ContractTest.filteringChecks` over the real process service with the
+fixture `tests/completion/filter` standing in for fzf; the head run by the
+process port's contract (`JobContract.processProperties`) and the process
+service's (`editor_process::contract::RUN_HEAD`).
 
 **An answer can be the input scheme's.** A key whose edit needs a text
 typed in the minibuffer, as Vim's `/` needs its pattern, cannot complete at
@@ -1409,7 +1418,9 @@ accepting hands the continuation the chosen candidate.
   text the listing is for, it asks the style chosen for the prompt's
   category (`Loop.Keys.matching`; the fuzzy matcher's by default) and
   keeps the candidates it answers, in its order, with the ranges that
-  matched, then those a filtered source passed, with nothing chosen
+  matched, then those a filtered source passed, in the order it gave,
+  none dropped, each marked with the style's ranges where it matches it,
+  with nothing chosen
   ([lean-runtime.md](lean-runtime.md), "The editor's port is a
   composite"; [keymaps-and-modes.md](keymaps-and-modes.md), "A prompt's
   matching styles").
@@ -1449,7 +1460,11 @@ accepting hands the continuation the chosen candidate.
   - A text that did not change costs one read and no ranking, unless a
     batch came in since, which is listed for the same text with the choice
     kept on its candidate. A prompt with no candidates costs what it cost
-    before, and one whose every candidate was passed asks no style.
+    before, and one whose every candidate was passed asks the style only
+    to mark them, and not at all for the empty text. The size that chooses
+    between the editor thread and a match job counts the passed candidates
+    with those to match (`Candidates.listingSize`), in `Loop.listed` and
+    in the reconciler alike, so a long passed list is marked on the pool.
   - It is the loop's own request: it is not guarded, so the interrupt flag
     never stops a scene. The ranking runs in the call, on the editor
     thread for a short list and on a pool thread for a long one
@@ -1504,6 +1519,47 @@ accepting hands the continuation the chosen candidate.
   `Asking.answeredFor`), so the scene of the key that types a `/` lists
   nothing of the old directory before the new batch arrives; a source
   that waits for a pause keeps its previous answer, as phase 3 decided.
+- **Sources a command filters** (project navigation's phase 1,
+  `lean/Editor/Completion/Filtering.lean`) hand both the listing and the
+  filtering to external programs, so a workspace of 100,000 files is never
+  passed to Lean whole: only the best few hundred are. Such a source
+  answers later and is asked again after a pause (`Reask.afterPause`, 50
+  ms by default); its job:
+  - runs a *lister*, a `Process.Command` the source chooses, whose standard
+    output is the candidates, held whole up to 64 MiB by default, enough
+    for well over 100,000 paths;
+  - feeds that output to a *filter*, `fzf --filter <text>` by default,
+    with the typed text appended to its arguments as one argument. It
+    never passes through a shell, so no text typed into a prompt can run
+    a command;
+  - reads the filter's output as a head (`ProcessRequest.runHead`): past
+    its byte limit, 256 KiB by default, the library ends the filter and
+    answers what it kept as a success, so an empty text, which prints
+    every candidate, still answers. A cut head's last part of a record is
+    dropped;
+  - splits records on a line feed or a NUL (`git ls-files -z`, `fzf
+    --read0 --print0`), drops empty ones and those that are not UTF-8, and
+    delivers the first `limit` (200 by default) as **one batch**, an empty
+    one included, so an answer of no matches replaces the previous text's
+    at once;
+  - treats a filter exit status the source declares (fzf's 1) as no
+    matches, which is no failure; any other exit, a time-out (10 s by
+    default for each run) or a refusal fails the source through
+    `sourceFailed`, naming the program, so `fzf` not installed is said as
+    that and never as an empty list.
+
+  The source is filtered: the prompt lists its answer in the filter's
+  order and drops nothing, and the category's style only marks the ranges
+  it matches, so highlighting looks the same as in other prompts. Nothing
+  in it knows of files or workspaces; which commands list and filter is
+  the source's choice, so project handling stays in Lean and config.
+  - **Prior art**: fzf.vim, and Emacs's consult (`consult-fd`,
+    `consult-ripgrep`, affe), which hand both the listing and the filtering
+    to external processes.
+  - **Alternative considered**: a Rust `FileWalk` port over the `ignore`
+    crate. Rejected: it would put a walk and ignore-file rules in the
+    editor, and still pass every file to Lean.
+  - **Open**: the lister runs again at each ask, and nothing is cached.
 - **The listing's projection** (`Candidates.answering`): where a listing is
   made, inline or in a match job, an asking source's stale answer and the
   candidates its typed text does not reveal (`Candidate.hiddenUntil`) are
