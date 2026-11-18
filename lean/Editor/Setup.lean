@@ -140,6 +140,27 @@ not keys, one that names no keys (`localLeaderNoKeys`) and one written with
 `<localleader>` (`localLeaderWrittenWithItself`); `<leader>` is allowed in
 it. Each may be called once in a `setup`: a second call is refused.
 
+The key hints, which list the keys that can follow a pending prefix, read
+two labels config may give. A binding is described with `desc`, on the
+binding and not on its command, so one command bound twice may be
+described twice; and a prefix, which has no binding of its own, is named
+with `prefixName`:
+
+```lean
+def setup : SetupM Unit := do
+  bindKey "<leader> f f" "find" (desc := "Find file")
+  prefixName "<leader> f" "file"
+```
+
+A prefix name is held by its keys as written and expanded against the
+leaders in force, as a binding's keys are, so a new leader moves it too. A
+reload replaces both, as it replaces the bindings: a config that no longer
+names a prefix leaves it unnamed. `prefixName` refuses a key string that is
+not keys, with the parser's reason, and one that names no keys
+(`prefixNamedNoKeys`). One prefix named twice is refused, as written
+(`Config.Registrations.prefixNamedTwice`) and as the keys expand under the
+scheme's leaders (`Config.Registrations.prefixNamedTwiceAs`).
+
 An ex name is bound to a command's name (`exCommand`): a line of the ex
 command line whose first word is the name runs that command
 (`docs/design/keymaps-and-modes.md`, "The ex command line"). By default the
@@ -487,9 +508,13 @@ inductive SetupRequest where
   | job (name : String) (work : List Argument → Work)
   /-- Bind the key sequence `keys`, as written, placeholders in place, to
   the command called `command`, holding in the scheme's states named in
-  `states`, or as the leader rule says when it names none. The name is
-  looked up when the keys are typed. -/
-  | bind (keys : List Key.Stroke) (command : String) (states : List String)
+  `states`, or as the leader rule says when it names none, described by
+  `desc` for the key hints if it is given. The name is looked up when the
+  keys are typed. -/
+  | bind (keys : List Key.Stroke) (command : String) (states : List String) (desc : Option String)
+  /-- Name the prefix `keys`, as written, placeholders in place, `name`, for
+  the key hints. -/
+  | prefixName (keys : List Key.Stroke) (name : String)
   /-- Set the leader to `keys`, as chords. -/
   | leader (keys : List Key)
   /-- Set the localleader to `keys`, as strokes over the leader. -/
@@ -585,6 +610,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .storeCommand .. => Unit
   | .job .. => Unit
   | .bind .. => Unit
+  | .prefixName .. => Unit
   | .leader _ => Unit
   | .localLeader _ => Unit
   | .mode _ => Unit
@@ -694,18 +720,42 @@ looked up when the keys are typed, so the command need not be one this
 leaders in force when the registry makes its keymaps. With `states`, the
 binding holds only in the scheme's states named there; with none, it holds
 everywhere, except that one under the leader or the localleader does not
-hold where typing is text.
+hold where typing is text. With `desc`, the binding is described by it in
+the key hints (`(desc := "Find file")`).
 
 Refuses the `setup` for a key string that is not keys, with the key
 parser's reason, which names the stroke, and for one that names no keys. -/
-def bindKey (keys : String) (command : String) (states : List SchemeState := []) : SetupM Unit := do
+def bindKey (keys : String) (command : String) (states : List SchemeState := [])
+    (desc : Option String := none) : SetupM Unit := do
   match Key.parseStrokes keys with
   | .error reason =>
     throw reason
   | .ok [] =>
     throw (boundToNoKeys command)
   | .ok strokes =>
-    ExceptT.lift (Program.request (port := setupPort) (.bind strokes command (states.map (·.name))))
+    ExceptT.lift
+        (Program.request (port := setupPort) (.bind strokes command (states.map (·.name)) desc))
+
+/-- The message the prefix name `name` given to no keys is refused with. -/
+def prefixNamedNoKeys (name : String) : String :=
+  s!"the prefix name `{name}` is given to no keys"
+
+/-- Names the prefix the key string `keys` names (`Key.parseStrokes`:
+`"<leader> f"`) `name`, for the key hints: a prefix has no binding of its
+own to describe, so its name is held apart, by its keys as written, and
+expanded against the leaders in force as a binding's are. A reload replaces
+config's prefix names, as it replaces its bindings.
+
+Refuses the `setup` for a key string that is not keys, with the key
+parser's reason, and for one that names no keys (`prefixNamedNoKeys`). -/
+def prefixName (keys : String) (name : String) : SetupM Unit := do
+  match Key.parseStrokes keys with
+  | .error reason =>
+    throw reason
+  | .ok [] =>
+    throw (prefixNamedNoKeys name)
+  | .ok strokes =>
+    ExceptT.lift (Program.request (port := setupPort) (.prefixName strokes name))
 
 /-- The message a leader of no keys is refused with. -/
 def leaderNoKeys : String :=

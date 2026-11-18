@@ -27,6 +27,8 @@ the model tests run it with outcomes built by hand
   `Registry.replaceThemes`, `Registry.replaceSegments`,
   `Registry.replaceLanguages`, `Registry.replaceContributions`,
   `Registry.replaceSources`, `Registry.replaceStyles`, never an append),
+  and its prefix names (`Registry.replacePrefixNames`; a binding's
+  description is on the binding, so it is replaced with it),
   sets config's choices of completion style (`Registry.styleChoices`),
   sets the registry's leader and localleader to the ones the config set,
   `none` for the scheme's when it set none (`Registry.leader`,
@@ -404,6 +406,9 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
                   .config built.registrations.atPoints).replaceAtPointUses
               .config
               built.registrations.atPointUses with
+            prefixNames :=
+              (state.registry.replacePrefixNames .config
+                  built.registrations.prefixNames).prefixNames
             styleChoices := built.registrations.styleChoices
             displayChoices := built.registrations.displayChoices
             environment := built.registrations.environment

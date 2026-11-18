@@ -1026,4 +1026,24 @@ def reloadChecks : List Check :=
             (report true #[warning]).echo == none &&
             (report true #[]).echo == none) }]
 
+/-- The checks that an install replaces config's descriptions and prefix
+names along with its bindings. -/
+def reloadHintChecks : List Check :=
+  [{  name :=
+        "an install of a config that names a prefix and describes a binding puts both in the registry, and a later install of one that does neither clears them"
+      run :=
+        let labelled : SetupM Unit := do
+          prefixName "<leader> f" "file"
+          bindKey "<leader> f f" "find" (desc := "Find file")
+        let (loaded, _) := reduceFrom {} [.requested, .finished (accepted ["a"] labelled)]
+        let (reloaded, _) :=
+          reduceFrom loaded [.requested, .finished (accepted ["a"] (bindKey "<leader> f f" "find"))]
+        pure
+          (loaded.registry.prefixName? TestScheme.scheme (keys "C-c f") == some "file" &&
+            (loaded.registry.keymap TestScheme.scheme).describe? (keys "C-c f f") ==
+              some "Find file" &&
+            reloaded.registry.prefixName? TestScheme.scheme (keys "C-c f") == none &&
+            (reloaded.registry.keymap TestScheme.scheme).describe? (keys "C-c f f") == none &&
+            boundTo reloaded.registry "C-c f f" == some (invoke "find")) }]
+
 end ModelTest

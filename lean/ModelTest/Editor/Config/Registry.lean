@@ -812,4 +812,55 @@ def modeRegistryChecks : List Check :=
             (modeRegistry.activeMaps TestScheme.scheme state ⟨9⟩).length == 1 &&
               activeLookup modeRegistry state ⟨9⟩ Role.nextItem == .bound (invoke "global-next") }]
 
+/-- The checks of what the registry holds for the key hints: a binding's
+description on its keymap, and the prefix names, by owner, expanded against
+the leaders in force. -/
+def registryHintChecks : List Check :=
+  [{  name := "the registry's keymap carries a binding's description on its expanded keys"
+      run :=
+        let registry : Config.Registry :=
+          ({} : Config.Registry).replaceBindings .config
+            #[{ binding "<leader> f f" "find" with desc := some "Find file" },
+              binding "<leader> f g" "grep"]
+        let keymap := registry.keymap TestScheme.scheme
+        pure
+          (keymap.describe? (keys "C-c f f") == some "Find file" &&
+            keymap.describe? (keys "C-c f g") == none) },
+    { name :=
+        "a prefix name is found at its keys expanded against the leaders in force: the scheme's when config sets none, and config's when it does"
+      run :=
+        let named : Config.Registry :=
+          ({} : Config.Registry).replacePrefixNames .config
+            #[{ keys := strokes "<leader> f", name := "file" }]
+        let leading := { named with leader := some (keys "C-x") }
+        pure
+          (named.prefixName? TestScheme.scheme (keys "C-c f") == some "file" &&
+            named.prefixName? TestScheme.scheme (keys "C-x f") == none &&
+            leading.prefixName? TestScheme.scheme (keys "C-x f") == some "file" &&
+            leading.prefixName? TestScheme.scheme (keys "C-c f") == none) },
+    { name :=
+        "of two owners that name one prefix the later's name is found, and replacing one owner's names keeps the other's"
+      run :=
+        let both : Config.Registry :=
+          (({} : Config.Registry).replacePrefixNames .compiled
+                #[{ keys := strokes "C-x r", name := "rectangle" }]).replacePrefixNames
+            .config #[{ keys := strokes "C-x r", name := "rect" }]
+        let replaced := both.replacePrefixNames .config #[]
+        pure
+          (both.prefixName? TestScheme.scheme (keys "C-x r") == some "rect" &&
+            replaced.prefixName? TestScheme.scheme (keys "C-x r") == some "rectangle" &&
+            replaced.prefixNames.size == 1) },
+    { name :=
+        "a setup that names one prefix twice as it expands under the scheme's leaders is refused, naming both ways it was written"
+      run :=
+        let twice : SetupM Unit := do
+          prefixName "<leader> f" "file"
+          prefixName "SPC f" "files"
+        pure
+          (problemUnder spaceScheme twice ==
+              some
+                (Config.Registrations.prefixNamedTwiceAs (keys "SPC f") (strokes "<leader> f")
+                  (strokes "SPC f")) &&
+            problemUnder TestScheme.scheme twice == none) }]
+
 end ModelTest

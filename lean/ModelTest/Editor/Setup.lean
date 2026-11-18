@@ -917,4 +917,44 @@ def setupChecks : List Check :=
           (refusal (workspace "tools") == some (relativeWorkspace "tools") &&
             refusal twice == some (Config.Registrations.workspaceTwice "/r/tools")) }]
 
+/-- The checks of what a `setup` says for the key hints: a binding's
+description (`bindKey`'s `desc`) and a prefix's name (`prefixName`). -/
+def setupHintChecks : List Check :=
+  [{  name :=
+        "a setup that binds a key with a description collects the description, and one without collects none"
+      run :=
+        let setup : SetupM Unit := do
+          bindKey "<leader> f f" "find" (desc := "Find file")
+          bindKey "<leader> f g" "grep"
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.bindings.map (·.desc) == #[some "Find file", none] &&
+              collected.bindings.map (·.keys) ==
+                #[strokes "<leader> f f", strokes "<leader> f g"]) },
+    { name :=
+        "a setup that names a prefix collects its keys as written, placeholders in place, and its name"
+      run :=
+        match Config.Registrations.ofSetup (prefixName "<leader> f" "file") with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.prefixNames ==
+              #[{ keys := [.leader, .key (charKey "f")], name := "file" }]) },
+    { name :=
+        "a setup that names a prefix of no keys is refused, one that is not keys with the parser's reason, and one that names one prefix twice as written is refused, naming the prefix"
+      run :=
+        let parsed : Option String :=
+          match Key.parseStrokes "C-<leader>" with
+          | .error message => some message
+          | .ok _ => none
+        let twice : SetupM Unit := do
+          prefixName "<leader> f" "file"
+          prefixName "<leader> f" "files"
+        pure
+          (refusal (prefixName "" "x") == some (prefixNamedNoKeys "x") && parsed.isSome &&
+            refusal (prefixName "C-<leader>" "x") == parsed &&
+            refusal twice == some (Config.Registrations.prefixNamedTwice (strokes "<leader> f"))) }]
+
 end ModelTest

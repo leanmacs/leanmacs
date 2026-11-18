@@ -544,11 +544,17 @@ The config session's decisions are tested here too, with no elaborator:
 - `setupChecks`: what a `setup` registers, commands, stores, jobs, key
   bindings, the leader and the localleader, modes, ex bindings and faces,
   and when it is refused;
+- `setupHintChecks`: a binding's description (`bindKey`'s `desc`) and a
+  prefix's name (`prefixName`), as a `setup` collects them, and the names
+  it refuses;
 - `registryChecks`: the registry, its commands, its jobs, its key
   bindings, its modes, its ex bindings and its faces, replaced by owner,
   and the keymap it makes, its bindings expanded against the leaders in
   force and bound by where they hold, and the bindings a scheme's leaders
   make one sequence, which are refused;
+- `registryHintChecks`: a binding's description on the registry's keymap,
+  and its prefix names, by owner, expanded against the leaders in force,
+  and two names a scheme's leaders make one prefix, which are refused;
 - `storeChecks`: the rule that meets a new config's stores with the cells
   there are, one check for each case;
 - `sessionChecks`: one reload (`Config.build`), on a fake elaborator that
@@ -562,7 +568,9 @@ The config session's decisions are tested here too, with no elaborator:
   installs, and only then; and what the theme is: the built-in one then the
   installed config's faces, replaced as a set by an install and kept by a
   rejected reload. An install replaces config's key bindings, modes and ex
-  bindings and keeps the compiled ones.
+  bindings and keeps the compiled ones;
+- `reloadHintChecks`: an install replaces config's descriptions and prefix
+  names with its bindings, so a later config without them clears them.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -837,10 +845,13 @@ def checks : List Check :=
     fileWatchModelChecks ++
     fileWatchRunnerChecks ++
     setupChecks ++
+    setupHintChecks ++
     registryChecks ++
+    registryHintChecks ++
     storeChecks ++
     sessionChecks ++
     reloadChecks ++
+    reloadHintChecks ++
     windowTallyChecks ++
     windowLoopChecks ++
     windowArgumentChecks ++

@@ -95,6 +95,19 @@ config set, else the scheme's), so `<leader> f` with `SPC f` under the
 `SPC` leader is bound twice too, and the message names both ways the keys
 were written (`keysBoundTwice`). `Config.build` asks it after `problem?`.
 
+**The key hints read two labels.** A binding's description (`desc`,
+`bindKey … (desc := …)`) rides on its `KeyBinding`, so `keymap` puts it on
+the keymap's entry (`Keymap.descriptions`) and an install replaces it with
+the binding. A prefix has no entry, so its name is a table of its own
+(`PrefixName`, held by owner as `prefixNames` and replaced as a set by
+`replacePrefixNames`), its keys as written. `prefixName?` expands them
+against the leaders in force when it is asked, as `keymap` does a
+binding's, so a reload with a new leader moves the names with the
+bindings; of two owners' names for one prefix, the later owner's is found.
+A prefix named twice is refused as a binding is: as written by `problem?`
+(`prefixNamedTwice`), and as expanded under the scheme by `problemUnder?`
+(`prefixNamedTwiceAs`).
+
 **The menu bar shows a command's key from these bindings**
 (`keyEquivalent?`): of the sequences the bindings, as one keymap, bind to
 the command's name, the one bound last that is a single chord of one
@@ -413,6 +426,8 @@ structure KeyBinding where
   binding that holds as the leader rule says ("Key bindings", in the
   module docs). -/
   states : List String := []
+  /-- The binding's description for the key hints, if it has one. -/
+  desc : Option String := none
   deriving DecidableEq, Repr
 
 /-- The binding of the keys `keys`, as chords, to the command called
@@ -426,6 +441,24 @@ structure BindingEntry where
   owner : Owner
   /-- The binding. -/
   binding : KeyBinding
+  deriving DecidableEq, Repr
+
+/-- A prefix's name for the key hints: a prefix has no binding of its own,
+so its name is held apart ("Key bindings", in the module docs). -/
+structure PrefixName where
+  /-- The prefix's keys, in order, as written: chords, and `<leader>` and
+  `<localleader>` in place, expanded when the name is looked up. -/
+  keys : List Key.Stroke
+  /-- The name. -/
+  name : String
+  deriving DecidableEq, Repr
+
+/-- A prefix name entry of the registry: a prefix name and its owner. -/
+structure PrefixNameEntry where
+  /-- Who named the prefix. -/
+  owner : Owner
+  /-- The prefix name. -/
+  prefixName : PrefixName
   deriving DecidableEq, Repr
 
 /-- A mode entry of the registry: a mode and its owner. -/
@@ -534,6 +567,8 @@ structure Registry where
   jobs : Array JobEntry := #[]
   /-- The key bindings. -/
   bindings : Array BindingEntry := #[]
+  /-- The prefix names, for the key hints. -/
+  prefixNames : Array PrefixNameEntry := #[]
   /-- The mode entries. -/
   modes : Array ModeEntry := #[]
   /-- The ex bindings. -/
@@ -895,26 +930,44 @@ localleader's `<leader>` the leader in force. -/
 def leaders (registry : Registry) (scheme : InputScheme) : Key.Leaders :=
   scheme.leaders registry.leader registry.localLeader
 
+/-- `registry` with every prefix name of `owner` removed and `names` added as
+its prefix names. -/
+def replacePrefixNames (registry : Registry) (owner : Owner) (names : Array PrefixName) :
+    Registry :=
+  { registry with
+    prefixNames :=
+      registry.prefixNames.filter (·.owner != owner) ++
+        names.map fun prefixName => { owner, prefixName } }
+
+/-- The name of the prefix `keys`, as chords, under `scheme`, if one is
+named: of the prefix names whose keys expand to `keys` against the leaders
+in force, the latest's, so a later owner's name is over an earlier's. -/
+def prefixName? (registry : Registry) (scheme : InputScheme) (keys : List Key) : Option String :=
+  let leaders := registry.leaders scheme
+  (registry.prefixNames.toList.reverse.find? fun entry =>
+        (Key.expand leaders entry.prefixName.keys).map Key.chord == keys).map
+    (·.prefixName.name)
+
 /-- The keymap of every owner's bindings for `scheme`: each key sequence,
 expanded against the leaders in force, bound to what the scheme says runs
 the command of its name: in the binding's states when it names any, as a
 mode's key when the expanded keys begin with the leader or the localleader,
 and as a command otherwise ("Key bindings", in the module docs). The
 entries are bound oldest first, so of two owners that bind one sequence the
-later owner's is the keymap's. -/
+later owner's is the keymap's. A binding's description is on its entry. -/
 def keymap (registry : Registry) (scheme : InputScheme) : Keymap scheme.Binding :=
   let leaders := registry.leaders scheme
   let underLeader (keys : List Key) : Bool :=
     [leaders.leader, leaders.localLeader].any fun leader =>
       !leader.isEmpty && leader.isPrefixOf keys
-  Keymap.ofList
+  Keymap.ofDescribed
     (registry.bindings.toList.map fun entry =>
       let keys := Key.expand leaders entry.binding.keys
       let command := entry.binding.command
       let bound :=
         if !entry.binding.states.isEmpty then scheme.stateCommand entry.binding.states command
         else if underLeader keys then scheme.modeCommand command else scheme.command command
-      (keys, bound))
+      (keys, bound, entry.binding.desc))
 
 /-- The key equivalent the menu bar shows for the command `command`: the
 last chord the bindings bind to it alone that is one character with the
@@ -1089,6 +1142,9 @@ structure Registrations where
   /-- The key bindings, in the order they were made, their keys as written,
   each key as a chord. -/
   bindings : Array KeyBinding := #[]
+  /-- The prefix names (`prefixName`), in the order they were given, their
+  keys as written, each key as a chord. -/
+  prefixNames : Array PrefixName := #[]
   /-- The leaders `setup` set (`leaderKey`), in order: one at most, in a
   `setup` that is not refused. -/
   leaders : Array (List Key) := #[]
@@ -1230,6 +1286,17 @@ def localLeader (collected : Registrations) : Option (List Key.Stroke) :=
 def localLeaderTwice : String :=
   "the localleader is set twice"
 
+/-- What a `setup` that names the prefix written `keys` twice is refused
+with. -/
+def prefixNamedTwice (keys : List Key.Stroke) : String :=
+  s!"the prefix `{Key.strokeNotations keys}` is named twice"
+
+/-- `strokes` with each key as its chord, and each placeholder as it is. -/
+private def chordStrokes (strokes : List Key.Stroke) : List Key.Stroke :=
+  strokes.map fun
+    | .key pressed => .key pressed.chord
+    | placeholder => placeholder
+
 /-- The handler of the setup port that collects: its answer to each request,
 and what has been registered after it. -/
 def collect : (request : SetupRequest) → Registrations → request.Reply × Registrations
@@ -1243,12 +1310,14 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((),
       { collected with commands := collected.commands.push { name, action := .store store step } })
   | .job name work, collected => ((), { collected with jobs := collected.jobs.push { name, work } })
-  | .bind keys command states, collected =>
-    let keys :=
-      keys.map fun
-        | .key pressed => .key pressed.chord
-        | placeholder => placeholder
-    ((), { collected with bindings := collected.bindings.push { keys, command, states } })
+  | .bind keys command states desc, collected =>
+    ((),
+      { collected with
+        bindings := collected.bindings.push { keys := chordStrokes keys, command, states, desc } })
+  | .prefixName keys name, collected =>
+    ((),
+      { collected with
+        prefixNames := collected.prefixNames.push { keys := chordStrokes keys, name } })
   | .leader keys, collected =>
     ((), { collected with leaders := collected.leaders.push (keys.map Key.chord) })
   | .localLeader keys, collected =>
@@ -1458,6 +1527,8 @@ def problem? (collected : Registrations) : Option String := do
       return boundToNoKeys binding.command
   if let some keys := repeated? (collected.bindings.map (·.keys)) then
     return s!"the keys `{Key.strokeNotations keys}` are bound twice"
+  if let some keys := repeated? (collected.prefixNames.map (·.keys)) then
+    return prefixNamedTwice keys
   if let some name := repeated? (collected.ex.map (·.name)) then
     return s!"the ex name `{name}` is bound twice"
   for registration in collected.commands do
@@ -1504,23 +1575,40 @@ one sequence `keys` under the leaders in force is refused with. -/
 def keysBoundTwice (keys : List Key) (first second : List Key.Stroke) : String :=
   s!"the keys `{Key.notations keys}` are bound twice: as `{Key.strokeNotations first}` and as `{Key.strokeNotations second}`"
 
+/-- What a `setup` whose prefix names written as `first` and as `second` name
+the one prefix `keys` under the leaders in force is refused with. -/
+def prefixNamedTwiceAs (keys : List Key) (first second : List Key.Stroke) : String :=
+  s!"the prefix `{Key.notations keys}` is named twice: as `{Key.strokeNotations first}` and as `{Key.strokeNotations second}`"
+
+/-- Of `written`, each a sequence as written, the first whose expansion
+against `leaders` is that of one written before it: its expansion, the
+earlier as written, and it as written. -/
+private def expandedTwice (leaders : Key.Leaders) (written : Array (List Key.Stroke)) :
+    Option (List Key × List Key.Stroke × List Key.Stroke) := do
+  let expanded := written.map fun keys => ((Key.expand leaders keys).map Key.chord, keys)
+  for index in [0:expanded.size] do
+    if let some (keys, second) := expanded[index]? then
+      if let some (_, first) := (expanded.extract 0 index).find? (·.1 == keys) then
+        return (keys, first, second)
+  none
+
 /-- What is wrong with what was collected under the input scheme `scheme`,
 if anything: two bindings whose keys, expanded against the leaders in force
 (the leader and the localleader `setup` set, each the scheme's where it set
 none: `InputScheme.leaders`), are one sequence (`keysBoundTwice`), whatever
-states each names. The registry's keymap holds a sequence once
-(`Registry.keymap`), so the later would hide the earlier in every state.
+states each names; or two prefix names whose keys are one prefix
+(`prefixNamedTwiceAs`). The registry's keymap holds a sequence once
+(`Registry.keymap`), so the later would hide the earlier in every state,
+and the later name would hide the earlier.
 What `problem?` refuses is wrong under every scheme; this is what is wrong
 under this one, so `Config.build` asks it of a `setup` `problem?` let by. -/
 def problemUnder? (collected : Registrations) (scheme : InputScheme) : Option String := do
   let leaders := scheme.leaders collected.leader collected.localLeader
-  let expanded :=
-    collected.bindings.map fun binding =>
-      ((Key.expand leaders binding.keys).map Key.chord, binding.keys)
-  for index in [0:expanded.size] do
-    if let some (keys, second) := expanded[index]? then
-      if let some (_, first) := (expanded.extract 0 index).find? (·.1 == keys) then
-        return keysBoundTwice keys first second
+  if let some (keys, first, second) := expandedTwice leaders (collected.bindings.map (·.keys)) then
+    return keysBoundTwice keys first second
+  if let some (keys, first, second) :=
+      expandedTwice leaders (collected.prefixNames.map (·.keys)) then
+    return prefixNamedTwiceAs keys first second
   none
 
 end Registrations
