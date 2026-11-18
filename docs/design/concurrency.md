@@ -1540,28 +1540,39 @@ state under the Vim scheme that ships, on a fake job clock and the real
 library, queue and recorder: with no at-point source, and with the shipped
 `words` re-arming its pause at each key over 20 open buffers of about
 50 KB, four of each sample's six keys typed with the session open
-([on-demand-checks.md](../dev-practices/on-demand-checks.md)). Three runs,
-2026-11-17, at `fdd4cb9`, on the Apple M5 Max above (a pool of 18
-threads), 600 keys a row, in µs, median / 99th percentile / maximum, with
-the run's no-candidates row beside them:
+([on-demand-checks.md](../dev-practices/on-demand-checks.md)).
+
+**The auto-popup row's bound is the plain insert row**: its median at most
+twice the `insert, no at-point` median, and its 99th percentile under
+1 ms. The row measures what the auto popup adds to a typed key in insert
+state, and the plain insert row is that key with nothing armed. It was
+first judged against the prompt's no-candidates row, a key of the test
+scheme, which swung from 49 µs to 187 µs between runs on this machine
+while the auto-popup row's own median sat at 121-134 µs, so it failed in
+about one run of three on the floor alone. The worker rows keep the
+no-candidates row as theirs.
+
+Three runs, 2026-11-17, with the bound above (the commit after
+`6ba2e2f`), on the Apple M5 Max above (a pool of 18 threads), 600 keys a
+row, in µs, median / 99th percentile / maximum, with the run's
+no-candidates row beside them:
 
 | Run | no candidates | insert, no at-point | insert, auto popup, 20 buffers | Within bound |
 |---|---|---|---|---|
-| 1 | 53.3 / 136.2 / 179.2 | 115.2 / 214.9 / 264.3 | 125.6 / 236.6 / 437.5 | no: the median is over twice 53.3; both worker rows were out of bound in this run too |
-| 2 | 186.8 / 262.0 / 309.7 | 167.6 / 357.8 / 5483.3 | 122.9 / 242.7 / 369.2 | yes |
-| 3 | 180.0 / 242.2 / 267.4 | 105.0 / 140.3 / 182.8 | 133.6 / 256.3 / 346.7 | yes |
+| 1 | 77.0 / 187.6 / 301.6 | 100.1 / 115.8 / 127.9 | 124.1 / 175.3 / 190.0 | yes; both worker rows yes |
+| 2 | 50.5 / 84.5 / 104.3 | 99.8 / 116.3 / 143.4 | 117.0 / 143.2 / 157.8 | yes; both worker rows yes |
+| 3 | 48.0 / 69.0 / 104.4 | 98.0 / 114.8 / 123.8 | 116.5 / 145.8 / 168.6 | yes; both worker rows yes |
 
-- **The auto-popup row stays within about 30 µs of the plain insert row**
-  in every run, and its 99th percentile under 0.3 ms: re-arming the pause
+- **The auto-popup row stays within about 25 µs of the plain insert row**
+  in every run, and its 99th percentile under 0.2 ms: re-arming the pause
   (a withdraw and a start on the clock) and the pure check of the chain
   are what a typed key adds, and the session's listing is matched off the
-  thread.
-- **The bound is judged against the prompt's no-candidates row**, a
-  key of the test scheme, which moved from 53 µs to 187 µs between runs on
-  this machine; a key of the Vim scheme's insert state costs more than
-  that floor on its own (the plain insert row). Run 1 is out of bound by
-  that floor alone. D9's fallback (re-arming in place of restarting) would
-  save at most the one withdraw and start, and is not built.
+  thread. D9's fallback (re-arming in place of restarting) would save at
+  most the one withdraw and start, and is not built.
+- **The plain insert row is steady** (98-100 µs median in these runs),
+  where the no-candidates row moved from 48 µs to 77 µs; the runs at
+  `fdd4cb9`, judged against no candidates, saw it move from 53 µs to
+  187 µs and put run 1 out of bound by that floor alone.
 
 **Sessions at point** (completion's phase 5,
 [keymaps-and-modes.md](keymaps-and-modes.md), "Completion at point") use

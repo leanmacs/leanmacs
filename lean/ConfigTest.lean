@@ -6660,7 +6660,8 @@ def cadence : Nat :=
 
 /-- Whether a row of keys is within the bound the plan set for matching off
 the editor thread: its median at most twice the idle row's, and its 99th
-percentile under 1 ms. -/
+percentile under 1 ms. The auto-popup row is judged with the plain insert
+row as its idle row: the same key with no at-point source. -/
 def Row.keyWithinBound (row idle : Row) : Bool :=
   row.median ≤ 2 * idle.median && row.high < keyBound
 
@@ -6852,8 +6853,12 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   IO.println
       ("within bound (median within twice the no-candidates median, 99th percentile under 1 ms): " ++
         "; ".intercalate
-          ([worker, backToBack, autoPopup].map fun row =>
+          ([worker, backToBack].map fun row =>
             s!"{row.name}: {if row.keyWithinBound idle then "yes" else "no"}"))
+  -- What auto popup adds to a typed key in insert state is judged against
+  -- the same key with no at-point source, not against a key of the prompt.
+  IO.println
+      s!"within bound (median within twice the insert, no at-point median, 99th percentile under 1 ms): {autoPopup.name}: {if autoPopup.keyWithinBound plainInsert then "yes" else "no"}"
   let under := inlineRows.filter (·.2.high < keyBound)
   IO.println
       s!"inline rows with the 99th percentile under 1 ms: {", ".intercalate (under.map (·.2.name))}; the largest such size is {(under.map (·.1)).foldl max 0} (the inline limit is {Loop.inlineMatches})"
