@@ -6664,10 +6664,27 @@ percentile under 1 ms. -/
 def Row.keyWithinBound (row idle : Row) : Bool :=
   row.median ≤ 2 * idle.median && row.high < keyBound
 
+/-- About 50 KB of generated words, `word<i % 4999>_<i % 4999 % 97>` for `i` from
+`first`, space-separated: one open buffer of the auto-popup row of the
+prompt benchmark. -/
+def wordText (first : Nat) : String :=
+  " ".intercalate
+    ((List.range 5000).map fun index =>
+      let i := first + index
+      s!"word{i % 4999}_{i % 4999 % 97}")
+
+/-- Makes 20 buffers of `wordText`, about 5,000 distinct words in all: what
+the auto-popup row of the prompt benchmark completes from. -/
+def makeWordBuffers : EditorM Unit := do
+  for index in [0:20] do
+    discard <| createBuffer s!"words-{index}" (wordText (index * 5000))
+
 /-- `bench-prompt`: what a key costs in a prompt with no candidates, over
 1,000, 10,000 and 100,000 candidates listed inline (the limit lifted), and
 over 100,000 matched off the editor thread, keys joined and back to back;
-`samples` keys a row. -/
+and what a word key costs in insert state under the Vim scheme that ships,
+with no at-point source, and with the shipped `words` popping up by itself
+over 20 open buffers; `samples` keys a row. -/
 def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let pool := (← Job.Pool.warm Job.Pool.size 200).size
   let completions ← Job.Completions.new
@@ -6757,8 +6774,74 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let backToBack :=
     Row.of s!"100,000 on the worker, keys {cadence} ms apart"
       (← row 100000 Loop.inlineMatches false false).1
+  -- The insert rows: a host of the Vim scheme that ships, as `withVimHost`
+  -- builds one, on a fake clock of its own, with the real library, queue and
+  -- recorder; `atPoint` says whether the shipped `words` is used in every
+  -- buffer. Each sample types two word keys, timed; with `atPoint`, moves the
+  -- clock past the pause and joins the `words` job, untimed; types four more
+  -- word keys, timed; and leaves insert state and undoes, untimed.
+  let insertRow (atPoint : Bool) : IO (Array Nat) := do
+    let requests ← ids.modifyGet fun next => (next, next + 6)
+    let waits ← Job.Completions.new
+    let clock ← Job.FakeClock.new waits
+    let published ← Snapshots.new
+    let services : Job.Services :=
+      { completions := waits, timers := clock.timers, fuzzy := Fuzzy.real
+        snapshots := Job.realSnapshots published.reader }
+    let shipped :=
+      Headless.shippedOver sysroot oleanDir "" emit services published (← Job.HeldSnapshots.new)
+    let host ←
+      Headless.start
+          { shipped with
+            source := { chunks := pure #[] }, requests, wakeups := requests + 1
+            jobs := requests + 2, environment := requests + 3, posts := requests + 4
+            pauseEvents := requests + 5, clock := some clock, log := fun _ => pure ()
+            atPointUses := if atPoint then shipped.atPointUses else #[]
+            commands :=
+              shipped.commands ++
+                #[{ name := "noop", action := .plain (pure ()) },
+                  { name := "make-buffers", action := .plain makeWordBuffers }] }
+    try
+      host.send (.run "make-buffers")
+      unless (← host.join patience) == .settled do
+        throw (IO.userError "the buffers were not made")
+      let timed (key : String) : IO Nat := do
+        let ran ← IO.Promise.new
+        ranSlot.set (some ran)
+        let asked ← IO.monoNanosNow
+        for pressed in keysOf key do
+          host.press pressed
+        host.send (.run "noop")
+        let some handled ← IO.wait ran.result? | throw (IO.userError "a key was lost")
+        return handled - asked
+      let untimed (text : String) : IO Unit := do
+        for pressed in keysOf text do
+          host.press pressed
+        unless (← host.join patience) == .settled do
+          throw (IO.userError "the keys were not handled")
+      let mut times := #[]
+      for _ in [0:(samples + 5) / 6] do
+        untimed "i"
+        for key in ["w", "o"] do
+          times := times.push (← timed key)
+        if atPoint then
+          unless ← clock.dueWithin 240 do
+            throw (IO.userError "no pause was armed")
+          clock.advance 240
+          unless (← host.join patience) == .settled do
+            throw (IO.userError "the words were not gathered")
+        for key in ["r", "d", "1", "_"] do
+          times := times.push (← timed key)
+        untimed "<Escape> u"
+      return times
+    finally
+      discard <| host.halt patience
+      discard <| Job.Pool.warm pool 5000
+  let plainInsert := Row.of "insert, no at-point" (← insertRow false)
+  let autoPopup := Row.of "insert, auto popup, 20 buffers" (← insertRow true)
   let rows :=
-    [idle, hundred, quarter, half, thousand, tenThousand, inline, worker, listed, backToBack]
+    [idle, hundred, quarter, half, thousand, tenThousand, inline, worker, listed, backToBack,
+      plainInsert, autoPopup]
   let inlineRows := [(100, hundred), (250, quarter), (500, half), (1000, thousand)]
   IO.println
       s!"pool: {pool} threads; {samples} keys a row, each of `src/f1` committed into the prompt; inline limit {Loop.inlineMatches}"
@@ -6769,7 +6852,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   IO.println
       ("within bound (median within twice the no-candidates median, 99th percentile under 1 ms): " ++
         "; ".intercalate
-          ([worker, backToBack].map fun row =>
+          ([worker, backToBack, autoPopup].map fun row =>
             s!"{row.name}: {if row.keyWithinBound idle then "yes" else "no"}"))
   let under := inlineRows.filter (·.2.high < keyBound)
   IO.println

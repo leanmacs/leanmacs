@@ -40128,6 +40128,21 @@ def atPointLoopChecks : List Check :=
               evilText once == some "say hellox" &&
               evilText twice == some "say he" },
     { name :=
+        "a session over more candidates than are matched inline has its listing matched by a job under completion-match <view>, and closing the session cancels it"
+      run :=
+        pure <|
+          let threes : Completion.AtPoint :=
+            { lineAtPoint [.source "threes"] with name := "threes" }
+          match atPointDriver "|a" #["threes"] [threes] with
+          | none => false
+          | some driver =>
+            let driver := { driver with keys := { driver.keys with inlineMatches := 1 } }
+            let (opened, steps) := evilSteps driver "a C-SPC"
+            let (_, quitSteps) := evilSteps opened "C-g"
+            let spawned : Array String := steps.flatMap (·.spawns.map (·.key))
+            let cancelled : Array String := quitSteps.flatMap (·.cancels)
+            spawned == #[Loop.matchKey ⟨0⟩] && cancelled.contains (Loop.matchKey ⟨0⟩) },
+    { name :=
         "C-n with words starts its job under completion 0 words, with an order whose texts are snapshots of the open buffers; its batches list the words that match, and closing the session cancels the key and releases the snapshots"
       run :=
         pure <|
