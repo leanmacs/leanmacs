@@ -19,6 +19,8 @@ import ContractTest.Editor.SyntaxTree.Real
 import ContractTest.Editor.Text.Contract
 import ContractTest.Editor.VersionControl.Contract
 import ContractTest.Editor.VersionControl.Git
+import ContractTest.Editor.VersionControl.Log
+import ContractTest.Editor.VersionControl.Review
 import ContractTest.Editor.VersionControl.Status
 import ContractTest.Editor.Watch.Contract
 import ContractTest.Editor.Watch.Real

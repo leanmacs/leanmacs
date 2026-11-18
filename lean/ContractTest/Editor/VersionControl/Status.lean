@@ -3,47 +3,25 @@ import ContractTest.Support.Git
 import ContractTest.Support.Jobs
 import ContractTest.Support.Projects
 import ContractTest.Support.Trees
+import ContractTest.Support.VersionControl
 import Editor.Api
 import Editor.Clipboard
 import Editor.Command
-import Editor.Command.Call
-import Editor.Command.Dispatch
 import Editor.Command.Real
-import Editor.Compile.Contribution
-import Editor.Completion
-import Editor.Completion.AtPoint
-import Editor.Completion.Displays
-import Editor.Completion.Styles
 import Editor.Config.Registry
-import Editor.Config.Stores
-import Editor.DisplayRules
-import Editor.Ex.Line
 import Editor.Ffi.Snapshot
-import Editor.Files.Compiled
-import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Real
 import Editor.Job.Runner
-import Editor.Keymap
-import Editor.Language
-import Editor.Layout
 import Editor.Loop
-import Editor.Menu
-import Editor.Mode
-import Editor.ModeLine
-import Editor.Program
-import Editor.Scene
 import Editor.State
 import Editor.SyntaxTree
-import Editor.TabBar
 import Editor.Text
 import Editor.Text.Real
-import Editor.Value
 import Editor.VersionControl
 import Editor.VersionControl.Commit
-import Editor.VersionControl.Compiled
 import Editor.VersionControl.Contract
 import Editor.VersionControl.Model
 import Editor.VersionControl.Show
@@ -51,8 +29,6 @@ import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 import Editor.VersionControl.Worktrees
 import Editor.Watch
-import Editor.Workspace
-import Editor.Workspace.Compiled
 
 /-!
 # Contract tests: `Editor/VersionControl/Status.lean`
@@ -60,9 +36,7 @@ import Editor.Workspace.Compiled
 The tests of `Editor/VersionControl/Status.lean`: `statusBufferChecks`: the
 status buffer, the worktree list, `vc-show` and the other version-control
 commands over real git. The root module `ContractTest` runs them; its module doc
-says what each shows. Main's `reviewBufferChecks` and `historyBufferChecks`
-sit here too, beside the keys and jobs they share, until they get their own
-modules.
+says what each shows.
 -/
 
 namespace ContractTest
@@ -114,49 +88,6 @@ partial def settleQueued (rig : ProjectRig) (texts : RealTexts) (loop : Loop Tes
     unless next.answered.isEmpty do
       return none
     settleQueued rig after next.loop (queued ++ next.starts.toList) keys jobs (depth - 1)
-
-/-- The jobs of the status buffer check: the file commands', the workspace
-finder's and the status buffer's, as a host registers them. -/
-def statusJobs : Array Config.JobRegistration :=
-  Files.jobs ++ Workspace.jobs ++ VersionControl.jobs
-
-/-- The keys of the status buffer check: none bound; the file commands',
-the workspace's and the version-control commands by name, `to-row`, which
-puts the window's cursor at the start of the row its argument names, and
-`set-text`, which makes the window's text its argument; their jobs
-registered; and the version-control modes known to the loop. -/
-def statusKeys : Loop.Keys TestScheme.scheme :=
-  let toRow : Call → EditorM (Option Config.Write) := fun call => do
-    if let .nat row :: _ := call.arguments then
-      let offset ← call.target.buffer.text.offsetOf ⟨row, 0⟩
-      discard <| call.target.window.id.select { ranges := #[⟨offset, offset⟩] }
-    return none
-  let setText : Call → EditorM (Option Config.Write) := fun call => do
-    if let .str text :: _ := call.arguments then
-      let target := call.target.buffer.text
-      target.replaceRange 0 (← target.byteLength) text
-    return none
-  { command? := fun name =>
-      if name == "to-row" then some toRow
-      else
-        if name == "set-text" then some setText
-        else
-          ((Files.commands ++ Workspace.commands ++ VersionControl.commands).find?
-                (·.name == name)).bind
-            fun registration =>
-            match registration.action with
-            | .call run =>
-              some fun call => do
-                run call
-                return none
-            | _ => none
-    registered :=
-      { jobs := fun name => statusJobs.any (·.name == name)
-        entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) } }
-
-/-- The invocation that puts the window's cursor at the start of `row`. -/
-def toRow (row : Nat) : Invocation :=
-  { command := "to-row", arguments := [.nat row] }
 
 /-- The invocation that makes the window's text `text`. -/
 def setText (text : String) : Invocation :=
@@ -349,184 +280,5 @@ def statusBufferChecks (services : Job.Services) : List Check :=
               output.any fun text =>
                 (text.splitOn "the hook says no on its output").length > 1 &&
                   (text.splitOn "the hook says no on its error").length > 1 }]
-
-/-- The lines `1` to `20`, each ended by a line feed. -/
-def twentyLines : String :=
-  String.join ((List.range 20).map fun row => s!"{row + 1}\n")
-
-/-- The keys of the review buffer check: the status buffer check's, and
-`to-excerpt`, which puts the window's cursor at the start of the excerpt of
-its text its argument names. -/
-def reviewKeys : Loop.Keys TestScheme.scheme :=
-  let toExcerpt : Call → EditorM (Option Config.Write) := fun call => do
-    if let .nat index :: _ := call.arguments then
-      if let some excerpt := (← call.target.buffer.text.excerpts)[index]? then
-        discard <| call.target.window.id.select { ranges := #[⟨excerpt.start, excerpt.start⟩] }
-    return none
-  { statusKeys with
-    command? := fun name =>
-      if name == "to-excerpt" then some toExcerpt else statusKeys.command? name }
-
-/-- The checks of the review buffer (`Editor/VersionControl/Review.lean`) over
-real git, wiring only: its jobs run over the library's process, file and
-diff services and the real text store in a temporary repository, every
-child's git under `pinnedAwayConfig` and kept from the system's config. -/
-def reviewBufferChecks (services : Job.Services) : List Check :=
-  [{  name :=
-        "criteria 1 and 2 over real git: in a linked worktree on feature, whose commit changes a.txt in two hunks and b.txt, vc-review with no text reviews against the main worktree's branch, both files' hunks under their headers; vc-review-revert on a.txt's first hunk makes a.txt's buffer hold the base's lines for it and the branch's for the other, and leaves b.txt"
-      run :=
-        withConfiguredRepository
-          (VersionControlContract.clean #[("a.txt", twentyLines), ("b.txt", "b\n")])
-          fun home config directory => do
-          let linked := directory.parent.getD directory / "feature"
-          discard <|
-              gitIn home directory #["worktree", "add", "-q", "-b", "feature", linked.toString]
-          let changed :=
-            VersionControlContract.lineSet (VersionControlContract.lineSet twentyLines 1 "two\n") 15
-              "sixteen\n"
-          writeMaking (linked / "a.txt") changed
-          writeMaking (linked / "b.txt") "bee\n"
-          discard <| gitIn home linked #["add", "-A"]
-          discard <|
-              gitIn home linked #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "feature"]
-          let rig ← ProjectRig.over (onIsolatedGit services home config)
-          let some (reviewed, texts) ←
-            runSettled rig linked
-                [openFile (linked / "a.txt"), { command := VersionControl.reviewName }] reviewKeys
-                statusJobs | return false
-          let headers :=
-            ((reviewed.state.focusedTarget?.bind (·.buffer.excerpts)).map fun excerpts =>
-                  (excerpts.entries.map (·.header)).filter (!·.isEmpty)).getD
-              #[]
-          let some (reverted, texts) ←
-            runSettledFrom rig reviewed texts
-                [{ command := "to-excerpt", arguments := [.nat 1] },
-                  { command := VersionControl.reviewRevertName }]
-                reviewKeys statusJobs | return false
-          let first ← bufferText rig texts reverted "a.txt"
-          let other ← bufferText rig texts reverted "b.txt"
-          return headers ==
-                #["a.txt @@ -1,5 +1,5 @@", "a.txt @@ -13,7 +13,7 @@", "b.txt @@ -1 +1 @@"] &&
-              first == some (VersionControlContract.lineSet twentyLines 15 "sixteen\n") &&
-              other == some "bee\n" &&
-              reverted.state.echo == "reverted a hunk of a.txt" }]
-
-/-- The name of the buffer the focused view of `loop` shows. -/
-def focusedName (loop : Loop TestScheme.scheme) : Option String :=
-  loop.state.focusedTarget?.map (·.buffer.name)
-
-/-- The headers of the excerpts of the buffer the focused view of `loop`
-shows that are not empty. -/
-def focusedHeaders (loop : Loop TestScheme.scheme) : Array String :=
-  ((loop.state.focusedTarget?.bind (·.buffer.excerpts)).map fun excerpts =>
-        (excerpts.entries.map (·.header)).filter (!·.isEmpty)).getD
-    #[]
-
-/-- The first 8 characters of the commit `revision` names in the repository
-at `directory`. -/
-def shortRevision (home directory : System.FilePath) (revision : String) : IO String := do
-  return ((← gitIn home directory #["rev-parse", revision]).trimAscii.take 8).toString
-
-/-- The repository of the history buffer checks: on `main`, `HEAD`, written
-by `b` a day after the others, changes `a.txt`'s second line over `B`; the
-branch `feature` adds `f.txt` and then `g.txt` to `B`. -/
-def historyCheckRepository : VersionControl.Model.Repository :=
-  { VersionControlContract.clean
-      #[("a.txt",
-          "1\ntwo\n3\n")] with
-    commits :=
-      #[("B", { files := #[("a.txt", "1\n2\n3\n")] }),
-        ("F1",
-          { parents := #["B"], files := #[("a.txt", "1\n2\n3\n"), ("f.txt", "f\n")]
-            authored := { VersionControl.Model.fixedAuthored with subject := "add f" } }),
-        ("F2",
-          { parents := #["F1"]
-            files := #[("a.txt", "1\n2\n3\n"), ("f.txt", "f\n"), ("g.txt", "g\n")]
-            authored := { VersionControl.Model.fixedAuthored with subject := "add g" } })]
-    parents := #["B"], branches := #[("feature", "F2"), ("base", "B")]
-    headAuthored := { author := "b", time := 1767312000, subject := "change two" } }
-
-/-- The checks of the log buffer (`Editor/VersionControl/Log.lean`), the
-blame view (`Editor/VersionControl/Blame.lean`) and `vc-review-since`
-(`Editor/VersionControl/Review.lean`) over real git, wiring only: their
-jobs run over the library's process, file and diff services and the real
-text store in a temporary repository, every child's git under
-`pinnedAwayConfig`, whose `blame.ignoreRevsFile` names every commit but
-`HEAD`'s, and kept from the system's config. -/
-def historyBufferChecks (services : Job.Services) : List Check :=
-  [{  name :=
-        "criteria 1 and 2 over real git: vc-log feature lists feature's two commits newest first, and visiting the older one's row opens its change as a review buffer with its one header"
-      run :=
-        withConfiguredRepository historyCheckRepository fun home config directory => do
-          let rig ← ProjectRig.over (onIsolatedGit services home config)
-          let some (logged, texts) ←
-            runSettled rig directory
-                [openFile (directory / "a.txt"),
-                  { command := VersionControl.logName, arguments := [.str "feature"] }]
-                reviewKeys statusJobs | return false
-          let text ← bufferText rig texts logged "*vc-log: repo@main feature*"
-          let some (visited, _) ←
-            runSettledFrom rig logged texts [toRow 2, { command := VersionControl.logVisitName }]
-                reviewKeys statusJobs | return false
-          let (g, f, b) :=
-            (← shortRevision home directory "feature", ← shortRevision home directory "feature~1",
-              ← shortRevision home directory "base")
-          return text ==
-                some
-                  (s!"repo@main: log of feature\n{g} 2026-01-01 add g (a)\n" ++
-                    s!"{f} 2026-01-01 add f (a)\n{b} 2026-01-01 B (a)\n") &&
-              focusedName visited == some s!"*vc-review: repo@main {f}*" &&
-              focusedHeaders visited == #["f.txt @@ -0,0 +1 @@"] },
-    { name :=
-        "criterion 3 over real git, under a config that ignores every commit but HEAD's in blame: vc-blame in a.txt names on each row the commit that last changed it and its author, HEAD's and b on the changed line alone, the first commit's and a on the others"
-      run :=
-        withConfiguredRepository historyCheckRepository fun home config directory => do
-          let rig ← ProjectRig.over (onIsolatedGit services home config)
-          let some (blamed, texts) ←
-            runSettled rig directory
-                [openFile (directory / "a.txt"), { command := VersionControl.blameName }] reviewKeys
-                statusJobs | return false
-          let text ← bufferText rig texts blamed "*vc-blame: a.txt@HEAD*"
-          let (head, base) :=
-            (← shortRevision home directory "HEAD", ← shortRevision home directory "base")
-          return text ==
-              some
-                (s!"{base} a 2026-01-01 | 1\n{head} b 2026-01-02 | two\n" ++
-                  s!"{base} a 2026-01-01 | 3\n") },
-    { name :=
-        "criterion 4 over real git: after vc-review against base and a new commit, vc-review-since shows the new commit's hunk alone; after that commit is amended, vc-review-since opens the range-diff of the branch's commits since, which pairs the amended one !"
-      run :=
-        withConfiguredRepository historyCheckRepository fun home config directory => do
-          let rig ← ProjectRig.over (onIsolatedGit services home config)
-          let some (reviewed, texts) ←
-            runSettled rig directory
-                [openFile (directory / "a.txt"),
-                  { command := VersionControl.reviewName, arguments := [.str "base"] }]
-                reviewKeys statusJobs | return false
-          let reviewedAt ← shortRevision home directory "HEAD"
-          writeMaking (directory / "c.txt") VersionControlContract.tenLines
-          discard <| gitIn home directory #["add", "-A"]
-          discard <|
-              gitIn home directory #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "add c"]
-          let committed ← shortRevision home directory "HEAD"
-          let some (since, texts) ←
-            runSettledFrom rig reviewed texts [{ command := VersionControl.reviewSinceName }]
-                reviewKeys statusJobs | return false
-          writeMaking (directory / "c.txt") VersionControlContract.sixChanged
-          discard <| gitIn home directory #["add", "-A"]
-          discard <|
-              gitIn home directory
-                #["-c", "commit.gpgsign=false", "commit", "-q", "--amend", "-m", "add c"]
-          let some (rewritten, texts) ←
-            runSettledFrom rig since texts [{ command := VersionControl.reviewSinceName }]
-                reviewKeys statusJobs | return false
-          let range ← bufferText rig texts rewritten "*vc-range-diff: repo@main*"
-          return focusedName since == some s!"*vc-review: repo@main since {reviewedAt}*" &&
-              focusedHeaders since == #["c.txt @@ -0,0 +1,10 @@"] &&
-              focusedName rewritten == some "*vc-range-diff: repo@main*" &&
-              range.any fun text =>
-                text.startsWith
-                    s!"repo@main: HEAD was rewritten since {committed}; its commits against base\n" &&
-                  (text.splitOn "\n").any fun line => (line.splitOn " ! ").length > 1 }]
 
 end ContractTest
