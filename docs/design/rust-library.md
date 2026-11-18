@@ -532,6 +532,13 @@ C functions are `crates/editor-ffi/src/watches.rs`.
     (seen in the Linux container). `COALESCED` is the exception: it fails
     if the path written five times is in more than its first delivery. The
     exact sets are pinned on the fake, in the service's unit tests.
+  - **A property that needs a read still pending makes its file after
+    the read is asked.** FSEvents can tell of a change made just before a
+    registration once the registration is live, so a write before the
+    watches can complete a read before `CANCELLED_SILENT` cancels it or
+    `SHUTDOWN` shuts the service down (seen on the macOS runner under
+    load). Both properties make the file after that point instead, which
+    is why a fake that misses writes no longer fails them.
   - **The window passes through the ground.** `Ground::let_pass(ms)` lets
     time pass on the clock the check was given: the fake's ground, put on
     a manual clock (`FakeGround::on(clock)`), advances it, and the property
