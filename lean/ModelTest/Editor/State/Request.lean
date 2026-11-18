@@ -60,10 +60,10 @@ def stateRequests : List StateRequest :=
     .sourceAnswered ⟨3⟩ 0 1, .listMatched ⟨3⟩ "" 0 #[], .matchFailed ⟨3⟩ "" 0 "no",
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }),
-    .matchCandidates (some "buffer") "w" #["w"], .loadTheme "second", .invoke asked, .quit, .reload,
-    .giveUp "no", .breakOff "far enough", .setRegister "a" { text := "a line\n", linewise := true },
-    .setScrollMargin 2, .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .loadTheme "second", .invoke asked,
+    .quit, .reload, .giveUp "no", .breakOff "far enough",
+    .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
+    .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
     .arrange ⟨0⟩ .promote, .arrange ⟨1⟩ (.exchange none), .arrange ⟨0⟩ .zoom, .arrange ⟨9⟩ .zoom,
     .arrange ⟨0⟩ (.mainCount true 1), .arrange ⟨1⟩ (.edge .left),
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .stack,
@@ -91,7 +91,7 @@ asks the text store nothing, so a marker's id is written out by hand. -/
 def stateRequestChecks : List Check :=
   let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
   [{  name :=
-        "the at-point requests are their operations: open, choose, retype, retake and close a session, and retype pushes onto what commands typed; with no registry the chain asks nothing and an at-point source answers none"
+        "the at-point requests are their operations: open, choose, retype, retake and close a session, and retype pushes onto what commands typed"
       run :=
         pure <|
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
@@ -110,7 +110,6 @@ def stateRequestChecks : List Check :=
             let (retaken, taken) := shown.handle (.retakeAtPoint "a1z")
             let (closed, gone) := taken.handle .closeAtPoint
             let ((), told) := state.handle (.retype ⟨0⟩ "\x08b")
-            let (region, _) := state.handle (.askAtPoint "line" { view := ⟨0⟩, offset := 0 })
             opened matches .ok () && chose matches .ok () && retyped matches .ok () &&
               retaken matches .ok () &&
               (chosen.atPoint.bind (·.candidates.chosen)) == some 0 &&
@@ -119,7 +118,6 @@ def stateRequestChecks : List Check :=
               closed.toOption.map (·.source) == some "line" &&
               gone.atPoint.isNone &&
               told.retyped == #[(⟨0⟩, "\x08b")] &&
-              region.isNone &&
               (state.handle .closeAtPoint).1.toOption.isNone },
     { name :=
         "setLanguage records a buffer's language by name and clears it, and refuses a buffer there is none of with the state unchanged; a buffer has no language until one is set"
@@ -780,15 +778,6 @@ def stateRequestChecks : List Check :=
                 failed.echo == "completion-match: broken" &&
                 other == waiting
             | _ => false },
-    { name :=
-        "the handler knows no style: asked to match a text with a category's style, it answers no hit, asks the matcher nothing, and leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (hits, after) := state.handle (.matchCandidates (some "buffer") "w" #["w", "wq"])
-            hits == #[] && after == state },
     { name :=
         "asked to load a theme, the handler takes any name and keeps the latest until the loop takes it out"
       run :=

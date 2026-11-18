@@ -899,7 +899,7 @@ runs, and it is part of this command. `false`, with nothing run, for a
 name no command is registered under, and where no loop runs the
 command. -/
 def runCommand (name : String) (call : Call) : EditorM Bool :=
-  EditorState.ask (.runCommand name call)
+  ControlRequest.ask (.runCommand name call)
 
 /-- Makes the buffer `id` read-only to editing commands, or not, as `on`
 says (`Editor/State.lean`, "Buffers"). Refused with `noSuchBuffer` for a
@@ -1076,7 +1076,7 @@ def collectSources (sources : List Completion.SourceRef) (query : Completion.Que
                 candidates := (← source.candidates query).map (·.inGroup source.name) })
       | .inr name =>
         let some answered ←
-          EditorState.ask (.askSource name query) | return .error (.noSuchSource name)
+          ControlRequest.ask (.askSource name query) | return .error (.noSuchSource name)
         pure (name, { answered with candidates := answered.candidates.map (·.inGroup name) })
     -- Failing that, the category is the first source's.
     let category := collected.category <|> some answer.category
@@ -1182,7 +1182,7 @@ the module docs). It is run inside this command, over the fuzzy port, and
 is not refused. -/
 def matchByCategory (category : String) (text : String) (candidates : Array String) :
     EditorM (Array Completion.Hit) :=
-  EditorState.ask (.matchCandidates (some category) text candidates)
+  ControlRequest.ask (.matchCandidates (some category) text candidates)
 
 /-- Moves the open prompt's choice by `step` through the candidates it has
 listed ("Prompts", in the module docs): from nothing chosen to the first or
@@ -2272,7 +2272,7 @@ def completeAtPoint (occasion : Completion.Occasion) (silent : Bool := false) :
   let mut answered : Option (String × Completion.Region) := none
   for name in
     ← RegistryRequest.ask (.atPointSources target.buffer.major target.buffer.minors occasion) do
-    if let some region← EditorState.ask (.askAtPoint name spot) then
+    if let some region← ControlRequest.ask (.askAtPoint name spot) then
       answered := some (name, region)
       break
   let some (name, region) := answered | return .ok false

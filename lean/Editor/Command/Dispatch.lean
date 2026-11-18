@@ -645,43 +645,6 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       let (reply, state) := state.handle (.loadTheme name)
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchTheme name)))
-  | state, .step (.state (.runCommand name call)) next =>
-    match registered.command name with
-    | none => dispatched registered state (next false)
-    | some command =>
-      dispatched registered state do
-        match ← (command call).run with
-        | .ok () =>
-          next true
-        | .error error =>
-          pure (.error error)
-  | state, .step (.state (.askSource name query)) next =>
-    match registered.sources name with
-    | none => dispatched registered state (next none)
-    | some { category, filtered, later := some later, .. } =>
-      -- A source that answers later is not run: its job answers.
-      dispatched registered state
-        (next (some { category, filtered, candidates := #[], later := some later }))
-    | some source =>
-      dispatched registered state do
-        match ← (source.candidates query).run with
-        | .ok candidates =>
-          next (some { category := source.category, filtered := source.filtered, candidates })
-        | .error error =>
-          pure (.error error)
-  | state, .step (.state (.askAtPoint name spot)) next =>
-    match registered.atPoint name with
-    | none => dispatched registered state (next none)
-    | some atPoint =>
-      dispatched registered state do
-        match ← (atPoint.ask spot).run with
-        | .ok region =>
-          next region
-        | .error error =>
-          pure (.error error)
-  | state, .step (.state (.matchCandidates category text candidates)) next =>
-    dispatched registered state do
-      next (← ((registered.matching.styleFor category).hits text candidates).embedFuzzy)
   | state, .step (.state (.giveUp reason)) _ => .done (.gaveUp reason, state)
   | state, .step (.state (.breakOff reason)) _ => .done (.brokeOff reason, state)
   | state, .step (.registry request) next =>

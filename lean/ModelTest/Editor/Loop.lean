@@ -1639,8 +1639,8 @@ def dispatchStateChecks : List Check :=
                 Option Completion.Region ×
                 Array String × Array String × Array String × Array String) :=
             do
-            let asked ← EditorState.ask (.askAtPoint "reading" { view := ⟨0⟩, offset := 0 })
-            let nobody ← EditorState.ask (.askAtPoint "nobody" { view := ⟨0⟩, offset := 0 })
+            let asked ← ControlRequest.ask (.askAtPoint "reading" { view := ⟨0⟩, offset := 0 })
+            let nobody ← ControlRequest.ask (.askAtPoint "nobody" { view := ⟨0⟩, offset := 0 })
             let onKey ← RegistryRequest.ask (.atPointSources (some "notes") #["one"] .key)
             let onDot ← RegistryRequest.ask (.atPointSources (some "notes") #["one"] (.trigger '.'))
             let onPause ← RegistryRequest.ask (.atPointSources (some "notes") #["one"] (.pause 240))
@@ -2048,12 +2048,12 @@ def dispatchStateChecks : List Check :=
                 Option (Array Completion.Candidate) × Option Completion.Answer) :=
             do
             let start ← editorState
-            let missing ← EditorState.ask (.askSource "nope" { text := "w", view := ⟨0⟩ })
+            let missing ← ControlRequest.ask (.askSource "nope" { text := "w", view := ⟨0⟩ })
             let unchanged := (← editorState) == start
-            let echoed ← EditorState.ask (.askSource "echo" { text := "wq", view := ⟨1⟩ })
+            let echoed ← ControlRequest.ask (.askSource "echo" { text := "wq", view := ⟨1⟩ })
             message "hello"
-            let read ← EditorState.ask (.askSource "said" { text := "", view := ⟨0⟩ })
-            let filtering ← EditorState.ask (.askSource "filtering" { text := "w", view := ⟨0⟩ })
+            let read ← ControlRequest.ask (.askSource "said" { text := "", view := ⟨0⟩ })
+            let filtering ← ControlRequest.ask (.askSource "filtering" { text := "w", view := ⟨0⟩ })
             return (missing, unchanged, echoed, read.map (·.candidates), filtering)
           let program : EditorM (Guarded _ × EditorState) := do
             command.dispatched registered (← EditorState.initial ⟨640, 480⟩)
@@ -2085,7 +2085,7 @@ def dispatchStateChecks : List Check :=
             { sources := fun name => if name == "later" then some later else none
               jobs := (· == "later-pick") }
           let command : EditorM (Option Completion.Answer × Bool × Bool) := do
-            let answered ← EditorState.ask (.askSource "later" { text := "w", view := ⟨0⟩ })
+            let answered ← ControlRequest.ask (.askSource "later" { text := "w", view := ⟨0⟩ })
             return (answered, ← RegistryRequest.ask (.hasJob "later-pick"),
                 ← RegistryRequest.ask (.hasJob "nope"))
           let program : EditorM (Guarded _ × EditorState) := do
@@ -2133,7 +2133,7 @@ def dispatchStateChecks : List Check :=
             let program : EditorM (Guarded (Array Completion.Hit) × Bool) := do
               let start ← EditorState.initial ⟨640, 480⟩
               let (outcome, state) ←
-                (EditorState.ask (.matchCandidates category "w" candidates) :
+                (ControlRequest.ask (.matchCandidates category "w" candidates) :
                         EditorM (Array Completion.Hit)).dispatched
                     registered start
               return (outcome, state == start)
@@ -2154,7 +2154,7 @@ def dispatchStateChecks : List Check :=
                 else none }
           let asking : EditorM Unit := do
             discard <| createText "early"
-            discard <| EditorState.ask (.askSource "refusing" { text := "", view := ⟨0⟩ })
+            discard <| ControlRequest.ask (.askSource "refusing" { text := "", view := ⟨0⟩ })
             discard <| createText "late"
           let program : EditorM (Guarded Unit × EditorState) := do
             asking.dispatched registered (← EditorState.initial ⟨640, 480⟩)
@@ -2167,7 +2167,7 @@ def dispatchStateChecks : List Check :=
       run :=
         pure <|
           let command : EditorM (Option Completion.Answer) :=
-            EditorState.ask (.askSource "echo" { text := "w", view := ⟨0⟩ })
+            ControlRequest.ask (.askSource "echo" { text := "w", view := ⟨0⟩ })
           (command.runModel editorModel).1.toOption == some none }]
 
 /-- The checks of what the loop gives up after a command (`Editor/Loop.lean`,

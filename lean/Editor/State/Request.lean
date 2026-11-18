@@ -385,9 +385,6 @@ inductive StateRequest where
   /-- The match in flight for `pattern` at `revision` in the prompt open in
   `view` could not list, for `message`. -/
   | matchFailed (view : ViewId) (pattern : String) (revision : Nat) (message : String)
-  /-- Ask the at-point source registered under `name` for its region at
-  `spot`, inside this command. -/
-  | askAtPoint (name : String) (spot : Completion.Spot)
   /-- Open a session at point, `session`, with what its sources answered,
   `collected`. -/
   | openAtPoint (session : AtPointSession) (collected : Completion.Collected)
@@ -411,16 +408,6 @@ inductive StateRequest where
   | loadTheme (name : String)
   /-- Have `invocation` run after this command, as a step of its own. -/
   | invoke (invocation : Invocation)
-  /-- Run the command registered under `name` inside this command, with
-  `call`. -/
-  | runCommand (name : String) (call : Call)
-  /-- Ask the completion source registered under `name` for its candidates
-  for `query`, inside this command. -/
-  | askSource (name : String) (query : Completion.Query)
-  /-- Which of `candidates` `text` matches, in order, with the completion
-  style the loop chooses for `category` (`none` for a prompt with no
-  category), as the prompt of that category lists them. -/
-  | matchCandidates (category : Option String) (text : String) (candidates : Array String)
   /-- Ask the editor to quit. -/
   | quit
   /-- Ask for the config to be reloaded. -/
@@ -504,7 +491,6 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .sourceFailed .. => Unit
   | .listMatched .. => Unit
   | .matchFailed .. => Unit
-  | .askAtPoint .. => Option Completion.Region
   | .openAtPoint .. => Except AtPointRefusal Unit
   | .closeAtPoint => Except AtPointRefusal AtPointSession
   | .chooseAtPoint _ => Except AtPointRefusal Unit
@@ -514,9 +500,6 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setWanted .. => Except LayoutRefusal Unit
   | .loadTheme _ => Except ThemeRefusal Unit
   | .invoke _ => Unit
-  | .runCommand .. => Bool
-  | .askSource .. => Option Completion.Answer
-  | .matchCandidates .. => Array Completion.Hit
   | .quit => Unit
   | .reload => Unit
   | .giveUp _ => Unit
@@ -617,9 +600,6 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
     ((), state.listMatched view pattern revision listed)
   | .matchFailed view pattern revision message, state =>
     ((), state.matchFailed view pattern revision message)
-  -- An at-point source is the loop's to ask (`Program.dispatched`): here,
-  -- with no registry, there is none.
-  | .askAtPoint .., state => (none, state)
   | .openAtPoint session collected, state => state.openAtPoint session collected
   | .closeAtPoint, state => state.closeAtPoint
   | .chooseAtPoint step, state => state.chooseAtPoint step
@@ -630,9 +610,6 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .loadTheme name, state => (.ok (), { state with outbox.theme := some name })
   | .invoke invocation, state =>
     ((), { state with outbox.answered := state.outbox.answered.push invocation })
-  | .runCommand .., state => (false, state)
-  | .askSource .., state => (none, state)
-  | .matchCandidates .., state => (#[], state)
   | .quit, state => ((), { state with quitting := true })
   | .reload, state => ((), { state with outbox.reload := true })
   | .giveUp _, state => ((), state)
