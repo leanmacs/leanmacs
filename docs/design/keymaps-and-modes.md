@@ -17,6 +17,7 @@ registers, undo and dot repeat, on the editor API:
 | A binding that holds only in some of a scheme's states (`bindKey … (states := …)`, `SchemeState`, `InputScheme.stateCommand`, `Vim.Bound.within`, `Vim.Bound.holdsIn`) | `lean/Editor/Setup.lean`, `lean/Editor/InputScheme.lean`, `lean/Editor/InputScheme/Vim.lean`; the Vim scheme's state names in `lean/Editor/InputScheme/Vim/Default.lean` |
 | Descriptions on bindings and names of prefixes, for the key hints (`Keymap.descriptions`, `bindKey`'s `desc`, `prefixName`, `Registry.prefixName?`, `Mode.roleDescs`, `Mode.localDescs`, `Vim.Default.keymap`'s `descs`) | `lean/Editor/Keymap.lean`, `lean/Editor/Setup.lean`, `lean/Editor/Config/Registry.lean`, `lean/Editor/Mode.lean`, `lean/Editor/InputScheme/Vim/Default.lean` |
 | What can follow a pending prefix, and its agreement with the walk (`Keymap.continuations`, `Keymap.continuationsOver`, `InputScheme.continuations`, `Vim.State.continuations`, `Scene.keyHints`, `Loop.keyHints`) | `lean/Editor/Keymap.lean`, `lean/Editor/InputScheme.lean`, `lean/Editor/InputScheme/Vim.lean`, `lean/Editor/Scene.lean`, `lean/Editor/Loop.lean` |
+| Every sequence the walk completes from rest, the bindings that run a command, and pressing a binding's keys (`Keymap.reachableOver`, `InputScheme.keyBindings`, `Vim.State.keyBindings`, `InputScheme.keysName`, `Loop.pressed`, `Loop.keyBindingsIn`) | `lean/Editor/Keymap.lean`, `lean/Editor/InputScheme.lean`, `lean/Editor/InputScheme/Vim.lean`, `lean/Editor/Loop.lean` ("Searching the bindings" below) |
 | The key hints shown through the completion display after a delay, and the pending prefix's segment (`Completion.Keys`, `Loop.armedHints`, `Loop.keyHinted`, `EditorState.keyHints`, `keyHintDelay`, `ModeLine.pendingKeys`) | `lean/Editor/Completion/Keys.lean`, `lean/Editor/Loop.lean`, `lean/Editor/State.lean`, `lean/Editor/Setup.lean`, `lean/Editor/ModeLine.lean`, `lean/Editor/Headless.lean` ("The key hints (built)" below) |
 | Invocations | `lean/Editor/Invocation.lean` |
 | The scheme interface, and what a key prints | `lean/Editor/InputScheme.lean` |
@@ -269,6 +270,26 @@ cannot see whether a scheme hands the query the tiers it walks, so the Vim
 scheme's agreement over its default states is a `lake test` sweep too
 ("Who tests what").
 
+#### What the walk reaches
+
+The binding search and the command prompt's annotations need every key
+sequence a person can type to reach a binding. `Keymap.reachableOver
+specific defaults` lists them over two tiers (`Keymap.Reached`: the keys,
+the binding and the deciding tier's description).
+
+- **A sequence is listed when `resolveOver` binds it and every strict
+  non-empty prefix of it is pending**, the walk's own lookup from rest, so
+  a listed sequence is one the walk completes.
+- **Each is listed once, the specific tier's first**, in the order first
+  seen through the keymaps.
+- **What it leaves out**: a default binding a specific prefix or a
+  specific binding shadows, and a binding under a shorter bound sequence.
+  A shadowed binding is never listed as runnable.
+- **What it says of the lookup is proved** (`Keymap.reachableOver_resolves`):
+  each listed sequence resolves to its binding, and each of its strict
+  non-empty prefixes is pending. That a scheme's walk agrees once the keys
+  are chords is the scheme contract's (`keyBindingsWalk`).
+
 ### Input schemes
 
 A scheme is a state machine over keys, packaged with its own state and
@@ -325,6 +346,27 @@ structure InputScheme where
   or restoring the scheme's state at rest. A scheme that asks nothing
   yields nothing, which the scheme contract holds every scheme to
   (`unaskedAnswerYieldsNothing`); the test scheme keeps the default.
+- **`keyBindings` is which key sequences run a command** (built): each a
+  `KeyBinding`, the keys as chords, the command's name and the binding's
+  description, for every sequence the scheme's walk reaches for a view
+  from its state with nothing pending whose binding runs a command by
+  name, the specific tier's first. Only the scheme can say it: a binding
+  is of its own type, and only the scheme knows which keys it would take
+  as something else. It lists nothing by default. The contract holds every
+  scheme to its walk (`keyBindingsWalk`): each listed sequence, typed from
+  the initial state, yields nothing before its last key and an invocation
+  at its last. The test scheme lists `Keymap.reachableOver` of the view's
+  keymaps, each invocation's command.
+- **`InputScheme.keysName` is a second reserved name** (built), beside
+  `answerName`. Its invocation (`InputScheme.keysInvocation`) carries a
+  key string. `Loop.invoke` looks no command up for it: `Loop.pressed`
+  feeds the keys to the scheme for the focused view from the state at
+  rest (`Loop.atRest`), so a pending prefix cannot extend them and the
+  Vim scheme still knows each view's state, and runs what they complete
+  as `Loop.key` runs a key's, with those keys and the scheme's report
+  after them. Keys that complete nothing are said,
+  `<keys>: not bound` (`Loop.notBound`). The binding search runs a binding
+  this way ("Searching the bindings").
 
 - **`command` is what a key bound to a command name is bound to** under the
   scheme. Config and compiled code bind a key sequence to a command's name
@@ -1293,6 +1335,16 @@ command.
   the hints cannot drift from the walk. After an operator they come from
   the pending keymaps. A count, the register prefix or an operator alone
   lists nothing: none is a keymap prefix (`State.walked` is empty).
+- **The bindings that run a command are listed from the same tiers**
+  (built). `Vim.State.keyBindings` takes `Keymap.reachableOver` of
+  `State.tiers` for the view's state with nothing pending, and keeps the
+  bindings `Bound.commandName?` names: `.command`, and a `.mode` or
+  `.within` binding of one. Motions, operators, text objects, the
+  register prefix and the repeat key are parts of an edit and run no
+  command alone, so they are left out, as is a sequence whose first key
+  the state would read as a count digit, which typing cannot reach. A
+  mode's binding is not listed where typing is text, since `holdsIn`
+  filters it out of the active tier.
 
 ### Motions that ask
 
@@ -2926,6 +2978,7 @@ Which names have something behind them:
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
 | `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
 | `execute-command`, which no table names | Built and registered (`ExecuteCommand.commands`; "Running a command by name"). The scheme binds no key to it (the owner, 2026-11-17); the default config binds `SPC :` |
+| `search-bindings`, which no table names | Built and registered (`BindingSearch.commands`; "Searching the bindings"). The scheme binds no key to it, as for `execute-command`; the default config binds `SPC ?` |
 | `keyboard-quit` | Built and registered (`Shell.commands`): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
 | The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
@@ -3731,7 +3784,8 @@ asked and what accepting gives).
   `buffer` with `Buffers.source` (`buffers`); `tab-switch` for `tab` with
   `TabCommands.source` (`tabs`); `load-theme` for `theme` with
   `Themes.source` (`themes`); `execute-command` for `command` with
-  `ExecuteCommand.source` (`commands`). Each is registered compiled under its name
+  `ExecuteCommand.source` (`commands`); `search-bindings` for `binding`
+  with `BindingSearch.source` (`bindings`). Each is registered compiled under its name
   in its category, in that order, so on the executable's hosts the
   defaults' places are registration order. So config adds candidates to a
   shipped prompt by registering a source in its category, after the
@@ -4774,6 +4828,17 @@ such as `load-theme` in a config that binds nothing.
   reload that drops one of config's commands drops it from the next
   prompt; nothing is kept across a reload. Hiding some commands would
   need a command attribute that does not exist.
+- **Each candidate is annotated with its keys** (built,
+  `ExecuteCommand.annotation`): the key bindings the scheme reaches in the
+  asking view, in its state then (the state request `keyBindings`), whose
+  command is the candidate's, each written as a key string and joined by
+  `, ` in listing order, then two spaces and the first description among
+  them. The default config's `open-file` shows `SPC ., SPC f f  Find
+  file`; a command no key reaches has none. The display aligns it in its
+  column. The same reverse question `Keymap.keysFor` answers of one keymap
+  is asked of the scheme's reachable list instead, so tiers, shadowing and
+  which command a Vim binding runs are the walk's, and a shadowed key is
+  never shown. The text stays the name, so resolution is unchanged.
 - **Accepting runs the command as a key bound to it would**, with
   `invoke`: a step of its own after the prompt's, with the window then
   focused, its store write written back and its failure said under its
@@ -4797,18 +4862,84 @@ such as `load-theme` in a config that binds nothing.
   style.
 - **Keys**: the Vim scheme binds no key to it (the owner, 2026-11-17). The
   default config binds `SPC :` to it, described `Execute command` ("Extending
-  from config"). Showing each command's keys beside it, as its annotation,
-  is the leader-and-key-hints roadmap's phase 6.
+  from config").
 
-Pinned by `ModelTest.executeCommandChecks` (the prompt, its candidates,
-the resolution, a refusal, and a fake style deciding the order, on the
-loop's driver over the editor's models), `dispatchStateChecks` and
-`registryChecks` (the names the loop is told), `sourceContractChecks`
-(the source), `ConfigTest.commandPromptChecks` (compiled and config
-commands listed, and a reload dropping one, through a host),
+Pinned by `ModelTest.executeCommandChecks` (the prompt, its candidates and
+their annotations, the resolution, a refusal, and a fake style deciding
+the order, on the loop's driver over the editor's models),
+`dispatchStateChecks` and `registryChecks` (the names the loop is told),
+`sourceContractChecks` (the source), `ConfigTest.commandPromptChecks`
+(compiled and config commands listed, a reload dropping one, and a
+command config binds to `SPC f f` shown with `SPC f f`, through a host),
 `ConfigTest.shippedChecks` (registered compiled, with its source in
 `command`) and `ConfigTest.defaultConfigChecks` (`SPC :` under the default
 config).
+
+## Searching the bindings
+
+`search-bindings` (`lean/Editor/BindingSearch.lean`) asks `Binding: ` for
+one of the key bindings reachable in the asking view and runs the one
+accepted as its key would, as Embark's `embark-bindings` and Doom's
+`SPC h b b` do.
+
+- **What is listed**: every key sequence the walk reaches from rest in
+  the view's current state whose binding runs a command by name
+  (`InputScheme.keyBindings`, over `Keymap.reachableOver` of the walk's
+  own tiers; "What the walk reaches"). A shadowed default binding, and one
+  under a shorter bound sequence, are not listed. A Vim part of speech
+  (motion, operator, text object, the register prefix, `.`) runs nothing
+  alone and has no command to show, so it is not listed, nor is a
+  sequence that begins with a count digit.
+- **How it reaches the command**: the state request `keyBindings view`,
+  answered by the loop per step (`Loop.Registered.keyBindings`, filled by
+  `Loop.keyBindingsIn` at each of `Loop.run`'s four call sites), in the
+  scheme's state the step's report is computed from. It is a function, so
+  nothing is listed for a step whose command does not ask. A command a job
+  runs is answered none. The prompt's sources are asked once, when it
+  opens, in the asking view, so after `SPC ?` the list is normal state's.
+- **What a candidate shows**: its text is `<keys>  <command>`, the keys as
+  a key string, two spaces and the command's name (`SPC f f  open-file`),
+  which is what the style matches and what accepting gives; its
+  annotation is the binding's description, which the display aligns; its
+  kind is `binding`. Every listed sequence is apart, so every text is.
+- **The answer is resolved as it was listed**, the rule `execute-command`
+  follows: an exact text wins, else the first binding the style chosen for
+  `binding` lists for the text, else
+  ``search-bindings: no binding matches `<text>` ``. An empty or blank
+  answer runs nothing and says nothing.
+- **Accepting runs the binding as its key would.** It invokes the
+  reserved keys invocation of its keys (`InputScheme.keysInvocation`), and
+  the loop feeds them to the scheme from rest (`Loop.pressed`). So the
+  invocation is the scheme's own (under Vim, no count and no register,
+  since none was typed), the command is told the binding's keys, and the
+  scheme's state changes as the key changes it: `i` accepted enters
+  insert state, and a visual state's run table applies. Invoking the
+  command by name would do none of this, and would give a Vim-bound
+  command no arguments where its key gives two. Keys that no longer
+  complete anything, after a reload between listing and accepting, are
+  said, `<keys>: not bound`.
+- **It hard-codes no matching.** The prompt asks for the sources of the
+  category `binding`, with `BindingSearch.source` (`bindings`) as its
+  default, so config chooses the style (`useStyleFor "binding" …`), the
+  display, and extra or replacement sources.
+- **Judgement calls.** Only bindings that run a command are listed. The
+  description is the annotation, which styles do not see, so it is not
+  searched; making it searchable would mean moving it into the text.
+  Accepting feeds the keys rather than invoking the command by name.
+- **Keys**: the Vim scheme binds no key to it. The default config binds
+  `SPC ?`, described `Search bindings` ("Extending from config").
+
+Pinned by `ModelTest.keymapChecks` (`reachableOver`),
+`keyBindingsContractChecks` and the contract over every scheme
+(`keyBindingsWalk`), `vimKeyBindingChecks` (what the Vim scheme lists),
+`pressedChecks` (the reserved keys invocation, under the test scheme and
+the Vim scheme), `bindingSearchChecks` (the prompt, its candidates,
+accepting, resolution, a refusal and a fake style, on the loop's driver),
+`dispatchStateChecks` and `stateRequestChecks` (the request),
+`sourceContractChecks` (the source), `ConfigTest.commandPromptChecks` (a
+config binding listed with its keys and description, and accepting it
+runs its command, through a host) and `ConfigTest.defaultConfigChecks`
+(`SPC ?` under the default config).
 
 ## Extending from config
 
@@ -4898,6 +5029,7 @@ config).
   - **The keys follow Doom Emacs's `SPC`**, each with a `desc` and each
     prefix named: `SPC .` and `SPC ,` find a file and switch buffer;
     `SPC :` executes a command by name ("Running a command by name");
+    `SPC ?` searches the bindings ("Searching the bindings");
     `SPC f` file (`f f` open, `f s` save); `SPC b` buffer (`b`, `i`, `k`,
     `d`, `s`, `r`); `SPC w` window, Vim's `C-w` keys with `n`, `p`, `c`
     and `w` given back their window meanings; `SPC TAB` tab, Doom's
@@ -4906,14 +5038,14 @@ config).
     Doom: `SPC w o` is `window-only`, as evil's map has it, and this
     editor's layout commands (`z`, `m`, `M`, `,`, `.`, `H J K L`, `F`) sit
     on the letters `C-w` gives them. Keys with no registered command are
-    left out. `05-leader.lean` holds the full list. `SPC ?` is to come
-    with its command. Doom labels `SPC :` `M-x`; here it is
+    left out. `05-leader.lean` holds the full list. Doom labels `SPC :` `M-x`; here it is
     `Execute command`, since a Vim-first editor has no `M-x`.
   - **Pinned** by `ConfigTest.defaultConfigChecks`: a reload installs it
     with no diagnostic, `SPC f f` asks for a path to open and, once that
-    is cancelled, `SPC :` opens the command prompt; every binding names a
-    registered command, `<leader> :` among them with its description; and
-    every prefix under the leader has a name.
+    is cancelled, `SPC :` opens the command prompt and, once that is
+    cancelled, `SPC ?` opens the binding search; every binding names a
+    registered command, `<leader> :` and `<leader> ?` among them with
+    their descriptions; and every prefix under the leader has a name.
 - Built: completion at point from config ("Completion at point").
   `defineAtPoint` registers an at-point source by its name, and config's of
   a shipped name replaces it, so `defineAtPoint (Completion.AtPoint.words

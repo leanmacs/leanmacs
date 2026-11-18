@@ -1087,6 +1087,7 @@ later and matching off the editor thread by completion's phase 3.
 | The candidate list: the sheet shown in the publish, kept on the prompt, the place that grows and never shrinks, and the list's view above the minibuffer's | `lean/Editor/State.lean` ("The minibuffer's place": `displayed`, `Prompt.tallest`, `cutStrip`, `candidateListRect?`), `lean/Editor/Loop.lean` (`Loop.candidateListView`, `Loop.Keys.displaying`) |
 | The `:!` history and the ex names as the ex line's candidates, from two sources | `lean/Editor/Ex.lean` (`exCommand`, `historySource`, `namesSource`), `lean/Editor/Api.lean` (`exNames`) |
 | An answer for the input scheme: `minibuffer-ask`, the reserved continuation `InputScheme.answerName`, and the loop handing the answer to the scheme | `lean/Editor/Minibuffer.lean`, `lean/Editor/InputScheme.lean` (`answered`), `lean/Editor/Loop.lean` ("Prompts": `Loop.answer`) |
+| Keys pressed by an invocation: the reserved name `InputScheme.keysName`, which the binding search invokes with the keys of the binding accepted, and the loop feeding them to the scheme from rest | `lean/Editor/BindingSearch.lean`, `lean/Editor/InputScheme.lean` (`keysInvocation`), `lean/Editor/Loop.lean` ("Prompts": `Loop.pressed`) |
 
 Pinned on the models by `ModelTest.stateChecks` and `stateRequestChecks`
 (the state's operations), `promptChecks` (the loop, its host on the
