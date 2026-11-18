@@ -3,6 +3,7 @@ import Editor.Clipboard
 import Editor.Clipboard.Model
 import Editor.Command
 import Editor.Command.Call
+import Editor.Command.Control
 import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Command.Registry
@@ -353,6 +354,16 @@ def dispatchRegistryChecks : List Check :=
             (countingModel { arrived := 1 })
         return resulted ended == .inr (.finished #["w"], EditorState.none) &&
             model.watch.clock == 0 },
+    { name :=
+        "a control request is not guarded either: with the interrupt flag up, a dispatched command that asks to run a command nobody registered finishes with false"
+      run := do
+        let program : EditorM (Guarded Bool) := do
+          let state ← twoBuffers
+          let some target := state.target? ⟨0⟩ | throw .noSuchText
+          let asking : EditorM Bool := ControlRequest.ask (.runCommand "nobody" { target })
+          return (← asking.dispatched {} state).1
+        let (ended, _) := program.runModel (countingModel { arrived := 1 })
+        return resulted ended == .inr (.finished false) },
     { name :=
         "a dispatched command that asks for a path's language is answered the name of the language the loop's table chooses for the path, or none"
       run :=

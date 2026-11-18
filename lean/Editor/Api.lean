@@ -795,6 +795,12 @@ never refused. -/
 def RegistryRequest.ask (request : RegistryRequest) : EditorM request.Reply :=
   ExceptT.lift (Program.request (port := editorPort) (.registry request))
 
+/-- Asks the loop to end the command, or to run something registered inside
+it, and returns the reply ("Asking the registry, and the loop's control", in
+the module docs). It is never refused. -/
+def ControlRequest.ask (request : ControlRequest) : EditorM request.Reply :=
+  ExceptT.lift (Program.request (port := editorPort) (.control request))
+
 /-- The whole editor state, as it is now. -/
 def editorState : EditorM EditorState :=
   EditorState.ask .read

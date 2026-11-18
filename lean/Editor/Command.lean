@@ -1,4 +1,5 @@
 import Editor.Clipboard
+import Editor.Command.Control
 import Editor.Command.Registry
 import Editor.Display
 import Editor.Fuzzy
@@ -160,6 +161,9 @@ inductive EditorRequest where
   /-- A question to the registry or config, which the loop that runs the
   command answers. -/
   | registry (request : RegistryRequest)
+  /-- A request to end the command or run something registered inside it,
+  which the loop that runs the command acts on. -/
+  | control (request : ControlRequest)
 
 /-- The type of the reply to each request: its sub-port's reply. -/
 def EditorRequest.Reply : EditorRequest → Type
@@ -171,6 +175,7 @@ def EditorRequest.Reply : EditorRequest → Type
   | .syntaxTree request => request.Reply
   | .state request => request.Reply
   | .registry request => request.Reply
+  | .control request => request.Reply
 
 /-- The editor's port: `EditorRequest` and the reply to each request. -/
 abbrev editorPort : Port :=

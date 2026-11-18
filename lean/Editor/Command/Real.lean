@@ -52,6 +52,7 @@ def EditorRequest.handleReal (display : DisplayHandler) (watch : WatchHandler :=
   | .syntaxTree request => StateT.lift (syntaxTree request)
   | .state request => pure (EditorState.none.handle request).1
   | .registry request => pure request.bare
+  | .control request => pure request.bare
 
 /-- Runs a command against the Rust library, with `texts` as the texts made
 so far, `display` answering its display requests, `watch` its watch

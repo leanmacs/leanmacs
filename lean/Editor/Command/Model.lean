@@ -98,6 +98,7 @@ nothing in it, and changes nothing. -/
 def handle : (request : EditorRequest) → EditorModel → request.Reply × EditorModel
   | .state request, model => ((EditorState.none.handle request).1, model)
   | .registry request, model => (request.bare, model)
+  | .control request, model => (request.bare, model)
   | .text request, model =>
     let (reply, texts) := TextModel.handle request model.texts
     (reply,
