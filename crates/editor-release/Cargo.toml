@@ -1,0 +1,13 @@
+[package]
+name = "editor-release"
+version = "0.1.0"
+description = "Release tooling's core: the build ID, the commit, the .dmg's plan and the nightly release, over the Env and Process ports, with their fakes and the process contract"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No dependency and no dev-dependency: the ports name no library, and every
+# test runs on the published fakes. The real adapters and the
+# `leanmacs-release` binary are `editor-release-std`. The editor never
+# links either (deny.toml).
+[dependencies]

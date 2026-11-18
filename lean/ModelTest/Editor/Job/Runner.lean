@@ -1,0 +1,799 @@
+import Editor.Command
+import Editor.File
+import Editor.File.Model
+import Editor.FileWatch
+import Editor.FileWatch.Model
+import Editor.Invocation
+import Editor.Job
+import Editor.Job.Contract
+import Editor.Job.Fake
+import Editor.Job.Jobs
+import Editor.Job.Pool
+import Editor.Job.Runner
+import Editor.Job.Table
+import Editor.Process
+import Editor.Process.Environment
+import Editor.Process.Model
+import Editor.Program
+import Editor.Text
+import Editor.Text.Model
+import ModelTest.Check
+import ModelTest.Support.Jobs
+import ModelTest.Support.Models
+
+/-!
+# Model tests: `Editor/Job/Runner.lean`
+
+The model tests of `Editor/Job/Runner.lean`: `waitChecks`, `runnerChecks`,
+`fileRunnerChecks` and `fileWatchRunnerChecks`. `fileWatchRunnerChecks` are the
+runner's watch waits on the fake of the watch service. The root module
+`ModelTest` runs them; its module doc says what each shows.
+-/
+
+namespace ModelTest
+
+open Editor
+
+/-- How `wait` ended; `none` while it is in flight. -/
+def ended (wait : IO.Promise Job.Completion) : BaseIO (Option Job.Completion) := do
+  if ← wait.isResolved then
+    return wait.result?.get
+  else
+    return none
+
+/-- Registers a wait in `rig`'s table and starts it at the clock for
+`deadline`, as the runner does. `log` gets the wait's id when it ends,
+on the thread that ended it, so the order of a log is the order the waits
+ended in. -/
+def Rig.wait (rig : Rig) (deadline : Nat) (log : IO.Ref (Array UInt64)) :
+    BaseIO (UInt64 × IO.Promise Job.Completion) := do
+  let (id, wait) ← rig.services.completions.register
+  BaseIO.chainTask wait.result? (fun _ => log.modify (·.push id)) (sync := true)
+  rig.services.timers.start id deadline
+  return (id, wait)
+
+/-- The checks of the table of waits and of the fake clock
+(`Editor/Job/Runner.lean`, `Editor/Job/Fake.lean`), with no job. -/
+def waitChecks : List Check :=
+  [{
+      name :=
+        "the table of waits gives each wait an id of its own, from 1, and finish ends exactly that wait and forgets it",
+      run := do
+        let table ← Job.Completions.new
+        let (first, firstWait) ← table.register
+        let (second, secondWait) ← table.register
+        table.finish first .completed
+        return first == 1 && second == 2 && (← ended firstWait) == some .completed &&
+            (← ended secondWait) == none &&
+            (← table.waiting) == 1 },
+    { name :=
+        "a wait ends once: a second finish, and a finish for an id that is not waiting, change nothing, and no id is used again"
+      run := do
+        let table ← Job.Completions.new
+        let (id, wait) ← table.register
+        table.finish id .cancelled
+        table.finish id .completed
+        table.finish 99 .completed
+        let (next, _) ← table.register
+        return (← ended wait) == some .cancelled && next == id + 1 && (← table.waiting) == 1 },
+    { name :=
+        "the fake clock completes the waits that are due when it is advanced, earliest deadline first, and leaves the others waiting"
+      run := do
+        let rig ← Rig.new
+        let log ← IO.mkRef #[]
+        let (late, _) ← rig.wait 30 log
+        let (early, _) ← rig.wait 10 log
+        let (middle, _) ← rig.wait 20 log
+        let (last, lastWait) ← rig.wait 40 log
+        let before ← log.get
+        rig.clock.advance 30
+        let due ← log.get
+        let waiting ← rig.clock.waiting
+        let lastEnded ← ended lastWait
+        rig.clock.advance 10
+        return before.isEmpty && due == #[early, middle, late] && waiting == 1 &&
+            lastEnded == none &&
+            (← log.get) == #[early, middle, late, last] &&
+            (← rig.clock.now) == 40 },
+    { name := "the fake clock completes a wait started at or after its deadline at once"
+      run := do
+        let rig ← Rig.new
+        let log ← IO.mkRef #[]
+        rig.clock.advance 30
+        let (now, nowWait) ← rig.wait 30 log
+        let (past, pastWait) ← rig.wait 7 log
+        return (← log.get) == #[now, past] && (← ended nowWait) == some .completed &&
+            (← ended pastWait) == some .completed &&
+            (← rig.clock.waiting) == 0 &&
+            (← rig.clock.started) == #[(now, 30), (past, 7)] },
+    { name :=
+        "the fake clock records each wait started with the thread that started it, and each wait withdrawn, and never completes a withdrawn wait"
+      run := do
+        let rig ← Rig.new
+        let log ← IO.mkRef #[]
+        let (kept, _) ← rig.wait 10 log
+        let (dropped, droppedWait) ← rig.wait 10 log
+        rig.services.timers.cancel dropped
+        -- Withdrawing a wait that is not waiting is not recorded.
+        rig.services.timers.cancel 99
+        rig.clock.advance 10
+        return (← log.get) == #[kept] && (← ended droppedWait) == none &&
+            (← rig.clock.started) == #[(kept, 10), (dropped, 10)] &&
+            (← rig.clock.withdrawn) == #[dropped] &&
+            (← rig.clock.startThreads) == #[← IO.getTID, ← IO.getTID] }]
+
+/-- `value`, once `gate` has been resolved: pure work a check can hold a
+thread in. It is never inlined, so the read of the gate stays where the call
+is. -/
+@[noinline]
+def onceOpen (gate : IO.Promise Unit) (value : Nat) : Nat :=
+  if gate.result?.get.isSome then value else value + 1
+
+/-- The checks of the job runner (`Editor/Job/Runner.lean`), each on a fake
+clock of its own. A check holds what it controls (the clock, a promise) and
+polls only as the bound after which it fails. -/
+def runnerChecks : List Check :=
+  [{
+      name :=
+        "a job that runs to its end is finished with its command, a job that throws is failed with its message, and the runner says so once for each",
+      run := do
+        let rig ← Rig.new
+        let ends ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 2
+                return 42)
+        let throws ←
+          rig.spawn fun _ => do
+              sleep 2
+              throw "no thanks"
+        unless ← eventually (return (← rig.clock.waiting) == 2) do
+          return false
+        rig.clock.advance 2
+        return (← ends.endedAs (.finished #["42"])) && (← throws.endedAs (.failed "no thanks")) },
+    { name :=
+        "100,000 now requests in one job are answered on one thread, and none of them registers a wait"
+      run := do
+        let rig ← Rig.new
+        let reads ←
+          rig.spawn
+              (reporting fun _ => do
+                let mut last := 0
+                for _ in [0:100000] do
+                  last ← now
+                return last)
+        let ended ← reads.endedAs (.finished #["0"])
+        -- A request that needs no wait is a direct call on the job's thread:
+        -- a runner that hopped to a task for each would read the clock from
+        -- many threads.
+        return ended && (← rig.clock.reads) == 100000 && (← rig.clock.readThreads).size == 1 &&
+            (← rig.clock.started).isEmpty &&
+            (← rig.services.completions.register).1 == 1 },
+    { name :=
+        "jobs blocked in waits do not delay a new pool task, and their waits hold no thread: more jobs than the pool has threads all reach their wait from fewer threads than there are jobs"
+      run := do
+        let rig ← Rig.new
+        -- More jobs than the pool has threads, whatever its size is here.
+        let count := max 64 ((← Job.Pool.whole warmPatience).size + 1)
+        let mut jobs := #[]
+        for _ in [0:count] do
+          jobs :=
+            jobs.push
+              (←
+                rig.spawn
+                    (reporting fun _ => do
+                      sleep 1000
+                      return true))
+        try
+          -- A runner that parked a thread in a system call for each wait
+          -- would let only a pool's worth of jobs get this far.
+          unless ← eventually (return (← rig.clock.waiting) == count) do
+            return false
+          let ran ← IO.Promise.new
+          discard <| BaseIO.asTask (ran.resolve ())
+          let notDelayed ← eventually ran.isResolved
+          -- The clock has not moved, so every job is still in its wait.
+          let allWaiting := (← rig.clock.waiting) == count && (← rig.clock.now) == 0
+          let noneEnded ← jobs.allM fun job => return !(← job.handle.ended)
+          -- A runner that parked each job in `IO.wait` would have had Lean add
+          -- a thread for every one of them: as many threads as jobs.
+          let threads := distinct (← rig.clock.startThreads)
+          rig.clock.advance 1000
+          let allFinished ← jobs.allM (·.endedAs (.finished #["true"]))
+          return notDelayed && allWaiting && noneEnded && threads < count && allFinished
+        finally
+          rig.clock.advance 1000 },
+    { name :=
+        "jobs in file waits do not delay a new pool task, and their waits hold no thread: more jobs than the pool has threads are all in a load at once, started from fewer threads than there are jobs"
+      run := do
+        let (rig, files) ←
+          Rig.withFiles
+              ((({} : FileModel).withDirectory fileRoot).withFile (fileRoot / "a.txt")
+                JobContract.rawFile)
+        files.holdCompletions
+        let count := max 64 ((← Job.Pool.whole warmPatience).size + 1)
+        let mut jobs := #[]
+        for _ in [0:count] do
+          jobs :=
+            jobs.push
+              (←
+                rig.spawn
+                    (reporting fun _ => do
+                      return (← JobContract.loaded (fileRoot / "a.txt")).stamp.size))
+        try
+          unless ← eventually (return (← files.waiting) == count) do
+            return false
+          let ran ← IO.Promise.new
+          discard <| BaseIO.asTask (ran.resolve ())
+          let notDelayed ← eventually ran.isResolved
+          let allWaiting := (← files.waiting) == count
+          let noneEnded ← jobs.allM fun job => return !(← job.handle.ended)
+          let threads := distinct (← files.startThreads)
+          files.letGo
+          let allFinished ← jobs.allM (·.endedAs (.finished #["17"]))
+          return notDelayed && allWaiting && noneEnded && threads < count && allFinished
+        finally
+          files.letGo },
+    { name :=
+        "a job's leading pure work does not run on the spawning thread: spawn returns while that work is still held"
+      run := do
+        let rig ← Rig.new
+        let gate : IO.Promise Unit ← IO.Promise.new
+        try
+          -- The job's leading pure work reads the gate, so whichever thread
+          -- applies the job stays in it until the check resolves the gate.
+          let work : Work := fun _ =>
+            if gate.result?.get.isSome then pure (makes "ran") else pure (makes "dropped")
+          -- On a thread of its own: a spawn that applied the job on its
+          -- caller's thread would not return while the gate is held, and
+          -- the wait for it would run out.
+          let spawning ← BaseIO.asTask (prio := .dedicated) (rig.spawn work)
+          let returned ← eventually (IO.hasFinished spawning)
+          let held := !(← gate.isResolved)
+          gate.resolve ()
+          unless returned do
+            return false
+          return held && (← spawning.get.endedAs (.finished #["ran"]))
+        finally
+          gate.resolve () },
+    { name :=
+        "cancelling a sleeping job ends it promptly: it is cancelled, its wait is withdrawn at the clock and gone from the table, and the runner says so once, with the clock never moved"
+      run := do
+        let rig ← Rig.new
+        let sleeper ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 1000
+                return true)
+        try
+          unless ← eventually (return (← rig.clock.waiting) == 1) do
+            return false
+          let started ← rig.clock.started
+          sleeper.handle.cancel
+          -- The clock stays at 0, so only the cancel can have ended the job.
+          let cancelled ← sleeper.endedAs .cancelled
+          return cancelled && started.size == 1 && (← rig.clock.withdrawn) == started.map (·.1) &&
+              (← rig.clock.waiting) == 0 &&
+              (← rig.services.completions.waiting) == 0 &&
+              (← rig.clock.now) == 0
+        finally
+          sleeper.handle.cancel },
+    { name :=
+        "a cancelled job cannot be resumed by a try/catch: a job that catches every error around each of five sleeps, cancelled in the first, makes no further request"
+      run := do
+        let rig ← Rig.new
+        let job ←
+          rig.spawn fun _ => do
+              stubborn
+              return makes "resumed"
+        try
+          unless ← eventually (return (← rig.clock.waiting) == 1) do
+            return false
+          job.handle.cancel
+          -- A job that went on would start its second sleep.
+          discard <|
+              eventually do
+                return (← job.handle.ended) || (← rig.clock.started).size > 1
+          -- Past all five sleeps: a job that had gone on runs to its end.
+          rig.clock.advance 100
+          return (← job.endedAs .cancelled) && (← rig.clock.started).size == 1 &&
+              (← rig.clock.reads) == 1
+        finally
+          job.handle.cancel },
+    { name :=
+        "a job cancelled before it starts makes no request: cancelled while its leading work is held, it reads no clock and starts no wait"
+      run := do
+        let rig ← Rig.new
+        let gate : IO.Promise Unit ← IO.Promise.new
+        let job ←
+          rig.spawn fun _ =>
+              if gate.result?.get.isSome then do
+                sleep 1000
+                return makes "ran"
+              else pure (makes "dropped")
+        -- A job with no request at all: cancelled, it does not finish.
+        let short ←
+          rig.spawn fun _ =>
+              if gate.result?.get.isSome then pure (makes "ran") else pure (makes "dropped")
+        try
+          job.handle.cancel
+          short.handle.cancel
+          gate.resolve ()
+          -- A job that went on would read the clock for its sleep.
+          discard <|
+              eventually do
+                return (← job.handle.ended) || (← rig.clock.reads) > 0
+          return (← job.endedAs .cancelled) && (← short.endedAs .cancelled) &&
+              (← rig.clock.reads) == 0 &&
+              (← rig.clock.started).isEmpty
+        finally
+          gate.resolve ()
+          job.handle.cancel },
+    { name :=
+        "cancellation is looked for again when a reply arrives: a job cancelled while a reading of the clock is in flight is not continued with the reading"
+      run := do
+        let rig ← Rig.new
+        let gate : IO.Promise Unit ← IO.Promise.new
+        let reading ← rig.clock.holdReads
+        let job ←
+          rig.spawn
+              (reporting fun _ => do
+                let instant ← now
+                -- What follows the reply starts with pure work the check
+                -- holds: a runner that applied it would be held in it.
+                waitUntil (onceOpen gate instant + 10)
+                return true)
+        try
+          unless ← eventually (return (← rig.clock.held) == 1) do
+            return false
+          job.handle.cancel
+          reading.resolve ()
+          -- The gate is still shut, so the job can only have ended if what
+          -- follows the reply was never applied.
+          let cancelled ← job.endedAs .cancelled
+          return cancelled && !(← gate.isResolved) && (← rig.clock.started).isEmpty
+        finally
+          reading.resolve ()
+          gate.resolve ()
+          job.handle.cancel },
+    { name :=
+        "a wait entered just as the job is cancelled is withdrawn at once: cancelled while the clock is being asked for the wait, the job ends with the clock never moved"
+      run := do
+        let rig ← Rig.new
+        let starting ← rig.clock.holdStarts
+        let job ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 1000
+                return true)
+        try
+          -- The job has registered its wait and is asking the clock for it:
+          -- the cancel finds no wait to withdraw yet.
+          unless ← eventually (return (← rig.clock.held) == 1) do
+            return false
+          job.handle.cancel
+          starting.resolve ()
+          let cancelled ← job.endedAs .cancelled
+          let started ← rig.clock.started
+          return cancelled && started.size == 1 && (← rig.clock.withdrawn) == started.map (·.1) &&
+              (← rig.services.completions.waiting) == 0 &&
+              (← rig.clock.now) == 0
+        finally
+          starting.resolve ()
+          job.handle.cancel },
+    { name :=
+        "cancellation is looked for again when a wait has ended: a job cancelled as its wait completes is not continued"
+      run := do
+        let rig ← Rig.new
+        let gate : IO.Promise Unit ← IO.Promise.new
+        let starting ← rig.clock.holdStarts
+        let job ←
+          rig.spawn
+              (reporting fun _ => do
+                let instant ← now
+                -- Due already: the clock completes it as soon as it is asked.
+                waitUntil instant
+                waitUntil (onceOpen gate instant + 10)
+                return true)
+        try
+          unless ← eventually (return (← rig.clock.held) == 1) do
+            return false
+          -- Cancelled before the clock knows the wait, which then completes
+          -- at once: the completion wins, and the job's token is set.
+          job.handle.cancel
+          starting.resolve ()
+          let cancelled ← job.endedAs .cancelled
+          return cancelled && !(← gate.isResolved) && (← rig.clock.started).size == 1 &&
+              (← rig.clock.withdrawn).isEmpty
+        finally
+          starting.resolve ()
+          gate.resolve ()
+          job.handle.cancel },
+    { name :=
+        "cancelling a job that has ended, and cancelling a job twice, change nothing: the outcome stays, the runner said so once, and the wait was withdrawn once"
+      run := do
+        let rig ← Rig.new
+        let short ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 5
+                return 7)
+        let sleeper ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 1000
+                return true)
+        try
+          unless ← eventually (return (← rig.clock.waiting) == 2) do
+            return false
+          rig.clock.advance 5
+          unless ← short.endedAs (.finished #["7"]) do
+            return false
+          short.handle.cancel
+          sleeper.handle.cancel
+          sleeper.handle.cancel
+          return (← sleeper.endedAs .cancelled) && (← short.endedAs (.finished #["7"])) &&
+              (← rig.clock.withdrawn).size == 1 &&
+              (← rig.services.completions.waiting) == 0
+        finally
+          short.handle.cancel
+          sleeper.handle.cancel },
+    { name :=
+        "over shared environments, a job's record of a failure reaches the report once, a second job finds the first one's entry, and no environment request registers a wait"
+      run := do
+        let rig ← Rig.new
+        let state ← IO.mkRef ({} : Process.Environments)
+        let said ← IO.mkRef #[]
+        let rig :=
+          { rig with
+            services :=
+              { rig.services with
+                environments :=
+                  Job.sharedEnvironments state fun text => said.modify (·.push text) } }
+        let failure := Process.Failure.exited 1 "untrusted"
+        let entry : Process.Entry := { stamps := #[none], found := .failed failure }
+        let first ←
+          rig.spawn
+              (reporting fun _ => do
+                Process.askEnvironment (.record "/p/d" entry)
+                Process.askEnvironment (.record "/p/d" entry)
+                return true)
+        let firstEnded ← first.endedAs (.finished #["true"])
+        let second ←
+          rig.spawn
+              (reporting fun _ => do
+                let found : Option Process.Entry ← Process.askEnvironment (.cached "/p/d")
+                return found == some entry)
+        let secondEnded ← second.endedAs (.finished #["true"])
+        return firstEnded && secondEnded &&
+            (← said.get) == #[Process.failureMessage "/p/d" failure] &&
+            (← rig.services.completions.waiting) == 0 &&
+            (← rig.clock.started).isEmpty },
+    { name :=
+        "a runner given no environments answers the policy as inherited: auto in the headless mode"
+      run := do
+        let rig ← Rig.new
+        let job ←
+          rig.spawn
+              (reporting fun _ => do
+                let policy : Process.Policy ← Process.askEnvironment .policy
+                return policy ==
+                    { setting := .auto, host := .headless, resolved := none, limit := 5000 })
+        job.endedAs (.finished #["true"]) },
+    { name :=
+        "a job cancelled in a wait after one post makes no second post: its host is handed the first alone, and it ends cancelled"
+      run := do
+        let rig ← Rig.new
+        let posts ← IO.mkRef #[]
+        let work :=
+          Work.of
+            (fun _ => do
+              post (JobContract.posting "first")
+              sleep 1000
+              post (JobContract.posting "second"))
+            fun _ => pure ()
+        let handle ←
+          Job.spawn rig.services work (pure ()) fun invocation => posts.modify (·.push invocation)
+        unless ← eventually (return (← rig.clock.waiting) == 1) do
+          return false
+        let before ← posts.get
+        handle.cancel
+        let ended ← eventually handle.ended
+        rig.clock.advance 1000
+        return before == #[JobContract.posting "first"] && ended &&
+            (← posts.get) == #[JobContract.posting "first"] &&
+            (← handle.outcome?).map texts == some .cancelled }]
+
+/-- A model with the directory `fileRoot` and, in it, `a.txt` holding
+`JobContract.rawFile`, seventeen bytes, and `b.txt` holding
+`JobContract.otherFile`, twelve. -/
+def twoFiles : FileModel :=
+  ((({} : FileModel).withDirectory fileRoot).withFile (fileRoot / "a.txt")
+        JobContract.rawFile).withFile
+    (fileRoot / "b.txt") JobContract.otherFile
+
+/-- What the editor has published, in the checks below: one snapshot, of a
+text with a two-byte character and an escape. Saved, it is the seven bytes
+`pubBytes`. -/
+def pubContent : TextContent :=
+  { contents := "pub é".push (Char.ofNat 0x10DCFF), revision := 2 }
+
+/-- The bytes `pubContent` is saved as, written out by hand. -/
+def pubBytes : ByteArray :=
+  ⟨#[0x70, 0x75, 0x62, 0x20, 0xC3, 0xA9, 0xFF]⟩
+
+/-- Whether `reply` is a refusal as failed, whatever its detail. -/
+def isFailed {α : Type} (reply : Except FileError α) : Bool :=
+  match reply with
+  | .error (.failed _) => true
+  | _ => false
+
+/-- The bytes of the file `name` of `fileRoot` in the fake's model, if it is
+there. -/
+def fileOf (files : Job.FakeFiles) (name : String) : BaseIO (Option ByteArray) :=
+  return ((← files.model).file? (fileRoot / name)).map (·.bytes)
+
+/-- The checks of the job runner's file waits (`Editor/Job/Runner.lean`),
+each on a fake of the file service of its own (`Job.FakeFiles`,
+`Editor/Job/Fake.lean`), over a model of two files. A check holds what it
+controls (the service's completions, its takes, a clock) and polls only as
+the bound after which it fails. -/
+def fileRunnerChecks : List Check :=
+  [{
+      name :=
+        "cancelling a job in a file wait withdraws the wait and ends the job cancelled, and its save never happens: no file is written, then or when the service lets go",
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        files.publish #[some pubContent]
+        files.holdCompletions
+        let saver ←
+          rig.spawn
+              (reporting fun _ => do
+                return (← JobContract.saved (.snapshot ⟨0⟩) (fileRoot / "new.txt") .absent).size)
+        try
+          unless ← eventually (return (← files.waiting) == 1) do
+            return false
+          let started := (← files.started).map (·.1)
+          saver.handle.cancel
+          let cancelled ← saver.endedAs .cancelled
+          let withdrawn := (← files.withdrawn) == started && (← files.waiting) == 0
+          let forgotten := (← rig.services.completions.waiting) == 0
+          files.letGo
+          return cancelled && started.size == 1 && withdrawn && forgotten &&
+              (← fileOf files "new.txt").isNone
+        finally
+          saver.handle.cancel
+          files.letGo },
+    { name :=
+        "a job cancelled as its load completes is not continued, and what it loaded is released: cancelled while the reply is being fetched, it ends cancelled, and the snapshot the load made is given up"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        let hold ← files.holdTakes
+        let loader ←
+          rig.spawn
+              (reporting fun _ => do
+                let file ← JobContract.loaded (fileRoot / "a.txt")
+                -- Never reached: the job is cancelled before the reply is
+                -- handed to it.
+                return (←
+                      JobContract.saved (.held file.snapshot) (fileRoot / "new.txt") .absent).size)
+        try
+          unless ← eventually (return (← files.takesHeld) == 1) do
+            return false
+          loader.handle.cancel
+          hold.resolve ()
+          let cancelled ← loader.endedAs .cancelled
+          return cancelled && (← files.released) == #[⟨0⟩] && (← files.model).held == #[none] &&
+              (← loader.handle.holding).isEmpty &&
+              (← files.started).size == 1 &&
+              (← fileOf files "new.txt").isNone
+        finally
+          hold.resolve ()
+          loader.handle.cancel },
+    { name :=
+        "what a job loaded is the runner's to release: a job that fails after a load has its snapshot released with no call from here, and one that finishes keeps it until it is settled, once"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        let fails ←
+          rig.spawn fun _ => do
+              discard <| JobContract.loaded (fileRoot / "a.txt")
+              throw "no thanks"
+        let failed ← fails.endedAs (.failed "no thanks")
+        let afterFailure ← files.released
+        let finishes ←
+          rig.spawn
+              (reporting fun _ => do
+                discard <| JobContract.loaded (fileRoot / "a.txt")
+                return (← JobContract.loaded (fileRoot / "b.txt")).stamp.size)
+        let finished ← finishes.endedAs (.finished #["12"])
+        let kept ← files.released
+        let holding ← finishes.handle.holding
+        finishes.handle.settle
+        let settled ← files.released
+        finishes.handle.settle
+        return failed && afterFailure == #[⟨0⟩] && finished && kept == #[⟨0⟩] &&
+            holding == #[⟨1⟩, ⟨2⟩] &&
+            settled == #[⟨0⟩, ⟨1⟩, ⟨2⟩] &&
+            (← files.released) == settled &&
+            (← finishes.handle.holding).isEmpty &&
+            (← files.model).held == #[none, none, none] },
+    { name :=
+        "removing an owner releases what its finished job loaded though the job's command never ran, and so does cancelling every job"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        let woken ← IO.mkRef #[]
+        let finished (id : Nat) : BaseIO Unit := woken.modify (·.push id)
+        let loads : Work :=
+          reporting fun _ => do
+            return (← JobContract.loaded (fileRoot / "a.txt")).stamp.size
+        let jobs : Job.Jobs := { services := rig.services }
+        let (annas, jobs) ← jobs.start anna "loads" loads finished
+        unless ← eventually (return (← woken.get) == #[annas]) do
+          return false
+        let before ← files.released
+        let (removed, jobs) ← jobs.removeOwner anna
+        let afterRemoval ← files.released
+        let (bens, jobs) ← jobs.start ben "loads" loads finished
+        unless ← eventually (return (← woken.get) == #[annas, bens]) do
+          return false
+        jobs.cancelAll
+        return before.isEmpty && removed.map (·.id) == #[annas] && afterRemoval == #[⟨0⟩] &&
+            (← files.released) == #[⟨0⟩, ⟨1⟩] &&
+            (← files.model).held == #[none, none] },
+    { name :=
+        "a job cannot save what another job holds: with one job parked after its load, a second that saves that job's snapshot is refused as naming none, and the service is asked to start nothing for it"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        let holder ←
+          rig.spawn
+              (reporting fun _ => do
+                discard <| JobContract.loaded (fileRoot / "a.txt")
+                sleep 1000
+                return true)
+        try
+          unless ← eventually (return (← rig.clock.waiting) == 1) do
+            return false
+          let #[theirs] ← holder.handle.holding | return false
+          let thief ←
+            rig.spawn
+                (reporting fun _ =>
+                  JobContract.saveRefusedAs .noSuchSnapshot (.held theirs) (fileRoot / "new.txt")
+                    .absent)
+          let refused ← thief.endedAs (.finished #["true"])
+          return refused && (← files.started).size == 1 && (← fileOf files "new.txt").isNone &&
+              (← holder.handle.holding) == #[theirs]
+        finally
+          holder.handle.cancel },
+    { name :=
+        "a save of a snapshot the editor published finds it by its id when the save is made: one published before the job began, one published after, and none for one taken away since"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        files.publish #[some pubContent]
+        let saver ←
+          rig.spawn
+              (reporting fun _ => do
+                let early ← JobContract.saved (.snapshot ⟨0⟩) (fileRoot / "early.txt") .absent
+                sleep 10
+                let late ← JobContract.saved (.snapshot ⟨1⟩) (fileRoot / "late.txt") .absent
+                sleep 10
+                let gone ←
+                  JobContract.saveRefusedAs .noSuchSnapshot (.snapshot ⟨0⟩) (fileRoot / "gone.txt")
+                      .absent
+                return early.size == 7 && late.size == 4 && gone)
+        try
+          unless ← eventually (return (← rig.clock.waiting) == 1) do
+            return false
+          files.publish #[some pubContent, some { contents := "lé\n" }]
+          rig.clock.advance 10
+          unless ← eventually (return (← rig.clock.waiting) == 1) do
+            return false
+          files.publish #[none, some { contents := "lé\n" }]
+          rig.clock.advance 10
+          let held ← saver.endedAs (.finished #["true"])
+          return held && (← fileOf files "early.txt") == some pubBytes &&
+              (← fileOf files "late.txt") == some ⟨#[0x6C, 0xC3, 0xA9, 0x0A]⟩ &&
+              (← fileOf files "gone.txt").isNone
+        finally
+          saver.handle.cancel },
+    { name :=
+        "on a runner that was given no file service a load and a save are refused as failed, and the job goes on to finish"
+      run := do
+        let rig ← Rig.new
+        let asks ←
+          rig.spawn
+              (reporting fun _ => do
+                let load ← File.load (fileRoot / "a.txt") 1000
+                let save ← File.save (.snapshot ⟨0⟩) (fileRoot / "b.txt") .whatever
+                return isFailed load && isFailed save && (← now) == 0)
+        return (← asks.endedAs (.finished #["true"])) &&
+            (← rig.services.completions.waiting) == 0 }]
+
+/-- A watch model with `watchRoot` there, for the runner's watch checks. -/
+def rootWatches : FileWatchModel :=
+  { directories := #[watchRoot] }
+
+/-- A job that watches `watchRoot / "f"` and then sleeps for `ms`. -/
+def watchesThenSleeps (ms : Nat) : JobM Bool := do
+  let .ok _ ← FileWatch.start (.file (watchRoot / "f")) atOnce | return false
+  sleep ms
+  return true
+
+/-- The checks of the runner's watch waits, on the fake of the watch
+service: a watch is named for its job, it ends with its job however the job
+ends, a cancelled job's pending read is withdrawn, and removing an owner
+ends its jobs' watches. -/
+def fileWatchRunnerChecks : List Check :=
+  [{  name := "a watch is named for its job: another job's next of it is noSuchWatch, asked of no service"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let holder ← rig.spawn (reporting fun _ => watchesThenSleeps 1000)
+        unless ← eventually (return (← watches.watching) == 1) do
+          return false
+        let id := ((← watches.started)[0]?.map (·.1)).getD 0
+        let other ←
+          rig.spawn
+              (reporting fun _ => do
+                let .error .noSuchWatch ← FileWatch.next ⟨id.toNat⟩ | return false
+                return true)
+        let refused ← other.endedAs (.finished #["true"])
+        holder.handle.cancel
+        let asked :=
+          (← watches.started).any fun (_, request) =>
+            match request with
+            | .next _ => true
+            | _ => false
+        return refused && !asked },
+    { name := "a watch ends with its job, finished, failed or cancelled, through the watch service's cancel"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let finished ← rig.spawn (reporting fun _ => watchesThenSleeps 0)
+        let failed ←
+          rig.spawn
+              (reporting fun _ => (do
+                discard <| watchesThenSleeps 0
+                throw "failed" : JobM Bool))
+        let cancelled ← rig.spawn (reporting fun _ => watchesThenSleeps 1000000)
+        let ended ←
+          (return (← finished.endedAs (.finished #["true"])) && (← failed.endedAs (.failed "failed")))
+        unless ← eventually (return (← watches.watching) == 1) do
+          return false
+        cancelled.handle.cancel
+        let cancelledEnded ← cancelled.endedAs .cancelled
+        let ids := (← watches.started).map (·.1)
+        return ended && cancelledEnded && (← watches.watching) == 0 &&
+            (← watches.ended).qsort (· < ·) == (ids.map (·.toNat)).qsort (· < ·) &&
+            ids.all (← watches.withdrawn).contains },
+    { name := "a cancelled job's pending next is withdrawn from the watch service, and its watch ended"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let .ok watch ← FileWatch.start (.file (watchRoot / "f")) atOnce | return false
+                discard <| FileWatch.next watch
+                return true)
+        unless ← eventually (return (← watches.started).size == 2) do
+          return false
+        let started ← watches.started
+        spawned.handle.cancel
+        let ended ← spawned.endedAs .cancelled
+        let withdrawn ← watches.withdrawn
+        return ended && started.all (withdrawn.contains ·.1) && (← watches.watching) == 0 &&
+            (← watches.waiting) == 0 },
+    { name := "Jobs.removeOwner ends the watches of the owner's jobs, and leaves another owner's"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let sleeps : Work := reporting fun _ => watchesThenSleeps 1000000
+        let jobs : Job.Jobs := { services := rig.services }
+        let (_, jobs) ← jobs.start anna "watches" sleeps fun _ => pure ()
+        let (_, jobs) ← jobs.start ben "watches" sleeps fun _ => pure ()
+        unless ← eventually (return (← watches.watching) == 2) do
+          return false
+        let (_, jobs) ← jobs.removeOwner anna
+        let annasEnded ← eventually (return (← watches.watching) == 1)
+        let one := (← watches.ended).size == 1
+        jobs.cancelAll
+        let allEnded ← eventually (return (← watches.watching) == 0)
+        return annasEnded && one && allEnded }]
+
+end ModelTest

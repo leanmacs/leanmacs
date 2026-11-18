@@ -222,7 +222,9 @@ job reads as it comes and whose standard input it writes to (phase 2;
   waiter, two readers and a writer when its input is piped; the editor's
   expected streaming children are a handful (agent sessions, language
   servers). Cancel kills the group, wakes parked readers and the writer,
-  and drops the child's waits uncompleted; shutdown cancels every child as
+  and drops the child's waits uncompleted, its pending read with them in
+  the same step, so no reader or waiter completes it after the kill;
+  shutdown cancels every child as
   it does every run. The contract holds the port's input to three more
   properties (a write reaches `/bin/cat` byte for byte, a write to an input
   the child closed is `InputClosed`, a child spawned with no input has
@@ -1923,20 +1925,21 @@ build on the owner's machine. Lean's syntax is extensible and the grammar is
 a fixed approximation of it: a construct it does not know is an error node,
 which the idle refresh corrects once the text is quiet. The largest Lean
 file in the repository (`find lean tests -name '*.lean' -not -path
-'*/.lake/*' | xargs ls -S | head -1`) is `lean/ModelTest.lean`: 1,701,630
-bytes, 30,504 lines, 1,629 error nodes. Its first parse takes 142.7 ms; a
-round after an edit 85.0 ms at the median and 87.6 ms at most over 20 runs;
-the idle refresh (a whole parse and its compare) 208.1 ms at the median.
-The round is above a 16 ms frame on this test file; it runs on the worker,
-off the editor thread, and the delivered spans are carried meanwhile. The
-largest file under `lean/Editor/` (`Ffi.lean`, 180,989 bytes) took about
-6 ms a round when the grammar was chosen. How much of this repository's Lean
-the grammar parses (2026-11-17, when it was chosen): 20 of the 52 files of
-`lean/Editor/` and 65 of all 172 Lean files parse with no error, and 97.5 %
-of `lean/Editor/`'s non-space bytes are captured by the shipped highlights
-query, since an error node's tokens are still keywords, strings and
-comments to it. Reusing work across rounds for files this size is an open
-question, with this measurement as its trigger.
+'*/.lake/*' | xargs ls -S | head -1`) was then `lean/ModelTest.lean`, before
+the model tests were split into modules: 1,701,630 bytes, 30,504 lines,
+1,629 error nodes. Its first parse takes 142.7 ms; a round after an edit
+85.0 ms at the median and 87.6 ms at most over 20 runs; the idle refresh (a
+whole parse and its compare) 208.1 ms at the median. The round is above a 16
+ms frame on this test file; it runs on the worker, off the editor thread,
+and the delivered spans are carried meanwhile. The largest file under
+`lean/Editor/` (`Ffi.lean`, 180,989 bytes) took about 6 ms a round when the
+grammar was chosen. How much of this repository's Lean the grammar parses
+(2026-11-17, when it was chosen): 20 of the 52 files of `lean/Editor/` and
+65 of all 172 Lean files parse with no error, and 97.5 % of `lean/Editor/`'s
+non-space bytes are captured by the shipped highlights query, since an error
+node's tokens are still keywords, strings and comments to it. Reusing work
+across rounds for files this size is an open question, with this measurement
+as its trigger.
 
 **Kept queries.** A session keeps one query of each structural kind it is
 given (`Session::keep`), and answers a kept query's names and captures in a
@@ -1962,8 +1965,8 @@ indents queries (`lean/Editor/Highlight.lean`); the indent rule
 **Open questions:**
 
 - Reusing an injected layer's tree across rounds (measured above).
-- Reusing work across rounds for a file the size of `lean/ModelTest.lean`,
-  whose round is above a frame (Lean, measured above).
+- Reusing work across rounds for a file of about 1.7 MB, whose round is
+  above a frame (Lean, measured above).
 - Lean's upstream injections query, which hands doc and module-doc comments
   to `markdown`: off, since each doc comment would be a Markdown layer, and
   its inline layers, parsed whole every round (`lean/Editor/` is about 65 %

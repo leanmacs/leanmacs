@@ -1,0 +1,116 @@
+name: Build
+
+# The nightly's build (docs/dev-practices/ci.md, "`build`: the .dmg"): the
+# app bundle stamped with the run's build ID and commit, checked by
+# `mise run app-check`, packed into Leanmacs-<build-id>.dmg, the image
+# mounted and checked, and the .dmg uploaded as a workflow artifact. ci.yml
+# calls it from main pushes only, after both legs of the gate; nothing else
+# does.
+on:
+  workflow_call:
+    inputs:
+      build-id:
+        description: "The run's build ID, YYYYMMDDHHMMSS (UTC): ci.yml's build-id job's output"
+        required: true
+        type: string
+      commit:
+        description: "The commit the app is stamped with, 40 lowercase hex digits: the run's github.sha"
+        required: true
+        type: string
+      ref:
+        description: "The commit to check out and build: the run's github.sha"
+        required: true
+        type: string
+
+# The token reads the checkout and nothing more; the artifact upload uses
+# the runner's own token, not this one.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # A leg of ci.yml's matrix: the bundle runs where it was built, and
+    # dyld refuses an executable whose minimum macOS is newer than the
+    # host (mise.toml, MACOSX_DEPLOYMENT_TARGET).
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      # As in ci.yml: mise installs only what the mise-action step names.
+      MISE_AUTO_INSTALL: "false"
+      # As in ci.yml: the runner's disk is small, and nothing here reads
+      # debug information.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      # The stamp. `mise run app` takes these first, through
+      # leanmacs-release, which checks them, so the bundle, the .dmg's name
+      # and `editor --version` all name the run's build. Inputs reach a
+      # step only through env:, never inside run: (zizmor's
+      # template-injection).
+      LEANMACS_BUILD_ID: ${{ inputs.build-id }}
+      LEANMACS_COMMIT: ${{ inputs.commit }}
+    steps:
+      # The commit the gate passed on, not whatever the ref points at now.
+      # Don't leave the job's token in .git/config: nothing here pushes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      # mise at the Linux container's version, and Rust alone: lean and lake
+      # come from elan below, and the build runs no lint tool.
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: 2026.11.2
+          install: true
+          install_args: rust
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+      # ci.yml's elan entry, with ci.yml's key, restored and never saved
+      # here: the gate's job saves it.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.elan
+          key: elan-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'tools/ci/install-elan.sh') }}
+      # As in ci.yml: elan, and through it the toolchain lean/lean-toolchain
+      # pins.
+      - run: sh tools/ci/install-elan.sh
+      # Cargo's registry and the third-party build artifacts, in an entry of
+      # this job's own (rust-cache keys on the job). Saved from main only,
+      # like every cache here.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # ci.yml's Lake entry, with ci.yml's key and restore-keys: the exact
+      # key is the one the `ci (macos-26)` leg just saved for this commit,
+      # so no Lean module is rebuilt. Never saved here: lean/.lake now holds
+      # the bundle, about 600 MB, which must not enter the cache.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: lean/.lake
+          key: lake-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: |
+            lake-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-
+      # Builds the bundle stamped with the run's build ID and commit
+      # (`mise run app`), then checks it: its signature, its Info.plist and
+      # stamp, its headless mode and `editor --version` from a relocated
+      # copy with an empty environment, and the rebuild rules in a clone
+      # (tools/app-check.sh). It ends `app-check: ok`.
+      - name: App check
+        run: mise run app-check
+        shell: bash
+      # Packs dist/Leanmacs-<build-id>.dmg from the checked bundle
+      # (crates/editor-release, `dmg`).
+      - name: Pack
+        run: mise run dmg
+        shell: bash
+      # Mounts the image and checks its four entries, their bytes, the
+      # app's signature, stamp and `--version` (crates/editor-release-std,
+      # tests/dmg_mount.rs).
+      - name: Check the dmg
+        run: mise run dmg-check
+        shell: bash
+      # The .dmg as a workflow artifact, kept 14 days. A run with no .dmg
+      # fails here rather than uploading nothing.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Leanmacs-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+          retention-days: 14

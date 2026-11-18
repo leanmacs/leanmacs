@@ -3,8 +3,17 @@
 # (docs/dev-practices/on-demand-checks.md, "The app bundle, on demand").
 #
 # `mise run app` builds `lean/.lake/build/Leanmacs.app` first (`editorApp`
-# in lean/lakefile.lean). This script then, in a temporary directory removed
-# by a trap:
+# in lean/lakefile.lean), stamped with the build ID and the commit. This
+# script first works out the stamp it expects with the same tool, `cargo
+# run -p editor-release-std --bin leanmacs-release -- build-id` and
+# `-- commit`, which take LEANMACS_BUILD_ID and LEANMACS_COMMIT when they
+# are set (as in CI) and read HEAD otherwise, and exports both, so its own
+# builds below see the values `mise run app` used. When neither variable
+# was set, it also requires the two to be HEAD's committer time in UTC and
+# HEAD's SHA as git itself prints them (`TZ=UTC git log -1
+# --date=format-local:%Y%m%d%H%M%S --format=%cd`, `git rev-parse HEAD`), so
+# the tool that stamps the bundle is not the only judge of what it reads
+# from HEAD. Then, in a temporary directory removed by a trap:
 #
 # 1. copies the bundle there with `ditto`, so everything after runs on a
 #    relocated copy;
@@ -24,8 +33,9 @@
 #    count or entry count; a `Default`, an `Owner`, an inserted
 #    `UTExportedTypeDeclarations`, an `Owner` under a dotted key the walk
 #    cannot address), and each must fail naming the key. Its
-#    `CFBundleShortVersionString` and `CFBundleVersion` are each the line of
-#    `lean/app/version`, read here from the file the build reads; its
+#    `CFBundleShortVersionString` is the line of `lean/app/version`, read
+#    here from the file the build reads, its `CFBundleVersion` the expected
+#    build ID and its `LeanmacsCommit` the expected commit; its
 #    `LSApplicationCategoryType` is `public.app-category.developer-tools`
 #    and its `NSHumanReadableCopyright` is not empty;
 # 4. converts the icon back to an iconset (`iconutil -c iconset`), which
@@ -38,6 +48,10 @@
 #    `expected`, whose command calls compiled code of `Init` and of
 #    `Editor`, so the copy found its toolchain and `.olean` files from its
 #    own path;
+# 5b. runs the copy's `editor --version` the same way, with an empty
+#    environment from `/`: it must print exactly `Leanmacs <version>`,
+#    `build <build ID>` and `commit <commit>`, so the Lean plist reader
+#    (lean/Editor/Version.lean) reads the keys the build writes;
 # 6. builds `editorApp` again and checks that it copied and signed
 #    nothing: the bundle's executable, its `CodeResources` and the build's
 #    trace file keep their modification times and inodes. Lake's output is
@@ -54,7 +68,8 @@
 #    trace takes as up to date;
 # 8. in the same clone, writes another version, 9.8.7, into
 #    `lean/app/version` and builds: the bundle must be rebuilt, verify, and
-#    name 9.8.7 as both version keys;
+#    name 9.8.7 as `CFBundleShortVersionString`, with `CFBundleVersion`
+#    still the expected build ID;
 # 9. turns the clone's artwork, `lean/app/Leanmacs.png`, a quarter
 #    (`sips -r 90`) and builds: the bundle must be rebuilt and verify, its
 #    icon must pass step 4's check, and its 1024-pixel image must differ
@@ -64,12 +79,23 @@
 #    builds each: each build must fail on the version file and leave the
 #    old bundle, which must still verify;
 # 11. writes `0.1.0` with no newline after it and builds: the build must
-#    succeed with 0.1.0 as both version keys, and this check must read 0.1.0
-#    from the file, so the build and the check take the same version files;
+#    succeed with 0.1.0 as `CFBundleShortVersionString`, with
+#    `CFBundleVersion` still the expected build ID, and this check must read
+#    0.1.0 from the file, so the build and the check take the same version
+#    files;
 # 12. replaces the clone's artwork with a 512x300 PNG, a 256x256 PNG and a
 #    1024x1024 JPEG and builds each: each build must fail on the artwork,
 #    which must be a 1024x1024 PNG, and leave the old bundle, which must
-#    still verify. The artwork is then put back.
+#    still verify. The artwork is then put back;
+# 13. builds the clone with LEANMACS_BUILD_ID=20010203040506 and
+#    LEANMACS_COMMIT forty `a`s (20010203040507 and forty `b`s when the
+#    stamp expected is that one): the bundle must be rebuilt and verify, its
+#    `CFBundleVersion` and `LeanmacsCommit` must be those two, and its
+#    `editor --version` must print them;
+# 14. builds the clone with LEANMACS_BUILD_ID unset, `2026` and
+#    `2001020304050x`, and with LEANMACS_COMMIT unset, in upper case and
+#    39 digits long: each build must fail naming the variable and leave the
+#    old bundle, which must still verify.
 #
 # It writes nothing outside the temporary directory but that second build,
 # which is shown to write nothing. It opens no window and needs no person.
@@ -110,6 +136,30 @@ version_file="$lean_dir/app/version"
 read_version "$version_file"
 version=$version_read
 
+# The stamp `mise run app` built with, worked out as it does and exported,
+# so every build below sees it. Before the clone puts a `cargo` that does
+# nothing first on the PATH.
+stamp_given=
+if [ -n "${LEANMACS_BUILD_ID+set}" ] || [ -n "${LEANMACS_COMMIT+set}" ]; then
+  stamp_given=1
+fi
+release_tool() {
+  (cd "$lean_dir" && cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-release-std --bin leanmacs-release -- "$1")
+}
+build_id=$(release_tool build-id) || fail "leanmacs-release build-id failed"
+commit=$(release_tool commit) || fail "leanmacs-release commit failed"
+export LEANMACS_BUILD_ID=$build_id LEANMACS_COMMIT=$commit
+if [ -z "$stamp_given" ]; then
+  # HEAD as git itself prints it, not as the tool reads it.
+  git_id=$(cd "$lean_dir" && TZ=UTC git log -1 --date=format-local:%Y%m%d%H%M%S --format=%cd) ||
+    fail "git cannot read HEAD's committer time"
+  git_commit=$(cd "$lean_dir" && git rev-parse HEAD) || fail "git cannot read HEAD"
+  [ "$build_id" = "$git_id" ] ||
+    fail "leanmacs-release build-id says $build_id, but HEAD's committer time in UTC is $git_id"
+  [ "$commit" = "$git_commit" ] || fail "leanmacs-release commit says $commit, but HEAD is $git_commit"
+fi
+sha_a=$(printf 'a%.0s' $(seq 40))
+
 started=$SECONDS
 step() {
   echo "app-check: $1 ($((SECONDS - started)) s)"
@@ -117,6 +167,11 @@ step() {
 }
 
 [ -d "$built" ] || fail "no bundle at $built: run \`mise run app\`"
+if [ -n "$stamp_given" ]; then
+  step "expecting build $build_id from commit $commit, as LEANMACS_BUILD_ID and LEANMACS_COMMIT give them"
+else
+  step "expecting build $build_id from commit $commit, HEAD's as git prints them"
+fi
 
 # 1. A relocated copy.
 app="$dir/Leanmacs.app"
@@ -305,17 +360,22 @@ for m in "${claims_mutations[@]}"; do
     fail "the check for Default, Owner and type declarations missed ${m%%|*} (it said: ${claims_problem:-nothing})"
   fi
 done
-# The version, from the file the build reads, as both version keys.
-for key in CFBundleShortVersionString CFBundleVersion; do
-  value=$(read_key "$key" 2>/dev/null) || fail "Info.plist has no $key"
-  [ "$value" = "$version" ] || fail "Info.plist's $key is $value, not $version (lean/app/version)"
-done
+# The version, from the file the build reads, the build ID and the commit.
+# Whether the plist at $1 has key $2 with the value $3; $4 says what $3 is.
+check_key() {
+  local value
+  value=$(plutil -extract "$2" raw -o - "$1" 2>/dev/null) || fail "Info.plist has no $2"
+  [ "$value" = "$3" ] || fail "Info.plist's $2 is $value, not $3 ($4)"
+}
+check_key "$plist" CFBundleShortVersionString "$version" lean/app/version
+check_key "$plist" CFBundleVersion "$build_id" "the build ID"
+check_key "$plist" LeanmacsCommit "$commit" "the commit"
 category=$(read_key LSApplicationCategoryType 2>/dev/null) || fail "Info.plist has no LSApplicationCategoryType"
 [ "$category" = public.app-category.developer-tools ] ||
   fail "Info.plist's LSApplicationCategoryType is $category, not public.app-category.developer-tools"
 copyright=$(read_key NSHumanReadableCopyright 2>/dev/null) || fail "Info.plist has no NSHumanReadableCopyright"
 [ -n "$copyright" ] || fail "Info.plist's NSHumanReadableCopyright is empty"
-step "Info.plist lints and names arm64, $executable, macOS $minimum (this machine runs $running), the document types public.text (Editor, Alternate) and public.data (Editor, None), no rank of Default or Owner and no type declarations (each check catching its mutated copies), version $version, the category $category and the copyright \"$copyright\""
+step "Info.plist lints and names arm64, $executable, macOS $minimum (this machine runs $running), the document types public.text (Editor, Alternate) and public.data (Editor, None), no rank of Default or Owner and no type declarations (each check catching its mutated copies), version $version, build $build_id, commit $commit, the category $category and the copyright \"$copyright\""
 
 # 4. The icon, converted back to its images and each read by ImageIO.
 # Whether the iconset at $1 holds exactly the ten standard images, each at
@@ -352,6 +412,19 @@ out=$(cd / && env -i "$app/Contents/MacOS/$executable" headless "$dir/config" "$
 printf '%s\n' "$out"
 printf '%s\n' "$out" | diff "$fixtures/expected" - || fail "the headless mode printed other than tests/headless/bundle/expected"
 step "the copy's headless mode, with an empty environment from /, printed tests/headless/bundle/expected"
+
+# 5b. What the copy says of its build, read from its own Info.plist.
+# Whether the bundle at $1 says version $2, build $3 and commit $4.
+check_says() {
+  local said
+  said=$(cd / && env -i "$1/Contents/MacOS/editor" --version) || fail "$1's editor --version failed"
+  [ "$said" = "$(printf 'Leanmacs %s\nbuild %s\ncommit %s' "$2" "$3" "$4")" ] ||
+    fail "$1's editor --version printed
+$said
+not version $2, build $3, commit $4"
+}
+check_says "$app" "$version" "$build_id" "$commit"
+step "the copy's editor --version, with an empty environment from /, printed version $version, build $build_id and commit $commit"
 
 # 6. A second build copies and signs nothing.
 marks() {
@@ -401,12 +474,9 @@ printf '9.8.7\n' >"$clone/lean/app/version"
 build_clone || fail "building editorApp in the clone after a change of version failed"
 [ "$before" != "$(clone_marks)" ] || fail "a change of version did not rebuild the bundle"
 codesign --verify --strict --deep "$cloned" || fail "after a change of version, the bundle does not verify"
-for key in CFBundleShortVersionString CFBundleVersion; do
-  value=$(plutil -extract "$key" raw -o - "$cloned/Contents/Info.plist" 2>/dev/null) ||
-    fail "after a change of version, Info.plist has no $key"
-  [ "$value" = 9.8.7 ] || fail "after a change of version to 9.8.7, Info.plist's $key is $value"
-done
-step "a change of version rebuilt the bundle, signed, with the new version"
+check_key "$cloned/Contents/Info.plist" CFBundleShortVersionString 9.8.7 "the new version"
+check_key "$cloned/Contents/Info.plist" CFBundleVersion "$build_id" "the build ID, unchanged"
+step "a change of version rebuilt the bundle, signed, with the new version and the same build ID"
 
 # 9. A change of artwork rebuilds the bundle with the new icon. The
 # artwork is turned a quarter, so it must not look the same turned.
@@ -453,11 +523,8 @@ build_clone || fail "building editorApp in the clone with a version file of 0.1.
 read_version "$clone/lean/app/version"
 [ "$version_read" = 0.1.0 ] ||
   fail "this check read $version_read, not 0.1.0, from a version file of 0.1.0 and no newline"
-for key in CFBundleShortVersionString CFBundleVersion; do
-  value=$(plutil -extract "$key" raw -o - "$cloned/Contents/Info.plist" 2>/dev/null) ||
-    fail "with a version file of 0.1.0 and no newline, Info.plist has no $key"
-  [ "$value" = 0.1.0 ] || fail "with a version file of 0.1.0 and no newline, Info.plist's $key is $value"
-done
+check_key "$cloned/Contents/Info.plist" CFBundleShortVersionString 0.1.0 "a version file of 0.1.0 and no newline"
+check_key "$cloned/Contents/Info.plist" CFBundleVersion "$build_id" "the build ID, unchanged"
 codesign --verify --strict --deep "$cloned" || fail "with a version file with no newline, the bundle does not verify"
 step "a version file with no newline built the bundle with that version, and this check read the same version"
 
@@ -484,5 +551,57 @@ done
 codesign --verify --strict --deep "$cloned" || fail "after wrong artwork, the bundle does not verify"
 mv "$dir/artwork.png" "$clone/lean/app/Leanmacs.png"
 step "artwork that is not a 1024x1024 PNG failed the build on the artwork and left the old bundle"
+
+# 13. The stamp comes from the environment: another build ID and commit
+# rebuild the bundle with them.
+# Builds the clone with the environment changed by `env` arguments $@.
+build_clone_env() {
+  (cd "$clone/lean" && env "$@" PATH="$clone/bin:$PATH" LEAN_CC=/usr/bin/cc lake build --wfail editorApp)
+}
+# The fake stamp, or the next one when this check was given the fake stamp
+# itself (the by-hand run in docs/dev-practices/on-demand-checks.md), so
+# that it always differs from the stamp the clone was built with.
+other_id=20010203040506 other_sha=$sha_a
+if [ "$build_id" = "$other_id" ] || [ "$commit" = "$other_sha" ]; then
+  other_id=20010203040507 other_sha=$(printf 'b%.0s' $(seq 40))
+fi
+before=$(clone_marks)
+build_clone_env LEANMACS_BUILD_ID=$other_id LEANMACS_COMMIT="$other_sha" ||
+  fail "building editorApp in the clone with a build ID and commit of its own failed"
+[ "$before" != "$(clone_marks)" ] || fail "another build ID and commit did not rebuild the bundle"
+codesign --verify --strict --deep "$cloned" || fail "after another build ID and commit, the bundle does not verify"
+check_key "$cloned/Contents/Info.plist" CFBundleVersion "$other_id" "LEANMACS_BUILD_ID"
+check_key "$cloned/Contents/Info.plist" LeanmacsCommit "$other_sha" "LEANMACS_COMMIT"
+read_version "$clone/lean/app/version"
+check_says "$cloned" "$version_read" "$other_id" "$other_sha"
+step "another build ID and commit, $other_id and $other_sha, rebuilt the bundle, signed, naming both, and its editor --version said them"
+
+# 14. A missing or malformed stamp fails the build, naming the variable,
+# and leaves the old bundle.
+before=$(clone_marks)
+sha_upper=$(printf '%s' "$sha_a" | tr a-z A-Z)
+sha_short=${sha_a%a}
+stamp_cases=(
+  "-u LEANMACS_BUILD_ID LEANMACS_COMMIT=$sha_a|LEANMACS_BUILD_ID must be the build ID"
+  "LEANMACS_BUILD_ID=2026 LEANMACS_COMMIT=$sha_a|LEANMACS_BUILD_ID must be the build ID"
+  "LEANMACS_BUILD_ID=2001020304050x LEANMACS_COMMIT=$sha_a|LEANMACS_BUILD_ID must be the build ID"
+  "-u LEANMACS_COMMIT LEANMACS_BUILD_ID=20010203040506|LEANMACS_COMMIT must be the commit"
+  "LEANMACS_BUILD_ID=20010203040506 LEANMACS_COMMIT=$sha_upper|LEANMACS_COMMIT must be the commit"
+  "LEANMACS_BUILD_ID=20010203040506 LEANMACS_COMMIT=$sha_short|LEANMACS_COMMIT must be the commit"
+)
+for c in "${stamp_cases[@]}"; do
+  read -r -a args <<<"${c%%|*}"
+  if build_clone_env "${args[@]}" >"$dir/stamp.log" 2>&1; then
+    cat "$dir/stamp.log"
+    fail "building editorApp with ${c%%|*} succeeded"
+  fi
+  grep -qF "${c#*|}" "$dir/stamp.log" || {
+    cat "$dir/stamp.log"
+    fail "building editorApp with ${c%%|*} failed, but not naming the variable"
+  }
+  [ "$before" = "$(clone_marks)" ] || fail "a build with ${c%%|*} changed the bundle"
+done
+codesign --verify --strict --deep "$cloned" || fail "after a missing or malformed stamp, the bundle does not verify"
+step "a missing or malformed build ID or commit failed the build, naming the variable, and left the old bundle"
 
 echo "app-check: ok, $(du -sh "$built" | awk '{ print $1 }') bundle"

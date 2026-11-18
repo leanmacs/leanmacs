@@ -7,9 +7,13 @@ workflow-lint` runs (docs/dev-practices/ci.md). They live outside
   (`actions/checkout@v7.0.1`). zizmor, with `.github/zizmor.yml`, must exit
   non-zero on it with an `unpinned-uses` finding.
 
-The probe's other cases are made at run time: it copies
-`.github/workflows/ci.yml`, with the check and the files it reads, into a
-temporary directory, breaks each rule of `tools/workflow-check.sh` in turn
-(with `yq` on the workflow, or `sed` on another file), and requires the
-check to fail on each with a message naming that rule and no other, then
-to pass on the unbroken copy.
+The probe's other cases are made at run time: for each case it copies
+`.github/workflows/ci.yml` and `build.yml`, with the check and the files it
+reads, into a temporary directory, breaks one rule of
+`tools/workflow-check.sh` (with `yq` on the tree's `ci.yml` or `build.yml`,
+or `sed` on another file), and requires the check, run on the tree's copy
+of the workflow, to fail with a message naming that rule and no other. The
+copy's base name picks the rules, as in the checkout, and a copy of
+`ci.yml` saved as `release.yml`, a file the check has no rules for, must
+fail the rule `workflows`. Last, the check must pass both workflows of an
+unbroken tree.

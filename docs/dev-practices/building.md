@@ -96,8 +96,12 @@ the same `tools/stage-bundle.sh`. On 2026-11-15 that was 2,006 files,
 382 MB, beside a 196 MB executable: 579 MB in all. `Info.plist` names the
 bundle identifier `io.github.leanmacs.Leanmacs`, the executable `editor`,
 the icon, `NSHighResolutionCapable`, `LSArchitecturePriority` arm64 and
-`LSMinimumSystemVersion`, the lowest macOS the bundle has been run on
-(27.2). Its two document types (`CFBundleDocumentTypes`) are "Text"
+`LSMinimumSystemVersion`, the lowest macOS the bundle has been run on:
+26.0, which equals mise.toml's `MACOSX_DEPLOYMENT_TARGET`, so the
+executable's `minos` is the same. CI's `mise run app-check` runs the
+bundle's headless mode on the `macos-26` runner on every main build, and
+the window was run by hand on 27.2; the owner chose 26.0 on 2026-11-17
+([`ci.md`](ci.md), "Deployment target"). Its two document types (`CFBundleDocumentTypes`) are "Text"
 (`public.text`, which every text type conforms to) at the rank `Alternate`,
 offered under Finder's "Open With" but never chosen over another app, and
 "Any file" (`public.data`) at the rank `None`, accepted on the Dock icon and
@@ -107,13 +111,40 @@ no types (no `UTImportedTypeDeclarations` or `UTExportedTypeDeclarations`). `LSA
 `public.app-category.developer-tools`, and `NSHumanReadableCopyright` names
 the licence, GPL-3.0-or-later.
 
-The version is the one line of `lean/app/version`: 0.1.0, as every crate's
-`version` is. It is written as both `CFBundleShortVersionString` and
-`CFBundleVersion`; the release that first needs a build number of its own
-decides how the two part. The line must be one to three dot-separated runs
-of digits, with or without a newline after it, and `editorApp` refuses
-anything else, a second line or whitespace among it, with an error naming
-the file.
+Three keys say which build the bundle is, and `editor --version` prints
+them (lean/Editor/Version.lean):
+
+- `CFBundleShortVersionString` is the version, the one line of
+  `lean/app/version`: 0.1.0, as every crate's `version` is. The line must
+  be one to three dot-separated runs of digits, with or without a newline
+  after it, and `editorApp` refuses anything else, a second line or
+  whitespace among it, with an error naming the file.
+- `CFBundleVersion` is the build ID, from `LEANMACS_BUILD_ID`: HEAD's
+  committer time in UTC as `YYYYMMDDHHMMSS`, which `mise run build-id`
+  prints. The committer time, not the author time: landing rebases, which
+  resets it, so the ID goes up along `main`.
+- `LeanmacsCommit` is the commit, HEAD's full SHA, from `LEANMACS_COMMIT`.
+
+`mise run app` sets both variables with `leanmacs-release build-id` and
+`commit` (`crates/editor-release-std`), which take each variable as it is
+when it is set, as CI sets them from its run (the build ID from the
+`build-id` job, the commit from `github.sha`), and read HEAD otherwise. A
+bare `lake build editorApp` without them is refused, naming the variable;
+`editorApp` checks only their shape (14 digits, 40 lowercase hex digits),
+and the tool checks the build ID is a real time. A local build from a tree
+with uncommitted changes is stamped with HEAD's commit all the same. The
+plist is part of the bundle's trace, so a new commit rebuilds and re-signs
+the bundle.
+
+```sh
+$ lean/.lake/build/Leanmacs.app/Contents/MacOS/editor --version
+Leanmacs 0.1.0
+build 20261117190046
+commit 3d9490ca5c5244a972da004c20f1cf2b72ce29d9
+```
+
+Outside a bundle, as `lean/.lake/build/bin/editor`, `--version` says it is
+a development build, with no version, build ID or commit.
 
 The icon is made from `lean/app/Leanmacs.png`, a 1024×1024 PNG. Before
 anything is built, `editorApp` reads its width, height and format with
@@ -127,8 +158,8 @@ turns it to show a new artwork rebuilds the icon).
 
 Lake rebuilds the bundle only when an input changes: the executable, the
 `Editor` library's modules, `config-test` (which lists the closure), the
-stage script, the toolchain, the lakefile, the version file or the
-artwork.
+stage script, the toolchain, the lakefile, the version file, the artwork,
+or the build ID or commit.
 A second `mise run app` with nothing changed copies and signs nothing, and
 Lake prints no `Built editorApp` line. A rebuild starts from an empty
 bundle, so it never keeps a module that is no longer imported. It assembles
@@ -161,3 +192,52 @@ config is there
 
 `mise run app-check` checks the built bundle
 ([`on-demand-checks.md`](on-demand-checks.md), "The app bundle, on demand").
+
+### The disk image
+
+```sh
+mise run dmg
+```
+
+This builds the bundle (`mise run app`) and packs it into
+`dist/Leanmacs-<build-id>.dmg`, a compressed HFS+ image whose volume,
+"Leanmacs", holds exactly:
+
+```
+Leanmacs.app    the bundle, copied with ditto, so its signature holds
+Applications    a link to /Applications, to drag the app onto
+LICENSE         the repository's
+README.txt      packaging/macos/README.txt: install, first launch, --version
+```
+
+`leanmacs-release dmg` (`crates/editor-release`, `dmg`) does it: it reads
+the bundle's `CFBundleVersion` and refuses a bundle built for another build
+than this one's ID, then stages the volume's root in `target/dmg/staging`,
+packs it with `hdiutil create`, and removes the staging directory. `dist/`
+is ignored by git. `mise run dmg-check` mounts the image and checks it
+([`on-demand-checks.md`](on-demand-checks.md), "The disk image, on
+demand"). CI's build job packs one on every push to main and uploads it
+([`ci.md`](ci.md)).
+
+The app in it is ad-hoc signed, as the bundle is, and not notarized, so
+Gatekeeper blocks its first launch; README.txt says how to open it.
+Developer ID signing and notarization are rdm:task/developer-id-notarization.
+
+### The nightly's assets
+
+```sh
+mise run nightly
+```
+
+After `mise run dmg`, this checks `dist/Leanmacs-<build-id>.dmg` and
+prepares the nightly release's assets in `target/nightly`, with no token
+and no network: `leanmacs-release nightly` (`crates/editor-release`,
+`nightly`) mounts the image at `target/nightly-mount`, checks that its
+file name and the app's `CFBundleVersion` and `LeanmacsCommit` are this
+build's ID and commit, detaches it, and writes `Leanmacs-<build-id>.dmg`,
+`Leanmacs.dmg`, `Leanmacs.dmg.sha256`, `build.json` and the release notes,
+`notes.md`. Outside Actions the notes link to github.com's
+leanmacs/leanmacs. Only CI's `release` job publishes them
+([`ci.md`](ci.md), "`release`: the nightly"). `mise run nightly-check`
+runs the same preparation on a tiny stamped image it packs in a temporary
+directory.

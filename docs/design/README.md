@@ -19,6 +19,7 @@ and the document updated.
 | [agent-hosting.md](agent-hosting.md) | Hosting coding agents: ACP, the terminal front end, the agent table, permissions, sessions |
 | [review-and-navigation.md](review-and-navigation.md) | Reviewing agents' plans and code, provenance, version control, the rdm client, codebase navigation |
 | [version-control.md](version-control.md) | The version-control interface in the editor's own terms, its model and contract, the git implementation and its porcelain reader, the status buffer, the gutter, staging a hunk and the message buffer. Built: status, stage and unstage, `vc-status`, `vc-show`, the gutter marks, `vc-stage-hunk`, `vc-unstage-hunk` and `vc-commit` |
+| [code-structure-audit.md](code-structure-audit.md) | The 2026-11-17 audit of the largest files, the editor state and the widest interfaces against the ports-and-adapters rules: how size was measured, a verdict per item, and the follow-up work |
 
 `AGENTS.md` at the repository root holds the working rules (test-first, ports
 and adapters, hand-written fakes). These documents say what to build; that

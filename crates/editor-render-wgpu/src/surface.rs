@@ -50,7 +50,7 @@
 //!
 //! # The present mode
 //!
-//! [`present::choose`](crate::present::choose) decides, from the modes a
+//! [`present::choose`] decides, from the modes a
 //! surface offers. [`mode_of`] and [`wgpu_mode`] are that module's names
 //! for wgpu's modes and back. wgpu's own default is not taken: on a
 //! surface that offers a mode that tears, it is that mode. A run that asks

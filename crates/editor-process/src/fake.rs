@@ -162,6 +162,10 @@ pub struct ChildRecord {
     pub read: [usize; 2],
     /// What it is waiting for now.
     pub blocked_on: Blocked,
+    /// Whether each stream's reader has let go of it, out then err: the
+    /// stream was taken and its [`FakeOutput`] dropped. A reader is done
+    /// with the stream once this is set.
+    pub outputs_dropped: [bool; 2],
 }
 
 impl Script {
@@ -287,6 +291,9 @@ pub struct Record {
     /// How many waits are parked on the hold of reaps now: their child has
     /// ended and is not yet reaped.
     pub reaps_parked: usize,
+    /// How many kills are parked on the hold of kills now: nothing they
+    /// end has ended yet.
+    pub kills_parked: usize,
     /// Each child's streams and input, by its id.
     pub children: HashMap<u32, ChildRecord>,
     /// How many writes to a child's input are blocked now, on a full pipe.
@@ -453,6 +460,8 @@ struct State {
     reads_held: bool,
     /// Whether reaps are held.
     reaps_held: bool,
+    /// Whether kills are held.
+    kills_held: bool,
     /// What a test reads.
     record: Record,
     /// The rules it breaks.
@@ -631,6 +640,18 @@ impl FakeProcesses {
         self.shared.changed.notify_all();
     }
 
+    /// Holds every kill from now on: a kill parks before it ends anything,
+    /// until [`FakeProcesses::release_kills`].
+    pub fn hold_kills(&self) {
+        self.shared.state().kills_held = true;
+    }
+
+    /// Lets every parked kill go on, and holds none from now on.
+    pub fn release_kills(&self) {
+        self.shared.state().kills_held = false;
+        self.shared.changed.notify_all();
+    }
+
     /// Whether the process `id` is alive: a child until it is reaped, a
     /// member until its group is ended, a process started outside the group
     /// until the ground ends it. An id the fake never gave is not.
@@ -689,6 +710,12 @@ impl FakeProcesses {
     /// has been reaped.
     fn kill(&self, id: u32) {
         let mut state = self.shared.state();
+        if state.kills_held {
+            state.record.kills_parked += 1;
+            self.shared.changed.notify_all();
+            state = self.shared.wait_until(state, |state| !state.kills_held);
+            state.record.kills_parked -= 1;
+        }
         let leader_only = state.flaws.kill_leader_only;
         let Some(group) = state.groups.get_mut(&id) else {
             return;
@@ -874,6 +901,20 @@ impl FakeProcesses {
         drop(state);
         self.shared.changed.notify_all();
     }
+
+    /// Records that the reader of child `id`'s `stream` has let go of it.
+    fn drop_output(&self, id: u32, stream: Stream) {
+        let slot = match stream {
+            Stream::Out => 0,
+            Stream::Err => 1,
+        };
+        let mut state = self.shared.state();
+        if let Some(io) = state.record.children.get_mut(&id) {
+            io.outputs_dropped[slot] = true;
+        }
+        drop(state);
+        self.shared.changed.notify_all();
+    }
 }
 
 impl Processes for FakeProcesses {
@@ -1035,6 +1076,12 @@ pub struct FakeOutput {
 impl Output for FakeOutput {
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Refusal> {
         self.fake.read(self.id, self.stream, buffer)
+    }
+}
+
+impl Drop for FakeOutput {
+    fn drop(&mut self) {
+        self.fake.drop_output(self.id, self.stream);
     }
 }
 
@@ -1345,6 +1392,27 @@ mod tests {
     }
 
     #[test]
+    fn a_held_kill_parks_before_it_ends_anything_until_released() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilKilled)),
+        )]);
+        let child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
+        fake.hold_kills();
+
+        thread::scope(|scope| {
+            let killing = scope.spawn(|| child.kill());
+            assert!(fake.until(DEADLINE, |record| record.kills_parked == 1));
+            assert_eq!(fake.record().killed, Vec::<u32>::new(), "nothing ended yet");
+            fake.release_kills();
+            killing.join().expect("the kill returns");
+        });
+
+        assert_eq!(fake.record().killed, vec![child.id()]);
+        assert_eq!(fake.record().kills_parked, 0);
+    }
+
+    #[test]
     fn held_reads_park_until_released() {
         let fake =
             FakeProcesses::scripted([(command("x"), Ok(Script::ends(Exit::Code(0)).stdout("a")))]);
@@ -1368,6 +1436,21 @@ mod tests {
 
     fn io(fake: &FakeProcesses, id: u32) -> ChildRecord {
         fake.record().children.get(&id).cloned().expect("a child")
+    }
+
+    #[test]
+    fn dropping_a_childs_stream_is_recorded_for_that_stream_alone() {
+        let fake = FakeProcesses::scripted([(command("x"), Ok(Script::ends(Exit::Code(0))))]);
+        let mut child = fake.spawn(&command("x"), Input::Closed).expect("spawned");
+        let out = child.take_output(Stream::Out).expect("out");
+        let err = child.take_output(Stream::Err).expect("err");
+        assert_eq!(io(&fake, child.id()).outputs_dropped, [false, false]);
+
+        drop(err);
+
+        assert_eq!(io(&fake, child.id()).outputs_dropped, [false, true]);
+        drop(out);
+        assert_eq!(io(&fake, child.id()).outputs_dropped, [true, true]);
     }
 
     #[test]

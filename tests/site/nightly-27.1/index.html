@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Leanmacs nightly</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --fg: #1b1b1b;
+  --bg: #ffffff;
+  --muted: #5c5c5c;
+  --accent: #0b57d0;
+  --on-accent: #ffffff;
+  --code: #f1f1f1;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e8e8e8;
+    --bg: #161616;
+    --muted: #a6a6a6;
+    --accent: #8ab4f8;
+    --on-accent: #0b1a33;
+    --code: #262626;
+  }
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+main {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+a {
+  color: var(--accent);
+}
+a.download {
+  display: inline-block;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.5rem;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+}
+dt {
+  color: var(--muted);
+}
+dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+code,
+pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875rem;
+  background: var(--code);
+  border-radius: 0.25rem;
+}
+code {
+  padding: 0.1rem 0.25rem;
+  overflow-wrap: anywhere;
+}
+pre {
+  padding: 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+footer {
+  margin-top: 3rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+</style>
+</head>
+<body>
+<main>
+<h1>Leanmacs</h1>
+<p>A text editor whose config and extensions are written in Lean.</p>
+<p>The nightly: the newest build of <code>main</code>, unreleased, made on every push that passes CI.</p>
+<p><a class="download" href="https://github.com/leanmacs/leanmacs/releases/download/nightly/Leanmacs.dmg">Download Leanmacs.dmg</a></p>
+<h2>This build</h2>
+<dl>
+<dt>Build ID</dt>
+<dd id="build-id">20270305091507</dd>
+<dt>Commit</dt>
+<dd id="commit"><a href="https://github.com/leanmacs/leanmacs/commit/b0e1d2c3a4f5968778695a4b3c2d1e0f9a8b7c6d"><code>b0e1d2c3a4f5968778695a4b3c2d1e0f9a8b7c6d</code></a></dd>
+<dt>Date</dt>
+<dd id="date">2027-03-05 09:15:07 UTC</dd>
+<dt>Size</dt>
+<dd id="size">0.9 MB (912384 bytes)</dd>
+<dt>SHA-256</dt>
+<dd id="sha256"><code>03f7a1c5e9b2d6f0a4c8e1b5d9f3a7c0e4b8d2f6a1c5e9b3d7f0a4c8e2b6d1f5</code></dd>
+</dl>
+<p>To check the download, put <a href="https://github.com/leanmacs/leanmacs/releases/download/nightly/Leanmacs.dmg.sha256">Leanmacs.dmg.sha256</a> beside it and run <code>shasum -a 256 -c Leanmacs.dmg.sha256</code>.</p>
+<h2>Requirements</h2>
+<p>macOS 27.1 or later, on Apple silicon (arm64) only.</p>
+<h2>Install</h2>
+<ol>
+<li>Download <code>Leanmacs.dmg</code> and open it.</li>
+<li>Drag Leanmacs.app onto Applications.</li>
+<li>Open it, and on first launch follow the steps below.</li>
+</ol>
+<h2>First launch</h2>
+<p>The app is ad-hoc signed and not notarized, so macOS blocks it the first time. Since macOS 15, Control-click &gt; Open no longer gets past this. Instead:</p>
+<ol>
+<li>Open Leanmacs once. macOS says it cannot check it; click Done.</li>
+<li>Open System Settings &gt; Privacy &amp; Security, scroll down, and click &quot;Open Anyway&quot; beside the message about Leanmacs.</li>
+<li>Open Leanmacs again and confirm.</li>
+</ol>
+<p>If that does not work, remove the quarantine flag in Terminal:</p>
+<pre><code>xattr -dr com.apple.quarantine /Applications/Leanmacs.app</code></pre>
+<h2>Which build is installed</h2>
+<pre><code>/Applications/Leanmacs.app/Contents/MacOS/editor --version</code></pre>
+<p>prints the version, the build ID and the commit.</p>
+<footer>
+<p><a href="https://github.com/leanmacs/leanmacs">Source, issues and licence</a></p>
+</footer>
+</main>
+</body>
+</html>

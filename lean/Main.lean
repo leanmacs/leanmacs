@@ -1,6 +1,7 @@
 import Editor.Command.Append
 import Editor.Executable
 import Editor.Headless
+import Editor.Version
 import Editor.Window.Real
 import Editor.WindowCheck.Real
 
@@ -13,6 +14,11 @@ Lean owns the process. `main` acts on the mode the command line selects
 `editor demo` only shows the build works: it calls the Rust library and
 prints what comes back, and it runs one command against the library through
 the text port's real binding.
+
+`editor --version` says the version, the build ID and the commit of the
+running build, read from its bundle's `Info.plist`, or that it is a
+development build when it runs from outside a bundle
+(`Editor/Version.lean`).
 
 `editor headless [--render] [<sysroot> <olean dir>] <config dir> <script file>`
 is the headless mode (`Editor/Headless.lean`): it loads the config in a
@@ -68,7 +74,9 @@ def demo : IO UInt32 := do
 /-- Runs the mode the command line selects (`Executable.mode`). The match
 is exhaustive on purpose: `main` must act on every mode.
 
-With `demo`, the demonstration. With `headless`, the headless mode, handed
+With `demo`, the demonstration. With `--version`, the build's version, build
+ID and commit on stdout and status 0, or, when its bundle's `Info.plist`
+cannot be read, why on stderr and status 1. With `headless`, the headless mode, handed
 the rest of the command line, which exits with its own status: 0 when the
 script ran to its end, 1 when it could not, and 2 for a command line it does
 not take. With `window-check`, the keyboard check, which opens a window and
@@ -81,6 +89,19 @@ def main (args : List String) : IO UInt32 := do
   match Editor.Executable.mode args with
   | .demo =>
     demo
+  | .version =>
+    let readFile (path : System.FilePath) : IO (Except String String) := do
+      try
+        return .ok (← IO.FS.readFile path)
+      catch error =>
+        return .error (toString error)
+    let (text, status) :=
+      Editor.Version.report (← Editor.Version.read (← IO.appPath).toString readFile)
+    if status == 0 then
+      IO.println text
+    else
+      IO.eprintln text
+    pure status
   | .headless rest =>
     Editor.Headless.main rest
   | .windowCheck options =>

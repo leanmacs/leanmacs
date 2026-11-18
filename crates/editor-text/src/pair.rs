@@ -117,7 +117,7 @@ impl Snapshot {
     /// `%` unless `skip_quoted`.
     ///
     /// When `skip_quoted`, brackets Vim guesses are quoted are passed over,
-    /// as its default `cpo` does ([`Snapshot::quote_walk`] has the rule);
+    /// as its default `cpo` does (`Snapshot::quote_walk` has the rule);
     /// otherwise quotes are characters like any other.
     ///
     /// `Some(None)` when there is no such bracket; `None` unless `offset`

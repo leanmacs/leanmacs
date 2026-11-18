@@ -64,10 +64,14 @@
 //! - **Cancelling** a streaming child kills its group, stops its readers
 //!   (a parked one returns without another read) and its writer, and drops
 //!   its waits and kept replies without completing them; it is over once
-//!   its child is reaped. Cancelling a pending read or write drops that wait
-//!   alone: the child keeps running and keeps what it wrote.
-//! - **Shutdown** cancels every streaming child as it does every run, and
-//!   waits for every waiter. It waits for no reader and no writer.
+//!   its child is reaped. A pending read is dropped with its wait, in one
+//!   step under the state lock and before the kill, so no reader or waiter
+//!   completes it afterwards, even one already inside a read when the kill
+//!   lands. Cancelling a pending read or write drops that wait alone: the
+//!   child keeps running and keeps what it wrote.
+//! - **Shutdown** cancels every streaming child as it does every run, its
+//!   pending read dropped with its waits as a cancel drops it, and waits
+//!   for every waiter. It waits for no reader and no writer.
 //!
 //! So each streaming child has four threads: its waiter, two readers, and
 //! a writer when its input is piped. A reader blocked in `read(2)` on a
@@ -293,9 +297,19 @@ impl StreamState {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Stops its readers and its writer.
+    /// Stops its readers and its writer, and drops its pending read: an
+    /// abandoned stream has no pending read, so no reader or waiter can
+    /// complete one after this. It takes only the stream's own lock, so it
+    /// is atomic with nothing else by itself: cancel and shutdown call it
+    /// under the service's state lock, in the same step that drops the
+    /// child's waits, and before the kill, and that is what drops a
+    /// pending read with its wait. A caller with no pending read to drop
+    /// may call it anywhere.
     fn abandon(&self) {
-        self.state().abandoned = true;
+        let mut streamed = self.state();
+        streamed.abandoned = true;
+        streamed.read = None;
+        drop(streamed);
         self.changed.notify_all();
     }
 }
@@ -642,14 +656,16 @@ impl<P: Processes + 'static> Service<P> {
                     state.runs.remove(&id);
                 }
                 // Its waits are dropped, never completed: the open's reply,
-                // a pending read and a pending write among them.
+                // a pending read and a pending write among them. The
+                // stream's own record of the pending read goes in the same
+                // step, so no reader or waiter finds it to complete.
                 state.waits.retain(|&wait, kept| {
                     wait != id
                         && !matches!(kept, Wait::Reading(of) | Wait::Writing(of) if *of == id)
                 });
+                stream.abandon();
                 drop(state);
                 child.kill();
-                stream.abandon();
                 return true;
             }
         };
@@ -668,7 +684,7 @@ impl<P: Processes + 'static> Service<P> {
         let mut state = self.inner.state();
         state.shut = true;
         let mut children = Vec::new();
-        let mut streams = Vec::new();
+        let mut streaming = Vec::new();
         state.runs.retain(|_, run| match run {
             Run::Kept(_) => false,
             Run::Starting { cancelled } => {
@@ -691,7 +707,10 @@ impl<P: Processes + 'static> Service<P> {
                 reaped,
             } => {
                 *cancelled = true;
-                streams.push((Arc::clone(child), Arc::clone(stream)));
+                // Abandoned with its waits, so its pending read is dropped
+                // uncompleted.
+                stream.abandon();
+                streaming.push(Arc::clone(child));
                 !*reaped
             }
         });
@@ -701,9 +720,8 @@ impl<P: Processes + 'static> Service<P> {
             child.kill();
             reads.abandon();
         }
-        for (child, stream) in streams {
+        for child in streaming {
             child.kill();
-            stream.abandon();
         }
         let state = self.inner.state();
         drop(
@@ -835,6 +853,8 @@ impl<P: Processes + 'static> Service<P> {
         if ended.is_some() {
             Self::forget(&mut state, child);
             drop(state);
+            // Outside the state lock: the read was just taken, and the
+            // child is forgotten, so no later read can be pending.
             stream.abandon();
         }
         Some(StreamReply::Delivered(Delivery { out, err, ended }))
@@ -1175,6 +1195,8 @@ impl<P: Processes + 'static> Inner<P> {
         }
         drop(state);
         if cancelled {
+            // Outside the state lock: a read refuses a cancelled child, so
+            // none can be pending.
             child.kill();
             stream.abandon();
         } else {
@@ -1990,7 +2012,7 @@ mod tests {
 
 #[cfg(test)]
 mod streaming {
-    use std::sync::mpsc::{self, Receiver};
+    use std::sync::mpsc::{self, Receiver, TryRecvError};
     use std::time::Duration;
 
     use super::*;
@@ -2818,6 +2840,15 @@ mod streaming {
         false
     }
 
+    /// Whether both readers of the child `child` come to let go of its
+    /// streams. A reader completes a read before it lets go, so after this
+    /// no reader can complete one.
+    fn readers_done(fake: &FakeProcesses, child: u32) -> bool {
+        fake.until(DEADLINE, |record| {
+            record.children[&child].outputs_dropped == [true, true]
+        })
+    }
+
     #[test]
     fn a_cancel_of_a_held_child_kills_its_group_stops_its_readers_and_leaves_nothing_pending() {
         let fake = FakeProcesses::scripted([(
@@ -2867,12 +2898,113 @@ mod streaming {
             lines_with(Input::Pipe, ROOMY),
         );
         assert!(service.read(1, 2));
+        let child = fake.record().spawned[0].0;
 
         assert!(service.cancel(1));
 
-        assert!(pending_comes_to(&service, 0));
-        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        assert!(pending_comes_to(&service, 0), "its waiter is done");
+        assert!(readers_done(&fake, child));
+        assert_eq!(completed.try_recv(), Err(TryRecvError::Empty));
         assert_eq!(service.take_stream(2), None);
+    }
+
+    #[test]
+    fn a_cancel_with_its_readers_inside_a_read_never_completes_the_pending_read() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).step(Step::EchoLine(Stream::Out))),
+        )]);
+        let (service, completed) = service(&fake);
+        fake.hold_reads();
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            lines_with(Input::Pipe, ROOMY),
+        );
+        assert!(service.read(1, 2));
+        assert!(fake.until(DEADLINE, |record| record.reads_parked == 2));
+        let child = fake.record().spawned[0].0;
+
+        assert!(service.cancel(1));
+        fake.release_reads();
+
+        assert!(pending_comes_to(&service, 0), "its waiter is done");
+        assert!(readers_done(&fake, child));
+        assert_eq!(completed.try_recv(), Err(TryRecvError::Empty));
+        assert_eq!(service.take_stream(2), None);
+    }
+
+    #[test]
+    fn a_cancel_abandons_the_stream_before_the_kill_so_a_reader_back_from_a_read_reads_no_more() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .stdout("a\n")
+                .step(Step::EchoLine(Stream::Out))),
+        )]);
+        let (service, completed) = service(&fake);
+        fake.hold_reads();
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            lines_with(Input::Pipe, ROOMY),
+        );
+        assert!(service.read(1, 2));
+        assert!(fake.until(DEADLINE, |record| record.reads_parked == 2));
+        let child = fake.record().spawned[0].0;
+        fake.hold_kills();
+
+        thread::scope(|scope| {
+            let cancelling = scope.spawn(|| service.cancel(1));
+            assert!(fake.until(DEADLINE, |record| record.kills_parked == 1));
+            fake.release_reads();
+            // The child is not killed yet, so its output is still open: a
+            // reader back from its read that read again would block.
+            let let_go = fake.until(DEADLINE, |record| {
+                record.children[&child].read[0] == 2 && record.children[&child].outputs_dropped[0]
+            });
+            fake.release_kills();
+            assert!(cancelling.join().expect("the cancel returns"));
+            assert!(
+                let_go,
+                "the reader of out read what was there and let go, the kill still held"
+            );
+        });
+
+        assert!(pending_comes_to(&service, 0), "its waiter is done");
+        assert!(readers_done(&fake, child));
+        assert_eq!(completed.try_recv(), Err(TryRecvError::Empty));
+        assert_eq!(service.take_stream(2), None);
+    }
+
+    #[test]
+    fn shutdown_with_its_readers_inside_a_pending_read_never_completes_it() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).step(Step::EchoLine(Stream::Out))),
+        )]);
+        let (service, completed) = service(&fake);
+        fake.hold_reads();
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            lines_with(Input::Pipe, ROOMY),
+        );
+        assert!(service.read(1, 2));
+        assert!(fake.until(DEADLINE, |record| record.reads_parked == 2));
+        let child = fake.record().spawned[0].0;
+
+        service.shutdown();
+        fake.release_reads();
+
+        assert!(readers_done(&fake, child));
+        assert_eq!(completed.try_recv(), Err(TryRecvError::Empty));
     }
 
     #[test]

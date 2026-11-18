@@ -73,9 +73,17 @@ count for a script a hundred times as long.
 target; `mise run app`). It copies the executable and the `.olean` files of
 the closure of `Editor` into `Leanmacs.app`, laid out as module lookup
 expects (`lean/Editor/ModuleLookup.lean`), writes `Info.plist`, with
-the version from `lean/app/version`, and the icon, made from the checked-in
-artwork `lean/app/Leanmacs.png`, and signs the whole bundle ad-hoc, last. Lake's trace of
-its inputs makes it rebuild only when one changed. It builds on macOS on
+the version from `lean/app/version` as `CFBundleShortVersionString`, the
+build ID as `CFBundleVersion` and the commit as `LeanmacsCommit`, a key of
+the app's own, and the icon, made from the checked-in
+artwork `lean/app/Leanmacs.png`, and signs the whole bundle ad-hoc, last.
+The build ID and the commit come from the environment,
+`LEANMACS_BUILD_ID` and `LEANMACS_COMMIT`, which `mise run app` sets from
+HEAD and CI from its run (`crates/editor-release`); a build without either,
+or with one malformed, is refused, naming the variable. `editor --version`
+reads the three keys back (`lean/Editor/Version.lean`). Lake's trace of
+its inputs, the plist's text among them, makes it rebuild only when one
+changed, so a new commit rebuilds it. It builds on macOS on
 arm64 only. How to build it, what it holds and why it is signed again are
 in [building.md](../dev-practices/building.md), "The app bundle".
 

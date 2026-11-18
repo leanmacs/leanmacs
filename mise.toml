@@ -17,7 +17,7 @@ pkl = "0.32.1"
 opentofu = "1.13.2"
 # The workflow lint (`mise run workflow-lint`, part of `ci`): actionlint and
 # zizmor over .github/workflows, and yq for tools/workflow-check.sh's
-# structural check of ci.yml. Like cargo-deny, prebuilt release binaries
+# structural check of the workflows. Like cargo-deny, prebuilt release binaries
 # whose checksums aqua checks. Each is a release at least two weeks old when
 # pinned (docs/dev-practices/ci.md).
 "aqua:rhysd/actionlint" = "1.7.12"
@@ -31,13 +31,16 @@ opentofu = "1.13.2"
 [env]
 RDM_ROOT = "{{env.HOME | default(value=env.USERPROFILE | default(value=''))}}/Projects/rdm-atlas-repo"
 RDM_PROJECT = "editor-project"
-# The lowest macOS every Lake link targets, the executable's `minos`. With
-# this unset Lake links for 99.0, and Finder refuses to start the app ("you
-# can't use this version"). It must equal `appMinimumSystemVersion` in
-# lean/lakefile.lean, the bundle's LSMinimumSystemVersion; `mise run
-# app-check` fails when the executable's `minos` is later. Other platforms
-# ignore it.
-MACOSX_DEPLOYMENT_TARGET = "27.2"
+# The lowest macOS every Lake link targets, the executable's `minos`, here
+# and in CI alike. With this unset Lake links for 99.0, and Finder refuses
+# to start the app ("you can't use this version"). It must equal
+# `appMinimumSystemVersion` in lean/lakefile.lean, the bundle's
+# LSMinimumSystemVersion; `mise run app-check` fails when the executable's
+# `minos` is later. It is the CI runner's macOS (macos-26): dyld refuses to
+# start a Mach-O whose `minos` is newer than the host, and the gate and the
+# build job run what they build there (docs/dev-practices/ci.md,
+# "Deployment target"). Other platforms ignore it.
+MACOSX_DEPLOYMENT_TARGET = "26.0"
 
 [tasks.fmt]
 description = "Check Rust formatting"
@@ -61,14 +64,14 @@ description = "Rust unit, integration and doc tests"
 run = "cargo test --workspace --locked"
 
 # The model tests: editor logic run in Lean alone, against hand-written fakes
-# and the pure models of the editor's ports (lean/ModelTest.lean). They must
-# pass without the Rust library being built, and the task shows that by
-# behaviour: `lean/no-cargo/cargo` is a fake `cargo` that always fails, put
-# first on the PATH, and Lake's `rustlib` target runs `cargo` on every build
-# that reaches it. So this passes only if nothing the test driver needs
-# reaches `rustlib`, on a tree where the archive is already built as well as
-# on a clean one. Seen to bite once by hand: with the same PATH,
-# `LEAN_CC=/usr/bin/cc lake build editor` fails at `editor/rustlib`.
+# and the pure models of the editor's ports (lean/ModelTest.lean and
+# lean/ModelTest/). They must pass without the Rust library being built, and
+# the task shows that by behaviour: `lean/no-cargo/cargo` is a fake `cargo`
+# that always fails, put first on the PATH, and Lake's `rustlib` target runs
+# `cargo` on every build that reaches it. So this passes only if nothing the
+# test driver needs reaches `rustlib`, on a tree where the archive is already
+# built as well as on a clean one. Seen to bite once by hand: with the same
+# PATH, `LEAN_CC=/usr/bin/cc lake build editor` fails at `editor/rustlib`.
 #
 # No LEAN_CC: the test driver links no C glue, so Lean's bundled compiler
 # builds it.
@@ -78,7 +81,7 @@ run = "cargo test --workspace --locked"
 # jobs wait from pin no size: they pass under a bare `lake test` whatever the
 # variable says.
 [tasks.lean-test]
-description = "Run the Lean model tests with `lake test`, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean)"
+description = "Run the Lean model tests with `lake test`, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/)"
 dir = "lean"
 run = 'PATH="$PWD/no-cargo:$PATH" lake test --wfail'
 
@@ -545,12 +548,27 @@ run = [
 # toolchain and be refused, and the build tree's `.olean` directory is not
 # beside the copy. The fixture's commands only make texts, so nothing is
 # written outside the temporary directory.
+#
+# Then `editor --version` (lean/Editor/Version.lean), through `IO.appPath`
+# and the real file read: the fixture's `Info.plist`, which holds only the
+# three keys with a fake stamp, is copied into the staged `Contents/`, and
+# the copy, run with an empty environment, must print exactly
+# `version-expected`; and the build tree's `editor`, outside a bundle, must
+# print the line of a development build.
 [tasks.bundle-test]
-description = "Stage the app bundle's layout in a temporary directory and run the headless mode of a copy of the editor there, with no directory argument, an empty environment and a working directory outside it (tools/stage-bundle.sh, tests/headless/bundle)"
+description = "Stage the app bundle's layout in a temporary directory and run the headless mode of a copy of the editor there, with no directory argument, an empty environment and a working directory outside it, and its --version on a fixture Info.plist (tools/stage-bundle.sh, tests/headless/bundle)"
 depends = ["lean"]
 dir = "lean"
 timeout = "120s"
-run = '''dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && .lake/build/bin/config-test bench-modules "$sysroot" .lake/build/lib/lean Editor >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" "$dir/Leanmacs.app" .lake/build/bin/editor "$sysroot" .lake/build/lib/lean olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" -'''
+run = '''lean_dir=$PWD && dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && .lake/build/bin/config-test bench-modules "$sysroot" .lake/build/lib/lean Editor >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" "$dir/Leanmacs.app" .lake/build/bin/editor "$sysroot" .lake/build/lib/lean olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" - && cp "$fixtures/Info.plist" "$dir/Leanmacs.app/Contents/Info.plist" && env -i "$dir/Leanmacs.app/Contents/MacOS/editor" --version | diff "$fixtures/version-expected" - && "$lean_dir/.lake/build/bin/editor" --version | grep -qxF 'Leanmacs, a development build: not run from an app bundle, so it has no version, build ID or commit''''
+
+# The build ID (crates/editor-release, `build_id`): LEANMACS_BUILD_ID when
+# it is set, else HEAD's committer time in UTC, the time landing sets. CI's
+# `build-id` job runs it once per run, so every job of a run names the same
+# build. `app`, `dmg` and `dmg-check` read it through the same binary.
+[tasks.build-id]
+description = "Print the build ID: LEANMACS_BUILD_ID when set, else HEAD's committer time in UTC as YYYYMMDDHHMMSS (crates/editor-release)"
+run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- build-id"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl. The bundle is about 600 MB and signing hashes all of it, and the
@@ -559,18 +577,24 @@ run = '''dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print
 # It builds `lean/.lake/build/Leanmacs.app` with Lake (`editorApp` in
 # lean/lakefile.lean): the editor executable, the `.olean` files of the
 # modules `Editor` imports, Info.plist with the version from
-# lean/app/version, and the icon made from lean/app/Leanmacs.png with sips
-# and iconutil, ad-hoc signed as a whole, last. Lake rebuilds it only when an input changed, so a
-# second run with nothing changed copies and signs nothing, and prints no
-# `Built editorApp` line. It waits for `lean` so that the Lake builds in
-# lean/ run in one chain, and sets LEAN_CC as `lean` does, since the
-# executables it fetches must be linked by the system compiler.
+# lean/app/version, the build ID as CFBundleVersion and the commit as
+# LeanmacsCommit, and the icon made from lean/app/Leanmacs.png with sips
+# and iconutil, ad-hoc signed as a whole, last. The build ID and the commit
+# come from `leanmacs-release build-id` and `commit` (crates/editor-release),
+# which take LEANMACS_BUILD_ID and LEANMACS_COMMIT first, so CI's values
+# pass through checked, and HEAD otherwise; `editorApp` refuses a build
+# without them. Lake rebuilds it only when an input changed, a new commit
+# among them, so a second run with nothing changed copies and signs
+# nothing, and prints no `Built editorApp` line. It waits for `lean` so
+# that the Lake builds in lean/ run in one chain, and sets LEAN_CC as
+# `lean` does, since the executables it fetches must be linked by the
+# system compiler.
 [tasks.app]
-description = "Opt-in, never part of ci; macOS on arm64 only: build lean/.lake/build/Leanmacs.app with Lake (`editorApp` in lean/lakefile.lean), ad-hoc signed"
+description = "Opt-in, never part of ci; macOS on arm64 only: build lean/.lake/build/Leanmacs.app with Lake (`editorApp` in lean/lakefile.lean), stamped with the build ID and the commit, ad-hoc signed"
 depends = ["lean"]
 dir = "lean"
 env = { LEAN_CC = "/usr/bin/cc" }
-run = "lake build --wfail editorApp"
+run = "id=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-release-std --bin leanmacs-release -- build-id) && commit=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-release-std --bin leanmacs-release -- commit) && LEANMACS_BUILD_ID=$id LEANMACS_COMMIT=$commit lake build --wfail editorApp"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl: the gate does not build the bundle, and runs on Linux too. It is
@@ -596,6 +620,79 @@ description = "Opt-in, never part of ci; macOS on arm64 only: verify the built L
 depends = ["app"]
 timeout = "300s"
 run = "tools/app-check.sh lean"
+
+# Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
+# hk.pkl: the gate does not build the bundle, and runs on Linux too. CI's
+# build job runs it on main (.github/workflows/build.yml).
+#
+# `leanmacs-release dmg` (crates/editor-release, `dmg`) packs the built
+# bundle into `dist/Leanmacs-<build-id>.dmg`: the app, a link to
+# /Applications, LICENSE and packaging/macos/README.txt, staged in
+# target/dmg/staging and packed with hdiutil. It refuses a bundle whose
+# CFBundleVersion is not this build's ID, and prints the image's path.
+[tasks.dmg]
+description = "Opt-in, never part of ci; macOS on arm64 only: pack the built Leanmacs.app, a link to /Applications, LICENSE and the README into dist/Leanmacs-<build-id>.dmg (crates/editor-release)"
+depends = ["app"]
+run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- dmg lean/.lake/build/Leanmacs.app dist"
+
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl:
+# it mounts a disk image. It does not depend on `dmg`, so CI's build job
+# packs once; it fails, saying to run `mise run dmg`, when this build's
+# image is not in dist/.
+#
+# The ignored test crates/editor-release-std/tests/dmg_mount.rs mounts the
+# image read-only on a temporary mount point and detaches it when done. The
+# volume's root must be exactly the app, the link to /Applications, LICENSE
+# and README.txt (names starting with `.` aside); the two files must be
+# the repository's; the app's signature must verify; its CFBundleVersion
+# must be the build the file name names and this build's ID, its
+# LeanmacsCommit this build's commit and its CFBundleShortVersionString
+# lean/app/version's line; and its `editor --version`, run with an empty
+# environment, must print those three.
+[tasks.dmg-check]
+description = "Opt-in, never part of ci; macOS only: mount dist/Leanmacs-<build-id>.dmg and check its root, its files, the app's signature, Info.plist and `editor --version` (crates/editor-release-std/tests/dmg_mount.rs)"
+run = 'id=$(cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- build-id) && dmg="$PWD/dist/Leanmacs-$id.dmg" && { [ -f "$dmg" ] || { echo "dmg-check: no $dmg: run \`mise run dmg\`" >&2; exit 1; }; } && LEANMACS_DMG="$dmg" cargo test --locked -p editor-release-std --test dmg_mount -- --ignored --nocapture'
+
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl:
+# it mounts a disk image. CI's release job runs it on main
+# (.github/workflows/release.yml), as its "Prepare the nightly" step. It
+# does not depend on `dmg`, so CI packs once; run `mise run dmg` first.
+#
+# `leanmacs-release nightly` (crates/editor-release, `nightly`) takes
+# dist/Leanmacs-<build-id>.dmg, mounts it at target/nightly-mount and checks
+# that the app's CFBundleVersion and LeanmacsCommit are this build's ID and
+# commit, then writes the nightly's assets to target/nightly:
+# Leanmacs-<build-id>.dmg, Leanmacs.dmg, Leanmacs.dmg.sha256 and build.json,
+# with the release notes in notes.md. It holds no token and talks to no
+# server; `leanmacs-release publish target/nightly` uploads them, in CI only.
+[tasks.nightly]
+description = "Opt-in, never part of ci; macOS only: check dist/Leanmacs-<build-id>.dmg's stamp and prepare the nightly's assets in target/nightly, with no token (crates/editor-release, `nightly`)"
+run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- nightly dist target/nightly"
+
+# Any host, part of nothing: the golden tests in `mise run test`
+# (crates/editor-release's `site` and crates/editor-release-std/tests/site.rs)
+# cover it. CI's release job runs it on main, on the build.json `nightly`
+# just prepared (.github/workflows/release.yml).
+#
+# `leanmacs-release site` (crates/editor-release, `site`) renders the
+# download page for the build a build.json describes into
+# <out-dir>/index.html, target/site by default. The minimum macOS it shows
+# is [env]'s MACOSX_DEPLOYMENT_TARGET, the one the executable is linked for;
+# run outside mise, with that unset, it refuses.
+[tasks.site]
+description = "Any host: render the download page from a build.json into <out-dir>/index.html (default target/site): mise run site -- <build.json> [<out-dir>] (crates/editor-release, site)"
+run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- site"
+
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl:
+# it mounts a disk image. The ignored test
+# crates/editor-release-std/tests/nightly_mount.rs packs a tiny stamped app
+# into an image in a temporary directory and runs the nightly's prepare on
+# it through the real process adapter: the five files, `shasum -a 256 -c`,
+# the build read back, a wrong commit refused, and the image detached every
+# time.
+[tasks.nightly-check]
+description = "Opt-in, never part of ci; macOS only: prepare a nightly from a tiny stamped image in a temporary directory, with real hdiutil, plutil and shasum (crates/editor-release-std/tests/nightly_mount.rs)"
+run = "cargo test --locked -p editor-release-std --test nightly_mount -- --ignored --nocapture"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl: it writes outside the checkout. After `app-check`,
@@ -849,13 +946,13 @@ run = "cargo run --locked --package editor-shape-parley --example system"
 # nothing: its figures are this machine's, recorded dated in
 # docs/design/rust-library.md (docs/dev-practices/on-demand-checks.md). The
 # file is the largest by `find lean tests -name '*.lean' -not -path
-# '*/.lake/*' | xargs ls -S | head -1`.
+# '*/.lake/*' | xargs ls -S | head -1`, found again on every run.
 #
 # Run it on a quiet machine when the Lean grammar is updated, or the round
 # changes.
 [tasks.syntax-bench]
 description = "Time one syntax round and an idle refresh on the largest Lean file (docs/design/rust-library.md); asserts nothing"
-run = "cargo run --release --locked -p editor-syntax-treesitter --example round -- lean/ModelTest.lean lean"
+run = "cargo run --release --locked -p editor-syntax-treesitter --example round -- \"$(find lean tests -name '*.lean' -not -path '*/.lake/*' | xargs ls -S | head -1)\" lean"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It writes
 # a file of the repository, which no gate may do.
@@ -1035,19 +1132,21 @@ run = "tools/linux/run.sh render"
 # reads no git history, so it runs the same in `linux-ci`'s copy of the
 # checkout. actionlint checks the workflows are valid, zizmor that they are
 # safe, with every `uses:` pinned by a full SHA (.github/zizmor.yml), and
-# tools/workflow-check.sh what this repository needs of ci.yml: the legs,
-# the gate step, the main-only cache saves, the allowlist. The probe last
-# shows zizmor and the check reject a workflow that breaks their rules.
+# tools/workflow-check.sh what this repository needs of each workflow file:
+# ci.yml's legs, gate step and build jobs, build.yml's steps, the main-only
+# cache saves, the allowlist. A workflow file it has no rules for fails it.
+# The probe last shows zizmor and the check reject a workflow that breaks
+# their rules.
 #
 # actionlint runs with shellcheck and pyflakes off: neither is pinned here,
 # so with them on the result would depend on what the machine has
 # installed.
 [tasks.workflow-lint]
-description = "actionlint and zizmor (pinned) over .github/workflows, the structural check of ci.yml, and the probe that both reject a bad workflow; offline"
+description = "actionlint and zizmor (pinned) over .github/workflows, the structural check of every workflow file, and the probe that both reject a bad workflow; offline"
 run = [
   "actionlint -shellcheck= -pyflakes= .github/workflows/*.yml",
   "zizmor --offline --config .github/zizmor.yml .github/workflows",
-  "sh tools/workflow-check.sh .github/workflows/ci.yml",
+  "sh -c 's=0; for f in .github/workflows/*.yml; do sh tools/workflow-check.sh \"$f\" || s=1; done; exit $s'",
   "sh tools/workflow-lint-probe.sh",
 ]
 

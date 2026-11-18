@@ -3,7 +3,8 @@
 OpenTofu configuration for the `leanmacs/leanmacs` GitHub repository's
 security-relevant settings: its visibility, its merge and feature settings,
 secret scanning, the `main` branch ruleset, what Actions may run and what
-their token may do, and GitHub Pages. Cosmetic settings (description,
+their token may do, GitHub Pages and the `github-pages` environment it
+deploys to. Cosmetic settings (description,
 homepage, topics) are out of scope and ignored. Plan and apply run only on
 the owner's machine, never in CI. Why the repository is public and what it
 holds is in
@@ -14,7 +15,7 @@ holds is in
 | `repository.tf` | `github_repository.leanmacs`: visibility, features, merge settings, secret scanning and push protection (imported) |
 | `rulesets.tf` | `github_repository_ruleset.main`, `protect-main` (created) |
 | `actions.tf` | `github_actions_repository_permissions.leanmacs` and `github_workflow_repository_permissions.leanmacs` (imported) |
-| `pages.tf` | `github_repository_pages.leanmacs` (created) |
+| `pages.tf` | `github_repository_pages.leanmacs` (created); `github_repository_environment.github_pages` (imported) and `github_repository_environment_deployment_policy.github_pages_main` (imported by hand, once) |
 | `versions.tf` | The OpenTofu and provider pins, and the state encryption |
 
 ## One-time setup
@@ -133,8 +134,34 @@ comment together.
 `source` branch: the site is deployed from an Actions artifact, so no
 branch holds built files. It is a resource of its own because provider
 6.13.0 deprecates the `pages` block on `github_repository`. No custom
-domain. Enabling Pages makes GitHub create the `github-pages` environment,
-which this config does not manage.
+domain.
+
+Enabling Pages made GitHub create the `github-pages` environment, which
+this config now manages: `.github/workflows/release.yml`'s `pages` job
+deploys the download page to it, and only `main` may. The environment is
+imported with its live values (no reviewers, no wait timer, admins may
+bypass, custom branch policies on and protected branches off), and its one
+branch policy is `main`. The policy's import ID ends in a number only the
+live API knows, so it has no `import` block; it is imported by hand once,
+below. A skipped import shows in the plan as `1 to add`, a second `main`
+policy: stop there and import it.
+
+### Taking over `github-pages`
+
+Once, before the first plan that declares the environment, inside the same
+`op run` and `GITHUB_TOKEN` wrapping as the tasks:
+
+```sh
+gh api repos/leanmacs/leanmacs/environments/github-pages/deployment-branch-policies --jq '.branch_policies[] | {id, name, type}'
+tofu -chdir=infra/github import github_repository_environment_deployment_policy.github_pages_main leanmacs:github-pages:<id>
+```
+
+`<id>` is the `main` policy's `id`; there must be exactly one policy, of
+type `branch`. The ID format, `<repository>:<environment>:<policy_id>`, is
+provider 6.13.0's (`docs/resources/repository_environment_deployment_policy.md`).
+Then `mise run infra-plan` must read only the environment imported and
+`0 to add, 0 to change, 0 to destroy`; if it shows a change, align the
+declared value with the live one. Then `mise run infra-apply`.
 
 ## Main branch ruleset
 
@@ -171,8 +198,10 @@ OpenTofu's native encryption: a `pbkdf2` key from the passphrase and the
 `.terraform.lock.hcl` is committed, for macOS on arm64 and Linux on amd64
 and arm64.
 
-- **Lost state:** the `import` blocks adopt the repository and the two
-  Actions resources again on the next apply, with no change. The ruleset
+- **Lost state:** the `import` blocks adopt the repository, the two
+  Actions resources and the `github-pages` environment again on the next
+  apply, with no change. The environment's branch policy needs the manual
+  import in "Taking over `github-pages`" above. The ruleset
   and Pages have no `import` block (they were created by this config):
   import them first, inside the same `op run` and `GITHUB_TOKEN` wrapping
   as the tasks, or the apply tries to create them again:
@@ -212,7 +241,8 @@ the hk hooks; run it after any change here.
 config must hold: the repository public, with its live settings and secret
 scanning; the ruleset's target, its two rules, the rules left out and its
 bypass; the Actions allowlist, SHA pinning and the read-only token; Pages
-built from Actions. It can't plan an `import` block, even against a mock
+built from Actions; the `github-pages` environment deploying from `main`
+alone. It can't plan an `import` block, even against a mock
 (OpenTofu 1.13 panics), so the tests set `import_existing = false`, which
 empties the imports' `for_each`. Nothing else sets that variable.
 

@@ -101,7 +101,9 @@ holds no fingerprints; its header records that review.
 The repository's visibility, merge settings, secret scanning and push
 protection, the ruleset that refuses a force-push to `main` or its
 deletion, what Actions may run (SHA-pinned, from an allowlist) and what
-their token may do, and Pages built from Actions are declared with
+their token may do, Pages built from Actions, and the `github-pages`
+environment that only `main` may deploy the download page to are
+declared with
 OpenTofu in [`infra/github/`](../../infra/github/README.md), which also
 holds the owner's one-time setup and what to do after a lost state or
 passphrase.
