@@ -41,9 +41,10 @@ implementation runs on the models too.
   request, as git does, with status 128 and nothing staged.
 - **`unstage paths`**: each path's `HEAD` content goes into the index, or
   the path is removed from the index when `HEAD` lacks it.
-- **`fileAt revision path`**: `HEAD`'s content of the path, or a named
-  revision's (`revisions`, the tags a test makes), or the index's for the
-  empty revision; `none` when the revision does not have it or is not
+- **`fileAt revision path`**: the content of the path at the commit the
+  revision resolves to ("The graph"): `HEAD`'s, a branch's, a tag's
+  (`revisions`, the tags a test makes) or a commit's, or the index's for
+  the empty revision; `none` when the revision does not have it or is not
   there.
 - **`watched`**: the common directory (`commonDir`), with `HEAD` and the
   index of the git directory (`gitDir`), `packed-refs`, and `refs` as a
@@ -63,7 +64,42 @@ implementation runs on the models too.
   `nothing to commit`). Otherwise `HEAD`'s files become the index's
   (`Repository.commit`). The model keeps no message.
 - **`Repository.commit`** (also for tests) makes `HEAD`'s files the index's,
-  as a commit made outside the editor does.
+  as a commit made outside the editor does. It first freezes `HEAD`'s
+  commit into the graph, with its parents, when the branch is born, and
+  `HEAD` becomes a new commit whose parent it is, so a branch made from
+  `HEAD` before a commit stays where it was.
+
+## The graph
+
+- **Commits**: `HEAD`'s, whose files are `committed`, its id `headId` and
+  its parents `parents`; the others in `commits`, by id, parents before
+  children, none naming `HEAD`'s; and each tag of `revisions`, a
+  parentless commit of its files whose id is its name.
+- **A name resolves** (`resolve`) to `HEAD`'s commit for `HEAD` and the
+  checked-out branch while it is born, to a branch's commit, to a tag, or
+  to a commit's id; `fileAt` reads through it.
+- **The merge base** (`mergeBase`) is the first of one commit's ancestors,
+  breadth-first, that is also the other's. That is git's answer wherever
+  the merge base is unique, as in every property's graph; a criss-cross
+  history has several, and git picks one.
+- **`worktrees`**: the root on `head`, then each linked worktree on its
+  branch, or detached, in path order.
+- **`branches`**: the checked-out branch while it is born, and the others,
+  in byte order.
+- **`changes revision against`**: `Request.invalid?` first; then each name
+  resolved, or refused with status 1, `<name> is not a commit`; then their
+  merge base, or status 1, `<revision> and <against> have no merge base`;
+  then every path of either side whose content differs, sorted.
+- **`addWorktree path branch start`**: `Request.invalid?` first; a path
+  that is the root or a linked worktree is refused (128). With `start`, a
+  branch that exists is refused (128), and a start that resolves to
+  nothing (128); otherwise the branch is made there. Without it, a missing
+  branch, or one checked out at the root or in a linked worktree, is
+  refused (128). Then the linked worktree is added.
+- **`removeWorktree path`**: `Request.invalid?` first; the root (128, `is a
+  main working tree`), a path that is no linked worktree (128) and a dirty
+  one (128, `contains modified or untracked files`) are refused; otherwise
+  it is dropped, and its branch kept.
 
 The contract (`Editor/VersionControl/Contract.lean`) is what says the model
 and the git implementation agree.
@@ -78,6 +114,24 @@ inductive Entry where
   /-- A conflict: the merge's base, ours and theirs, each where the index
   holds it. -/
   | conflict (base ours theirs : Option String)
+  deriving DecidableEq, Repr
+
+/-- A commit of the model's graph: its parents and its files. -/
+structure Commit where
+  /-- Its parents' ids, the first parent first. -/
+  parents : Array String := #[]
+  /-- Its files, each a path and its content. -/
+  files : Array (String × String)
+  deriving DecidableEq, Repr
+
+/-- A linked worktree. -/
+structure Linked where
+  /-- Its directory, beside the root: `/<name>` for the root `/r`. -/
+  path : System.FilePath
+  /-- Its branch, or none when it is detached at `HEAD`'s commit. -/
+  branch : Option String
+  /-- Whether it holds an untracked file, so that removing it is refused. -/
+  dirty : Bool := false
   deriving DecidableEq, Repr
 
 /-- A repository, as a value. -/
@@ -101,6 +155,19 @@ structure Repository where
   /-- A pre-commit hook that refuses every commit, printing this: its first
   line on its standard output and the rest on its standard error. -/
   hook : Option String := none
+  /-- The main worktree's directory. -/
+  root : System.FilePath := "/r"
+  /-- Commits besides `HEAD`'s, by id, parents before children. None names
+  `HEAD`'s commit as a parent. -/
+  commits : Array (String × Commit) := #[]
+  /-- Branches besides the checked-out one, each a name and a commit's id. -/
+  branches : Array (String × String) := #[]
+  /-- The parents of `HEAD`'s commit, each the id of one of `commits`. -/
+  parents : Array String := #[]
+  /-- `HEAD`'s commit's id; its files are `committed`. -/
+  headId : String := "head"
+  /-- The linked worktrees. -/
+  linked : Array Linked := #[]
   deriving DecidableEq, Repr
 
 /-- The value `entries` holds for `path`. -/
@@ -281,10 +348,67 @@ def unstageOne (repository : Repository) (path : String) : Repository :=
 def ran (stdout : ByteArray) : Except ProcessError Process.Ran :=
   .ok { exit := .code 0, stdout, stderr := .empty }
 
-/-- The files of `revision` (`fileAt`'s): `HEAD`'s, a named revision's, and
-`none` for a revision that is not there. -/
+/-- The checked-out branch's name, if `HEAD` is on one. -/
+def checkedOut (repository : Repository) : Option String :=
+  match repository.head with
+  | .branch name => some name
+  | .detached => none
+
+/-- The commit id `name` names ("The graph", in the module docs): `HEAD` and
+the checked-out branch name `HEAD`'s commit while the branch is born, a
+branch its commit, a tag itself, and a commit's id itself; `none` for a
+name that is none of these. -/
+def resolve (repository : Repository) (name : String) : Option String :=
+  if name == "HEAD" || repository.checkedOut == some name then
+    if repository.committed.isEmpty then none else some repository.headId
+  else
+    match lookup repository.branches name with
+    | some id => some id
+    | none =>
+      if (lookup repository.revisions name).isSome then some name
+      else if (lookup repository.commits name).isSome then some name else none
+
+/-- The files of the commit `id`: `HEAD`'s, a commit's, or a tag's. -/
+def filesAt (repository : Repository) (id : String) : Option (Array (String × String)) :=
+  if id == repository.headId && !repository.committed.isEmpty then some repository.committed
+  else
+    match lookup repository.commits id with
+    | some commit => some commit.files
+    | none => lookup repository.revisions id
+
+/-- The parents of the commit `id`; a tag's commit has none. -/
+def parentsOf (repository : Repository) (id : String) : Array String :=
+  if id == repository.headId then repository.parents
+  else ((lookup repository.commits id).map (·.parents)).getD #[]
+
+/-- The commit `id` and its ancestors, breadth-first, the commit first, each
+once. -/
+def ancestors (repository : Repository) (id : String) : Array String :=
+  let fuel := repository.commits.size + 2
+  (List.range fuel).foldl
+      (fun ((seen, frontier) : Array String × Array String) _ =>
+        let next :=
+          frontier.foldl
+            (fun (next : Array String) at_ =>
+              (repository.parentsOf at_).foldl
+                (fun next parent =>
+                  if seen.contains parent || next.contains parent then next else next.push parent)
+                next)
+            #[]
+        (seen ++ next, next))
+      (#[id], #[id]) |>.1
+
+/-- The merge base of the commits `a` and `b`: the first of `a`'s ancestors,
+breadth-first, that is also `b`'s. Where the merge base is unique, as in
+every property's graph, that is git's. -/
+def mergeBase (repository : Repository) (a b : String) : Option String :=
+  let ofB := repository.ancestors b
+  (repository.ancestors a).find? ofB.contains
+
+/-- The files of `revision` (`fileAt`'s), through `resolve`; `none` for a
+revision that is not there. -/
 def filesOf (repository : Repository) (revision : String) : Option (Array (String × String)) :=
-  if revision == "HEAD" then some repository.committed else lookup repository.revisions revision
+  (repository.resolve revision).bind repository.filesAt
 
 /-- The content of `path` at `revision` ("How it answers", in the module
 docs): the index's for the empty revision. -/
@@ -305,7 +429,16 @@ def watchedOf (repository : Repository) : Watched :=
 /-- `repository` with its index committed: `HEAD`'s files are the index's
 merged files, as `git commit` without `-a` makes them. -/
 def commit (repository : Repository) : Repository :=
-  { repository with
+  let frozen :=
+    if repository.committed.isEmpty then repository
+    else
+      let headId := s!"{repository.headId}-{repository.commits.size}"
+      { repository with
+        commits :=
+          repository.commits.push
+            (repository.headId, { parents := repository.parents, files := repository.committed })
+        parents := #[repository.headId], headId }
+  { frozen with
     committed :=
       repository.index.filterMap fun (path, entry) =>
         match entry with
@@ -350,6 +483,115 @@ def committing (repository : Repository) : Except Error Repository :=
         .error (.failed (.code 1) "nothing to commit")
       else .ok repository.commit
 
+/-- The worktrees of `repository` (`worktrees`): the main one, then each
+linked one in path order. -/
+def worktreesOf (repository : Repository) : Array Worktree :=
+  #[{ path := repository.root, head := repository.head }] ++
+    (repository.linked.map fun linked =>
+          ({  path := linked.path
+              head :=
+                match linked.branch with
+                | some branch => .branch branch
+                | none => .detached } :
+            Worktree)).qsort
+      fun a b => decide (a.path.toString < b.path.toString)
+
+/-- The local branches of `repository` (`branches`): the checked-out one
+while it is born, and every other, in byte order. -/
+def branchNames (repository : Repository) : Array String :=
+  let current :=
+    match repository.checkedOut with
+    | some name => if repository.committed.isEmpty then #[] else #[name]
+    | none => #[]
+  (current ++ repository.branches.map (·.1)).qsort fun a b => decide (a < b)
+
+/-- Whether a branch named `name` exists: the checked-out one while it is
+born, or another. -/
+def hasBranch (repository : Repository) (name : String) : Bool :=
+  repository.branchNames.contains name
+
+/-- The change of `revision` against its merge base with `against`
+("`changes`", in the module docs), or why it is refused. -/
+def changesOf (repository : Repository) (revision against : String) : Except Error Changes := do
+  let resolved (name : String) : Except Error String :=
+    match repository.resolve name with
+    | some id => .ok id
+    | none => .error (.failed (.code 1) s!"{name} is not a commit")
+  let new ← resolved revision
+  let old ← resolved against
+  let some base :=
+    repository.mergeBase new
+      old | throw (.failed (.code 1) s!"{revision} and {against} have no merge base")
+  let oldFiles := (repository.filesAt base).getD #[]
+  let newFiles := (repository.filesAt new).getD #[]
+  let paths :=
+    ((oldFiles.map (·.1) ++ newFiles.map (·.1)).qsort fun a b => decide (a < b)).foldl
+      (fun (kept : Array String) path => if kept.back? == some path then kept else kept.push path)
+      #[]
+  return {
+      base
+      files :=
+        paths.filterMap fun path =>
+          let (old, new) := (lookup oldFiles path, lookup newFiles path)
+          if old == new then none else some { path, old, new } }
+
+/-- Where the branch `branch` is checked out, if it is: the root or a linked
+worktree's directory. -/
+def checkedOutAt (repository : Repository) (branch : String) : Option System.FilePath :=
+  if repository.checkedOut == some branch then some repository.root
+  else (repository.linked.find? (·.branch == some branch)).map (·.path)
+
+/-- `repository` with a worktree added at `path` ("`addWorktree`", in the
+module docs), or why it is refused, as git refuses it. -/
+def addingWorktree (repository : Repository) (path : System.FilePath) (branch : String)
+    (start : Option String) : Except Error Repository := do
+  if path == repository.root || repository.linked.any (·.path == path) then
+    throw (.failed (.code 128) s!"fatal: '{path}' already exists")
+  match start with
+  | some start =>
+    if repository.hasBranch branch then
+      throw (.failed (.code 128) s!"fatal: a branch named '{branch}' already exists")
+    let some id :=
+      repository.resolve start | throw (.failed (.code 128) s!"fatal: invalid reference: {start}")
+    return { repository with
+        branches := repository.branches.push (branch, id)
+        linked := repository.linked.push { path, branch := some branch } }
+  | none =>
+    if !repository.hasBranch branch then
+      throw (.failed (.code 128) s!"fatal: invalid reference: {branch}")
+    if let some at_ := repository.checkedOutAt branch then
+      throw (.failed (.code 128) s!"fatal: '{branch}' is already used by worktree at '{at_}'")
+    return { repository with linked := repository.linked.push { path, branch := some branch } }
+
+/-- `repository` with the linked worktree at `path` removed
+("`removeWorktree`", in the module docs), or why it is refused, as git
+refuses it. -/
+def removingWorktree (repository : Repository) (path : System.FilePath) : Except Error Repository :=
+  do
+  if path == repository.root then
+    throw (.failed (.code 128) s!"fatal: '{path}' is a main working tree")
+  let some linked :=
+    repository.linked.find?
+      (·.path == path) | throw (.failed (.code 128) s!"fatal: '{path}' is not a working tree")
+  if linked.dirty then
+    throw
+        (.failed (.code 128)
+          s!"fatal: '{path}' contains modified or untracked files, use --force to delete it")
+  return { repository with linked := repository.linked.filter (·.path != path) }
+
+/-- What the git implementation's worktree list read
+(`Git.worktreeListArguments`) prints of `repository`, as git prints it with
+`-z`: a record for each worktree, its path, `HEAD` and its branch or
+`detached`. -/
+def worktreePorcelain (repository : Repository) : ByteArray :=
+  String.join
+      (repository.worktreesOf.toList.map fun worktree =>
+        let head :=
+          match worktree.head with
+          | .branch name => s!"branch refs/heads/{name}"
+          | .detached => "detached"
+        s!"worktree {worktree.path}\x00HEAD {zeros}\x00{head}\x00\x00") |>.toUTF8
+
 end Repository
 
 /-- The id the job model gives the blob of `content`: made of its content
@@ -364,7 +606,7 @@ meets `repository`: its status read prints `porcelain`; each of `writes`
 exits 0; `fileAt`'s two runs answer each file of `HEAD`, of the index (the
 empty revision) and of each named revision, its id and then its bytes; its first run exits 1 for each
 revision and path of `missing`; and `watched` prints the git and the common
-directories. A hunk's apply of `writes` exits 0 whatever it is fed, and so
+directories; and its worktree list read prints `worktreePorcelain`. A hunk's apply of `writes` exits 0 whatever it is fed, and so
 does its commit, but in a repository with a `hook`, where it exits 1 with
 the hook's output on its standard error. A command no script names is refused as `notFound`, as a
 program that is not there is. -/
@@ -380,7 +622,8 @@ def jobModel (repository : Repository) (git : String) (root : System.FilePath)
     processes :=
       {
         scripts :=
-          #[script Git.statusArguments repository.porcelain] ++
+          #[script Git.statusArguments repository.porcelain,
+              script Git.worktreeListArguments repository.worktreePorcelain] ++
             writes.filterMap
               (fun write =>
                 match write with
@@ -443,5 +686,25 @@ def handle : (request : Request) → Repository → request.Reply × Repository
     match repository.committing with
     | .ok after => (.ok (), after)
     | .error error => (.error error, repository)
+  | .worktrees, repository => (.ok repository.worktreesOf, repository)
+  | .branches, repository => (.ok repository.branchNames, repository)
+  | request@(.changes revision against), repository =>
+    match request.invalid? with
+    | some detail => (.error (.invalid detail), repository)
+    | none => (repository.changesOf revision against, repository)
+  | request@(.addWorktree path branch start), repository =>
+    match request.invalid? with
+    | some detail => (.error (.invalid detail), repository)
+    | none =>
+      match repository.addingWorktree path branch start with
+      | .ok after => (.ok (), after)
+      | .error error => (.error error, repository)
+  | request@(.removeWorktree path), repository =>
+    match request.invalid? with
+    | some detail => (.error (.invalid detail), repository)
+    | none =>
+      match repository.removingWorktree path with
+      | .ok after => (.ok (), after)
+      | .error error => (.error error, repository)
 
 end Editor.VersionControl.Model

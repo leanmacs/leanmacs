@@ -1,4 +1,5 @@
 import Editor.VersionControl
+import Editor.VersionControl.Plumbing
 import Editor.VersionControl.Porcelain
 import Editor.Workspace
 
@@ -8,8 +9,9 @@ import Editor.Workspace
 `Git.handler git root` answers each request of the version-control port
 (`Editor/VersionControl.lean`) by running `git` in the repository's root as
 a job: each run is one `Process.runWithin` (`Editor/Job.lean`), or a fed
-`Process.runWithInput` for a hunk and a commit, one for each request but
-`fileAt`, which is two, so the child gets its directory's environment, and
+`Process.runWithInput` for a hunk, a commit and a change's blobs, one for
+each request but `fileAt`, which is two, `changes`, which is five, and
+`addWorktree`, which is two or three, so the child gets its directory's environment, and
 is killed with its process group when the job is cancelled. No new binding is needed. Its model is
 `Editor/VersionControl/Model.lean`, and both are held to the contract
 (`Editor/VersionControl/Contract.lean`).
@@ -69,6 +71,41 @@ change:
   option, and no temporary file. `--cleanup=whitespace` is git's own
   default for a message from a file; pinning it stops a user's
   `commit.cleanup=strip` from dropping a line that starts with `#`.
+- **worktrees**: `git worktree list --porcelain -z` (git 2.36 and later),
+  which never quotes a path, read by `parseWorktrees`
+  (`Editor/VersionControl/Plumbing.lean`): a bare main repository is
+  dropped, the linked worktrees sorted by path after the first.
+- **branches**: `git for-each-ref --format=%(refname) refs/heads/`, each
+  full name with `refs/heads/` stripped (`parseBranches`), never
+  `%(refname:short)`, which git shortens differently when a tag shares a
+  branch's name.
+- **changes**: `git rev-parse --verify --quiet <name>^{commit}` for each
+  name, so the merge base and the diff are of one pair of commits even if
+  a branch moves meanwhile; an exit of 1 is `<name> is not a commit`, with
+  status 1, as the model refuses it. Then `git merge-base <R> <A>`, whose
+  exit of 1 with nothing said is `<revision> and <against> have no merge
+  base`; `git diff-tree -r -z --no-renames <M> <R>`, plumbing, so no
+  textconv, external diff or colour, with `--no-renames` pinning it against
+  `diff.renames=copies` (`parseRawDiff`, which drops a change of mode
+  alone); and one `git cat-file --batch` fed each distinct blob id a line,
+  without `--textconv` or `--filters`, so it prints raw blobs, read by
+  their sizes (`parseBatch`). Its output must name every id asked for, as
+  a blob, or the change is `unparsable`. A submodule's side is never read:
+  it is `Subproject commit <id>`. Each content is decoded by the store's
+  escape rule.
+- **addWorktree**: `git worktree list --porcelain -z` first, and a path
+  that is a worktree is refused (128) before anything is made, since git
+  makes a new branch before it refuses an existing path. Without a start,
+  `git rev-parse --verify --quiet refs/heads/<branch>`, whose exit of 1 is
+  refused (128) as an invalid reference: `git worktree add <path> <name>`
+  would otherwise detach at a tag or a commit of that name, or make a
+  branch from a remote one. Then `git worktree add --quiet -b <branch>
+  <path> <start>`, or `git worktree add --quiet <path> <branch>`.
+- **removeWorktree**: `git -c status.showUntrackedFiles=normal worktree
+  remove <path>`. Under a user's `status.showUntrackedFiles=no`, git would
+  not see an untracked file, and would delete it with the worktree.
+- **Before any run**, `Request.invalid?` refuses a name that starts with
+  `-` and a relative worktree path, so no name is read as an option.
 - **The patch** (`patch path hunk reverse`) is pure: a `diff --git` header
   and `---`/`+++` lines naming the path C-quoted (`quoted`), always, so a
   space, a quote or a byte past ASCII reads back as itself; one `@@ -o,oc
@@ -94,7 +131,12 @@ change:
   with `outputTooLarge` or `timedOut`, never a parse of output cut short.
   A commit has `commitTime` (10 minutes) in place of `gitTime`, because a
   pre-commit hook may run linters or tests, and a commit killed while its
-  hook runs could leave `index.lock` behind.
+  hook runs could leave `index.lock` behind. Making and removing a
+  worktree run under `commitEnvironment` and `worktreeTime` (10 minutes):
+  checking out a large tree takes time, and git runs the `post-checkout`
+  hook, which must see pathspecs as patterns. A change's streams are held
+  to `statusOutput` too, so its contents together are; past it the change
+  could not run, never a partial one.
 
 ## The replies
 
@@ -123,6 +165,11 @@ def gitTime : Nat :=
 /-- How long a commit may take, in milliseconds: 10 minutes, for a hook that
 runs linters or tests. -/
 def commitTime : Nat :=
+  600000
+
+/-- How long making or removing a worktree may take, in milliseconds: 10
+minutes, for checking out a large tree and its `post-checkout` hook. -/
+def worktreeTime : Nat :=
   600000
 
 /-- The environment of every git run: the editor's, with `GIT_DIR`,
@@ -212,6 +259,49 @@ def revisionArguments (revision path : String) : Array String :=
 def blobArguments (id : String) : Array String :=
   #["cat-file", "blob", id]
 
+/-- The arguments of the worktree list read. -/
+def worktreeListArguments : Array String :=
+  #["worktree", "list", "--porcelain", "-z"]
+
+/-- The arguments of the branch list read. -/
+def branchArguments : Array String :=
+  #["for-each-ref", "--format=%(refname)", "refs/heads/"]
+
+/-- The arguments that resolve `name` to a commit's id, or exit 1 when it
+names none. -/
+def resolveArguments (name : String) : Array String :=
+  #["rev-parse", "--verify", "--quiet", s!"{name}^\{commit}"]
+
+/-- The arguments of a merge base's read: the merge base of the commits `a`
+and `b`. -/
+def mergeBaseArguments (a b : String) : Array String :=
+  #["merge-base", a, b]
+
+/-- The arguments of a raw diff of the commit `new` against `old`, renames
+off. -/
+def diffTreeArguments (old new : String) : Array String :=
+  #["diff-tree", "-r", "-z", "--no-renames", old, new]
+
+/-- The arguments of a batch read of blobs, fed their ids, one a line. -/
+def batchArguments : Array String :=
+  #["cat-file", "--batch"]
+
+/-- The arguments that check that a local branch named `branch` exists. -/
+def branchExistsArguments (branch : String) : Array String :=
+  #["rev-parse", "--verify", "--quiet", s!"refs/heads/{branch}"]
+
+/-- The arguments that make a worktree at `path` on `branch`: a new branch
+at `start`, or the existing branch. -/
+def addWorktreeArguments (path : System.FilePath) (branch : String) : Option String → Array String
+  | some start => #["worktree", "add", "--quiet", "-b", branch, path.toString, start]
+  | none => #["worktree", "add", "--quiet", path.toString, branch]
+
+/-- The arguments that remove the linked worktree at `path`, untracked files
+pinned visible: under a user's `status.showUntrackedFiles=no`, git would
+not see an untracked file and would delete it with the worktree. -/
+def removeWorktreeArguments (path : System.FilePath) : Array String :=
+  #["-c", "status.showUntrackedFiles=normal", "worktree", "remove", path.toString]
+
 /-- The arguments of `watched`. -/
 def watchedArguments : Array String :=
   #["rev-parse", "--git-dir", "--git-common-dir"]
@@ -219,6 +309,13 @@ def watchedArguments : Array String :=
 /-- The command that runs `git` with `arguments` in `root`. -/
 def command (git : String) (root : System.FilePath) (arguments : Array String) : Process.Command :=
   { program := git, arguments, environment, directory := root }
+
+/-- The command that makes or removes a worktree from `root` with
+`arguments`, under `commitEnvironment`, since git runs the `post-checkout`
+hook. -/
+def worktreeCommand (git : String) (root : System.FilePath) (arguments : Array String) :
+    Process.Command :=
+  { program := git, arguments, environment := commitEnvironment, directory := root }
 
 /-- The command that commits in `root`, under `commitEnvironment`. -/
 def commitCommand (git : String) (root : System.FilePath) : Process.Command :=
@@ -271,6 +368,142 @@ def watchedOf (root : System.FilePath) (stdout : ByteArray) : Except Error Watch
         paths := #[gitDir / "HEAD", gitDir / "index", commonDir / "packed-refs"]
         trees := #[commonDir / "refs"] }
   | _ => .error (.unparsable s!"rev-parse printed {lines.length} lines, not two")
+
+/-- The commit id `name` names, through `rev-parse`, or the refusal of a name
+that names none ("`changes`", in the module docs). -/
+def resolveIn (git : String) (root : System.FilePath) (name : String) :
+    JobM (Except Error String) := do
+  match ← run git root (resolveArguments name) with
+  | .error (.failed (.code 1) _) =>
+    return .error (.failed (.code 1) s!"{name} is not a commit")
+  | .error error =>
+    return .error error
+  | .ok ran =>
+    let id := (File.decodeBytes ran.stdout).trimAscii.toString
+    return if id.isEmpty then .error (.unparsable "rev-parse printed no object id") else .ok id
+
+/-- The ids of the blobs `changes` reads, each once, in order: every side of
+a change that is there and is not a submodule's commit. -/
+def blobIds (changes : Array Plumbing.RawChange) : Array String :=
+  (changes.flatMap fun change =>
+        #[(change.oldMode, change.oldId), (change.newMode, change.newId)]).foldl
+    (fun (ids : Array String) (mode, id) =>
+      if mode == Plumbing.absentMode || mode == Plumbing.gitlinkMode || ids.contains id then ids
+      else ids.push id)
+    #[]
+
+/-- The content of a side of a change, its mode `mode` and its id `id`, from
+the blobs read: `none` where the side lacks the path, and a submodule's
+commit as git prints it. -/
+def sideContent (blobs : Array (String × ByteArray)) (mode id : String) :
+    Except Error (Option String) :=
+  if mode == Plumbing.absentMode then .ok none
+  else
+    if mode == Plumbing.gitlinkMode then .ok (some s!"Subproject commit {id}\n")
+    else
+      match blobs.find? (·.1 == id) with
+      | some (_, bytes) => .ok (some (File.decodeBytes bytes))
+      | none => .error (.unparsable s!"cat-file did not print {id}")
+
+/-- The contents of `changes`' blobs, read with one `cat-file --batch`: none
+is run when there are none. -/
+def readBlobs (git : String) (root : System.FilePath) (changes : Array Plumbing.RawChange) :
+    JobM (Except Error (Array (String × ByteArray))) := do
+  let ids := blobIds changes
+  if ids.isEmpty then
+    return .ok #[]
+  let fed := String.join (ids.toList.map (· ++ "\n")) |>.toUTF8
+  match
+    outcome (← Process.runWithInput (command git root batchArguments) fed statusOutput gitTime) with
+  | .error error =>
+    return .error error
+  | .ok ran =>
+    return (Plumbing.parseBatch ran.stdout).mapError .unparsable
+
+/-- The change of `revision` against its merge base with `against`
+("`changes`", in the module docs). -/
+def changesIn (git : String) (root : System.FilePath) (revision against : String) :
+    JobM (Except Error Changes) := do
+  let new ←
+    match ← resolveIn git root revision with
+    | .ok id =>
+      pure id
+    | .error error =>
+      return .error error
+  let old ←
+    match ← resolveIn git root against with
+    | .ok id =>
+      pure id
+    | .error error =>
+      return .error error
+  let base ←
+    match ← run git root (mergeBaseArguments new old) with
+    | .error (.failed (.code 1) "") =>
+      return .error (.failed (.code 1) s!"{revision} and {against} have no merge base")
+    | .error error =>
+      return .error error
+    | .ok ran =>
+      let base := (File.decodeBytes ran.stdout).trimAscii.toString
+      if base.isEmpty then
+        return .error (.unparsable "merge-base printed no object id")
+      pure base
+  let raw ←
+    match ← run git root (diffTreeArguments base new) with
+    | .error error =>
+      return .error error
+    | .ok ran =>
+      match Plumbing.parseRawDiff ran.stdout with
+      | .ok raw =>
+        pure raw
+      | .error why =>
+        return .error (.unparsable why)
+  let blobs ←
+    match ← readBlobs git root raw with
+    | .ok blobs =>
+      pure blobs
+    | .error error =>
+      return .error error
+  let files ←
+    match
+      raw.mapM fun change => do
+        return ({
+              path := change.path, old := ← sideContent blobs change.oldMode change.oldId
+              new := ← sideContent blobs change.newMode change.newId } :
+            FileChange) with
+    | .ok files =>
+      pure files
+    | .error error =>
+      return .error error
+  return .ok { base, files := files.qsort fun a b => decide (a.path < b.path) }
+
+/-- Makes a worktree ("`addWorktree`", in the module docs): refused when its
+path is a worktree already, or, on an existing branch, when there is no
+such branch, before `git worktree add` runs. -/
+def addWorktreeIn (git : String) (root : System.FilePath) (path : System.FilePath) (branch : String)
+    (start : Option String) : JobM (Except Error Unit) := do
+  match ← run git root worktreeListArguments with
+  | .error error =>
+    return .error error
+  | .ok ran =>
+    match Plumbing.parseWorktrees ran.stdout with
+    | .error why =>
+      return .error (.unparsable why)
+    | .ok listed =>
+      if listed.any (·.path == path) then
+        return .error (.failed (.code 128) s!"fatal: '{path}' already exists")
+  if start.isNone then
+    match ← run git root (branchExistsArguments branch) with
+    | .error (.failed (.code 1) _) =>
+      return .error (.failed (.code 128) s!"fatal: invalid reference: {branch}")
+    | .error error =>
+      return .error error
+    | .ok _ =>
+      pure ()
+  return written
+      (outcome
+        (←
+          Process.runWithin (worktreeCommand git root (addWorktreeArguments path branch start))
+              statusOutput worktreeTime))
 
 /-- The git implementation, running `git` in `root` ("The command lines",
 "The replies", in the module docs). -/
@@ -330,5 +563,39 @@ def handler (git : String) (root : System.FilePath) : Handler
             Process.runWithInput (commitCommand git root) (File.encodeText message) statusOutput
                 commitTime)
           bothSaid)
+  | .worktrees => do
+    match ← run git root worktreeListArguments with
+    | .error error =>
+      return .error error
+    | .ok ran =>
+      return (Plumbing.parseWorktrees ran.stdout).mapError .unparsable
+  | .branches => do
+    match ← run git root branchArguments with
+    | .error error =>
+      return .error error
+    | .ok ran =>
+      return (Plumbing.parseBranches ran.stdout).mapError .unparsable
+  | request@(.changes revision against) => do
+    match request.invalid? with
+    | some detail =>
+      return .error (.invalid detail)
+    | none =>
+      changesIn git root revision against
+  | request@(.addWorktree path branch start) => do
+    match request.invalid? with
+    | some detail =>
+      return .error (.invalid detail)
+    | none =>
+      addWorktreeIn git root path branch start
+  | request@(.removeWorktree path) => do
+    match request.invalid? with
+    | some detail =>
+      return .error (.invalid detail)
+    | none =>
+      return written
+          (outcome
+            (←
+              Process.runWithin (worktreeCommand git root (removeWorktreeArguments path))
+                  statusOutput worktreeTime))
 
 end Editor.VersionControl.Git

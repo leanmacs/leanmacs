@@ -108,8 +108,9 @@ files last shown, which the commands read the cursor's file from.
 (`Editor/Command/Dispatch.lean`, "Read-only buffers"). It fills three
 roles, `refresh` with `vc-status-refresh`, `activate` with
 `vc-status-visit` and `toggle` with `vc-status-toggle`, and has the leader
-suffixes `s`, `u` and `c`, the last `vc-commit`, which opens the message
-buffer (`Editor/VersionControl/Commit.lean`). It needs no key of its own: each scheme's role table
+suffixes `s`, `u`, `c` and `w`: `c` is `vc-commit`, which opens the message
+buffer (`Editor/VersionControl/Commit.lean`), and `w` is `vc-worktrees`,
+which opens the worktree list (`Editor/VersionControl/Worktrees.lean`). It needs no key of its own: each scheme's role table
 puts its keys on the roles.
 
 Pinned by `ModelTest.statusViewChecks` on the model's values,
@@ -155,6 +156,12 @@ def unstageName : String :=
 buffers are shown for: the status buffer's leader suffix `c`. -/
 def commitName : String :=
   "vc-commit"
+
+/-- The name the command that opens the worktree list
+(`Editor/VersionControl/Worktrees.lean`) is registered under, and the opener
+its buffer is shown for: the status buffer's leader suffix `w`. -/
+def worktreesName : String :=
+  "vc-worktrees"
 
 /-- The name the job that reads a status is registered under. -/
 def readJob : String :=
@@ -550,23 +557,34 @@ def applyWork (arguments : List Argument) : Work := fun _ => do
 def gitProgram : EditorM String := do
   return (← EditorState.ask .workspaceSettings).1.git
 
-/-- `vc-status` ("The commands", in the module docs). Its arguments are
-ignored. -/
-def statusCommand (call : Call) : EditorM Unit := do
+/-- The read the command `name` asks of the focused buffer's workspace, shown:
+`none`, said, when the buffer has no workspace or its location cannot run
+commands ("The commands", in the module docs). `vc-status`'s gate, which
+`vc-worktrees` shares. -/
+def readOrder (name : String) (call : Call) : EditorM (Option ReadOrder) := do
   match (← editorState).workspaceOf? call.target.window.buffer with
   | none =>
-    message s!"{statusName}: {call.target.buffer.name} has no workspace"
+    message s!"{name}: {call.target.buffer.name} has no workspace"
+    return none
   | some (workspace, _) =>
     match workspace.location with
     | .local root =>
       if workspace.location.can.runCommands then
-        startRead
+        return some
             { root, git := ← gitProgram, label := workspace.label, view := call.target.window.id
               shows := true }
       else
-        message s!"{statusName}: {workspace.label} cannot run commands"
+        message s!"{name}: {workspace.label} cannot run commands"
+        return none
     | _ =>
-      message s!"{statusName}: {workspace.label} cannot run commands"
+      message s!"{name}: {workspace.label} cannot run commands"
+      return none
+
+/-- `vc-status` ("The commands", in the module docs). Its arguments are
+ignored. -/
+def statusCommand (call : Call) : EditorM Unit := do
+  if let some order← readOrder statusName call then
+    startRead order
 
 /-- The read of the status buffer `call` was made in, as the command `name`
 asks it, with the files it shows; said and `none` when the buffer is not its
@@ -648,6 +666,6 @@ def unstageCommand (call : Call) : EditorM Unit :=
 def mode : Mode :=
   { name := modeName
     roles := [(Role.refresh, refreshName), (Role.activate, visitName), (Role.toggle, toggleName)]
-    locals := [("s", stageName), ("u", unstageName), ("c", commitName)] }
+    locals := [("s", stageName), ("u", unstageName), ("c", commitName), ("w", worktreesName)] }
 
 end Editor.VersionControl

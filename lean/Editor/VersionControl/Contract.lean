@@ -36,6 +36,16 @@ property tests the interface and not a diff engine. One of them is the
 adapter test of phase 3's first criterion: staging one hunk of a file with
 two changed hunks stages that hunk alone.
 
+The properties of worktrees (`worktreeProperties`) never write a path:
+each takes the main worktree's path from the `worktrees` reply and names
+the others beside it (`beside`), so one program holds of the model's `/r`
+and of a temporary directory, which git spells with links resolved. The
+first is the adapter test of phase 4's third criterion: creating a
+worktree for a new branch and removing it leaves the list as it was, with
+the worktree on its branch in between. Its refusals compare the exit, and
+a change's the exit and the message, so the model cannot drift from
+git.
+
 ## Adding to this
 
 A new request's behaviour is a new property here, with the repository that
@@ -305,6 +315,242 @@ def hunkProperties : List Property :=
             (← fileAt "HEAD" "a.txt") == .ok (some "one\n") &&
             (← indexOf "a.txt") == some "two\n" }]
 
+/-- The directory named `name` beside `path`: in the directory that holds
+`path`, spelled with one separator under the root. -/
+def beside (path : System.FilePath) (name : String) : System.FilePath :=
+  match path.parent with
+  | some parent => if parent.toString == "/" then ⟨"/" ++ name⟩ else parent / name
+  | none => name
+
+/-- The worktrees, and the main one, the first; none when the read failed or
+listed none. -/
+def listed : VersionControlM (Option (Array Worktree × Worktree)) := do
+  match ← worktrees with
+  | .ok all =>
+    return all[0]?.map (all, ·)
+  | .error _ =>
+    return none
+
+/-- The branches, or none when the read failed. -/
+def branchesOf : VersionControlM (Option (Array String)) := do
+  return (← branches).toOption
+
+/-- Whether a reply is a refusal before anything ran (`Error.invalid`). -/
+def invalidReply {α : Type} : Except Error α → Bool
+  | .error (.invalid _) => true
+  | _ => false
+
+/-- The changed files of `revision` against `against`, or none when the
+request was refused. -/
+def changedFiles (revision against : String) : VersionControlM (Option (Array FileChange)) := do
+  return ((← changes revision against).toOption).map (·.files)
+
+/-- A repository on `main` whose `HEAD` holds `files` and has the parent `B`,
+which holds `base`, with the branches `branches`, each a name and a commit
+of `commits`. -/
+def forked (base files : Array (String × String)) (commits : Array (String × Model.Commit))
+    (branches : Array (String × String)) : Model.Repository :=
+  { clean files with
+    commits := #[("B", { files := base })] ++ commits, parents := #["B"], branches }
+
+/-- The interface's properties of worktrees, branches and a branch's change
+(phase 4). Paths are never written into a property: each takes the main
+worktree's path from the `worktrees` reply and names the others beside it
+(`beside`), so the same program holds of the model's root and of a
+temporary directory. -/
+def worktreeProperties : List Property :=
+  [{  name :=
+        "criterion 3: creating a worktree for a new branch and then removing it leaves the worktree list as it was, with the worktree on its branch in between"
+      repository := clean #[("a.txt", "a\n")]
+      holds := do
+        let some (before, main) ← listed | return false
+        let path := beside main.path "feature"
+        let added ← addWorktree path "feature" (some "HEAD")
+        let during ← worktrees
+        let removed ← removeWorktree path
+        let after ← worktrees
+        let names ← branchesOf
+        return succeeded added &&
+            during == .ok (before ++ #[{ path, head := .branch "feature" }]) &&
+            succeeded removed &&
+            after == .ok before &&
+            names == some #["feature", "main"] },
+    { name := "a repository with no linked worktree lists its main worktree alone, on its branch"
+      repository := clean #[("a.txt", "a\n")]
+      holds := do
+        let some (all, main) ← listed | return false
+        return all.size == 1 && main.head == .branch "main" && main.path.isAbsolute },
+    { name := "a detached main worktree is listed as detached"
+      repository := { clean #[("a.txt", "a\n")] with head := .detached }
+      holds := do
+        let some (all, main) ← listed | return false
+        return all.size == 1 && main.head == .detached },
+    { name :=
+        "linked worktrees are listed after the main one in path order, each with its branch, a detached one as detached"
+      repository :=
+        { clean #[("a.txt", "a\n")] with
+          branches := #[("b", "head")]
+          linked :=
+            #[{ path := "/b-wt", branch := some "b" }, { path := "/a-wt", branch := none }] }
+      holds := do
+        let some (all, main) ← listed | return false
+        return all ==
+            #[main, { path := beside main.path "a-wt", head := .detached },
+              { path := beside main.path "b-wt", head := .branch "b" }] },
+    { name := "creating a worktree on an existing branch checks that branch out there"
+      repository := { clean #[("a.txt", "a\n")] with branches := #[("b", "head")] }
+      holds := do
+        let some (before, main) ← listed | return false
+        let path := beside main.path "b-wt"
+        let added ← addWorktree path "b"
+        return succeeded added &&
+            (← worktrees) == .ok (before ++ #[{ path, head := .branch "b" }]) },
+    { name :=
+        "creating a worktree for a branch that exists, or at the main worktree's path, is refused, and the list and the branches are as they were"
+      repository := { clean #[("a.txt", "a\n")] with branches := #[("b", "head")] }
+      holds := do
+        let some (before, main) ← listed | return false
+        let names ← branchesOf
+        let existing ← addWorktree (beside main.path "x") "b" (some "HEAD")
+        let atRoot ← addWorktree main.path "z" (some "HEAD")
+        return !succeeded existing && !succeeded atRoot && (← worktrees) == .ok before &&
+            names.isSome &&
+            (← branchesOf) == names },
+    { name := "creating a worktree on a branch checked out elsewhere is refused"
+      repository :=
+        { clean #[("a.txt", "a\n")] with
+          branches := #[("b", "head")], linked := #[{ path := "/b-wt", branch := some "b" }] }
+      holds := do
+        let some (before, main) ← listed | return false
+        let onMain ← addWorktree (beside main.path "x") "main"
+        let onB ← addWorktree (beside main.path "y") "b"
+        return onMain matches .error (.failed (.code 128) _) &&
+            onB matches .error (.failed (.code 128) _) &&
+            (← worktrees) == .ok before },
+    { name :=
+        "creating a worktree from a start that is not there, or on a branch that is not there, is refused, and no branch is made"
+      repository := clean #[("a.txt", "a\n")]
+      holds := do
+        let some (before, main) ← listed | return false
+        let fromNothing ← addWorktree (beside main.path "x") "n" (some "nope")
+        let onNothing ← addWorktree (beside main.path "y") "nope"
+        return fromNothing matches .error (.failed (.code 128) _) &&
+            onNothing matches .error (.failed (.code 128) _) &&
+            (← worktrees) == .ok before &&
+            (← branchesOf) == some #["main"] },
+    { name :=
+        "removing a worktree with an untracked file in it is refused with status 128, and it is still listed"
+      repository :=
+        { clean #[("a.txt", "a\n")] with
+          linked := #[{ path := "/w", branch := none, dirty := true }] }
+      holds := do
+        let some (before, main) ← listed | return false
+        let removed ← removeWorktree (beside main.path "w")
+        return removed matches .error (.failed (.code 128) _) && (← worktrees) == .ok before },
+    { name :=
+        "removing the main worktree, or a path that is no worktree, is refused with status 128"
+      repository := clean #[("a.txt", "a\n")]
+      holds := do
+        let some (before, main) ← listed | return false
+        let removedMain ← removeWorktree main.path
+        let removedNothing ← removeWorktree (beside main.path "nowhere")
+        return removedMain matches .error (.failed (.code 128) _) &&
+            removedNothing matches .error (.failed (.code 128) _) &&
+            (← worktrees) == .ok before },
+    { name :=
+        "a name that starts with - is refused before anything runs, and a relative worktree path too"
+      repository := { clean #[("a.txt", "a\n")] with branches := #[("b", "head")] }
+      holds := do
+        let some (before, main) ← listed | return false
+        let path := beside main.path "x"
+        let replies :=
+          #[← changes "-x" "main", ← changes "main" "--all"].map invalidReply ++
+            #[← addWorktree path "-b" (some "HEAD"), ← addWorktree path "n" (some "-x"),
+                  ← addWorktree "relative" "n" (some "HEAD"), ← removeWorktree "relative"].map
+              invalidReply
+        return replies.all id && (← worktrees) == .ok before &&
+            (← branchesOf) == some #["b", "main"] },
+    { name :=
+        "branches lists every local branch in byte order, and an unborn checked-out branch is not among them"
+      repository :=
+        { index := #[("a.txt", .file "a\n")], worktree := #[("a.txt", "a\n")]
+          commits := #[("C", { files := #[("c.txt", "c\n")] })]
+          branches := #[("b", "C"), ("a/x", "C")] }
+      holds := return (← branchesOf) == some #["a/x", "b"] },
+    { name :=
+        "criterion 4 on the model's terms: a branch's change against main is each file changed since their merge base, with its old and new content, and main's later commits are not in it"
+      repository :=
+        forked #[("a", "1\n"), ("b", "b\n"), ("d", "d\n")]
+          #[("a", "1\n"), ("b", "b\n"), ("d", "d\n"), ("m", "m\n")]
+          #[("F", { parents := #["B"], files := #[("a", "2\n"), ("b", "b\n"), ("c", "new\n")] })]
+          #[("feature", "F")]
+      holds := do
+        match ← changes "feature" "main" with
+        | .error _ =>
+          return false
+        | .ok change =>
+          return change.files ==
+                #[{ path := "a", old := some "1\n", new := some "2\n" },
+                  { path := "c", old := none, new := some "new\n" },
+                  { path := "d", old := some "d\n", new := none }] &&
+              (← fileAt change.base "a") == .ok (some "1\n") &&
+              (← fileAt change.base "m") == .ok none },
+    { name :=
+        "a branch made from HEAD stays where it was when main commits after: its change against main is empty, and main's against it is the committed file"
+      repository := writing (clean #[("a.txt", "one\n")]) "a.txt" "two\n"
+      holds := do
+        let some (_, main) ← listed | return false
+        let added ← addWorktree (beside main.path "f") "f" (some "HEAD")
+        let staged ← stage #["a.txt"]
+        let committed ← commit "two\n"
+        return succeeded added && succeeded staged && succeeded committed &&
+            (← changedFiles "f" "main") == some #[] &&
+            (← changedFiles "main" "f") ==
+              some #[{ path := "a.txt", old := some "one\n", new := some "two\n" }] },
+    { name :=
+        "a file moved on a branch is its old path deleted and its new path added, and a copied file an addition, under a config that asks for copies"
+      repository :=
+        forked #[("a.txt", "moved\n"), ("k.txt", "kept\n")]
+          #[("a.txt", "moved\n"), ("k.txt", "kept\n")]
+          #[("M",
+              { parents := #["B"]
+                files := #[("b.txt", "moved\n"), ("c.txt", "kept\n"), ("k.txt", "kept\n")] })]
+          #[("mv", "M")]
+      holds := do
+        return (← changedFiles "mv" "main") ==
+            some
+              #[{ path := "a.txt", old := some "moved\n", new := none },
+                { path := "b.txt", old := none, new := some "moved\n" },
+                { path := "c.txt", old := none, new := some "kept\n" }] },
+    { name := "a change keeps a byte that is not UTF-8 as its escape, and a path with a space whole"
+      repository :=
+        forked #[("with space.txt", "a\n")] #[("with space.txt", "a\n")]
+          #[("X",
+              { parents := #["B"]
+                files := #[("with space.txt", "a".push (Char.ofNat 0x10DC80) ++ "\n")] })]
+          #[("x", "X")]
+      holds := do
+        return (← changedFiles "x" "main") ==
+            some
+              #[{ path := "with space.txt", old := some "a\n"
+                  new := some ("a".push (Char.ofNat 0x10DC80) ++ "\n") }] },
+    { name :=
+        "a revision that is not there is refused with status 1 as not a commit, on either side, and two with no merge base with status 1 as such"
+      repository := { clean #[("a.txt", "a\n")] with revisions := #[("v1", #[("o.txt", "o\n")])] }
+      holds := do
+        return (← changes "nope" "main") == .error (.failed (.code 1) "nope is not a commit") &&
+            (← changes "main" "nope") == .error (.failed (.code 1) "nope is not a commit") &&
+            (← changes "v1" "main") ==
+              .error (.failed (.code 1) "v1 and main have no merge base") },
+    { name := "fileAt of a branch is that branch's content, and of the checked-out branch HEAD's"
+      repository :=
+        { clean #[("a.txt", "a\n")] with
+          commits := #[("F", { files := #[("a.txt", "b\n")] })], branches := #[("b", "F")] }
+      holds := do
+        return (← fileAt "b" "a.txt") == .ok (some "b\n") &&
+            (← fileAt "main" "a.txt") == .ok (some "a\n") &&
+            (← fileAt "HEAD" "a.txt") == .ok (some "a\n") }]
+
 /-- The interface's properties. -/
 def properties : List Property :=
   [{  name :=
@@ -463,6 +709,7 @@ def properties : List Property :=
               answer.paths.any (fun path => under path && path.fileName == some "HEAD") &&
               answer.paths.any (fun path => under path && path.fileName == some "index") &&
               answer.trees == #[answer.directory / "refs"] }] ++
-    hunkProperties
+    hunkProperties ++
+    worktreeProperties
 
 end Editor.VersionControlContract

@@ -23469,7 +23469,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, compile-command, recompile, next-error, previous-error, vc-stage-hunk, vc-unstage-hunk and vc-commit-accept, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, compile-command, recompile, next-error, previous-error, vc-stage-hunk, vc-unstage-hunk, vc-worktrees and vc-commit-accept, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -23482,7 +23482,7 @@ def exChecks : List Check :=
                 some
                   #["e", "e!", "autoread", "noautoread", "reload", "compile", "compile-command",
                     "recompile", "next-error", "previous-error", "vc-stage-hunk", "vc-unstage-hunk",
-                    "vc-commit-accept"] &&
+                    "vc-worktrees", "vc-commit-accept"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               candidatesOf opening == some {} }]
 
@@ -37855,6 +37855,141 @@ def versionControlParserChecks : List Check :=
               (porcelainClean.toUTF8 ++ ByteArray.mk #[63, 32, 0xff, 0]) matches
             .error _ }]
 
+/-- What `git worktree list --porcelain -z` printed in `/d/r`, a main
+checkout on `main` with three linked worktrees, made in a directory written
+here `/d`: `git init r; cd r; echo a > a.txt; git add -A; g commit -m head;
+git branch b; git branch feature/x`, then `git worktree add ../b-wt b; git
+worktree add --detach "../a wt"; git worktree add ../gone -b gone; git
+worktree lock ../b-wt --reason kept; rm -rf ../gone`. git lists the linked
+ones by their administrative directories' names. -/
+def worktreeListMixed : String :=
+  "worktree /d/r\x00HEAD a655a818d91215d2e13ebd735265b112d61e150d\x00branch refs/heads/main\x00\x00" ++
+    "worktree /d/a wt\x00HEAD a655a818d91215d2e13ebd735265b112d61e150d\x00detached\x00\x00" ++
+    "worktree /d/gone\x00HEAD a655a818d91215d2e13ebd735265b112d61e150d\x00branch refs/heads/gone\x00prunable gitdir file points to non-existent location\x00\x00" ++
+    "worktree /d/b-wt\x00HEAD a655a818d91215d2e13ebd735265b112d61e150d\x00branch refs/heads/b\x00locked kept\x00\x00"
+
+/-- What `git worktree list --porcelain -z` printed in a bare repository
+with one linked worktree: `git clone --bare r bare.git; cd bare.git; git
+worktree add ../from-bare main`, in `/d`. -/
+def worktreeListBare : String :=
+  "worktree /d/bare.git\x00bare\x00\x00" ++
+    "worktree /d/from-bare\x00HEAD a655a818d91215d2e13ebd735265b112d61e150d\x00branch refs/heads/main\x00\x00"
+
+/-- What `git for-each-ref --format=%(refname) refs/heads/` printed in
+`worktreeListMixed`'s repository. -/
+def branchRefs : String :=
+  "refs/heads/b\nrefs/heads/feature/x\nrefs/heads/gone\nrefs/heads/main\n"
+
+/-- What `git diff-tree -r -z --no-renames <base> <next>` printed: `git init
+sub` holding a commit, then `git init d; cd d`, `m.txt`, `d.txt`, `t.txt`,
+`x.sh`, `with space.txt` and `héllo.txt` written and committed as `base`;
+then `m.txt`, `with space.txt` and `héllo.txt` changed, `git rm d.txt`,
+`a.txt` written, `t.txt` made a link to `m.txt`, `chmod +x x.sh`, `git
+submodule add ../sub sub`, and all committed as `next`. -/
+def rawDiffMixed : String :=
+  ":000000 100644 0000000000000000000000000000000000000000 8688a8ca6cf509b12d9b25114e11207f53ac3fd1 A\x00.gitmodules\x00" ++
+    ":000000 100644 0000000000000000000000000000000000000000 78981922613b2afb6025042ff6bd878ac1994e85 A\x00a.txt\x00" ++
+    ":100644 000000 4bcfe98e640c8284511312660fb8709b0afa888e 0000000000000000000000000000000000000000 D\x00d.txt\x00" ++
+    ":100644 100644 6e9f0da13f19b444ec3a9c3d6e795ad35c0554a2 c48b5634fe43460805dc0ca67824bbb970dd4b04 M\x00héllo.txt\x00" ++
+    ":100644 100644 28ce6a8b26aa170e1de65536fe8abe1832bd3242 08bb2331e777f431177c40df6841c0034f89fb58 M\x00m.txt\x00" ++
+    ":000000 160000 0000000000000000000000000000000000000000 99b40b2607860a2c0bd8347079713da7ea949dd3 A\x00sub\x00" ++
+    ":100644 120000 718f4d2ff533cf8ead8d3556cf43912bd245fbc4 347bda8b202a5db796d1fe649680232fde0f6c3a T\x00t.txt\x00" ++
+    ":100644 100644 f05367e3b20ebba4db1ac176615bde75d2fc1638 ae138b0b5c6ef541479c06869a3cc2fc78dc7350 M\x00with space.txt\x00" ++
+    ":100644 100755 587be6b4c3f93f93c489c0111bba5596147a26cb 587be6b4c3f93f93c489c0111bba5596147a26cb M\x00x.sh\x00"
+
+/-- What `git cat-file --batch` printed fed two ids, a line each: the blob of
+`line\nwith\0nul\n` and the empty blob. -/
+def batchTwo : ByteArray :=
+  "b15bec5cc12be2d6c08c29b7fb19d58f8af19499 blob 14\nline\nwith".toUTF8 ++ ByteArray.mk #[0] ++
+    "nul\n\ne69de29bb2d1d6434b8b29ae775ad8c2e48c5391 blob 0\n\n".toUTF8
+
+/-- The checks of the readers of git's plumbing
+(`Editor/VersionControl/Plumbing.lean`), on the fixtures. -/
+def versionControlPlumbingChecks : List Check :=
+  let raw (status oldMode newMode oldId newId path : String) : VersionControl.Plumbing.RawChange :=
+    { oldMode, newMode, oldId, newId, status, path }
+  let zero := VersionControl.Model.Repository.zeros
+  let one := "1" ++ (zero.drop 1).toString
+  [{  name :=
+        "a worktree list reads as the main worktree first, then the linked ones in path order, each with its branch, a detached one as detached, a path with a space whole, locked and prunable ones kept"
+      run :=
+        pure <|
+          (VersionControl.Plumbing.parseWorktrees worktreeListMixed.toUTF8).toOption ==
+            some
+              #[{ path := "/d/r", head := .branch "main" },
+                { path := "/d/a wt", head := .detached },
+                { path := "/d/b-wt", head := .branch "b" },
+                { path := "/d/gone", head := .branch "gone" }] },
+    { name := "a bare main repository is no worktree: only its linked worktree is listed"
+      run :=
+        pure <|
+          (VersionControl.Plumbing.parseWorktrees worktreeListBare.toUTF8).toOption ==
+            some #[{ path := "/d/from-bare", head := .branch "main" }] },
+    { name :=
+        "a worktree record that does not start with its path, or names no head, is refused, and so is no record"
+      run :=
+        pure <|
+          VersionControl.Plumbing.parseWorktrees "HEAD 0\x00detached\x00\x00".toUTF8 matches
+              .error _ &&
+            VersionControl.Plumbing.parseWorktrees "worktree /d/r\x00HEAD 0\x00\x00".toUTF8 matches
+              .error _ &&
+            VersionControl.Plumbing.parseWorktrees ByteArray.empty matches .error _ },
+    { name := "the branches read as their names, refs/heads/ stripped, one with / whole"
+      run :=
+        pure <|
+          (VersionControl.Plumbing.parseBranches branchRefs.toUTF8).toOption ==
+              some #["b", "feature/x", "gone", "main"] &&
+            (VersionControl.Plumbing.parseBranches ByteArray.empty).toOption == some #[] &&
+            VersionControl.Plumbing.parseBranches "refs/tags/v1\n".toUTF8 matches .error _ },
+    { name :=
+        "a raw diff reads as each change's modes, ids, status and path: added, deleted, modified, a gitlink, a type change, a path with a space and a non-ASCII path; a change of mode alone is dropped"
+      run :=
+        pure <|
+          (VersionControl.Plumbing.parseRawDiff rawDiffMixed.toUTF8).toOption ==
+            some
+              #[raw "A" "000000" "100644" zero "8688a8ca6cf509b12d9b25114e11207f53ac3fd1"
+                  ".gitmodules",
+                raw "A" "000000" "100644" zero "78981922613b2afb6025042ff6bd878ac1994e85" "a.txt",
+                raw "D" "100644" "000000" "4bcfe98e640c8284511312660fb8709b0afa888e" zero "d.txt",
+                raw "M" "100644" "100644" "6e9f0da13f19b444ec3a9c3d6e795ad35c0554a2"
+                  "c48b5634fe43460805dc0ca67824bbb970dd4b04" "héllo.txt",
+                raw "M" "100644" "100644" "28ce6a8b26aa170e1de65536fe8abe1832bd3242"
+                  "08bb2331e777f431177c40df6841c0034f89fb58" "m.txt",
+                raw "A" "000000" "160000" zero "99b40b2607860a2c0bd8347079713da7ea949dd3" "sub",
+                raw "T" "100644" "120000" "718f4d2ff533cf8ead8d3556cf43912bd245fbc4"
+                  "347bda8b202a5db796d1fe649680232fde0f6c3a" "t.txt",
+                raw "M" "100644" "100644" "f05367e3b20ebba4db1ac176615bde75d2fc1638"
+                  "ae138b0b5c6ef541479c06869a3cc2fc78dc7350" "with space.txt"] },
+    { name :=
+        "a raw diff with a change that names no path, a rename's two paths, or too few fields is refused; no change at all is none"
+      run :=
+        pure <|
+          VersionControl.Plumbing.parseRawDiff s!":100644 100644 {zero} {one} M\x00".toUTF8 matches
+              .error _ &&
+            VersionControl.Plumbing.parseRawDiff
+                s!":100644 100644 {zero} {one} R100\x00a\x00b\x00".toUTF8 matches
+              .error _ &&
+            VersionControl.Plumbing.parseRawDiff ":100644 M\x00a\x00".toUTF8 matches .error _ &&
+            (VersionControl.Plumbing.parseRawDiff ByteArray.empty).toOption == some #[] },
+    { name :=
+        "a batch reads each blob by its size, one holding a line feed and a NUL whole, and an empty one empty"
+      run :=
+        pure <|
+          (VersionControl.Plumbing.parseBatch batchTwo).toOption ==
+            some
+              #[("b15bec5cc12be2d6c08c29b7fb19d58f8af19499",
+                  "line\nwith".toUTF8 ++ ByteArray.mk #[0] ++ "nul\n".toUTF8),
+                ("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391", ByteArray.empty)] },
+    { name :=
+        "a batch naming an id missing, an object that is not a blob, or content cut short is refused"
+      run :=
+        pure <|
+          VersionControl.Plumbing.parseBatch
+                "0123456789012345678901234567890123456789 missing\n".toUTF8 matches
+              .error _ &&
+            VersionControl.Plumbing.parseBatch s!"{zero} tree 0\n\n".toUTF8 matches .error _ &&
+            VersionControl.Plumbing.parseBatch s!"{zero} blob 9\nshort\n".toUTF8 matches .error _ }]
+
 /-- A model repository in every state `porcelainMixed` shows, whose status
 is `mixedStatus`. -/
 def mixedRepository : VersionControl.Model.Repository :=
@@ -37931,7 +38066,49 @@ def versionControlModelChecks : List Check :=
     { name :=
         "the real parser reads what the model prints as the model's status, for every repository of the contract"
       run :=
-        pure (VersionControlContract.properties.all fun property => printed property.repository) }]
+        pure (VersionControlContract.properties.all fun property => printed property.repository) },
+    { name :=
+        "the model resolves HEAD and the checked-out branch to HEAD's commit while it is born, a branch to its commit, a tag and a commit's id to themselves, and nothing else"
+      run :=
+        pure <|
+          let repository : VersionControl.Model.Repository :=
+            { VersionControlContract.clean
+                #[("a", "a")] with
+              commits := #[("C", { files := #[] })], branches := #[("b", "C")]
+              revisions := #[("v1", #[])] }
+          let unborn : VersionControl.Model.Repository := {}
+          ["HEAD", "main", "b", "v1", "C", "nope"].map repository.resolve ==
+              [some "head", some "head", some "C", some "v1", some "C", none] &&
+            unborn.resolve "HEAD" == none &&
+            unborn.resolve "main" == none },
+    { name :=
+        "the model's merge base is the first of one commit's ancestors, breadth-first, that is the other's, and none for two with no common ancestor"
+      run :=
+        pure <|
+          let repository :=
+            VersionControlContract.forked #[] #[]
+              #[("F", { parents := #["B"], files := #[] }),
+                ("G", { parents := #["F"], files := #[] }), ("L", { files := #[] })]
+              #[]
+          repository.ancestors "G" == #["G", "F", "B"] &&
+            repository.mergeBase "G" "head" == some "B" &&
+            repository.mergeBase "head" "G" == some "B" &&
+            repository.mergeBase "F" "G" == some "F" &&
+            repository.mergeBase "L" "G" == none },
+    { name :=
+        "a commit in the model freezes HEAD's commit with its parents, and HEAD becomes a new commit whose parent it is; on an unborn branch nothing is frozen"
+      run :=
+        pure <|
+          let repository :=
+            VersionControlContract.writing (VersionControlContract.clean #[("a", "one")]) "a" "two"
+          let after := (VersionControl.Model.Repository.stageOne repository "a").commit
+          let first := ({ index := #[("a", .file "a")] } : VersionControl.Model.Repository).commit
+          after.commits == #[("head", { files := #[("a", "one")] })] &&
+            after.parents == #["head"] &&
+            after.headId != "head" &&
+            after.committed == #[("a", "two")] &&
+            first.commits == #[] &&
+            first.committed == #[("a", "a")] }]
 
 /-- The git implementation's status read in `/r` on `model`. -/
 def gitStatus (model : JobModel) :
@@ -38106,6 +38283,238 @@ def gitApplyRun (reverse : Bool) : Process.Command :=
 def answering (command : Process.Command) (reply : Except ProcessError Process.Ran)
     (takes : Nat := 0) : JobModel :=
   { processes := { scripts := #[{ command, reply, takes }] } }
+
+/-- The git implementation's worktree list in `/r` on `model`. -/
+def gitWorktrees (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error (Array VersionControl.Worktree)) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" .worktrees :
+        JobM (Except VersionControl.Error (Array VersionControl.Worktree))).runModel
+    model
+
+/-- The git implementation's branch list in `/r` on `model`. -/
+def gitBranches (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error (Array String)) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" .branches :
+        JobM (Except VersionControl.Error (Array String))).runModel
+    model
+
+/-- The git implementation's change of `revision` against `against` in `/r`
+on `model`. -/
+def gitChanges (revision against : String) (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error VersionControl.Changes) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" (.changes revision against) :
+        JobM (Except VersionControl.Error VersionControl.Changes)).runModel
+    model
+
+/-- The git implementation's making of a worktree in `/r` on `model`. -/
+def gitAddWorktree (path : System.FilePath) (branch : String) (start : Option String)
+    (model : JobModel) : Job.Outcome (Except VersionControl.Error Unit) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" (.addWorktree path branch start) :
+        JobM (Except VersionControl.Error Unit)).runModel
+    model
+
+/-- The git implementation's removal of a worktree in `/r` on `model`. -/
+def gitRemoveWorktree (path : System.FilePath) (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error Unit) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" (.removeWorktree path) :
+        JobM (Except VersionControl.Error Unit)).runModel
+    model
+
+/-- The command that makes or removes a worktree from `/r` with `arguments`:
+under the environment of a commit, which git hands its hooks. -/
+def gitWorktreeRun (arguments : Array String) : Process.Command :=
+  { gitRun arguments with environment := gitCommitRun.environment }
+
+/-- A script of `command` that exits `status` having printed `stdout`, taking
+`takes` milliseconds. -/
+def printing (command : Process.Command) (stdout : String) (status : Nat := 0) (takes : Nat := 0) :
+    Process.Script :=
+  { command, takes,
+    reply := .ok { exit := .code status, stdout := stdout.toUTF8, stderr := .empty } }
+
+/-- The scripts of a change of `feature` against `main` in `/r`: each name
+resolved, their merge base `B`, a raw diff of `a` modified, `c` added, `d`
+deleted and a submodule `sub` added, and the batch of the four blobs. -/
+def changesScripts : Array Process.Script :=
+  #[printing (gitRun #["rev-parse", "--verify", "--quiet", "feature^{commit}"]) "F\n",
+    printing (gitRun #["rev-parse", "--verify", "--quiet", "main^{commit}"]) "M\n",
+    printing (gitRun #["merge-base", "F", "M"]) "B\n",
+    printing (gitRun #["diff-tree", "-r", "-z", "--no-renames", "B", "F"])
+      (":100644 100644 a1 a2 M\x00a\x00:000000 100644 0 c1 A\x00c\x00" ++
+        ":100644 000000 d1 0 D\x00d\x00:000000 160000 0 s1 A\x00sub\x00"),
+    printing (gitRun #["cat-file", "--batch"])
+      "a1 blob 2\n1\n\na2 blob 2\n2\n\nc1 blob 4\nnew\n\nd1 blob 2\nd\n\n"]
+
+/-- The checks of the git implementation's worktrees, branches and changes
+(`Editor/VersionControl/Git.lean`) on the job model: the command lines, their
+environments and limits, and how what they answer is read. -/
+def versionControlWorktreeGitChecks : List Check :=
+  let listRun := gitRun #["worktree", "list", "--porcelain", "-z"]
+  let linked : VersionControl.Model.Repository :=
+    { VersionControlContract.clean
+        #[("a", "a")] with
+      branches := #[("b", "head")]
+      linked := #[{ path := "/w", branch := some "b" }, { path := "/d", branch := none }] }
+  let changesModel : JobModel := { processes := { scripts := changesScripts } }
+  let resolveRun (name : String) :=
+    gitRun #["rev-parse", "--verify", "--quiet", s!"{name}^\{commit}"]
+  let addRun := gitWorktreeRun #["worktree", "add", "--quiet", "-b", "f", "/f", "HEAD"]
+  let addModel (takes : Nat) : JobModel :=
+    {
+      processes :=
+        {
+          scripts :=
+            #[{ command := listRun,
+                reply :=
+                  .ok { exit := .code 0, stdout := linked.worktreePorcelain, stderr := .empty } },
+              printing addRun "" (takes := takes)] } }
+  [{  name :=
+        "a worktree list runs git worktree list --porcelain -z in the root, once, under the environment of every read, and reads the main worktree first and the linked ones in path order"
+      run :=
+        pure <|
+          let (reply, after) := gitWorktrees (linked.jobModel "git" "/r")
+          reply ==
+              .finished
+                (.ok
+                  #[{ path := "/r", head := .branch "main" }, { path := "/d", head := .detached },
+                    { path := "/w", head := .branch "b" }]) &&
+            after.processes.started == #[listRun] },
+    { name :=
+        "a branch list runs git for-each-ref --format=%(refname) refs/heads/ in the root and reads the names"
+      run :=
+        pure <|
+          let run := gitRun #["for-each-ref", "--format=%(refname)", "refs/heads/"]
+          let (reply, after) :=
+            gitBranches
+              { processes := { scripts := #[printing run "refs/heads/main\nrefs/heads/a/b\n"] } }
+          reply == .finished (.ok #["a/b", "main"]) && after.processes.started == #[run] },
+    { name := "a worktree list git answers with what cannot be read is unparsable"
+      run :=
+        pure <|
+          (gitWorktrees
+                { processes := { scripts := #[printing listRun "HEAD 0\x00\x00"] } }).1 matches
+            .finished (.error (.unparsable _)) },
+    { name :=
+        "a change resolves both names to commits, reads their merge base, the raw diff of the revision against it, and every blob in one cat-file --batch fed their ids a line each; a submodule's side is its commit as git prints it"
+      run :=
+        pure <|
+          let (reply, after) := gitChanges "feature" "main" changesModel
+          reply ==
+              .finished
+                (.ok
+                  { base := "B"
+                    files :=
+                      #[{ path := "a", old := some "1\n", new := some "2\n" },
+                        { path := "c", old := none, new := some "new\n" },
+                        { path := "d", old := some "d\n", new := none },
+                        { path := "sub", old := none, new := some "Subproject commit s1\n" }] }) &&
+            after.processes.started == changesScripts.map (·.command) &&
+            after.processes.fed ==
+              #[(gitRun #["cat-file", "--batch"], "a1\na2\nc1\nd1\n".toUTF8)] },
+    { name :=
+        "a name rev-parse refuses with status 1 is not a commit, refused with status 1, and nothing more runs"
+      run :=
+        pure <|
+          let model : JobModel :=
+            { processes := { scripts := #[printing (resolveRun "nope") "" 1] } }
+          let (reply, after) := gitChanges "nope" "main" model
+          reply == .finished (.error (.failed (.code 1) "nope is not a commit")) &&
+            after.processes.started == #[resolveRun "nope"] },
+    { name :=
+        "two commits merge-base answers with status 1 and nothing printed have no merge base, refused with status 1, and nothing more runs"
+      run :=
+        pure <|
+          let model : JobModel :=
+            {
+              processes :=
+                {
+                  scripts :=
+                    (changesScripts.extract 0 2) ++
+                      #[printing (gitRun #["merge-base", "F", "M"]) "" 1] } }
+          let (reply, after) := gitChanges "feature" "main" model
+          reply == .finished (.error (.failed (.code 1) "feature and main have no merge base")) &&
+            after.processes.started == (changesScripts.extract 0 3).map (·.command) },
+    { name := "a batch that does not name an id asked for is unparsable"
+      run :=
+        pure <|
+          let model : JobModel :=
+            {
+              processes :=
+                {
+                  scripts :=
+                    (changesScripts.extract 0 4) ++
+                      #[printing (gitRun #["cat-file", "--batch"]) "a1 blob 2\n1\n\n"] } }
+          (gitChanges "feature" "main" model).1 matches .finished (.error (.unparsable _)) },
+    { name :=
+        "a name that starts with -, and a worktree path that is not absolute, are refused as invalid before any process starts"
+      run :=
+        pure <|
+          let invalid {α : Type} : Job.Outcome (Except VersionControl.Error α) × JobModel → Bool
+            | (.finished (.error (.invalid _)), after) => after.processes.started.isEmpty
+            | _ => false
+          invalid (gitChanges "-x" "main" {}) && invalid (gitChanges "main" "-x" {}) &&
+            invalid (gitAddWorktree "f" "f" (some "HEAD") {}) &&
+            invalid (gitAddWorktree "/f" "-f" (some "HEAD") {}) &&
+            invalid (gitAddWorktree "/f" "f" (some "--orphan") {}) &&
+            invalid (gitRemoveWorktree "w" {}) },
+    { name :=
+        "creating a worktree for a new branch lists the worktrees, then runs git worktree add --quiet -b and the branch, the path and the start, under a commit's environment, within the worktree time limit and not the read's"
+      run :=
+        pure <|
+          let (reply, after) :=
+            gitAddWorktree "/f" "f" (some "HEAD") (addModel (VersionControl.Git.gitTime + 1))
+          let (late, _) :=
+            gitAddWorktree "/f" "f" (some "HEAD") (addModel (VersionControl.Git.worktreeTime + 1))
+          reply == .finished (.ok ()) && after.processes.started == #[listRun, addRun] &&
+            late == .finished (.error (.couldNotRun (.timedOut VersionControl.Git.worktreeTime))) },
+    { name :=
+        "creating a worktree at a path that is already a worktree is refused with status 128 before git worktree add runs, so no branch is made"
+      run :=
+        pure <|
+          let (reply, after) := gitAddWorktree "/w" "f" (some "HEAD") (addModel 0)
+          reply == .finished (.error (.failed (.code 128) "fatal: '/w' already exists")) &&
+            after.processes.started == #[listRun] },
+    { name :=
+        "creating a worktree on an existing branch checks the branch is a local one, then runs git worktree add --quiet and the path and the branch; a branch that is not there is refused with status 128 before git worktree add runs"
+      run :=
+        pure <|
+          let existsRun := gitRun #["rev-parse", "--verify", "--quiet", "refs/heads/b"]
+          let add := gitWorktreeRun #["worktree", "add", "--quiet", "/f", "b"]
+          let listed :=
+            { command := listRun,
+              reply :=
+                .ok { exit := .code 0, stdout := linked.worktreePorcelain, stderr := .empty } }
+          let (reply, after) :=
+            gitAddWorktree "/f" "b" none
+              { processes := { scripts := #[listed, printing existsRun "0\n", printing add ""] } }
+          let (missing, refused) :=
+            gitAddWorktree "/f" "b" none
+              { processes := { scripts := #[listed, printing existsRun "" 1, printing add ""] } }
+          reply == .finished (.ok ()) && after.processes.started == #[listRun, existsRun, add] &&
+            missing == .finished (.error (.failed (.code 128) "fatal: invalid reference: b")) &&
+            refused.processes.started == #[listRun, existsRun] },
+    { name :=
+        "removing a worktree runs git -c status.showUntrackedFiles=normal worktree remove and the path, under a commit's environment, and a refusal is git's"
+      run :=
+        pure <|
+          let remove :=
+            gitWorktreeRun #["-c", "status.showUntrackedFiles=normal", "worktree", "remove", "/w"]
+          let (reply, after) :=
+            gitRemoveWorktree "/w" { processes := { scripts := #[printing remove ""] } }
+          let (refused, _) :=
+            gitRemoveWorktree "/w"
+              {
+                processes :=
+                  {
+                    scripts :=
+                      #[{ command := remove
+                          reply :=
+                            .ok {
+                                exit := .code 128, stdout := .empty
+                                stderr := "fatal: '/w' is a main working tree\n".toUTF8 } }] } }
+          reply == .finished (.ok ()) && after.processes.started == #[remove] &&
+            refused ==
+              .finished (.error (.failed (.code 128) "fatal: '/w' is a main working tree")) }]
 
 /-- The checks of the pure core of staging a hunk
 (`Editor/VersionControl/Hunk.lean`) and of the patch the git implementation
@@ -38825,6 +39234,200 @@ def gutterCarryChecks : List Check :=
               (gutterView marked).map (·.marks) == some #[addedMark 0 2] &&
               (gutterView edited).map (·.marks) == some #[addedMark 2 4] }]
 
+/-- The worktrees of the worktree list checks: `/r` on `main`, `/d` detached
+and `/w` on `feature`. -/
+def listedWorktrees : Array VersionControl.Worktree :=
+  #[{ path := "/r", head := .branch "main" }, { path := "/d", head := .detached },
+    { path := "/w", head := .branch "feature" }]
+
+/-- The text of the worktree list of `listedWorktrees`, asked from `/r`. -/
+def worktreesText : String :=
+  "r@main: worktrees\nmain: /r (this one)\ndetached: /d\nfeature: /w\n"
+
+/-- The checks of the worktree list's pure view and record
+(`Editor/VersionControl/Worktrees.lean`). -/
+def worktreeViewChecks : List Check :=
+  [{  name :=
+        "the worktree list renders its head line, then one row per worktree naming its branch or detached and its path, the asking root's row marked"
+      run :=
+        pure (VersionControl.WorktreeView.render "r@main" "/r" listedWorktrees == worktreesText) },
+    { name := "the worktree on a row is the row's: none on the head line or past the last"
+      run :=
+        pure <|
+          VersionControl.WorktreeView.entryAt listedWorktrees 0 == none &&
+            VersionControl.WorktreeView.entryAt listedWorktrees 1 == listedWorktrees[0]? &&
+            VersionControl.WorktreeView.entryAt listedWorktrees 3 == listedWorktrees[2]? &&
+            VersionControl.WorktreeView.entryAt listedWorktrees 4 == none },
+    { name :=
+        "a worktree list's record reads back as it was written, a detached worktree and a buffer of none among them"
+      run :=
+        pure <|
+          let record : VersionControl.WorktreesRecord :=
+            { buffer := some 3, worktrees := listedWorktrees }
+          let store := VersionControl.worktreesStore
+          store.decode (store.encode record) == some record &&
+            store.decode (store.encode {}) == some {} &&
+            store.version == 1 },
+    { name :=
+        "the mode vc-worktrees fills refresh and activate with the worktree list's commands, has no leader suffix, and nothing is wrong with it"
+      run :=
+        pure <|
+          VersionControl.worktreesMode.name == "vc-worktrees" &&
+            VersionControl.worktreesMode.roles ==
+              [(Role.refresh, VersionControl.worktreesRefreshName),
+                (Role.activate, VersionControl.worktreesVisitName)] &&
+            VersionControl.worktreesMode.locals == [] &&
+            VersionControl.worktreesMode.problems == [] }]
+
+/-- The repository checked out in `/w` of the worktree list checks: on
+`feature`, with `a.txt` changed in the working tree. -/
+def featureRepository : VersionControl.Model.Repository :=
+  {
+    VersionControlContract.writing (VersionControlContract.clean #[("a.txt", "a\n")]) "a.txt"
+      "b\n" with
+    head := .branch "feature" }
+
+/-- The jobs of the worktree list checks: the status buffer checks', and the
+worktree list's read and find jobs. -/
+def worktreeJobs (name : String) : Option (List Argument → Work) :=
+  if name == VersionControl.worktreesReadJob then some VersionControl.listWork
+  else
+    if name == VersionControl.worktreeFindJob then some VersionControl.visitFindWork
+    else statusJobs name
+
+/-- The keys of the worktree list checks: the status buffer checks', and
+`C-v l` (`vc-worktrees`), `C-v e` (`vc-worktrees-visit`) and `C-v f`
+(`vc-worktrees-refresh`). -/
+def worktreeKeys : Loop.Keys TestScheme.scheme :=
+  let keys :=
+    dispatchKeys
+      (statusBindings ++
+        [("C-v l", invoke VersionControl.worktreesName),
+          ("C-v e", invoke VersionControl.worktreesVisitName),
+          ("C-v f", invoke VersionControl.worktreesRefreshName)])
+      statusCommands
+  { statusKeys with
+    command? := keys.command?,
+    maps := fun state view => statusKeys.maps state view ++ keys.maps state view }
+
+/-- The driver of the worktree list checks: the status buffer checks' over a
+repository in `/r` with `feature` checked out in `/w` and `/d` detached,
+whose git in `/w` meets `featureRepository`, and whose finder finds `/w`, a
+worktree of `/r`'s repository on `feature` (`workspaceWorld`), and nothing
+at `/d`, whose directory is gone. -/
+def worktreeDriver : Option TestDriver :=
+  let repository : VersionControl.Model.Repository :=
+    { VersionControlContract.clean
+        #[("a.txt", "a\n")] with
+      branches := #[("feature", "head")]
+      linked := #[{ path := "/w", branch := some "feature" }, { path := "/d", branch := none }] }
+  (statusDriverOf repository (registered := worktreeJobs) (keys := worktreeKeys)).map fun driver =>
+    let extra :=
+      (featureRepository.jobModel "git" "/w").processes.scripts ++
+        (workspaceWorld.jobModel "git" #["/w", "/d"]).processes.scripts
+    { driver with
+      jobs :=
+        { driver.jobs with
+          processes :=
+            { driver.jobs.processes with scripts := driver.jobs.processes.scripts ++ extra } } }
+
+/-- The name of the worktree list of `/r`. -/
+def worktreesBufferName : String :=
+  "*vc-worktrees: r@main*"
+
+/-- The checks of the worktree list (`Editor/VersionControl/Worktrees.lean`),
+on the loop's driver over the editor's models, the job model, the models of
+two repositories in `/r` and `/w` and the finder's world. -/
+def worktreeBufferChecks : List Check :=
+  let listRun := gitRun #["worktree", "list", "--porcelain", "-z"]
+  let shownList (driver : TestDriver) := settledAfter (settledAfter driver "C-o a") "C-v l"
+  [{  name :=
+        "criterion 1: vc-worktrees in a repository with a main and two linked worktrees, one detached, shows *vc-worktrees: r@main* read-only in the mode vc-worktrees, one row for each with its branch, and runs git worktree list --porcelain -z in the root once"
+      run :=
+        pure <|
+          match worktreeDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let asking := (fedTo opened (presses "C-v l")).1
+            let shown := shownList driver
+            let state := shown.loop.state
+            asking.pending.map (fun job => (job.name, job.key)) ==
+                #[(VersionControl.worktreesReadJob, some "vc-worktrees local /r")] &&
+              match state.findBuffer worktreesBufferName with
+              | none => false
+              | some id =>
+                (state.buffer? id).map (·.readOnly) == some true &&
+                  (state.buffer? id).bind (·.major) == some VersionControl.worktreesModeName &&
+                  (state.workspaceOf? id).map (·.1.location) == some (.local "/r") &&
+                  (showingFocused shown).map (·.id) == some id &&
+                  namedText shown worktreesBufferName == some worktreesText &&
+                  gitStarted shown == #[listRun] },
+    { name :=
+        "criterion 2: visiting a linked worktree's row runs the finder there, records its workspace, and shows *vc-status: r@feature* with that worktree's status; a second visit finds it in the table and runs no finder"
+      run :=
+        pure <|
+          match worktreeDriver with
+          | none => false
+          | some driver =>
+            let visited := settledAfter (shownList driver) "C-v 3 C-v e"
+            let again := settledAfter (settledAfter visited "C-v l") "C-v 3 C-v e"
+            let name := "*vc-status: r@feature*"
+            let finds (driver : TestDriver) :=
+              (driver.jobs.processes.started.filter
+                  (· == Workspace.Git.revParseCommand "git" "/w")).size
+            finds visited == 1 && finds again == 1 &&
+              namedText visited name ==
+                some "r@feature: on feature\nunstaged: a.txt (modified)\n" &&
+              (showingFocused visited).map (·.buffer.name) == some name &&
+              (visited.loop.state.findBuffer name).bind
+                  (fun id => (visited.loop.state.workspaceOf? id).map (·.1.location)) ==
+                some (.local "/w") &&
+              visited.loop.state.workspaces.cached? "/w" 0 == some (some (.local "/w")) },
+    { name := "visiting this workspace's own row shows its status buffer without a find"
+      run :=
+        pure <|
+          match worktreeDriver with
+          | none => false
+          | some driver =>
+            let visited := settledAfter (shownList driver) "C-v 1 C-v e"
+            (showingFocused visited).map (·.buffer.name) == some statusBufferName &&
+              !visited.jobs.processes.started.contains (Workspace.Git.revParseCommand "git" "/r") },
+    { name :=
+        "visiting a worktree whose directory is gone says it is not a repository any more and opens nothing; on the head line there is no worktree"
+      run :=
+        pure <|
+          match worktreeDriver with
+          | none => false
+          | some driver =>
+            let shown := shownList driver
+            let gone := settledAfter shown "C-v 2 C-v e"
+            let head := settledAfter shown "C-v 0 C-v e"
+            echoOf gone == some "vc-worktrees-visit: /d is not a repository any more" &&
+              (gone.loop.state.buffers.filterMap id).all (!·.name.startsWith "*vc-status") &&
+              echoOf head == some "vc-worktrees: no worktree on this line" },
+    { name :=
+        "refreshing reads the list again into the same buffer; outside a worktree list it says the buffer is not one, and vc-worktrees in a buffer with no workspace says so and starts nothing"
+      run :=
+        pure <|
+          match worktreeDriver with
+          | none => false
+          | some driver =>
+            let shown := shownList driver
+            let refreshed := settledAfter shown "C-v f"
+            let outside := settledAfter (settledAfter driver "C-o a") "C-v f"
+            let bare := settledAfter driver "C-v l"
+            gitStarted refreshed == #[listRun, listRun] &&
+              ((refreshed.loop.state.buffers.filterMap id).filter
+                    (·.name.startsWith "*vc-worktrees")).size ==
+                1 &&
+              ((echoOf outside).map fun echo =>
+                  echo.startsWith "vc-worktrees-refresh: " &&
+                    echo.endsWith " is not a worktree list") ==
+                some true &&
+              echoOf bare == some s!"vc-worktrees: {EditorState.scratchName} has no workspace" &&
+              gitStarted bare == #[] }]
+
 /-- The checks of the status buffer (`Editor/VersionControl/Status.lean`), on
 the loop's driver over the editor's models, the job model and the model of a
 repository in `/r`. -/
@@ -39039,7 +39642,7 @@ def statusBufferChecks : List Check :=
               refreshed.loop.state.findBuffer statusBufferName ==
                 shown.loop.state.findBuffer statusBufferName },
     { name :=
-        "the mode vc-status fills refresh, activate and toggle with the status buffer's commands, and has s and u as its leader suffixes, with nothing wrong"
+        "the mode vc-status fills refresh, activate and toggle with the status buffer's commands, and has s, u, c and w as its leader suffixes, with nothing wrong"
       run :=
         pure <|
           VersionControl.mode.name == "vc-status" &&
@@ -39049,7 +39652,7 @@ def statusBufferChecks : List Check :=
                 (Role.toggle, VersionControl.toggleName)] &&
             VersionControl.mode.locals ==
               [("s", VersionControl.stageName), ("u", VersionControl.unstageName),
-                ("c", VersionControl.commitName)] &&
+                ("c", VersionControl.commitName), ("w", VersionControl.worktreesName)] &&
             VersionControl.mode.problems == [] }]
 
 /-- The jobs of the hunk and message buffer checks: every job of the
@@ -39556,14 +40159,14 @@ def commitBufferChecks : List Check :=
                 some "vc-commit-abort: a.lean is not a commit message buffer" &&
               echoOf bare == some s!"vc-commit: {EditorState.scratchName} has no workspace" },
     { name :=
-        "the vc-commit mode has no role and the leader suffixes c, accept, and k, abort, and is registered with the status buffer's mode"
+        "the vc-commit mode has no role and the leader suffixes c, accept, and k, abort, and is registered with the status buffer's mode and the worktree list's"
       run :=
         pure <|
           VersionControl.commitMode.name == "vc-commit" && VersionControl.commitMode.roles == [] &&
             VersionControl.commitMode.locals ==
               [("c", VersionControl.acceptName), ("k", VersionControl.abortName)] &&
             VersionControl.commitMode.problems == [] &&
-            VersionControl.modes.map (·.name) == #["vc-status", "vc-commit"] }]
+            VersionControl.modes.map (·.name) == #["vc-status", "vc-commit", "vc-worktrees"] }]
 
 /-- The jobs of the gutter checks: the status buffer checks', and the
 version-control gutter's. -/
@@ -40197,12 +40800,16 @@ def checks : List Check :=
     listingChecks ++
     projectModeChecks ++
     versionControlParserChecks ++
+    versionControlPlumbingChecks ++
     versionControlModelChecks ++
     versionControlGitChecks ++
+    versionControlWorktreeGitChecks ++
     hunkChecks ++
     versionControlShowChecks ++
     statusViewChecks ++
     statusBufferChecks ++
+    worktreeViewChecks ++
+    worktreeBufferChecks ++
     revisionBufferChecks ++
     gutterCarryChecks ++
     gutterChecks ++

@@ -4,6 +4,7 @@ import Editor.VersionControl.Gutter
 import Editor.VersionControl.Show
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
+import Editor.VersionControl.Worktrees
 
 /-!
 # The status buffer's commands, its jobs and its mode, as compiled code registers them
@@ -27,18 +28,25 @@ command of that name.
   (`Editor/VersionControl/Stage.lean`); and `vc-commit`, the status
   buffer's leader suffix `c`, which opens the message buffer, with
   `vc-commit-accept` and `vc-commit-abort`, its mode's suffixes `c` and `k`
-  (`Editor/VersionControl/Commit.lean`).
+  (`Editor/VersionControl/Commit.lean`); and `vc-worktrees`, the status
+  buffer's leader suffix `w`, which opens the worktree list, with
+  `vc-worktrees-refresh` and `vc-worktrees-visit`, its mode's `refresh`
+  and `activate` (`Editor/VersionControl/Worktrees.lean`).
 - **`VersionControl.jobs`**: `vc-status-read`, which reads a repository's
   status and shows it (`VersionControl.readWork`), and `vc-status-apply`,
   which stages or unstages and then starts a read
   (`VersionControl.applyWork`); and `vc-show-read`, which reads a file at a
   revision and shows it (`VersionControl.showWork`); `vc-hunk-fetch`,
   `vc-hunk-diff` and `vc-hunk-apply`, the steps of staging a hunk; and
-  `vc-commit-run`, which commits. A host that is not handed them shows no
+  `vc-commit-run`, which commits; `vc-worktrees-read`, which reads the
+  worktree list and shows it (`VersionControl.listWork`), and
+  `vc-worktree-find`, which finds a listed worktree's workspace and opens
+  its status (`VersionControl.visitFindWork`). A host that is not handed them shows no
   status, and says so when one is asked for.
 - **`VersionControl.modes`**: `vc-status`, the status buffer's major mode
-  (`VersionControl.mode`), and `vc-commit`, the message buffer's
-  (`VersionControl.commitMode`).
+  (`VersionControl.mode`), `vc-commit`, the message buffer's
+  (`VersionControl.commitMode`), and `vc-worktrees`, the worktree list's
+  (`VersionControl.worktreesMode`).
 
 This module is apart from `Editor/VersionControl/Status.lean` because it
 names the registry, which is the config session's.
@@ -63,7 +71,10 @@ def commands : Array Config.Registration :=
     { name := unstageHunkName, action := .call unstageHunkCommand },
     { name := commitName, action := .call commitCommand },
     { name := acceptName, action := .call acceptCommand },
-    { name := abortName, action := .call abortCommand }]
+    { name := abortName, action := .call abortCommand },
+    { name := worktreesName, action := .call worktreesCommand },
+    { name := worktreesRefreshName, action := .call worktreesRefreshCommand },
+    { name := worktreesVisitName, action := .call worktreesVisitCommand }]
 
 /-- The status buffer's jobs, as a host registers them for the owner
 `compiled`. -/
@@ -71,7 +82,8 @@ def jobs : Array Config.JobRegistration :=
   #[{ name := readJob, work := readWork }, { name := applyJob, work := applyWork },
     { name := showJob, work := showWork }, { name := hunkFetchJob, work := hunkFetchWork },
     { name := hunkDiffJob, work := hunkDiffWork }, { name := hunkApplyJob, work := hunkApplyWork },
-    { name := commitJob, work := commitWork }]
+    { name := commitJob, work := commitWork }, { name := worktreesReadJob, work := listWork },
+    { name := worktreeFindJob, work := visitFindWork }]
 
 /-- The version-control gutter's command, `vc-gutter-moved`, which its watch
 job posts (`Editor/VersionControl/Gutter.lean`), as a host registers it for
@@ -89,6 +101,6 @@ def gutterJobs : Array Config.JobRegistration :=
 /-- The status buffer's mode, as a host registers it for the owner
 `compiled`. -/
 def modes : Array Mode :=
-  #[mode, commitMode]
+  #[mode, commitMode, worktreesMode]
 
 end Editor.VersionControl

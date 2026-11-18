@@ -97,6 +97,9 @@ drops it.
   - `vc-commit`, `vc-commit-accept` and `vc-commit-abort` run the commands
     of those names (`Editor/VersionControl/Commit.lean`) and take nothing:
     they open the message buffer, commit with its text, and give it up.
+  - `vc-worktrees` runs `vc-worktrees`
+    (`Editor/VersionControl/Worktrees.lean`) and takes nothing: it opens
+    the worktree list of the focused buffer's workspace's repository.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -142,6 +145,7 @@ def bindings : Array Binding :=
     { name := "vc-stage-hunk", command := VersionControl.stageHunkName },
     { name := "vc-unstage-hunk", command := VersionControl.unstageHunkName },
     { name := "vc-commit", command := VersionControl.commitName },
+    { name := "vc-worktrees", command := VersionControl.worktreesName },
     { name := "vc-commit-accept", command := VersionControl.acceptName },
     { name := "vc-commit-abort", command := VersionControl.abortName }]
 

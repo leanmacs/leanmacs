@@ -6,7 +6,8 @@ import Editor.Program
 
 What the editor asks of a version-control system, in its own terms: which
 files of a repository have changed and how, to stage or unstage files or
-one hunk of a file, and to commit what is staged.
+one hunk of a file, to commit what is staged, its worktrees and branches, a
+branch's change against its base, and to make and remove a worktree.
 It is a port like the others (`Editor/Program.lean`): requests, a reply
 type for each, a pure model of a repository
 (`Editor/VersionControl/Model.lean`) and a contract every implementation is
@@ -70,6 +71,37 @@ against it.
   is neutral data: git names its common directory, with `HEAD` and the
   index of the checkout's own git directory, `packed-refs` and `refs`, and
   jj would name its operation heads.
+- **`worktrees`** is every worktree of the repository (`Worktree`): the
+  main one first, then the linked ones in path order, each its absolute
+  path as the system spells it and what is checked out there. A bare main
+  repository is no worktree and is not listed; a worktree whose directory
+  is gone is still listed.
+- **`branches`** is every local branch's name, in byte order; an unborn
+  branch has no commit and is not one.
+- **`changes revision against`** is committed content only (`Changes`):
+  the merge base of `revision` and `against`, and every path whose content
+  differs between that base and `revision`, sorted, each with its content
+  on both sides, `none` where a side lacks it. A change is of content:
+  renames are off, so a moved file is its old path deleted and its new
+  path added, and a change of mode alone is not listed. Content is decoded
+  by the store's escape rule, as `fileAt`'s is; a submodule's side reads
+  `Subproject commit <id>` and a line feed, as git prints it. A name that
+  is not a commit is refused with status 1, `<name> is not a commit`, and
+  two with no merge base with status 1, `<revision> and <against> have no
+  merge base`.
+- **`addWorktree path branch start`** makes a worktree at `path`: with
+  `start`, on a new branch `branch` made there; without it, on the
+  existing local branch `branch`. A branch that exists (with `start`), a
+  missing branch or one checked out in another worktree (without it), or a
+  path that is a worktree, refuses it, and nothing changes.
+- **`removeWorktree path`** removes the linked worktree at `path` and its
+  directory, and keeps its branch. The main worktree, a path that is no
+  worktree and one holding a modified or untracked file refuse it, and
+  nothing changes.
+- **A name that starts with `-`** (a revision, `against`, a branch, a
+  start), which a system could read as an option, and a worktree path that
+  is not absolute refuse the request before anything runs, as `invalid`
+  (`Request.invalid?`). Every implementation calls it first.
 - **Errors are values** (`Error`): a reply is an `Except`, and nothing is
   thrown. A command says `Error.describe` of a refusal.
 
@@ -80,9 +112,9 @@ both implementations behind it; none goes in ahead of them.
 
 | Addition | Where |
 |---|---|
-| Another question of the repository: the branches and the worktrees, and a diff between two revisions (phase 4). A file at a revision (`fileAt`) and what to watch (`watched`) are here (phase 2), and staging and unstaging a hunk (`stageHunk`, `unstageHunk`) and committing (`commit`) (phase 3) | A constructor of `Request`, its case in `Request.Reply`, an operation here, a clause of `Model.handle`, a clause of `Git.handler`, and a property of the contract |
+| Another question of the repository or another write. A file at a revision (`fileAt`) and what to watch (`watched`) are here (phase 2), staging and unstaging a hunk (`stageHunk`, `unstageHunk`) and committing (`commit`) (phase 3), and the worktrees (`worktrees`), the branches (`branches`), a branch's change against its base (`changes`) and making and removing a worktree (`addWorktree`, `removeWorktree`) (phase 4) | A constructor of `Request`, its case in `Request.Reply`, an operation here, a clause of `Model.handle`, a clause of `Git.handler`, and a property of the contract |
 | Another way a file differs | A constructor of `FileState` (or of `Change` or `Conflict`), its case in the parser (`Editor/VersionControl/Porcelain.lean`), in the model's status and printer, and in the status buffer's view (`Editor/VersionControl/Status.lean`) |
-| Another way a request fails | A constructor of `Error`, with its sentence in `Error.describe` |
+| Another way a request fails | A constructor of `Error`, with its sentence in `Error.describe`; one refused before anything runs is a case of `Request.invalid?` |
 | Another system (jj) | A handler of these requests, held to the contract; nothing here |
 
 Pinned by the contract, which `model-test` runs against the model and
@@ -188,6 +220,9 @@ inductive Error where
   | failed (exit : Process.Exit) (message : String)
   /-- What it printed could not be read: `detail` says why. -/
   | unparsable (detail : String)
+  /-- The request was refused before anything ran (`Request.invalid?`):
+  `detail` says why. -/
+  | invalid (detail : String)
   deriving DecidableEq, Repr
 
 /-- The first line of `text` that is not blank, trimmed; empty when there is
@@ -204,6 +239,7 @@ def Error.describe : Error → String
     | line => s!"exited with status {status}: {line}"
   | .failed (.signal signal) _ => s!"was ended by signal {signal}"
   | .unparsable detail => s!"printed what cannot be read: {detail}"
+  | .invalid detail => s!"was not asked: {detail}"
 
 /-- Two status replies are equal when they are the same case with equal
 contents. `Except` derives no equality. -/
@@ -298,6 +334,34 @@ structure LineHunk where
   after : Array String
   deriving DecidableEq, Repr
 
+/-- A checkout of the repository: where its files are, and what is checked
+out there. -/
+structure Worktree where
+  /-- Its directory, absolute, as the system spells it. -/
+  path : System.FilePath
+  /-- What is checked out there. -/
+  head : Head
+  deriving DecidableEq, Repr
+
+/-- A file whose content differs between two revisions: its content on each
+side, `none` where that side lacks it. -/
+structure FileChange where
+  /-- Its path, relative to the repository's root. -/
+  path : String
+  /-- Its content on the old side, the merge base's. -/
+  old : Option String
+  /-- Its content on the new side, the revision's. -/
+  new : Option String
+  deriving DecidableEq, Repr
+
+/-- The change of a revision against its merge base with a named branch. -/
+structure Changes where
+  /-- The merge base's id, which `fileAt` reads at. -/
+  base : String
+  /-- Every file whose content differs, sorted by path. -/
+  files : Array FileChange := #[]
+  deriving DecidableEq, Repr
+
 /-- What may be asked of a repository. -/
 inductive Request where
   /-- What is checked out, and every file that differs from it. -/
@@ -317,7 +381,65 @@ inductive Request where
   | unstageHunk (path : String) (hunk : LineHunk)
   /-- Make `HEAD` a new commit of the index, with `message`. -/
   | commit (message : String)
+  /-- Every worktree of the repository. -/
+  | worktrees
+  /-- Every local branch's name. -/
+  | branches
+  /-- The change of `revision` against its merge base with `against`. -/
+  | changes (revision against : String)
+  /-- A new worktree at `path` on `branch`: a new branch made at `start`, or
+  the existing branch when there is no `start`. -/
+  | addWorktree (path : System.FilePath) (branch : String) (start : Option String)
+  /-- The linked worktree at `path` gone, its branch kept. -/
+  | removeWorktree (path : System.FilePath)
   deriving DecidableEq, Repr
+
+/-- Why `request` is refused before anything runs, if it is ("The rules", in
+the module docs): a name that starts with `-`, which a system could read as
+an option, or a worktree path that is not absolute. Every implementation
+calls it first, so none can disagree. -/
+def Request.invalid? : Request → Option String
+  | .changes revision against => dashed #[revision, against]
+  | .addWorktree path branch start => relative path <|> dashed (#[branch] ++ start.toArray)
+  | .removeWorktree path => relative path
+  | _ => none
+where
+  /-- The first of `names` that starts with `-`, said. -/
+  dashed (names : Array String) : Option String :=
+    (names.find? (·.startsWith "-")).map fun name => s!"{name} starts with -"
+  /-- `path`, said, when it is not absolute. -/
+  relative (path : System.FilePath) : Option String :=
+    if path.isAbsolute then none else some s!"{path} is not absolute"
+
+/-- Two replies of `worktrees` are equal when they are the same case with
+equal contents. -/
+instance : DecidableEq (Except Error (Array Worktree))
+  | .ok a, .ok b =>
+    if h : a = b then isTrue (congrArg Except.ok h) else isFalse fun e => h (Except.ok.inj e)
+  | .error a, .error b =>
+    if h : a = b then isTrue (congrArg Except.error h) else isFalse fun e => h (Except.error.inj e)
+  | .ok _, .error _ => isFalse fun e => by cases e
+  | .error _, .ok _ => isFalse fun e => by cases e
+
+/-- Two replies of `branches` are equal when they are the same case with
+equal contents. -/
+instance : DecidableEq (Except Error (Array String))
+  | .ok a, .ok b =>
+    if h : a = b then isTrue (congrArg Except.ok h) else isFalse fun e => h (Except.ok.inj e)
+  | .error a, .error b =>
+    if h : a = b then isTrue (congrArg Except.error h) else isFalse fun e => h (Except.error.inj e)
+  | .ok _, .error _ => isFalse fun e => by cases e
+  | .error _, .ok _ => isFalse fun e => by cases e
+
+/-- Two replies of `changes` are equal when they are the same case with equal
+contents. -/
+instance : DecidableEq (Except Error Changes)
+  | .ok a, .ok b =>
+    if h : a = b then isTrue (congrArg Except.ok h) else isFalse fun e => h (Except.ok.inj e)
+  | .error a, .error b =>
+    if h : a = b then isTrue (congrArg Except.error h) else isFalse fun e => h (Except.error.inj e)
+  | .ok _, .error _ => isFalse fun e => by cases e
+  | .error _, .ok _ => isFalse fun e => by cases e
 
 /-- The type of the reply to each request: the status, nothing for a write,
 a file's content or none, or what to watch; each refused with an `Error`. -/
@@ -330,6 +452,11 @@ def Request.Reply : Request → Type
   | .stageHunk .. => Except Error Unit
   | .unstageHunk .. => Except Error Unit
   | .commit _ => Except Error Unit
+  | .worktrees => Except Error (Array Worktree)
+  | .branches => Except Error (Array String)
+  | .changes .. => Except Error Changes
+  | .addWorktree .. => Except Error Unit
+  | .removeWorktree _ => Except Error Unit
 
 /-- The version-control port: `Request` and the reply to each request. -/
 abbrev port : Port :=
@@ -377,5 +504,28 @@ def unstageHunk (path : String) (hunk : LineHunk) : VersionControlM (Except Erro
 /-- Makes `HEAD` a new commit of the index, with `message`. -/
 def commit (message : String) : VersionControlM (Except Error Unit) :=
   Program.request (port := port) (.commit message)
+
+/-- Every worktree of the repository: the main one first, then the linked
+ones in path order. -/
+def worktrees : VersionControlM (Except Error (Array Worktree)) :=
+  Program.request (port := port) .worktrees
+
+/-- Every local branch's name, in byte order. -/
+def branches : VersionControlM (Except Error (Array String)) :=
+  Program.request (port := port) .branches
+
+/-- The change of `revision` against its merge base with `against`. -/
+def changes (revision against : String) : VersionControlM (Except Error Changes) :=
+  Program.request (port := port) (.changes revision against)
+
+/-- Makes a worktree at `path` on `branch`: a new branch made at `start`, or
+the existing branch when there is no `start`. -/
+def addWorktree (path : System.FilePath) (branch : String) (start : Option String := none) :
+    VersionControlM (Except Error Unit) :=
+  Program.request (port := port) (.addWorktree path branch start)
+
+/-- Removes the linked worktree at `path`, keeping its branch. -/
+def removeWorktree (path : System.FilePath) : VersionControlM (Except Error Unit) :=
+  Program.request (port := port) (.removeWorktree path)
 
 end Editor.VersionControl
