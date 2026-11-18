@@ -63,6 +63,14 @@ def floatTop (driver : EvilDriver) : Option Nat := do
   let scene ← driver.model.display.scenes.back?
   return (← scene.views.find? (·.id != ⟨0⟩)).rect.y
 
+/-- A tracked entry of the source `⟨0⟩`, shown by `scenes` scenes. -/
+def trackedEntry (scenes : Nat := 0) : Buffer.ExcerptEntry :=
+  { source := ⟨0⟩, viewed := some { scenes } }
+
+/-- The entries of the excerpt buffer `id` of `state`, if it is one. -/
+def entriesOf (state : EditorState) (id : BufferId) : Option (Array Buffer.ExcerptEntry) :=
+  (state.buffer? id).bind (·.excerpts) |>.map (·.entries)
+
 /-- The checks of what a view of an excerpt buffer shows
 (`Editor/ExcerptView.lean`; `Editor/Loop.lean`, "Decorations"; the follow
 and the scroll commands over blocks, `Editor/Scroll.lean`, "Blocks"), on
@@ -167,15 +175,57 @@ def excerptDisplayChecks : List Check :=
             -- `alpha`, at 5, is below both headers: two rows of one pixel.
             match blocked, plain with
             | some blocked, some plain => blocked == plain + 2
-            | _, _ => false }]
-
-/-- A tracked entry of the source `⟨0⟩`, shown by `scenes` scenes. -/
-def trackedEntry (scenes : Nat := 0) : Buffer.ExcerptEntry :=
-  { source := ⟨0⟩, viewed := some { scenes } }
-
-/-- The entries of the excerpt buffer `id` of `state`, if it is one. -/
-def entriesOf (state : EditorState) (id : BufferId) : Option (Array Buffer.ExcerptEntry) :=
-  (state.buffer? id).bind (·.excerpts) |>.map (·.entries)
+            | _, _ => false },
+    { name :=
+        "a tracked excerpt buffer's first scene draws review-unexamined over each excerpt its rows show, and the next scene, after a step that moves nothing, draws none"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let made := excerptInvoked driver "make-tracked"
+            let next := excerptInvoked made "noop"
+            let unexamined : Array Decoration :=
+              #[⟨0, 4, ExcerptView.unexaminedFace⟩, ⟨5, 9, ExcerptView.unexaminedFace⟩,
+                ⟨10, 16, ExcerptView.unexaminedFace⟩, ⟨17, 23, ExcerptView.unexaminedFace⟩,
+                ⟨24, 29, ExcerptView.unexaminedFace⟩, ⟨30, 32, ExcerptView.unexaminedFace⟩]
+            (lastView made).map (·.decorations) == some unexamined &&
+              (lastView next).map (·.decorations) == some #[] },
+    { name :=
+        "in a window four rows tall, an excerpt below the rows shown is never marked and stays drawn unexamined, and G shows it: it is marked by one scene and drawn unexamined in that scene only"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let made := excerptInvoked (viewResized driver ⟨20, 4⟩) "make-tracked"
+            let moved := evilFed made "G"
+            let after := excerptInvoked moved "noop"
+            let scenesOf (driver : EvilDriver) : Option (Array Nat) := do
+              let id ← driver.loop.state.findBuffer "tracked"
+              let entries ← entriesOf driver.loop.state id
+              return entries.map fun entry => (entry.viewed.map (·.scenes)).getD 0
+            let last : Decoration := ⟨30, 32, ExcerptView.unexaminedFace⟩
+            (scenesOf made).map (fun scenes => (scenes[0]?, scenes[5]?)) == some (some 1, some 0) &&
+              (scenesOf moved).map (·[5]?) == some (some 1) &&
+              (lastView moved).any (·.decorations.contains last) &&
+              !(lastView after).any (·.decorations.contains last) },
+    { name :=
+        "the first scene that shows a tracked excerpt is at the step's clock, and its time on screen grows by the clock's difference between two steps"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let clocked (driver : EvilDriver) (now : Nat) : EvilDriver :=
+              { driver with keys := { driver.keys with now } }
+            let made := excerptInvoked (clocked driver 1000) "make-tracked"
+            let later := excerptInvoked (clocked made 1500) "noop"
+            let first (driver : EvilDriver) : Option (Option Buffer.Viewed) := do
+              let id ← driver.loop.state.findBuffer "tracked"
+              return (← entriesOf driver.loop.state id)[0]?.bind (·.viewed)
+            first made == some (some { scenes := 1, firstAt := some 1000, shownFor := 0 }) &&
+              first later == some (some { scenes := 2, firstAt := some 1000, shownFor := 500 }) }]
 
 /-- The checks of what is viewed of a tracked excerpt
 (`Editor/ExcerptView.lean`, "What was not examined"; `Editor/State.lean`,
