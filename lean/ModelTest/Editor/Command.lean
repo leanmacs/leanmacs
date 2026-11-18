@@ -3,6 +3,7 @@ import Editor.Clipboard
 import Editor.Clipboard.Model
 import Editor.Command
 import Editor.Command.Model
+import Editor.Command.Registry
 import Editor.Display
 import Editor.Display.Model
 import Editor.Fuzzy
@@ -194,6 +195,17 @@ def commandPortChecks : List Check :=
               model.texts.contents == #[] &&
               model.display.scenes == #[]
         | .error _ =>
-          return false }]
+          return false },
+    { name :=
+        "a registry question of a command no loop runs is answered as with nothing registered, and neither the watch model's clock nor the other models move"
+      run := do
+        let command : EditorM (Array String × Bool × Option String) := do
+          return (← RegistryRequest.ask .exNames, ← RegistryRequest.ask (.hasJob "nope"),
+              ← RegistryRequest.ask (.languageOf "/p/main.rs"))
+        let watch : WatchModel := { clock := 7, pace := 3 }
+        let (result, model) := command.runModel { editorModel with watch }
+        return resulted result == .inr (#[], true, none) && model.watch == watch &&
+            model.texts.contents == #[] &&
+            model.display.scenes == #[] }]
 
 end ModelTest

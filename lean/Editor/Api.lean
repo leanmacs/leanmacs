@@ -789,6 +789,12 @@ refused: a reply that can be is an `Except`, a value. -/
 def EditorState.ask (request : StateRequest) : EditorM request.Reply :=
   ExceptT.lift (Program.request (port := editorPort) (.state request))
 
+/-- Asks the registry or config one question and returns its answer
+("Asking the registry, and the loop's control", in the module docs). It is
+never refused. -/
+def RegistryRequest.ask (request : RegistryRequest) : EditorM request.Reply :=
+  ExceptT.lift (Program.request (port := editorPort) (.registry request))
+
 /-- The whole editor state, as it is now. -/
 def editorState : EditorM EditorState :=
   EditorState.ask .read

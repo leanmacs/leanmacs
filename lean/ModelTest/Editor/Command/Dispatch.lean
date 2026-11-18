@@ -5,6 +5,7 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Command.Model
+import Editor.Command.Registry
 import Editor.Compile.Contribution
 import Editor.Config.Owner
 import Editor.Config.Registry
@@ -47,10 +48,13 @@ import ModelTest.Support.States
 /-!
 # Model tests: `Editor/Command/Dispatch.lean`
 
-The model tests of `Editor/Command/Dispatch.lean`: `guardChecks` and
-`modeEnterChecks`. `guardChecks` are of the loop's guard and `modeEnterChecks`
-of entering a mode, both in `Editor/Command/Dispatch.lean`. The root module
-`ModelTest` runs them; its module doc says what each shows.
+The model tests of `Editor/Command/Dispatch.lean`: `guardChecks`,
+`modeEnterChecks` and `dispatchRegistryChecks`. `guardChecks` are of the
+loop's guard, `modeEnterChecks` of entering a mode and
+`dispatchRegistryChecks` of the loop's answers to the questions to the
+registry and config (`Loop.Registered.answer`), all in
+`Editor/Command/Dispatch.lean`. The root module `ModelTest` runs them; its
+module doc says what each shows.
 -/
 
 namespace ModelTest
@@ -334,5 +338,31 @@ def modeEnterChecks : List Check :=
         pure
           (entered [(⟨0⟩, "listing")] (watch := { arrived := 1 }) ==
             some (#[], ["enter: interrupted"], #[none, none])) }]
+
+/-- The checks of the loop's answers to the questions to the registry and
+config (`Loop.Registered.answer`, `Editor/Command/Dispatch.lean`), and of
+where its arms for them stand towards the guard. -/
+def dispatchRegistryChecks : List Check :=
+  [{  name :=
+        "a question to the registry is not guarded: with the interrupt flag up from the first request, a dispatched command that asks which ex names are bound finishes with the names the loop was told"
+      run := do
+        let asking : EditorM (Array String) := RegistryRequest.ask .exNames
+        let (ended, model) :=
+          (asking.dispatched { exNames := #["w"] } EditorState.none).runModel
+            (countingModel { arrived := 1 })
+        return resulted ended == .inr (.finished #["w"], EditorState.none) &&
+            model.watch.clock == 0 },
+    { name :=
+        "a dispatched command that asks for a path's language is answered the name of the language the loop's table chooses for the path, or none"
+      run :=
+        let program : EditorM (Guarded (Option String × Option String) × EditorState) := do
+          (do
+                  return (← RegistryRequest.ask (.languageOf "/p/main.rs"),
+                      ← RegistryRequest.ask (.languageOf "/p/notes.txt"))).dispatched
+              { languages := Language.shipped.toList } (← twoBuffers)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) => answer == (some "rust", none)
+          | _ => false }]
 
 end ModelTest

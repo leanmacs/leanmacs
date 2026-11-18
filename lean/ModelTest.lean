@@ -881,6 +881,7 @@ def checks : List Check :=
     modeRegistryChecks ++
     modeDispatchChecks ++
     modeEnterChecks ++
+    dispatchRegistryChecks ++
     highlightFaceChecks ++
     highlightEnterChecks ++
     treeObjectRuleChecks ++

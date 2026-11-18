@@ -527,6 +527,28 @@ def Loop.Registered.workspaceSettings (registered : Loop.Registered) : Workspace
   { roots := registered.workspaceRoots, git := registered.git
     markerModes := registered.compile.contributions.map (·.markerMode) }
 
+/-- The answer to `request`, a question to the registry or config, from what
+`registered` says ("Requests that name something registered", in the module
+docs). It reads no state. -/
+def Loop.Registered.answer (registered : Loop.Registered) :
+    (request : RegistryRequest) → request.Reply
+  | .ex name => registered.ex name
+  | .exNames => registered.exNames
+  | .themeNames => registered.themeNames
+  | .autoReload => registered.autoReload
+  | .workspaceSettings => (registered.workspaceSettings, registered.generation)
+  | .displayRules => registered.displayRules
+  | .shellTimeLimit => registered.shellTimeLimit
+  | .syntaxRefreshDelay => registered.syntaxRefreshDelay
+  | .languageOf path => (Language.forPath registered.languages path).map (·.name)
+  | .indentUnitOf language => (registered.languages.find? (·.name == language)).map (·.indentUnit)
+  | .compileHook => registered.compile
+  | .hasJob name => registered.jobs name
+  | .categorySources category => registered.categorySources category
+  | .atPointSources major minors occasion =>
+    (registered.atPointNames major minors).filter fun name =>
+      (registered.atPoint name).any (·.asksOn occasion)
+
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
 instance {α : Type} : Inhabited (Program editorPort (Guarded α × EditorState)) :=
@@ -694,6 +716,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       next (← ((registered.matching.styleFor category).hits text candidates).embedFuzzy)
   | state, .step (.state (.giveUp reason)) _ => .done (.gaveUp reason, state)
   | state, .step (.state (.breakOff reason)) _ => .done (.brokeOff reason, state)
+  | state, .step (.registry request) next =>
+    dispatched registered state (next (registered.answer request))
   | state, .step (.state request) next =>
     let (reply, state) := state.handle request
     dispatched registered state (next reply)
