@@ -4,8 +4,8 @@
 What a file prompt's text means as a path, read as Emacs reads a file name
 typed in the minibuffer. It is pure, and imports nothing: the file source
 (`Editor/Completion/Paths.lean`) reads the directory part of the text with
-it, and `open-file` resolves its answer with it (`Files.resolve`,
-`Editor/Files.lean`).
+it, and `open-file` resolves its answer and the paths it is handed with it
+(`Files.resolve`, `Editor/Files.lean`).
 
 - **`split`** gives the directory part, through the last `/`, and the last
   component, which is what is matched. With no `/` the directory part is
@@ -20,20 +20,27 @@ it, and `open-file` resolves its answer with it (`Files.resolve`,
   and a trailing `/`. A `..` with nothing before it is kept in a relative
   text and after `~`, and dropped at the root.
 - **`tidy`** is `normalize` after `restart`. It is idempotent.
-- **`expand`** makes an absolute path of a text: tidied, then `~` read under
-  the home directory, an absolute text as it is, and anything else under
-  the directory it is read from, then normalized again, with no trailing
-  `/` but for the root. With no home a `~` is refused, and with no
-  directory a relative text is.
+- **`expand`** makes an absolute path of a path handed over, as a program
+  hands one (Finder, the headless `open` request, config): normalized, a
+  leading `~` read under the home directory, an absolute text as it is,
+  and anything else under the directory it is read from, then normalized
+  again, with no trailing `/` but for the root. It does not restart: a
+  `//` or a `~` component is part of the path. With no home a `~` is
+  refused, and with no directory a relative text is.
+- **`expandTyped`** is `expand` after `restart`: what a text typed into a
+  file prompt means.
 - **`abbreviate`** writes a path under the home directory with `~`, and
   `directoryText` is that with one `/` after it: a prompt's initial text.
+  That text is one the restart reads back as itself; a directory with a
+  `~` component has none, and its prompt starts empty, read under that
+  directory.
 - **`~user` is not expanded**: it is a name like any other.
 
 ## Where an addition goes
 
 | Addition | Where | Pinned by |
 |---|---|---|
-| A new form of path (`~user`, an environment variable) | A case of `expand`, and of `restart` if it restarts the text | `ModelTest.typedPathChecks` |
+| A new form of path (`~user`, an environment variable) | A case of `expand`, and of `restart` if it restarts the text, which only typed text is | `ModelTest.typedPathChecks` |
 -/
 
 namespace Editor.TypedPath
@@ -97,27 +104,29 @@ def tidy (text : String) : String :=
   normalize (restart text)
 
 /-- The absolute path `text` means, read with the directory `directory` and
-the home directory `home`: tidied, then `~` read under the home, an
-absolute text as it is, and anything else under the directory, normalized
-again, with no trailing `/` but for the root. Why not, as a sentence, when
-the text needs a home or a directory there is none of. -/
+the home directory `home`, as a path handed to the editor is read: a
+leading `~` under the home, an absolute text as it is, and anything else
+under the directory, normalized, with no trailing `/` but for the root. It
+does not restart (`expandTyped` does): a `//` or a `~` component in a path
+a program hands over is part of that path. Why not, as a sentence, when the
+text needs a home or a directory there is none of. -/
 def expand (text : String) (directory home : Option System.FilePath) :
     Except String System.FilePath := do
-  let tidied := tidy text
+  let normal := normalize text
   let joined ←
-    if tidied == "~" || tidied.startsWith "~/" then
+    if normal == "~" || normal.startsWith "~/" then
       match home with
       | some home =>
-        pure (home.toString ++ "/" ++ ofChars (tidied.toList.drop 1))
+        pure (home.toString ++ "/" ++ ofChars (normal.toList.drop 1))
       | none =>
         throw "the home directory is not known"
     else
-      if tidied.startsWith "/" then
-        pure tidied
+      if normal.startsWith "/" then
+        pure normal
       else
         match directory with
         | some directory =>
-          pure (directory.toString ++ "/" ++ tidied)
+          pure (directory.toString ++ "/" ++ normal)
         | none =>
           throw "no directory to read it from"
   let normal := normalize joined
@@ -125,14 +134,27 @@ def expand (text : String) (directory home : Option System.FilePath) :
     if normal != "/" && normal.endsWith "/" then ofChars normal.toList.dropLast else normal
   return path
 
+/-- The absolute path `text`, as a person typed it into a file prompt,
+means: restarted (`restart`), then read as `expand` reads a path. -/
+def expandTyped (text : String) (directory home : Option System.FilePath) :
+    Except String System.FilePath :=
+  expand (restart text) directory home
+
+/-- `text`, normalized, with no trailing `/` but for the root. -/
+private def bare (text : String) : String :=
+  let normal := normalize text
+  if normal != "/" && normal.endsWith "/" then ofChars normal.toList.dropLast else normal
+
 /-- `path` written under the home directory `home` with `~`: `~` for the
 home itself, `~/…` for a path under it, and the path as it is otherwise or
-with no home. -/
+with no home. Both are normalized first, so a home written with a trailing
+`/` is the same home, and only a whole component is a prefix:
+`/home/meadow` is not under `/home/me`. -/
 def abbreviate (path : System.FilePath) (home : Option System.FilePath) : String :=
-  let text := path.toString
+  let text := bare path.toString
   match home with
   | some home =>
-    let homeText := home.toString
+    let homeText := bare home.toString
     if text == homeText then "~"
     else
       let under := if homeText.endsWith "/" then homeText else homeText ++ "/"
@@ -140,9 +162,14 @@ def abbreviate (path : System.FilePath) (home : Option System.FilePath) : String
   | none => text
 
 /-- The text a file prompt starts with for the directory `path`: its
-abbreviation (`abbreviate`) with one `/` after it. -/
+abbreviation (`abbreviate`) with one `/` after it, when the restart reads
+that text back as itself. A directory with a `~` component, such as
+`/srv/~/proj`, has no such text, since the restart reads `/srv/~/proj/` as
+`~/proj/`; its prompt starts empty, which the prompt reads under the asking
+view's directory, that same directory. -/
 def directoryText (path : System.FilePath) (home : Option System.FilePath) : String :=
   let text := abbreviate path home
-  if text.endsWith "/" then text else text ++ "/"
+  let text := if text.endsWith "/" then text else text ++ "/"
+  if restart text == text then text else ""
 
 end Editor.TypedPath

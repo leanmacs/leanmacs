@@ -131,9 +131,9 @@ are in `Editor/Files/Compiled.lean`.
   is not one, one after another. With anything else first, or nothing, it
   asks for the path with a
   prompt (`prompt`, `Editor/Api.lean`), labelled `openPrompt`, whose
-  continuation is the open command itself with no argument of its own:
-  when the prompt is accepted the command runs again with the answer as
-  its first argument, in the view it was asked from
+  continuation is the open command itself with `typedMark` as its own
+  arguments: when the prompt is accepted the command runs again with the
+  answer as its first argument and the mark after it, in the view it was asked from
   (`docs/design/concurrency.md`, "Prompts"). A key bound to the command
   under the Vim scheme hands it a count and a register, so its first
   argument is no path, and it asks. Where the prompt is refused, because
@@ -142,16 +142,21 @@ are in `Editor/Files/Compiled.lean`.
 - **The prompt completes file names** (`askPath`), as Emacs's `find-file`
   under Doom's vertico does. It starts with the asking view's directory as
   its text (`EditorState.directoryOf`, written with `~` under the home,
-  `TypedPath.directoryText`), and asks the sources of the category `file`,
+  `TypedPath.directoryText`; empty, and so read under that directory, for
+  a directory with a `~` component, which no typed text names), and asks the sources of the category `file`,
   with the shipped file source (`Completion.Paths.source`) as their
   default, so config adds to what it lists by registering a source in the
   category. The style compiled code gives the category is the path style
   (`Files.styleDefaults`).
 - **The command resolves each path it is given** (`resolve`) before it
-  opens it, as Emacs reads a typed file name (`TypedPath.expand`): `~`
-  under the home directory, an absolute path as it is, and anything else
-  under the asking view's directory, after a restart (`//`, `/~/`) and
-  with `.` and `..` read lexically. One that cannot be resolved, a `~`
+  opens it: a leading `~` under the home directory, an absolute path as it
+  is, and anything else under the asking view's directory, with `.` and
+  `..` read lexically (`TypedPath.expand`). Only the prompt's answer,
+  which comes back with `typedMark` after it, is read as Emacs reads a
+  typed file name, after a restart (`//`, `/~/`,
+  `TypedPath.expandTyped`); a path a program hands over (Finder's
+  `openFiles`, the headless `open` request, config, `:e`) is not, since a
+  `//` or a `~` component is part of it. One that cannot be resolved, a `~`
   with no home known, is said (`notResolved`) and left out, and the rest
   still open. `Files.open`, which config calls, does not resolve: it is
   handed a path.
@@ -397,20 +402,30 @@ read as a path, for `why`. -/
 def notResolved (text : String) (why : String) : String :=
   s!"cannot open {text}: {why}"
 
-/-- The absolute path `text`, as a person typed it, means in `view`
-(`TypedPath.expand`): read under the view's place (`EditorState.placeOf`),
-its directory and the home; or why not. -/
-def resolve (state : EditorState) (view : ViewId) (text : String) : Except String System.FilePath :=
+/-- The absolute path `text` means in `view`, read under the view's place
+(`EditorState.placeOf`), its directory and the home; or why not. With
+`typed`, `text` is what a person typed into the prompt, which is restarted
+(`TypedPath.expandTyped`); otherwise it is a path handed over, which is not
+(`TypedPath.expand`). -/
+def resolve (state : EditorState) (view : ViewId) (text : String) (typed : Bool := false) :
+    Except String System.FilePath :=
   let place := state.placeOf view
-  TypedPath.expand text place.directory place.home
+  if typed then TypedPath.expandTyped text place.directory place.home
+  else TypedPath.expand text place.directory place.home
+
+/-- The open prompt's continuation's own arguments, after the answer: a
+`true` that says the answer was typed into the prompt, so that the open
+command reads it as typed (`resolve`). -/
+def typedMark : List Argument :=
+  [.bool true]
 
 /-- Asks for a path to open in `view`, with the prompt labelled `openPrompt`
-whose continuation is the open command: its text starts as the view's
-directory (`TypedPath.directoryText`), and it asks the sources of the
-category `file`, the shipped file source by default. -/
+whose continuation is the open command with `typedMark`: its text starts
+as the view's directory (`TypedPath.directoryText`), and it asks the
+sources of the category `file`, the shipped file source by default. -/
 def askPath (view : ViewId) : EditorM (Except PromptRefusal ViewId) := do
   let state ← editorState
-  prompt openPrompt { command := openName }
+  prompt openPrompt { command := openName, arguments := typedMark }
       (TypedPath.directoryText (state.directoryOf view) state.home)
       [.category Completion.Paths.category [Completion.Paths.source]]
 
@@ -560,14 +575,15 @@ def leadingPaths : List Argument → List System.FilePath
   | .str path :: rest => path :: leadingPaths rest
   | _ => []
 
-/-- Opens each of `texts`, as typed, in `view`: each resolved (`resolve`),
-one that cannot be said and left out, and the rest opened one after another
+/-- Opens each of `texts` in `view`: each resolved (`resolve`), as typed
+into the prompt with `typed` and as a path handed over without, one that
+cannot be said and left out, and the rest opened one after another
 (`Files.open`). -/
-def openTexts (view : ViewId) (texts : List String) : EditorM Unit := do
+def openTexts (view : ViewId) (texts : List String) (typed : Bool := false) : EditorM Unit := do
   let state ← editorState
   let mut paths : List System.FilePath := []
   for text in texts do
-    match resolve state view text with
+    match resolve state view text typed with
     | .ok path =>
       paths := paths ++ [path]
     | .error why =>
@@ -581,13 +597,16 @@ def openTexts (view : ViewId) (texts : List String) : EditorM Unit := do
 /-- The open command as it is called: opens the path that is its first
 argument, a string, in the window it was called with, and after it the
 strings that follow it, up to the first argument that is not one, one after
-another, each resolved as typed (`openTexts`). With anything else first, or
-nothing, it asks for the path (`askPath`, labelled `openPrompt`), with
-itself as the continuation: the answer is then its first argument, and it
-runs in the view it was asked from. Where the prompt is refused, because
-one is open, it says so in the echo area (`notAsking`). -/
+another, each resolved as a path handed over (`openTexts`). With anything
+else first, or nothing, it asks for the path (`askPath`, labelled
+`openPrompt`), with itself and `typedMark` as the continuation: the answer
+is then its first argument, followed by the mark, and it is resolved as
+typed, and it runs in the view it was asked from. Where the prompt is
+refused, because one is open, it says so in the echo area (`notAsking`). -/
 def openCommand (call : Call) : EditorM Unit := do
   match call.arguments with
+  | .str path :: .bool true :: _ =>
+    openTexts call.target.window.id [path] (typed := true)
   | .str path :: rest =>
     openTexts call.target.window.id (path :: (leadingPaths rest).map (·.toString))
   | _ =>

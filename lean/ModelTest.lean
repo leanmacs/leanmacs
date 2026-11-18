@@ -7099,7 +7099,7 @@ def typedPathChecks : List Check :=
                 "../x/", "~/../x", "/../a", "~/proj//etc/", "/srv/a/~/notes"].all
             fun text => TypedPath.tidy (TypedPath.tidy text) == TypedPath.tidy text) },
     { name :=
-        "expand reads ~ under the home, a relative name under the directory and an absolute one as it is, keeps .. at the root, drops a trailing /, and says why with no home or no directory"
+        "expand reads a leading ~ under the home, a relative name under the directory and an absolute one as it is, with no restart, keeps .. at the root, drops a trailing /, and says why with no home or no directory; expandTyped restarts first"
       run :=
         let home : Option System.FilePath := some "/home/me"
         let here : Option System.FilePath := some "/w/src"
@@ -7119,7 +7119,13 @@ def typedPathChecks : List Check :=
             expanded "/../../a" none none == some "/a" &&
             expanded "/" none none == some "/" &&
             expanded "notes/" here none == some "/w/src/notes" &&
-            expanded "~/x//etc/" none home == some "/etc" &&
+            expanded "/tmp/a//b.txt" none home == some "/tmp/a/b.txt" &&
+            expanded "/srv/~/notes" none home == some "/srv/~/notes" &&
+            expanded "~/x//etc/" none home == some "/home/me/x/etc" &&
+            (TypedPath.expandTyped "~/x//etc/" none home).toOption.map (·.toString) ==
+              some "/etc" &&
+            (TypedPath.expandTyped "/srv/~/notes" none home).toOption.map (·.toString) ==
+              some "/home/me/notes" &&
             refusal "~/a" here none == some "the home directory is not known" &&
             refusal "a" none home == some "no directory to read it from") },
     { name :=
@@ -7135,7 +7141,24 @@ def typedPathChecks : List Check :=
             TypedPath.directoryText "/home/me/proj" home == "~/proj/" &&
             TypedPath.directoryText "/w" home == "/w/" &&
             TypedPath.directoryText "/w" none == "/w/" &&
-            TypedPath.directoryText "/" home == "/") }]
+            TypedPath.directoryText "/" home == "/" &&
+            TypedPath.abbreviate "/home/me/proj" (some "/home/me/") == "~/proj" &&
+            TypedPath.abbreviate "/home/me" (some "/home/me/") == "~") },
+    { name :=
+        "directoryText is a text the restart reads back as the directory, and empty, read under the directory, where there is none: /srv/~/proj and /w//x"
+      run :=
+        let home : Option System.FilePath := some "/home/me"
+        let readBack (path : System.FilePath) : Bool :=
+          let text := TypedPath.directoryText path home
+          (TypedPath.expandTyped text (some path) home).toOption ==
+            (TypedPath.expand path.toString none home).toOption
+        pure
+          (TypedPath.directoryText "/srv/~/proj" home == "" &&
+            TypedPath.directoryText "/home/me/~/x" home == "" &&
+            TypedPath.directoryText "/w//x" home == "/w/x/" &&
+            (["/srv/~/proj", "/home/me/~/x", "/w//x", "/home/me", "/home/me/proj", "/w", "/"] :
+                  List System.FilePath).all
+              readBack) }]
 
 /-- The checks of the pure model of the files a job reaches
 (`Editor/File/Model.lean`) and of the file data (`Editor/File.lean`). They
@@ -24855,7 +24878,7 @@ def fileCommandChecks : List Check :=
               (opened.loop.state.findFile crlf).isSome &&
               opened.loop.state.wellFormed },
     { name :=
-        "the open command with no path among its arguments, with none and with the count and the register an input scheme hands a command, starts no load and asks for the path: a prompt is open, labelled as the open command's, whose continuation is the open command with no argument of its own, asked from the view the command was called in, starting at the working directory, /, with the file source asking, whose job is the one started"
+        "the open command with no path among its arguments, with none and with the count and the register an input scheme hands a command, starts no load and asks for the path: a prompt is open, labelled as the open command's, whose continuation is the open command with the mark of a typed answer, asked from the view the command was called in, starting at the working directory, /, with the file source asking, whose job is the one started"
       run :=
         pure <|
           match filesDriver with
@@ -24869,7 +24892,9 @@ def fileCommandChecks : List Check :=
                 asked.loop.state.prompt.map
                     (fun prompt =>
                       (prompt.label, prompt.view, prompt.asker, prompt.continuation)) ==
-                  some (Files.openPrompt, ⟨1⟩, ⟨0⟩, { command := Files.openName }) &&
+                  some
+                    (Files.openPrompt, ⟨1⟩, ⟨0⟩,
+                      { command := Files.openName, arguments := Files.typedMark }) &&
                 asked.loop.state.prompt.map (·.candidates.asking.map (·.source)) ==
                   some #["files"] &&
                 minibufferText asked == some "/" &&
@@ -25186,7 +25211,8 @@ def fileCommandChecks : List Check :=
               (started steps).map (·.name) == #[Completion.Paths.job] &&
               bare.pending.all (·.name == Completion.Paths.job) &&
               bare.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
-                some (Files.openPrompt, { command := Files.openName }) &&
+                some
+                  (Files.openPrompt, { command := Files.openName, arguments := Files.typedMark }) &&
               (showing opened).bind (·.text) == some FileCases.noteText &&
               (showing saved).bind (·.text) == some text &&
               bytesOf saved path == some (FileModel.encode text) &&
@@ -25962,7 +25988,8 @@ def exChecks : List Check :=
           | some driver =>
             let (asking, _) := fedTo driver (exLine "e")
             asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
-                some (Files.openPrompt, { command := Files.openName }) &&
+                some
+                  (Files.openPrompt, { command := Files.openName, arguments := Files.typedMark }) &&
               asking.pending.all (·.name == Completion.Paths.job) },
     { name :=
         "the ex name w after an edit starts a save, which is in flight until its job is finished: the file then holds the buffer's text, the buffer is not modified, and the echo area says the file was written"
@@ -40921,15 +40948,17 @@ def fileNameKeys (inline : Nat := Loop.inlineMatches) : Loop.Keys TestScheme.sch
         byCategory := fun category =>
           if category == Completion.Paths.category then some Completion.Styles.path else none } }
 
-/-- A driver of the file name checks over the initial state with `/w` as
-the working directory and `home` as the home directory, its jobs the ones
+/-- A driver of the file name checks over the initial state with `directory`
+(`/w` unless given) as the working directory and `home` as the home
+directory, its jobs the ones
 compiled code registers for files, over `files`; `none` if making the state
 was refused. -/
 def fileNameDriver (home : Option System.FilePath := none) (files : FileModel := fileNameFiles)
-    (inline : Nat := Loop.inlineMatches) : Option TestDriver :=
+    (inline : Nat := Loop.inlineMatches) (directory : System.FilePath := "/w") :
+    Option TestDriver :=
   let start : TextM EditorState := do
     return { (← EditorState.initial ⟨640, 480⟩) with
-        workingDirectory := "/w", home }
+        workingDirectory := directory, home }
   (Loop.Driver.over (fileNameKeys inline)
         (fun name => (Files.jobs.find? (·.name == name)).map (·.work)) start
         editorModel).toOption.map
@@ -41073,6 +41102,46 @@ def fileNameChecks : List Check :=
               refused.pending.isEmpty &&
               refused.loop.state.echo == "cannot open ~/alpha.txt: the home directory is not known"
           | _, _, _ => false },
+    { name :=
+        "a path given as an argument is not restarted: open-file /w//alpha.txt, as Finder hands it, opens /w/alpha.txt, and /w/~/beta.txt opens that file, not ~/beta.txt"
+      run :=
+        let files := fileNameFiles.withDirectory "/w/~" |>.withFile "/w/~/beta.txt" "tilde\n".toUTF8
+        pure <|
+          match fileNameDriver (home := some "/w") (files := files) with
+          | none => false
+          | some driver =>
+            let fileOf (driver : TestDriver) : Option System.FilePath :=
+              (showing (settled driver)).bind (·.buffer.file.map (·.path))
+            let doubled := (fedTo driver [.openFiles ["/w//alpha.txt"]]).1
+            let tilde := (fedTo driver [.openFiles ["/w/~/beta.txt"]]).1
+            fileOf doubled == some "/w/alpha.txt" && fileOf tilde == some "/w/~/beta.txt" &&
+              (showing (settled tilde)).bind (·.text) == some "tilde\n" },
+    { name := "a path typed into the prompt is restarted: /w/src//w/alpha.txt opens /w/alpha.txt"
+      run :=
+        pure <|
+          match opened? with
+          | none => false
+          | some opened =>
+            let typed := (fedTo opened (presses "C-u / w / s r c / / w / a l p h a . t x t RET")).1
+            (showing (settled typed)).bind (·.buffer.file.map (·.path)) == some "/w/alpha.txt" },
+    { name :=
+        "a directory with a ~ component, which no text can name through the restart, starts the prompt empty, read under that directory: it lists /srv/~/proj, not ~/proj, and RET on plan.md opens /srv/~/proj/plan.md"
+      run :=
+        let files :=
+          ((fileNameFiles.withDirectory "/srv").withDirectory "/srv/~").withDirectory
+              "/srv/~/proj" |>.withFile
+            "/srv/~/proj/plan.md" "plan\n".toUTF8
+        pure <|
+          match
+            fileNameDriver (home := some "/w") (files := files) (directory := "/srv/~/proj") with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-o o")
+            let opened := settled asked
+            let picked := (fedTo opened (presses "p l C-n RET")).1
+            minibufferText asked == some "" && fileLabels opened == #["plan.md"] &&
+              (showing (settled picked)).bind (·.buffer.file.map (·.path)) ==
+                some "/srv/~/proj/plan.md" },
     { name :=
         "an unreadable directory: TAB on notes/ says files: cannot list /w/notes/: the file system does not allow it, and lists nothing"
       run :=
