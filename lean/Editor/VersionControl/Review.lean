@@ -72,10 +72,12 @@ diff service is a job, and each job's command does the next step:
    `vc-review: <DiffError.describe>`; a working buffer whose text moved
    since its snapshot says `vc-review: <path> changed while the review was
    read; run vc-review again`. Otherwise the files are ordered
-   (`orderFiles`), each with the lines its spans change, and the buffer
-   built ("Hunks and their excerpts"): a new one called `*vc-review:
-   <label>*`, or the first free name of that, given the workspace, or, for
-   a refresh, the kept one's list replaced (`BufferId.setExcerpts`). Its
+   (`orderFiles`), each with the lines its spans change. With no hunk at
+   all it says the files left out, or that there is no change. Otherwise
+   the buffer is built ("Hunks and their excerpts"): a new one called
+   `*vc-review: <label>*`, or the first free name of that, given the
+   workspace, or, for a refresh, the kept one's list replaced
+   (`BufferId.setExcerpts`). Its
    gutter, mode and record are set, the store written, and a new one shown
    where the display rules say for the opener `vc-review` and focused. A
    refresh then removes the previous round's old buffers that no window
@@ -566,6 +568,12 @@ def reviewGutter (text : TextId) (marks : Array (Nat × Nat × Nat × GutterMark
           stop := stop - excerpt.sourceStart + excerpt.start }
   return { revision := ← text.revision, marks := moved.qsort (·.start < ·.start) }
 
+/-- What is said of the paths `missing`, whose load was refused; none when
+there are none. -/
+def leftOut (missing : Array String) : Option String :=
+  if missing.isEmpty then none
+  else some s!"{reviewName}: left out {", ".intercalate missing.toList}: its load was refused"
+
 /-- The command a finished diff hands the loop ("The pipeline", in the module
 docs). -/
 def reviewDiffed (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff.Hunks)) :
@@ -592,7 +600,7 @@ def reviewDiffed (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff
   let against := order.order.against
   let (list, hunks, marks) := reviewBuild read
   if list.isEmpty then
-    message s!"{reviewName}: no change against {against}"
+    message ((leftOut order.missing).getD s!"{reviewName}: no change against {against}")
     return
   let root := order.order.root
   let location := Location.local root
@@ -629,8 +637,8 @@ def reviewDiffed (order : ReviewDiffOrder) (diffs : Array (Except DiffError Diff
     let view := order.order.view
     let asking := if (state.window? view).isSome then view else state.frame.focused
     discard <| id.display asking reviewName
-  unless order.missing.isEmpty do
-    message s!"{reviewName}: left out {", ".intercalate order.missing.toList}: its load was refused"
+  if let some sentence := leftOut order.missing then
+    message sentence
 
 /-- The diff job: the hunks of each file's old side against its new side, and
 finishes with what they come to (`reviewDiffed`). It fails only for

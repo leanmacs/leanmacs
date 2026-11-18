@@ -299,6 +299,21 @@ def reviewBufferChecks : List Check :=
                 reviewHeadersExpected.filter (!·.startsWith "lean/Pkg/C.lean") &&
               echoOf reviewed == some "vc-review: left out lean/Pkg/C.lean: its load was refused" &&
               strayShots reviewed == 0 },
+    { name := "when every changed file's load is refused, the review names them and opens nothing"
+      run :=
+        pure <|
+          let unread :=
+            {
+              VersionControlContract.forked #[("x.txt", "x\n")] #[("x.txt", "y\n")] #[]
+                #[("base", "B")] with
+              worktree := #[] }
+          match reviewOpened unread with
+          | none => false
+          | some opened =>
+            let reviewed := reviewAfter opened "C-t r"
+            echoOf reviewed == some "vc-review: left out x.txt: its load was refused" &&
+              (focusedShowing reviewed).map (·.buffer.name) == some "a.lean" &&
+              strayShots reviewed == 0 },
     { name :=
         "a working buffer edited between its snapshot and the diff says so, opens nothing and holds no snapshot"
       run :=
