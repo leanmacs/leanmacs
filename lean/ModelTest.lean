@@ -39314,7 +39314,7 @@ def stageHunkChecks : List Check :=
               !(edited.pending.any (·.name == Files.saveJob)) &&
               liveSnapshots unstaged == liveSnapshots opened },
     { name :=
-        "an apply git refuses says git's refusal, reads the status again into no buffer, and holds no snapshot"
+        "an apply git refuses says git's refusal, does not read the status again, and holds no snapshot"
       run :=
         pure <|
           match stagingDriverOf stagingRepository with
