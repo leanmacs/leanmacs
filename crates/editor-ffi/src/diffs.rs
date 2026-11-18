@@ -67,7 +67,7 @@
 //! | [`editor_ffi_diffs_start_hunks`] | As `start`, for the hunks of the two texts |
 //! | [`editor_ffi_diffs_take_hunks`] | Fills a [`RawWords`] with the hunks and returns true, or returns false when the service keeps no hunks for the id |
 //! | [`editor_ffi_diffs_cancel`] | Cancels, and says whether there was anything to cancel |
-//! | [`editor_ffi_diffs_pending`] | Requests waiting or being worked, and scripts not taken |
+//! | [`editor_ffi_diffs_pending`] | Requests waiting or being worked, and answers (scripts or hunks) not yet taken |
 
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -245,8 +245,8 @@ impl<E: LineDiff + Default> Diffs<E> {
         state.answers.remove(&id).is_some()
     }
 
-    /// How many requests are waiting or being worked, and how many scripts
-    /// have not been taken, together.
+    /// How many requests are waiting or being worked, and how many answers
+    /// (scripts or hunks) have not yet been taken, together.
     pub fn pending(&self) -> usize {
         let state = self.state();
         state.requests.pending() + usize::from(state.working.is_some()) + state.answers.len()
@@ -471,7 +471,8 @@ pub extern "C" fn editor_ffi_diffs_cancel(id: u64) -> bool {
 }
 
 /// How many diff requests are waiting or being worked, and how many
-/// scripts have not been taken, together. A readout for tests.
+/// answers (scripts or hunks) have not yet been taken, together. A readout
+/// for tests.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_diffs_pending() -> u64 {
     DIFFS.pending() as u64

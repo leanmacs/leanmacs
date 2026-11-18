@@ -2160,8 +2160,8 @@ cancel. Safe for an id that is unknown. -/
 @[extern "editor_glue_diffs_cancel"]
 opaque diffsCancel (id : UInt64) : IO Bool
 
-/-- How many diff requests are waiting or being worked, and how many scripts
-have not been taken, together. A readout for tests. -/
+/-- How many diff requests are waiting or being worked, and how many answers
+(scripts or hunks) have not yet been taken, together. A readout for tests. -/
 @[extern "editor_glue_diffs_pending"]
 opaque diffsPending : IO UInt64
 
