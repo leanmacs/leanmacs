@@ -447,6 +447,18 @@ def registryChecks : List Check :=
             ({} : Config.Registry).registered.exNames == #[] &&
             (registry.replaceEx .config #[]).registered.exNames == #["w", "q"]) },
     { name :=
+        "what the loop is told of a registry's command names is every name a command is registered under, once: compiled names first, then config's, a config name that shadows a compiled one listed once at the compiled one's place; a reload that registers none of config's drops config's own names, and a registry with no command has none"
+      run :=
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replace .compiled
+                #[registration "load-theme" "1", registration "quit" "2"]).replace
+            .config #[registration "mine" "3", registration "quit" "4"]
+        pure
+          (registry.registered.commandNames == #["load-theme", "quit", "mine"] &&
+            registry.registered.commandNames == registry.names &&
+            (registry.replace .config #[]).registered.commandNames == #["load-theme", "quit"] &&
+            ({} : Config.Registry).registered.commandNames == #[]) },
+    { name :=
         "themes are held by owner and replaced as a set: the latest entry of a name is the one found, config's theme of a compiled theme's name while config registers it and the compiled one again once it does not; the theme names are each listed once, in the order first registered, and are what the loop is told; the commands and the faces are left as they were"
       run :=
         let registry : Config.Registry :=

@@ -74,6 +74,7 @@ def stateRequests : List StateRequest :=
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
+    .commandNames,
     .categorySources "buffer", .matchCandidates (some "buffer") "w" #["w"], .loadTheme "second",
     .invoke asked, .quit, .reload, .giveUp "no", .breakOff "far enough",
     .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
@@ -858,6 +859,15 @@ def stateRequestChecks : List Check :=
           | none => false
           | some state =>
             let (names, after) := state.handle .exNames
+            names == #[] && after == state },
+    { name :=
+        "the handler knows no registry: asked which names commands are registered under, it answers none, and leaves the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (names, after) := state.handle .commandNames
             names == #[] && after == state },
     { name :=
         "the handler knows no registry: asked which sources are registered in a category, it answers none, and leaves the state as it was"

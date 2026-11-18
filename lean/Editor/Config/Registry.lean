@@ -358,6 +358,10 @@ name, so config's command of a name a compiled command has is the one that
 runs while config registers it, and the compiled one runs again once a
 reload drops it.
 
+The names commands are registered under (`names`), compiled code's first,
+are what the command prompt lists (`registered`, `Editor/ExecuteCommand.lean`),
+so a reload that drops config's command drops it from the prompt.
+
 A command may be given what it was called with (`Action.call`,
 `Editor/Command/Call.lean`): the window it acts on, the invocation's
 arguments and the keys. Compiled code registers one as such, and `setup`
@@ -1105,7 +1109,9 @@ its lineage, root first, whose on-enter actions run when the mode becomes a
 buffer's major mode; whether a job is registered under a name, for a
 command to start; and the ex binding of an ex name (`ex?`) and the ex
 names that are bound (`exNames`), for the ex line; and the names themes
-are registered under (`themeNames`), for the command that loads one;
+are registered under (`themeNames`), for the command that loads one; the
+names commands are registered under (`names`), each once, for the command
+prompt, so a reload that drops config's command drops it from the prompt;
 config's workspace roots and the config generation, for the finder;
 config's display rules, for a command that displays a buffer; config's
 shell time limit, for `:!`; the language table (`languageTable`), for a
@@ -1122,6 +1128,7 @@ def registered (registry : Registry) : Loop.Registered :=
   { entering := fun name => (registry.mode? name).map fun _ => (registry.lineage name).reverse
     jobs := fun name => (registry.findJob? name).isSome, ex := registry.ex?
     exNames := registry.exNames, themeNames := registry.themeNames
+    commandNames := registry.names
     autoReload := registry.autoReload, workspaceRoots := registry.workspaceRoots
     generation := registry.generation, displayRules := registry.displayRules
     shellTimeLimit := registry.shellTimeLimit, syntaxRefreshDelay := registry.syntaxRefreshDelay

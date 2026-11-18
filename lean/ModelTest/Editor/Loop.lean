@@ -2095,6 +2095,19 @@ def dispatchStateChecks : List Check :=
           asks registered == some (.finished #["w", "q", "greet"], true) &&
             asks {} == some (.finished #[], true) },
     { name :=
+        "a command that asks which names commands are registered under is answered the names the loop was told of the registry, in their order, and none where it was told none; the state is as it was"
+      run :=
+        pure <|
+          let asks (registered : Loop.Registered) : Option (Guarded (Array String) × Bool) :=
+            let program : EditorM (Guarded (Array String) × Bool) := do
+              let start ← EditorState.initial ⟨640, 480⟩
+              let (outcome, state) ← commandNames.dispatched registered start
+              return (outcome, state == start)
+            (program.runModel editorModel).1.toOption
+          asks { commandNames := #["load-theme", "quit", "mine"] } ==
+              some (.finished #["load-theme", "quit", "mine"], true) &&
+            asks {} == some (.finished #[], true) },
+    { name :=
         "a command that asks which themes are registered is answered the names the loop was told, in their order, with the state as it was"
       run :=
         pure <|

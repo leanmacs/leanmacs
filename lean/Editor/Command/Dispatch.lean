@@ -180,6 +180,10 @@ from the next command.
   answered the names the loop was told (`Loop.Registered.themeNames`), the
   state not read and not changed. The command that loads a theme asks, for
   the candidates of its prompt.
+- **Asking which commands are registered** (`StateRequest.commandNames`)
+  is answered the names the loop was told (`Loop.Registered.commandNames`),
+  each once, in their order, the state not read and not changed. The
+  command prompt asks, for its candidates (`Editor/ExecuteCommand.lean`).
 - **Loading a theme** (`StateRequest.loadTheme`) is refused with
   `noSuchTheme` for a name the loop was not told a theme is registered
   under, with the state as it was. Otherwise the name is kept in the state,
@@ -457,6 +461,10 @@ structure Loop.Registered where
   /-- The names themes are registered under, each once, for the command
   that loads a theme: its candidates, and the names it may load. -/
   themeNames : Array String := #[]
+  /-- The names commands are registered under, each once, for the command
+  prompt (`Editor/ExecuteCommand.lean`). Whoever fills this and `command`
+  fills them from one registry. -/
+  commandNames : Array String := #[]
   /-- The command registered under this name, as one run inside another is
   run: given the call, its program. `none` for a name no command is
   registered under. The loop fills it from the lookup a key's invocation
@@ -622,6 +630,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
   | state, .step (.state .exNames) next => dispatched registered state (next registered.exNames)
   | state, .step (.state .themeNames) next =>
     dispatched registered state (next registered.themeNames)
+  | state, .step (.state .commandNames) next =>
+    dispatched registered state (next registered.commandNames)
   | state, .step (.state (.loadTheme name)) next =>
     if registered.themeNames.contains name then
       let (reply, state) := state.handle (.loadTheme name)

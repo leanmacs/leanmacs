@@ -11,6 +11,7 @@ import Editor.Evil.Scroll
 import Editor.Evil.Theorems
 import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
+import Editor.ExecuteCommand
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
@@ -115,7 +116,11 @@ registrations (`Editor/TabCommands/Compiled.lean`) are not imported. The command
 with `Themes.loadThemeCommand`, over `themeNames` and `loadTheme`
 (`Editor/Api.lean`); `setup` registers a theme with `defineTheme` and names
 the one in force with `useTheme` (`Editor/Setup.lean`). Its registration and
-the themes that ship (`Editor/Themes/Compiled.lean`) are not imported.
+the themes that ship (`Editor/Themes/Compiled.lean`) are not imported. So is
+the command prompt (`Editor/ExecuteCommand.lean`): `execute-command`, which
+a command of config's calls with `ExecuteCommand.executeCommand`, over
+`commandNames`; its registration (`Editor/ExecuteCommand/Compiled.lean`) is
+not imported.
 
 How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they

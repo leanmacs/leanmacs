@@ -546,6 +546,16 @@ asks, and nothing changes; a command that is refused or interrupted after
 asking loads none. Neither makes a request of the library. Pinned by
 `ModelTest.dispatchStateChecks` and `ModelTest.dispatchQuitChecks`.
 
+## Commands
+
+`commandNames` answers the names commands are registered under, each once:
+compiled code's first, then config's, in the order they were first
+registered, as the loop is told of the registry for the step that asks, so
+a reload that drops config's command drops its name. It is what the command
+prompt lists (`Editor/ExecuteCommand.lean`). Where no loop runs the command
+it answers none. It makes no request of the library. Pinned by
+`ModelTest.dispatchStateChecks`.
+
 ## Jobs
 
 `startJob name arguments` asks for the job registered under `name` to be
@@ -873,6 +883,12 @@ were first registered ("Themes", in the module docs). None where no loop
 runs the command. -/
 def themeNames : EditorM (Array String) :=
   EditorState.ask .themeNames
+
+/-- The names commands are registered under, each once, compiled code's
+first and then config's, in the order they were first registered
+("Commands", in the module docs). None where no loop runs the command. -/
+def commandNames : EditorM (Array String) :=
+  EditorState.ask .commandNames
 
 /-- Asks for the theme registered under `name` to be the theme in force,
 once this command has run to its end ("Themes", in the module docs).

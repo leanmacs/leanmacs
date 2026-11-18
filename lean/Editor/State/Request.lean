@@ -33,7 +33,7 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
   named, and so is a job, and what the name stands for is the registry's.
-  So ten requests are answered with more than this handler by the loop,
+  So these requests are answered with more than this handler by the loop,
   which knows the registry: `setMajorMode` and `setBufferMajorMode`, which
   there refuse a name no mode is registered under and run the mode's
   on-enter actions,
@@ -41,7 +41,8 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   `ex`, which there is answered the binding the registry has for an ex
   name (`Editor/Ex/Line.lean`), `exNames`, which there is answered the ex
   names that are bound, `themeNames`, which there is answered the names
-  themes are registered under, `loadTheme`, which there refuses a name no
+  themes are registered under, `commandNames`, which there is answered the
+  names commands are registered under, `loadTheme`, which there refuses a name no
   theme is registered under, `runCommand`, which there runs the
   command registered under a name inside the asking command, `askSource`,
   which there runs the completion source registered under a name inside
@@ -53,7 +54,8 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   (`Editor/DisplayRules.lean`), and `hasJob`, which there is answered
   whether a job is registered under a name. Here
   `setMajorMode`, `setBufferMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
-  answered `none`, `exNames` and `themeNames` are answered no name,
+  answered `none`, `exNames`, `themeNames` and `commandNames` are answered
+  no name,
   `runCommand` is answered `false` and runs nothing, `askSource` is answered
   `none` and runs nothing, `categorySources` is answered no name,
   `matchCandidates` is answered no hit and asks the matcher nothing,
@@ -420,6 +422,8 @@ inductive StateRequest where
   | exNames
   /-- Which names themes are registered under. -/
   | themeNames
+  /-- Which names commands are registered under. -/
+  | commandNames
   /-- Have the theme called `name` loaded once this command has run to its
   end. -/
   | loadTheme (name : String)
@@ -557,6 +561,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .ex _ => Option Ex.Binding
   | .exNames => Array String
   | .themeNames => Array String
+  | .commandNames => Array String
   | .loadTheme _ => Except ThemeRefusal Unit
   | .invoke _ => Unit
   | .runCommand .. => Bool
@@ -690,6 +695,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .ex _, state => (none, state)
   | .exNames, state => (#[], state)
   | .themeNames, state => (#[], state)
+  | .commandNames, state => (#[], state)
   | .loadTheme name, state => (.ok (), { state with theme := some name })
   | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
   | .runCommand .., state => (false, state)

@@ -56,6 +56,7 @@ import ModelTest.Editor.Ex
 import ModelTest.Editor.Ex.Line
 import ModelTest.Editor.ExcerptView
 import ModelTest.Editor.Executable
+import ModelTest.Editor.ExecuteCommand
 import ModelTest.Editor.Face
 import ModelTest.Editor.Face.Vocabulary
 import ModelTest.Editor.File.Cases
@@ -488,6 +489,15 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   that driver, told of two registered themes: with no name it asks among
   them, with a registered name the step hands the name back, and a name
   nobody registered, or a prompt already open, is said in the echo area;
+- `executeCommandChecks`: the command prompt (`Editor/ExecuteCommand.lean`)
+  on that driver, from keys that bind neither it nor `load-theme`: it lists
+  the registered commands' names in order; accepting `load-theme` runs it
+  as a step of its own, which asks in turn, and accepting a theme there
+  loads it; a typed fragment runs the first command the style lists for it,
+  a text nothing matches is said and an empty one runs nothing; a prompt
+  already open is said; and a fake style chosen for the category `command`
+  reverses the listing and decides which command a fragment runs, while a
+  theme prompt keeps its own order;
 - `faceVocabularyChecks`: the face vocabulary (`Editor/Face/Vocabulary.lean`)
   names each face once with its meaning, and lists every face the shipped
   Vim scheme and the loop draw, layout's four and the faces declared
@@ -982,6 +992,7 @@ def checks : List Check :=
     autoReloadChecks ++
     bufferCommandChecks ++
     themeChecks ++
+    executeCommandChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++
     solarizedChecks ++
