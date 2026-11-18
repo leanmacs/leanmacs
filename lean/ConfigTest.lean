@@ -17,10 +17,12 @@ import Editor.Workspace.Compiled
 
 The `config-test` executable is linked exactly like `editor`, with the glue
 object, the Rust archive and Lean's elaborator. `mise run ffi-test` runs it
-as `config-test <sysroot> <olean dir> <syntax fixtures>`: the Lean
-toolchain's directory, the directory holding the package's `.olean` files,
-and the directory of the syntax fixtures (`tests/syntax`), whose Rust
-indent fixture the indent checks read. It reads nothing from the
+as `config-test <sysroot> <olean dir> <syntax fixtures> <default config>`:
+the Lean toolchain's directory, the directory holding the package's
+`.olean` files, the directory of the syntax fixtures (`tests/syntax`), whose
+Rust indent fixture the indent checks read, and the directory of the
+default config `mise run install` ships (`config/default`), which
+`defaultConfigChecks` read. It reads nothing from the
 environment or the working directory. It runs every check in `checks`, names
 the ones that failed, and exits non-zero if any did.
 
@@ -121,6 +123,12 @@ show:
   in the scene's `hint` lines after `SPC` and after `SPC f`, none are after
   the binding runs, and a reload that drops the prefix name lists the
   prefix unnamed;
+- `defaultConfigChecks`: the default config `mise run install` ships, read
+  from the directory the fourth argument names: a reload of it through a
+  host of the Vim scheme that ships installs with no diagnostic and
+  `SPC f f` then asks for a path to open; each of its bindings names a
+  registered command; and each prefix it binds under the leader has a
+  prefix name (`Registry.prefixName?`);
 - `indentChecks`: `=` and the indented new lines through a host of the Vim
   scheme that ships, over the library's Rust grammar: `gg=G` on the
   mangled Rust indent fixture (`tests/syntax/rust/indent.rs`, read from the
@@ -225,6 +233,9 @@ structure Context where
   /-- The directory of the syntax fixtures (`tests/syntax`), whose Rust
   fixtures the indent checks read. -/
   syntaxFixtures : System.FilePath
+  /-- The directory of the default config `mise run install` ships
+  (`config/default`), which `defaultConfigChecks` read. -/
+  defaultConfig : System.FilePath
 
 /-- The table of waits every host over the library's file service is staged
 over, with the process's one completion pump running over it. It is made,
@@ -6675,6 +6686,98 @@ def hintChecks (context : Context) : List Check :=
               unnamed.contains "hint f: prefix - 1" &&
               !unnamed.any (·.startsWith "hint f: prefix \"file\"") }]
 
+/-- The registrations of the default config (`config/default`, the
+directory `context.defaultConfig` names), built as a reload builds them
+(`Config.build`), under the Vim scheme that ships, with the real
+elaborator. Throws with the diagnostics when the build is rejected, so a
+check that fails says why. -/
+def defaultBuilt (context : Context) : IO Config.Registrations := do
+  let outcome ←
+    Config.build Vim.Default.scheme context.elaborator
+      (Config.Directory.source context.defaultConfig) (some context.base) #[]
+  match outcome.built with
+  | some built => return built.registrations
+  | none =>
+    throw <| IO.userError
+        s!"the default config was rejected: {outcome.diagnostics.toList.map (·.message)}"
+
+/-- The registry a host of the executable starts with
+(`Headless.shippedOver`), with the default config's bindings, prefix names
+and leaders installed for the owner `.config`, as a reload installs them
+(`Config.Reload.install`). -/
+def defaultRegistry (registrations : Config.Registrations) : IO Config.Registry := do
+  let completions ← Job.Completions.new
+  let clock ← Job.FakeClock.new completions
+  let shipped :=
+    Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+      (← Snapshots.new) (← Job.HeldSnapshots.new)
+  let registry :=
+    ((Headless.compiled shipped).replaceBindings .config registrations.bindings).replacePrefixNames
+      .config registrations.prefixNames
+  return { registry with
+      leader := registrations.leader, localLeader := registrations.localLeader }
+
+/-- The checks of the default config `mise run install` ships
+(`config/default`), read from the directory the fourth argument names: it
+loads with no reload error and `SPC f f` opens a file, each binding names a
+registered command, and each prefix it binds under the leader is named. -/
+def defaultConfigChecks (context : Context) : List Check :=
+  [{  name :=
+        "the default config: a reload installs it with no diagnostic, and SPC f f then runs open-file, which asks for a path"
+      run := do
+        let files ← chunksOf context.defaultConfig
+        withVimHost context files.toList fun session => do
+          session.ask [.reload]
+          let output ← session.output.get
+          let installed := output.any (·.startsWith "reload 1: installed")
+          let clean := !output.any (·.startsWith "diagnostic:")
+          let before ← session.sceneLines
+          session.typed "SPC f f"
+          let joined := (← session.host.join patience) == .settled
+          let after ← session.sceneLines
+          return installed && clean && joined &&
+              !before.contains (promptStatus Files.openPrompt) &&
+              after.contains (promptStatus Files.openPrompt) },
+    { name :=
+        "the default config: every binding names a command registered compiled or by the config, and <leader> f f is bound to open-file"
+      run := do
+        let registrations ← defaultBuilt context
+        let registry ← defaultRegistry registrations
+        let unregistered :=
+          registrations.bindings.filter fun binding =>
+            (registry.find? binding.command).isNone &&
+              !registrations.commands.any (·.name == binding.command)
+        unless unregistered.isEmpty do
+          throw <| IO.userError s!"unregistered commands: {unregistered.toList.map (·.command)}"
+        return !registrations.bindings.isEmpty &&
+            registrations.bindings.any fun binding =>
+              Key.strokeNotations binding.keys == "<leader> f f" &&
+                binding.command == Files.openName },
+    { name :=
+        "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are SPC f, SPC b, SPC w, SPC TAB and SPC h"
+      run := do
+        let registrations ← defaultBuilt context
+        let registry ← defaultRegistry registrations
+        let leaders := registry.leaders Vim.Default.scheme
+        let leader := leaders.leader.map Key.chord
+        let mut prefixes : Array (List Key) := #[]
+        for binding in registrations.bindings do
+          let keys := (Key.expand leaders binding.keys).map Key.chord
+          unless keys.take leader.length == leader do
+            continue
+          for n in [leader.length + 1:keys.length] do
+            let begun := keys.take n
+            unless prefixes.contains begun do
+              prefixes := prefixes.push begun
+        let unnamed :=
+          prefixes.filter fun begun => (registry.prefixName? Vim.Default.scheme begun).isNone
+        unless unnamed.isEmpty do
+          throw <| IO.userError s!"unnamed prefixes: {unnamed.toList.map Key.notations}"
+        let expected :=
+          ["SPC f", "SPC b", "SPC w", "SPC TAB", "SPC h"].map fun text =>
+            (keysOf text).map Key.chord
+        return prefixes.size == expected.length && expected.all prefixes.contains }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
@@ -6705,7 +6808,8 @@ def checks (context : Context) : List Check :=
     gutterChecks context ++
     exScriptChecks context ++
     leaderChecks context ++
-    hintChecks context
+    hintChecks context ++
+    defaultConfigChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
@@ -6721,7 +6825,8 @@ failed, and returns the exit status, 0 when all hold and 1 otherwise.
 
 `sysroot` is the Lean toolchain's directory and `oleanDir` the directory
 holding the package's `.olean` files. -/
-def run (sysroot oleanDir : String) (syntaxFixtures : System.FilePath) : IO UInt8 := do
+def run (sysroot oleanDir : String) (syntaxFixtures defaultConfig : System.FilePath) :
+    IO UInt8 := do
   let real :=
     Config.Elaborate.elaborator { sysroot, oleanDir, imports := #[`Editor, `ConfigFixture] }
   -- Compiled code writes to the fixture's cell before the base is imported.
@@ -6729,7 +6834,7 @@ def run (sysroot oleanDir : String) (syntaxFixtures : System.FilePath) : IO UInt
   let base ← real.base
   let context : Context :=
     { elaborator := { real with base := pure base }, base, bumped, ids := ← IO.mkRef 100
-      waits := ← IO.mkRef none, syntaxFixtures }
+      waits := ← IO.mkRef none, syntaxFixtures, defaultConfig }
   let checks := checks context
   let failed ← failures checks
   for name in failed do
@@ -7470,15 +7575,16 @@ end Bench
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: config-test <sysroot> <olean dir> <syntax fixtures> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples>"
+      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> |config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples>"
   return 2
 
 end ConfigTest
 
-/-- `config-test <sysroot> <olean dir> <syntax fixtures>` runs the checks:
-exits 0 when all hold, and 1 after naming the ones that do not. The third
-argument is the directory of the syntax fixtures (`tests/syntax`), which the
-indent checks read.
+/-- `config-test <sysroot> <olean dir> <syntax fixtures> <default config>`
+runs the checks: exits 0 when all hold, and 1 after naming the ones that do
+not. The third argument is the directory of the syntax fixtures
+(`tests/syntax`), which the indent checks read, and the fourth the directory
+of the default config (`config/default`), which `defaultConfigChecks` read.
 
 `bench-start`, `bench-reload` and `bench-soak` are the benchmark
 (`ConfigTest.Bench`; `mise run config-bench`), which the gate never runs.
@@ -7534,7 +7640,7 @@ def main (args : List String) : IO UInt32 := do
       IO.Process.exit status
     | none =>
       ConfigTest.usage
-  | [sysroot, oleanDir, syntaxFixtures] =>
-    IO.Process.exit (← ConfigTest.run sysroot oleanDir syntaxFixtures)
+  | [sysroot, oleanDir, syntaxFixtures, defaultConfig] =>
+    IO.Process.exit (← ConfigTest.run sysroot oleanDir syntaxFixtures defaultConfig)
   | _ =>
     ConfigTest.usage
