@@ -932,8 +932,8 @@ run = "tools/milestone-bench.sh lean"
 # no key or pointer input. It prints its verdict, then each resize the
 # window reported on a line of its own, and its exit status is the result.
 #
-# Then it runs `editor-ffi`'s example (`crates/editor-ffi/examples/
-# window.rs`): the window that draws. The wgpu renderer draws a fixture
+# Then it runs `editor-ffi`'s example (`crates/editor-ffi/examples/window/`):
+# the window that draws. The wgpu renderer draws a fixture
 # frame in the real window, on this machine's GPU; the example checks that
 # each frame is laid out at the scale the window said, that a frame was
 # presented, that its picture is the frame's, that nothing is drawn that
@@ -961,7 +961,7 @@ run = [
 ]
 
 # Opt-in: do not add it to `ci` or to hk.pkl. It opens the window that
-# draws (`crates/editor-ffi/examples/window.rs`) with `--until-closed
+# draws (`crates/editor-ffi/examples/window/`) with `--until-closed
 # --no-picture` and leaves it open until it is closed, for trying the
 # window out (`docs/dev-practices/on-demand-checks.md`, "The window to
 # try, on demand").

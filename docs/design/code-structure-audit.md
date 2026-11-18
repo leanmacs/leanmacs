@@ -424,6 +424,31 @@ concern above, each with its tests, and `main.rs` keeping the wiring, as
 (`split-window-example-decisions`). The decisions are the harness's, not
 the library's, so they stay in the example.
 
+**Done** (roadmap `structural-splits`, phase
+`phase-5-split-window-example-decisions`): split. The example is the
+directory `crates/editor-ffi/examples/window/`, ten files and 3,658 lines
+in all. `main.rs` (541 lines) keeps the program's docs, the wiring
+(`Shared`, `edit`, `watch`, `report`) and `main`, and has no tests. Each
+other concern above is a module, with the tests of what it decides beside
+it: the command line in `command_line.rs` (214 lines, 4 tests); the
+judging in `judge.rs` (546 lines, 8 tests), with `Findings`, which
+`pictured`, `on_demand` and `left_alone` all return; the frame ledger and
+the wrapping renderers in `ledger.rs` (533 lines, 5 tests), with
+`Entered`, `Checked` and `renderer`; the fixture scene and its fonts in
+`scene.rs` (147 lines, 1 test), which holds `family_of` beside `fonts`,
+its one caller, with the one test of it, which was among the command
+line's; and the printing of input in `input.rs` (117 lines), which has no
+tests, as it had none before. The timing tally and its findings, about
+1,480 lines with their tests, are three modules, so that none is over 800
+lines: `tally.rs` (532 lines, 7 tests), what the ledger comes to;
+`timing.rs` (476 lines, 8 tests), with `on_demand`, `timeline` and
+`journalled`; and `alone.rs` (441 lines, 4 tests), with `left_alone`. The
+tenth file, `testing.rs` (111 lines, compiled only for tests), holds the
+builders the tests of five modules share, so that no test module reaches
+into another's. The 37 tests are those that ran before, under their
+modules' paths. The command line, the output and the exit status are
+unchanged. The largest module is `judge.rs` (546 lines).
+
 ### The frame: `crates/editor-layout/src/frame.rs`
 
 **Cohesion**: 3,715 lines, 1,356 of them non-test, of which about 240 are

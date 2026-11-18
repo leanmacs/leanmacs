@@ -38,7 +38,8 @@
 #
 # - `window_renderer` in `src/window.rs`, the factory of the process's
 #   window, which Lean's window mode runs on the winit platform;
-# - the example `examples/window.rs`: the window that draws, run on demand
+# - `renderer` in the example `examples/window/ledger.rs`: the window that
+#   draws, run on demand
 #   (`mise run linux-window`, `mise run window-contract`).
 #
 # No test runs the winit platform: the crate's tests of the session and of
@@ -59,7 +60,7 @@
 # - `editor_ffi_display_new_system` in `src/display.rs`, the process's
 #   display, made for Lean's window mode, which lays out in the machine's
 #   fonts;
-# - `fonts` in `examples/window.rs`, reached only when a run gives
+# - `fonts` in `examples/window/scene.rs`, reached only when a run gives
 #   `--family <name>` to lay the fixture out in a family of this machine's
 #   fonts (`docs/dev-practices/on-demand-checks.md`, "The window to try, on
 #   demand").

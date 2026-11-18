@@ -413,7 +413,7 @@ window, where a close with the system's quit pending must let AppKit end
 the process with status 0, only after that process recorded its verdict.
 
 **The second** is the window that draws: the example `window` of
-`crates/editor-ffi` (`examples/window.rs`). The real window is run onto a
+`crates/editor-ffi` (`examples/window/`). The real window is run onto a
 queue with a render session as its drawer, and the session's renderer is
 the wgpu renderer on the window's surface, on this machine's GPU. A second
 thread stands in for the editor: when it learns the window's size and
@@ -507,7 +507,7 @@ were found, the first three since changed:
   published, and one draw answers both. The example now enters what asks
   and what is drawn in one ledger, judges each draw by what it was for,
   and begins the idle second once what was asked as the window opened is
-  drawn (`crates/editor-ffi/examples/window.rs`, "The ledger").
+  drawn (`crates/editor-ffi/examples/window/main.rs`, "The ledger").
 - **A window that opens is not on the screen at once, and does not say
   so.** Started from a process not in front, the surface answered
   `Occluded` for the window's first 140 ms and the window told nothing
@@ -686,7 +686,7 @@ fails:
    focus and typing a sentence and a dead key into it;
 3. the same with `--no-ime`;
 4. the window that draws, as `window-contract` runs it second
-   (`crates/editor-ffi/examples/window.rs`), on Mesa's software Vulkan
+   (`crates/editor-ffi/examples/window/`), on Mesa's software Vulkan
    driver, llvmpipe, and with `--require-picture`, which that task does
    not give. It is run twice: at scale 1, which is what Xvfb's display
    is at, and at scale 2. Each time, once it says it is ready, xdotool

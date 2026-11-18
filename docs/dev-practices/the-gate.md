@@ -74,7 +74,7 @@ What the gate does check of the window, with none open:
   back end: that a window no adapter can present to gives no renderer,
   and that a surface that offers its adapter nothing is refused.
 - **What the window that draws makes of what it saw**, in
-  `crates/editor-ffi` (`examples/window.rs`, whose unit tests `cargo
+  `crates/editor-ffi` (`examples/window/`, whose unit tests `cargo
   test` runs, and which open no window): how its command line is read,
   and which of its options contradict each other; which findings of a
   frame's picture fail the run (a picture past the tolerance, of the

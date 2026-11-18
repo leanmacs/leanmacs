@@ -225,7 +225,7 @@ inside_clipboard_across() {
   [ "$got" = "$text" ] || die "the text read is not the text written"
 }
 
-# The window that draws (`crates/editor-ffi/examples/window.rs`): the real
+# The window that draws (`crates/editor-ffi/examples/window/`): the real
 # window with the wgpu renderer drawing a fixture frame in it, on Mesa's
 # software Vulkan driver, and xdotool giving it input once it says it is
 # ready: a key, a named key, a key with modifiers, a press, a drag, a
