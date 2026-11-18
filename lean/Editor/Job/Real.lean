@@ -377,6 +377,19 @@ structure RefusedDiffs where private mk ::
 def RefusedDiffs.new : BaseIO RefusedDiffs :=
   return ⟨← IO.mkRef {}⟩
 
+/-- The snapshot reads of `JobRequest.snapshot`, answered from the read half
+of the text store's table (`published`): the library's text of the
+snapshot the table holds for the id now, read in the call (`Ffi.Snapshot.read`,
+which reads a value that never changes, on the job's thread); `none` for an
+id the table holds nothing for, and for a read the library refuses. -/
+def realSnapshots (published : SnapshotReader) (id : SnapshotId) : BaseIO (Option String) := do
+  let some snapshot ← published.find? id | return none
+  match ← (Ffi.Snapshot.read snapshot).toBaseIO with
+  | .ok text =>
+    return some text
+  | .error _ =>
+    return none
+
 /-- The port's form of a step of the library's script. -/
 def stepOf : Ffi.ScriptStep → Diff.Step
   | .retain count => .retain count.toNat

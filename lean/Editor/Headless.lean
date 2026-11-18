@@ -2415,7 +2415,8 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (h
         processes := Job.realProcesses completions refused timers timed
         fileWatches := Job.realFileWatches completions watches
         diffs := Job.realDiffs completions published.reader held refusedDiffs
-        environments := reportedEnvironments environments 4, fuzzy := Fuzzy.real } published held
+        environments := reportedEnvironments environments 4, fuzzy := Fuzzy.real
+        snapshots := Job.realSnapshots published.reader } published held
 
 /-- The headless mode of the executable, handed the command line after
 `headless`: `editor headless [--render] [<sysroot> <olean dir>] <config dir>

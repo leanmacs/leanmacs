@@ -55,6 +55,11 @@ here.
   `JobModel.posted`, oldest first: what a host would run on the editor
   thread. `runParking` parks a job at each post, so a driver runs it before
   the job goes on.
+- A snapshot read is answered at once, without moving the clock, from the
+  published snapshots of the model of the files (`FileModel.snapshots`),
+  which whoever plays a command and a job sets from the text model's
+  (`Loop.Driver`): the snapshot's contents, or `none` for an id that names
+  no snapshot or one that was released.
 - A fuzzy request is answered at once, without moving the clock, with the
   fuzzy model's answer (`Editor/Fuzzy/Model.lean`); while
   `JobModel.fuzzyRefusal` is set, with an error, `fuzzy: ` and the refusal,
@@ -131,6 +136,7 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     match model.fuzzyRefusal with
     | some refusal => (.error s!"fuzzy: {refusal}", model)
     | none => (.ok (FuzzyModel.handle request ()).1, model)
+  | .snapshot id, model => ((model.files.snapshots[id.index]?).join.map (·.contents), model)
 
 /-- The model once the job has ended: every streaming child it started is
 ended (`ProcessModel.endAll`), as the runner cancels them, and every watch

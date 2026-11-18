@@ -103,6 +103,21 @@ hands a post over only while the job is not cancelled
 while the job is in its table (`Job.Jobs.has`). It is how a compile streams
 its output into its buffer (`Editor/Compile.lean`).
 
+## Reading a snapshot
+
+A job reads the text of a snapshot a command took through one request,
+`snapshot`, which carries the `SnapshotId` (`readSnapshot`). It is answered
+at once, as `environment` is, and moves no clock: the text is read from the
+published table of snapshots as it is then (`Editor/Text/Real.lean`), a
+value that never changes. An id that names no snapshot, or one that was
+released, is answered `none`, so a job that reads after the command that
+took the snapshot gave it up goes on with nothing. It is how the `words`
+source gathers the open buffers' words off the editor thread
+(`Editor/Completion/Words.lean`). Its model is the job model's table of
+published snapshots (`FileModel.snapshots`), the runner's port is
+`Job.Services.snapshots`, and its contract is
+`JobContract.snapshotProperties`.
+
 ## Asking the matcher
 
 A job asks the fuzzy matcher (`Editor/Fuzzy.lean`) through one request,
@@ -243,6 +258,10 @@ inductive JobRequest where
   /-- Ask the fuzzy matcher (`Editor/Fuzzy.lean`): answered at once, or
   with the error the service that answers it threw. -/
   | fuzzy (request : FuzzyRequest)
+  /-- Read the text of the snapshot `id` a command took, as the published
+  table holds it now: answered at once, `none` for an id that names no
+  snapshot or one that was released. -/
+  | snapshot (id : SnapshotId)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the clock's reading for `now`,
@@ -258,6 +277,7 @@ def JobRequest.Reply : JobRequest → Type
   | .environment request => request.Reply
   | .post _ => Unit
   | .fuzzy request => Except String request.Reply
+  | .snapshot _ => Option String
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -310,6 +330,13 @@ answered at once and never waits; a cancelled or removed job's posts are
 dropped. -/
 def post (invocation : Invocation) : JobM Unit :=
   ExceptT.lift (Program.request (port := jobPort) (.post invocation))
+
+/-- The text of the snapshot `id` a command took, as the published table
+holds it now ("Reading a snapshot", in the module docs): `none` for an id
+that names no snapshot, or one that was released. It is answered at once
+and never waits. -/
+def readSnapshot (id : SnapshotId) : JobM (Option String) :=
+  ExceptT.lift (Program.request (port := jobPort) (.snapshot id))
 
 /-- `program`, a program over the fuzzy port, as one over the job port that
 ends with its value or with the error a fuzzy request was answered: each

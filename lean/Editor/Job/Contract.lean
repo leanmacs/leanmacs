@@ -33,7 +33,9 @@ library's watch service on real files, each property in a temporary
 directory. A job's posts have a list of their own, `postProperties`, last:
 against the model, and against the runner over the fake clock and over the
 library's timer service, each with a host that records what it is handed.
-The fuzzy request has one too, `fuzzyProperties`, after them: against the
+The snapshot read has one too, `snapshotProperties`, last: against the
+model, the runner over the fake clock and the runner over the library's
+published table. The fuzzy request has one too, `fuzzyProperties`, after them: against the
 model, against the runner over the fake clock given the fuzzy model's
 handler, and against the runner given the library's binding. What needs
 equality (that the request registers no wait and moves no clock) is
@@ -1392,5 +1394,77 @@ def fuzzyProperties : List Property :=
     FuzzyContract.properties.map fun property =>
       { name := s!"a fuzzy request in a job: {property.name}"
         holds := Job.embedFuzzy property.holds }
+
+/-! ## Snapshots
+
+A property of the snapshot read (`JobRequest.snapshot`) is the table of
+snapshots published when the job runs, each slot a snapshot's text or `none`
+for one released, and a job that returns whether it held. Whoever runs the
+list publishes the table: the model as its files' published snapshots, the
+runner over the fake clock as a function over the table, and the runner
+over the library as the read half of a real table of snapshots, with the
+released ones released. What needs equality (that the read registers no
+wait and leaves the clock where it was) is checked against the model and
+the fake alone (`ModelTest.jobModelChecks`). -/
+
+/-- One property of the snapshot read. -/
+structure SnapshotProperty where
+  /-- What must hold, as a sentence; printed when it does not. -/
+  name : String
+  /-- The table published when the job runs: by the snapshot's id, its text,
+  or `none` for one that was released. -/
+  published : Array (Option String)
+  /-- Observes the property; `true` when it holds. -/
+  holds : JobM Bool
+
+/-- The table of snapshots the snapshot properties are run with: an ASCII
+text, one released, one with a two-byte character and a CRLF, and an empty
+one. -/
+def snapshotTable : Array (Option String) :=
+  #[some "alpha beta", none, some "café\r\nau", some ""]
+
+/-- The properties every implementation of the snapshot read has. -/
+def snapshotProperties : List SnapshotProperty :=
+  [{  name :=
+        "a snapshot's text read in a job is its contents, whatever they hold; a released id and one that names nothing answer none"
+      published := snapshotTable
+      holds := do
+        let first ← readSnapshot ⟨0⟩
+        let released ← readSnapshot ⟨1⟩
+        let third ← readSnapshot ⟨2⟩
+        let empty ← readSnapshot ⟨3⟩
+        let missing ← readSnapshot ⟨9⟩
+        return first == some "alpha beta" && released.isNone && third == some "café\r\nau" &&
+            empty == some "" &&
+            missing.isNone },
+    { name :=
+        "a snapshot read is answered without a wait: the job goes on, and the clock has not gone back across it"
+      published := snapshotTable
+      holds := do
+        let before ← now
+        let read ← readSnapshot ⟨0⟩
+        return before ≤ (← now) && read.isSome }]
+
+/-- Runs each of `properties` with `run`, which publishes the property's
+table and runs its job to its end, and returns the names of those that did
+not hold. -/
+def snapshotFailures (run : Array (Option String) → JobM Bool → IO (Job.Outcome Bool))
+    (properties : List SnapshotProperty) : IO (List String) :=
+  failures'
+    (properties.map fun (property : SnapshotProperty) =>
+      (property.name, run property.published property.holds))
+where
+  /-- The names of the runs that did not end `true`. -/
+  failures' (runs : List (String × IO (Job.Outcome Bool))) : IO (List String) :=
+    runs.filterMapM fun (name, run) => do
+      match ← run with
+      | .finished true =>
+        return none
+      | .finished false =>
+        return some name
+      | .failed message =>
+        return some s!"{name} (the job failed with `{message}`)"
+      | .cancelled =>
+        return some s!"{name} (the job was cancelled)"
 
 end Editor.JobContract

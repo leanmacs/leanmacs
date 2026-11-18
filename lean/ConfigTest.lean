@@ -512,6 +512,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
       Job.Completions.new
   let clock ← Job.FakeClock.new completions
   let watches ← Job.FakeFileWatches.new completions { directories := #["/watched"] }
+  let published ← Snapshots.new
   let requests ← context.ids.modifyGet fun next => (next, next + 5)
   return {
       collaborators :=
@@ -520,9 +521,10 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
             threads.modify (·.push (← IO.getTID))
             output.modify (·.push line),
           services :=
-            { completions, timers := clock.timers, fileWatches := watches.fileWatches, fuzzy }
-          published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
-          wakeups := requests + 1, jobs := requests + 2, environment := requests + 3
+            { completions, timers := clock.timers, fileWatches := watches.fileWatches, fuzzy
+              snapshots := Job.realSnapshots published.reader }
+          published, held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
+          jobs := requests + 2, environment := requests + 3
           posts := requests + 4
           commands := compiled.commands, compiledJobs := compiled.jobs,
           bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,

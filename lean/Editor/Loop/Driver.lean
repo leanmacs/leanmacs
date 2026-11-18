@@ -85,7 +85,8 @@ two ports are played (`Editor/File/Cases.lean`):
 - **A job reads what the editor has published.** When a job is started,
   the job model's published snapshots (`FileModel.snapshots`) are set to
   the text model's, as they are after the step that asked for the job. So
-  a job saves a snapshot its command took, by its id.
+  a job saves a snapshot its command took, by its id, and reads one's text
+  (`JobRequest.snapshot`), as the `words` source's job does.
 - **What a job loaded is kept with the job** (`Pending.held`): the ids its
   loads made, until its command has run.
 - **A finished job's command is handed what its job held, and nothing

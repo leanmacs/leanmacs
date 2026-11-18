@@ -14,6 +14,7 @@ import Editor.Completion.Displays
 import Editor.Completion.Fake
 import Editor.Completion.StyleContract
 import Editor.Completion.Styles
+import Editor.Completion.Words
 import Editor.Config.Display
 import Editor.Config.Reload
 import Editor.Display.Contract
@@ -1075,6 +1076,18 @@ def Rig.new : BaseIO Rig := do
   let clock ← Job.FakeClock.new completions
   return { clock, services := { completions, timers := clock.timers } }
 
+/-- A table of published snapshots, each slot a text or `none` for one
+released, as the files' model holds them (`FileModel.snapshots`). -/
+def snapshotModelTable (table : Array (Option String)) : Array (Option TextContent) :=
+  table.map (·.map fun contents => { contents })
+
+/-- A rig whose runner reads snapshots from `table`, each slot a text or
+`none` for one released (`Job.Services.snapshots`). -/
+def snapshotRig (table : Array (Option String)) : BaseIO Rig := do
+  let rig ← Rig.new
+  return { rig with
+      services := { rig.services with snapshots := fun id => pure (table[id.index]?).join } }
+
 /-- Registers a wait in `rig`'s table and starts it at the clock for
 `deadline`, as the runner does. `log` gets the wait's id when it ends,
 on the thread that ended it, so the order of a log is the order the waits
@@ -1224,6 +1237,30 @@ def runOnFake (job : JobM Bool) (rig? : Option Rig := none) : IO (Job.Outcome Bo
     return .failed message
   | _ =>
     return .cancelled
+
+/-- The checks of the job port's snapshot read that need equality, against
+the job model and the runner over the fake clock (`JobContract`, "Snapshots",
+`Editor/Job/Contract.lean`). -/
+def snapshotReadChecks : List Check :=
+  [{  name :=
+        "in the job model, a snapshot read leaves the clock where it was, and is answered from the published snapshots of the files' model; on the runner over the fake clock it registers no wait and starts none on the clock"
+      run := do
+        let published := snapshotModelTable JobContract.snapshotTable
+        let job : JobM (Nat × Option String × Nat) := do
+          let before ← now
+          let read ← readSnapshot ⟨0⟩
+          return (before, read, ← now)
+        let onModel := modelled job { now := 7, files := { snapshots := published } }
+        let rig ← snapshotRig JobContract.snapshotTable
+        let outcome ←
+          runOnFake
+              (do
+                return (← readSnapshot ⟨2⟩) == some "café\r\nau")
+              (some rig)
+        let state ← rig.clock.state.get
+        return onModel == (.finished (7, some "alpha beta", 7), 7) && outcome == .finished true &&
+            state.started.isEmpty &&
+            (← rig.services.completions.waiting) == 0 }]
 
 /-- The names of the job port's contract properties that do not hold of the
 runner over the fake clock. -/
@@ -39285,7 +39322,8 @@ def atPointModel : Completion.AtPoint :=
 
 /-- The at-point sources the contract is run on. -/
 def atPointSubjects : List Completion.AtPoint :=
-  [atPointModel, Completion.AtPoint.silent "silent"]
+  [atPointModel, Completion.AtPoint.silent "silent"] ++ Completion.AtPoint.shipped.toList ++
+    [Completion.AtPoint.words (least := 1), Completion.AtPoint.words (pause := 100)]
 
 /-- The checks of the at-point sources' contract
 (`Editor/Completion/AtPointContract.lean`): it holds of the model, of one
@@ -39326,6 +39364,78 @@ def atPointContractChecks : List Check :=
               !atPointModel.asksOn (.pause 240) &&
               !atPointModel.asksOn (.trigger '.') }]
 
+/-- The order `words`' job is started with in the checks: the region `al`
+at the end of `alpha beta al`, from view 0, over the snapshots 0, 1 and 2. -/
+def wordsOrder : Completion.Order :=
+  { view := ⟨0⟩, index := 0, generation := 1
+    query :=
+      { text := "al", view := ⟨0⟩, region := some { start := 11, stop := 13 }
+        texts := #[⟨0⟩, ⟨1⟩, ⟨2⟩] } }
+
+/-- The checks of the words of the open buffers
+(`Editor/Completion/Words.lean`): the rule, the at-point source and the job
+on the job model. -/
+def wordsChecks : List Check :=
+  [{  name :=
+        "a text's words are its maximal runs of word characters, `_`, digits and a character past ASCII among them, split at a space and at CRLF, each once in order; a run that overlaps the region is left out, and the same word elsewhere is kept"
+      run :=
+        pure <|
+          Completion.Words.of "alpha beta_2 é\r\nalpha x9" == #["alpha", "beta_2", "é", "x9"] &&
+            Completion.Words.of "alpha beta_2 é\r\nalpha x9" (some { start := 0, stop := 5 }) ==
+              #["beta_2", "é", "alpha", "x9"] &&
+            Completion.Words.of "" == #[] &&
+            Completion.Words.of "  .,;" == #[] },
+    { name :=
+        "the order is Vim's C-n order: the first text's words after the region, then those before it, then each other text's from its start, each word once at its first place"
+      run :=
+        pure <|
+          Completion.Words.ordered #["alpha beta al gamma", "almond alpha zed"]
+                (some { start := 11, stop := 13 }) ==
+              #["gamma", "alpha", "beta", "almond", "zed"] &&
+            Completion.Words.ordered #["b a", "c"] none == #["b", "a", "c"] &&
+            Completion.Words.ordered #[] none == #[] },
+    { name :=
+        "the word before the cursor starts where its run of word characters does, and is empty after a space"
+      run :=
+        pure <|
+          Completion.Words.startBefore "alpha al" 8 == 6 &&
+            Completion.Words.startBefore "alpha al" 5 == 0 &&
+            Completion.Words.startBefore "alpha al" 6 == 6 &&
+            Completion.Words.startBefore "café" 5 == 0 &&
+            Completion.Words.startBefore "" 0 == 0 },
+    { name :=
+        "the at-point source words answers the word before the cursor from the category word, an empty one on a key; on a pause it answers only once two characters are typed"
+      run :=
+        pure <|
+          let words := Completion.AtPoint.words
+          let answer (start stop : Nat) : Option (Option Completion.Region × Bool) :=
+            some (some { start, stop, sources := [.category Completion.Words.category] }, true)
+          atPointRunner "beta al" 7 .key words == answer 5 7 &&
+            atPointRunner "beta a" 6 .key words == answer 5 6 &&
+            atPointRunner "beta " 5 .key words == answer 5 5 &&
+            atPointRunner "beta al" 7 (.pause 240) words == answer 5 7 &&
+            atPointRunner "beta a" 6 (.pause 240) words == some (none, true) &&
+            atPointRunner "beta é" 7 (.pause 240) words == some (none, true) &&
+            atPointRunner "one\nal" 6 (.pause 240) words == answer 4 6 &&
+            words.pause == some 240 &&
+            words.name == "words" },
+    { name :=
+        "words' job on the job model reads each snapshot and posts one batch a buffer, in C-n order, a word once across the batches; a released snapshot is passed over; it then marks the source answered"
+      run :=
+        pure <|
+          let published := snapshotModelTable #[some "alpha beta al", none, some "almond alpha zed"]
+          let work := Completion.answering Completion.Words.gather wordsOrder.arguments
+          let (outcome, model) := (work ()).runModel { files := { snapshots := published } }
+          let batches :=
+            model.posted.toList.filterMap fun posted =>
+              (Completion.batchOfArguments? posted.arguments).map fun (_, _, _, batch) =>
+                batch.map (·.text)
+          batches == [#["alpha", "beta"], #["almond", "zed"]] &&
+            model.posted.all (·.command == Completion.candidatesCommand) &&
+            outcome matches .finished _ &&
+            Completion.Words.source.later ==
+              some { job := Completion.Words.job, reask := .never, readsTexts := true } }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -39334,7 +39444,9 @@ counts the threads jobs wait from comes before any check that holds a job in
 pure code on a promise: pure code blocked in `Task.get` on a pool thread
 makes Lean add a thread to the pool, which a later burst can land on. -/
 def checks : List Check :=
-  poolChecks ++ programChecks ++ jobModelChecks ++ waitChecks ++ runnerChecks ++ tableChecks ++
+  poolChecks ++ programChecks ++ jobModelChecks ++ snapshotReadChecks ++ waitChecks ++
+    runnerChecks ++
+    tableChecks ++
     ownerChecks ++
     fileRunnerChecks ++
     processChecks ++
@@ -39421,6 +39533,7 @@ def checks : List Check :=
     laterLoopChecks ++
     sourceContractChecks ++
     atPointContractChecks ++
+    wordsChecks ++
     fileCommandChecks ++
     openFilesChecks ++
     languageOpenChecks ++
@@ -39518,6 +39631,24 @@ def adoptFailures : IO (List String) := do
         TextContract.adoptProperties
   return failed.map (s!"the text model: {·}")
 
+/-- The names of the snapshot properties of the job port that do not hold of
+the job model, with the table published as its files' snapshots, and of
+those that do not hold of the runner over the fake clock, with the table as
+its snapshot service. -/
+def snapshotJobFailures : IO (List String) := do
+  let onModel ←
+    JobContract.snapshotFailures
+        (fun table job =>
+          pure (job.runModel { files := { snapshots := snapshotModelTable table } }).1)
+        JobContract.snapshotProperties
+  let onFake ←
+    JobContract.snapshotFailures
+        (fun table job => do
+          runOnFake job (some (← snapshotRig table)))
+        JobContract.snapshotProperties
+  return onModel.map (s!"the job model: {·}") ++
+      onFake.map (s!"the job runner over the fake clock: {·}")
+
 /-- The names of the job port's contract properties that do not hold of the
 job model, each run from a clock at 0 that nothing cancels. -/
 def jobModelFailures : IO (List String) := do
@@ -39604,6 +39735,7 @@ def main : IO UInt32 := do
     (← ModelTest.failures ModelTest.checks) ++ (← ModelTest.textFailures) ++
       (← ModelTest.adoptFailures) ++
       (← ModelTest.jobModelFailures) ++
+      (← ModelTest.snapshotJobFailures) ++
       (← ModelTest.jobRunnerFailures) ++
       (← ModelTest.postFailures) ++
       (← ModelTest.fuzzyJobFailures) ++
@@ -39626,6 +39758,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model"
   (← IO.getStdout).flush
   IO.Process.exit 0

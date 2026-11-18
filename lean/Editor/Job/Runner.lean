@@ -167,6 +167,11 @@ the job goes on; one that is given no watch service has
 has `Fuzzy.absent`, which throws, so a fuzzy request there is answered an
 error, and never a model's order as if it were a library's.
 
+A snapshot read is answered by `snapshots`, a function from a snapshot's id
+to its text, at once and with no wait. One that is given none answers
+`none` for every id; a host's real one reads the published table
+(`realSnapshots`, `Editor/Job/Real.lean`).
+
 ## What a job holds
 
 A load's reply names a snapshot the file service holds for the job, by a
@@ -413,6 +418,10 @@ structure Services where
   environments : Environments := Environments.inherited
   /-- The fuzzy matcher. A runner that is given none has `Fuzzy.absent`. -/
   fuzzy : FuzzyHandler := Fuzzy.absent
+  /-- The text of a snapshot a command took, as the published table holds
+  it now (`JobRequest.snapshot`); `none` for an id that names nothing or
+  was released. A runner that is given none answers `none` for every id. -/
+  snapshots : SnapshotId → BaseIO (Option String) := fun _ => pure none
 
 instance {α : Type} : Nonempty (Outcome α) :=
   ⟨.cancelled⟩
@@ -647,6 +656,7 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
       return .now (.ok reply)
     | .error error =>
       return .now (.error s!"fuzzy: {error}")
+  | .snapshot id => return .now (← handle.services.snapshots id)
   | .fileWatch (.next watch) => do
     -- A watch is named for the job that started it, and for no other.
     unless (← handle.watches.get).contains watch do
