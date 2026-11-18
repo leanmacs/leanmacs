@@ -349,10 +349,12 @@ def reviewJobs (repository : VersionControl.Model.Repository) (name : String) :
 
 /-- A driver of the review buffer checks over `repository`
 (`statusDriverOf`), its frame resized so that its one window is `rows` rows
-of text tall, with the working tree's files in the file model at `/r`. -/
-def reviewDriverOf (repository : VersionControl.Model.Repository) (rows : Nat := 6) :
+of text tall, with the working tree's files in the file model at `/r`, and
+the jobs `registered`, `reviewJobs repository` by default. -/
+def reviewDriverOf (repository : VersionControl.Model.Repository) (rows : Nat := 6)
+    (registered : String → Option (List Argument → Work) := reviewJobs repository) :
     Option TestDriver :=
-  (statusDriverOf repository stagingWrites #[] (reviewJobs repository) reviewKeys).map fun driver =>
+  (statusDriverOf repository stagingWrites #[] registered reviewKeys).map fun driver =>
     let cells := driver.model.display.cells
     let height := (rows + 2) * cells.lineHeight
     (driver.feed

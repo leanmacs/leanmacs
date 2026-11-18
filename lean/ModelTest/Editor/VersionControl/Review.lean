@@ -567,6 +567,34 @@ def reviewBufferChecks : List Check :=
               entrySources root == #[("x.txt@B", true), ("y.txt@B", true)] &&
               strayShots reviewed == 0 },
     { name :=
+        "a commit's review holds its new side's read-only buffers in its record's olds, so a refresh leaves one of each and a round that ends before its buffer is built removes them"
+      run :=
+        pure <|
+          let refusing (name : String) : Option (List Argument → Work) :=
+            if name == reviewDiffJob then none else reviewJobs sinceRepository name
+          match reviewOpened sinceRepository,
+            (reviewDriverOf sinceRepository (registered := refusing)).map
+              (reviewAfter · "C-o a") with
+          | some opened, some refused =>
+            let reviewed := reviewAfter opened "C-y m"
+            let refreshed := reviewAfter reviewed "C-t f"
+            let ended := reviewAfter refused "C-y m"
+            -- The buffers of x.txt at C: the commit's new side.
+            let newSides (driver : TestDriver) : Array Nat :=
+              driver.loop.state.buffers.zipIdx.filterMap fun (buffer, index) =>
+                buffer.bind fun buffer =>
+                  if buffer.name.startsWith "x.txt@C" then some index else none
+            let held (driver : TestDriver) : Bool :=
+              (reviewShown driver).any fun (_, record) => (newSides driver).all record.olds.contains
+            (newSides reviewed).size == 1 && held reviewed && (newSides refreshed).size == 1 &&
+              held refreshed &&
+              strayShots refreshed == 0 &&
+              (echoOf ended).any (·.startsWith "vc-review: ") &&
+              newSides ended == #[] &&
+              oldNames ended == #[] &&
+              strayShots ended == 0
+          | _, _ => false },
+    { name :=
         "criterion 4 on the models: with the last round at an earlier commit of the branch, vc-review-since opens the change since it, the later commits' hunks alone, and records a round against the same branch at the new HEAD"
       run :=
         pure <|
