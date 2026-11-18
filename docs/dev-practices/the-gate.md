@@ -365,7 +365,8 @@ copied from.
 The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and
 `mise run lean-test` runs `lake test`: the model tests
-(`lean/ModelTest.lean`), which run editor commands, the text interface's
+(`lean/ModelTest.lean` and its modules under `lean/ModelTest/`), which run
+editor commands, the text interface's
 contract and the cases of the undo tree, which is Lean over that interface,
 against the model, and the config session's decisions (what a
 reload elaborates, what it installs, how reloads are serialised) on
@@ -456,6 +457,21 @@ the API. The editor state's side of a
 save in flight, the snapshot the loop releases once a save has ended and
 the saved mark a rollback takes back are checked with the state requests
 and the loop's dispatch.
+
+The model tests are split by area into `lean/ModelTest/*.lean`, which the
+root `lean/ModelTest.lean` imports, so that lean-fmt's exact-frontend
+child, one per file with a 600 s bound by default
+(`LEAN_FMT_CHILD_TIMEOUT_MS`), never meets one huge file. As a single file
+of 38,031 lines it took 221 to 318 s under `lake exe lean-fmt format
+--check --no-cache` on the owner's machine (2026-11-17) and once ran past
+the bound on the `macos-26` runner; split, the largest module took 9.1 s
+on the same machine, and the whole tree 22 s. Put a new area's checks in a module of its own, or in the module
+of the area it belongs to, and split a module that grows past a few
+thousand lines; don't raise the bound. The modules are areas in a chain of
+imports, each importing the one before it, rather than modules that mirror
+the module under test: the split moved the code verbatim, and the areas
+share helpers. Moving toward the mirrored layout is the task
+`modeltest-mirror-layout`.
 
 The ex command line (`lean/Editor/Ex.lean`) is checked there in layers,
 so that a change to one breaks no other's checks:

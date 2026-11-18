@@ -1471,9 +1471,9 @@ Two more findings, made while the job system was built on Lean 4.35.0:
   only runs with the task.
 
 As built, the mechanism for each row and the check that pins it. `lake
-test` runs `model-test` (`lean/ModelTest.lean`), with no Rust library;
-`contract-test` and `config-test` are linked with it and run by
-`mise run ffi-test`.
+test` runs `model-test` (`lean/ModelTest.lean` and its modules under
+`lean/ModelTest/`), with no Rust library; `contract-test` and
+`config-test` are linked with it and run by `mise run ffi-test`.
 
 | Row | Mechanism | Check |
 |---|---|---|

@@ -525,10 +525,11 @@ target editorApp pkg : FilePath := do
             IO.FS.removeDirAll old
       return bundle
 
-/-- The model tests (`ModelTest.lean`): `lake test` builds and runs this
-(`mise run lean-test`). It is not a default target and links no glue and no
-Rust archive, so nothing it needs reaches `rustlib`. `-L`: as in `linkArgs`,
-so it links under either compiler. It starts at Lean's `main`. -/
+/-- The model tests (`ModelTest.lean`, which imports its modules under
+`ModelTest/`): `lake test` builds and runs this (`mise run lean-test`). It
+is not a default target and links no glue and no Rust archive, so nothing it
+needs reaches `rustlib`. `-L`: as in `linkArgs`, so it links under either
+compiler. It starts at Lean's `main`. -/
 @[test_driver] lean_exe «model-test» where
   root := `ModelTest
   moreLinkArgs := #["-L", leanSystemLibDir.toString]

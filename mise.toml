@@ -64,14 +64,14 @@ description = "Rust unit, integration and doc tests"
 run = "cargo test --workspace --locked"
 
 # The model tests: editor logic run in Lean alone, against hand-written fakes
-# and the pure models of the editor's ports (lean/ModelTest.lean). They must
-# pass without the Rust library being built, and the task shows that by
-# behaviour: `lean/no-cargo/cargo` is a fake `cargo` that always fails, put
-# first on the PATH, and Lake's `rustlib` target runs `cargo` on every build
-# that reaches it. So this passes only if nothing the test driver needs
-# reaches `rustlib`, on a tree where the archive is already built as well as
-# on a clean one. Seen to bite once by hand: with the same PATH,
-# `LEAN_CC=/usr/bin/cc lake build editor` fails at `editor/rustlib`.
+# and the pure models of the editor's ports (lean/ModelTest.lean and
+# lean/ModelTest/). They must pass without the Rust library being built, and
+# the task shows that by behaviour: `lean/no-cargo/cargo` is a fake `cargo`
+# that always fails, put first on the PATH, and Lake's `rustlib` target runs
+# `cargo` on every build that reaches it. So this passes only if nothing the
+# test driver needs reaches `rustlib`, on a tree where the archive is already
+# built as well as on a clean one. Seen to bite once by hand: with the same
+# PATH, `LEAN_CC=/usr/bin/cc lake build editor` fails at `editor/rustlib`.
 #
 # No LEAN_CC: the test driver links no C glue, so Lean's bundled compiler
 # builds it.
@@ -81,7 +81,7 @@ run = "cargo test --workspace --locked"
 # jobs wait from pin no size: they pass under a bare `lake test` whatever the
 # variable says.
 [tasks.lean-test]
-description = "Run the Lean model tests with `lake test`, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean)"
+description = "Run the Lean model tests with `lake test`, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/)"
 dir = "lean"
 run = 'PATH="$PWD/no-cargo:$PATH" lake test --wfail'
 
@@ -946,13 +946,13 @@ run = "cargo run --locked --package editor-shape-parley --example system"
 # nothing: its figures are this machine's, recorded dated in
 # docs/design/rust-library.md (docs/dev-practices/on-demand-checks.md). The
 # file is the largest by `find lean tests -name '*.lean' -not -path
-# '*/.lake/*' | xargs ls -S | head -1`.
+# '*/.lake/*' | xargs ls -S | head -1`, found again on every run.
 #
 # Run it on a quiet machine when the Lean grammar is updated, or the round
 # changes.
 [tasks.syntax-bench]
 description = "Time one syntax round and an idle refresh on the largest Lean file (docs/design/rust-library.md); asserts nothing"
-run = "cargo run --release --locked -p editor-syntax-treesitter --example round -- lean/ModelTest.lean lean"
+run = "cargo run --release --locked -p editor-syntax-treesitter --example round -- \"$(find lean tests -name '*.lean' -not -path '*/.lake/*' | xargs ls -S | head -1)\" lean"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It writes
 # a file of the repository, which no gate may do.

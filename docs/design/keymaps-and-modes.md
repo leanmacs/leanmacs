@@ -4046,12 +4046,12 @@ Strokes are separated by spaces. A stroke is modifier prefixes, then a key:
 
 Tests follow the pipeline. Most need no fake.
 
-What is built is checked by the model tests (`lean/ModelTest.lean`, under
-`lake test`, with no Rust library): `keymapChecks`, `keyNotationChecks`,
-`invocationChecks`, `schemeChecks` on the test scheme, and
-`schemeContractChecks`. They are checks that the test driver runs, each
-with a name it prints when it fails and each written to fail first, as the
-rest of the model tests are, and not `#guard`s.
+What is built is checked by the model tests (`lean/ModelTest.lean` and
+`lean/ModelTest/`, under `lake test`, with no Rust library):
+`keymapChecks`, `keyNotationChecks`, `invocationChecks`, `schemeChecks` on
+the test scheme, and `schemeContractChecks`. They are checks that the test
+driver runs, each with a name it prints when it fails and each written to
+fail first, as the rest of the model tests are, and not `#guard`s.
 
 The Vim scheme is checked the same way, by six lists:
 

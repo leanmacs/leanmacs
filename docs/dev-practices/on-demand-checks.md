@@ -280,20 +280,20 @@ mise run syntax-bench
 ```
 
 This times the syntax rounds on the largest Lean file in the repository,
-`lean/ModelTest.lean`, through the real tree-sitter adapter in a release
-build, and asserts nothing, so it is not part of the gate, which only
-builds it. It is the example of `crates/editor-syntax-treesitter`
-(`examples/round.rs`), which takes any path and grammar name. It prints the
-file's bytes and lines, the grammar's reparse policy and its tree's error
-nodes, the time of the first parse, and the median, minimum and maximum of
-20 rounds after an edit (`Session::parse_once`) and of 20 idle refreshes (a
-whole parse and its compare, `Session::refresh_once`).
+which the task finds on every run, through the real tree-sitter adapter in
+a release build, and asserts nothing, so it is not part of the gate, which
+only builds it. It is the example of `crates/editor-syntax-treesitter`
+(`examples/round.rs`), which takes any path and grammar name. It prints
+the file's bytes and lines, the grammar's reparse policy and its tree's
+error nodes, the time of the first parse, and the median, minimum and
+maximum of 20 rounds after an edit (`Session::parse_once`) and of 20 idle
+refreshes (a whole parse and its compare, `Session::refresh_once`).
 
 Run it on a quiet machine when the Lean grammar is updated
 (`vendor/README.md`) or the round changes, and record its figures, dated, in
-`docs/design/rust-library.md` ("Lean, measured"). The largest Lean file is
-found again with `find lean tests -name '*.lean' -not -path '*/.lake/*' |
-xargs ls -S | head -1`.
+`docs/design/rust-library.md` ("Lean, measured"), naming the file it
+timed. The task finds the largest Lean file with `find lean tests -name
+'*.lean' -not -path '*/.lake/*' | xargs ls -S | head -1`.
 
 ## The keyboard check, on demand
 

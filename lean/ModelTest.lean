@@ -21,6 +21,12 @@ hand-written fakes and the pure models of the editor's ports. With no
 arguments it runs every check in `checks`, names the ones that failed, and
 exits non-zero if any did.
 
+The checks themselves live in modules by area under `ModelTest/`, each
+importing the one before it, from `ModelTest.Check` (the `Check` type and
+`failures`) through `ModelTest.Compile`. Each area keeps its helpers next to
+its checks; a later area reaches an earlier one's helpers through the chain.
+This module keeps `checks`, the runs of the ports' contracts and `main`.
+
 The checks of the program type run programs over a small port of their own
 (`Ask`) against a fake that records the requests it receives.
 

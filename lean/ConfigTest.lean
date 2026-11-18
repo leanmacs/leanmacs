@@ -22,8 +22,9 @@ indent fixture the indent checks read. It reads nothing from the
 environment or the working directory. It runs every check in `checks`, names
 the ones that failed, and exits non-zero if any did.
 
-The model tests (`ModelTest.lean`) pin the decisions of the config session on
-fakes. The checks here pin what only real collaborators can show:
+The model tests (`ModelTest.lean` and `ModelTest/`) pin the decisions of the
+config session on fakes. The checks here pin what only real collaborators can
+show:
 
 - `elaboratorChecks`: the real elaborator behaves as the fake of its port
   assumes, and compiled code and config share state;
