@@ -186,10 +186,10 @@ def vocabulary : Array Entry :=
           "A match of the last search in a view's text, drawn by the loop as a decoration (`Loop.searchMatchFace`)." },
       { name := ⟨"review-unexamined"⟩
         meaning :=
-          "Text a review has not examined yet: drawn by the excerpts-and-review roadmap, declared ahead." },
+          "A tracked excerpt no scene has shown yet, such as a review buffer's hunk never on screen: drawn by the loop over its bytes (`ExcerptView.unexaminedFace`)." },
       { name := ⟨"block-header"⟩
         meaning :=
-          "The header line of a block decoration: drawn by the excerpts-and-review roadmap, declared ahead." }]
+          "The header drawn above an excerpt of an excerpt buffer, such as a review buffer's hunk header (`ExcerptView.headerFace`)." }]
 
 /-- The vocabulary's names, in its order. -/
 def vocabularyNames : Array FaceName :=

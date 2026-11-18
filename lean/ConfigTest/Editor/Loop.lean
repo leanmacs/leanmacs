@@ -218,16 +218,26 @@ def dispatchChecks (context : Context) : List Check :=
       run :=
         withHost context []
           (fun session => do
-            -- The loop reads the clock just before the command and just
-            -- after it. Each reading is held, so the clock is moved between
-            -- the two and at no other time.
-            let first ← session.clock.holdReads
+            -- The host reads the clock once at each step, for the time the
+            -- publish records what was viewed by (`Loop.Keys.now`): at the
+            -- prefix's step and at the command's. Then the loop reads it just
+            -- before the command and just after it. Each reading is held, so
+            -- the clock is moved between the last two and at no other time.
+            let pressed ← session.clock.holdReads
             session.type "C-c s"
             unless ← eventually (return (← session.clock.held) == 1) do
               return false
+            let step ← session.clock.holdReads
+            pressed.resolve ()
+            unless ← eventually (return (← session.clock.held) == 2) do
+              return false
+            let first ← session.clock.holdReads
+            step.resolve ()
+            unless ← eventually (return (← session.clock.held) == 3) do
+              return false
             let second ← session.clock.holdReads
             first.resolve ()
-            unless ← eventually (return (← session.clock.held) == 2) do
+            unless ← eventually (return (← session.clock.held) == 4) do
               return false
             session.clock.advance 60
             second.resolve ()

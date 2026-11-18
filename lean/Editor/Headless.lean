@@ -1383,9 +1383,12 @@ from the registry's bindings (`Config.Registry.menuOf`); and the
 completion styles config chose by category over the registry's styles, or
 the fuzzy style (`Config.Registry.matching`); and the completion displays
 config chose by category over the registry's displays, or the minibuffer
-display (`Config.Registry.displaying`). It is made for
-each window event, so a reload changes it between two events. -/
-def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
+display (`Config.Registry.displaying`); and `now`, the job clock's
+milliseconds (`Job.Timers.now`), which times what is viewed of a tracked
+excerpt (`Loop.Keys.now`). It is made for each window event, so a reload
+changes it between two events. -/
+def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) (now : Nat) :
+    Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
     slowAfter := collaborators.slowAfter, registered := running.config.registry.registered
     modeLine := (running.config.registry.resolve (running.config.modeLine.getD .standard)).1
@@ -1394,7 +1397,7 @@ def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     tabBar := some (running.config.tabBar.getD .several)
     menu := collaborators.menu.map running.config.registry.menuOf
     matching := running.config.registry.matching, inlineMatches := collaborators.inlineMatches
-    displaying := running.config.registry.displaying }
+    displaying := running.config.registry.displaying, now }
 
 /-- Publishes a scene of the frame's state, if there is a frame, its status
 lines drawn by the mode line the registry and config make (`keys`): what
@@ -1411,11 +1414,11 @@ publish that changes nothing reconciles to nothing. -/
 def publish (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
     IO (Running σ scheme) := do
   let some frame := running.frame | return running
-  let keys := running.keys collaborators
+  let keys := running.keys collaborators (← collaborators.services.timers.now)
   let (published, running) ←
     running.attempt collaborators
         (frame.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
-          keys.inlineMatches keys.displaying)
+          keys.inlineMatches keys.displaying keys.now)
   let (frame, starts, cancels, spawns) := (published.getD frame).completionJobs keys
   { running with frame := some frame }.launch collaborators starts cancels spawns
 
@@ -1518,7 +1521,9 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
       break
     let some frame := running.frame | break
     let (answered, attempted) ←
-      running.attempt collaborators (frame.invoke (running.keys collaborators) invocation)
+      running.attempt collaborators
+          (frame.invoke (running.keys collaborators (← collaborators.services.timers.now))
+            invocation)
     running := attempted
     if let some answered := answered then
       running ← running.took collaborators answered
@@ -1555,7 +1560,8 @@ def input (collaborators : Collaborators σ scheme) (running : Running σ scheme
     drop collaborators received.interrupt
     return running
   let (stepped, running) ←
-    running.attempt collaborators (frame.take (running.keys collaborators) received)
+    running.attempt collaborators
+        (frame.take (running.keys collaborators (← collaborators.services.timers.now)) received)
   match stepped with
   | some stepped =>
     running.took collaborators stepped
@@ -1578,7 +1584,8 @@ def run (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     collaborators.emit s!"run {name}: no frame"
     return running
   let (stepped, running) ←
-    running.attempt collaborators (frame.invoke (running.keys collaborators) invocation)
+    running.attempt collaborators
+        (frame.invoke (running.keys collaborators (← collaborators.services.timers.now)) invocation)
   let some stepped := stepped | return running
   collaborators.emit s!"run {name}: {describeEnding ((stepped.ended).getD .finished)}"
   running.took collaborators stepped
@@ -1615,8 +1622,10 @@ def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme
       return running
     let (result, texts) ←
       Job.finishWith collaborators.held entry.handle
-          (frame.deliver (running.keys collaborators) label command) running.texts
-          running.display.handle (watch collaborators) running.clipboard running.syntaxTree
+          (frame.deliver (running.keys collaborators (← collaborators.services.timers.now)) label
+            command)
+          running.texts running.display.handle (watch collaborators) running.clipboard
+          running.syntaxTree
     let running := { running with texts }
     match result with
     | .ok stepped =>
@@ -1645,7 +1654,7 @@ def paused (collaborators : Collaborators σ scheme) (running : Running σ schem
   let some frame := made | return running
   let (stepped, running) ←
     running.attempt collaborators
-        (frame.invoke (running.keys collaborators)
+        (frame.invoke (running.keys collaborators (← collaborators.services.timers.now))
           { command := AtPoint.pausedName, arguments := [.nat view.index, .nat ms] })
   let some stepped := stepped | return running
   running.took collaborators stepped
@@ -1669,7 +1678,8 @@ def posted (collaborators : Collaborators σ scheme) (running : Running σ schem
     return running
   let (stepped, running) ←
     running.attempt collaborators
-        (frame.deliver (running.keys collaborators) label (runPosted invocation))
+        (frame.deliver (running.keys collaborators (← collaborators.services.timers.now)) label
+          (runPosted invocation))
   let some stepped := stepped | return running
   collaborators.emit s!"{label}: {describeEnding ((stepped.ended).getD .finished)}"
   running.took collaborators stepped
@@ -2568,7 +2578,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     modes := Minibuffer.modes ++ Compile.modes ++ VersionControl.modes ++ Language.modes
     ex := Ex.bindings
     themes := Themes.shipped, languages := Language.shipped
-    segments := ModeLine.shipped, contributions := Compile.shipped
+    segments := ModeLine.shipped ++ VersionControl.segments, contributions := Compile.shipped
     sources :=
       Ex.sources ++ Buffers.sources ++ TabCommands.sources ++ Themes.sources ++
         Completion.Words.shipped ++

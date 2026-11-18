@@ -783,11 +783,20 @@ its excerpts, which `setExcerptHistory` replaces whole (refused with
   display data, kept here and not in the store's list: a window over the
   buffer draws each header as a block above its excerpt, and each source
   buffer's spans at its excerpts (`Editor/ExcerptView.lean`).
+- **An entry may be tracked** (`Buffer.ExcerptEntry.viewed`, `some` of a
+  `Buffer.Viewed`): the loop's publish records what the views showed of it,
+  how many scenes, the clock at the first, and how long it was on screen
+  (`markViewed`, `creditViewed`; `Editor/Loop.lean`, "After each event"),
+  and a view draws one no scene has shown yet in `review-unexamined`
+  (`Editor/ExcerptView.lean`). Both are pure, and ignore an entry that is
+  not tracked and an index past the entries. The review buffer's excerpts
+  are tracked (`Editor/VersionControl/Review.lean`).
 
 - **Its own `history`** is an undo tree over its text like any buffer's,
   told and closed by the loop and never moved: its text keeps no inverse, so
-  an undo in it is not its tree's. Its "modified" mark is left to a later
-  phase.
+  an undo in it is not its tree's. Its "modified" mark is not its tree's
+  either: the mode line marks it modified while a buffer over one of its
+  sources is (`ModeLine.Context.modified`, `Loop.contextOf`).
 - **What it edited is a list of steps** (`Buffer.Excerpts`): each step
   (`Buffer.ExcerptStep`) names the source buffers an edit through the
   excerpt buffer reached, each with its name and the state its undo tree
@@ -1113,14 +1122,34 @@ structure Buffer.ExcerptStep where
   sources : Array Buffer.ExcerptSource := #[]
   deriving DecidableEq, Repr
 
+/-- What the views of a tracked excerpt showed of it ("Excerpt buffers", in
+the module docs): written by the loop's publish (`Editor/Loop.lean`, "After
+each event"). -/
+structure Buffer.Viewed where
+  /-- How many published scenes showed it in a view's visible rows. -/
+  scenes : Nat := 0
+  /-- The host clock's milliseconds at the first such scene. -/
+  firstAt : Option Nat := none
+  /-- How long it was on screen, in milliseconds: the time between a scene
+  that showed it and the next publish, summed. -/
+  shownFor : Nat := 0
+  deriving DecidableEq, Repr
+
+/-- Whether a scene has shown it. -/
+def Buffer.Viewed.examined (viewed : Buffer.Viewed) : Bool :=
+  viewed.scenes > 0
+
 /-- One excerpt of an excerpt buffer as the editor keeps it beside the
-store's list: its source's text, and the header drawn above it ("Excerpt
-buffers", in the module docs). -/
+store's list: its source's text, the header drawn above it, and, when it is
+tracked, what was viewed of it ("Excerpt buffers", in the module docs). -/
 structure Buffer.ExcerptEntry where
   /-- The text of its source. -/
   source : TextId
   /-- The header drawn above it; none when empty. -/
   header : String := ""
+  /-- What the views showed of it, when it is tracked; `none` when it is
+  not. -/
+  viewed : Option Buffer.Viewed := none
   deriving DecidableEq, Repr
 
 /-- What an excerpt buffer keeps of what its edits reached, and of each of
@@ -3267,6 +3296,39 @@ def closeExcerptGroup (id : BufferId) (state : EditorState) : EditorState :=
       { state with
         buffers := state.buffers.set! id.index (some { buffer with excerpts := some excerpts }) }
   | _ => state
+
+/-- `state` with `change` made to what was viewed of each tracked entry of
+the excerpt buffer `id` among `indices`. An entry that is not tracked, an
+index past the entries and a buffer that is not an excerpt buffer change
+nothing. -/
+def changeViewed (id : BufferId) (indices : Array Nat) (change : Buffer.Viewed → Buffer.Viewed)
+    (state : EditorState) : EditorState :=
+  match state.buffer? id with
+  | some buffer@{ excerpts := some excerpts, .. } =>
+    let entries :=
+      excerpts.entries.mapIdx fun index entry =>
+        if indices.contains index then { entry with viewed := entry.viewed.map change } else entry
+    { state with
+      buffers :=
+        state.buffers.set! id.index
+          (some { buffer with excerpts := some { excerpts with entries } }) }
+  | _ => state
+
+/-- `state` with each tracked entry of the excerpt buffer `id` among
+`indices` shown by one more scene, first at `now` when no scene showed it
+before ("Excerpt buffers", in the module docs). -/
+def markViewed (id : BufferId) (indices : Array Nat) (now : Nat) (state : EditorState) :
+    EditorState :=
+  state.changeViewed id indices fun viewed =>
+    { viewed with
+      scenes := viewed.scenes + 1, firstAt := viewed.firstAt <|> some now }
+
+/-- `state` with `elapsed` milliseconds more on screen for each tracked entry
+of the excerpt buffer `id` among `indices` ("Excerpt buffers", in the module
+docs). -/
+def creditViewed (id : BufferId) (indices : Array Nat) (elapsed : Nat) (state : EditorState) :
+    EditorState :=
+  state.changeViewed id indices fun viewed => { viewed with shownFor := viewed.shownFor + elapsed }
 
 /-- Makes `excerpts` what the excerpt buffer `id` keeps of its edits.
 Refused, with the state unchanged, with `noSuchBuffer` for a buffer there

@@ -99,12 +99,27 @@ def writerEnvironment (home : System.FilePath) : Array (String × Option String)
       ("GIT_WORK_TREE", none), ("GIT_INDEX_FILE", none)]
 
 /-- Runs `git` with `arguments` in `directory`, fed `input` if it is given,
-with the writer's environment: what it printed, or a throw when it did not
-exit 0. -/
+with the writer's environment and `extra` over it: what it printed, or a
+throw when it did not exit 0. -/
 def gitIn (home directory : System.FilePath) (arguments : Array String)
-    (input : Option String := none) : IO String :=
+    (input : Option String := none) (extra : Array (String × Option String) := #[]) : IO String :=
   IO.Process.run
-    { cmd := "git", args := arguments, cwd := directory, env := writerEnvironment home } input
+    { cmd := "git", args := arguments, cwd := directory
+      env := (writerEnvironment home).filter (fun (name, _) => !extra.any (·.1 == name)) ++ extra }
+    input
+
+/-- The variables that make a commit's author the one `authored` names, at
+its time, which is also the committer's time; the committer stays the
+writer's `a`, so an author other than `a` differs from the committer. -/
+def authoredEnvironment (authored : VersionControl.Authored) : Array (String × Option String) :=
+  let date := s!"@{authored.time} +0000"
+  #[("GIT_AUTHOR_NAME", some authored.author), ("GIT_AUTHOR_DATE", some date),
+    ("GIT_COMMITTER_DATE", some date)]
+
+/-- The message of a commit of the model whose id is `id`, written by
+`authored`: its subject, or its id when that is empty. -/
+def messageOf (id : String) (authored : VersionControl.Authored) : String :=
+  if authored.subject.isEmpty then id else authored.subject
 
 /-- `gitIn`, with the index git reads and writes the file `index` in place of
 the repository's own. -/
@@ -144,9 +159,10 @@ def hashBlob (home directory : System.FilePath) (content : String) : IO String :
 
 /-- Writes a commit of `files` with the parents `parents`, real ids, into the
 repository at `directory`, made with an index file of its own named after
-`name` under `home`, `write-tree` and `commit-tree`: its id. -/
+`name` under `home`, `write-tree` and `commit-tree`, written by `authored`
+(`authoredEnvironment`), its message `messageOf name authored`: its id. -/
 def writeCommit (home directory : System.FilePath) (name : String) (files : Array (String × String))
-    (parents : Array String) : IO String := do
+    (parents : Array String) (authored : VersionControl.Authored) : IO String := do
   let index := home / s!"index-commit-{name}"
   for (path, content) in files do
     discard <|
@@ -154,8 +170,10 @@ def writeCommit (home directory : System.FilePath) (name : String) (files : Arra
           #["update-index", "--add", "--cacheinfo",
             s!"100644,{← hashBlob home directory content},{path}"]
   let tree := (← gitInIndex home directory index #["write-tree"]).trimAscii.toString
-  let arguments := #["commit-tree", tree, "-m", name] ++ parents.flatMap (#["-p", ·])
-  return (← gitIn home directory arguments).trimAscii.toString
+  let arguments :=
+    #["commit-tree", tree, "-m", messageOf name authored] ++ parents.flatMap (#["-p", ·])
+  return (←
+        gitIn home directory arguments (extra := authoredEnvironment authored)).trimAscii.toString
 
 /-- The real id of the model's commit `id` among `written`, the model's ids
 with the real ones, or none. -/
@@ -183,11 +201,13 @@ def writeHook (directory : System.FilePath) (printed : String) : IO Unit := do
 
 /-- Writes `repository` out as a git repository in `directory`, with git's
 own commands: initialised on its branch; each of its `commits` written in
-order (`writeCommit`), its parents mapped to the real ids; `HEAD`'s files
-committed, over its `parents` with `commit-tree` and its branch pointed at
+order (`writeCommit`), its parents mapped to the real ids, by its author at
+its time (`authoredEnvironment`); `HEAD`'s files
+committed, by `headAuthored`, over its `parents` with `commit-tree` and its branch pointed at
 it when it has some, then the index read from it, and checked out detached
 if it is; each of its other `branches` pointed at its commit with
-`update-ref`; each index entry that differs from `HEAD` written
+`update-ref`; `<home>/ignore-revs` written, naming every commit but
+`HEAD`'s, for `pinnedAwayConfig`'s `blame.ignoreRevsFile`; each index entry that differs from `HEAD` written
 with `update-index` (a conflict as its stages, through `--index-info`), each
 named revision committed and tagged (`writeRevisions`), the working tree
 made exactly `repository.worktree`, each `linked` worktree made with `git
@@ -207,17 +227,22 @@ def writeGitRepository (home directory : System.FilePath)
   let mut written : Array (String × String) := #[]
   for (id, commit) in repository.commits do
     let parents := commit.parents.filterMap (realId written)
-    written := written.push (id, ← writeCommit home directory id commit.files parents)
+    written :=
+      written.push (id, ← writeCommit home directory id commit.files parents commit.authored)
   unless repository.committed.isEmpty do
     for (path, content) in repository.committed do
       writeMaking (directory / path) content
     if repository.parents.isEmpty then
       discard <| gitIn home directory #["add", "-A"]
-      discard <| gitIn home directory #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "head"]
+      discard <|
+          gitIn home directory
+            #["-c", "commit.gpgsign=false", "commit", "-q", "-m",
+              messageOf repository.headId repository.headAuthored]
+            (extra := authoredEnvironment repository.headAuthored)
     else
       let head ←
-        writeCommit home directory "head" repository.committed
-            (repository.parents.filterMap (realId written))
+        writeCommit home directory repository.headId repository.committed
+            (repository.parents.filterMap (realId written)) repository.headAuthored
       discard <| gitIn home directory #["update-ref", s!"refs/heads/{branch}", head]
       discard <| gitIn home directory #["read-tree", "HEAD"]
     if repository.head == .detached then
@@ -228,6 +253,10 @@ def writeGitRepository (home directory : System.FilePath)
   for (name, id) in repository.branches do
     if let some real := realId written id then
       discard <| gitIn home directory #["update-ref", s!"refs/heads/{name}", real]
+  -- Every commit but HEAD's, for the hostile config's blame.ignoreRevsFile.
+  IO.FS.writeFile (home / "ignore-revs")
+      (String.join
+        ((written.filter (·.1 != repository.headId)).toList.map fun (_, real) => real ++ "\n"))
   let hash (content : String) : IO String := do
     return (←
           gitIn home directory #["hash-object", "-w", "--stdin"] (some content)).trimAscii.toString
@@ -288,7 +317,8 @@ lines"): copies found as well as renames, by `status.renames` and by
 stripped of lines that start with `#`; and a patch's whitespace fixed and
 its context matched loosely; and remote branches guessed for a new worktree
 and every new branch tracking its start, neither of which may change what
-is made. It names a user, since no commit runs without
+is made; and every commit but `HEAD`'s ignored by blame, through
+`blame.ignoreRevsFile` naming the writer's `<home>/ignore-revs`. It names a user, since no commit runs without
 one and the writer's own does not reach the editor's runs, and turns
 signing off. The editor runs git under the user's config, so the contract
 runs it under this one. -/
@@ -297,7 +327,8 @@ def pinnedAwayConfig : String :=
     "[worktree]\n\tguessRemote = true\n[branch]\n\tautoSetupMerge = always\n" ++
     "[user]\n\tname = a\n\temail = a@example.com\n" ++
     "[commit]\n\tgpgSign = false\n\tcleanup = strip\n" ++
-    "[apply]\n\twhitespace = fix\n\tignoreWhitespace = change\n"
+    "[apply]\n\twhitespace = fix\n\tignoreWhitespace = change\n" ++
+    "[blame]\n\tignoreRevsFile = ~/ignore-revs\n"
 
 /-- `check` handed a home holding `pinnedAwayConfig` as the file `gitconfig`,
 whose path it is also handed, and a repository directory, both its own

@@ -63,6 +63,12 @@ are in `Editor/Files/Compiled.lean`.
   result is delivered. Two opens of one path can be in flight, and the
   first delivery makes the buffer: the second then shows that buffer and
   takes nothing in, so there is one buffer for the path.
+- **Taking a loaded file in without showing it** (`adopt`): what the job's
+  command does with a load, the buffer made, holding the file, attached and
+  given its language and `code`, or the buffer that already holds the path,
+  with no view; the open's command is `adopt` with the view it shows the
+  buffer in. The review buffer takes in the files it shows so
+  (`Editor/VersionControl/Review.lean`).
 - **The name** is the path's base name. When a buffer already has that
   name it is the base name followed by `<2>`, `<3>` and so on, the first
   that is free (`EditorState.freeName`), so a second file of one base name
@@ -494,40 +500,56 @@ def arrived (order : LoadOrder) (view : ViewId) (buffer : BufferId) : EditorM Un
   if let some point := order.point then
     placeAt view buffer point order.focus
 
+/-- The buffer of the file at `path`, whose load answered `loaded` ("Open",
+in the module docs): the buffer that holds the path, if one does, its load
+not taken in; otherwise a new buffer over the loaded text, named for the
+file (`EditorState.freeName`), holding the file, attached to its workspace,
+with the language the registry chooses for its name and the mode `code`.
+When `view` is given the buffer is shown in it first, and the mode is set
+through it, as an open does; with none it is shown nowhere, as the review
+buffer takes in a file (`Editor/VersionControl/Review.lean`). `none` when a
+step is refused: a name, the file, or showing it. -/
+def adopt (path : System.FilePath) (loaded : File.Loaded) (view : Option ViewId := none) :
+    EditorM (Option BufferId) := do
+  let state ← editorState
+  -- Another open of the path may have been delivered while this one's
+  -- file loaded: the path is matched again, and nothing is taken in.
+  if let some buffer := state.findFile path then
+    if let some view := view then
+      let .ok () ← view.show buffer | return none
+    return some buffer
+  let text ← loaded.snapshot.toText
+  let name := state.freeName (path.fileName.getD path.toString)
+  let .ok buffer ← addBuffer name text | return none
+  let .ok () ← buffer.attachFile path loaded.stamp (loaded.endings.dominant.getD .lf) | return none
+  Workspace.attach buffer path
+  if let some view := view then
+    let .ok () ← view.show buffer | return none
+  -- The language is recorded before the mode is set, so the mode's entry
+  -- reads it ("Open", in the module docs, "Language").
+  if let some language← languageOf path then
+    discard <| buffer.setLanguage (some language)
+    -- `code` is compiled, and a shown view has a window: neither refusal
+    -- of `setMajorMode` can happen here.
+    match view with
+    | some view =>
+      discard <| view.setMajorMode Language.codeName
+    | none =>
+      discard <| buffer.setMajorMode Language.codeName
+  return some buffer
+
 /-- What the reply to the load of `order.path` makes of that one file
 ("Open", in the module docs): a message on a refusal; on success the
-buffer, shown in `view`, unless a buffer already holds the path; for a
-visit, the view's cursor at the point and the focus (`arrived`). -/
+buffer, shown in `view` (`adopt`); for a visit, the view's cursor at the
+point and the focus (`arrived`). -/
 def takeIn (order : LoadOrder) (view : ViewId) (reply : Except FileError File.Loaded) :
     EditorM Unit := do
   match reply with
   | .error error =>
     message (notOpened order.path error)
   | .ok loaded =>
-    let path := order.path
-    let state ← editorState
-    let view := shownIn state view
-    -- Another open of the path may have been delivered while this one's
-    -- file loaded: the path is matched again, and nothing is taken in.
-    if let some buffer := state.findFile path then
-      let .ok () ← view.show buffer | message (notShown path)
-      arrived order view buffer
-      return
-    let text ← loaded.snapshot.toText
-    let name := state.freeName (path.fileName.getD path.toString)
-    let .ok buffer ← addBuffer name text | message (notShown path)
-    let .ok () ←
-      buffer.attachFile path loaded.stamp
-          (loaded.endings.dominant.getD .lf) | message (notShown path)
-    Workspace.attach buffer path
-    let .ok () ← view.show buffer | message (notShown path)
-    -- The language is recorded before the mode is set, so the mode's entry
-    -- reads it ("Open", in the module docs, "Language").
-    if let some language← languageOf path then
-      discard <| buffer.setLanguage (some language)
-      -- The view was just shown, so it has a window, and `code` is
-      -- compiled: neither refusal of `setMajorMode` can happen here.
-      discard <| view.setMajorMode Language.codeName
+    let view := shownIn (← editorState) view
+    let some buffer ← adopt order.path loaded (some view) | message (notShown order.path)
     arrived order view buffer
 
 /-- The command a finished load job hands the loop: what the reply to the

@@ -80,7 +80,7 @@ def modeLineOf (name : String := "scratch") (modified : Bool := false)
   let history := UndoTree.new ⟨0⟩ 0
   ModeLine.standard.fields
     { buffer := { name, text := ⟨0⟩, history := if modified then history.record 1 else history }
-      reported, cursor, lines, selected }
+      reported, cursor, lines, selected, modified }
 
 /-- The left side of a status line: the fields of the buffer's name and its
 modified mark, and a badge. -/

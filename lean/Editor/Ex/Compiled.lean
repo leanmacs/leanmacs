@@ -3,7 +3,10 @@ import Editor.Compile
 import Editor.Config.Registry
 import Editor.Ex
 import Editor.Files
+import Editor.VersionControl.Blame
 import Editor.VersionControl.Commit
+import Editor.VersionControl.Log
+import Editor.VersionControl.Review
 import Editor.VersionControl.Show
 import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
@@ -100,6 +103,18 @@ drops it.
   - `vc-worktrees` runs `vc-worktrees`
     (`Editor/VersionControl/Worktrees.lean`) and takes nothing: it opens
     the worktree list of the focused buffer's workspace's repository.
+  - `vc-review` runs `vc-review` (`Editor/VersionControl/Review.lean`) and
+    takes text, a branch, or nothing for the main worktree's: it opens the
+    review buffer of `HEAD`'s change against that branch.
+  - `vc-review-since` runs `vc-review-since`
+    (`Editor/VersionControl/Review.lean`) and takes nothing: it opens the
+    change since the commit the last review recorded.
+  - `vc-log` runs `vc-log` (`Editor/VersionControl/Log.lean`) and takes
+    text, a revision, or nothing for `HEAD`: it opens the log buffer of
+    that revision's commits.
+  - `vc-blame` runs `vc-blame` (`Editor/VersionControl/Blame.lean`) and
+    takes text, a revision, or nothing for `HEAD`: it opens the blame of the
+    focused buffer's file at that revision.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -147,7 +162,11 @@ def bindings : Array Binding :=
     { name := "vc-commit", command := VersionControl.commitName },
     { name := "vc-worktrees", command := VersionControl.worktreesName },
     { name := "vc-commit-accept", command := VersionControl.acceptName },
-    { name := "vc-commit-abort", command := VersionControl.abortName }]
+    { name := "vc-commit-abort", command := VersionControl.abortName },
+    { name := "vc-review", command := VersionControl.reviewName, takes := .text },
+    { name := "vc-review-since", command := VersionControl.reviewSinceName },
+    { name := "vc-log", command := VersionControl.logName, takes := .text },
+    { name := "vc-blame", command := VersionControl.blameName, takes := .text }]
 
 /-- The ex line's completion sources, as a host registers them for the owner
 `compiled`, so config can ask for them by name: the `:!` history, then the

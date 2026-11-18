@@ -413,8 +413,11 @@ run = [
   # absolute path in place of `@DIR@`. The editor must exit with status 0,
   # and its output, with that path written `@DIR@`, must be exactly
   # `open-file/expected`. Every job is waited for with `join`, so its lines
-  # are fixed. No file is written.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/open-file/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/open-file/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/open-file/expected -",
+  # are fixed. No file is written. The prompt's view prints the cursor's
+  # byte offset over the absolute path typed, which the scrub cannot
+  # rewrite, so the directory is made from a template under `/tmp`, not
+  # under `$TMPDIR`: its path is always 23 bytes, on every machine.
+  "dir=$(mktemp -d /tmp/open-file.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/open-file/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/open-file/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/open-file/expected -",
   # A view that follows its cursor, as a process, with no config
   # (tests/headless/view): the script sizes the frame, opens a file of 120
   # lines with `:e`, and moves the cursor 100 lines down, with a scene

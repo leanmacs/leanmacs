@@ -3,7 +3,10 @@ import Editor.Scene
 import Editor.State
 import Editor.Text
 import ModelTest.Check
+import ModelTest.Editor.ExcerptView
 import ModelTest.Support.Config
+import ModelTest.Support.Evil
+import ModelTest.Support.Excerpt
 
 /-!
 # Model tests: `Editor/ModeLine.lean`
@@ -106,16 +109,36 @@ def modeLineChecks : List Check :=
             unknown == #["nope", "gone"] &&
             ModeLine.unknown "nope" == "no segment is registered as `nope`") },
     { name :=
-        "the default order is the badge, buffer, modified mark, changed mark and directory on the left, and major mode, line:col and position on the right"
+        "the default order is the badge, buffer, modified mark, changed mark, a review's counts and directory on the left, and major mode, line:col and position on the right; review is not shipped, so the shipped mode line leaves it out, the one name the shipped segments do not resolve"
       run :=
         pure
           (ModeLine.Order.standard ==
-              { left := #["state", "buffer", "modified", "changed", "directory"]
+              { left := #["state", "buffer", "modified", "changed", "review", "directory"]
                 right := #["major-mode", "line-column", "position"] } &&
             ModeLine.shipped.map (·.name) ==
               #["state", "buffer", "modified", "changed", "directory", "major-mode", "line-column",
                 "position"] &&
-            ModeLine.standard.left.map (·.name) == ModeLine.Order.standard.left &&
-            ModeLine.standard.right.map (·.name) == ModeLine.Order.standard.right) }]
+            (ModeLine.resolve ModeLine.Order.standard ModeLine.shipped?).2 == #["review"] &&
+            ModeLine.standard.left.map (·.name) == ModeLine.Order.standard.left.erase "review" &&
+            ModeLine.standard.right.map (·.name) == ModeLine.Order.standard.right) },
+    { name := "the modified segment reads the context's modified, not the buffer's history"
+      run :=
+        let marks (context : ModeLine.Context) : Array String :=
+          ((ModeLine.standard.fields context).filter (·.face == ModeLine.modifiedFace)).map (·.text)
+        pure
+          (marks { loopContext with modified := false } == #[] &&
+            marks { loopContext (loopLean (path := "Loop.lean")) with modified := true } ==
+              #["●"]) },
+    { name :=
+        "on the driver, an edit typed through an excerpt buffer gives its view the modified mark, and undoing it, which leaves the source as it was saved, takes the mark away"
+      run :=
+        pure <|
+          match excerptDriver with
+          | none => false
+          | some driver =>
+            let marked (driver : EvilDriver) : Bool :=
+              (lastView driver).any (·.status.any (·.text == ModeLine.modifiedMark))
+            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            !marked driver && marked typed && !marked (evilFed typed "u") }]
 
 end ModelTest

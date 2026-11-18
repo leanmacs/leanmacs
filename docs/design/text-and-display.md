@@ -1195,9 +1195,7 @@ above each excerpt and its sources' decorations at every excerpt of them
   selection and the search matches are the excerpt view's own, asked of
   its own text: translating a source's would draw them twice.
 - **Deferred**: `locate` of a snapshot, whose answer names a source by
-  `TextId` while the snapshot's list names sources by document key; the
-  excerpt buffer's mode-line "modified" field, which the review buffer of
-  phase 4 owns.
+  `TextId` while the snapshot's list names sources by document key.
 
 | Piece | Where |
 |---|---|
@@ -1206,6 +1204,41 @@ above each excerpt and its sources' decorations at every excerpt of them
 | The snapshot's list, and the highlights translated | `crates/editor-ffi/src/excerpts.rs`, `text_ref` in `crates/editor-ffi/src/display.rs` |
 | The headers and the sources' spans of a view | `lean/Editor/ExcerptView.lean` |
 | The reference image | `tests/render/excerpts/excerpts.png` and its README |
+
+### As built: the review buffer
+
+Phase 4 of the excerpts roadmap built the review buffer, an excerpt buffer
+of a branch's change ([version-control.md](version-control.md), "The
+review buffer: `vc-review`"). It changed no Rust: what it needed of the
+excerpt text, blocks, gutter marks, spans and the rows query was built.
+What it added to excerpt buffers is generic.
+
+- **Tracked excerpts.** An excerpt buffer's entry may be tracked
+  (`Buffer.ExcerptEntry.viewed`, asked for with `BufferExcerpt.tracked`):
+  what the views showed of it, how many published scenes, the host
+  clock's milliseconds at the first, and how long it was on screen
+  (`Buffer.Viewed`). `BufferId.setExcerptHeaders` rewrites the headers and
+  keeps it.
+- **The viewed record is written by the publish.** Once a scene's views
+  are decorated, the loop credits the time since the last publish, on the
+  clock the host hands each step (`Loop.Keys.now`, the job clock under
+  the headless host), to what the last scene showed, and asks the display
+  which rows each view of an excerpt buffer with a tracked entry shows,
+  with its blocks, as the follow asks. Each excerpt one of those rows
+  starts in is shown by one more scene (`ExcerptView.shown`,
+  `EditorState.markViewed`). A separator row starts at the end of the
+  excerpt above, so it shows nothing.
+- **The face is read before the marking.** A tracked excerpt no scene has
+  shown is drawn with a span over its bytes in `review-unexamined`
+  (`ExcerptView.unexamined`), read in the decorations before this scene
+  marks: so it is drawn unexamined in the first scene that shows it, and
+  plainly from the next one on. One never scrolled to stays unexamined
+  and counted.
+- **The modified mark of an excerpt buffer** is its sources': the mode
+  line's `modified` reads `ModeLine.Context.modified`, which the loop
+  sets for an excerpt buffer when a buffer over one of its entries'
+  sources is modified (`Loop.contextOf`). Its own tree is never moved, so
+  it could not say.
 
 ## Decorations
 
@@ -1329,13 +1362,17 @@ the host's shows through where the injected language has no face
 (`docs/design/rust-library.md`, "Injections, indentation and text objects,
 as built").
 
-**The decorations a scene carries** have two sources built, in this order
-(`lean/Editor/Loop.lean`, "Decorations"): a buffer's own spans, byte ranges
-each with a face that the buffer's owner sets (`Buffer.spans`,
-`lean/Editor/State.lean`, "Buffers"), such as the compile mode's locations
-in a compilation buffer; then the matches of the last search, in the face
-`search-match`. A later decoration is drawn over an earlier one, so a match
-is over a span. Each view but the minibuffer's covers the range from the
+**The decorations a scene carries** come from these sources, in this order
+(`lean/Editor/Loop.lean`, "Decorations"): for an excerpt buffer, its
+sources' buffers' spans, translated to each excerpt ("As built: showing
+excerpts"); a buffer's own spans, byte ranges each with a face that the
+buffer's owner sets (`Buffer.spans`, `lean/Editor/State.lean`,
+"Buffers"), such as the compile mode's locations in a compilation buffer;
+then, over each tracked excerpt no scene has shown, a span in
+`review-unexamined` ("As built: the review buffer"); then the matches of
+the last search, in the face `search-match`. A later decoration is drawn
+over an earlier one, so a match is over a span, and the mark of what was
+not examined is over the buffer's own spans. Each view but the minibuffer's covers the range from the
 start of its scroll anchor's row through as many text rows as it has
 display rows, and one more, which covers every visible row however the rows
 wrap; the loop reads it after the follow has placed the anchor. The spans
@@ -3737,8 +3774,13 @@ frame journal and the renderer's counters.
   220 ms from a window's size arriving to its first frame presented, is
   of a debug build on a software driver, and includes making the
   renderer. Layout's counters are layout's
-  ("Layout and rendering", as built); which ranges have been visible is
-  not built.
+  ("Layout and rendering", as built).
+- **Which ranges have been visible is built in Lean, not in the
+  journal**: per tracked excerpt of an excerpt buffer, from the rows query
+  the publish asks of each view and the clock the host hands each step
+  ("As built: the review buffer"). It counts scenes and the time between
+  publishes, not frames presented; a range outside a tracked excerpt is
+  not recorded.
 
 ## Open questions
 

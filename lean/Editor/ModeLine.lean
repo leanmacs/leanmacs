@@ -25,12 +25,20 @@ In the default order (`ModeLine.Order.standard`):
 |---|---|---|---|
 | Left | `state` | The scheme's reported fields, the badge (`NORMAL`), when the window is selected | the scheme's (`mode-line.state.<state>` under the Vim scheme) |
 | Left | `buffer` | The buffer's name | `mode-line.buffer` |
-| Left | `modified` | `●` while the buffer is modified | `mode-line.modified` |
+| Left | `modified` | `●` while the buffer is modified (`Context.modified`): for an excerpt buffer, while a buffer over one of its sources is | `mode-line.modified` |
 | Left | `changed` | `[changed on disk]` while a check has found the buffer's file changed on disk, or gone (`Editor/Loop.lean`, "Files that changed on disk") | `mode-line.changed` |
+| Left | `review` | A review buffer's counts, `<k> kept · <r> reverted · <n> not examined`; registered by `Editor/VersionControl/Review.lean`, not shipped here | `mode-line.secondary` |
 | Left | `directory` | The opened path's parent, as written | `mode-line.secondary` |
 | Right | `major-mode` | The buffer's major mode | `mode-line.secondary` |
 | Right | `line-column` | `row:column` of the cursor, each from 1, the column in the text's cells (`ColumnUnit.cells`) | `mode-line.secondary` |
 | Right | `position` | `All`, `Top`, `Bot` or a whole percentage | `mode-line.secondary` |
+
+**`review`** is listed by the default order but is not shipped here: the
+version-control review registers it (`Editor/VersionControl/Review.lean`),
+as a component registers its own segments through the registry. So the
+default order resolved over the shipped segments alone (`standard`) leaves
+it out, which `ModelTest.modeLineChecks` pins, and a host that registers
+version control's segments draws it.
 
 A segment that has nothing to say gives no field: `directory` for a buffer
 with no file, or whose path's parent is absent, empty or `.`;
@@ -99,6 +107,10 @@ structure ModeLine.Context where
   lines : Nat := 0
   /-- Whether it is the selected window (`EditorState.selectedView`). -/
   selected : Bool := true
+  /-- Whether its buffer is modified, as the loop reads it (`Loop.contextOf`,
+  its one writer): a plain buffer's `Buffer.isModified`, and for an excerpt
+  buffer whether a buffer over one of its sources is. -/
+  modified : Bool := false
 
 /-- A segment of the mode line: a name it is registered and listed by, and
 the fields it gives for a window. -/
@@ -204,10 +216,11 @@ def buffer : Segment where
   name := "buffer"
   fields context := #[field context.buffer.name bufferFace]
 
-/-- The `modified` segment: the mark while the buffer is modified. -/
+/-- The `modified` segment: the mark while the buffer is modified
+(`Context.modified`). -/
 def modified : Segment where
   name := "modified"
-  fields context := if context.buffer.isModified then #[field modifiedMark modifiedFace] else #[]
+  fields context := if context.modified then #[field modifiedMark modifiedFace] else #[]
 
 /-- The `changed` segment: the mark while a check has found the buffer's
 file changed on disk, or gone (`FileInfo.changed`). -/
@@ -255,10 +268,13 @@ def shipped : Array Segment :=
   #[state, buffer, modified, changed, directory, majorMode, lineColumn, position]
 
 /-- The default listing: the badge, the buffer's name, the modified mark,
-the changed mark and the directory on the left; the major mode, line:col
-and the position on the right. -/
+the changed mark, a review's counts and the directory on the left; the
+major mode, line:col and the position on the right. `review` is not a
+shipped segment: version control registers it (`VersionControl.segments`),
+and a mode line resolved over the shipped ones alone leaves it out
+(`standard`). -/
 def Order.standard : Order where
-  left := #["state", "buffer", "modified", "changed", "directory"]
+  left := #["state", "buffer", "modified", "changed", "review", "directory"]
   right := #["major-mode", "line-column", "position"]
 
 /-- The mode line `order` names, each name the segment `segment?` finds for
@@ -279,7 +295,10 @@ its own, so no entry of a name is later than another. -/
 def shipped? (name : String) : Option Segment :=
   shipped.find? (·.name == name)
 
-/-- The shipped mode line, in the default order. -/
+/-- The shipped mode line, in the default order, resolved over the shipped
+segments: `review`, which version control registers, is left out of it. A
+host draws it by resolving the order over the registry, which holds version
+control's segments (`Headless.keys`). -/
 def standard : ModeLine :=
   (resolve Order.standard shipped?).1
 

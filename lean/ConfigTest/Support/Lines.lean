@@ -61,7 +61,8 @@ def statusOf (view : Nat := 0) (name : String := "scratch") (modified : Bool := 
         path.map fun path =>
           { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 }
             changed := if changed then some { found := none, told := true } else none } }
-  Headless.statusLine ⟨view⟩ (ModeLine.standard.fields { buffer, cursor := some cursor, lines })
+  Headless.statusLine ⟨view⟩
+    (ModeLine.standard.fields { buffer, cursor := some cursor, lines, modified })
     (some ModeLine.activeFace)
 
 /-- Whether `output` has a line that says a job registered under `name`

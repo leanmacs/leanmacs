@@ -89,10 +89,11 @@ def loopLean (modified : Bool := true) (path : String := "lean/Editor/Loop.lean"
     file := some { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 } } }
 
 /-- The context of a window on `buffer` in normal state, its cursor on row
-958 at column 4 of 2338 rows, selected when `selected` says. -/
+958 at column 4 of 2338 rows, selected when `selected` says, and modified
+when `buffer` is, as the loop reads a plain buffer (`Loop.contextOf`). -/
 def loopContext (buffer : Buffer := loopLean) (selected : Bool := true) : ModeLine.Context :=
   { buffer, reported := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
-    cursor := some ⟨958, 4⟩, lines := 2338, selected }
+    cursor := some ⟨958, 4⟩, lines := 2338, selected, modified := buffer.isModified }
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
