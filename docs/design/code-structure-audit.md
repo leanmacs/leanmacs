@@ -246,11 +246,17 @@ so no caller changes (`split-lean-ffi-bindings-by-port`).
 
 **Done** (roadmap `structural-splits`, phase
 `phase-1-split-lean-ffi-bindings-by-port`): split. `lean/Editor/Ffi.lean`
-holds the conventions, an index of the families and the imports, and no
-`@[extern]`. The 142 externs (139 at 37b1335; three were added before the
+holds the conventions, an index of the families and no `@[extern]`; it
+imports the 20 families no other family imports, and the rest come in
+through those. The 142 externs (139 at 37b1335; three were added before the
 split) are in 25 modules `lean/Editor/Ffi/<Family>.lean`, one per Rust
 module of `crates/editor-ffi/src/` that defines them, all still in
-`namespace Editor.Ffi`, so no caller changed. The word codec the families
+`namespace Editor.Ffi`, so no name a caller uses changed. With
+`Editor.Ffi` defining nothing itself, lean-fmt's FMT004 flags an
+`import Editor.Ffi` that another import already brings, so that line was
+dropped from the four files that had one:
+`lean/Editor/Display/Real.lean`, `lean/Editor/Job/Real.lean`,
+`lean/Editor/SyntaxTree/Real.lean` and `lean/FfiTest.lean`. The word codec the families
 share is `lean/Editor/Ffi/Words.lean`, under `Editor.Ffi.Words`, the one
 place a raw structure is not private to its family. The largest family
 module is `Syntax.lean` (490 lines).
