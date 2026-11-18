@@ -1,6 +1,5 @@
 import Editor.Display
 import Editor.Face
-import Editor.Ffi
 import Editor.Text.Real
 
 /-!

@@ -1,7 +1,6 @@
 import Editor.Command.Real
 import Editor.Display.Real
 import Editor.Event.Queue
-import Editor.Ffi
 import Editor.InputScheme.Test
 import Editor.InputScheme.Vim
 import Editor.Themes.Compiled

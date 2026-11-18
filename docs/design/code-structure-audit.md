@@ -244,6 +244,17 @@ capability, so the interface is not the fault, the file's cohesion is.
 `lean/Editor/Ffi.lean` keeping the conventions and importing every family
 so no caller changes (`split-lean-ffi-bindings-by-port`).
 
+**Done** (roadmap `structural-splits`, phase
+`phase-1-split-lean-ffi-bindings-by-port`): split. `lean/Editor/Ffi.lean`
+holds the conventions, an index of the families and the imports, and no
+`@[extern]`. The 142 externs (139 at 37b1335; three were added before the
+split) are in 25 modules `lean/Editor/Ffi/<Family>.lean`, one per Rust
+module of `crates/editor-ffi/src/` that defines them, all still in
+`namespace Editor.Ffi`, so no caller changed. The word codec the families
+share is `lean/Editor/Ffi/Words.lean`, under `Editor.Ffi.Words`, the one
+place a raw structure is not private to its family. The largest family
+module is `Syntax.lean` (490 lines).
+
 ### The window example: `crates/editor-ffi/examples/window.rs`
 
 **Cohesion**: 3,502 lines, 1,844 outside its test module, about 220 of

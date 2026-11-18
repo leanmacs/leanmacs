@@ -1,5 +1,4 @@
 import Editor.Command.Real
-import Editor.Ffi
 import Editor.Job.Runner
 import Editor.Text.Real
 

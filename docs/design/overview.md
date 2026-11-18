@@ -193,7 +193,7 @@ Cargo for the static library:
 
 | Part | Contents |
 |---|---|
-| `Editor.Ffi` | Bindings to the library, and a small C glue file. |
+| `Editor.Ffi` | Bindings to the library, one module per binding family under `Editor/Ffi/`, and a small C glue file. |
 | `Editor` | The interfaces and their models, editor state, the command loop, jobs, the config session. The command loop runs one input scheme: each key press is stepped through it, and the invocation it yields is looked up in the registry of compiled and config commands and run as a command, which the loop rolls back when it is refused or interrupted. |
 | `Editor.UndoTree` | The undo tree: a text's history as a tree of states, in plain Lean over the text interface. Groups, undo, redo, branches, reverting the open group, and the saved state. |
 | `Editor.File` | Loading, saving and reading a file's stamp as a job asks for them: the three file requests of the job interface, with their data (a stamp, line endings, what a save expects, the refusals), and a pure model of the files a job reaches. The work is the library's; a file's bytes never pass through a Lean string. |
