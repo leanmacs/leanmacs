@@ -1227,11 +1227,53 @@ order. Faces are named and defined in Lean.
 
 ### As built
 
-Of the kinds above, span faces and blocks between lines are built. Span
-faces come from three sources: the selections, the decorations a scene
-carries, and a text's own spans, a syntax's highlights, which the text
-carries through a port of layout's (`TextSpans`, on a `TextRef`; "The
+Of the kinds above, span faces, blocks between lines and gutter marks are
+built. Span faces come from three sources: the selections, the decorations
+a scene carries, and a text's own spans, a syntax's highlights, which the
+text carries through a port of layout's (`TextSpans`, on a `TextRef`; "The
 scene", as built). The rest are not.
+
+**Gutter marks** (built by the version-control roadmap's phase 2;
+`crates/editor-layout/src/frame.rs`, "The gutter"; `lean/Editor/Gutter.lean`):
+a view's marks are short texts drawn in a column of their own before its
+text, which Lean chooses per buffer (the version-control gutter's `+`, `~`
+and `-`, [version-control.md](version-control.md), "Gutter marks").
+
+- **The column** is `Padding.gutter` points wide, a left-only inset after
+  `across`, in Lean's scene and in Rust's. Every query already takes a
+  padding, so the text wraps at the width less twice `across` and once
+  `gutter`, a spot is `across` and `gutter` further right, and a move wraps
+  at the same width, in the frame and the rows, spot and move queries
+  alike: they cannot disagree. The column's paper is the face `gutter`'s
+  only behind a mark's glyphs, the rest of it the view's background: a
+  fill of the whole column would need a fill a view, and frame fills are
+  drawn before views. A window has the column while its buffer has a
+  gutter (`EditorState.paddingOf`), `Buffer.Gutter.width` points.
+- **A mark is a row.** It is a row of the frame, `FrameRow::mark` naming
+  it, pushed after each text row it is drawn beside: on every visual line
+  of each buffer row its range has a byte in, or of the row that holds its
+  start when its range is empty. Its `x` is `across`, it sits on its text
+  row's baseline, and only its text's first visual line is drawn. So no
+  renderer changes: the painters place rows by `x` and `y` and cache them
+  by hash. What reads a frame's text rows picks them by
+  `FrameRow::is_text`, so a block row and a mark row are never taken for
+  one (the frame's kept rows, and the frame's rows through C).
+- **Its faces.** Its text is laid out through the block store, in its face
+  over `gutter` over the default face, keyed by its text and its face, so
+  two marks of one text and face share an entry and a row hash, and an
+  unchanged mark keeps its hash. Its paint is only its own: it joins no
+  span stack, so the precedence below gains no layer.
+- **It holds no position.** Its offsets are moved back to a character
+  boundary, and past the end to the end, as a block's are; marks beside
+  rows not shown draw nothing.
+- **Carried through edits.** A buffer's gutter is marks at one revision of
+  its text (`Buffer.gutter`). A view carries them to the revision it shows
+  through the text's log (`Gutter.marksOf`): a start maps after an
+  insertion at it and a stop before, so a mark grows only by what is put
+  inside it; a mark whose bytes were all deleted is dropped; an empty one
+  maps its offset after; and a forgotten log draws none until the owner
+  sets them again. They are clipped to the view's range as its
+  decorations are.
 
 **Blocks** (built by the excerpts roadmap's phase 3;
 `crates/editor-layout/src/query.rs`, "Blocks"; `lean/Editor/Display.lean`,

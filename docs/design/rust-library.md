@@ -1074,7 +1074,21 @@ no dependencies).
   script was made for, and refused (`BadChange`) unless every step starts
   and stops on a character boundary of both. It searches nothing, so its
   cost on the editor thread is linear in the steps and the inserted bytes.
-- Not built: a word diff, applying or reverting one hunk, gutter marks.
+- **Hunks** (built by the version-control roadmap's phase 2, for gutter
+  marks): `hunks(engine, old, new, limit)` answers the same checked line
+  hunks `script` trims, untrimmed, as byte ranges of whole lines in both
+  texts (`ByteHunk`): each from a line's start to the next line's start or
+  the text's end, none empty on both sides, none for equal texts. `script`
+  and `hunks` share one private function for the strip, the limit and the
+  check, so they never disagree about which lines changed. Whole lines,
+  not trimmed ranges, because a gutter marks lines and the review buffer
+  will excerpt lines. `apply_hunks` says what they give; the contract's
+  `HUNKS_APPLY`, `HUNK_LINES` and `HUNK_SWEEP` (generated texts from a
+  fixed seed, which the imara adapter's tests name) hold every engine to
+  it. The service answers a request for hunks (`editor_ffi_diffs_start_hunks`)
+  as a count and four words a hunk (`editor_ffi_diffs_take_hunks`); a take
+  of the other kind's answer takes nothing and keeps it.
+- Not built: a word diff, applying or reverting one hunk.
 
 ### Fuzzy matching, as built
 
