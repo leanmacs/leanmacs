@@ -50,7 +50,7 @@ any source's job does; it is pinned on the job model by
 | Addition | Where |
 |---|---|
 | A new way to ask again | A constructor of `Completion.Reask` and its case of `Reask.asksAgain` (`Editor/Completion/Candidate.lean`) |
-| Something more a source's job is handed | A field of `Order`, and its argument in `Order.arguments` and `Order.ofArguments?` |
+| Something more a source's job is handed | A field of `Order`, or of its `Query`, and its argument in `Order.arguments` and `Order.ofArguments?` |
 | A source's job | A function given to `answering`, registered with `sourceJob` (`Editor/Setup.lean`) |
 
 Pinned by `ModelTest.laterChecks`, `completionJobChecks` and
@@ -74,15 +74,42 @@ structure Order where
   pause : Nat := 0
   deriving DecidableEq, Repr
 
-/-- `order` as the plain arguments a job is started with. -/
+/-- `order` as the plain arguments a job is started with: the view, the
+index, the generation, the query's text and view and the pause, then the
+query's region, its two ends or `false` for none, then each snapshot id of
+its texts. -/
 def Order.arguments (order : Order) : List Argument :=
+  let region :=
+    match order.query.region with
+    | some span => [.nat span.start, .nat span.stop]
+    | none => [.bool false]
   [.nat order.view.index, .nat order.index, .nat order.generation, .str order.query.text,
-    .nat order.query.view.index, .nat order.pause]
+      .nat order.query.view.index, .nat order.pause] ++
+    region ++
+    order.query.texts.toList.map fun snapshot => .nat snapshot.index
 
-/-- The order `arguments` hold; `none` for arguments that are not one. -/
+/-- The snapshot ids `arguments` hold, each a number; `none` for arguments
+that are not all numbers. -/
+def snapshotsOfArguments? (arguments : List Argument) : Option (Array SnapshotId) :=
+  arguments.toArray.mapM fun
+    | .nat index => some ⟨index⟩
+    | _ => none
+
+/-- The order `arguments` hold; `none` for arguments that are not one. The
+six arguments of an order with no region and no texts are taken too. -/
 def Order.ofArguments? : List Argument → Option Order
   | [.nat view, .nat index, .nat generation, .str text, .nat asker, .nat pause] =>
     some { view := ⟨view⟩, index, generation, query := { text, view := ⟨asker⟩ }, pause }
+  | .nat view :: .nat index :: .nat generation :: .str text :: .nat asker :: .nat pause :: rest =>
+    let parsed : Option (Option Span × List Argument) :=
+      match rest with
+      | .bool false :: rest => some (none, rest)
+      | .nat start :: .nat stop :: rest => some (some { start, stop }, rest)
+      | _ => none
+    parsed.bind fun (region, rest) =>
+      (snapshotsOfArguments? rest).map fun texts =>
+        { view := ⟨view⟩, index, generation, query := { text, view := ⟨asker⟩, region, texts }
+          pause }
   | _ => none
 
 /-- An optional field of a candidate as an argument: its text, or `false`

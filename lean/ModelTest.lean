@@ -7,6 +7,7 @@ import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Compile.Compiled
 import Editor.Compile.Shipped
+import Editor.Completion.AtPointContract
 import Editor.Completion.Contract
 import Editor.Completion.DisplayContract
 import Editor.Completion.Displays
@@ -22527,7 +22528,7 @@ its order and its batches as arguments, its job on the job model, and the
 command that takes a batch into the open prompt. -/
 def laterChecks : List Check :=
   [{  name :=
-        "an order and a batch round-trip through their arguments: a candidate with nothing beside its text, one with each optional field, all of them, and empty strings among them; malformed lists decode to none"
+        "an order and a batch round-trip through their arguments: an order with a region and texts, one with texts alone, and the six arguments of one with neither; a candidate with nothing beside its text, one with each optional field, all of them, and empty strings among them; malformed lists decode to none"
       run :=
         pure <|
           let batch : Array Completion.Candidate :=
@@ -22536,7 +22537,19 @@ def laterChecks : List Check :=
               { text := "d", group := some "g" },
               { text := "e", label := some "l", annotation := some "a", kind := some "k"
                 group := some "g" }]
+          let atPoint : Completion.Order :=
+            { laterOrder with
+              query :=
+                { laterOrder.query with
+                  region := some { start := 2, stop := 5 }, texts := #[⟨4⟩, ⟨1⟩] } }
+          let textsOnly : Completion.Order :=
+            { laterOrder with query := { laterOrder.query with texts := #[⟨0⟩] } }
           Completion.Order.ofArguments? laterOrder.arguments == some laterOrder &&
+            Completion.Order.ofArguments? atPoint.arguments == some atPoint &&
+            Completion.Order.ofArguments? textsOnly.arguments == some textsOnly &&
+            Completion.Order.ofArguments? [.nat 3, .nat 1, .nat 2, .str "w", .nat 0, .nat 30] ==
+              some laterOrder &&
+            Completion.Order.ofArguments? (atPoint.arguments ++ [.str "x"]) == none &&
             Completion.batchOfArguments? (Completion.batchArguments ⟨3⟩ 1 2 batch) ==
               some (⟨3⟩, 1, 2, batch) &&
             Completion.batchOfArguments? (Completion.batchArguments ⟨3⟩ 1 2 #[]) ==
@@ -39245,6 +39258,74 @@ def modeMarkerFailures : IO (List String) :=
         if after.processes.started.isEmpty then []
         else [s!"the mode marker search on the job model starts no process: {property.name}"]
 
+/-- The contract's runner of at-point sources on the editor's models
+(`Completion.AtPointContract.Runner`): the at-point source asked at
+`offset`, on `occasion`, from the one window of a state of one buffer over a
+text holding `text` (`evilState`), dispatched with no registry. `some` with
+what it answered and whether the editor state and the texts the store holds
+were left as they were; `none` when it was refused, or the fixture could not
+be made. -/
+def atPointRunner : Completion.AtPointContract.Runner := fun text offset occasion atPoint =>
+  match (TextM.lift (evilState text offset)).runModel editorModel with
+  | (.error _, _) => none
+  | (.ok start, model) =>
+    let asking : EditorM (Guarded (Option Completion.Region) × EditorState) :=
+      (atPoint.ask { view := ⟨0⟩, offset, occasion }).dispatched {} start
+    match asking.runModel model with
+    | (.ok (.finished answer, after), left) =>
+      some (answer, after == start && left.texts.contents == model.texts.contents)
+    | _ => none
+
+/-- The model at-point source of the contract checks: the region from the
+start of the cursor's line to the cursor, read from no text, so it answers
+`[offset, offset]` and names the source `say`. -/
+def atPointModel : Completion.AtPoint :=
+  .fixed "fixed" fun spot =>
+    some { start := spot.offset, stop := spot.offset, sources := [.source "say"] }
+
+/-- The at-point sources the contract is run on. -/
+def atPointSubjects : List Completion.AtPoint :=
+  [atPointModel, Completion.AtPoint.silent "silent"]
+
+/-- The checks of the at-point sources' contract
+(`Editor/Completion/AtPointContract.lean`): it holds of the model, of one
+that never answers and of every shipped at-point source, and it reports one
+whose region ends past the text, one that makes a text and one that is
+refused. -/
+def atPointContractChecks : List Check :=
+  let broken : Completion.AtPoint :=
+    .fixed "broken" fun spot =>
+      some { start := spot.offset, stop := spot.offset + 100, sources := [] }
+  let writes : Completion.AtPoint :=
+    { name := "writes"
+      ask := fun _ => do
+        discard <| createText "made"
+        return none }
+  let holds (atPoint : Completion.AtPoint) : Bool :=
+    Completion.AtPointContract.properties.all (·.holds atPointRunner atPoint)
+  (atPointSubjects.flatMap fun atPoint =>
+      Completion.AtPointContract.properties.map fun property =>
+        { name := s!"the at-point source {atPoint.name}: {property.name}"
+          run := pure (property.holds atPointRunner atPoint) }) ++
+    [{  name :=
+          "the at-point contract reports a source whose region ends past the text, one that makes a text and one that is refused; it asks at every position of a text with a two-byte character, its end included"
+        run :=
+          pure <|
+            !holds broken && !holds writes && !holds (Completion.Fake.AtPoint.refusing "no") &&
+              Completion.AtPointContract.positions "café" == [0, 1, 2, 3, 5] },
+      { name :=
+          "an at-point source asks on a key always, on a trigger only of its own, and on a pause only of its own length"
+        run :=
+          pure <|
+            let dots : Completion.AtPoint :=
+              { atPointModel with
+                triggers := ['.'], pause := some 240 }
+            dots.asksOn .key && dots.asksOn (.trigger '.') && !dots.asksOn (.trigger 'a') &&
+              dots.asksOn (.pause 240) &&
+              !dots.asksOn (.pause 100) &&
+              !atPointModel.asksOn (.pause 240) &&
+              !atPointModel.asksOn (.trigger '.') }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -39339,6 +39420,7 @@ def checks : List Check :=
     completionJobChecks ++
     laterLoopChecks ++
     sourceContractChecks ++
+    atPointContractChecks ++
     fileCommandChecks ++
     openFilesChecks ++
     languageOpenChecks ++

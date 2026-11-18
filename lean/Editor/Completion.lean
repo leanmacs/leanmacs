@@ -68,6 +68,7 @@ share (`defineSource`, `Editor/Setup.lean`; `Editor/Config/Registry.lean`,
 | A shipped source | A value beside the rule it lists, a default of the category the prompt that lists it asks for, registered compiled in `Headless.shippedOver`, and run by `ModelTest.sourceContractChecks` |
 | A way to match candidates | A style (`Editor/Completion/Style.lean`), not a source |
 | A rule every source keeps | A property of `Editor/Completion/Contract.lean` |
+| A source asked at a position of a buffer | An at-point source (`Editor/Completion/AtPoint.lean`), which names the sources to complete its region from (`Named`, `Named.ref`) |
 
 Pinned by `ModelTest.sourceContractChecks` (the contract, on the model,
 the fake and the shipped sources), `candidateChecks` (sources asked by a
@@ -136,5 +137,12 @@ inductive SourceRef where
 defaults. -/
 def SourceRef.ofCategory (category : String) : SourceRef :=
   .category category []
+
+/-- The reference a source an at-point source names stands for
+(`Completion.Named`, `Editor/Completion/AtPoint.lean`): the source of the
+name, or every source of the category, with no defaults. -/
+def Named.ref : Named → SourceRef
+  | .source name => .named name
+  | .category named => .ofCategory named
 
 end Editor.Completion

@@ -1,4 +1,5 @@
 import Editor.Completion
+import Editor.Completion.AtPoint
 
 /-!
 # Completion sources for tests
@@ -15,6 +16,9 @@ nothing the editor runs does.
 - `Fake.refusing name category` is refused with `TextError.badRange`
   before it answers, so a check sees what a refused source does to the
   command that asked it.
+- `Fake.AtPoint.refusing name` is an at-point source
+  (`Editor/Completion/AtPoint.lean`) refused the same way, so a check sees
+  that an at-point source was not asked.
 -/
 
 namespace Editor.Completion.Fake
@@ -31,5 +35,11 @@ def echo (name category : String) : Source :=
 `badRange` before it answers. -/
 def refusing (name category : String) : Source :=
   { name, category, candidates := fun _ => throw .badRange }
+
+/-- An at-point source called `name` that is refused with `badRange`
+before it answers: asking it refuses the asking command, so a check sees it
+was never asked. -/
+def AtPoint.refusing (name : String) : Completion.AtPoint :=
+  { name, ask := fun _ => throw .badRange }
 
 end Editor.Completion.Fake

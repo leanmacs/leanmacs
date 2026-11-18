@@ -61,21 +61,70 @@ in its own group, or, with none, in the source's. -/
 def Candidate.inGroup (candidate : Candidate) (source : String) : Candidate :=
   { candidate with group := candidate.group <|> some source }
 
+/-- A range of a candidate's text, or of a buffer's text: UTF-8 byte
+offsets, `stop` excluded, as a scene's decorations count them. -/
+structure Span where
+  /-- The offset of its first byte. -/
+  start : Nat
+  /-- The offset just past its last byte. -/
+  stop : Nat
+  deriving DecidableEq, Repr
+
 /-- What a source is asked. -/
 structure Query where
   /-- The text typed so far. -/
   text : String
   /-- The view the prompt was asked from. -/
   view : ViewId
+  /-- The region being completed, for a source asked at point
+  (`Editor/Completion/AtPoint.lean`); none for a prompt. -/
+  region : Option Span := none
+  /-- Snapshots of the open buffers' texts, the asking view's first, when a
+  source that answers later reads them (`Later.readsTexts`); none
+  otherwise. -/
+  texts : Array SnapshotId := #[]
   deriving DecidableEq, Repr
 
-/-- A range of a candidate's text: UTF-8 byte offsets, `stop` excluded, as
-a scene's decorations count them. -/
-structure Span where
-  /-- The offset of its first byte. -/
+/-- A source an at-point source names to complete its region from: by its
+name, or every source of a category. It is data, so a reply can carry it. -/
+inductive Named where
+  /-- The source registered under `name`. -/
+  | source (name : String)
+  /-- Every source registered in `category`. -/
+  | category (category : String)
+  deriving DecidableEq, Repr
+
+/-- Why an at-point source is asked. -/
+inductive Occasion where
+  /-- A key asked for completion: `C-SPC`, `C-n` or `C-p`. -/
+  | key
+  /-- The character `char`, one of the source's triggers, was typed. -/
+  | trigger (char : Char)
+  /-- Typing paused for `ms` milliseconds, the source's own pause. -/
+  | pause (ms : Nat)
+  deriving DecidableEq, Repr
+
+/-- What an at-point source is asked: the view, the cursor's byte offset in
+its buffer's text, and why it is asked. -/
+structure Spot where
+  /-- The view asked from. -/
+  view : ViewId
+  /-- The cursor's byte offset. -/
+  offset : Nat
+  /-- Why it is asked. -/
+  occasion : Occasion := .key
+  deriving DecidableEq, Repr
+
+/-- What an at-point source answers: the region of the text to replace, byte
+offsets with `start ≤ offset ≤ stop`, and the sources to complete it from,
+in order. -/
+structure Region where
+  /-- The offset of the region's first byte. -/
   start : Nat
-  /-- The offset just past its last byte. -/
+  /-- The offset just past the region's last byte. -/
   stop : Nat
+  /-- The sources its candidates come from. -/
+  sources : List Named
   deriving DecidableEq, Repr
 
 /-- What a style answers for one candidate it matched: its index among the
@@ -141,6 +190,9 @@ structure Later where
   job : String
   /-- When it is asked again. -/
   reask : Reask := .never
+  /-- Whether its job reads the open buffers' texts: the asking command then
+  takes a snapshot of each, which its query carries (`Query.texts`). -/
+  readsTexts : Bool := false
   deriving DecidableEq, Repr
 
 /-- What an open prompt holds of a source that answers later: which source
@@ -208,6 +260,12 @@ structure Collected where
   /-- The sources that answer later, in the order they were asked, none of
   them asked yet. -/
   asking : Array Asking := #[]
+  /-- The region the sources were asked to complete, for a session at
+  point; none for a prompt. -/
+  region : Option Span := none
+  /-- The snapshots taken for the sources that read the open buffers'
+  texts, the asking view's first; none when no source does. -/
+  texts : Array SnapshotId := #[]
   deriving DecidableEq, Repr
 
 end Editor.Completion
