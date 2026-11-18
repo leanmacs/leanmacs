@@ -12,7 +12,9 @@ registers, undo and dot repeat, on the editor API:
 | Built | Where |
 |---|---|
 | Keymaps, a key's chord, the walk and its proof | `lean/Editor/Keymap.lean` |
-| Key strings | `lean/Editor/Key/Notation.lean` |
+| Key strings, and the strokes `<leader>` and `<localleader>` (`Key.Stroke`, `Key.parseStrokes`, `Key.expand`) | `lean/Editor/Key/Notation.lean` |
+| The leader and the localleader: each scheme's (`InputScheme.leader`, `localLeader`, `leaders`), config's (`leaderKey`, `localLeaderKey`), the leaders in force and the keymap of bindings written with them | `lean/Editor/InputScheme.lean`, `lean/Editor/Setup.lean`, `lean/Editor/Config/Registry.lean` (`Registry.leaders`, `Registry.keymap`) |
+| A binding that holds only in some of a scheme's states (`bindKey … (states := …)`, `SchemeState`, `InputScheme.stateCommand`, `Vim.Bound.within`, `Vim.Bound.holdsIn`) | `lean/Editor/Setup.lean`, `lean/Editor/InputScheme.lean`, `lean/Editor/InputScheme/Vim.lean`; the Vim scheme's state names in `lean/Editor/InputScheme/Vim/Default.lean` |
 | Invocations | `lean/Editor/Invocation.lean` |
 | The scheme interface, and what a key prints | `lean/Editor/InputScheme.lean` |
 | The test scheme | `lean/Editor/InputScheme/Test.lean` |
@@ -221,10 +223,12 @@ structure InputScheme where
   pending : State → List Key
   command : String → Binding
   -- what a scheme says for modes ("Roles" and "Hand-tuned keys" under Modes)
-  roles       : List (Role × List Key)          := []
-  leader      : List Key                        := []
-  modeCommand : String → Binding                := command
-  defaults    : List (Keymap Binding)           := []
+  roles        : List (Role × List Key)          := []
+  leader       : List Key                        := []
+  localLeader  : List Key.Stroke                 := []
+  modeCommand  : String → Binding                := command
+  stateCommand : List String → String → Binding  := fun _ name => command name
+  defaults     : List (Keymap Binding)           := []
   tuned       : List (String × List Key × Binding) := []
   -- what a scheme says of one view ("What a scheme reports of a view")
   report      : State → ViewId → InputScheme.Report := fun _ _ => {}
@@ -1114,23 +1118,37 @@ command.
   of the two insert state's `C-w` does is a matter of the bindings a
   config defines, with no switch of its own.
 - **Consequence**: an active keymap's binding holds in every Vim state,
-  insert included, except a mode's (below). A binding meant for one state
-  belongs in that state's keymaps.
+  insert included, except a mode's, one under the leader and one given
+  states (below). A binding meant for one state belongs in that state's
+  keymaps, or is bound with `states :=`.
+- **Where a binding holds is one predicate** (built), `Bound.holdsIn` of
+  the record of the view's state. `Vim.parse` leaves the bindings that do
+  not hold out of the active keymaps, for every state, through
+  `Keymap.filter`, which keeps the bindings a predicate keeps, so the keys
+  are walked on to the state's own keymaps.
 - **A mode's keys hold only where typing is not text** (built). Without
-  that, a buffer whose mode fills a role on `j`, or has a suffix under `\`,
-  could not have `j` or `\` typed in insert state. Every key a mode binds
-  (a role, a suffix) is bound to what the scheme says a mode's key is bound
-  to (`InputScheme.modeCommand`, which is `command` unless a scheme says
-  otherwise). The Vim scheme's is `Bound.mode (.command { name })`: a
-  constructor, "a binding a mode contributes", which the grammar reaches as
-  what it wraps, so a mode's motion moves and is an operator's target.
-  `Vim.parse`
-  leaves the `.mode` bindings out of the active keymaps for a view whose
-  state's record has `insertsText`, the field that already says "typing is
-  text" (and "a digit is not a count"), through `Keymap.filter`, which keeps
-  the bindings a predicate keeps. The scheme wraps its hand-tuned keys in
-  `.mode`, so they follow the same rule. A binding from config's `bindKey`
-  is not a mode's and still holds in every state.
+  that, a buffer whose mode fills a role on `j`, or has a suffix under
+  `SPC m`, could not have `j` or a space typed in insert state. Every key a
+  mode binds (a role, a suffix) is bound to what the scheme says a mode's
+  key is bound to (`InputScheme.modeCommand`, which is `command` unless a
+  scheme says otherwise). The Vim scheme's is `Bound.mode (.command { name })`:
+  a constructor, "a binding a mode contributes", which the grammar reaches
+  as what it wraps, so a mode's motion moves and is an operator's target.
+  `.mode` does not hold for a view whose state's record has `insertsText`,
+  the field that already says "typing is text" (and "a digit is not a
+  count"). The scheme wraps its hand-tuned keys in `.mode`, so they follow
+  the same rule.
+- **Config's bindings under the leader follow the mode rule** (built). The
+  registry binds a binding whose keys, once expanded, begin with the leader
+  or the localleader in force to `modeCommand` (`Registry.keymap`), so
+  under the Vim scheme `SPC` is still a space in insert state while a config
+  binds keys under `<leader>`. Any other binding from config's `bindKey`
+  still holds in every state.
+- **A binding given states holds only there** (built). `bindKey … (states
+  := [.insert])` is bound to `InputScheme.stateCommand`, the Vim scheme's
+  `Bound.within states (.command { name })`, which holds only in a state
+  whose record's name is one of `states`, whatever the leader rule would
+  say, and which the grammar reaches as what it wraps.
 
 ### Motions that ask
 
@@ -2815,9 +2833,13 @@ check catches: each table's keymap has as many bindings as the table has
 rows.
 
 `Vim.Default` also holds the role table (`roles`), the leader (`leader`,
-`\`) and the hand-tuned keys (`tuned`, empty), as key strings (the table
-under "Roles"). A role whose string is refused is on no key, which the
-scheme contract reports.
+`SPC`), the localleader (`localLeader`, `<leader> m`, read with
+`Key.parseStrokes`) and the hand-tuned keys (`tuned`, empty), as key
+strings (the table under "Roles"), and the names of its five states as
+config names them for a binding (`SchemeState.normal`, `.insert`,
+`.visual`, `.visualLine`, `.minibuffer`), which the records of `states`
+take their names from. A role whose string is refused is on no key, which
+the scheme contract reports.
 
 ## Other schemes
 
@@ -2941,9 +2963,13 @@ changes every mode that fills it.
   to the core, and a mode may name a role that is not registered, which
   `Mode.check` must be able to report; a closed inductive could not
   represent that mistake.
-- **Each scheme's role table and leader are fields of `InputScheme`**
-  (`roles : List (Role × List Key)`, `leader : List Key`), so the scheme
-  contract and a mode's keymaps read them without knowing the scheme.
+- **Each scheme's role table, leader and localleader are fields of
+  `InputScheme`** (`roles : List (Role × List Key)`, `leader : List Key`,
+  `localLeader : List Key.Stroke`), so the scheme contract and a mode's
+  keymaps read them without knowing the scheme. The localleader is written
+  over the leader, so it may begin with `<leader>`; `InputScheme.leaders`
+  resolves the two in force as chords, given config's in place of the
+  scheme's.
 
 | Role | Test scheme | Vim scheme |
 |---|---|---|
@@ -2954,21 +2980,29 @@ changes every mode that fills it.
 | `refresh` | `<F5>` | `g r` |
 | `toggle` | `TAB` | `TAB` |
 | `mark` | `C-SPC` | `m` |
-| **leader** | `C-c` | `\` |
+| **leader** | `C-c` | `SPC` |
+| **localleader** | `C-c` (`<leader>`) | `SPC m` (`<leader> m`) |
 
 - **The test scheme's keys print nothing**, so none is ever a self-insert,
-  and `C-c` is Emacs's prefix for a mode's keys.
+  and `C-c` is Emacs's prefix for a mode's keys. Its localleader is the
+  leader itself, so a mode's suffixes are under `C-c`.
 - **The Vim scheme's are evil-collection's usual keys for list buffers.**
   `j` and `k` replace the motions only in buffers whose modes fill those
-  roles, which is the design's intent; `g r` merges with the `g g` prefix;
-  `\` is Vim's own default `maplocalleader`, and begins no binding of any
-  default state, so a suffix under it reaches nothing of the scheme's.
+  roles, which is the design's intent; `g r` merges with the `g g` prefix.
+- **The Vim scheme's leader is `SPC` and its localleader `SPC m`**, Doom
+  Emacs's. `SPC` begins no binding of any default state, so a sequence
+  under it reaches nothing of the scheme's; neither leader holds where
+  typing is text, so `SPC` is still a space in insert state ("Which keymaps
+  a key is looked up in"). The role `mark` is on `m`, which neither leader
+  begins with. A config that sets the leader moves the localleader with it:
+  `leaderKey "\\"` puts a mode's suffixes under `\ m`.
 - **The scheme contract has three properties for modes**: every registered role has
-  a key (`everyRoleHasKey`); the leader is not empty, no two roles share a
-  key sequence, and no role's keys begin with the leader or are a prefix of
-  it (`leaderAndRolesApart`), since a role key that collided with a leader
-  suffix would make one of them unreachable, which no check of one mode can
-  see; and the key bound to what the scheme says a mode's key is bound to
+  a key (`everyRoleHasKey`); the leader and the localleader in force by
+  default are not empty, no two roles share a key sequence, and no role's
+  keys begin with either or are a prefix of either (`leaderAndRolesApart`),
+  since a role key that collided with a suffix under one would make one of
+  them unreachable, which no check of one mode can see; and the key bound
+  to what the scheme says a mode's key is bound to
   (`modeCommand`) of a name yields an invocation of that name and leaves
   nothing pending (`modeCommandRuns`), as `namedCommandRuns` does for
   `command`.
@@ -2976,9 +3010,13 @@ changes every mode that fills it.
 **A mode's keymaps** (`Mode.keymaps scheme mode`). A mode makes, for a
 scheme, a keymap of its hand-tuned keys (below), then one of its roles and
 suffixes: each role it fills bound at the scheme's key for the role, and
-each suffix bound at the scheme's leader followed by the suffix, each to
-`scheme.modeCommand` of the command's name. A role the scheme's table
-lacks, and an unreadable suffix, bind nothing.
+each suffix bound at the localleader followed by the suffix, each to
+`scheme.modeCommand` of the command's name. The localleader is the one in
+force: the registry passes the leaders config set, or the scheme's
+(`Mode.keymaps scheme mode leaders`, `Registry.modeKeymaps`), so a reload
+that sets another leader moves every mode's suffixes. A role the scheme's
+table lacks, and an unreadable suffix, bind nothing; a suffix written with
+`<leader>` is unreadable.
 
 ### Hand-tuned keys
 
@@ -4579,6 +4617,35 @@ which run the executable on a real file.
   is not registered is accepted: the name is looked up when the key runs.
   It is `bindKey` and not `bind`, which would shadow the monad's `bind` for
   config, which opens `Editor`.
+- Built: the leader and the localleader from config. A binding's key
+  string may be written with `<leader>` and `<localleader>`
+  (`bindKey "<leader> f f" "find"`, "Key strings" below), and `setup` may
+  set the keys they stand for with `leaderKey "\\"` and
+  `localLeaderKey "<leader> m"`, in place of the scheme's (`SPC` and
+  `<leader> m` under the Vim scheme). Each may be set once in a `setup`; a
+  leader of no keys or written with a placeholder is refused, and so is a
+  localleader of no keys or written with `<localleader>`.
+  - **The placeholders are expanded against the leaders in force** when
+    the registry makes its keymaps (`Registry.keymap`), which are config's
+    or the scheme's, and the registry's change only at an install. So the
+    order of the calls inside `setup` does not matter, and a reload with a
+    new leader moves every binding written with it and every mode's
+    suffix, which is under the localleader. The binding is held as
+    written (`KeyBinding.keys : List Key.Stroke`), and a keymap only ever
+    holds expanded chords: `Key`, the walk and `Keymap.walk_unbound` know
+    of no placeholder, as Vim's own `<Leader>` is replaced when the
+    mapping is defined. Changing the leader without a reload is not a goal.
+  - **A binding under the leader or the localleader is kept out of insert
+    state** by the rule a mode's keys follow ("Which keymaps a key is
+    looked up in"), read off its expanded keys, so `SPC` is a space where
+    typing is text however the binding was written.
+  - **`bindKey … (states := [.insert])` says the scheme's states a binding
+    holds in** (`SchemeState`, whose Vim constants are `.normal`,
+    `.insert`, `.visual`, `.visualLine` and `.minibuffer`). Given states,
+    they replace the leader rule for that binding. The same keys bound once
+    plain and once with states are bound twice, and refused.
+  - **Deferred**: a key that reaches the leader from insert state, as
+    general.el's `:non-normal-prefix` does.
 - Built: completion at point from config ("Completion at point").
   `defineAtPoint` registers an at-point source by its name, and config's of
   a shipped name replaces it, so `defineAtPoint (Completion.AtPoint.words
@@ -4678,9 +4745,19 @@ Strokes are separated by spaces. A stroke is modifier prefixes, then a key:
 | `<Name>`: `<Escape>`, `<ArrowLeft>` | The named key of that W3C `key` value, as the event's key names it |
 | `RET`, `ESC`, `TAB` | `<Enter>`, `<Escape>`, `<Tab>` |
 | `SPC` | The space character, the W3C `key` value of the space bar |
+| `<leader>` | The leader in force, which only a key binding expands |
+| `<localleader>` | The localleader in force, which only a key binding expands |
 
 - A prefix is one only while something follows its `-`: `-` is the minus
   key, and `C--` is control with it.
+- `<leader>` and `<localleader>` are lowercase and exact, and read before
+  a name is tried, so `<Leader>` is still the named key `Leader`. A
+  modifier prefix on one (`C-<leader>`) is refused. `Key.parseStrokes`
+  reads a string as strokes (`Key.Stroke`: a key, or a placeholder),
+  `Key.expand` puts the leaders' keys in their place, and `Key.parse text
+  (some leaders)` is the two together. Read with no leaders, as every
+  caller but a key binding reads one, a string with a placeholder is
+  refused: a mode's suffix written with `<leader>` is reported as not keys.
 - `S-` before a character is refused. A shifted character is written as
   itself, and a chord carries no shift on a character, so the prefix would
   be dropped without a word.
@@ -4722,8 +4799,9 @@ The Vim scheme is checked the same way, by six lists:
   holds it to that.
 - **A state record is compared by its fields**: it holds keymaps and has no
   equality. The scheme's state is compared whole, at its own type.
-- **The Vim checks' contract runs on a role table and leader written in the
-  test** (`vimModeKeys`), so no grammar check names a default.
+- **The Vim checks' contract runs on a role table, leader and localleader
+  written in the test** (`vimModeKeys`), so no grammar check names a
+  default.
 
 Evil is checked on the editor's models, by four lists. This is where Vim
 keys are pressed against a text:
@@ -4780,15 +4858,15 @@ the command loop's phase 15):
   script's comments ([the gate](../dev-practices/the-gate.md)).
 
 Modes are checked on the test scheme, by four lists in the model tests and
-one in `config-test`. Each check reads the role's keys and the leader from
-the test scheme (`InputScheme.roleKey`, `InputScheme.leader`), so none
+one in `config-test`. Each check reads the role's keys and the leaders from
+the test scheme (`InputScheme.roleKey`, `InputScheme.leaders`), so none
 names a scheme's key:
 
 | List | Checks |
 |---|---|
-| `modeRecordChecks` | The registered roles; the keymaps a mode makes for a scheme (a role at the scheme's key, a suffix under the leader, a role the scheme has no key for, hand-tuned keys ahead of both); what `Mode.check` reports, each problem and none |
+| `modeRecordChecks` | The registered roles; the keymaps a mode makes for a scheme (a role at the scheme's key, a suffix under the localleader, the scheme's or the one it is given, a role the scheme has no key for, hand-tuned keys ahead of both); what `Mode.check` reports, each problem and none |
 | `modeRegistryChecks` | A mode's lineage, a cycle and a missing parent; the order of the active keymaps; a mode name no mode is registered under; a view with no window |
-| `modeDispatchChecks` | On the editor's models, through the loop: a major mode's role runs its command in a view of its buffer and the global binding elsewhere; a minor mode's wins; a derived mode falls to its parent; the leader then a suffix |
+| `modeDispatchChecks` | On the editor's models, through the loop: a major mode's role runs its command in a view of its buffer and the global binding elsewhere; a minor mode's wins; a derived mode falls to its parent; the localleader then a suffix |
 | `modeEnterChecks` | On the editor's models: the on-enter action runs once, with the view, when the mode becomes the major mode; a derived mode's lineage root first; a refusal runs nothing |
 | `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set and the text detached, a mode before drawn no more, a parent's syntax tree, and the text detached when a mode with none replaces it; then its injections and a language for the model's grammar, its text objects and indents queries kept, and a refusal of one of those steps said and stopping it alone |
 | `languageMatchChecks`, `languageOpenChecks` | The language rule, pure: by extension, an exact base name over an extension, config's entry over a shipped one and the earlier over the later, no match, `Language.over` and the registry's table, and the shipped table; and, on the loop's driver over the editor's models, a `.json` and a `.rs` file opened into `code` with their language and highlighted, a file of no language opened as before, one already open asking nothing more, a config mode with its own tree winning, and config's entry of a language's name used |
@@ -4961,8 +5039,9 @@ on a real file in the headless executable (`tests/headless/session/`,
     unbound key, bound in a keymap of its own to `scheme.command` of a
     name, yields from the initial state an invocation of that name and
     leaves nothing pending (`namedCommandRuns`); every registered role has
-    a key (`everyRoleHasKey`); the leader is not empty, and the roles are
-    on distinct keys apart from it (`leaderAndRolesApart`); the unbound
+    a key (`everyRoleHasKey`); the leader and the localleader are not
+    empty, and the roles are on distinct keys apart from both
+    (`leaderAndRolesApart`); the unbound
     key bound to `scheme.modeCommand` of a name runs as `namedCommandRuns`
     asks (`modeCommandRuns`); once the scheme is told that the view is
     the minibuffer's, the key that prints, typed for it, yields an

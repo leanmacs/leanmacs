@@ -440,9 +440,13 @@ in the major mode `vc-status`.
 | `vc-status-visit` | `activate` | Opens the cursor's file under the root; a file gone from the working tree, or a row with no file, is said. A staged deletion the status also lists as untracked is still on disk, and opens; a conflict always opens, since the status cannot say its file is gone |
 | `vc-status-toggle` | `toggle` | Stages an untracked, a conflicted or an unstaged file; unstages a staged one, a staged rename by both its paths |
 | `vc-status-refresh` | `refresh` | Reads the status again, without showing the buffer again |
-| `vc-status-stage` | leader `s` | Stages the cursor's file, or says there is nothing to stage |
-| `vc-status-unstage` | leader `u` | Unstages the cursor's file, or says nothing is staged |
-| `vc-worktrees` | leader `w` | Opens the worktree list of the workspace's repository ("The worktree list") |
+| `vc-status-stage` | localleader `s` | Stages the cursor's file, or says there is nothing to stage |
+| `vc-status-unstage` | localleader `u` | Unstages the cursor's file, or says nothing is staged |
+| `vc-worktrees` | localleader `w` | Opens the worktree list of the workspace's repository ("The worktree list") |
+
+The suffixes are under the localleader, `SPC m` under the Vim scheme while
+config sets no leader ([keymaps-and-modes.md](keymaps-and-modes.md),
+"Roles"), so `SPC m s` stages.
 
 A stage or an unstage is a job of its own, unkeyed, which then starts the
 keyed read, so the buffer shows the new state. The ex name `vc-status` runs
@@ -605,7 +609,7 @@ and git refuses the second, which is said.
 ## The message buffer: `vc-commit`
 
 magit's commit message buffer. `vc-commit` (the ex name, and the status
-buffer's leader `c`), under `vc-status`'s gate, shows the workspace's
+buffer's localleader `c`), under `vc-status`'s gate, shows the workspace's
 message buffer if it has one, and otherwise makes `*vc-commit: <label>*`:
 empty, editable, with no file, given the workspace, in the major mode
 `vc-commit`, shown where the display rules say for the opener `vc-commit`,
@@ -615,8 +619,8 @@ is.
 
 | Command | Suffix | What it does |
 |---|---|---|
-| `vc-commit-accept` | leader `c` | Commits with the buffer's text, as magit's `C-c C-c`; refused outside the workspace's message buffer and while a commit runs |
-| `vc-commit-abort` | leader `k` | Closes the message buffer, as magit's `C-c C-k`; refused while a commit runs |
+| `vc-commit-accept` | localleader `c` | Commits with the buffer's text, as magit's `C-c C-c`; refused outside the workspace's message buffer and while a commit runs |
+| `vc-commit-abort` | localleader `k` | Closes the message buffer, as magit's `C-c C-k`; refused while a commit runs |
 
 - **Accepting** reads the text and its revision, records the commit as in
   flight in the workspace's store, and starts the unkeyed job
@@ -647,7 +651,7 @@ hostile config, never guessed from the host's name.
 
 ## The worktree list: `vc-worktrees`
 
-`vc-worktrees` (the ex name, and the status buffer's leader `w`) lists
+`vc-worktrees` (the ex name, and the status buffer's localleader `w`) lists
 every worktree of the focused buffer's workspace's repository, one per
 row, in a read-only buffer `*vc-worktrees: <label>*` in the mode
 `vc-worktrees`, kept in the workspace's store as the status buffer is.
