@@ -325,7 +325,8 @@ loop (`Program.dispatched`, before the guard, so neither request is
 guarded, though the program a control request runs is) and,
 where no loop dispatched a command, by a runner as with nothing registered
 (`RegistryRequest.bare`, `ControlRequest.bare`, the values the stand-ins
-had). `EditorRequest.registry` (`RegistryRequest`,
+had; for `autoReload`, `false`, which `Files.autoReloadOn` takes where no
+command chose, as the stand-in did). `EditorRequest.registry` (`RegistryRequest`,
 `lean/Editor/Command/Registry.lean`) holds fourteen questions, answered by
 one pure function of what the loop is told (`Loop.Registered.answer`):
 the eleven the finding named, with `autoReloadMode` now `autoReload`,
@@ -337,7 +338,7 @@ place of a view. `EditorRequest.control` (`ControlRequest`,
 `askSource`, `askAtPoint` and `matchCandidates`: the loop acts on each by
 ending the command's program or putting a registered program before its
 rest, not by answering, and `giveUp` and `breakOff` ask the registry
-nothing, so they are a sub-port apart. No single read of config's
+nothing, so the six are a sub-port apart from the questions. No single read of config's
 readings replaced the questions: the language table cannot be in a reply,
 since `Language` holds a `Mode.SyntaxTree` and `lean/Editor/Mode.lean`
 imports `Editor.Command`, and `ex`, `hasJob`, `categorySources` and
