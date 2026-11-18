@@ -11,7 +11,7 @@ import Editor.Workspace
 a job: each run is one `Process.runWithin` (`Editor/Job.lean`), or a fed
 `Process.runWithInput` for a hunk, a commit and a change's blobs, one for
 each request but `fileAt`, which is two, `changes`, which is five, and
-`addWorktree`, which is two or three, so the child gets its directory's environment, and
+`addWorktree`, which is up to three, so the child gets its directory's environment, and
 is killed with its process group when the job is cancelled. No new binding is needed. Its model is
 `Editor/VersionControl/Model.lean`, and both are held to the contract
 (`Editor/VersionControl/Contract.lean`).
@@ -93,14 +93,21 @@ change:
   a blob, or the change is `unparsable`. A submodule's side is never read:
   it is `Subproject commit <id>`. Each content is decoded by the store's
   escape rule.
-- **addWorktree**: `git worktree list --porcelain -z` first, and a path
-  that is a worktree is refused (128) before anything is made, since git
-  makes a new branch before it refuses an existing path. Without a start,
-  `git rev-parse --verify --quiet refs/heads/<branch>`, whose exit of 1 is
-  refused (128) as an invalid reference: `git worktree add <path> <name>`
-  would otherwise detach at a tag or a commit of that name, or make a
-  branch from a remote one. Then `git worktree add --quiet -b <branch>
-  <path> <start>`, or `git worktree add --quiet <path> <branch>`.
+- **addWorktree**: `git rev-parse --verify --quiet refs/heads/<branch>`
+  first. With a start, its exit of 0 is refused (128, `a branch named
+  '<branch>' already exists`); without one, its exit of 1 is refused (128)
+  as an invalid reference: `git worktree add <path> <name>` would
+  otherwise detach at a tag or a commit of that name, or make a branch
+  from a remote one. Then `git worktree add --quiet -b <branch> <path>
+  <start>`, or `git worktree add --quiet <path> <branch>`. git makes a new
+  branch before it checks the path, so when `-b` exits non-zero, `git
+  branch -D <branch>` deletes what it made, and the reply is git's
+  refusal: the branch was not there before, and `-D` refuses a branch a
+  worktree has checked out, such as one whose `post-checkout` hook
+  failed. This holds whatever spelling of the path git refuses (a trailing
+  separator, a `..`, a link) and a non-empty directory, without the
+  implementation resolving paths itself. A run that could not finish
+  (timed out or cancelled) deletes nothing.
 - **removeWorktree**: `git -c status.showUntrackedFiles=normal worktree
   remove <path>`. Under a user's `status.showUntrackedFiles=no`, git would
   not see an untracked file, and would delete it with the worktree.
@@ -290,6 +297,11 @@ def batchArguments : Array String :=
 def branchExistsArguments (branch : String) : Array String :=
   #["rev-parse", "--verify", "--quiet", s!"refs/heads/{branch}"]
 
+/-- The arguments that delete the local branch `branch`, which git refuses
+while a worktree has it checked out. -/
+def deleteBranchArguments (branch : String) : Array String :=
+  #["branch", "-D", branch]
+
 /-- The arguments that make a worktree at `path` on `branch`: a new branch
 at `start`, or the existing branch. -/
 def addWorktreeArguments (path : System.FilePath) (branch : String) : Option String → Array String
@@ -476,34 +488,36 @@ def changesIn (git : String) (root : System.FilePath) (revision against : String
       return .error error
   return .ok { base, files := files.qsort fun a b => decide (a.path < b.path) }
 
-/-- Makes a worktree ("`addWorktree`", in the module docs): refused when its
-path is a worktree already, or, on an existing branch, when there is no
-such branch, before `git worktree add` runs. -/
+/-- Makes a worktree ("`addWorktree`", in the module docs): first checks
+whether `branch` is a local branch, refusing a new branch that is one, or
+an existing branch that is not, before `git worktree add` runs; and when
+git refuses to make a new branch's worktree, deletes the branch git made
+before it refused. -/
 def addWorktreeIn (git : String) (root : System.FilePath) (path : System.FilePath) (branch : String)
     (start : Option String) : JobM (Except Error Unit) := do
-  match ← run git root worktreeListArguments with
-  | .error error =>
-    return .error error
-  | .ok ran =>
-    match Plumbing.parseWorktrees ran.stdout with
-    | .error why =>
-      return .error (.unparsable why)
-    | .ok listed =>
-      if listed.any (·.path == path) then
-        return .error (.failed (.code 128) s!"fatal: '{path}' already exists")
-  if start.isNone then
+  let isBranch ←
     match ← run git root (branchExistsArguments branch) with
     | .error (.failed (.code 1) _) =>
-      return .error (.failed (.code 128) s!"fatal: invalid reference: {branch}")
+      pure false
     | .error error =>
       return .error error
     | .ok _ =>
-      pure ()
-  return written
-      (outcome
-        (←
-          Process.runWithin (worktreeCommand git root (addWorktreeArguments path branch start))
-              statusOutput worktreeTime))
+      pure true
+  match start, isBranch with
+  | some _, true =>
+    return .error (.failed (.code 128) s!"fatal: a branch named '{branch}' already exists")
+  | none, false =>
+    return .error (.failed (.code 128) s!"fatal: invalid reference: {branch}")
+  | _, _ =>
+    pure ()
+  let made :=
+    outcome
+      (←
+        Process.runWithin (worktreeCommand git root (addWorktreeArguments path branch start))
+            statusOutput worktreeTime)
+  if start.isSome && made matches .error (.failed ..) then
+    discard <| run git root (deleteBranchArguments branch)
+  return written made
 
 /-- The git implementation, running `git` in `root` ("The command lines",
 "The replies", in the module docs). -/

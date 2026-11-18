@@ -91,7 +91,8 @@ implementation runs on the models too.
   merge base, or status 1, `<revision> and <against> have no merge base`;
   then every path of either side whose content differs, sorted.
 - **`addWorktree path branch start`**: `Request.invalid?` first; a path
-  that is the root or a linked worktree is refused (128). With `start`, a
+  that is, once `normal`, the root, a linked worktree or an `occupied`
+  directory is refused (128), `'<path>' already exists`. With `start`, a
   branch that exists is refused (128), and a start that resolves to
   nothing (128); otherwise the branch is made there. Without it, a missing
   branch, or one checked out at the root or in a linked worktree, is
@@ -168,7 +169,23 @@ structure Repository where
   headId : String := "head"
   /-- The linked worktrees. -/
   linked : Array Linked := #[]
+  /-- Directories beside the root that hold a file and are no worktree,
+  each `/<name>` for the root `/r`: git makes no worktree in one. -/
+  occupied : Array System.FilePath := #[]
   deriving DecidableEq, Repr
+
+/-- `path` with its spelling made one: no empty or `.` component, and each
+`..` taking the component before it away, as git resolves a worktree's path
+when the model's directories hold no link. -/
+def normal (path : System.FilePath) : System.FilePath :=
+  let parts :=
+    (path.toString.splitOn "/").foldl
+      (fun (kept : Array String) part =>
+        if part.isEmpty || part == "." then kept
+        else if part == ".." then kept.pop else kept.push part)
+      #[]
+  let joined := "/".intercalate parts.toList
+  if path.isAbsolute then ⟨"/" ++ joined⟩ else ⟨joined⟩
 
 /-- The value `entries` holds for `path`. -/
 def lookup {α : Type} (entries : Array (String × α)) (path : String) : Option α :=
@@ -542,11 +559,16 @@ def checkedOutAt (repository : Repository) (branch : String) : Option System.Fil
   else (repository.linked.find? (·.branch == some branch)).map (·.path)
 
 /-- `repository` with a worktree added at `path` ("`addWorktree`", in the
-module docs), or why it is refused, as git refuses it. -/
-def addingWorktree (repository : Repository) (path : System.FilePath) (branch : String)
+module docs), or why it is refused, as git refuses it. The path `spelled`
+is taken as git takes it, made `normal`: a trailing separator or a `..`
+names the directory it would on disk. -/
+def addingWorktree (repository : Repository) (spelled : System.FilePath) (branch : String)
     (start : Option String) : Except Error Repository := do
-  if path == repository.root || repository.linked.any (·.path == path) then
-    throw (.failed (.code 128) s!"fatal: '{path}' already exists")
+  let path := normal spelled
+  if
+      path == repository.root || repository.linked.any (·.path == path) ||
+        repository.occupied.contains path then
+    throw (.failed (.code 128) s!"fatal: '{spelled}' already exists")
   match start with
   | some start =>
     if repository.hasBranch branch then

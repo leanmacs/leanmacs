@@ -38359,15 +38359,16 @@ def versionControlWorktreeGitChecks : List Check :=
   let resolveRun (name : String) :=
     gitRun #["rev-parse", "--verify", "--quiet", s!"{name}^\{commit}"]
   let addRun := gitWorktreeRun #["worktree", "add", "--quiet", "-b", "f", "/f", "HEAD"]
+  let existsRun (branch : String) :=
+    gitRun #["rev-parse", "--verify", "--quiet", s!"refs/heads/{branch}"]
+  let deleteRun := gitRun #["branch", "-D", "f"]
   let addModel (takes : Nat) : JobModel :=
     {
       processes :=
         {
           scripts :=
-            #[{ command := listRun,
-                reply :=
-                  .ok { exit := .code 0, stdout := linked.worktreePorcelain, stderr := .empty } },
-              printing addRun "" (takes := takes)] } }
+            #[printing (existsRun "f") "" 1, printing addRun "" (takes := takes),
+              printing deleteRun ""] } }
   [{  name :=
         "a worktree list runs git worktree list --porcelain -z in the root, once, under the environment of every read, and reads the main worktree first and the linked ones in path order"
       run :=
@@ -38458,41 +38459,59 @@ def versionControlWorktreeGitChecks : List Check :=
             invalid (gitAddWorktree "/f" "f" (some "--orphan") {}) &&
             invalid (gitRemoveWorktree "w" {}) },
     { name :=
-        "creating a worktree for a new branch lists the worktrees, then runs git worktree add --quiet -b and the branch, the path and the start, under a commit's environment, within the worktree time limit and not the read's"
+        "creating a worktree for a new branch checks there is no local branch of that name, then runs git worktree add --quiet -b and the branch, the path and the start, under a commit's environment, within the worktree time limit and not the read's; one that could not run deletes nothing"
       run :=
         pure <|
           let (reply, after) :=
             gitAddWorktree "/f" "f" (some "HEAD") (addModel (VersionControl.Git.gitTime + 1))
-          let (late, _) :=
+          let (late, lateAfter) :=
             gitAddWorktree "/f" "f" (some "HEAD") (addModel (VersionControl.Git.worktreeTime + 1))
-          reply == .finished (.ok ()) && after.processes.started == #[listRun, addRun] &&
-            late == .finished (.error (.couldNotRun (.timedOut VersionControl.Git.worktreeTime))) },
+          reply == .finished (.ok ()) && after.processes.started == #[existsRun "f", addRun] &&
+            late == .finished (.error (.couldNotRun (.timedOut VersionControl.Git.worktreeTime))) &&
+            lateAfter.processes.started == #[existsRun "f", addRun] },
     { name :=
-        "creating a worktree at a path that is already a worktree is refused with status 128 before git worktree add runs, so no branch is made"
+        "creating a worktree for a new branch whose name a local branch has is refused with status 128 before git worktree add runs"
       run :=
         pure <|
-          let (reply, after) := gitAddWorktree "/w" "f" (some "HEAD") (addModel 0)
-          reply == .finished (.error (.failed (.code 128) "fatal: '/w' already exists")) &&
-            after.processes.started == #[listRun] },
+          let (reply, after) :=
+            gitAddWorktree "/f" "f" (some "HEAD")
+              { processes := { scripts := #[printing (existsRun "f") "0\n", printing addRun ""] } }
+          reply ==
+              .finished (.error (.failed (.code 128) "fatal: a branch named 'f' already exists")) &&
+            after.processes.started == #[existsRun "f"] },
+    { name :=
+        "a worktree for a new branch that git worktree add refuses is refused with git's status and message, and the branch git made first is deleted with git branch -D, so a refusal leaves the branches as they were"
+      run :=
+        pure <|
+          let refusing : Process.Script :=
+            { command := addRun,
+              reply :=
+                .ok {
+                    exit := .code 128, stdout := .empty
+                    stderr := "fatal: '/f' already exists\n".toUTF8 } }
+          let (reply, after) :=
+            gitAddWorktree "/f" "f" (some "HEAD")
+              {
+                processes :=
+                  {
+                    scripts :=
+                      #[printing (existsRun "f") "" 1, refusing, printing deleteRun "" 1] } }
+          reply == .finished (.error (.failed (.code 128) "fatal: '/f' already exists")) &&
+            after.processes.started == #[existsRun "f", addRun, deleteRun] },
     { name :=
         "creating a worktree on an existing branch checks the branch is a local one, then runs git worktree add --quiet and the path and the branch; a branch that is not there is refused with status 128 before git worktree add runs"
       run :=
         pure <|
-          let existsRun := gitRun #["rev-parse", "--verify", "--quiet", "refs/heads/b"]
           let add := gitWorktreeRun #["worktree", "add", "--quiet", "/f", "b"]
-          let listed :=
-            { command := listRun,
-              reply :=
-                .ok { exit := .code 0, stdout := linked.worktreePorcelain, stderr := .empty } }
           let (reply, after) :=
             gitAddWorktree "/f" "b" none
-              { processes := { scripts := #[listed, printing existsRun "0\n", printing add ""] } }
+              { processes := { scripts := #[printing (existsRun "b") "0\n", printing add ""] } }
           let (missing, refused) :=
             gitAddWorktree "/f" "b" none
-              { processes := { scripts := #[listed, printing existsRun "" 1, printing add ""] } }
-          reply == .finished (.ok ()) && after.processes.started == #[listRun, existsRun, add] &&
+              { processes := { scripts := #[printing (existsRun "b") "" 1, printing add ""] } }
+          reply == .finished (.ok ()) && after.processes.started == #[existsRun "b", add] &&
             missing == .finished (.error (.failed (.code 128) "fatal: invalid reference: b")) &&
-            refused.processes.started == #[listRun, existsRun] },
+            refused.processes.started == #[existsRun "b"] },
     { name :=
         "removing a worktree runs git -c status.showUntrackedFiles=normal worktree remove and the path, under a commit's environment, and a refusal is git's"
       run :=

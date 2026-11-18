@@ -451,6 +451,25 @@ def worktreeProperties : List Property :=
             (← worktrees) == .ok before &&
             (← branchesOf) == some #["main"] },
     { name :=
+        "creating a worktree for a new branch at an existing worktree's path spelled with a trailing separator or through .., or in a directory that holds a file and is no worktree, is refused with status 128, and the list and the branches are as they were"
+      repository :=
+        { clean #[("a.txt", "a\n")] with
+          branches := #[("b", "head")], linked := #[{ path := "/w", branch := some "b" }]
+          occupied := #["/full"] }
+      holds := do
+        let some (before, main) ← listed | return false
+        let names ← branchesOf
+        let linked := beside main.path "w"
+        let slashed ← addWorktree ⟨linked.toString ++ "/"⟩ "f1" (some "HEAD")
+        let dotted ← addWorktree (linked / ".." / "w") "f2" (some "HEAD")
+        let full ← addWorktree (beside main.path "full") "f3" (some "HEAD")
+        return slashed matches .error (.failed (.code 128) _) &&
+            dotted matches .error (.failed (.code 128) _) &&
+            full matches .error (.failed (.code 128) _) &&
+            (← worktrees) == .ok before &&
+            names == some #["b", "main"] &&
+            (← branchesOf) == names },
+    { name :=
         "removing a worktree with an untracked file in it is refused with status 128, and it is still listed"
       repository :=
         { clean #[("a.txt", "a\n")] with

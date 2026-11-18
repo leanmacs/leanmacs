@@ -3431,7 +3431,8 @@ with `update-index` (a conflict as its stages, through `--index-info`), each
 named revision committed and tagged (`writeRevisions`), the working tree
 made exactly `repository.worktree`, each `linked` worktree made with `git
 worktree add` beside `directory` under its path's last component, on its
-branch or detached at `HEAD`, a `dirty` one given an untracked file, and a
+branch or detached at `HEAD`, a `dirty` one given an untracked file, each
+`occupied` directory made beside `directory` the same way with a file in it, and a
 `hook` written as an executable `.git/hooks/pre-commit` (`writeHook`). A file is written with the store's
 escapes turned back into their bytes (`File.encodeText`), so a content may
 hold a byte that is not UTF-8. -/
@@ -3505,6 +3506,9 @@ def writeGitRepository (home directory : System.FilePath)
           gitIn home directory #["worktree", "add", "-q", "--detach", target.toString, "HEAD"]
     if linked.dirty then
       writeMaking (target / "untracked.txt") "untracked\n"
+  for occupied in repository.occupied do
+    let target := (directory.parent.getD directory) / (occupied.fileName.getD "occupied")
+    writeMaking (target / "kept.txt") "kept\n"
   if let some printed := repository.hook then
     writeHook directory printed
 
