@@ -5869,12 +5869,14 @@ def commandChunk (mine : Bool) : String :=
 /-- The checks of the command prompt (`Editor/ExecuteCommand.lean`) through
 a host over the real elaborator and the real registry: its candidates are
 the commands compiled code registers and config's, and a reload that drops
-one of config's drops it from them. The style `starts`, which config
+one of config's drops it from them, and the command it runs is a step of
+its own, so `load-theme` asked through it puts the chosen theme in force
+with no key bound to either. The style `starts`, which config
 chooses for the category `command`, keeps each listing short and in the
 source's order, so no check pins the library matcher's order. -/
 def commandPromptChecks (context : Context) : List Check :=
   [{  name :=
-        "criteria 2 and 3: the command prompt lists the commands compiled code registers and config's, config's in the order registered; a reload whose config no longer registers zz-mine drops it from the candidates"
+        "criteria 1, 2 and 3: the command prompt lists the commands compiled code registers and config's, config's in the order registered; a reload whose config no longer registers zz-mine drops it from the candidates; from a config that binds neither execute-command nor load-theme, calling execute-command, accepting load-theme and then solarized-dark puts that theme in force, as the scene line names it"
       run :=
         withHost context [("10-commands.lean", commandChunk true)]
           (fun session => do
@@ -5885,15 +5887,31 @@ def commandPromptChecks (context : Context) : List Check :=
               let asking ← session.sceneLines
               session.pressKeys cancelKeys
               return asking
+            let answered (typed : String) : IO Bool := do
+              unless ← Event.post (.commit typed) do
+                return false
+              session.pressKeys acceptKeys
+              return true
+            let drawnIn : IO String := do
+              return ((← session.sceneLines).filter (·.startsWith "scene ")).back?.getD ""
             session.ask [.reload]
             let configs ← asked "zz-"
             let compiled ← asked "load"
             session.write "10-commands.lean" (commandChunk false)
             session.ask [.reload]
             let dropped ← asked "zz-"
+            let before ← drawnIn
+            session.ask [.run ExecuteCommand.name]
+            unless ← answered Themes.loadName do
+              return false
+            unless ← answered Themes.Solarized.dark.name do
+              return false
+            let after ← drawnIn
             return listsAfter configs ExecuteCommand.label ["zz-other", "zz-mine"] &&
                 listsAfter compiled ExecuteCommand.label [Themes.loadName] &&
                 listsAfter dropped ExecuteCommand.label ["zz-other"] &&
+                before.endsWith s!", theme {Theme.defaultName.quote}" &&
+                after.endsWith s!", theme {Themes.Solarized.dark.name.quote}" &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           commandCompiled }]
 
