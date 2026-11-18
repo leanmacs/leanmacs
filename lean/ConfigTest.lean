@@ -6471,7 +6471,7 @@ def filePromptChecks (context : Context) : List Check :=
               let output ← session.output.get
               return lines.any
                     (fun line =>
-                      line.startsWith "status 0: " &&
+                      line.startsWith "status 0 in mode-line.active: " &&
                         (line.splitOn s!"mode-line.buffer {first.quote}").length > 1) &&
                   lines.any (fun line => line.startsWith s!"view 0 0,0 0x0: {text.quote}") &&
                   output.any
@@ -6504,7 +6504,7 @@ def filePromptChecks (context : Context) : List Check :=
                   lines.any (fun line => line.startsWith s!"view 0 0,0 0x0: {"alpha\n".quote}") &&
                   lines.any
                     (fun line =>
-                      line.startsWith "status 0: " &&
+                      line.startsWith "status 0 in mode-line.active: " &&
                         (line.splitOn s!"mode-line.buffer {"alpha.txt".quote}").length > 1) &&
                   !(← session.output.get).any (·.startsWith "loop: refused") },
     { name :=
