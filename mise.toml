@@ -208,9 +208,8 @@ run = [
   # (`dispatch/expected`). A command that is not stopped loops for longer
   # than the time limit.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/dispatch/expected -",
-  # The config fixture installed with the app (tests/headless/
-  # finder-session), the one tools/install-app.sh installs to
-  # ~/.config/leanmacs when none is there: it loads, and its command, run by its key `C-c h`
+  # The finder-session config fixture (tests/headless/finder-session): it
+  # loads, and its command, run by its key `C-c h`
   # and by its ex name `finder-hello`, says `finder-session: config loaded`
   # in the echo area each time (`finder-session/expected`).
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/finder-session/config ../tests/headless/finder-session/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/finder-session/expected -",
@@ -721,8 +720,9 @@ run = "cargo test --locked -p editor-release-std --test nightly_mount -- --ignor
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl: it writes outside the checkout. After `app-check`,
 # tools/install-app.sh replaces /Applications/Leanmacs.app with the built
-# bundle, installs the config fixture tests/headless/finder-session/config to
-# ~/.config/leanmacs only when no config is there, and deletes the backups
+# bundle, installs the default config config/default (a starter SPC map) to
+# ~/.config/leanmacs only when no config is there, otherwise only saying
+# where the default config is, and deletes the backups
 # the earlier install script left. It keeps no backups and opens, registers
 # or runs nothing.
 [tasks.install]

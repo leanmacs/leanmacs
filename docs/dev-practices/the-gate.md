@@ -690,11 +690,9 @@ state, advances the headless mode's clock 240 ms so the shipped `words`
 source's pause fires, and prints the session's candidate list, then
 previews and accepts its first candidate, and whose output must be exactly
 `at-point/expected`; and with `finder-session/script` on the
-config in `finder-session/config`, the fixture
-`tools/install-app.sh` installs with the app when no config is there, which runs that
-config's command by its key `C-c h` and by its ex name `finder-hello`, so
-the fixture the installed app loads is known to load and to say
-`finder-session: config loaded`, and whose output must be exactly
+config in `finder-session/config`, which runs that config's command by its
+key `C-c h` and by its ex name `finder-hello`, so the fixture is known to
+load and to say `finder-session: config loaded`, and whose output must be exactly
 `finder-session/expected`; and with `files/script` on the config in
 `files/config`, which runs the file commands the editor ships and touches
 no file: `save-buffer` on the scratch buffer says it has no file, and a
@@ -1125,6 +1123,11 @@ host's syntax tree; a parse of a highlighted text the library delivers
 makes the host publish a scene, with no key pressed; and, in a Rust buffer
 of a host of the Vim scheme that ships, `v a f` selects the enclosing
 function and `d a f` deletes it. Its config directories are temporary directories of its own.
+Its fourth argument is the default config `mise run install` ships
+(`config/default`), which it reads and never writes: `defaultConfigChecks`
+pin that a reload of it installs with no diagnostic and `SPC f f` then
+asks for a path to open, that every binding names a registered command,
+and that every prefix it binds under the leader has a prefix name.
 
 With no arguments `ffi-test` runs its checks of handles, plain data, the
 event queues, the timer service, the document, the snapshot of a document,

@@ -10,9 +10,10 @@
 #    verifies the installed copy with `codesign --verify --strict --deep`.
 #    `$apps` is `/Applications`, or `$LEANMACS_APPLICATIONS` (for testing on
 #    a scratch prefix only);
-# 3. installs the config fixture `tests/headless/finder-session/config` to
-#    `$HOME/.config/leanmacs` only when that directory does not exist, so an
-#    existing config is never touched;
+# 3. installs the default config `config/default`, a starter `SPC` map, to
+#    `$HOME/.config/leanmacs` only when that directory does not exist; when
+#    it does, it only says where the default config is, so an existing
+#    config is never touched;
 # 4. deletes the `Leanmacs.app.backup-*` and `leanmacs.backup-*` directories
 #    the earlier install script left beside them.
 #
@@ -33,6 +34,7 @@ built="$lean_dir/.lake/build/Leanmacs.app"
 apps=${LEANMACS_APPLICATIONS:-/Applications}
 app="$apps/Leanmacs.app"
 cfg="$HOME/.config/leanmacs"
+default="$repo/config/default"
 
 if [ ! -d "$built" ]; then
   echo "install: no bundle at $built: run \`mise run app\`" >&2
@@ -46,8 +48,10 @@ echo "install: installed $app ($(git -C "$repo" describe --always --dirty)), sig
 
 if [ ! -e "$cfg" ]; then
   mkdir -p "$cfg"
-  cp "$repo"/tests/headless/finder-session/config/*.lean "$cfg/"
-  echo "install: no config found; installed the fixture in $cfg (C-c h says it loaded)"
+  cp "$default"/*.lean "$cfg/"
+  echo "install: no config found; installed the default config in $cfg (SPC f f finds a file)"
+else
+  echo "install: kept the config in $cfg as it is; the default config is in $default"
 fi
 
 for old in "$apps"/Leanmacs.app.backup-* "$cfg".backup-*; do

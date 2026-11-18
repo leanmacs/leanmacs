@@ -184,9 +184,11 @@ mise run dmg-check    # checks that image
 ```
 
 `mise run install` keeps no backup of the app it replaces. When
-`~/.config/leanmacs` does not exist it installs a small config,
-[`tests/headless/finder-session/config`](tests/headless/finder-session/config/10-finder-session.lean),
-whose `C-c h` shows `finder-session: config loaded`.
+`~/.config/leanmacs` does not exist it installs the default config,
+[`config/default`](config/default/05-leader.lean), a starter Doom-style
+`SPC` map (`SPC f f` finds a file). An existing config is left as it is:
+to add the map to it, copy `config/default/05-leader.lean` in and call
+`leaderMap` from its `setup`.
 
 The app holds its own Lean toolchain modules
 ([building.md](docs/dev-practices/building.md), "The app bundle"). Finder

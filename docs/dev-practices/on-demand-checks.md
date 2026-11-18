@@ -238,9 +238,10 @@ mise run install
 This installs the app to use, on macOS on arm64 only. After `mise run
 app-check`, `tools/install-app.sh` replaces `/Applications/Leanmacs.app`
 with the built bundle (`ditto`) and verifies its signature. When
-`~/.config/leanmacs` does not exist it installs the config fixture
-`tests/headless/finder-session/config` there (which the gate runs headless,
-[`the-gate.md`](the-gate.md)); an existing config is never touched. It
+`~/.config/leanmacs` does not exist it installs the default config
+`config/default` there, a starter `SPC` map (which the gate's
+`config-test` loads, [`the-gate.md`](the-gate.md)); an existing config is
+never touched, and the script only says where the default config is. It
 keeps no backups, since any commit's app can be rebuilt, and deletes the
 `Leanmacs.app.backup-*` and `~/.config/leanmacs.backup-*` directories the
 earlier install script left. It opens, registers or runs nothing.

@@ -4767,6 +4767,32 @@ which run the executable on a real file.
     One prefix named twice is refused as written (`prefixNamedTwice`) and
     as expanded under the scheme's leaders (`prefixNamedTwiceAs`, by
     `Registrations.problemUnder?`), as two bindings of one sequence are.
+- Built: the default config, `config/default`, which `mise run install`
+  puts in `~/.config/leanmacs` when none is there. The Vim scheme itself
+  binds nothing under the leader; the starter map is config's (the owner,
+  2026-11-17).
+  - **The map is `leaderMap`** in `05-leader.lean`, apart from `setup` in
+    `90-setup.lean`, which calls it. A config has one `setup`, so to use
+    the map in a config of one's own, copy `05-leader.lean` in and call
+    `leaderMap` from that config's `setup`. Chunks elaborate in the byte
+    order of their file names, and `05-` sorts before the usual `10-`
+    chunks, so `leaderMap` is defined where such a `setup` is.
+  - **The keys follow Doom Emacs's `SPC`**, each with a `desc` and each
+    prefix named: `SPC .` and `SPC ,` find a file and switch buffer;
+    `SPC f` file (`f f` open, `f s` save); `SPC b` buffer (`b`, `i`, `k`,
+    `d`, `s`, `r`); `SPC w` window, Vim's `C-w` keys with `n`, `p`, `c`
+    and `w` given back their window meanings; `SPC TAB` tab, Doom's
+    workspace keys (`.`, `n`, `d`, `r`, `]`, `[`, `1`–`9`), not `SPC t`,
+    which is Doom's toggle; and `SPC h t` load theme. Departures from
+    Doom: `SPC w o` is `window-only`, as evil's map has it, and this
+    editor's layout commands (`z`, `m`, `M`, `,`, `.`, `H J K L`, `F`) sit
+    on the letters `C-w` gives them. Keys with no registered command are
+    left out. `05-leader.lean` holds the full list. `SPC :` and `SPC ?`
+    are to come with their commands.
+  - **Pinned** by `ConfigTest.defaultConfigChecks`: a reload installs it
+    with no diagnostic and `SPC f f` asks for a path to open, every
+    binding names a registered command, and every prefix under the leader
+    has a name.
 - Built: completion at point from config ("Completion at point").
   `defineAtPoint` registers an at-point source by its name, and config's of
   a shipped name replaces it, so `defineAtPoint (Completion.AtPoint.words
