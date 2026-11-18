@@ -299,8 +299,12 @@ impl StreamState {
 
     /// Stops its readers and its writer, and drops its pending read: an
     /// abandoned stream has no pending read, so no reader or waiter can
-    /// complete one after this. Called under the service's state lock, in
-    /// the same step that drops the child's waits, and before the kill.
+    /// complete one after this. It takes only the stream's own lock, so it
+    /// is atomic with nothing else by itself: cancel and shutdown call it
+    /// under the service's state lock, in the same step that drops the
+    /// child's waits, and before the kill, and that is what drops a
+    /// pending read with its wait. A caller with no pending read to drop
+    /// may call it anywhere.
     fn abandon(&self) {
         let mut streamed = self.state();
         streamed.abandoned = true;
@@ -849,6 +853,8 @@ impl<P: Processes + 'static> Service<P> {
         if ended.is_some() {
             Self::forget(&mut state, child);
             drop(state);
+            // Outside the state lock: the read was just taken, and the
+            // child is forgotten, so no later read can be pending.
             stream.abandon();
         }
         Some(StreamReply::Delivered(Delivery { out, err, ended }))
@@ -1189,6 +1195,8 @@ impl<P: Processes + 'static> Inner<P> {
         }
         drop(state);
         if cancelled {
+            // Outside the state lock: a read refuses a cancelled child, so
+            // none can be pending.
             child.kill();
             stream.abandon();
         } else {
