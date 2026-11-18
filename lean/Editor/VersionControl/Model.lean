@@ -1,6 +1,8 @@
+import Editor.Diff.Model
 import Editor.Job.Model
 import Editor.VersionControl
 import Editor.VersionControl.Git
+import Editor.VersionControl.Hunk
 
 /-!
 # The pure model of a repository
@@ -120,12 +122,21 @@ inductive Entry where
   | conflict (base ours theirs : Option String)
   deriving DecidableEq, Repr
 
-/-- A commit of the model's graph: its parents and its files. -/
+/-- Who wrote a commit of the model unless it says otherwise: `a`, at
+2026-01-01T00:00:00Z, the writer's fixed author and time; an empty subject
+is the commit's id, which the writer's message is. -/
+def fixedAuthored : Authored :=
+  { author := "a", time := 1767225600, subject := "" }
+
+/-- A commit of the model's graph: its parents, its files and who wrote
+it. -/
 structure Commit where
   /-- Its parents' ids, the first parent first. -/
   parents : Array String := #[]
   /-- Its files, each a path and its content. -/
   files : Array (String × String)
+  /-- Who wrote it, when, and its subject; an empty subject is its id. -/
+  authored : Authored := fixedAuthored
   deriving DecidableEq, Repr
 
 /-- A linked worktree. -/
@@ -170,6 +181,9 @@ structure Repository where
   parents : Array String := #[]
   /-- `HEAD`'s commit's id; its files are `committed`. -/
   headId : String := "head"
+  /-- Who wrote `HEAD`'s commit, when, and its subject: `head`, the
+  writer's message, unless a commit made another. -/
+  headAuthored : Authored := { fixedAuthored with subject := "head" }
   /-- The linked worktrees. -/
   linked : Array Linked := #[]
   /-- Directories beside the root that hold a file and are no worktree,
@@ -376,8 +390,8 @@ def checkedOut (repository : Repository) : Option String :=
 
 /-- The commit id `name` names ("The graph", in the module docs): `HEAD` and
 the checked-out branch name `HEAD`'s commit while the branch is born, a
-branch its commit, a tag itself, and a commit's id itself; `none` for a
-name that is none of these. -/
+branch its commit, a tag itself, and a commit's id itself, `HEAD`'s among
+them; `none` for a name that is none of these. -/
 def resolve (repository : Repository) (name : String) : Option String :=
   if name == "HEAD" || repository.checkedOut == some name then
     if repository.committed.isEmpty then none else some repository.headId
@@ -386,7 +400,9 @@ def resolve (repository : Repository) (name : String) : Option String :=
     | some id => some id
     | none =>
       if (lookup repository.revisions name).isSome then some name
-      else if (lookup repository.commits name).isSome then some name else none
+      else
+        if (lookup repository.commits name).isSome then some name
+        else if name == repository.headId && !repository.committed.isEmpty then some name else none
 
 /-- The files of the commit `id`: `HEAD`'s, a commit's, or a tag's. -/
 def filesAt (repository : Repository) (id : String) : Option (Array (String × String)) :=
@@ -446,9 +462,11 @@ def watchedOf (repository : Repository) : Watched :=
         repository.commonDir / "packed-refs"]
     trees := #[repository.commonDir / "refs"] }
 
-/-- `repository` with its index committed: `HEAD`'s files are the index's
-merged files, as `git commit` without `-a` makes them. -/
-def commit (repository : Repository) : Repository :=
+/-- `repository` with its index committed as a commit whose subject is
+`subject`: `HEAD`'s files are the index's merged files, as `git commit`
+without `-a` makes them, and the commit `HEAD` was is frozen into the graph
+with who wrote it. -/
+def commit (repository : Repository) (subject : String := "commit") : Repository :=
   let frozen :=
     if repository.committed.isEmpty then repository
     else
@@ -456,9 +474,12 @@ def commit (repository : Repository) : Repository :=
       { repository with
         commits :=
           repository.commits.push
-            (repository.headId, { parents := repository.parents, files := repository.committed })
+            (repository.headId,
+              { parents := repository.parents, files := repository.committed
+                authored := repository.headAuthored })
         parents := #[repository.headId], headId }
   { frozen with
+    headAuthored := { repository.headAuthored with subject }
     committed :=
       repository.index.filterMap fun (path, entry) =>
         match entry with
@@ -489,9 +510,17 @@ def indexFiles (repository : Repository) : Array (String × String) :=
         | .conflict .. => none).qsort
     fun a b => decide (a.1 < b.1)
 
-/-- What a commit of `repository` comes to ("How it answers", in the module
-docs): the repository after it, or why it is refused. -/
-def committing (repository : Repository) : Except Error Repository :=
+/-- The subject of a commit whose message is `message`, as git's `%s` gives
+it: the first paragraph after any blank lines, each line's trailing white
+space dropped, its lines joined by a space. -/
+def subjectOf (message : String) : String :=
+  let lines := ((message.splitOn "\n").map (·.trimAsciiEnd.toString)).dropWhile (·.isEmpty)
+  " ".intercalate (lines.takeWhile (!·.isEmpty))
+
+/-- What a commit of `repository` with `message` comes to ("How it answers",
+in the module docs): the repository after it, its new commit's subject
+`message`'s (`subjectOf`), or why it is refused. -/
+def committing (repository : Repository) (message : String) : Except Error Repository :=
   if repository.index.any (·.2 matches .conflict ..) then
     .error
       (.failed (.code 128) "error: Committing is not possible because you have unmerged files.")
@@ -501,7 +530,7 @@ def committing (repository : Repository) : Except Error Repository :=
     | none =>
       if repository.indexFiles == repository.committed.qsort (fun a b => decide (a.1 < b.1)) then
         .error (.failed (.code 1) "nothing to commit")
-      else .ok repository.commit
+      else .ok (repository.commit (subjectOf message))
 
 /-- The worktrees of `repository` (`worktrees`): the main one, then each
 linked one in path order. -/
@@ -530,26 +559,236 @@ born, or another. -/
 def hasBranch (repository : Repository) (name : String) : Bool :=
   repository.branchNames.contains name
 
+/-- The commit id `name` names, or the refusal of a name that names none:
+status 1, `<name> is not a commit`. -/
+def resolved (repository : Repository) (name : String) : Except Error String :=
+  match repository.resolve name with
+  | some id => .ok id
+  | none => .error (.failed (.code 1) s!"{name} is not a commit")
+
+/-- Who wrote the commit `id` ("The graph", in the module docs): `HEAD`'s
+`headAuthored`, a commit's `authored`, and for a tag the fixed author with
+its name as its subject; an empty subject is the commit's id. -/
+def authoredOf (repository : Repository) (id : String) : Authored :=
+  let named (authored : Authored) : Authored :=
+    if authored.subject.isEmpty then { authored with subject := id } else authored
+  if id == repository.headId && !repository.committed.isEmpty then named repository.headAuthored
+  else
+    match lookup repository.commits id with
+    | some commit => named commit.authored
+    | none => { fixedAuthored with subject := id }
+
+/-- How many commits a walk of the graph may take: each commit and tag
+once, and `HEAD`'s. -/
+def fuel (repository : Repository) : Nat :=
+  repository.commits.size + repository.revisions.size + 2
+
+/-- The log of `revision` ("`log`", in the module docs): it and its first
+parents, newest first, at most `limit`, or why it is refused. -/
+def logOf (repository : Repository) (revision : String) (limit : Nat) :
+    Except Error (Array LogEntry) := do
+  let id ← repository.resolved revision
+  let (entries, _) :=
+    (List.range (min limit repository.fuel)).foldl
+      (fun ((entries, next) : Array LogEntry × Option String) _ =>
+        match next with
+        | none => (entries, none)
+        | some id =>
+          let parents := repository.parentsOf id
+          (entries.push { id, parents, authored := repository.authoredOf id }, parents[0]?))
+      (#[], some id)
+  return entries
+
+/-- The content of `path` in the commit `id`, if it has the path. -/
+def contentAt (repository : Repository) (id path : String) : Option String :=
+  (repository.filesAt id).bind (lookup · path)
+
+/-- The line hunks of `old` against `new`, as rows of their lines, none
+empty on both sides. -/
+def rowHunks (old new : String) : Array DiffModel.Hunk :=
+  (DiffModel.lineHunks (DiffModel.lines old.toUTF8) (DiffModel.lines new.toUTF8) 100000).filter
+    fun hunk => hunk.oldStart != hunk.oldStop || hunk.newStart != hunk.newStop
+
+/-- The rows of `rows` (each a line of the blamed file and its row in
+`new`) that a parent whose text is `old` has unchanged, each carried to its
+row in `old`, and the rows it does not have. -/
+def carried (old new : String) (rows : Array (Nat × Nat)) : Array (Nat × Nat) × Array (Nat × Nat) :=
+  let hunks := rowHunks old new
+  rows.foldl
+    (fun ((moved, kept) : Array (Nat × Nat) × Array (Nat × Nat)) (line, row) =>
+      if hunks.any fun hunk => hunk.newStart ≤ row && row < hunk.newStop then
+        (moved, kept.push (line, row))
+      else
+        let before := hunks.filter (·.newStop ≤ row)
+        let shift := before.foldl (fun shift hunk => shift + (hunk.oldStop - hunk.oldStart : Nat)) 0
+        let back := before.foldl (fun back hunk => back + (hunk.newStop - hunk.newStart : Nat)) 0
+        (moved.push (line, row - back + shift), kept))
+    (#[], #[])
+
+/-- The commit that last changed each line of `rows` (each a line of the
+blamed file and its row in the commit `id`'s `content` of `path`): each
+passed to the first parent, then each other, whose file has it unchanged,
+and on through that parent; the commit's own otherwise. -/
+def blameRows (repository : Repository) (path : String) :
+    Nat → String → String → Array (Nat × Nat) → Array (Nat × String)
+  | 0, id, _, rows => rows.map fun (line, _) => (line, id)
+  | fuel + 1, id, content, rows =>
+    let (passed, left) :=
+      (repository.parentsOf id).foldl
+        (fun ((passed, left) : Array (String × String × Array (Nat × Nat)) × Array (Nat × Nat))
+            parent =>
+          match repository.contentAt parent path with
+          | none => (passed, left)
+          | some old =>
+            let (moved, kept) := carried old content left
+            (passed.push (parent, old, moved), kept))
+        (#[], rows)
+    left.map (fun (line, _) => (line, id)) ++
+      passed.flatMap fun (parent, old, moved) =>
+        if moved.isEmpty then #[] else repository.blameRows path fuel parent old moved
+
+/-- The blame of `path` at `revision` ("`blame`", in the module docs): `none`
+when the revision lacks the path, or why it is refused. -/
+def blameOf (repository : Repository) (revision path : String) : Except Error (Option Blame) := do
+  let id ← repository.resolved revision
+  let some content := repository.contentAt id path | return none
+  let texts := linesOf content
+  let rows := (Array.range texts.size).map fun row => (row, row)
+  let owners := repository.blameRows path repository.fuel id content rows
+  let lines :=
+    (Array.range texts.size).map fun row =>
+      { id := ((owners.find? (·.1 == row)).map (·.2)).getD id
+        text := (texts[row]?.getD "").dropSuffix "\n" |>.toString : BlameLine }
+  let commits :=
+    lines.foldl
+      (fun (commits : Array (String × Authored)) line =>
+        if commits.any (·.1 == line.id) then commits
+        else commits.push (line.id, repository.authoredOf line.id))
+      #[]
+  return some { commits, lines }
+
+/-- The commits of `base..tip`, merges left out, oldest first. -/
+def rangeOf (repository : Repository) (base tip : String) : Array String :=
+  let excluded := repository.ancestors base
+  ((repository.ancestors tip).filter fun id =>
+      !excluded.contains id && (repository.parentsOf id).size ≤ 1).reverse
+
+/-- The change the commit `id` makes against its first parent, as range-diff
+compares it: each path whose content differs, with its hunks, their rows
+dropped. -/
+def patchOf (repository : Repository) (id : String) : Array (String × Array LineHunk) :=
+  let newFiles := (repository.filesAt id).getD #[]
+  let oldFiles := (((repository.parentsOf id)[0]?).bind repository.filesAt).getD #[]
+  let paths :=
+    ((oldFiles.map (·.1) ++ newFiles.map (·.1)).qsort fun a b => decide (a < b)).foldl
+      (fun (kept : Array String) path => if kept.back? == some path then kept else kept.push path)
+      #[]
+  paths.filterMap fun path =>
+    let (old, new) := (lookup oldFiles path, lookup newFiles path)
+    if old == new then none
+    else
+      let (old, new) := (old.getD "", new.getD "")
+      some
+        (path,
+          (DiffModel.hunks old new 100000).map fun hunk =>
+            { LineHunk.ofTexts .stage old new hunk with
+              oldLine := 0, newLine := 0 })
+
+/-- The header line git prints of a range-diff pair: each side's index, padded
+to `width`, and the commit's id, or dashes, the mark, and the subject. -/
+def rangeLine (width : Nat) (old new : Option (Nat × String)) (mark subject : String) : String :=
+  let side : Option (Nat × String) → String
+    | some (index, id) =>
+      let number := toString index
+      s!"{String.ofList (List.replicate (width - number.length) ' ')}{number}:  {(id.take 7).toString}"
+    | none => s!"{String.ofList (List.replicate (width - 1) ' ')}-:  -------"
+  s!"{side old} {mark} {side new} {subject}\n"
+
+/-- The range-diff of `base..old` against `base..new` ("`rangeDiff`", in the
+module docs), or why it is refused. -/
+def rangeDiffOf (repository : Repository) (base old new : String) : Except Error RangeDiff := do
+  let base ← repository.resolved base
+  let old ← repository.resolved old
+  let new ← repository.resolved new
+  let olds := repository.rangeOf base old
+  let news := repository.rangeOf base new
+  let same (a b : String) : Bool :=
+    (repository.authoredOf a).subject == (repository.authoredOf b).subject &&
+      (repository.authoredOf a).author == (repository.authoredOf b).author &&
+      repository.patchOf a == repository.patchOf b
+  let similar (a b : String) : Bool :=
+    (repository.authoredOf a).subject == (repository.authoredOf b).subject
+  let pairing (matches_ : Array (Option (Nat × RangeRelation))) (relation : RangeRelation)
+    (holds : String → String → Bool) : Array (Option (Nat × RangeRelation)) :=
+    (Array.range news.size).foldl
+      (fun matches_ j =>
+        if (matches_[j]?.join).isSome then matches_
+        else
+          match
+            (Array.range olds.size).find? fun i =>
+              !matches_.any (·.any (·.1 == i)) && holds (olds[i]?.getD "") (news[j]?.getD "") with
+          | some i => matches_.set! j (some (i, relation))
+          | none => matches_)
+      matches_
+  let matches_ := pairing (pairing (Array.replicate news.size none) .same same) .changed similar
+  let matched (i : Nat) : Bool := matches_.any (·.any (·.1 == i))
+  let width := (toString (max olds.size news.size)).length
+  let subjectOf (id : String) := (repository.authoredOf id).subject
+  let at_ (ids : Array String) (index : Nat) : Option (Nat × String) :=
+    ids[index]?.map (index + 1, ·)
+  let (pairs, text) :=
+    Id.run do
+      let mut i := 0
+      let mut j := 0
+      let mut shown : Array Bool := Array.replicate olds.size false
+      let mut pairs : Array RangePair := #[]
+      let mut text := ""
+      for _ in [0:olds.size + news.size + 1] do
+        while i < olds.size && (shown[i]?.getD false) do
+          i := i + 1
+        if i ≥ olds.size && j ≥ news.size then
+          break
+        if i < olds.size && !matched i then
+          pairs := pairs.push { old := some (i + 1), new := none, relation := .removed }
+          text := text ++ rangeLine width (at_ olds i) none "<" (subjectOf (olds[i]?.getD ""))
+          i := i + 1
+          continue
+        while j < news.size && (matches_[j]?.join).isNone do
+          pairs := pairs.push { old := none, new := some (j + 1), relation := .added }
+          text := text ++ rangeLine width none (at_ news j) ">" (subjectOf (news[j]?.getD ""))
+          j := j + 1
+        if let some (a, relation) := matches_[j]?.join then
+          pairs := pairs.push { old := some (a + 1), new := some (j + 1), relation }
+          let mark := if relation == .same then "=" else "!"
+          text :=
+            text ++ rangeLine width (at_ olds a) (at_ news j) mark (subjectOf (news[j]?.getD ""))
+          shown := shown.set! a true
+          j := j + 1
+      return (pairs, text)
+  return { pairs, text }
+
 /-- The change of `revision` against its merge base with `against`
 ("`changes`", in the module docs), or why it is refused. -/
 def changesOf (repository : Repository) (revision against : String) : Except Error Changes := do
-  let resolved (name : String) : Except Error String :=
-    match repository.resolve name with
-    | some id => .ok id
-    | none => .error (.failed (.code 1) s!"{name} is not a commit")
+  let resolved := repository.resolved
   let new ← resolved revision
-  let old ← resolved against
-  let some base :=
-    repository.mergeBase new
-      old | throw (.failed (.code 1) s!"{revision} and {against} have no merge base")
-  let oldFiles := (repository.filesAt base).getD #[]
+  let base ←
+    if against.isEmpty then
+      pure ""
+    else
+      let old ← resolved against
+      let some base :=
+        repository.mergeBase new
+          old | throw (.failed (.code 1) s!"{revision} and {against} have no merge base")
+      pure base
+  let oldFiles := if base.isEmpty then #[] else (repository.filesAt base).getD #[]
   let newFiles := (repository.filesAt new).getD #[]
   let paths :=
     ((oldFiles.map (·.1) ++ newFiles.map (·.1)).qsort fun a b => decide (a < b)).foldl
       (fun (kept : Array String) path => if kept.back? == some path then kept else kept.push path)
       #[]
   return {
-      base
+      base, tip := new
       files :=
         paths.filterMap fun path =>
           let (old, new) := (lookup oldFiles path, lookup newFiles path)
@@ -707,8 +946,8 @@ def handle : (request : Request) → Repository → request.Reply × Repository
         (hunk.before ++ hunk.removed ++ hunk.after) with
     | .ok after => (.ok (), after)
     | .error error => (.error error, repository)
-  | .commit _, repository =>
-    match repository.committing with
+  | .commit message, repository =>
+    match repository.committing message with
     | .ok after => (.ok (), after)
     | .error error => (.error error, repository)
   | .worktrees, repository => (.ok repository.worktreesOf, repository)
@@ -731,6 +970,18 @@ def handle : (request : Request) → Repository → request.Reply × Repository
       match repository.removingWorktree path with
       | .ok after => (.ok (), after)
       | .error error => (.error error, repository)
+  | request@(.log revision limit), repository =>
+    match request.invalid? with
+    | some detail => (.error (.invalid detail), repository)
+    | none => (repository.logOf revision limit, repository)
+  | request@(.blame revision path), repository =>
+    match request.invalid? with
+    | some detail => (.error (.invalid detail), repository)
+    | none => (repository.blameOf revision path, repository)
+  | request@(.rangeDiff base old new), repository =>
+    match request.invalid? with
+    | some detail => (.error (.invalid detail), repository)
+    | none => (repository.rangeDiffOf base old new, repository)
 
 /-- The model as an implementation of the port inside a job: each request
 answered as `handle` answers it in `repository`, the repository it gives

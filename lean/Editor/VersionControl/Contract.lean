@@ -582,6 +582,195 @@ def worktreeProperties : List Property :=
             (← fileAt "main" "a.txt") == .ok (some "a\n") &&
             (← fileAt "HEAD" "a.txt") == .ok (some "a\n") }]
 
+/-- Who wrote a commit of a property's repository: `author` at `time`, with
+the commit's own id as its subject. -/
+def authoredBy (author : String) (time : Nat) : Authored :=
+  { author, time, subject := "" }
+
+/-- `B`'s `a.txt` in `historyRepository`. -/
+def historyBase : String :=
+  "1\nthe second line\n3\n"
+
+/-- `F`'s `a.txt` in `historyRepository`: its second line changed a little,
+so that git's heuristic for an ignored commit would hand that line to `B`
+were the hostile config's `blame.ignoreRevsFile` read. -/
+def historyChanged : String :=
+  "1\nthe second line, changed\n3\n"
+
+/-- The repository of the log and blame properties: on `main`, `HEAD` adds
+the line `4` to `a.txt` over the merge `M`, whose first parent `F`, written
+by `b` a day after the others, changed the second line of `B`'s `a.txt`,
+and whose second parent `S` added `s.txt` to `B`. -/
+def historyRepository : Model.Repository :=
+  { clean
+      #[("a.txt", historyChanged ++ "4\n"),
+        ("s.txt",
+          "s\n")] with
+    commits :=
+      #[("B", { files := #[("a.txt", historyBase)] }),
+        ("F",
+          { parents := #["B"], files := #[("a.txt", historyChanged)]
+            authored := authoredBy "b" 1767312000 }),
+        ("S", { parents := #["B"], files := #[("a.txt", historyBase), ("s.txt", "s\n")] }),
+        ("M", { parents := #["F", "S"], files := #[("a.txt", historyChanged), ("s.txt", "s\n")] })]
+    parents := #["M"] }
+
+/-- The lines `1` to `10`, the sixth `six`. -/
+def sixChanged : String :=
+  lineSet tenLines 5 "six\n"
+
+/-- A repository whose `HEAD`, on `main`, is the branch `old` with its last
+commit amended: `base` names `B`; `old` is `P`, which adds `p.txt`, then
+`Q`, which adds `q.txt` holding `tenLines` and has `HEAD`'s subject; `HEAD`
+is `P`, then `q.txt` holding `sixChanged`. -/
+def amendedRepository : Model.Repository :=
+  { clean
+      #[("a.txt", "a\n"), ("p.txt", "p\n"),
+        ("q.txt",
+          sixChanged)] with
+    commits :=
+      #[("B", { files := #[("a.txt", "a\n")] }),
+        ("P", { parents := #["B"], files := #[("a.txt", "a\n"), ("p.txt", "p\n")] }),
+        ("Q",
+          { parents := #["P"], files := #[("a.txt", "a\n"), ("p.txt", "p\n"), ("q.txt", tenLines)]
+            authored := { authoredBy "a" 1767225600 with subject := "head" } })]
+    parents := #["P"], branches := #[("base", "B"), ("old", "Q")] }
+
+/-- The pairs of the range-diff of `base..old` against `base..new`, or none
+when it was refused. -/
+def rangePairs (base old new : String) : VersionControlM (Option (Array RangePair)) := do
+  return ((← rangeDiff base old new).toOption).map (·.pairs)
+
+/-- The interface's properties of a branch's history: its log, a file's
+blame, two ranges compared, and the commit a change was read at (phase 5).
+No id is ever written into a property: ids come from replies, and authors,
+times and subjects are compared. -/
+def historyProperties : List Property :=
+  [{  name :=
+        "a branch's log lists its commits newest first along first parents, each with its parents, author, time and subject"
+      repository := historyRepository
+      holds := do
+        let .ok entries ← log "main" 10 | return false
+        let linked :=
+          (List.range (entries.size - 1)).all fun index =>
+            (entries[index]?.bind (·.parents[0]?)) == (entries[index + 1]?.map (·.id))
+        let merge := entries[1]?.map (·.parents)
+        return entries.map (·.authored.subject) == #["head", "M", "F", "B"] &&
+            entries.map (·.authored.author) == #["a", "a", "b", "a"] &&
+            entries.map (·.authored.time) == #[1767225600, 1767225600, 1767312000, 1767225600] &&
+            linked &&
+            (merge.map (·.size)) == some 2 &&
+            (merge.bind (·[1]?)).any (fun second => !entries.any (·.id == second)) &&
+            (entries.back?.map (·.parents)) == some #[] },
+    { name := "a log asked for two commits gives the two newest"
+      repository := historyRepository
+      holds := do
+        let .ok entries ← log "HEAD" 2 | return false
+        return entries.map (·.authored.subject) == #["head", "M"] },
+    { name :=
+        "a log of a name that is not a commit, or of an unborn HEAD, is refused with status 1 as not a commit; a dashed name is refused before anything runs"
+      repository := { index := #[("a.txt", .file "a\n")], worktree := #[("a.txt", "a\n")] }
+      holds := do
+        return (← log "nope" 1) == .error (.failed (.code 1) "nope is not a commit") &&
+            invalidReply (← log "-x" 1) &&
+            (← log "HEAD" 1) == .error (.failed (.code 1) "HEAD is not a commit") },
+    { name :=
+        "blame gives each line of a file its last commit and that commit's author, through a commit that changed one line"
+      repository := historyRepository
+      holds := do
+        let .ok (some blamed) ← blame "HEAD" "a.txt" | return false
+        let authoredOf (id : String) : Option Authored :=
+          (blamed.commits.find? (·.1 == id)).map (·.2)
+        let lines := blamed.lines.map fun line => (line.text, authoredOf line.id)
+        return lines.map (·.1) == #["1", "the second line, changed", "3", "4"] &&
+            lines.map (fun (_, authored) => authored.map (·.subject)) ==
+              #[some "B", some "F", some "B", some "head"] &&
+            lines.map (fun (_, authored) => authored.map (·.author)) ==
+              #[some "a", some "b", some "a", some "a"] &&
+            lines.map (fun (_, authored) => authored.map (·.time)) ==
+              #[some 1767225600, some 1767312000, some 1767225600, some 1767225600] &&
+            blamed.commits.map (·.2.subject) == #["B", "F", "head"] },
+    { name :=
+        "blame of a path the revision lacks is none, and of a name that is not a commit refused with status 1"
+      repository := historyRepository
+      holds := do
+        return (← blame "HEAD" "nope.txt") == .ok none &&
+            (← blame "nope" "a.txt") == .error (.failed (.code 1) "nope is not a commit") &&
+            invalidReply (← blame "-x" "a.txt") },
+    { name :=
+        "range-diff of a branch whose last commit was amended pairs the first =, the amended !"
+      repository := amendedRepository
+      holds := do
+        return (← rangePairs "base" "old" "HEAD") ==
+            some
+              #[{ old := some 1, new := some 1, relation := .same },
+                { old := some 2, new := some 2, relation := .changed }] },
+    { name :=
+        "range-diff of a branch rebased past a commit of main on another file pairs every commit ="
+      repository :=
+        { clean
+            #[("a.txt", "a\n"), ("u.txt", "u\n"), ("p.txt", "p\n"),
+              ("q.txt",
+                tenLines)] with
+          commits :=
+            #[("B", { files := #[("a.txt", "a\n")] }),
+              ("U", { parents := #["B"], files := #[("a.txt", "a\n"), ("u.txt", "u\n")] }),
+              ("P", { parents := #["B"], files := #[("a.txt", "a\n"), ("p.txt", "p\n")] }),
+              ("Q",
+                { parents := #["P"]
+                  files := #[("a.txt", "a\n"), ("p.txt", "p\n"), ("q.txt", tenLines)]
+                  authored := { authoredBy "a" 1767225600 with subject := "head" } }),
+              ("P2",
+                { parents := #["U"],
+                  files := #[("a.txt", "a\n"), ("u.txt", "u\n"), ("p.txt", "p\n")]
+                  authored := { authoredBy "a" 1767225600 with subject := "P" } })]
+          parents := #["P2"], branches := #[("up", "U"), ("old", "Q")] }
+      holds := do
+        return (← rangePairs "up" "old" "HEAD") ==
+            some
+              #[{ old := some 1, new := some 1, relation := .same },
+                { old := some 2, new := some 2, relation := .same }] },
+    { name :=
+        "range-diff of a branch that dropped a commit and gained one on other files gives < then >, in git's order"
+      repository :=
+        { clean
+            #[("a.txt", "a\n"), ("p.txt", "p\n"),
+              ("y.txt",
+                "y\n")] with
+          commits :=
+            #[("B", { files := #[("a.txt", "a\n")] }),
+              ("P", { parents := #["B"], files := #[("a.txt", "a\n"), ("p.txt", "p\n")] }),
+              ("X",
+                { parents := #["P"],
+                  files := #[("a.txt", "a\n"), ("p.txt", "p\n"), ("x.txt", "x\n")] })]
+          parents := #["P"], branches := #[("base", "B"), ("old", "X")] }
+      holds := do
+        return (← rangePairs "base" "old" "HEAD") ==
+            some
+              #[{ old := some 1, new := some 1, relation := .same },
+                { old := some 2, new := none, relation := .removed },
+                { old := none, new := some 2, relation := .added }] },
+    { name := "range-diff of a name that is not a commit is refused with status 1"
+      repository := amendedRepository
+      holds := do
+        return (← rangeDiff "nope" "old" "HEAD") ==
+              .error (.failed (.code 1) "nope is not a commit") &&
+            (← rangeDiff "base" "old" "nope") ==
+              .error (.failed (.code 1) "nope is not a commit") &&
+            invalidReply (← rangeDiff "base" "-x" "HEAD") },
+    { name :=
+        "a change's tip is its revision's commit, and a change against \"\" is every file of the revision added, with an empty base"
+      repository := historyRepository
+      holds := do
+        let .ok entries ← log "HEAD" 10 | return false
+        let some head := entries[0]? | return false
+        let some root := entries.back? | return false
+        let .ok change ← changes "HEAD" "main" | return false
+        let .ok added ← changes root.id "" | return false
+        return change.tip == head.id && change.files.isEmpty && added.tip == root.id &&
+            added.base == "" &&
+            added.files == #[{ path := "a.txt", old := none, new := some historyBase }] }]
+
 /-- The interface's properties. -/
 def properties : List Property :=
   [{  name :=
@@ -741,6 +930,7 @@ def properties : List Property :=
               answer.paths.any (fun path => under path && path.fileName == some "index") &&
               answer.trees == #[answer.directory / "refs"] }] ++
     hunkProperties ++
-    worktreeProperties
+    worktreeProperties ++
+    historyProperties
 
 end Editor.VersionControlContract

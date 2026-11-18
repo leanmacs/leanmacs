@@ -356,10 +356,85 @@ structure FileChange where
 
 /-- The change of a revision against its merge base with a named branch. -/
 structure Changes where
-  /-- The merge base's id, which `fileAt` reads at. -/
+  /-- The merge base's id, which `fileAt` reads at; empty for a change
+  against no base. -/
   base : String
+  /-- The id the revision resolved to. -/
+  tip : String
   /-- Every file whose content differs, sorted by path. -/
   files : Array FileChange := #[]
+  deriving DecidableEq, Repr
+
+/-- Who wrote a commit, when, and what it says of itself. -/
+structure Authored where
+  /-- The author's name. -/
+  author : String
+  /-- The author's time, in seconds since the epoch. -/
+  time : Nat
+  /-- The subject: the first paragraph of the message, its lines joined by a
+  space. -/
+  subject : String
+  deriving DecidableEq, Repr
+
+/-- One commit of a log: its id, its parents and who wrote it. -/
+structure LogEntry where
+  /-- Its id. -/
+  id : String
+  /-- Its parents' ids, the first parent first. -/
+  parents : Array String := #[]
+  /-- Who wrote it, when, and its subject. -/
+  authored : Authored
+  deriving DecidableEq, Repr
+
+/-- One line of a blamed file: the commit that last changed it, and its
+text. -/
+structure BlameLine where
+  /-- The id of the commit that last changed the line. -/
+  id : String
+  /-- The line, without its line feed. -/
+  text : String
+  deriving DecidableEq, Repr
+
+/-- A file's lines, each with the commit that last changed it. -/
+structure Blame where
+  /-- Each commit a line names, once, in the order of its first line, with
+  who wrote it. -/
+  commits : Array (String × Authored) := #[]
+  /-- The lines, in order. -/
+  lines : Array BlameLine := #[]
+  deriving DecidableEq, Repr
+
+/-- How a commit of one range stands to one of another, as `git range-diff`
+says it. -/
+inductive RangeRelation where
+  /-- The same change (`=`). -/
+  | same
+  /-- The same commit, changed (`!`). -/
+  | changed
+  /-- In the old range alone (`<`). -/
+  | removed
+  /-- In the new range alone (`>`). -/
+  | added
+  deriving DecidableEq, Repr
+
+/-- One line of a range-diff: the commit of each range it names, by its
+1-based index in that range, and how they stand. -/
+structure RangePair where
+  /-- The old range's commit, if one. -/
+  old : Option Nat
+  /-- The new range's commit, if one. -/
+  new : Option Nat
+  /-- How they stand. -/
+  relation : RangeRelation
+  deriving DecidableEq, Repr
+
+/-- Two ranges of commits compared: the pairs, in the order printed, and the
+text printed. -/
+structure RangeDiff where
+  /-- The pairs, in the order printed. -/
+  pairs : Array RangePair := #[]
+  /-- What was printed, the diff of each changed pair's diffs among it. -/
+  text : String := ""
   deriving DecidableEq, Repr
 
 /-- What may be asked of a repository. -/
@@ -392,6 +467,13 @@ inductive Request where
   | addWorktree (path : System.FilePath) (branch : String) (start : Option String)
   /-- The linked worktree at `path` gone, its branch kept. -/
   | removeWorktree (path : System.FilePath)
+  /-- `revision` and its first parents, newest first, at most `limit`. -/
+  | log (revision : String) (limit : Nat)
+  /-- Each line of `path` at `revision`, with the commit that last changed
+  it. -/
+  | blame (revision path : String)
+  /-- The commits of `base..old` against those of `base..new`. -/
+  | rangeDiff (base old new : String)
   deriving DecidableEq, Repr
 
 /-- Why `request` is refused before anything runs, if it is ("The rules", in
@@ -400,6 +482,9 @@ an option, or a worktree path that is not absolute. Every implementation
 calls it first, so none can disagree. -/
 def Request.invalid? : Request → Option String
   | .changes revision against => dashed #[revision, against]
+  | .log revision _ => dashed #[revision]
+  | .blame revision _ => dashed #[revision]
+  | .rangeDiff base old new => dashed #[base, old, new]
   | .addWorktree path branch start => relative path <|> dashed (#[branch] ++ start.toArray)
   | .removeWorktree path => relative path
   | _ => none
@@ -441,10 +526,40 @@ instance : DecidableEq (Except Error Changes)
   | .ok _, .error _ => isFalse fun e => by cases e
   | .error _, .ok _ => isFalse fun e => by cases e
 
+/-- Two replies of `log` are equal when they are the same case with equal
+contents. -/
+instance : DecidableEq (Except Error (Array LogEntry))
+  | .ok a, .ok b =>
+    if h : a = b then isTrue (congrArg Except.ok h) else isFalse fun e => h (Except.ok.inj e)
+  | .error a, .error b =>
+    if h : a = b then isTrue (congrArg Except.error h) else isFalse fun e => h (Except.error.inj e)
+  | .ok _, .error _ => isFalse fun e => by cases e
+  | .error _, .ok _ => isFalse fun e => by cases e
+
+/-- Two replies of `blame` are equal when they are the same case with equal
+contents. -/
+instance : DecidableEq (Except Error (Option Blame))
+  | .ok a, .ok b =>
+    if h : a = b then isTrue (congrArg Except.ok h) else isFalse fun e => h (Except.ok.inj e)
+  | .error a, .error b =>
+    if h : a = b then isTrue (congrArg Except.error h) else isFalse fun e => h (Except.error.inj e)
+  | .ok _, .error _ => isFalse fun e => by cases e
+  | .error _, .ok _ => isFalse fun e => by cases e
+
+/-- Two replies of `rangeDiff` are equal when they are the same case with
+equal contents. -/
+instance : DecidableEq (Except Error RangeDiff)
+  | .ok a, .ok b =>
+    if h : a = b then isTrue (congrArg Except.ok h) else isFalse fun e => h (Except.ok.inj e)
+  | .error a, .error b =>
+    if h : a = b then isTrue (congrArg Except.error h) else isFalse fun e => h (Except.error.inj e)
+  | .ok _, .error _ => isFalse fun e => by cases e
+  | .error _, .ok _ => isFalse fun e => by cases e
+
 /-- The type of the reply to each request: the status, nothing for a write,
 a file's content or none, what to watch, the worktree list, the branch
-names, or a branch's change against its base (`Changes`); each refused with
-an `Error`. -/
+names, a branch's change against its base (`Changes`), a log, a blame or
+none, or a range-diff; each refused with an `Error`. -/
 def Request.Reply : Request → Type
   | .status => Except Error Status
   | .stage _ => Except Error Unit
@@ -459,6 +574,9 @@ def Request.Reply : Request → Type
   | .changes .. => Except Error Changes
   | .addWorktree .. => Except Error Unit
   | .removeWorktree _ => Except Error Unit
+  | .log .. => Except Error (Array LogEntry)
+  | .blame .. => Except Error (Option Blame)
+  | .rangeDiff .. => Except Error RangeDiff
 
 /-- The version-control port: `Request` and the reply to each request. -/
 abbrev port : Port :=
@@ -529,5 +647,19 @@ def addWorktree (path : System.FilePath) (branch : String) (start : Option Strin
 /-- Removes the linked worktree at `path`, keeping its branch. -/
 def removeWorktree (path : System.FilePath) : VersionControlM (Except Error Unit) :=
   Program.request (port := port) (.removeWorktree path)
+
+/-- `revision` and its first parents, newest first, at most `limit`. -/
+def log (revision : String) (limit : Nat) : VersionControlM (Except Error (Array LogEntry)) :=
+  Program.request (port := port) (.log revision limit)
+
+/-- Each line of `path` at `revision` with the commit that last changed it;
+`none` when the revision does not have the path. -/
+def blame (revision path : String) : VersionControlM (Except Error (Option Blame)) :=
+  Program.request (port := port) (.blame revision path)
+
+/-- The commits of `base..old` against those of `base..new`, paired as
+`git range-diff` pairs them. -/
+def rangeDiff (base old new : String) : VersionControlM (Except Error RangeDiff) :=
+  Program.request (port := port) (.rangeDiff base old new)
 
 end Editor.VersionControl

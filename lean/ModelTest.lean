@@ -117,6 +117,7 @@ import ModelTest.Editor.VersionControl.Commit
 import ModelTest.Editor.VersionControl.Contract
 import ModelTest.Editor.VersionControl.Git
 import ModelTest.Editor.VersionControl.Gutter
+import ModelTest.Editor.VersionControl.HistoryRead
 import ModelTest.Editor.VersionControl.Hunk
 import ModelTest.Editor.VersionControl.Model
 import ModelTest.Editor.VersionControl.Plumbing
@@ -983,9 +984,11 @@ def checks : List Check :=
     projectModeChecks ++
     versionControlParserChecks ++
     versionControlPlumbingChecks ++
+    versionControlHistoryParserChecks ++
     versionControlModelChecks ++
     versionControlGitChecks ++
     versionControlWorktreeGitChecks ++
+    versionControlHistoryGitChecks ++
     hunkChecks ++
     reviewHunkChecks ++
     reviewOrderChecks ++
