@@ -48,7 +48,21 @@ implementation runs on the models too.
 - **`watched`**: the common directory (`commonDir`), with `HEAD` and the
   index of the git directory (`gitDir`), `packed-refs`, and `refs` as a
   tree, as the git implementation answers.
-- **`commit`** (for tests, not a request) makes `HEAD`'s files the index's,
+- **`stageHunk path hunk`**: the index must hold `path` as a merged file
+  whose lines at row `oldLine` are `before ++ removed ++ after`; those
+  lines become `before ++ added ++ after`. Otherwise it is refused with
+  status 1, `error: patch failed: <path>`, and nothing changes.
+- **`unstageHunk path hunk`**: the same at row `newLine`, with `added` and
+  `removed` swapped.
+- **The position is exact** where git may apply a hunk at an offset, when
+  its lines are found elsewhere: the editor's hunks are made from the index
+  just read, so their position is exact, and the contract's refused hunk
+  holds lines that are nowhere in the file.
+- **`commit message`**: a conflict entry refuses it (128); then a `hook`
+  that refuses (1, what it printed); then an index equal to `HEAD` (1,
+  `nothing to commit`). Otherwise `HEAD`'s files become the index's
+  (`Repository.commit`). The model keeps no message.
+- **`Repository.commit`** (also for tests) makes `HEAD`'s files the index's,
   as a commit made outside the editor does.
 
 The contract (`Editor/VersionControl/Contract.lean`) is what says the model
@@ -84,6 +98,9 @@ structure Repository where
   /-- Its common git directory: the git directory, but for a linked
   worktree's. -/
   commonDir : System.FilePath := "/r/.git"
+  /-- A pre-commit hook that refuses every commit, printing this: its first
+  line on its standard output and the rest on its standard error. -/
+  hook : Option String := none
   deriving DecidableEq, Repr
 
 /-- The value `entries` holds for `path`. -/
@@ -295,6 +312,44 @@ def commit (repository : Repository) : Repository :=
         | .file content => some (path, content)
         | .conflict .. => none }
 
+/-- `content` with its lines `old` at row `row` replaced by `new`, when they
+are there. -/
+def replaceLines (content : String) (row : Nat) (old new : Array String) : Option String :=
+  let lines := linesOf content
+  if row + old.size ≤ lines.size && lines.extract row (row + old.size) == old then
+    some (String.join (lines.extract 0 row ++ new ++ lines.extract (row + old.size)).toList)
+  else none
+
+/-- `repository` with the lines `old` at row `row` of the index's `path`
+replaced by `new`, or the refusal git gives a patch that does not apply. -/
+def applyLines (repository : Repository) (path : String) (row : Nat) (old new : Array String) :
+    Except Error Repository :=
+  match (repository.indexed? path).bind (replaceLines · row old new) with
+  | some content => .ok { repository with index := setting repository.index path (.file content) }
+  | none => .error (.failed (.code 1) s!"error: patch failed: {path}")
+
+/-- The merged files of the index, sorted by path. -/
+def indexFiles (repository : Repository) : Array (String × String) :=
+  (repository.index.filterMap fun (path, entry) =>
+        match entry with
+        | .file content => some (path, content)
+        | .conflict .. => none).qsort
+    fun a b => decide (a.1 < b.1)
+
+/-- What a commit of `repository` comes to ("How it answers", in the module
+docs): the repository after it, or why it is refused. -/
+def committing (repository : Repository) : Except Error Repository :=
+  if repository.index.any (·.2 matches .conflict ..) then
+    .error
+      (.failed (.code 128) "error: Committing is not possible because you have unmerged files.")
+  else
+    match repository.hook with
+    | some printed => .error (.failed (.code 1) printed.trimAsciiEnd.toString)
+    | none =>
+      if repository.indexFiles == repository.committed.qsort (fun a b => decide (a.1 < b.1)) then
+        .error (.failed (.code 1) "nothing to commit")
+      else .ok repository.commit
+
 end Repository
 
 /-- The id the job model gives the blob of `content`: made of its content
@@ -309,7 +364,9 @@ meets `repository`: its status read prints `porcelain`; each of `writes`
 exits 0; `fileAt`'s two runs answer each file of `HEAD` and of each named
 revision, its id and then its bytes; its first run exits 1 for each
 revision and path of `missing`; and `watched` prints the git and the common
-directories. A command no script names is refused as `notFound`, as a
+directories. A hunk's apply of `writes` exits 0 whatever it is fed, and so
+does its commit, but in a repository with a `hook`, where it exits 1 with
+the hook's output on its standard error. A command no script names is refused as `notFound`, as a
 program that is not there is. -/
 def jobModel (repository : Repository) (git : String) (root : System.FilePath)
     (writes : Array Request := #[]) (missing : Array (String × String) := #[]) : JobModel :=
@@ -328,6 +385,18 @@ def jobModel (repository : Repository) (git : String) (root : System.FilePath)
                 match write with
                 | .stage paths => some (script (Git.stageArguments paths) .empty)
                 | .unstage paths => some (script (Git.unstageArguments paths) .empty)
+                | .stageHunk .. => some (script (Git.applyArguments false) .empty)
+                | .unstageHunk .. => some (script (Git.applyArguments true) .empty)
+                | .commit _ =>
+                  some
+                    { command := Git.commitCommand git root
+                      reply :=
+                        match repository.hook with
+                        | some printed =>
+                          .ok {
+                              exit := .code 1, stdout := .empty
+                              stderr := File.encodeText printed }
+                        | none => ran .empty }
                 | _ => none) ++
             files.flatMap
               (fun (revision, path, content) =>
@@ -357,5 +426,21 @@ def handle : (request : Request) → Repository → request.Reply × Repository
   | .unstage paths, repository => (.ok (), paths.foldl Repository.unstageOne repository)
   | .fileAt revision path, repository => (.ok (repository.fileAt revision path), repository)
   | .watched, repository => (.ok repository.watchedOf, repository)
+  | .stageHunk path hunk, repository =>
+    match
+      repository.applyLines path hunk.oldLine (hunk.before ++ hunk.removed ++ hunk.after)
+        (hunk.before ++ hunk.added ++ hunk.after) with
+    | .ok after => (.ok (), after)
+    | .error error => (.error error, repository)
+  | .unstageHunk path hunk, repository =>
+    match
+      repository.applyLines path hunk.newLine (hunk.before ++ hunk.added ++ hunk.after)
+        (hunk.before ++ hunk.removed ++ hunk.after) with
+    | .ok after => (.ok (), after)
+    | .error error => (.error error, repository)
+  | .commit _, repository =>
+    match repository.committing with
+    | .ok after => (.ok (), after)
+    | .error error => (.error error, repository)
 
 end Editor.VersionControl.Model

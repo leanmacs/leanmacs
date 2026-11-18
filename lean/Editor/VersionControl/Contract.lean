@@ -1,4 +1,6 @@
+import Editor.Diff.Model
 import Editor.VersionControl
+import Editor.VersionControl.Hunk
 import Editor.VersionControl.Model
 
 /-!
@@ -26,6 +28,13 @@ Property 1 is the adapter test of the phase's first criterion: git and the
 model agree on a repository with a staged, an unstaged, an untracked, a
 renamed and a conflicted file, and both give the status the property
 states.
+
+The properties of a hunk take their hunks as the editor does, from the
+texts the repository holds: the model's line diff (`DiffModel.hunks`), made
+`LineHunk`s with their context from the index (`LineHunk.ofTexts`), so a
+property tests the interface and not a diff engine. One of them is the
+adapter test of phase 3's first criterion: staging one hunk of a file with
+two changed hunks stages that hunk alone.
 
 ## Adding to this
 
@@ -111,6 +120,170 @@ def criterionStatus : Status :=
         { path := "staged.txt", state := .changed (some .modified) none },
         { path := "unstaged.txt", state := .changed none (some .modified) },
         { path := "untracked.txt", state := .untracked }] }
+
+/-- `text` with its line at row `row` replaced by `line`. -/
+def lineSet (text : String) (row : Nat) (line : String) : String :=
+  String.join ((linesOf text).set! row line).toList
+
+/-- The lines `1` to `10`, each ended by a line feed. -/
+def tenLines : String :=
+  String.join ((List.range 10).map fun row => s!"{row + 1}\n")
+
+/-- `tenLines` with row 1 (`2`) changed. -/
+def secondChanged : String :=
+  lineSet tenLines 1 "two\n"
+
+/-- `tenLines` with rows 1 (`2`) and 8 (`9`) changed: two hunks. -/
+def twoChanged : String :=
+  lineSet secondChanged 8 "nine\n"
+
+/-- The hunks of `old` against `new`, going `side`, as the editor makes them:
+the model's line diff, each with its context from the index. -/
+def lineHunks (side : HunkSide) (old new : String) : Array LineHunk :=
+  (DiffModel.hunks old new 100000).map (LineHunk.ofTexts side old new)
+
+/-- The index's content of `path`, as `fileAt` reads it; none when it has no
+merged file there or the read failed. -/
+def indexOf (path : String) : VersionControlM (Option String) := do
+  match ← fileAt "" path with
+  | .ok content =>
+    return content
+  | .error _ =>
+    return none
+
+/-- Stages the first hunk of `path`'s working-tree content `worktree` against
+its index, taken from the index read back: the reply, or a refusal when
+there is no such hunk. -/
+def stageFirst (path worktree : String) : VersionControlM (Except Error Unit) := do
+  let some index ← indexOf path | return .error (.unparsable "no index content")
+  match (lineHunks .stage index worktree)[0]? with
+  | some hunk =>
+    stageHunk path hunk
+  | none =>
+    return .error (.unparsable "no hunk")
+
+/-- Whether a refusal's message holds each line of `printed`. -/
+def saidEach (printed : String) : Except Error Unit → Bool
+  | .error (.failed _ message) =>
+    (linesOf printed).all fun line => (message.splitOn line.trimAsciiEnd.toString).length > 1
+  | _ => false
+
+/-- The interface's properties of hunks and commits (phase 3). -/
+def hunkProperties : List Property :=
+  [{  name :=
+        "criterion 1: staging one hunk of a file with two changed hunks stages that hunk alone"
+      repository := writing (clean #[("a.txt", tenLines)]) "a.txt" twoChanged
+      holds := do
+        let hunks := lineHunks .stage tenLines twoChanged
+        let some first := hunks[0]? | return false
+        let staged ← stageHunk "a.txt" first
+        return hunks.size == 2 && succeeded staged && (← indexOf "a.txt") == some secondChanged &&
+            (← stateIs "a.txt" (.changed (some .modified) (some .modified))) },
+    { name :=
+        "staging a file's second hunk after its first is staged leaves the index as the working tree"
+      repository := writing (clean #[("a.txt", tenLines)]) "a.txt" twoChanged
+      holds := do
+        let first ← stageFirst "a.txt" twoChanged
+        let second ← stageFirst "a.txt" twoChanged
+        return succeeded first && succeeded second && (← indexOf "a.txt") == some twoChanged &&
+            (← stateIs "a.txt" (.changed (some .modified) none)) },
+    { name :=
+        "staging one of two changes three lines apart stages it alone: its context overlaps the other change and is the index's"
+      repository :=
+        writing (clean #[("a.txt", tenLines)]) "a.txt" (lineSet secondChanged 4 "five\n")
+      holds := do
+        let staged ← stageFirst "a.txt" (lineSet secondChanged 4 "five\n")
+        return succeeded staged && (← indexOf "a.txt") == some secondChanged },
+    { name := "unstaging one of two staged hunks leaves the index HEAD's with the other hunk"
+      repository :=
+        { committed := #[("a.txt", tenLines)], index := #[("a.txt", .file twoChanged)]
+          worktree := #[("a.txt", twoChanged)] }
+      holds := do
+        let some first := (lineHunks .unstage tenLines twoChanged)[0]? | return false
+        let unstaged ← unstageHunk "a.txt" first
+        return succeeded unstaged && (← indexOf "a.txt") == some (lineSet tenLines 8 "nine\n") &&
+            (← stateIs "a.txt" (.changed (some .modified) (some .modified))) },
+    { name := "a hunk whose lines are not in the index is refused, and the index is as it was"
+      repository := writing (clean #[("a.txt", tenLines)]) "a.txt" twoChanged
+      holds := do
+        let staged ← stageHunk "a.txt" (LineHunk.make 0 0 "" "nowhere\n" "else\n" "")
+        let unstaged ← unstageHunk "a.txt" (LineHunk.make 0 0 "" "nowhere\n" "else\n" "")
+        return !succeeded staged && !succeeded unstaged && (← indexOf "a.txt") == some tenLines },
+    { name :=
+        "a hunk changing a last line without a line feed, and one adding the line feed, each stage exactly"
+      repository :=
+        writing (writing (clean #[("c.txt", "a\nb\nc"), ("f.txt", "a\nb\nc")]) "c.txt" "a\nb\nC")
+          "f.txt" "a\nb\nc\n"
+      holds := do
+        let changed ← stageFirst "c.txt" "a\nb\nC"
+        let fed ← stageFirst "f.txt" "a\nb\nc\n"
+        return succeeded changed && succeeded fed && (← indexOf "c.txt") == some "a\nb\nC" &&
+            (← indexOf "f.txt") == some "a\nb\nc\n" },
+    { name :=
+        "a hunk of CRLF lines stages with its carriage returns, and an added line ending in spaces keeps them"
+      repository :=
+        writing
+          (writing (clean #[("crlf.txt", "a\r\nb\r\nc\r\n"), ("spaces.txt", "a\nb\n")]) "crlf.txt"
+            "a\r\nB\r\nc\r\n")
+          "spaces.txt" "a\nb\nc  \n"
+      holds := do
+        let crlf ← stageFirst "crlf.txt" "a\r\nB\r\nc\r\n"
+        let spaces ← stageFirst "spaces.txt" "a\nb\nc  \n"
+        return succeeded crlf && succeeded spaces &&
+            (← indexOf "crlf.txt") == some "a\r\nB\r\nc\r\n" &&
+            (← indexOf "spaces.txt") == some "a\nb\nc  \n" },
+    { name := "a hunk of a path with a space and of a non-ASCII path stages"
+      repository :=
+        writing
+          (writing (clean #[("with space.txt", "one\n"), ("héllo.txt", "one\n")]) "with space.txt"
+            "two\n")
+          "héllo.txt" "two\n"
+      holds := do
+        let spaced ← stageFirst "with space.txt" "two\n"
+        let accented ← stageFirst "héllo.txt" "two\n"
+        return succeeded spaced && succeeded accented &&
+            (← indexOf "with space.txt") == some "two\n" &&
+            (← indexOf "héllo.txt") == some "two\n" },
+    { name := "a hunk into a file the index holds empty stages"
+      repository := writing (clean #[("e.txt", "")]) "e.txt" "a\nb\n"
+      holds := do
+        let staged ← stageFirst "e.txt" "a\nb\n"
+        return succeeded staged && (← indexOf "e.txt") == some "a\nb\n" },
+    { name :=
+        "committing a staged change makes HEAD the index, and the status then shows only the unstaged change"
+      repository :=
+        { committed := #[("a.txt", "one\n")], index := #[("a.txt", .file "two\n")]
+          worktree := #[("a.txt", "three\n")] }
+      holds := do
+        let committed ← commit "a message\n"
+        return succeeded committed && (← fileAt "HEAD" "a.txt") == .ok (some "two\n") &&
+            (← stateIs "a.txt" (.changed none (some .modified))) },
+    { name := "committing on an unborn branch makes its first commit"
+      repository := { index := #[("a.txt", .file "a\n")], worktree := #[("a.txt", "a\n")] }
+      holds := do
+        let committed ← commit "first\n"
+        return succeeded committed && (← fileAt "HEAD" "a.txt") == .ok (some "a\n") &&
+            (← statusOf) == some { head := .branch "main" } },
+    { name := "committing with nothing staged is refused, and HEAD is as it was"
+      repository := writing (clean #[("a.txt", "one\n")]) "a.txt" "two\n"
+      holds := do
+        let before ← statusOf
+        let committed ← commit "nothing\n"
+        return !succeeded committed && (← fileAt "HEAD" "a.txt") == .ok (some "one\n") &&
+            before.isSome &&
+            (← statusOf) == before },
+    { name :=
+        "a commit a hook refuses fails with every line the hook printed on either stream, and HEAD and the index are as they were"
+      repository :=
+        { committed := #[("a.txt", "one\n")], index := #[("a.txt", .file "two\n")]
+          worktree := #[("a.txt", "two\n")]
+          hook := some "the hook says no on its output\nthe hook says no on its error\n" }
+      holds := do
+        let committed ← commit "refused\n"
+        return saidEach "the hook says no on its output\nthe hook says no on its error\n"
+              committed &&
+            (← fileAt "HEAD" "a.txt") == .ok (some "one\n") &&
+            (← indexOf "a.txt") == some "two\n" }]
 
 /-- The interface's properties. -/
 def properties : List Property :=
@@ -269,6 +442,7 @@ def properties : List Property :=
           return answer.directory.isAbsolute &&
               answer.paths.any (fun path => under path && path.fileName == some "HEAD") &&
               answer.paths.any (fun path => under path && path.fileName == some "index") &&
-              answer.trees == #[answer.directory / "refs"] }]
+              answer.trees == #[answer.directory / "refs"] }] ++
+    hunkProperties
 
 end Editor.VersionControlContract

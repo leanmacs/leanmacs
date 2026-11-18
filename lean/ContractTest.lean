@@ -3323,12 +3323,32 @@ def writeRevisions (home directory : System.FilePath)
     let commit := (← gitIn home directory #["commit-tree", tree, "-m", name]).trimAscii.toString
     discard <| gitIn home directory #["update-ref", s!"refs/tags/{name}", commit]
 
+/-- `text` as one word of `/bin/sh`: in single quotes, each of its own made
+`'\\''`. -/
+def shellQuoted (text : String) : String :=
+  "'" ++ "'\\''".intercalate (text.splitOn "'") ++ "'"
+
+/-- Writes the pre-commit hook of the repository at `directory` that refuses
+every commit, printing `printed`: its first line on its standard output and
+the rest on its standard error (`Repository.hook`). -/
+def writeHook (directory : System.FilePath) (printed : String) : IO Unit := do
+  let lines := VersionControl.linesOf printed |>.map (·.trimAsciiEnd.toString)
+  let say (line : String) (stream : String) := s!"printf '%s\\n' {shellQuoted line}{stream}\n"
+  let script :=
+    "#!/bin/sh\n" ++ String.join ((lines.toList.take 1).map (say · "")) ++
+      String.join ((lines.toList.drop 1).map (say · " >&2")) ++
+      "exit 1\n"
+  let hook := directory / ".git" / "hooks" / "pre-commit"
+  writeMaking hook script
+  IO.setAccessRights hook { user := { read := true, write := true, execution := true } }
+
 /-- Writes `repository` out as a git repository in `directory`, with git's
 own commands: initialised on its branch, `HEAD`'s files committed, checked
 out detached if it is, each index entry that differs from `HEAD` written
 with `update-index` (a conflict as its stages, through `--index-info`), each
-named revision committed and tagged (`writeRevisions`), and then the working
-tree made exactly `repository.worktree`. A file is written with the store's
+named revision committed and tagged (`writeRevisions`), the working tree
+made exactly `repository.worktree`, and a `hook` written as an executable
+`.git/hooks/pre-commit` (`writeHook`). A file is written with the store's
 escapes turned back into their bytes (`File.encodeText`), so a content may
 hold a byte that is not UTF-8. -/
 def writeGitRepository (home directory : System.FilePath)
@@ -3374,6 +3394,8 @@ def writeGitRepository (home directory : System.FilePath)
       IO.FS.removeFile (directory / path)
   for (path, content) in repository.worktree do
     writeMaking (directory / path) content
+  if let some printed := repository.hook then
+    writeHook directory printed
 
 /-- `check` handed a home and a repository directory of its own, under a
 temporary directory removed afterwards (`withBase`). -/
@@ -3386,10 +3408,17 @@ def withRepository {α : Type} (check : System.FilePath → System.FilePath → 
 /-- A user's global git config asking for what the git implementation's
 command line pins away (`Editor/VersionControl/Git.lean`, "The command
 lines"): copies found as well as renames, by `status.renames` and by
-`diff.renames`, and no untracked files listed. The editor runs git under
-the user's config, so the contract runs it under this one. -/
+`diff.renames`, and no untracked files listed; a commit's message
+stripped of lines that start with `#`; and a patch's whitespace fixed and
+its context matched loosely. It names a user, since no commit runs without
+one and the writer's own does not reach the editor's runs, and turns
+signing off. The editor runs git under the user's config, so the contract
+runs it under this one. -/
 def pinnedAwayConfig : String :=
-  "[status]\n\trenames = copies\n\tshowUntrackedFiles = no\n[diff]\n\trenames = copies\n"
+  "[status]\n\trenames = copies\n\tshowUntrackedFiles = no\n[diff]\n\trenames = copies\n" ++
+    "[user]\n\tname = a\n\temail = a@example.com\n" ++
+    "[commit]\n\tgpgSign = false\n\tcleanup = strip\n" ++
+    "[apply]\n\twhitespace = fix\n\tignoreWhitespace = change\n"
 
 /-- The names of the version-control contract's properties
 (`Editor/VersionControl/Contract.lean`) that do not hold of the git

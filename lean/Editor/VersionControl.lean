@@ -5,7 +5,8 @@ import Editor.Program
 # The version-control interface
 
 What the editor asks of a version-control system, in its own terms: which
-files of a repository have changed and how, and to stage or unstage files.
+files of a repository have changed and how, to stage or unstage files or
+one hunk of a file, and to commit what is staged.
 It is a port like the others (`Editor/Program.lean`): requests, a reply
 type for each, a pure model of a repository
 (`Editor/VersionControl/Model.lean`) and a contract every implementation is
@@ -40,6 +41,23 @@ against it.
 - **`unstage paths`** makes the index hold each path as `HEAD` has it, or
   removes it from the index when `HEAD` lacks it, an unborn branch's
   included.
+- **A hunk** (`LineHunk`) is one run of changed lines with the lines of
+  the index around it: the change a hunk makes, with the context that
+  locates it in the index. Each line keeps its line feed; only the last
+  line of a text may lack one, which is how "no newline at end of file"
+  is carried. Its context always comes from the index, the text the change
+  is applied to: the old side when staging, the new side when unstaging.
+- **`stageHunk path hunk`**: `hunk` is of the file against the index, and
+  the index's lines `before ++ removed ++ after` at row `oldLine` become
+  `before ++ added ++ after`. Lines that are not there refuse it, and the
+  index is as it was.
+- **`unstageHunk path hunk`**: `hunk` is of the index against `HEAD`, and
+  its reverse is applied to the index: the index's lines `before ++ added
+  ++ after` at row `newLine` become `before ++ removed ++ after`. Lines
+  that are not there refuse it.
+- **`commit message`** makes `HEAD` a new commit of the index whose message
+  is `message`. A refusal (nothing staged, a conflict, a hook that says no)
+  is `failed`, with everything the system printed.
 - **`fileAt revision path`** is the content of `path` at `revision`, decoded
   by the store's escape rule (`File.decodeBytes`), so a byte that is not
   UTF-8 is kept as its escape: `none` when the revision does not have the
@@ -62,7 +80,7 @@ both implementations behind it; none goes in ahead of them.
 
 | Addition | Where |
 |---|---|
-| Another question of the repository: the branches and the worktrees, and a diff between two revisions (phase 4). A file at a revision (`fileAt`) and what to watch (`watched`) are here (phase 2) | A constructor of `Request`, its case in `Request.Reply`, an operation here, a clause of `Model.handle`, a clause of `Git.handler`, and a property of the contract |
+| Another question of the repository: the branches and the worktrees, and a diff between two revisions (phase 4). A file at a revision (`fileAt`) and what to watch (`watched`) are here (phase 2), and staging and unstaging a hunk (`stageHunk`, `unstageHunk`) and committing (`commit`) (phase 3) | A constructor of `Request`, its case in `Request.Reply`, an operation here, a clause of `Model.handle`, a clause of `Git.handler`, and a property of the contract |
 | Another way a file differs | A constructor of `FileState` (or of `Change` or `Conflict`), its case in the parser (`Editor/VersionControl/Porcelain.lean`), in the model's status and printer, and in the status buffer's view (`Editor/VersionControl/Status.lean`) |
 | Another way a request fails | A constructor of `Error`, with its sentence in `Error.describe` |
 | Another system (jj) | A handler of these requests, held to the contract; nothing here |
@@ -253,6 +271,33 @@ instance : DecidableEq (Except Error Watched)
   | .ok _, .error _ => isFalse fun e => by cases e
   | .error _, .ok _ => isFalse fun e => by cases e
 
+/-- The lines of `text`, each with its line feed; the last may lack one. The
+empty text has none. -/
+def linesOf (text : String) : Array String :=
+  let parts := text.splitOn "\n"
+  let ended := (parts.dropLast.map (· ++ "\n")).toArray
+  match parts.getLast? with
+  | some "" | none => ended
+  | some last => ended.push last
+
+/-- One run of changed lines and the lines of the index around it: the change
+a hunk makes, with the context that locates it in the index ("The rules", in
+the module docs). -/
+structure LineHunk where
+  /-- The row, from 0, in the old text, of the first line of `before`. -/
+  oldLine : Nat
+  /-- The row, from 0, in the new text, of the first line of `before`. -/
+  newLine : Nat
+  /-- The context before the change: the index's lines before it. -/
+  before : Array String
+  /-- The old text's lines the change replaces. -/
+  removed : Array String
+  /-- The new text's lines that replace them. -/
+  added : Array String
+  /-- The context after the change: the index's lines after it. -/
+  after : Array String
+  deriving DecidableEq, Repr
+
 /-- What may be asked of a repository. -/
 inductive Request where
   /-- What is checked out, and every file that differs from it. -/
@@ -265,6 +310,13 @@ inductive Request where
   | fileAt (revision path : String)
   /-- What to watch so as to see `HEAD` or the index move. -/
   | watched
+  /-- Apply `hunk`, a hunk of `path` against the index, to the index. -/
+  | stageHunk (path : String) (hunk : LineHunk)
+  /-- Apply the reverse of `hunk`, a hunk of `path`'s index against `HEAD`,
+  to the index. -/
+  | unstageHunk (path : String) (hunk : LineHunk)
+  /-- Make `HEAD` a new commit of the index, with `message`. -/
+  | commit (message : String)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the status, nothing for a write,
@@ -275,6 +327,9 @@ def Request.Reply : Request → Type
   | .unstage _ => Except Error Unit
   | .fileAt .. => Except Error (Option String)
   | .watched => Except Error Watched
+  | .stageHunk .. => Except Error Unit
+  | .unstageHunk .. => Except Error Unit
+  | .commit _ => Except Error Unit
 
 /-- The version-control port: `Request` and the reply to each request. -/
 abbrev port : Port :=
@@ -309,5 +364,18 @@ def fileAt (revision path : String) : VersionControlM (Except Error (Option Stri
 /-- What to watch so as to see `HEAD` or the index move. -/
 def watched : VersionControlM (Except Error Watched) :=
   Program.request (port := port) .watched
+
+/-- Applies `hunk`, a hunk of `path` against the index, to the index. -/
+def stageHunk (path : String) (hunk : LineHunk) : VersionControlM (Except Error Unit) :=
+  Program.request (port := port) (.stageHunk path hunk)
+
+/-- Applies the reverse of `hunk`, a hunk of `path`'s index against `HEAD`, to
+the index. -/
+def unstageHunk (path : String) (hunk : LineHunk) : VersionControlM (Except Error Unit) :=
+  Program.request (port := port) (.unstageHunk path hunk)
+
+/-- Makes `HEAD` a new commit of the index, with `message`. -/
+def commit (message : String) : VersionControlM (Except Error Unit) :=
+  Program.request (port := port) (.commit message)
 
 end Editor.VersionControl
