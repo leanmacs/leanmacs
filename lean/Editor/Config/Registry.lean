@@ -249,7 +249,7 @@ reload drops it. Compiled code registers the shipped sources (through
 `Headless.Collaborators.sources`); `setup` registers more with
 `defineSource` (`Editor/Setup.lean`). The loop is told the lookup
 (`registered`, `Loop.Registered.sources`), and runs the source a prompt
-names inside the asking command (`StateRequest.askSource`,
+names inside the asking command (`ControlRequest.askSource`,
 `Editor/Command/Dispatch.lean`).
 
 The sources of a category (`sourcesIn`) are the names whose latest entry
@@ -258,7 +258,7 @@ entries come first, so config's source of a shipped name keeps the
 shipped one's place and answers in its stead, and config's of a new name
 come after the compiled ones, in config's order. The loop is told them
 (`Loop.Registered.categorySources`) for a prompt that asks for a category
-(`StateRequest.categorySources`).
+(`RegistryRequest.categorySources`).
 
 A `setup` that defines a source name twice is refused
 (`Registrations.sourceTwice`).
@@ -1103,7 +1103,8 @@ def unknownAtPoints (registry : Registry) : Array String :=
     registry.atPointUses.map (·.source) ++ registry.modes.flatMap (·.mode.atPoint.toArray)
   (named.filter fun name => (registry.atPoint? name).isNone).toList.eraseDups.toArray
 
-/-- What the loop is told of the registry for a command's state requests
+/-- What the loop is told of the registry for a command's state requests,
+its questions to the registry and its control requests
 (`Editor/Command/Dispatch.lean`): for a name a mode is registered under,
 its lineage, root first, whose on-enter actions run when the mode becomes a
 buffer's major mode; whether a job is registered under a name, for a

@@ -22,7 +22,9 @@ import ModelTest.Editor.Clipboard.Contract
 import ModelTest.Editor.Clipboard.Model
 import ModelTest.Editor.Command
 import ModelTest.Editor.Command.Append
+import ModelTest.Editor.Command.Control
 import ModelTest.Editor.Command.Dispatch
+import ModelTest.Editor.Command.Registry
 import ModelTest.Editor.Compile
 import ModelTest.Editor.Compile.Errors
 import ModelTest.Editor.Compile.Listing
@@ -116,17 +118,23 @@ import ModelTest.Editor.Themes.Solarized
 import ModelTest.Editor.TypedPath
 import ModelTest.Editor.UndoTree
 import ModelTest.Editor.Version
+import ModelTest.Editor.VersionControl.Blame
 import ModelTest.Editor.VersionControl.Commit
 import ModelTest.Editor.VersionControl.Contract
 import ModelTest.Editor.VersionControl.Git
 import ModelTest.Editor.VersionControl.Gutter
+import ModelTest.Editor.VersionControl.HistoryRead
 import ModelTest.Editor.VersionControl.Hunk
+import ModelTest.Editor.VersionControl.Log
 import ModelTest.Editor.VersionControl.Model
 import ModelTest.Editor.VersionControl.Plumbing
 import ModelTest.Editor.VersionControl.Porcelain
+import ModelTest.Editor.VersionControl.Review
+import ModelTest.Editor.VersionControl.ReviewHunks
 import ModelTest.Editor.VersionControl.Show
 import ModelTest.Editor.VersionControl.Stage
 import ModelTest.Editor.VersionControl.Status
+import ModelTest.Editor.VersionControl.Views
 import ModelTest.Editor.VersionControl.Worktrees
 import ModelTest.Editor.Watch.Contract
 import ModelTest.Editor.Watch.Model
@@ -190,7 +198,12 @@ and the watch model side by side (`EditorModel`). `commandPortChecks` pin
 what that runner does with each sub-port's requests: a text program lifted
 into a command does what it does alone, the display answers from the text
 model's snapshots, a display refusal is the text port's of the same name,
-and a watch request goes to the watch model.
+and a watch request goes to the watch model. `registryRequestChecks` and
+`controlRequestChecks` pin what a runner answers a question to the
+registry and a control request where no loop runs the command
+(`Editor/Command/Registry.lean`, `Editor/Command/Control.lean`), and
+`dispatchRegistryChecks` the loop's answers to the questions and that
+neither sub-port is guarded.
 
 The watch port's contract (`Editor/Watch/Contract.lean`: the interrupt flag
 and a clock) is run against its model here (`watchFailures`), and
@@ -849,6 +862,10 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
 - `versionControlPlumbingChecks`: the readers of git's plumbing
   (`Editor/VersionControl/Plumbing.lean`): the worktree list, the branches,
   a raw diff and a batch of blobs, and what each refuses;
+- `versionControlHistoryParserChecks`: the readers of git's history
+  (`Editor/VersionControl/HistoryRead.lean`): a log, a blame with two
+  authors and a commit named twice, and a range-diff of each relation, on
+  fixtures, and what each refuses;
 - `versionControlModelChecks`: the model of a repository: its status of
   each state, how it pairs renames, what its writes do, and that the real
   parser reads what its printer prints as its status;
@@ -856,15 +873,21 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   (`Editor/VersionControl/Contract.lean`) against the model, and the git
   implementation's status read of each of its repositories on the job
   model that prints it (`Repository.jobModel`);
-- `versionControlGitChecks`, `versionControlWorktreeGitChecks` and
-  `versionControlShowChecks`: the git implementation
-  (`Editor/VersionControl/Git.lean`) on the job model: the command lines it
-  runs for the status and its writes, for worktrees, branches and changes,
-  and for `show` and `watched`, their environments and limits, and how it
+- `versionControlGitChecks`, `versionControlWorktreeGitChecks`,
+  `versionControlHistoryGitChecks` and `versionControlShowChecks`: the git
+  implementation (`Editor/VersionControl/Git.lean`) on the job model: the
+  command lines it runs for the status and its writes, for worktrees,
+  branches and changes, for a log, a blame, a range-diff and a change
+  against no base, and for `show` and `watched`, their environments and limits, and how it
   reads what they answer;
 - `hunkChecks`: the pure core of staging a hunk
   (`Editor/VersionControl/Hunk.lean`) and the patch the git implementation
   feeds `git apply` (`Git.patch`);
+- `reviewHunkChecks`, `reviewOrderChecks` and `reviewRecordChecks`: the
+  pure core of the review buffer (`Editor/VersionControl/ReviewHunks.lean`):
+  a change's hunks with their context and git's numbers, on strings; the
+  order of a change's files, over the change the version-control model
+  gives; and the record, its counts and the hunk at an offset;
 - `statusViewChecks` and `worktreeViewChecks`: the pure views of the status
   buffer (`Editor/VersionControl/Status.lean`) and of the worktree list
   (`Editor/VersionControl/Worktrees.lean`), on values the model gives;
@@ -881,7 +904,29 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   (`Editor/VersionControl/Gutter.lean`) on that driver and the model of
   watches, whose waiting jobs it holds parked: the head fetched, the marks
   of a diff, and what a commit made outside the editor and HEAD moving
-  while a fetch or a diff runs change.
+  while a fetch or a diff runs change;
+- `reviewBufferChecks`: the review buffer
+  (`Editor/VersionControl/Review.lean`) on that driver, its read run over
+  the version-control interface's model (`Model.readHandler`): the four
+  criteria of the excerpts roadmap's phase 4, its refusals, refresh, the
+  old buffers a round that ends early removes, the rounds its store keeps,
+  the commit each records and the store's migration, edits through its
+  excerpts, a commit's review, and `vc-review-since`, into a review buffer
+  and, past a rewritten branch, the range-diff buffer;
+- `logViewChecks` and `logBufferChecks`, `blameViewChecks` and
+  `blameBufferChecks`: the log buffer (`Editor/VersionControl/Log.lean`)
+  and the blame view (`Editor/VersionControl/Blame.lean`), their pure views
+  on values and their commands on that driver, their reads over the
+  interface's model: what each lists, with each commit's author, and the
+  review a row's visit opens;
+- `versionControlViewsChecks`: what the version-control buffers share
+  (`Editor/VersionControl/Views.lean`), on values: a day as the log's and
+  the blame's rows show it;
+- `excerptViewedChecks`: what a view shows of a tracked excerpt
+  (`Editor/ExcerptView.lean`) and the marking of what was viewed
+  (`EditorState.markViewed`, `creditViewed`), on hand-built rows and
+  entries; the loop's marking and the face of what was not examined are
+  among `excerptDisplayChecks`, on the loop's driver.
 -/
 
 namespace ModelTest
@@ -935,6 +980,8 @@ def checks : List Check :=
     displayChecks ++
     frameDisplayChecks ++
     commandPortChecks ++
+    registryRequestChecks ++
+    controlRequestChecks ++
     watchChecks ++
     clipboardChecks ++
     fuzzyChecks ++
@@ -983,6 +1030,7 @@ def checks : List Check :=
     modeRegistryChecks ++
     modeDispatchChecks ++
     modeEnterChecks ++
+    dispatchRegistryChecks ++
     highlightFaceChecks ++
     highlightEnterChecks ++
     treeObjectRuleChecks ++
@@ -1062,6 +1110,7 @@ def checks : List Check :=
     readOnlyChecks ++
     excerptBufferChecks ++
     excerptDisplayChecks ++
+    excerptViewedChecks ++
     compileChecks ++
     compileErrorChecks ++
     compileLocationChecks ++
@@ -1072,10 +1121,15 @@ def checks : List Check :=
     projectModeChecks ++
     versionControlParserChecks ++
     versionControlPlumbingChecks ++
+    versionControlHistoryParserChecks ++
     versionControlModelChecks ++
     versionControlGitChecks ++
     versionControlWorktreeGitChecks ++
+    versionControlHistoryGitChecks ++
     hunkChecks ++
+    reviewHunkChecks ++
+    reviewOrderChecks ++
+    reviewRecordChecks ++
     versionControlShowChecks ++
     statusViewChecks ++
     statusBufferChecks ++
@@ -1085,7 +1139,13 @@ def checks : List Check :=
     gutterCarryChecks ++
     gutterChecks ++
     stageHunkChecks ++
-    commitBufferChecks
+    commitBufferChecks ++
+    reviewBufferChecks ++
+    logViewChecks ++
+    logBufferChecks ++
+    blameViewChecks ++
+    blameBufferChecks ++
+    versionControlViewsChecks
 
 end ModelTest
 

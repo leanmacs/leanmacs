@@ -209,15 +209,17 @@ holds no job table.
   as a value the command sees, with `noSuchJob` for a name the step was not
   told a job is registered under (`Loop.Registered.jobs`).
 - **A start is kept in the state** until the command ends
-  (`EditorState.starts`). After a command that ran to its end the loop
-  takes the starts out of the state and hands them back with the step, in
-  the order they were asked for. A command that did not run to its end
+  (`EditorState.Outbox.starts`). The starts, the cancels, the answers, the
+  reload and the theme are one field of the state (`EditorState.outbox`,
+  `Editor/State/Outbox.lean`), which the loop takes out whole. After a
+  command that ran to its end the loop takes the starts out of the state
+  and hands them back with the step, in the order they were asked for. A command that did not run to its end
   starts no job: its starts go with the state it left.
 - **A start may carry a key, and a command may cancel a key**
   (`cancelJob`): the cancels are kept in the state too
-  (`EditorState.cancels`), taken out with the starts after a command that
-  ran to its end, and handed back in `Loop.Stepped.cancels`, ahead of the
-  loop's own ("Auto-reload"). A command that did not run to its end
+  (`EditorState.Outbox.cancels`), taken out with the starts after a
+  command that ran to its end, and handed back in `Loop.Stepped.cancels`,
+  ahead of the loop's own ("Auto-reload"). A command that did not run to its end
   cancels nothing. The host ends the job of each key, and starting a job
   of a key ends the running job of that key first ("Keyed jobs", below).
 - **The host starts each**, for whoever registered it, and when the job has
@@ -245,8 +247,9 @@ The open prompt is editor state (`Editor/State.lean`, "Prompts"), so the
 loop has little of its own to do.
 
 - **An answer is kept in the state** until the accepting command ends
-  (`EditorState.answered`): the prompt's continuation with the answer as
-  its first argument, recorded by the request that closed the prompt.
+  (`EditorState.Outbox.answered`): the prompt's continuation with the
+  answer as its first argument, recorded by the request that closed the
+  prompt.
   After a command that ran to its end the loop takes the answers out of
   the state and hands them back with the step (`Loop.Stepped.answered`),
   as it does the jobs to start. A command that did not run to its end
@@ -284,7 +287,7 @@ loop has little of its own to do.
   (`Editor/BindingSearch.lean`), so it runs as its key would: the scheme's
   own invocation, with no count and no register, and the scheme's state
   changed as the key changes it.
-- **Which keys reach a command** (`StateRequest.keyBindings`) is answered
+- **Which keys reach a command** (`RegistryRequest.keyBindings`) is answered
   per step, from the scheme's state the step's report is computed from
   (`Loop.keyBindingsIn`): after the key, after the answer, the loop's for
   an invocation, after `invoked` for a menu item. A command a job runs is
@@ -524,10 +527,10 @@ one-shot output of the step, like the jobs to start
 (`docs/design/concurrency.md`, "Reload").
 
 - **The request is kept in the state** until the command ends
-  (`EditorState.reload`). After a command that ran to its end the loop
-  takes it out and hands it back with the step (`Loop.Stepped.reload`). A
-  command that did not run to its end asks for none: the flag goes with
-  the state it left.
+  (`EditorState.Outbox.reload`). After a command that ran to its end the
+  loop takes it out and hands it back with the step
+  (`Loop.Stepped.reload`). A command that did not run to its end asks for
+  none: the flag goes with the state it left.
 - **The host asks its config session**, as it does for its driver's
   request: one reload job at a time, and a request made while one runs
   makes one follow-up (`Editor/Config/Reload.lean`). The reload is
@@ -547,9 +550,9 @@ theme in force is the reload reducer's, so the request is a one-shot output
 of the step, as a reload is.
 
 - **The request is kept in the state** until the command ends
-  (`EditorState.theme`, the latest one asked for). After a command that ran
-  to its end the loop takes it out and hands it back with the step
-  (`Loop.Stepped.theme`). A command that did not run to its end asks for
+  (`EditorState.Outbox.theme`, the latest one asked for). After a command
+  that ran to its end the loop takes it out and hands it back with the
+  step (`Loop.Stepped.theme`). A command that did not run to its end asks for
   none.
 - **The host switches the theme** with no reload: it feeds its reload
   reducer a choice (`Config.Event.choose`), hands its display the new theme
@@ -905,8 +908,10 @@ changed the state or not (`Loop.publish`):
    badge, every field in `mode-line.inactive`, and that face as its row's
    (`View.statusFace`); the selected one's row is in `mode-line.active`
    (`ModeLine.activeFace`), whose background marks it. "Modified" is the
-   `modified` segment's mark (`Buffer.isModified`): a buffer that is not
-   has no such field. The answer is right because the histories were told
+   `modified` segment's mark (`ModeLine.Context.modified`): for a plain
+   buffer `Buffer.isModified`, and for an excerpt buffer whether a buffer
+   over one of its entries' sources is; one that is not has no such
+   field. The answer is right because the histories were told
    their texts' revisions in step 1. A selection marker the text does not
    answer for gives a context with no cursor, and so no line:col and no
    position. The minibuffer's view has another status line
@@ -941,6 +946,21 @@ changed the state or not (`Loop.publish`):
    is listed after every tile and docked window, so the display, which
    draws views in scene order each over its own background, draws it
    above them.
+
+   **4b. What was viewed.** Once the views are decorated, the time between
+   the last publish and this one, on the clock the step's keys hand
+   (`Loop.Keys.now`), is credited to each tracked excerpt the last scene
+   showed (`EditorState.creditViewed`), of each buffer that still has as
+   many entries as it had then. Then each view of an excerpt buffer with a
+   tracked entry asks the display which rows it shows, as the follow asks,
+   with its blocks, and each excerpt a row starts in is marked shown by one
+   more scene, first at `now` (`Loop.viewedBy`, `ExcerptView.shown`,
+   `EditorState.markViewed`). It comes after the decorations because the
+   face of what was not examined shows the state before this scene: an
+   excerpt is drawn unexamined in the first scene that shows it
+   ("Decorations", below). A view of no height, and one whose questions are
+   refused, marks nothing. The loop keeps what it marked and the time
+   (`Loop.viewing`, `Loop.publishedAt`) for the next publish.
 5. **The candidate list and the tab bar** (`Loop.candidateListView`,
    `Loop.tabBarView`, `Editor/TabBar.lean`), each a view over generated
    text made, kept and drawn by one procedure (`Loop.generatedView`,
@@ -1038,8 +1058,9 @@ auto-reload is on.** A config's own jobs may still watch, as a plugin would.
   by `auto-reload-mode`, the ex names `autoread` and `noautoread`), which
   lasts until the editor stops and survives a reload of config; and
   otherwise config's setting (`autoReload` in `setup`,
-  `Loop.Registered.autoReload`); and otherwise off. The state request
-  `autoReloadMode` answers it from the dispatcher.
+  `Loop.Registered.autoReload`); and otherwise off. `Files.autoReloadOn`
+  reads the choice from the state and asks the registry for config's
+  setting (`RegistryRequest.autoReload`), which the dispatcher answers.
 - **The reconciler** (`Loop.reconcile`, after each publish, in
   `Loop.fileJobs`) keeps `EditorState.following` in step with what is
   wanted: every open file buffer with no save in flight, while the mode is
@@ -1087,11 +1108,14 @@ excerpt of its source (`ExcerptView.sourceSpansOf`,
 `Editor/ExcerptView.lean`); its buffer's spans (`Buffer.spans`,
 `Editor/State.lean`, "Buffers"), each in the face its owner gave it, such
 as the compile mode's locations (`Editor/Compile.lean`, "Locations"); then
-the matches of the last search (`EditorState.lastSearch`), each in the face
-`search-match` (`searchMatchFace`, defined in the built-in theme,
-`Editor/Face.lean`). A later decoration is drawn over an earlier one, so a
-match is over a span, and an excerpt buffer's own span (a review's mark,
-later) is over its sources'.
+what no scene has shown of its tracked excerpts, each in
+`review-unexamined` (`ExcerptView.unexaminedOf`), read before this scene
+marks what it shows (step 4b of "After each event"); then the matches of
+the last search (`EditorState.lastSearch`), each in the face `search-match`
+(`searchMatchFace`, defined in the built-in theme, `Editor/Face.lean`). A
+later decoration is drawn over an earlier one, so a match is over a span,
+the mark of what was not examined is over the buffer's own spans, and an
+excerpt buffer's own span is over its sources'.
 
 A view of an excerpt buffer also has its headers as blocks
 (`View.blocks`, `ExcerptView.blocksOf`), read of the snapshot it shows when
@@ -1385,6 +1409,13 @@ structure Loop (scheme : InputScheme) where
   /-- The pauses of completion at point the loop last asked its host to arm,
   if any ("Completion at point", in the module docs). -/
   pausing : Option Loop.Pausing := none
+  /-- What the last scene showed of tracked excerpts: each excerpt buffer, how
+  many entries it had, and the indexes of the tracked excerpts its views
+  showed ("After each event", in the module docs, step 4b). -/
+  viewing : Array (BufferId × Nat × Array Nat) := #[]
+  /-- The host clock's milliseconds at the last publish, once there was
+  one. -/
+  publishedAt : Option Nat := none
 
 /-- What the loop does after a step. -/
 inductive Loop.Next where
@@ -1496,6 +1527,10 @@ structure Loop.Keys (scheme : InputScheme) where
   `Loop.keyHintDelay` (`Headless.Running.keys`); a loop handed none never
   shows them, as a loop handed no padding has none. -/
   keyHintDelay : Completion.Keys.Delay := .never
+  /-- The host clock's milliseconds at this step, which what is viewed of a
+  tracked excerpt is timed by ("After each event", in the module docs, step
+  4b). A loop handed none records 0, so every duration is 0. -/
+  now : Nat := 0
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -1703,10 +1738,12 @@ reports the fields `reported` (`ModeLine.Context`): its buffer; its cursor,
 the head of the primary range of its selection, as a row and a column in
 cells of the snapshot; the snapshot's lines (`SnapshotId.lineCount`);
 whether it is the selected view
-(`EditorState.selectedView`); and, for the selected view only, `pending`,
-the keys pending (`pending`), which the `pending-keys` segment draws. It is
-not refused: when the selection marker or the snapshot does not answer,
-there is no cursor and no row. -/
+(`EditorState.selectedView`); whether it is modified: a plain buffer
+when it is (`Buffer.isModified`), and an excerpt buffer when a buffer over
+one of its entries' sources is (`EditorState.bufferOver?`); and, for the
+selected view only, `pending`, the keys pending (`pending`), which the
+`pending-keys` segment draws. It is not refused: when the selection marker
+or the snapshot does not answer, there is no cursor and no row. -/
 def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : SnapshotId)
     (reported : Array StatusField) (pending : String := "") : TextM ModeLine.Context := do
   let marker := target.window.selection
@@ -1719,10 +1756,16 @@ def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : 
     match ← (observing read : TextM (Except TextError (Point × Nat))) with
     | .ok (point, lines) => (some point, lines)
     | .error _ => (none, 0)
+  let modified :=
+    match target.buffer.excerpts with
+    | some excerpts =>
+      excerpts.entries.any fun entry =>
+        ((state.bufferOver? entry.source).bind state.buffer?).any (·.isModified)
+    | none => target.buffer.isModified
   let selected := id == state.selectedView
   return {
       buffer := target.buffer, reported, cursor, lines, selected
-      pending := if selected then pending else "" }
+      pending := if selected then pending else "", modified }
 
 /-- The views of the loop's state, in drawing order, and the snapshots they
 name: its windows, and the minibuffer's view in the minibuffer's place
@@ -1823,9 +1866,10 @@ def marksOf (state : EditorState) (view : View) : TextM (Array GutterMark) := do
 /-- The decorations of `view` in `state` ("Decorations", in the module docs),
 for a view that is not the minibuffer's, over the range from the row of the
 view's scroll anchor through `rect.height / heights.text + 1` rows below:
-its buffer's spans in that range (`spansIn`), then, when there is a last
-search, each match of its pattern there that is not empty, in
-`searchMatchFace`, in order. A pattern the syntax refuses draws no match,
+for an excerpt buffer, its sources' spans, then its buffer's spans in that
+range (`spansIn`), then what is not examined of its tracked excerpts
+(`ExcerptView.unexaminedOf`), then, when there is a last search, each match
+of its pattern there that is not empty, in `searchMatchFace`, in order. A pattern the syntax refuses draws no match,
 and a text that refuses draws nothing. -/
 def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration) := do
   if state.prompt.map (·.view) == some view.id then
@@ -1836,7 +1880,10 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
     let snapshot := view.snapshot
     -- An excerpt buffer's sources' spans come first, under its own.
     let sources := spansIn (← ExcerptView.sourceSpansOf state target.buffer snapshot) start stop
-    let spans := sources ++ spansIn target.buffer.spans start stop
+    -- What no scene has shown of a tracked excerpt, read before this
+    -- scene marks what its rows show.
+    let unexamined := spansIn (← ExcerptView.unexaminedOf target.buffer snapshot) start stop
+    let spans := sources ++ spansIn target.buffer.spans start stop ++ unexamined
     let some search := state.lastSearch | return spans
     match ← snapshot.matches search.pattern start stop with
     | .ranges all =>
@@ -2332,6 +2379,40 @@ def candidateListView (state : EditorState) (shown : Array Shown) :
       (fun state drawn => { state with candidateList := some drawn }) rect sheet.text
       sheet.decorations shown
 
+/-- What `views` of `state` show of tracked excerpts ("After each event", in
+the module docs, step 4b): for each view of an excerpt buffer with a tracked
+entry (`Buffer.ExcerptEntry.viewed`), the excerpts the rows the display
+answers for it show (`ExcerptView.shown`), asked as the follow asks, with its
+blocks; each buffer once, with how many entries it has and what its views
+show between them. A view of no height and one whose questions are refused
+show nothing. -/
+def viewedBy (state : EditorState) (views : Array View) :
+    EditorM (Array (BufferId × Nat × Array Nat)) := do
+  let mut viewing : Array (BufferId × Nat × Array Nat) := #[]
+  for view in views do
+    if view.rect.height == 0 then
+      continue
+    let some target := state.target? view.id | continue
+    let some excerpts := target.buffer.excerpts | continue
+    unless excerpts.entries.any (·.viewed.isSome) do
+      continue
+    let asked : EditorM (Array Nat) := do
+      let .anchor anchor ← view.scroll.text.marker view.scroll | throw .noSuchMarker
+      let placed ← view.snapshot.excerpts
+      let area :=
+        Scroll.Area.ofRect view.snapshot view.rect (state.bottomRow view.id) view.padding
+          view.blocks
+      return ExcerptView.shown placed (← area.rows anchor.offset)
+    let .ok indices ← (observing asked : EditorM (Except TextError (Array Nat))) | continue
+    let id := target.window.buffer
+    viewing :=
+      match viewing.findIdx? (·.1 == id) with
+      | some index =>
+        viewing.modify index fun (id, count, was) =>
+          (id, count, was ++ indices.filter (!was.contains ·))
+      | none => viewing.push (id, excerpts.entries.size, indices)
+  return viewing
+
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
 (`EditorState.settleQuit`), brings an open prompt's listing up to date
@@ -2357,8 +2438,8 @@ the echo area of the state it returns. -/
 def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (padding : Nat := 0)
     (layout : Option Layout := none) (tabBar : Option TabBar.Shown := none)
     (matching : Completion.Matching := .standard) (inlineMatches : Nat := Loop.inlineMatches)
-    (displaying : Completion.Displaying := .standard) (keyHints : Array KeyHint := #[]) :
-    EditorM (Loop scheme) := do
+    (displaying : Completion.Displaying := .standard) (now : Nat := 0)
+    (keyHints : Array KeyHint := #[]) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
@@ -2417,6 +2498,21 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   followed placed.scrollMargin placed.bottomRow (views.filter (floating placed))
   -- The matches are read from where each anchor now is.
   let views ← decorated placed views
+  -- What was viewed of tracked excerpts, once the decorations have read
+  -- what was not examined: the last scene's time on screen is credited to
+  -- what it showed, and what this scene's rows show is marked.
+  let elapsed := now - loop.publishedAt.getD now
+  let credited :=
+    loop.viewing.foldl
+      (fun (state : EditorState) (id, count, indices) =>
+        if ((state.buffer? id).bind (·.excerpts)).any (·.entries.size == count) then
+          state.creditViewed id indices elapsed
+        else state)
+      placed
+  let viewing ← viewedBy credited views
+  let placed :=
+    viewing.foldl (fun (state : EditorState) (id, _, indices) => state.markViewed id indices now)
+      credited
   -- The candidate list's view and then the tab bar's come last, once the
   -- views are followed and decorated: they are never followed and get no
   -- search match.
@@ -2452,7 +2548,8 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
       gaveUp before placed
   return { loop with
       state := state.refusedBy (unreleased <|> ungiven), shown := named
-      input := forgetViews closed loop.input, atRest := forgetViews closed loop.atRest, typed }
+      input := forgetViews closed loop.input, atRest := forgetViews closed loop.atRest, typed
+      viewing, publishedAt := some now }
 
 /-- Replaces what each range of `target`'s selection covers with `text`, as
 one transaction with the user's origin, which carries the selection before
@@ -2690,20 +2787,9 @@ structure Ran where
   write : Option Config.Write := none
   /-- The log entry of a command that took longer than the threshold. -/
   log : Array String := #[]
-  /-- The jobs the command asked to be started, when it ran to its end. -/
-  starts : Array JobStart := #[]
-  /-- The keys of the jobs the command asked to be cancelled, when it ran to
-  its end. -/
-  cancels : Array String := #[]
-  /-- The invocations to run next, when the command ran to its end: the
-  continuations of the prompts it accepted, each with its answer, and the
-  invocations it asked to be run after it. -/
-  answered : Array Invocation := #[]
-  /-- Whether the command asked for the config to be reloaded, when it ran
-  to its end. -/
-  reload : Bool := false
-  /-- The theme the command asked to be loaded, when it ran to its end. -/
-  theme : Option String := none
+  /-- What the command asked to be handed on, when it ran to its end or
+  broke off (`EditorState.outbox`); empty for a command that did not. -/
+  outbox : EditorState.Outbox := {}
   /-- What the command typed in place of typed text, each with its view,
   when it ran to its end (`EditorState.retyped`): the input scheme is told
   it as committed text (`ranInto`). -/
@@ -2745,14 +2831,13 @@ def keyBindingsIn (keys : Keys scheme) (state : EditorState) (input : scheme.Sta
 command ("Every command goes through the loop", in the module docs):
 dispatched (`EditorM.dispatched`: guarded, with its state requests answered
 from `state`). The state of a command that ran to its end is the one it
-left, with the jobs it asked for, the invocations to run next and a reload
-it asked for taken out and handed back. It is not
-refused: a refusal of the command, an interrupt and the reason of a command
-that gave up are each said in the echo area, after `name`, and a command
-that was refused or interrupted, or that gave up, is rolled back to the
-state from before it, with what could not be said after it. The reason of
-a command that broke off is said the same way, and the state it reached is
-kept as that of a command that ran to its end is.
+left, with its outbox (`EditorState.Outbox`) taken out and handed back.
+It is not refused: a refusal of the command, an interrupt and the reason
+of a command that gave up are each said in the echo area, after `name`,
+and a command that was refused or interrupted, or that gave up, is rolled
+back to the state from before it, with what could not be said after it.
+The reason of a command that broke off is said the same way, and the
+state it reached is kept as that of a command that ran to its end is.
 
 A command the command has run inside it is the one `keys` has of the name
 (`Loop.Keys.command?`), and one that asks for a store to be written gives
@@ -2797,18 +2882,13 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     return {
         state :=
           { left.refusedBy ungiven with
-            starts := #[], cancels := #[], answered := #[], reload := false, theme := none
-            retyped := #[] }
+            outbox := {}, retyped := #[] }
         ending
         closed := closedViews state left
         opened := openedMinibuffer state left
         write
         log
-        starts := left.starts
-        cancels := left.cancels
-        answered := left.answered
-        reload := left.reload
-        theme := left.theme
+        outbox := left.outbox
         retyped := if ending == .finished then left.retyped else #[] }
   match outcome with
   | .finished write =>
@@ -2867,12 +2947,12 @@ def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
     next := .continue
     write := ran.write
     log := ran.log
-    starts := ran.starts
-    answered := ran.answered
-    reload := ran.reload
-    theme := ran.theme
+    starts := ran.outbox.starts
+    answered := ran.outbox.answered
+    reload := ran.outbox.reload
+    theme := ran.outbox.theme
     ended := some ran.ending
-    cancels := ran.cancels }
+    cancels := ran.outbox.cancels }
 
 /-- One key through the scheme, for the focused view, and the invocation it
 yields, if it yields one, run (`run`): what the step hands back, with the
@@ -3193,7 +3273,7 @@ def publishHinted (keys : Keys scheme) (loop : Loop scheme) :
   let (hinted, change) ← loop.keyHinted keys
   let published ←
     hinted.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
-        keys.inlineMatches keys.displaying (keyHints := hinted.shownHints keys)
+        keys.inlineMatches keys.displaying keys.now (keyHints := hinted.shownHints keys)
   return (published, change)
 
 /-- `stepped`, a step whose scene is not yet published, once it is

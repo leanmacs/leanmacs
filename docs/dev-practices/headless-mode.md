@@ -1618,7 +1618,12 @@ otherwise), the state's badge in the status line (`NORMAL`, `INSERT`,
 form (`tests/headless/open-file/`): the entry copies the tree `tree/`
 (`alpha.txt`, `beta.txt`, `.hidden` and `notes/todo.md`) into its
 temporary directory and writes the template `script` there with that
-directory's path in place of `@DIR@`. The script loads no config. It runs
+directory's path in place of `@DIR@`. It makes that directory with
+`mktemp -d /tmp/open-file.XXXXXXXX`, not under `$TMPDIR`, so that its
+path is 23 bytes on every machine: the prompt's view prints the cursor's
+byte offset over the absolute path typed, which writing the path `@DIR@`
+does not change, so the offset is the same everywhere only if the path's
+length is. The script loads no config. It runs
 `open-file` and joins: the prompt starts with the executable's working
 directory and lists it, which is never printed. `C-u` deletes the input,
 and the tree's directory is committed and listed: `notes/`, annotated
@@ -1650,7 +1655,7 @@ job 3 files: ok
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 12, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "@DIR@/tree/", scroll 0, selections 69..69, padding 8 0
+view 1 0,0 0x0: "@DIR@/tree/", scroll 0, selections 29..29, padding 8 0
 status 1: minibuffer.prompt "Open file: "
 view 2 0,0 0x0: "notes/     directory\nalpha.txt\nbeta.txt", scroll 0, selections , padding 8 0
 decorations 2: minibuffer.candidate 0..20 minibuffer.annotation 11..20 minibuffer.candidate 21..30 minibuffer.candidate 31..39
@@ -1658,7 +1663,7 @@ status 2: -
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 14, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "@DIR@/tree/.", scroll 0, selections 70..70, padding 8 0
+view 1 0,0 0x0: "@DIR@/tree/.", scroll 0, selections 30..30, padding 8 0
 status 1: minibuffer.prompt "Open file: "
 view 2 0,0 0x0: ".hidden\nalpha.txt\nbeta.txt", scroll 0, selections , padding 8 0
 decorations 2: minibuffer.candidate 0..7 minibuffer.match 0..1 minibuffer.candidate 8..17 minibuffer.match 13..14 minibuffer.candidate 18..26 minibuffer.match 22..23
@@ -1667,7 +1672,7 @@ key arrived: <Backspace> Backspace -
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 17, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "@DIR@/tree/no", scroll 0, selections 71..71, padding 8 0
+view 1 0,0 0x0: "@DIR@/tree/no", scroll 0, selections 31..31, padding 8 0
 status 1: minibuffer.prompt "Open file: "
 view 2 0,0 0x0: "notes/  directory", scroll 0, selections , padding 8 0
 decorations 2: minibuffer.candidate 0..17 minibuffer.match 0..2 minibuffer.annotation 8..17
@@ -1679,7 +1684,7 @@ job 4 files: ok
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 22, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "@DIR@/tree/notes/", scroll 0, selections 75..75, padding 8 0
+view 1 0,0 0x0: "@DIR@/tree/notes/", scroll 0, selections 35..35, padding 8 0
 status 1: minibuffer.prompt "Open file: "
 view 2 0,0 0x0: "todo.md", scroll 0, selections , padding 8 0
 decorations 2: minibuffer.candidate 0..7
@@ -1708,7 +1713,7 @@ job 10 files: ok
 scene 0x0, focused 3, echo "files: cannot list @DIR@/tree/missing/: nothing is at the path", echo padding 8, preedit -, published 43, theme "default"
 view 0 0,0 0x0: "todo: list the files\n", scroll 0, selections 0..0, padding 8 8
 status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "todo.md" +4, mode-line.secondary "@DIR@/tree/notes" +4 | mode-line.secondary "code" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 3 0,0 0x0: "@DIR@/tree/missing/", scroll 0, selections 77..77, padding 8 0
+view 3 0,0 0x0: "@DIR@/tree/missing/", scroll 0, selections 37..37, padding 8 0
 status 3: minibuffer.prompt "Open file: "
 view 2 0,0 0x0: "", scroll 0, selections , padding 8 0
 status 2: -

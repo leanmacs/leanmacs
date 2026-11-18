@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Mode
 import Editor.VersionControl.Status
+import Editor.VersionControl.Views
 import Editor.Workspace.Attach
 
 /-!
@@ -238,17 +239,12 @@ def listed (order : ReadOrder) (reply : Except Error (Array Worktree)) : EditorM
         replace id content
         pure id
       | none =>
-        let .ok id ←
-          createBuffer (state.freeName (worktreesBufferName order.label)) content | return
-        discard <| id.setReadOnly true
-        Workspace.setBufferWorkspace id location
+        let some id ← readOnlyBufferOf (worktreesBufferName order.label) content location | return
         discard <| id.setMajorMode worktreesModeName
         pure id
     discard <| Workspace.set worktreesStore location { buffer := some id.index, worktrees }
     if order.shows then
-      let state ← editorState
-      let asking := if (state.window? order.view).isSome then order.view else state.frame.focused
-      discard <| id.display asking worktreesName
+      displayFor id order.view worktreesName
 
 /-- The worktree list read job: asks its order's repository for its
 worktrees through git, and finishes with what it comes to (`listed`). It
@@ -357,16 +353,13 @@ def visitFindWork (arguments : List Argument) : Work := fun _ => do
 /-- `vc-worktrees-visit` ("The commands", in the module docs). -/
 def worktreesVisitCommand (call : Call) : EditorM Unit := do
   let some (order, record) ← worktreesOf call worktreesVisitName | return
-  let selection ← call.target.selection
-  let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
-  let row := (← call.target.buffer.text.pointOf head).row
   let some worktree :=
     WorktreeView.entryAt record.worktrees
-      row | message s!"{worktreesName}: no worktree on this line"
+      (← cursorRowOf call) | message s!"{worktreesName}: no worktree on this line"
   if worktree.path == order.root then
     startRead { order with shows := true }
     return
-  let (settings, generation) ← EditorState.ask .workspaceSettings
+  let (settings, generation) ← RegistryRequest.ask .workspaceSettings
   match (← editorState).workspaces.cached? worktree.path generation with
   | some (some location) =>
     readWorkspace location worktree.path order.git order.view

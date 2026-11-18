@@ -1,9 +1,4 @@
-import Editor.Command.Call
-import Editor.Compile.Contribution
-import Editor.Ex.Line
-import Editor.InputScheme
 import Editor.Invocation
-import Editor.Language.IndentUnit
 import Editor.State
 
 /-!
@@ -34,43 +29,19 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
   named, and so is a job, and what the name stands for is the registry's.
-  So these requests are answered with more than this handler by the loop,
+  So four requests are answered with more than this handler by the loop,
   which knows the registry: `setMajorMode` and `setBufferMajorMode`, which
   there refuse a name no mode is registered under and run the mode's
-  on-enter actions,
-  `startJob`, which there refuses a name no job is registered under,
-  `ex`, which there is answered the binding the registry has for an ex
-  name (`Editor/Ex/Line.lean`), `exNames`, which there is answered the ex
-  names that are bound, `themeNames`, which there is answered the names
-  themes are registered under, `commandNames`, which there is answered the
-  names commands are registered under, `keyBindings`, which there is
-  answered the key sequences the input scheme says reach a command in the
-  view, in the state the command runs in, `loadTheme`, which there refuses a name no
-  theme is registered under, `runCommand`, which there runs the
-  command registered under a name inside the asking command, `askSource`,
-  which there runs the completion source registered under a name inside
-  the asking command (`Editor/Completion.lean`), `categorySources`, which
-  there is answered the names of the sources registered in a category,
-  `matchCandidates`, which there runs the completion style chosen for a
-  category (`Editor/Completion/Style.lean`) inside the asking command, and
-  `displayRules`, which there is answered config's display rules
-  (`Editor/DisplayRules.lean`), and `hasJob`, which there is answered
-  whether a job is registered under a name. Here
-  `setMajorMode`, `setBufferMajorMode`, `startJob` and `loadTheme` take any name, `ex` is
-  answered `none`, `exNames`, `themeNames` and `commandNames` are answered
-  no name, `keyBindings` is answered no sequence,
-  `runCommand` is answered `false` and runs nothing, `askSource` is answered
-  `none` and runs nothing, `categorySources` is answered no name,
-  `matchCandidates` is answered no hit and asks the matcher nothing,
-  `displayRules` is
-  answered no rule, and `hasJob` is answered `true`, as `startJob` takes any
-  name: this handler knows no registry.
-- **A reply holds plain data too**, so no request is answered a command:
-  a command is a program over the port these requests are part of, and a
-  reply that held one would be a type that refers to itself. A command
-  that needs what the registry holds for a command's name has the loop
-  run it (`runCommand`), with the call it hands it, which is plain data
-  (`Editor/Command/Call.lean`).
+  on-enter actions, `startJob`, which there refuses a name no job is
+  registered under, and `loadTheme`, which there refuses a name no theme
+  is registered under. Here they take any name: this handler knows no
+  registry. Each is still a state operation, which this handler makes.
+- **Every request is answered from the state.** A question to the registry
+  or config is `RegistryRequest`'s (`Editor/Command/Registry.lean`), and
+  what ends the command or runs something registered inside it is
+  `ControlRequest`'s (`Editor/Command/Control.lean`): both are sub-ports of
+  their own, which the loop answers. So the handler has no case it cannot
+  answer from the state.
 - **A marker is made by the caller.** `split`, `show` and `openWindow` are
   handed the markers of the window they make or change, which the command
   marked on the buffer's text first: the handler asks the text store
@@ -80,7 +51,7 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   or docked at an edge. It is refused with a `LayoutRefusal`, the state as
   it was, `noSuchEdge` among them for an edge the layout has none at.
   Where a buffer goes is the asking command's to decide, with the display
-  rules (`displayRules`, `EditorState.displaying`).
+  rules (`RegistryRequest.displayRules`, `EditorState.displaying`).
 - **The frame's tabs are changed by one request**, `tab`, with the change
   as data (`TabChange`: select, close, rename, move). A new tab is a spot
   of `openWindow` (`WindowSpot.tab`). It is refused with a
@@ -124,46 +95,21 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   list: it holds the candidates themselves, not indices.
 - **An invocation to run next is recorded by one request**, `invoke`: it
   is put after the invocations already recorded
-  (`EditorState.answered`), a prompt's answer among them, and the loop
-  hands them to its host once the command has run to its end
+  (`EditorState.Outbox.answered`), a prompt's answer among them, and the
+  loop hands them to its host once the command has run to its end
   (`Editor/Loop.lean`, "Prompts"). This is how a command has another run
   after it, as a step of its own.
-- **A command is run inside the asking command by one request**,
-  `runCommand`, with the name it is registered under and the call it is
-  to be run with. It is the loop's to act on: the transformation that
-  runs a command puts the named command's program before the rest of the
-  asking command's (`Editor/Command/Dispatch.lean`, "Requests that name
-  something registered"). The reply says whether a command was registered
-  under the name.
 - **A session at point is opened, moved, retyped, retaken and closed by
   one request each** (`openAtPoint`, `chooseAtPoint`, `retypeAtPoint`,
   `retakeAtPoint`, `closeAtPoint`), each refused with an `AtPointRefusal`
   (`Editor/State.lean`, "A session at point"). Which at-point sources a
-  buffer's chain has for an occasion (`atPointSources`) and an at-point
-  source's region (`askAtPoint`, run inside the asking command as
-  `askSource` is) are the loop's to answer, from the registry: here they
-  are answered no name and `none`. `retype` records what a command typed in
+  buffer's chain has for an occasion is a question to the registry
+  (`RegistryRequest.atPointSources`, `Editor/Command/Registry.lean`), and
+  an at-point source's region is asked inside the asking command
+  (`ControlRequest.askAtPoint`, `Editor/Command/Control.lean`). `retype`
+  records what a command typed in
   place of typed text (`EditorState.retyped`), which the loop tells the
   input scheme once the command has run to its end.
-- **A completion source is asked inside the asking command by one
-  request**, `askSource`, with the name it is registered under and the
-  query (`Editor/Completion.lean`). It is the loop's to act on, as
-  `runCommand` is: the source's program is put before the rest of the
-  asking command's. The reply is what it answered, its candidates with its
-  category and whether it filtered already (`Completion.Answer`), or
-  `none` when no source is registered under the name. A source is a
-  program over this port, so the request names it and the reply holds its
-  candidates, which are plain data. Which sources a category has is asked
-  by another, `categorySources`, whose reply is their names: plain data
-  too, so no program crosses the request.
-- **A text is matched with a category's completion style by one
-  request**, `matchCandidates`, with the category, the text and the
-  candidates' texts. It is the loop's to act on: the style the loop
-  chooses for the category is run inside the asking command, over the
-  fuzzy port, and the reply is its hits (`Completion.Hit`). A command
-  that resolves a typed answer asks it, so the answer is resolved as the
-  prompt of that category listed it. The request carries the category and
-  the reply the hits, plain data, so no style crosses it.
 - **The editor is asked to quit by one request**, `quit`, which sets the
   state's flag and nothing else (`Editor/State.lean`, "Quit"). The handler
   does not judge whether the editor may quit: the command that asks
@@ -171,19 +117,20 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   store, and the loop decides when the editor leaves.
 - **A job is started by one request, and cancelled by another.**
   `startJob` keeps the start, with its name, its arguments and its key if
-  it has one, in the state (`EditorState.starts`), and `cancelJob` keeps a
-  key (`EditorState.cancels`), until the loop hands them to its host once
-  the command has run to its end (`Editor/Loop.lean`, "Jobs from
+  it has one, in the state's outbox (`EditorState.Outbox.starts`,
+  `Editor/State/Outbox.lean`, "The outbox"), and `cancelJob` keeps a key
+  (`EditorState.Outbox.cancels`), until the loop hands them to its host
+  once the command has run to its end (`Editor/Loop.lean`, "Jobs from
   commands"). A start of a key cancels the running job of that key, and a
   cancel ends the job of its key; the host keeps the keys.
 - **A reload of the config is asked for by one request**, `reload`,
-  which sets a flag of the state (`EditorState.reload`) until the loop
-  hands it to its host, as `starts` holds the jobs a command asked for
-  (`Editor/Loop.lean`, "Reload from a command").
+  which sets a flag of the state (`EditorState.Outbox.reload`) until the
+  loop hands it to its host, as `starts` holds the jobs a command asked
+  for (`Editor/Loop.lean`, "Reload from a command").
 - **A theme is loaded by one request**, `loadTheme`, which keeps the name
-  in the state (`EditorState.theme`), the latest one wins, until the loop
-  hands it to its host, as `reload` is kept (`Editor/Loop.lean`, "A theme
-  switch from a command").
+  in the state (`EditorState.Outbox.theme`), the latest one wins, until
+  the loop hands it to its host, as `reload` is kept (`Editor/Loop.lean`,
+  "A theme switch from a command").
 - **A window's wanted column is set by one request**, `setWanted`, with
   the column, a goal of the display's or the line's end, and the offset it
   is kept at, or with none (`Editor/State.lean`, "The wanted column"). The
@@ -199,17 +146,6 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   file found is recorded by one request, `markChanged`, and that the user
   was told of it by another, `tellChanged`, so the command a check finishes
   with is made of state requests alone and cannot be interrupted.
-- **A command gives up by one request**, `giveUp`, with its reason
-  (`giveUp`, `Editor/Api.lean`). It is the loop's to act on: the
-  transformation that runs a command ends the command's program at this
-  request, with the reason (`Editor/Command/Dispatch.lean`, "A command
-  that gives up"). This handler knows no command to end, so here the
-  request changes nothing and is answered like a write that has no reply.
-- **A command breaks off by one request**, `breakOff`, with its reason
-  (`breakOff`, `Editor/Api.lean`). It is the loop's to act on as `giveUp`
-  is, and differs in what the loop then does: what the command did stays
-  (`Editor/Command/Dispatch.lean`, "A command that breaks off"). Here it
-  changes nothing either.
 - **A register is set by one request**, `setRegister`, with its name
   (`Editor/State.lean`, "Registers"). It is never refused: a name is any
   string, and which names mean something is the asking command's rule. A
@@ -233,24 +169,8 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   value in the store of the buffers outside any workspace, and is never
   refused. A command reads them with a
   read of the state (`EditorState.workspaceOf?`, `workspaces`).
-- **What the finder is handed is asked by one request**,
-  `workspaceSettings`: config's workspace roots and the config generation,
-  which the loop answers from what it was told of the registry
-  (`Editor/Command/Dispatch.lean`). Here, with no registry, it is answered
-  no root and generation 0.
-- **Config's shell time limit is asked by one request**, `shellTimeLimit`,
-  which the loop answers the same way; here it is answered `none`. So is
-  **config's syntax refresh delay**, `syntaxRefreshDelay`, and **a path's
-  language**, `languageOf`, which the loop answers with the name of the
-  language its table chooses for the path (`Language.forPath`), and **a
-  language's indent unit**, `indentUnitOf`, which the loop answers with the
-  unit of its table's first entry of that name.
 - **A buffer's language is recorded by name**, `setLanguage`, as its major
   mode is: any name is taken, and refused `noSuchBuffer` alone.
-- **The compile contributions are asked by one request**, `compileHook`:
-  the registered contributions in registration order and config's project
-  commands (`Compile.Hook`), which the loop answers the same way; here it
-  is answered empty.
 
 ## Where an addition goes
 
@@ -258,7 +178,10 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 |---|---|
 | A question about the state | A pure function over `EditorState` (`Editor/State.lean`); nothing here |
 | A new way to change the state | An operation in `Editor/State.lean`, a constructor here with its case in `Reply` and in `handle`, and the operation a command calls in `Editor/Api.lean` |
-| A request that needs the registry | The same, and its case in `EditorM.dispatched` (`Editor/Command/Dispatch.lean`) |
+| A change of the state the registry gates (a name it must know) | The same, and its case in `Program.dispatched` (`Editor/Command/Dispatch.lean`) |
+| Something a command asks the loop to hand its host | A field of `EditorState.Outbox` (`Editor/State/Outbox.lean`, "Where a new entry goes"), a constructor here whose case sets it, and the function a command calls in `Editor/Api.lean` |
+| A question to the registry or config, a new config setting a command reads among them | Not here: a constructor of `RegistryRequest` (`Editor/Command/Registry.lean`, "Where an addition goes") |
+| A way to end the command, or to run something registered inside it | Not here: a constructor of `ControlRequest` (`Editor/Command/Control.lean`, "Where an addition goes") |
 
 Pinned by `ModelTest.stateRequestChecks`.
 -/
@@ -352,9 +275,6 @@ inductive StateRequest where
   | gutter (change : GutterChange)
   /-- Choose auto-reload on or off, for as long as the editor runs. -/
   | setAutoReload (on : Bool)
-  /-- Whether auto-reload is in effect: a command's choice, or else config's
-  setting, which the loop that runs the command answers with. -/
-  | autoReloadMode
   /-- Stop following the buffer `id` for auto-reload: its follow job ended. -/
   | unfollow (id : BufferId)
   /-- Mark the following of the buffer `id` as refused: its watch could not
@@ -391,16 +311,6 @@ inductive StateRequest where
   /-- The match in flight for `pattern` at `revision` in the prompt open in
   `view` could not list, for `message`. -/
   | matchFailed (view : ViewId) (pattern : String) (revision : Nat) (message : String)
-  /-- Whether a job is registered under `name`, which the loop that runs the
-  command answers with. -/
-  | hasJob (name : String)
-  /-- The names of the at-point sources of the chain of the buffer `view`
-  shows that ask on `occasion`, in order, which the loop that runs the
-  command answers from the registry. -/
-  | atPointSources (view : ViewId) (occasion : Completion.Occasion)
-  /-- Ask the at-point source registered under `name` for its region at
-  `spot`, inside this command. -/
-  | askAtPoint (name : String) (spot : Completion.Spot)
   /-- Open a session at point, `session`, with what its sources answered,
   `collected`. -/
   | openAtPoint (session : AtPointSession) (collected : Completion.Collected)
@@ -419,44 +329,15 @@ inductive StateRequest where
   | retype (view : ViewId) (text : String)
   /-- Have the window `view` keep `wanted` as its wanted column, or none. -/
   | setWanted (view : ViewId) (wanted : Option Window.Wanted)
-  /-- Which command the ex name `name` is bound to, and what it takes. -/
-  | ex (name : String)
-  /-- Which ex names are bound. -/
-  | exNames
-  /-- Which names themes are registered under. -/
-  | themeNames
-  /-- Which names commands are registered under. -/
-  | commandNames
-  /-- Which key sequences reach a command in the view, as the input scheme
-  says in the state the command runs in. -/
-  | keyBindings (view : ViewId)
   /-- Have the theme called `name` loaded once this command has run to its
   end. -/
   | loadTheme (name : String)
   /-- Have `invocation` run after this command, as a step of its own. -/
   | invoke (invocation : Invocation)
-  /-- Run the command registered under `name` inside this command, with
-  `call`. -/
-  | runCommand (name : String) (call : Call)
-  /-- Ask the completion source registered under `name` for its candidates
-  for `query`, inside this command. -/
-  | askSource (name : String) (query : Completion.Query)
-  /-- Which completion sources are registered in `category`, by name, in
-  registration order. -/
-  | categorySources (category : String)
-  /-- Which of `candidates` `text` matches, in order, with the completion
-  style the loop chooses for `category` (`none` for a prompt with no
-  category), as the prompt of that category lists them. -/
-  | matchCandidates (category : Option String) (text : String) (candidates : Array String)
   /-- Ask the editor to quit. -/
   | quit
   /-- Ask for the config to be reloaded. -/
   | reload
-  /-- End this command here, with `reason`: it gives up. -/
-  | giveUp (reason : String)
-  /-- End this command here, with `reason`, and keep what it did: it breaks
-  off. -/
-  | breakOff (reason : String)
   /-- Keep `register` under `name`, in place of the register the name
   had. -/
   | setRegister (name : String) (register : Register)
@@ -479,34 +360,12 @@ inductive StateRequest where
   | setWorkspaceValue (location : Location) (name : String) (value : Value)
   /-- Have the project of `identity` keep `value` under `name`. -/
   | setProjectValue (identity : Project.Identity) (name : String) (value : Value)
-  /-- What the finder is to be handed, config's roots among it, and the
-  config generation, which the loop that runs the command answers with. -/
-  | workspaceSettings
-  /-- Config's display rules, in order, which the loop that runs the
-  command answers with. -/
-  | displayRules
   /-- Have the unscoped store, of the buffers outside any workspace, keep
   `value` under `name`. -/
   | setUnscopedValue (name : String) (value : Value)
-  /-- How long a `:!` or a filter may run, in milliseconds, as config set
-  it, which the loop that runs the command answers with. -/
-  | shellTimeLimit
-  /-- How long a text goes unchanged after an edit before it is parsed
-  whole again, in milliseconds, as config set it, which the loop that runs
-  the command answers with. -/
-  | syntaxRefreshDelay
   /-- Record `name` as the language of the buffer `id`, or that it has
   none. -/
   | setLanguage (id : BufferId) (name : Option String)
-  /-- The name of the language the registry's table chooses for `path`,
-  which the loop that runs the command answers with. -/
-  | languageOf (path : System.FilePath)
-  /-- The indent unit of the language called `language`, which the loop
-  that runs the command answers from its table. -/
-  | indentUnitOf (language : String)
-  /-- The compile contributions, in registration order, and config's
-  project commands, which the loop that runs the command answers with. -/
-  | compileHook
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -542,7 +401,6 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setGutter .. => Except BufferRefusal Unit
   | .gutter _ => Unit
   | .setAutoReload _ => Unit
-  | .autoReloadMode => Bool
   | .unfollow _ => Unit
   | .refuseFollow _ => Unit
   | .openPrompt .. => Except PromptRefusal ViewId
@@ -554,9 +412,6 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .sourceFailed .. => Unit
   | .listMatched .. => Unit
   | .matchFailed .. => Unit
-  | .hasJob _ => Bool
-  | .atPointSources .. => Array String
-  | .askAtPoint .. => Option Completion.Region
   | .openAtPoint .. => Except AtPointRefusal Unit
   | .closeAtPoint => Except AtPointRefusal AtPointSession
   | .chooseAtPoint _ => Except AtPointRefusal Unit
@@ -564,21 +419,10 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .retakeAtPoint _ => Except AtPointRefusal Unit
   | .retype .. => Unit
   | .setWanted .. => Except LayoutRefusal Unit
-  | .ex _ => Option Ex.Binding
-  | .exNames => Array String
-  | .themeNames => Array String
-  | .commandNames => Array String
-  | .keyBindings _ => Array KeyBinding
   | .loadTheme _ => Except ThemeRefusal Unit
   | .invoke _ => Unit
-  | .runCommand .. => Bool
-  | .askSource .. => Option Completion.Answer
-  | .categorySources _ => Array String
-  | .matchCandidates .. => Array Completion.Hit
   | .quit => Unit
   | .reload => Unit
-  | .giveUp _ => Unit
-  | .breakOff _ => Unit
   | .setRegister .. => Unit
   | .setLastFind _ => Unit
   | .setLastSearch _ => Unit
@@ -587,15 +431,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .registerWorkspace .. => Except WorkspaceRefusal Unit
   | .setWorkspaceValue .. => Except WorkspaceRefusal Unit
   | .setProjectValue .. => Except WorkspaceRefusal Unit
-  | .workspaceSettings => Workspace.Settings × Nat
-  | .displayRules => Array DisplayRule
   | .setUnscopedValue .. => Unit
-  | .shellTimeLimit => Option Nat
-  | .syntaxRefreshDelay => Option Nat
   | .setLanguage .. => Except BufferRefusal Unit
-  | .languageOf _ => Option String
-  | .indentUnitOf _ => Option Language.IndentUnit
-  | .compileHook => Compile.Hook
 
 namespace EditorState
 
@@ -649,8 +486,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .show view buffer scroll selection, state => state.showBuffer view buffer scroll selection
   | .message text, state => ((), { state with echo := text })
   | .startJob name arguments key, state =>
-    (.ok (), { state with starts := state.starts.push { name, arguments, key } })
-  | .cancelJob key, state => ((), { state with cancels := state.cancels.push key })
+    (.ok (), { state with outbox.starts := state.outbox.starts.push { name, arguments, key } })
+  | .cancelJob key, state => ((), { state with outbox.cancels := state.outbox.cancels.push key })
   | .attachFile id path stamp ending, state => state.attachFile id path stamp ending
   | .beginSave id snapshot saved, state => state.beginSave id snapshot saved
   | .endSave id snapshot stamp, state => state.endSave id snapshot stamp
@@ -661,9 +498,6 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setGutter id gutter, state => state.setGutter id gutter
   | .gutter change, state => ((), state.changeGutter change)
   | .setAutoReload on, state => ((), { state with autoReload := some on })
-  -- Config's setting is the loop's to answer with (`Program.dispatched`):
-  -- here, with no loop, a choice no command made is off.
-  | .autoReloadMode, state => (state.autoReload.getD false, state)
   | .unfollow id, state => ((), { state with following := state.following.filter (·.buffer != id) })
   | .refuseFollow id, state =>
     ((),
@@ -685,13 +519,6 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
     ((), state.listMatched view pattern revision listed)
   | .matchFailed view pattern revision message, state =>
     ((), state.matchFailed view pattern revision message)
-  -- The registry is the loop's to answer from (`Program.dispatched`): here,
-  -- with no loop, any name is taken, as `startJob` takes any.
-  | .hasJob _, state => (true, state)
-  -- The chain and the at-point sources are the loop's to answer from
-  -- (`Program.dispatched`): here, with no registry, there are none.
-  | .atPointSources .., state => (#[], state)
-  | .askAtPoint .., state => (none, state)
   | .openAtPoint session collected, state => state.openAtPoint session collected
   | .closeAtPoint, state => state.closeAtPoint
   | .chooseAtPoint step, state => state.chooseAtPoint step
@@ -699,21 +526,11 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .retakeAtPoint text, state => state.retakeAtPoint text
   | .retype view text, state => ((), state.retype view text)
   | .setWanted view wanted, state => state.setWanted view wanted
-  | .ex _, state => (none, state)
-  | .exNames, state => (#[], state)
-  | .themeNames, state => (#[], state)
-  | .commandNames, state => (#[], state)
-  | .keyBindings _, state => (#[], state)
-  | .loadTheme name, state => (.ok (), { state with theme := some name })
-  | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
-  | .runCommand .., state => (false, state)
-  | .askSource .., state => (none, state)
-  | .categorySources _, state => (#[], state)
-  | .matchCandidates .., state => (#[], state)
+  | .loadTheme name, state => (.ok (), { state with outbox.theme := some name })
+  | .invoke invocation, state =>
+    ((), { state with outbox.answered := state.outbox.answered.push invocation })
   | .quit, state => ((), { state with quitting := true })
-  | .reload, state => ((), { state with reload := true })
-  | .giveUp _, state => ((), state)
-  | .breakOff _, state => ((), state)
+  | .reload, state => ((), { state with outbox.reload := true })
   | .setRegister name register, state => ((), state.setRegister name register)
   | .setLastFind find, state => ((), state.setLastFind find)
   | .setLastSearch search, state => ((), state.setLastSearch search)
@@ -724,28 +541,9 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
     state.registerWorkspace location remote branch
   | .setWorkspaceValue location name value, state => state.setWorkspaceValue location name value
   | .setProjectValue identity name value, state => state.setProjectValue identity name value
-  -- Config's roots and its generation are the loop's to answer with
-  -- (`Program.dispatched`): here, with no loop, config has none.
-  | .workspaceSettings, state => (({}, 0), state)
-  -- Config's rules are the loop's to answer with (`Program.dispatched`):
-  -- here, with no loop, config has none.
-  | .displayRules, state => (#[], state)
   | .setUnscopedValue name value, state =>
     ((), { state with workspaces := state.workspaces.setUnscopedValue name value })
-  -- Config's limit is the loop's to answer with (`Program.dispatched`):
-  -- here, with no loop, config set none.
-  | .shellTimeLimit, state => (none, state)
-  -- So is config's syntax refresh delay.
-  | .syntaxRefreshDelay, state => (none, state)
   | .setLanguage id name, state => state.setLanguage id name
-  -- The language table is the loop's to answer from (`Program.dispatched`):
-  -- here, with no registry, no path has a language.
-  | .languageOf _, state => (none, state)
-  -- So is a language's indent unit.
-  | .indentUnitOf _, state => (none, state)
-  -- The contributions are the loop's to answer with (`Program.dispatched`):
-  -- here, with no loop, none is registered.
-  | .compileHook, state => ({}, state)
 
 end EditorState
 

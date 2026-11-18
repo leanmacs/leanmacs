@@ -2,6 +2,7 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Files
 import Editor.VersionControl.Git
+import Editor.VersionControl.Views
 
 /-!
 # A file at a revision: `vc-show`
@@ -47,7 +48,7 @@ Otherwise it starts `vc-show-read`, keyed `vc-show <root> <revision>:<path>`
   so the old text is drawn as the file is.
 
 Pinned by `ModelTest.revisionBufferChecks` on the models and
-`ContractTest.revisionBufferChecks` over real git.
+`ContractTest.statusBufferChecks` over real git.
 -/
 
 namespace Editor.VersionControl
@@ -116,13 +117,9 @@ def revisionShown (order : ShowOrder) (reply : Except Error (Option String)) : E
   | .ok none =>
     message s!"{showName}: {order.path} is not in {order.revision}"
   | .ok (some content) =>
-    let state ← editorState
-    let .ok id ← createBuffer (state.freeName s!"{order.path}@{order.revision}") content | return
-    discard <| id.setReadOnly true
-    Workspace.setBufferWorkspace id (.local order.root)
-    let state ← editorState
-    let asking := if (state.window? order.view).isSome then order.view else state.frame.focused
-    discard <| id.display asking showName
+    let some id ←
+      readOnlyBufferOf s!"{order.path}@{order.revision}" content (.local order.root) | return
+    displayFor id order.view showName
     if let some language← languageOf (order.root / order.path) then
       discard <| id.setLanguage (some language)
       discard <| id.setMajorMode Language.codeName
@@ -160,7 +157,7 @@ def showCommand (call : Call) : EditorM Unit := do
   let some path :=
     path? | message s!"{showName}: {call.target.buffer.name} has no file in {workspace.label}"
   let order : ShowOrder :=
-    { root, git := (← EditorState.ask .workspaceSettings).1.git, revision, path
+    { root, git := (← RegistryRequest.ask .workspaceSettings).1.git, revision, path
       view := call.target.window.id }
   if let .error refusal← startJob showJob order.arguments (key := some order.key) then
     message s!"{showName}: {refusal.describe}"

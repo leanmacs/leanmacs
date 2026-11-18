@@ -21,7 +21,7 @@ code registers them are in `Editor/Workspace/Compiled.lean`.
 
 - **When a file opens** (`attach`, called by `Files.takeIn` once the buffer
   holds the file), the workspace settings are asked of the loop
-  (`StateRequest.workspaceSettings`): config's roots and the config
+  (`RegistryRequest.workspaceSettings`): config's roots and the config
   generation. A cached answer for the file's directory under that
   generation (`Workspace.Table.cached?`) is the buffer's at once, and
   starts no job: a second file of a directory asks git nothing.
@@ -135,7 +135,7 @@ refused is silent. -/
 def attach (id : BufferId) (path : System.FilePath) : EditorM Unit := do
   let some directory := path.parent | return
   let directory := Process.trimmed directory
-  let (settings, generation) ← EditorState.ask .workspaceSettings
+  let (settings, generation) ← RegistryRequest.ask .workspaceSettings
   match (← editorState).workspaces.cached? directory generation with
   | some (some location) =>
     setBufferWorkspace id location
@@ -163,7 +163,7 @@ def found (order : FindOrder) (answer : Option Found) : EditorM Unit := do
     return
   if let some answer := answer then
     setBufferWorkspace order.buffer (.local answer.root)
-  let (settings, _) ← EditorState.ask .workspaceSettings
+  let (settings, _) ← RegistryRequest.ask .workspaceSettings
   markModes order.buffer order.directory ((answer.map (·.root)).getD order.directory)
       settings.markerModes
 

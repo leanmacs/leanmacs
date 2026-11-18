@@ -14,8 +14,8 @@
 // part of the gate.
 //
 // The conventions the wrappers follow are in the module docs of
-// `Editor/Ffi.lean`. `FfiTest.lean` pins what this file does, as Lean sees
-// it.
+// `Editor/Ffi.lean`. `ffi-test` (`FfiTest.lean` and its test modules under
+// `FfiTest/`) pins what this file does, as Lean sees it.
 
 // For `pthread_getattr_np` on Linux, which glibc declares only when this is
 // defined before the first include. It changes nothing on macOS.
@@ -239,8 +239,9 @@ lean_obj_res editor_glue_document_live(void) {
 //
 // The example of lists crossing. A list is words: a buffer of 64-bit numbers,
 // eight bytes each, least significant first. Lean writes and reads the words
-// (`Editor/Ffi.lean`) and Rust reads and writes them (`words.rs` in
-// `editor-ffi`); the glue knows only that they are bytes. A `ByteArray` goes
+// (`Editor/Ffi/Words.lean` and the family modules beside it) and Rust reads
+// and writes them (`words.rs` in `editor-ffi`); the glue knows only that they
+// are bytes. A `ByteArray` goes
 // to Rust as a pointer and a length, borrowed for the call, and a buffer of
 // words the library owns is copied into a `ByteArray` and handed straight
 // back with `editor_ffi_text_free`, as text is.

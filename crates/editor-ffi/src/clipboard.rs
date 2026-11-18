@@ -6,8 +6,8 @@
 //!
 //! - the port's memory clipboard ([`editor_ffi_clipboard_memory`]), the
 //!   fake every test runs on: Lean's contract check of its real binding
-//!   (`lean/ContractTest.lean`) is run over it, so the gate reads and
-//!   writes no desktop's clipboard;
+//!   (`lean/ContractTest/Editor/Clipboard/Contract.lean`) is run over it, so
+//!   the gate reads and writes no desktop's clipboard;
 //! - the port's failing clipboard ([`editor_ffi_clipboard_failing`]), the
 //!   fake of one that cannot be reached, made only by tests: the failure
 //!   path, a read's `Failed` and a write's `false` with the reason, is

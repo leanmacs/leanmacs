@@ -414,8 +414,11 @@ run = [
   # absolute path in place of `@DIR@`. The editor must exit with status 0,
   # and its output, with that path written `@DIR@`, must be exactly
   # `open-file/expected`. Every job is waited for with `join`, so its lines
-  # are fixed. No file is written.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/open-file/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/open-file/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/open-file/expected -",
+  # are fixed. No file is written. The prompt's view prints the cursor's
+  # byte offset over the absolute path typed, which the scrub cannot
+  # rewrite, so the directory is made from a template under `/tmp`, not
+  # under `$TMPDIR`: its path is always 23 bytes, on every machine.
+  "dir=$(mktemp -d /tmp/open-file.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/open-file/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/open-file/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/open-file/expected -",
   # A view that follows its cursor, as a process, with no config
   # (tests/headless/view): the script sizes the frame, opens a file of 120
   # lines with `:e`, and moves the cursor 100 lines down, with a scene
@@ -486,7 +489,8 @@ run = [
   # (tests/render/themes/README.md). It reads only checked-in files and
   # writes nothing. `mise run theme-references` makes the images again.
   ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/fonts/NotoSansMono-Regular.subset.ttf",
-  # The excerpt picture (lean/FfiTest.lean, `excerptPictureScenario`): an
+  # The excerpt picture (lean/FfiTest/Editor/ExcerptView.lean,
+  # `excerptPictureScenario`): an
   # excerpt document's view with each excerpt's header as a block above it,
   # drawn by the CPU renderer through the display's real binding in
   # solarized-dark, must match tests/render/excerpts/excerpts.png within the
@@ -754,7 +758,7 @@ run = "tools/install-app.sh lean"
 # just before it recurses, so the marker must be the last line of stdout as
 # well.
 [tasks.ffi-overflow]
-description = "Opt-in, never part of ci: check that a stack overflow in interpreted Lean code aborts the process (lean/FfiTest.lean). Each run makes macOS write a crash report under ~/Library/Logs/DiagnosticReports"
+description = "Opt-in, never part of ci: check that a stack overflow in interpreted Lean code aborts the process (lean/FfiTest/Editor/Ffi/MainThread.lean). Each run makes macOS write a crash report under ~/Library/Logs/DiagnosticReports"
 depends = ["lean"]
 dir = "lean"
 timeout = "60s"
@@ -780,7 +784,7 @@ run = '''status=0; out=$( (ulimit -c 0; exec env -u LEAN_STACK_SIZE_KB .lake/bui
 # whose directories are passed in. LEAN_STACK_SIZE_KB is removed from the
 # environment, so the threads have the stack the editor gives them.
 [tasks.config-bench]
-description = "Opt-in, never part of ci: measure start-up, reload time and memory across reloads of the config session (lean/ConfigTest.lean). It asserts nothing"
+description = "Opt-in, never part of ci: measure start-up, reload time and memory across reloads of the config session (lean/ConfigTest/Bench.lean). It asserts nothing"
 depends = ["lean"]
 dir = "lean"
 run = [
@@ -833,7 +837,7 @@ run = "tools/module-bench.sh lean"
 # and LEAN_STACK_SIZE_KB are removed from the environment, so the pool has
 # Lean's size and the threads the stack the editor gives them.
 [tasks.job-bench]
-description = "Opt-in, never part of ci: measure the latency of the editor loop while background jobs run (lean/ConfigTest.lean). It asserts nothing"
+description = "Opt-in, never part of ci: measure the latency of the editor loop while background jobs run (lean/ConfigTest/Bench.lean). It asserts nothing"
 depends = ["lean"]
 dir = "lean"
 run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-jobs \"$(lean --print-prefix)\" .lake/build/lib/lean 10000"
@@ -859,7 +863,7 @@ run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test
 # matcher among it; LEAN_NUM_THREADS and LEAN_STACK_SIZE_KB are removed from
 # the environment, as for `job-bench`.
 [tasks.prompt-bench]
-description = "Opt-in, never part of ci: measure what a key costs in a prompt over many candidates, listed on the editor thread and matched off it (lean/ConfigTest.lean). It asserts nothing"
+description = "Opt-in, never part of ci: measure what a key costs in a prompt over many candidates, listed on the editor thread and matched off it (lean/ConfigTest/Bench.lean). It asserts nothing"
 depends = ["lean"]
 dir = "lean"
 run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-prompt \"$(lean --print-prefix)\" .lake/build/lib/lean 600"
@@ -933,8 +937,8 @@ run = "tools/milestone-bench.sh lean"
 # no key or pointer input. It prints its verdict, then each resize the
 # window reported on a line of its own, and its exit status is the result.
 #
-# Then it runs `editor-ffi`'s example (`crates/editor-ffi/examples/
-# window.rs`): the window that draws. The wgpu renderer draws a fixture
+# Then it runs `editor-ffi`'s example (`crates/editor-ffi/examples/window/`):
+# the window that draws. The wgpu renderer draws a fixture
 # frame in the real window, on this machine's GPU; the example checks that
 # each frame is laid out at the scale the window said, that a frame was
 # presented, that its picture is the frame's, that nothing is drawn that
@@ -962,7 +966,7 @@ run = [
 ]
 
 # Opt-in: do not add it to `ci` or to hk.pkl. It opens the window that
-# draws (`crates/editor-ffi/examples/window.rs`) with `--until-closed
+# draws (`crates/editor-ffi/examples/window/`) with `--until-closed
 # --no-picture` and leaves it open until it is closed, for trying the
 # window out (`docs/dev-practices/on-demand-checks.md`, "The window to
 # try, on demand").

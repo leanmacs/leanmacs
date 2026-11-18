@@ -31,7 +31,10 @@ A state request is the loop's to answer (`Editor/Command.lean`, "The state
 requests are the loop's to answer"), and a command the loop runs has none
 left when it reaches this runner. One that does reach it is answered as the
 models answer it: as an editor with no buffer and no window would
-(`EditorState.none`), with nothing kept and no call into the library.
+(`EditorState.none`), with nothing kept and no call into the library. So
+are a question to the registry and a control request: as with nothing
+registered and no loop to act (`RegistryRequest.bare`,
+`ControlRequest.bare`).
 -/
 
 namespace Editor
@@ -39,7 +42,8 @@ namespace Editor
 /-- Answers `request` with its sub-port's handler: the text binding over the
 table of texts, `display`, `watch`, `clipboard`, the fuzzy port's real
 binding, or `syntaxTree`. A state request is answered from an editor with nothing in it, and
-changes nothing. -/
+changes nothing; a question to the registry and a control request are
+answered `bare`. -/
 def EditorRequest.handleReal (display : DisplayHandler) (watch : WatchHandler := Watch.idle)
     (clipboard : ClipboardHandler := Clipboard.unavailable)
     (syntaxTree : SyntaxTreeHandler := SyntaxTree.none) :
@@ -51,6 +55,8 @@ def EditorRequest.handleReal (display : DisplayHandler) (watch : WatchHandler :=
   | .fuzzy request => StateT.lift (Fuzzy.real request)
   | .syntaxTree request => StateT.lift (syntaxTree request)
   | .state request => pure (EditorState.none.handle request).1
+  | .registry request => pure request.bare
+  | .control request => pure request.bare
 
 /-- Runs a command against the Rust library, with `texts` as the texts made
 so far, `display` answering its display requests, `watch` its watch

@@ -458,7 +458,7 @@ def start (target : Target) (line text : String) (filter : Option Filter := none
     | .workspace root => root
     | .fileDirectory directory => directory
     | .elsewhere _ | .none => state.workingDirectory
-  let time := (← EditorState.ask .shellTimeLimit).getD defaultTimeLimit
+  let time := (← RegistryRequest.ask .shellTimeLimit).getD defaultTimeLimit
   let order : Order :=
     { line, text, directory, time, buffer, view := target.window.id, scope := scope.location?
       filter }

@@ -90,6 +90,18 @@ when no library fits or a measured problem requires it, and record why.
   module that mirrors its path under the test executable's root (the tests of
   `Editor/State.lean` in `ModelTest/Editor/State.lean`), and have that root
   only import its test modules and run their checks.
+- Add a new Lean check to the test module that mirrors the module it tests,
+  never to a test executable's root (`ModelTest.lean`, `FfiTest.lean`,
+  `ConfigTest.lean`, `ContractTest.lean`). If that test module does not exist
+  yet, create it, import it from the root and add its check list to the root's
+  aggregator, keeping any order the root documents. A helper a second test
+  module needs goes in `<Root>/Support/`; one with a single user stays in its
+  module. When you move a check list, keep its `<Root>.<name>Checks` name, since
+  docs cite tests by it.
+- Split a Rust example or test program that collects several concerns the same
+  way: a directory example (`examples/<name>/main.rs` holding the wiring, plus a
+  module per concern with its own `#[cfg(test)] mod tests`), as
+  `editor-platform-winit`'s `contract` and `editor-ffi`'s `window` examples do.
 
 ## Crate coupling
 

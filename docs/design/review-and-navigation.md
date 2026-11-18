@@ -44,6 +44,32 @@ the origin its transaction was applied with, a number. The second half is
 not: the table that says which agent session, tool call and transcript step
 a number stands for arrives with the command loop and agent hosting.
 
+Of the review itself, the first four rows' mechanisms are built for a
+branch's change (2026-11-18, the excerpts roadmap's phase 4;
+[version-control.md](version-control.md), "The review buffer:
+`vc-review`"): `vc-review` opens the change of a worktree's `HEAD` against
+a branch as an excerpt buffer of its hunks across files, each under a
+header, editable in place; `vc-review-keep` and `vc-review-revert` decide
+the hunk at the cursor, a revert one transaction on the working file's
+buffer; the hunks are ordered by Lean's policy, tests first and then by
+dependency, never alphabetically; and which hunks were on screen, how
+often and for how long is tracked per excerpt, a hunk never shown drawn in
+`review-unexamined` and counted in the status line as not examined
+([text-and-display.md](text-and-display.md), "As built: the review
+buffer"). The decisions and what was viewed of each round are kept, so the
+design can later be checked against use. Accept and reject are commands
+on the cursor's hunk, not controls in blocks; plan-step order waits for
+rdm:roadmap/acp-agents.
+
+"See what changed since last review" is built too (2026-11-18, the
+version-control roadmap's phase 5; [version-control.md](version-control.md),
+"The review buffer: `vc-review`"): each review round records the commit
+`HEAD` was at, and `vc-review-since` opens the change since the last
+round's commit. A branch that only moved forward gives a review buffer of
+the commits since, kept and reverted as any review; a branch rewritten
+past the recorded commit gives `git range-diff` of its commits since,
+shown as text. Reviewing that range-diff hunk by hunk waits.
+
 ### Anchoring comments
 
 Two models exist and the editor needs both.
@@ -97,8 +123,10 @@ If process-per-query is too slow for status in large repositories, an
 in-process library can sit behind the same interface.
 
 The interface, its git implementation, the status buffer, a file at a
-revision (`vc-show`), the gutter marks, staging a hunk and committing from
-a message buffer as built are in [version-control.md](version-control.md).
+revision (`vc-show`), the gutter marks, staging a hunk, committing from a
+message buffer, the worktree list, the review buffer, the log (`vc-log`)
+and blame (`vc-blame`) as built are in
+[version-control.md](version-control.md).
 
 ## rdm
 
@@ -169,10 +197,23 @@ Tours deserve a note: an agent that has just built something can be asked
 for a tour of it, and because a tour is anchored data, the editor can show
 when the code has moved out from under it.
 
+Of the history views, the log and blame are built (2026-11-18,
+[version-control.md](version-control.md), "The log buffer: `vc-log`" and
+"Blame: `vc-blame`"): each lists commits with their authors, and a line of
+either opens that commit's change as a review buffer. Telling an agent's
+changes from a person's waits for provenance, the second half of per-edit
+origin; hotspots and churn are not built.
+
 ## Open questions
 
 - **Hunk ordering**: nothing in the research says which order is best, only
-  that alphabetical is bad. Start with plan-step order and measure.
+  that alphabetical is bad. Start with plan-step order and measure. As
+  built, the order is tests first, then by file dependency, among files
+  that are ready the one that changes more lines first
+  (`orderFiles`, `lean/Editor/VersionControl/ReviewHunks.lean`), until
+  rdm:roadmap/acp-agents can order by plan step. The rounds the review
+  keeps, each hunk's decision and what was viewed of it, are what the
+  order will be measured from.
 - **Provenance storage**: the edit log is in memory. How is per-edit origin
   persisted and tied to commits? Agent Trace and git notes are existing
   formats; neither attributes at edit granularity. As built, the log is

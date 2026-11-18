@@ -112,8 +112,8 @@ the window shows. A frame request answers nothing and changes no
 answer of layout. Whether the window is then in fullscreen comes back as a
 resize (`Event.Resize.fullscreen`), which the loop keeps in the frame
 (`Frame.fullscreen`), whether a request or the user made the change. It is
-guarded like any request that is not the state's, and like the clipboard it
-is outside the editor: a command rolled back does not take it back. The
+guarded like any request the loop does not answer in place, and like the
+clipboard it is outside the editor: a command rolled back does not take it back. The
 model records each in order (`DisplayModel.asked`); the recorder, which has
 no window, answers it and does nothing; the real binding sends it to the
 window it was made with (`RealDisplay.platform`).

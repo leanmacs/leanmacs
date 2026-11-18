@@ -206,13 +206,14 @@ def commitBufferChecks : List Check :=
                 some "vc-commit-abort: a.lean is not a commit message buffer" &&
               echoOf bare == some s!"vc-commit: {EditorState.scratchName} has no workspace" },
     { name :=
-        "the vc-commit mode has no role and the leader suffixes c, accept, and k, abort, and is registered with the status buffer's mode and the worktree list's"
+        "the vc-commit mode has no role and the leader suffixes c, accept, and k, abort, and is registered with the status buffer's mode, the worktree list's, the review buffer's, the log buffer's and the blame buffer's"
       run :=
         pure <|
           VersionControl.commitMode.name == "vc-commit" && VersionControl.commitMode.roles == [] &&
             VersionControl.commitMode.locals ==
               [("c", VersionControl.acceptName), ("k", VersionControl.abortName)] &&
             VersionControl.commitMode.problems == [] &&
-            VersionControl.modes.map (·.name) == #["vc-status", "vc-commit", "vc-worktrees"] }]
+            VersionControl.modes.map (·.name) ==
+              #["vc-status", "vc-commit", "vc-worktrees", "vc-review", "vc-log", "vc-blame"] }]
 
 end ModelTest

@@ -551,7 +551,7 @@ elaborator.
   registry (`Registry.displayRules`), set at every install, so a config
   that makes none clears them, and handed to the loop for each step as
   `Loop.Registered.displayRules`, which answers a command's
-  `.displayRules` request (`BufferId.display`). Checking at install is
+  `RegistryRequest.displayRules` question (`BufferId.display`). Checking at install is
   enough because commands never add or drop an edge; a state handed a rule
   for an edge it lacks still places the buffer, in the stack.
 - **The title bar is config's, at the next start**: `titleBar .standard`
@@ -675,9 +675,9 @@ elaborates it.
 `ffi-test` checks the size on each kind of thread (`FfiTest.entryChecks`,
 in the gate); a thread reports its own stack size, so the check aborts
 nothing. `mise run ffi-overflow` shows the abort itself, under that size
-(the `overflow` scenario of `lean/FfiTest.lean`). It is run on demand and is
-not part of the gate, because every abort makes macOS write a crash report
-on the machine.
+(the `overflow` scenario of `lean/FfiTest/Editor/Ffi/MainThread.lean`). It
+is run on demand and is not part of the gate, because every abort makes
+macOS write a crash report on the machine.
 
 ## The editor API is an interface
 
@@ -781,7 +781,7 @@ The pattern is built for one deliberately small interface, text:
 | Programs, and the two runners | `lean/Editor/Program.lean` |
 | The text port: create, insert, delete, read; `snapshot`, which takes a text as it is now; `ask`, which puts a question to a text or a snapshot (its revision, length, row count or contents; the point of an offset and the offset of a point, in bytes, in UTF-16 or in cells; the content of one row and the text of a range; and where a motion leads from a position, with the motion a value of an inductive, so that a new motion is a constructor and not a question); `release`, which gives either up; `apply`, which applies a transaction, built by a command as plain data, with an origin, and replies with the revision it produced; `log`, which puts a question to a text's edit log (what changed since a revision, as one patch; who wrote a range); `forget`, which moves where that log starts; and `mark`, `marker`, `place` and `unmark`, which have a text hold an anchor or a selection that every edit moves, read it back, put another in its place, and give it up; and `applyInverse`, which applies the inverse of a run of a text's revisions as one edit, where the text is in the state the run ended in, and replies with the revision it produced and the selection to place, and `dropInverses`, which drops the inverses a text keeps for a run; `copy`, which makes a new text of what a text or a snapshot holds, at revision 0 with an empty log, no markers and no kept inverses; and `adopt`, which takes into the store a snapshot a job held, named by a second kind of id (`JobSnapshotId`) and answered from what the command's run was handed, so that an id the run was not handed is refused. `ask` also carries what a selection covers. A new question is data, a constructor of the query, not a request | `lean/Editor/Text.lean` |
 | Its pure model: a string and a revision for each text, a snapshot as a copy of that pair, and points found by walking characters. A transaction's changes are applied as the ranges they change. The log is modelled beside the texts, not inside them, as who wrote every byte and the text at every revision, so the model finds a patch and a trace by a different route from the library's. Markers are a table beside the texts too, moved through the ranges an edit changed, and what a selection covers is read off the string's rows and characters. A motion is picked from a list of every cell start or every word of the string, where the library walks from the position; and two theorems are stated about the conversions, that one that answers is undone by the other and that the line start of a line start is itself. The model keeps no inverse: beside the texts it keeps, for each, the name of the state it was in at every revision, the selections each edit carried and which inverses were dropped (its history). The text an inverse leaves is read off the log's model, and what it changed is the gaps between the bytes the two states share, by the identities the bytes had when the run ended; the library composes the inverses it kept. What a job held reaches its command as a value the run is handed, which `adopt` reads | `lean/Editor/Text/Model.lean` |
-| Its real binding, over the text-storage crate (`editor-text`): a table of documents and one of snapshots. The snapshots are a table behind a reference that the binding publishes and alone writes, in a command, on the editor thread; a reader off that thread is given its read half and nothing else. The documents are a value the editor thread owns. A run of a finished job's command is handed the library's snapshots the job held. A question about a text is answered from a snapshot taken for it; a transaction, a question about the log and a marker go to the document, which holds the markers: the binding keeps no table of them, and a marker's id is its text's id with the document's number for it, so that a text refuses another's. The kept inverses are the document's too, with no table here: a run is two of the text's own revisions. A transaction, a patch, a trace, a marker, extents and what an inverse did are lists, which cross the boundary as words, a buffer of 64-bit numbers that a codec on each side writes and checks | `lean/Editor/Text/Real.lean`, `lean/Editor/Ffi.lean` |
+| Its real binding, over the text-storage crate (`editor-text`): a table of documents and one of snapshots. The snapshots are a table behind a reference that the binding publishes and alone writes, in a command, on the editor thread; a reader off that thread is given its read half and nothing else. The documents are a value the editor thread owns. A run of a finished job's command is handed the library's snapshots the job held. A question about a text is answered from a snapshot taken for it; a transaction, a question about the log and a marker go to the document, which holds the markers: the binding keeps no table of them, and a marker's id is its text's id with the document's number for it, so that a text refuses another's. The kept inverses are the document's too, with no table here: a run is two of the text's own revisions. A transaction, a patch, a trace, a marker, extents and what an inverse did are lists, which cross the boundary as words, a buffer of 64-bit numbers that a codec on each side writes and checks | `lean/Editor/Text/Real.lean`; in `lean/Editor/Ffi/`, `Document.lean`, `Snapshot.lean`, `Transaction.lean`, `Log.lean`, `Marker.lean`, `Inverse.lean` and `Words.lean` |
 | Its contract, run against the model by `lake test` (`mise run lean-test`) and against the real binding by `contract-test` (`mise run ffi-test`) | `lean/Editor/Text/Contract.lean` |
 | A command, `append`, with a theorem about it | `lean/Editor/Command/Append.lean` |
 | The undo tree: logic above the port, in plain Lean that imports the port alone. It is told the text's revision, sets the boundaries of groups, undoes, redoes and moves between branches by `applyInverse`, drops what it has crossed by `dropInverses`, reverts the open group, and tracks the state last saved, with a theorem that a boundary does not change whether a text is modified | `lean/Editor/UndoTree.lean` |
@@ -852,9 +852,11 @@ editor state's buffers and windows through one port, whose shape is:
   `EditorRequest.display` one of the display port, `EditorRequest.watch`
   one of the watch port, `EditorRequest.clipboard` one of the clipboard
   port, `EditorRequest.fuzzy` one of the fuzzy port,
-  `EditorRequest.syntaxTree` one of the syntax tree port
-  and `EditorRequest.state` a request about the editor state: seven
-  sub-ports. The reply to each is its sub-port's reply. `editorPort` is
+  `EditorRequest.syntaxTree` one of the syntax tree port,
+  `EditorRequest.state` a request about the editor state,
+  `EditorRequest.registry` a question to the registry and config, and
+  `EditorRequest.control` a request to end the running command or to run
+  something registered inside it: nine sub-ports. The reply to each is its sub-port's reply. `editorPort` is
   an `abbrev`, as every port is.
 - **The fuzzy port** (`lean/Editor/Fuzzy.lean`, added by the command
   loop's phase 14) is what the editor asks of a fuzzy matcher:
@@ -890,7 +892,7 @@ editor state's buffers and windows through one port, whose shape is:
     answered by `Fuzzy.real`, one call, as a text request is by the text
     binding: the matcher needs nothing a host could hand in, so no runner
     takes a handler for it and no host changed. It is guarded like any
-    request that is not the state's.
+    request the loop does not answer in place.
   - Set aside: a function handed to the loop. The loop's publish and a
     command would then reach the matcher two ways, and config not at
     all.
@@ -914,7 +916,7 @@ editor state's buffers and windows through one port, whose shape is:
   publishes, once as its loop starts (`Collaborators.syntaxTree`,
   `Running.syntaxTree`), and hands it to every command it runs, a finished
   job's through `Job.finishWith` too. A syntax tree request is guarded like
-  any request that is not the state's, and what it did is not undone on
+  any request the loop does not answer in place, and what it did is not undone on
   rollback: the library parses and draws outside the editor state. What
   setting a major mode with a syntax tree asks of it is
   `lean/Editor/Highlight.lean`'s ([keymaps-and-modes.md](keymaps-and-modes.md),
@@ -1005,10 +1007,20 @@ editor state's buffers and windows through one port, whose shape is:
     by construction, since it runs above both runners;
   - the loop, and every test that builds one, is as it was.
 
+  The registry's questions (`lean/Editor/Command/Registry.lean`) and the
+  control requests (`lean/Editor/Command/Control.lean`) are the loop's to
+  answer in the same way, and for the same reasons: a question is answered
+  by one pure function of what the loop was told of the registry and
+  config (`Loop.Registered.answer`), and a control request by ending the
+  command's program or putting a registered program before its rest. So
+  neither has a model, a contract or a binding.
+
   A runner still answers every request of the port. Each answers a state
   request that reaches it as an editor with no buffer and no window would
-  (`EditorState.none`), and keeps nothing: a command run where no loop
-  dispatched it finds nothing. Every command a host runs goes through the
+  (`EditorState.none`), a question as with nothing registered
+  (`RegistryRequest.bare`) and a control request with nothing run and
+  nothing ended (`ControlRequest.bare`), and keeps nothing: a command run
+  where no loop dispatched it finds nothing. Every command a host runs goes through the
   loop; only a test runs one bare. A split of the port into one for
   commands and a smaller one for runners, which the types would then check,
   was set aside: it would rename the loop's monad and every call that runs
@@ -1020,12 +1032,53 @@ editor state's buffers and windows through one port, whose shape is:
   made by the host from the registry for each step), and answers those two
   requests with it: it refuses a name no one registered, runs a mode's
   on-enter actions inside the command, and hands the jobs a command asked
-  for back to the host to start.
+  for back to the host to start. A control request names the command, the
+  source or the style it runs, and a question's reply is names and
+  settings, never a program.
 - **Where it grows.** A new request about the editor state is a constructor
   of `StateRequest` and an operation of `lean/Editor/State.lean`
   (`lean/Editor/State/Request.lean`, "Where an addition goes"). A new
-  sub-port is a constructor and a lift. A new question about text or
-  layout stays inside its own sub-port and changes nothing here.
+  question to the registry or config, a new config setting a command reads
+  among them, is a constructor of `RegistryRequest`, and a new way to end
+  the command or to run something registered inside it one of
+  `ControlRequest` (each module's "Where an addition goes"). A new
+  sub-port is a constructor and a lift, or, for one the loop answers in
+  place, a constructor and an `ask`. A new question about text or layout
+  stays inside its own sub-port and changes nothing here.
+- **The registry's questions and the loop's control are sub-ports of their
+  own.** Decided 2026-11-18, by roadmap `structural-splits` phase 4. They
+  had been `StateRequest` variants that `EditorState.handle` answered with
+  a stand-in, since only the loop can answer them; twenty such variants had
+  grown there, so a sub-port whose rule is that it reaches nothing outside
+  the state grew a stub with each new config setting.
+  - **Two sub-ports, not one.** A question to the registry is answered by a
+    pure function of what the loop was told and changes neither the state
+    nor the program, so it is one arm of the dispatcher. A control request
+    changes the command's program: `giveUp` and `breakOff` end it, and
+    `runCommand`, `askSource`, `askAtPoint` and `matchCandidates` put a
+    registered program before the rest, so each is an arm of its own, in
+    one exhaustive match. `giveUp` and `breakOff` ask the registry nothing,
+    so a registry sub-port holding them would be misnamed. `askSource`,
+    `askAtPoint` and `matchCandidates` are control requests because they
+    are answered as `runCommand` is: a program runs inside the asking
+    command, guarded, and can refuse it.
+  - **No single read of config's readings**, as `StateRequest.read` is of
+    the state. The language table cannot be in a reply: a `Language` holds
+    a `Mode.SyntaxTree`, defined in `lean/Editor/Mode.lean`, which imports
+    `Editor.Command`, so a reply type over it would make the port depend on
+    itself. `ex`, `hasJob`, `categorySources` and `atPointSources` are
+    lookups over what the registry holds as functions. A read would have
+    replaced at most eight of the fourteen questions, and the sub-port would
+    have had two shapes of question; AGENTS.md asks for a variant per
+    question, and no command changes config's readings, so the state's
+    reason for one read does not hold.
+  - **Where no loop runs a command**, a runner answers both as with nothing
+    registered (`RegistryRequest.bare`, `ControlRequest.bare`), the values
+    the stand-ins had, `hasJob` answering yes for any name as `startJob`
+    takes any. Behaviour seen from a command did not change.
+  - `setMajorMode`, `setBufferMajorMode`, `startJob` and `loadTheme` stayed
+    state requests: each is a state operation the loop gates on a
+    registered name.
 
 | Piece | Where |
 |---|---|
@@ -1045,7 +1098,9 @@ editor state's buffers and windows through one port, whose shape is:
 | Its contract, imported from the port alone, run against the model by `lake test` and against the in-process clipboard by `contract-test` | `lean/Editor/Clipboard/Contract.lean` |
 | The clipboard where there is no window (the headless host): a cell of the process that answers with the model's rule | `lean/Editor/Clipboard/InProcess.lean` |
 | The state requests and their pure handler: one read of the whole state, and a request a write (a buffer, its history, values and modes; a window; the echo; a job to start), each refused with a value | `lean/Editor/State/Request.lean`, over the operations of `lean/Editor/State.lean` |
-| A dispatched command: its state requests answered from the loop's state, every other request guarded, so that it stops at its next one once the flag is up, a major mode's on-enter actions run inside it; `Guarded`, how it ended; and `Loop.Registered`, what the loop is told of the registry. The guard has this one definition | `lean/Editor/Command/Dispatch.lean` |
+| The questions to the registry and config: an ex binding, the themes, config's settings, the language table, the jobs and the completion sources registered; what a runner answers where no loop runs the command | `lean/Editor/Command/Registry.lean` |
+| The loop's control of a running command: giving up, breaking off, and running a command, a completion source, an at-point source or a category's style inside it; what a runner answers where no loop runs the command | `lean/Editor/Command/Control.lean` |
+| A dispatched command: its state, registry and control requests answered from the loop's state and what it is told of the registry (`Loop.Registered.answer`), every other request guarded, so that it stops at its next one once the flag is up, a major mode's on-enter actions run inside it; `Guarded`, how it ended; and `Loop.Registered`, what the loop is told of the registry. The guard has this one definition | `lean/Editor/Command/Dispatch.lean` |
 | The composite's model runner, over the five models side by side, and the fuzzy model, which has no state | `lean/Editor/Command/Model.lean` |
 | The composite's real runner, over the text binding, a display handler, a watch handler, a clipboard handler, a syntax tree handler and the fuzzy port's real binding | `lean/Editor/Command/Real.lean` |
 | `DisplayHandler`, and running a display program against one | `lean/Editor/Display.lean` |
@@ -1060,7 +1115,8 @@ editor state's buffers and windows through one port, whose shape is:
 Built by the command loop's phase 8 (`lean/Editor/Api.lean`, whose module
 docs have each operation's rules). It is what a command is written with
 beyond the text port's own operations: programs over the composite port,
-made of state requests and text requests. Config sees it through
+made of state requests, questions to the registry, control requests and
+text requests. Config sees it through
 `Editor.lean`.
 
 | A command can | With | Reaches the library |
@@ -1186,7 +1242,8 @@ made of state requests and text requests. Config sees it through
   `reload-config`. They needed four state requests. Two name something
   the host holds: which command an ex name is bound to (`exBinding`),
   which the dispatcher answers from the registry, as it answers a major
-  mode's name and a job's; and a reload (`reloadConfig`), a one-shot
+  mode's name and a job's (a question to the registry,
+  `RegistryRequest.ex`, since roadmap `structural-splits` phase 4); and a reload (`reloadConfig`), a one-shot
   output of the step. One has a command run after another (`invoke`), in
   the field a prompt's answer is recorded in. One asks the editor to quit
   (`quit`), which is a flag of the state the step turns into "stop"
@@ -1268,7 +1325,7 @@ made of state requests and text requests. Config sees it through
 | A buffer's changed-on-disk mark: what the last check of its file found that is not the file it holds, and whether the user was told (`Buffer.File.changed`) | Compiled Lean, a field of the buffer's file in the editor state, set by the command a check finishes with (`BufferId.markChanged`, `BufferId.tellChanged`) and cleared by a load, a reload or a save | Untouched | Lost: a check after a restart finds the file as it is |
 | What the loop saw at its last publish (`Loop.seen`): the focus, the buffers shown, modified and open, which decide the files due a check | Compiled Lean, a field of the loop | Untouched | Lost |
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change, and the text typed in the insert session that change began) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
-| The registers: a text and whether it is line-wise, by name. Evil keeps the unnamed one, which every yank and deletion sets | Compiled Lean, a field of the editor state (`EditorState.registers`, `lean/Editor/State.lean`), set by a command (`setRegister`), so it is rolled back with a command that does not run to its end | Untouched | Lost |
+| The registers: a text and whether it is line-wise, by name. Evil keeps the unnamed one, which every yank and deletion sets | Compiled Lean, a field of the editor state (`EditorState.Remembered.registers`, `lean/Editor/State.lean`), set by a command (`setRegister`), so it is rolled back with a command that does not run to its end | Untouched | Lost |
 | The system clipboard | Outside the editor: reached through the clipboard port. A host with no window keeps one of its own in the process (`lean/Editor/Clipboard/InProcess.lean`) | Untouched | The window system's is the system's; the in-process one is lost |
 | Compiled commands, jobs, key bindings, modes, ex bindings and themes | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the command `load-theme` and the theme `default` (`lean/Editor/Themes/Compiled.lean`), the command prompt `execute-command` with its source `commands` (`lean/Editor/ExecuteCommand/Compiled.lean`), the binding search `search-bindings` with its source `bindings` (`lean/Editor/BindingSearch/Compiled.lean`), the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `w!`, `e`, `e!`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file`, `save-buffer`, `edit-file` and `reload-buffer`, and their jobs, `load-file`, `save-file` and `reload-file`, with the file prompt's source `files`, its job `files` and the style `path` as the category `file`'s compiled default (`lean/Editor/Files/Compiled.lean`, `lean/Editor/Completion/Paths.lean`), the minibuffer's commands, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward` and `minibuffer-delete-to-start`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's thirty-seven commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `select-object`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators, text objects and changes, and the seven that scroll a view, `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`, `scroll-line-to-top`, `scroll-line-to-center` and `scroll-line-to-bottom`, the seven editing keys of insert state, `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up` and `insert-down`, and the four of the Edit menu, `clipboard-cut`, `clipboard-copy`, `clipboard-paste` and `select-all` (`lean/Editor/Evil/Clipboard.lean`) (`lean/Editor/Evil/Compiled.lean`), and `workspace-current` with the job `find-workspace` (`lean/Editor/Workspace/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
 | An open prompt: its label, the minibuffer's view, the asking view and the continuation, its candidates with what it has listed of them and the choice, all plain data, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |

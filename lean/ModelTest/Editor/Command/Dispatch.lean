@@ -3,8 +3,10 @@ import Editor.Clipboard
 import Editor.Clipboard.Model
 import Editor.Command
 import Editor.Command.Call
+import Editor.Command.Control
 import Editor.Command.Dispatch
 import Editor.Command.Model
+import Editor.Command.Registry
 import Editor.Compile.Contribution
 import Editor.Config.Owner
 import Editor.Config.Registry
@@ -14,6 +16,7 @@ import Editor.DisplayRules
 import Editor.Event
 import Editor.Ex.Line
 import Editor.File
+import Editor.Files
 import Editor.Fuzzy
 import Editor.Fuzzy.Model
 import Editor.InputScheme
@@ -47,10 +50,13 @@ import ModelTest.Support.States
 /-!
 # Model tests: `Editor/Command/Dispatch.lean`
 
-The model tests of `Editor/Command/Dispatch.lean`: `guardChecks` and
-`modeEnterChecks`. `guardChecks` are of the loop's guard and `modeEnterChecks`
-of entering a mode, both in `Editor/Command/Dispatch.lean`. The root module
-`ModelTest` runs them; its module doc says what each shows.
+The model tests of `Editor/Command/Dispatch.lean`: `guardChecks`,
+`modeEnterChecks` and `dispatchRegistryChecks`. `guardChecks` are of the
+loop's guard, `modeEnterChecks` of entering a mode and
+`dispatchRegistryChecks` of the loop's answers to the questions to the
+registry and config (`Loop.Registered.answer`), all in
+`Editor/Command/Dispatch.lean`. The root module `ModelTest` runs them; its
+module doc says what each shows.
 -/
 
 namespace ModelTest
@@ -334,5 +340,80 @@ def modeEnterChecks : List Check :=
         pure
           (entered [(⟨0⟩, "listing")] (watch := { arrived := 1 }) ==
             some (#[], ["enter: interrupted"], #[none, none])) }]
+
+/-- The checks of the loop's answers to the questions to the registry and
+config (`Loop.Registered.answer`, `Editor/Command/Dispatch.lean`), and of
+where its arms for them stand towards the guard. -/
+def dispatchRegistryChecks : List Check :=
+  [{  name :=
+        "a question to the registry is not guarded: with the interrupt flag up from the first request, a dispatched command that asks which ex names are bound finishes with the names the loop was told"
+      run := do
+        let asking : EditorM (Array String) := RegistryRequest.ask .exNames
+        let (ended, model) :=
+          (asking.dispatched { exNames := #["w"] } EditorState.none).runModel
+            (countingModel { arrived := 1 })
+        return resulted ended == .inr (.finished #["w"], EditorState.none) &&
+            model.watch.clock == 0 },
+    { name :=
+        "a control request is not guarded either: with the interrupt flag up, a dispatched command that asks to run a command nobody registered finishes with false"
+      run := do
+        let program : EditorM (Guarded Bool) := do
+          let state ← twoBuffers
+          let some target := state.target? ⟨0⟩ | throw .noSuchText
+          let asking : EditorM Bool := ControlRequest.ask (.runCommand "nobody" { target })
+          return (← asking.dispatched {} state).1
+        let (ended, _) := program.runModel (countingModel { arrived := 1 })
+        return resulted ended == .inr (.finished false) },
+    { name :=
+        "a dispatched command that asks for a path's language is answered the name of the language the loop's table chooses for the path, or none"
+      run :=
+        let program : EditorM (Guarded (Option String × Option String) × EditorState) := do
+          (do
+                  return (← RegistryRequest.ask (.languageOf "/p/main.rs"),
+                      ← RegistryRequest.ask (.languageOf "/p/notes.txt"))).dispatched
+              { languages := Language.shipped.toList } (← twoBuffers)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) => answer == (some "rust", none)
+          | _ => false },
+    { name :=
+        "a dispatched command that asks for a language's indent unit is answered the unit of the loop's entry of that name, the first in the table, or none; and a target's unit is its buffer's language's, or four spaces for a buffer with no language or one the table has no entry of"
+      run :=
+        let table := [{ Language.json with indentUnit := .tab }, Language.rust, Language.json]
+        let program :
+          EditorM
+            (Guarded (List (Option Language.IndentUnit) × List Language.IndentUnit) ×
+              EditorState) :=
+          do
+          (do
+                  let asked := [← indentUnitOf "json", ← indentUnitOf "rust", ← indentUnitOf "toml"]
+                  let unitOf (language : Option String) : EditorM Language.IndentUnit := do
+                    discard <| (⟨0⟩ : BufferId).setLanguage language
+                    let some target := (← editorState).target? ⟨0⟩ | throw TextError.noSuchText
+                    target.indentUnit
+                  let units := [← unitOf (some "json"), ← unitOf none, ← unitOf (some "toml")]
+                  return (asked, units)).dispatched
+              { languages := table } (← twoBuffers)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) =>
+            answer == ([some .tab, some (.spaces 4), none], [.tab, .spaces 4, .spaces 4])
+          | _ => false },
+    { name :=
+        "whether auto-reload is in effect, asked of a dispatched command, is config's setting while no command has chosen, and the command's choice once one has, either way; the registry is asked config's setting alone"
+      run :=
+        let asks (choice : Option Bool) (config : Bool) : Option (Bool × Bool) :=
+          let asking : EditorM (Bool × Bool) := do
+            return (← Files.autoReloadOn, ← RegistryRequest.ask .autoReload)
+          let program : EditorM (Guarded (Bool × Bool) × EditorState) :=
+            asking.dispatched { autoReload := config }
+              { EditorState.none with autoReload := choice }
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) => some answer
+          | _ => none
+        pure
+          (asks none true == some (true, true) && asks none false == some (false, false) &&
+            asks (some false) true == some (false, true) &&
+            asks (some true) false == some (true, false)) }]
 
 end ModelTest

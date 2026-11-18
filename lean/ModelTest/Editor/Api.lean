@@ -402,7 +402,7 @@ def apiStateChecks : List Check :=
           let answered (start : TextM EditorState) : Option (List Argument) :=
             (dispatchedFrom acceptPrompt start).bind fun (reply, state) =>
               if reply matches .ok () && state.prompt.isNone then
-                state.answered[0]?.map (·.arguments)
+                state.outbox.answered[0]?.map (·.arguments)
               else none
           answered (ApiCases.choosing "w" all "w" #[2, 0] [.next, .next]) ==
               some [.str "wq", .nat 7] &&

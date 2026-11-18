@@ -9,6 +9,7 @@ import Editor.GeneratedView
 import Editor.Invocation
 import Editor.Layout
 import Editor.Scene
+import Editor.State.Outbox
 import Editor.TabBar
 import Editor.UndoTree
 import Editor.Workspace
@@ -485,7 +486,16 @@ crossing a shorter line (`Window.wanted`, a `Window.Wanted`;
 - It is a field of the state, so a command that does not run to its end
   leaves it as it was.
 
-## Registers
+## What commands remember
+
+What the editor keeps from one command to the next, for Vim's commands to
+put back or repeat, is one field of the state (`EditorState.remembered`,
+an `EditorState.Remembered`): the registers, the last character find and
+the last search. Each part is set by one operation and read by one, is
+never refused, and is rolled back with a command that does not run to its
+end, since it is a field of the state.
+
+### Registers
 
 A register is a text a command set aside, to put back later
 (`Register`; `docs/design/keymaps-and-modes.md`, "Registers").
@@ -494,12 +504,12 @@ A register is a text a command set aside, to put back later
   what puts it back reads the flag to choose between the cursor and the
   line. The state does not check that a line-wise text ends in a line
   break: that is the rule of whoever sets it.
-- **Registers are kept by name** (`EditorState.registers`), for the whole
-  editor and not for a buffer or a view. `register?` reads one, and
-  `setRegister` sets one in place of the register the name had. A name is
-  any string: which names mean something, the unnamed register among
-  them, is the rule of the commands that set and read them, so one more
-  register is one more name and nothing here changes.
+- **Registers are kept by name** (`EditorState.Remembered.registers`),
+  for the whole editor and not for a buffer or a view. `register?` reads
+  one, and `setRegister` sets one in place of the register the name had.
+  A name is any string: which names mean something, the unnamed register
+  among them, is the rule of the commands that set and read them, so one
+  more register is one more name and nothing here changes.
 - **The state starts with none.** A name nothing was set under reads as
   no register, which is another thing than a register whose text is
   empty.
@@ -507,23 +517,24 @@ A register is a text a command set aside, to put back later
   end leaves them as they were.** The clipboard is not here: it is
   outside the editor, behind a port of its own.
 
-## The last search
+### The last search
 
-The last search (`Search`, `EditorState.lastSearch`) is what `n` and `N`
-repeat and what an empty pattern reuses: the pattern as it was typed, and
-whether it went forward. It is kept for the whole editor, as Vim keeps it,
-and set and kept as the last find is (below): `setLastSearch` sets it, a
-motion hands it back as data (`Vocabulary.To.search`), the command that ran
-the motion keeps it, and a command that does not run to its end leaves it
-as it was. The loop reads it too, for the matches it draws.
+The last search (`Search`, `EditorState.Remembered.lastSearch`, read by
+`EditorState.lastSearch`) is what `n` and `N` repeat and what an empty
+pattern reuses: the pattern as it was typed, and whether it went forward.
+It is kept for the whole editor, as Vim keeps it, and set and kept as the
+last find is (below): `setLastSearch` sets it, a motion hands it back as
+data (`Vocabulary.To.search`), the command that ran the motion keeps it,
+and a command that does not run to its end leaves it as it was. The loop
+reads it too, for the matches it draws.
 
-## The last find
+### The last find
 
-The last character find (`Find`, `EditorState.lastFind`) is what Vim's `;`
-and `,` repeat: the character an `f`, `t`, `F` or `T` looked for, and which
-of the four it was (`docs/design/keymaps-and-modes.md`, "Motions as
-built"). It is kept for the whole editor, as Vim keeps it and as the
-registers are kept.
+The last character find (`Find`, `EditorState.Remembered.lastFind`, read
+by `EditorState.lastFind`) is what Vim's `;` and `,` repeat: the
+character an `f`, `t`, `F` or `T` looked for, and which of the four it was
+(`docs/design/keymaps-and-modes.md`, "Motions as built"). It is kept for
+the whole editor, as Vim keeps it and as the registers are kept.
 
 - **The state starts with none**, and `setLastFind` sets it in place of
   the one it had. It is never refused.
@@ -597,8 +608,9 @@ A prompt is a request for one string, with a text to show beside the input
     minibuffer's view and needs a window of the list in its place.
   - **Given an answer it records the continuation**, with the answer as
     its first argument and the continuation's own after it
-    (`EditorState.answered`), until the loop hands it to its host
-    (`Editor/Loop.lean`), as `starts` holds the jobs a command asked for.
+    (`EditorState.Outbox.answered`, `Editor/State/Outbox.lean`), until the
+    loop hands it to its host (`Editor/Loop.lean`), as `starts` holds the
+    jobs a command asked for.
     Closing and recording are one operation, so one request.
   - **The minibuffer's markers and text are not given up here**: the loop
     gives them up once the command that closed the prompt has run to its
@@ -705,8 +717,9 @@ candidates, sheet and high-water mark.
   minibuffer's strip is the list's rows above the bottom row, with no input
   row (`listRows`, `minibufferPlace`, `cutStrip`, `candidateListRect?`),
   growing and never shrinking while it is open.
-- `retyped` is a one-shot, as `answered` is: what commands typed in place
-  of typed text (`retype`), which the loop tells the input scheme.
+- `retyped` is a one-shot, as the outbox's `answered` is: what commands
+  typed in place of typed text (`retype`), which the loop tells the input
+  scheme.
 - `wellFormed` holds a session to a view that is a window and a choice
   inside its listing.
 
@@ -797,11 +810,20 @@ its excerpts, which `setExcerptHistory` replaces whole (refused with
   display data, kept here and not in the store's list: a window over the
   buffer draws each header as a block above its excerpt, and each source
   buffer's spans at its excerpts (`Editor/ExcerptView.lean`).
+- **An entry may be tracked** (`Buffer.ExcerptEntry.viewed`, `some` of a
+  `Buffer.Viewed`): the loop's publish records what the views showed of it,
+  how many scenes, the clock at the first, and how long it was on screen
+  (`markViewed`, `creditViewed`; `Editor/Loop.lean`, "After each event"),
+  and a view draws one no scene has shown yet in `review-unexamined`
+  (`Editor/ExcerptView.lean`). Both are pure, and ignore an entry that is
+  not tracked and an index past the entries. The review buffer's excerpts
+  are tracked (`Editor/VersionControl/Review.lean`).
 
 - **Its own `history`** is an undo tree over its text like any buffer's,
   told and closed by the loop and never moved: its text keeps no inverse, so
-  an undo in it is not its tree's. Its "modified" mark is left to a later
-  phase.
+  an undo in it is not its tree's. Its "modified" mark is not its tree's
+  either: the mode line marks it modified while a buffer over one of its
+  sources is (`ModeLine.Context.modified`, `Loop.contextOf`).
 - **What it edited is a list of steps** (`Buffer.Excerpts`): each step
   (`Buffer.ExcerptStep`) names the source buffers an edit through the
   excerpt buffer reached, each with its name and the state its undo tree
@@ -997,13 +1019,6 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
   window; `none` when it is composing nothing.
 - No ambient context: a handler is given the window it acts on and its
   buffer, as a `Target`, never "the current buffer".
-- The jobs a command asked to be started are kept, in order, until the
-  loop hands them to its host (`EditorState.starts`, a `JobStart` each: a
-  registered job's name and plain arguments).
-- The invocations to run next are kept the same way
-  (`EditorState.answered`): the continuation of a prompt that was
-  accepted ("Prompts", above), and an invocation a command asked to be run
-  after it. The field is named for the first, which came first.
 - `EditorState.none` is an editor with no buffer and no window. It is not
   well formed, and no loop holds it: it is what a command's state requests
   are answered from where no loop runs the command
@@ -1053,14 +1068,19 @@ leaves them.
 | One buffer (its line ending, its modes) | A field of `Buffer` |
 | The file a buffer shows (what the next save expects on disk) | A field of `Buffer.File` |
 | One view (a goal column, a scroll offset) | A field of `Window` |
-| The whole editor (registers, the scroll margin, the pending key prefix, the order buffers were used in) | A field of `EditorState` |
+| Something a command asks the loop to hand its host once it has run to its end (a job to start or cancel, an invocation to run next, a reload, a theme) | A field of `EditorState.Outbox` (`Editor/State/Outbox.lean`, "Where a new entry goes"), which the loop empties whole after each command |
+| What commands remember for the whole editor from one command to the next, to put back or repeat (a register, the last find, the last search) | A field of `EditorState.Remembered` ("What commands remember"), set by an operation here and read through one |
+| The whole editor, set and read on its own (the scroll margin, the pending key prefix, a command's choice of auto-reload, asked to quit, the order buffers were used in) | A field of `EditorState` |
+| What the last publish was handed or measured, or drew itself (the row heights, the padding, when the tab bar shows, the tab bar's and the candidate list's views) | A field of `EditorState`, set by a publish (`Loop.publish`, `Editor/Loop.lean`) |
+| What a reconciler of the loop keeps in step after each publish (the files followed for auto-reload, the gutter's tracked files and watched repositories, the open prompt's job keys) | A field of `EditorState` beside `following`, `tracked`, `refWatches` and `completionKeys`, written by that reconciler |
 | One checkout or one codebase (compilation state, command history) | A value in a workspace's or a project's store (`Workspace.Table`) |
 | The open prompt (what completes it, what it has shown) | A field of `Prompt` |
 | What the user sees of it | A field of the scene (`Editor/Scene.lean`), filled in `Loop.scene`, or in `Loop.views` for a field of a view (`Editor/Loop.lean`) |
 
 Each is pinned by `ModelTest.stateChecks`, and what the scene shows of it by
 `ModelTest.loopChecks`. The operations a request reaches are pinned through
-the requests' handler, by `ModelTest.stateRequestChecks`.
+the requests' handler, by `ModelTest.stateRequestChecks`, and an outbox
+entry's hand-back by `ModelTest.dispatchQuitChecks`.
 -/
 
 namespace Editor
@@ -1129,14 +1149,34 @@ structure Buffer.ExcerptStep where
   sources : Array Buffer.ExcerptSource := #[]
   deriving DecidableEq, Repr
 
+/-- What the views of a tracked excerpt showed of it ("Excerpt buffers", in
+the module docs): written by the loop's publish (`Editor/Loop.lean`, "After
+each event"). -/
+structure Buffer.Viewed where
+  /-- How many published scenes showed it in a view's visible rows. -/
+  scenes : Nat := 0
+  /-- The host clock's milliseconds at the first such scene. -/
+  firstAt : Option Nat := none
+  /-- How long it was on screen, in milliseconds: the time between a scene
+  that showed it and the next publish, summed. -/
+  shownFor : Nat := 0
+  deriving DecidableEq, Repr
+
+/-- Whether a scene has shown it. -/
+def Buffer.Viewed.examined (viewed : Buffer.Viewed) : Bool :=
+  viewed.scenes > 0
+
 /-- One excerpt of an excerpt buffer as the editor keeps it beside the
-store's list: its source's text, and the header drawn above it ("Excerpt
-buffers", in the module docs). -/
+store's list: its source's text, the header drawn above it, and, when it is
+tracked, what was viewed of it ("Excerpt buffers", in the module docs). -/
 structure Buffer.ExcerptEntry where
   /-- The text of its source. -/
   source : TextId
   /-- The header drawn above it; none when empty. -/
   header : String := ""
+  /-- What the views showed of it, when it is tracked; `none` when it is
+  not. -/
+  viewed : Option Buffer.Viewed := none
   deriving DecidableEq, Repr
 
 /-- What an excerpt buffer keeps of what its edits reached, and of each of
@@ -1482,20 +1522,6 @@ def focusedOn (frame : Frame) (id : ViewId) : Frame :=
     focused := id, lastFocused := if moves then some frame.focused else frame.lastFocused }
 
 end Frame
-
-/-- A job a command asked to be started: the name it is registered under,
-and the arguments to start it with. It is plain data: the job itself is
-the registry's. -/
-structure JobStart where
-  /-- The name the job is registered under. -/
-  name : String
-  /-- What the job is started with, in order. -/
-  arguments : List Argument := []
-  /-- The key a host keeps the job under, if it has one: starting a job of a
-  key cancels the running job of that key, and a cancel of the key ends it
-  (`Loop.Stepped.cancels`). -/
-  key : Option String := none
-  deriving DecidableEq, Repr
 
 /-- A file buffer the loop follows for auto-reload: a `follow-file` job of
 the key `Following.key` is armed for it ("Auto-reload", `Editor/Loop.lean`). -/
@@ -1932,6 +1958,21 @@ structure Find where
   till : Bool
   deriving DecidableEq, Repr
 
+/-- What the editor remembers from one command to the next, for Vim's
+commands to put back or repeat: the registers, the last character find
+and the last search ("What commands remember", in the module docs). -/
+structure EditorState.Remembered where
+  /-- The registers, each under its name, in the order each name was first
+  set ("Registers", in the module docs). No name is here twice. -/
+  registers : Array (String × Register) := #[]
+  /-- The last character find, if one was made ("The last find", in the
+  module docs). -/
+  lastFind : Option Find := none
+  /-- The last search, if one was made ("The last search", in the module
+  docs). -/
+  lastSearch : Option Search := none
+  deriving DecidableEq, Repr
+
 /-- Everything the editor is showing and editing. -/
 structure EditorState where
   /-- The buffers, one a slot; a `BufferId` is an index here, and the slot of
@@ -1948,12 +1989,9 @@ structure EditorState where
   /-- The id the next new window gets, unless a window already has one as
   great: an id is never used again. -/
   nextView : Nat := 1
-  /-- The jobs commands asked to be started, in order, which the loop has
-  not yet handed to its host. -/
-  starts : Array JobStart := #[]
-  /-- The keys of the jobs commands asked to be cancelled, in order, which
-  the loop has not yet handed to its host. -/
-  cancels : Array String := #[]
+  /-- What commands asked the loop to hand its host, which it has not yet
+  handed (`Editor/State/Outbox.lean`). -/
+  outbox : EditorState.Outbox := {}
   /-- The prompt that is open, if one is: its view is a window of `windows`
   that is not in the frame's list. -/
   prompt : Option Prompt := none
@@ -1974,33 +2012,15 @@ structure EditorState where
   characters for the cells a command removed, then what it inserted, as the
   scheme records typed text ("A session at point", in the module docs). -/
   retyped : Array (ViewId × String) := #[]
-  /-- The invocations to run next, in order, which the loop has not yet
-  handed to its host: the continuations of the prompts commands accepted,
-  each with its answer as its first argument, and the invocations commands
-  asked to be run after them (`StateRequest.invoke`,
-  `Editor/State/Request.lean`). -/
-  answered : Array Invocation := #[]
   /-- Whether a command asked the editor to quit ("Quit", in the module
   docs). -/
   quitting : Bool := false
   /-- Whether the system asked the program to quit and has not been
   answered (`Event.quitRequested`; "Quit", in the module docs). -/
   systemQuit : Bool := false
-  /-- Whether a command asked for the config to be reloaded, which the loop
-  has not yet handed to its host. -/
-  reload : Bool := false
-  /-- The theme a command asked to be loaded, the latest if it asked more
-  than once, which the loop has not yet handed to its host. -/
-  theme : Option String := none
-  /-- The registers, each under its name, in the order each name was first
-  set ("Registers", in the module docs). No name is here twice. -/
-  registers : Array (String × Register) := #[]
-  /-- The last character find, if one was made ("The last find", in the
-  module docs). -/
-  lastFind : Option Find := none
-  /-- The last search, if one was made ("The last search", in the module
-  docs). -/
-  lastSearch : Option Search := none
+  /-- What commands remember from one to the next: the registers, the last
+  find and the last search ("What commands remember", in the module docs). -/
+  remembered : EditorState.Remembered := {}
   /-- How many rows every view keeps between its cursor's row and the first
   and the last row it shows ("The scroll margin", in the module docs). -/
   scrollMargin : Nat := 0
@@ -3370,6 +3390,39 @@ def closeExcerptGroup (id : BufferId) (state : EditorState) : EditorState :=
         buffers := state.buffers.set! id.index (some { buffer with excerpts := some excerpts }) }
   | _ => state
 
+/-- `state` with `change` made to what was viewed of each tracked entry of
+the excerpt buffer `id` among `indices`. An entry that is not tracked, an
+index past the entries and a buffer that is not an excerpt buffer change
+nothing. -/
+def changeViewed (id : BufferId) (indices : Array Nat) (change : Buffer.Viewed → Buffer.Viewed)
+    (state : EditorState) : EditorState :=
+  match state.buffer? id with
+  | some buffer@{ excerpts := some excerpts, .. } =>
+    let entries :=
+      excerpts.entries.mapIdx fun index entry =>
+        if indices.contains index then { entry with viewed := entry.viewed.map change } else entry
+    { state with
+      buffers :=
+        state.buffers.set! id.index
+          (some { buffer with excerpts := some { excerpts with entries } }) }
+  | _ => state
+
+/-- `state` with each tracked entry of the excerpt buffer `id` among
+`indices` shown by one more scene, first at `now` when no scene showed it
+before ("Excerpt buffers", in the module docs). -/
+def markViewed (id : BufferId) (indices : Array Nat) (now : Nat) (state : EditorState) :
+    EditorState :=
+  state.changeViewed id indices fun viewed =>
+    { viewed with
+      scenes := viewed.scenes + 1, firstAt := viewed.firstAt <|> some now }
+
+/-- `state` with `elapsed` milliseconds more on screen for each tracked entry
+of the excerpt buffer `id` among `indices` ("Excerpt buffers", in the module
+docs). -/
+def creditViewed (id : BufferId) (indices : Array Nat) (elapsed : Nat) (state : EditorState) :
+    EditorState :=
+  state.changeViewed id indices fun viewed => { viewed with shownFor := viewed.shownFor + elapsed }
+
 /-- Makes `excerpts` what the excerpt buffer `id` keeps of its edits.
 Refused, with the state unchanged, with `noSuchBuffer` for a buffer there
 is none of, and with `notExcerpts` for one that is not an excerpt buffer. -/
@@ -3383,30 +3436,41 @@ def setExcerptHistory (id : BufferId) (excerpts : Buffer.Excerpts) (state : Edit
 
 /-- The register kept under `name`, if one was set under it. -/
 def register? (state : EditorState) (name : String) : Option Register :=
-  (state.registers.find? (·.1 == name)).map (·.2)
+  (state.remembered.registers.find? (·.1 == name)).map (·.2)
 
 /-- `state` with `register` kept under `name`, in place of the register the
 name had, where that one was; a name nothing was set under is added
 last. Nothing else changes, and it is never refused: a name is any
 string. -/
 def setRegister (name : String) (register : Register) (state : EditorState) : EditorState :=
+  let registers := state.remembered.registers
   { state with
-    registers :=
-      if state.registers.any (·.1 == name) then
-        state.registers.map fun entry => if entry.1 == name then (name, register) else entry
-      else state.registers.push (name, register) }
+    remembered.registers :=
+      if registers.any (·.1 == name) then
+        registers.map fun entry => if entry.1 == name then (name, register) else entry
+      else registers.push (name, register) }
+
+/-- The last character find, if one was made: what `;` and `,` repeat ("The
+last find", in the module docs). -/
+def lastFind (state : EditorState) : Option Find :=
+  state.remembered.lastFind
+
+/-- The last search, if one was made: what `n` and `N` repeat ("The last
+search", in the module docs). -/
+def lastSearch (state : EditorState) : Option Search :=
+  state.remembered.lastSearch
 
 /-- `state` with `find` as its last character find, in place of the one it
 had ("The last find", in the module docs). Nothing else changes, and it is
 never refused. -/
 def setLastFind (find : Find) (state : EditorState) : EditorState :=
-  { state with lastFind := some find }
+  { state with remembered.lastFind := some find }
 
 /-- `state` with `search` as its last search, in place of the one it had
 ("The last search", in the module docs). Nothing else changes, and it is
 never refused. -/
 def setLastSearch (search : Search) (state : EditorState) : EditorState :=
-  { state with lastSearch := some search }
+  { state with remembered.lastSearch := some search }
 
 /-- `state` with `rows` as its scroll margin, in place of the one it had
 ("The scroll margin", in the module docs). Nothing else changes, and it is
@@ -4205,12 +4269,12 @@ def closePrompt (answer : Option String) (state : EditorState) :
         windows := state.windows.filter (·.id != asked.view)
         frame := { state.frame with focused := state.askedFrom asked }
         prompt := none
-        answered :=
+        outbox.answered :=
           match answer with
           | some answer =>
-            state.answered.push
+            state.outbox.answered.push
               { asked.continuation with arguments := .str answer :: asked.continuation.arguments }
-          | none => state.answered })
+          | none => state.outbox.answered })
 
 /-- The state with the open prompt's candidates changed by `change`.
 Refused, with the state unchanged, with `notOpen` when no prompt is

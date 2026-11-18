@@ -2,7 +2,9 @@ import Editor.Api
 import Editor.Clipboard
 import Editor.Clipboard.Model
 import Editor.Command
+import Editor.Command.Control
 import Editor.Command.Model
+import Editor.Command.Registry
 import Editor.Display
 import Editor.Display.Model
 import Editor.Fuzzy
@@ -194,6 +196,26 @@ def commandPortChecks : List Check :=
               model.texts.contents == #[] &&
               model.display.scenes == #[]
         | .error _ =>
-          return false }]
+          return false },
+    { name :=
+        "a registry question and a control request of a command no loop runs are answered as with nothing registered and no loop to act: nothing is run and nothing is ended, and neither the watch model's clock nor the other models move"
+      run := do
+        let command :
+          EditorM
+            (Array String ×
+              Bool × Option String × Option Completion.Answer × Array Completion.Hit) :=
+          do
+          return (← RegistryRequest.ask .exNames, ← RegistryRequest.ask (.hasJob "nope"),
+              ← RegistryRequest.ask (.languageOf "/p/main.rs"),
+              ← ControlRequest.ask (.askSource "words" { text := "w", view := ⟨0⟩ }),
+              ← ControlRequest.ask (.matchCandidates none "w" #["w", "wq"]))
+        let ended : EditorM Unit := ControlRequest.ask (.giveUp "no")
+        let watch : WatchModel := { clock := 7, pace := 3 }
+        let (result, model) := command.runModel { editorModel with watch }
+        return resulted result == .inr (#[], true, none, none, #[]) &&
+            resulted (ended.runModel editorModel).1 == .inr () &&
+            model.watch == watch &&
+            model.texts.contents == #[] &&
+            model.display.scenes == #[] }]
 
 end ModelTest

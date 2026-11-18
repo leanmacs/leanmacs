@@ -1,5 +1,6 @@
-The fixtures of contract-test's workspace checks (lean/ContractTest.lean,
-workspaceChecks and workspaceFailures), which `mise run ffi-test` hands
+The fixtures of contract-test's workspace checks (workspaceChecks in
+lean/ContractTest/Editor/Workspace.lean and workspaceFailures in
+lean/ContractTest/Editor/Workspace/Contract.lean), which `mise run ffi-test` hands
 contract-test as its second argument. It must stay executable (mode 100755).
 
 - git: stands for git. It answers exactly the two command lines the

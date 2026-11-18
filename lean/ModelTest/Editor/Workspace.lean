@@ -251,34 +251,25 @@ def workspaceStateChecks : List Check :=
             table.cached? "/x" 0 == some none &&
             table.cached? "/y" 0 == none) },
     { name :=
-        "with no loop to answer, the shell time limit is none; a dispatched command that asks is answered the limit the loop was told of"
+        "a dispatched command that asks for the shell time limit is answered the limit the loop was told of"
       run :=
         let program : EditorM (Guarded (Option Nat) × EditorState) := do
-          (EditorState.ask .shellTimeLimit).dispatched { shellTimeLimit := some 5000 }
+          (RegistryRequest.ask .shellTimeLimit).dispatched { shellTimeLimit := some 5000 }
               (← twoBuffers)
         pure <|
-          (EditorState.none.handle .shellTimeLimit).1 == none &&
-            match (program.runModel editorModel).1 with
-            | .ok (.finished answer, _) => answer == some 5000
-            | _ => false },
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) => answer == some 5000
+          | _ => false },
     { name :=
-        "with no loop to answer, the syntax refresh delay is none; a dispatched command that asks is answered the delay the loop was told of"
+        "a dispatched command that asks for the syntax refresh delay is answered the delay the loop was told of"
       run :=
         let program : EditorM (Guarded (Option Nat) × EditorState) := do
-          (EditorState.ask .syntaxRefreshDelay).dispatched { syntaxRefreshDelay := some 250 }
+          (RegistryRequest.ask .syntaxRefreshDelay).dispatched { syntaxRefreshDelay := some 250 }
               (← twoBuffers)
         pure <|
-          (EditorState.none.handle .syntaxRefreshDelay).1 == none &&
-            match (program.runModel editorModel).1 with
-            | .ok (.finished answer, _) => answer == some 250
-            | _ => false },
-    { name :=
-        "with no loop to answer, the workspace settings are config's defaults under generation 0"
-      run := pure ((EditorState.none.handle .workspaceSettings).1 == ({}, 0)) },
-    { name := "with no loop to answer, the compile hook is empty"
-      run :=
-        let hook := (EditorState.none.handle .compileHook).1
-        pure (hook.contributions.isEmpty && hook.projects.isEmpty) },
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) => answer == some 250
+          | _ => false },
     { name :=
         "a dispatched command that asks for the compile hook is answered what the loop was told, and the workspace settings carry the contributions' marker modes in registration order"
       run :=
@@ -288,7 +279,7 @@ def workspaceStateChecks : List Check :=
                 { mode := "a-mode", markers := #["a.toml", "a2.toml"] }]
             projects := #[{ project := .remote "github.com/o/r", mode := "b-mode" }] }
         let asking : EditorM (Compile.Hook × Workspace.Settings) := do
-          return (← EditorState.ask .compileHook, (← EditorState.ask .workspaceSettings).1)
+          return (← RegistryRequest.ask .compileHook, (← RegistryRequest.ask .workspaceSettings).1)
         let program : EditorM (Guarded (Compile.Hook × Workspace.Settings) × EditorState) := do
           asking.dispatched { compile := hook } (← twoBuffers)
         pure <|
@@ -306,7 +297,7 @@ def workspaceStateChecks : List Check :=
         let roots : Array Workspace.ConfigRoot := #[{ root := "/r/tools", project := some "tools" }]
         let registered : Loop.Registered := { workspaceRoots := roots, generation := 3 }
         let program : EditorM (Guarded (Workspace.Settings × Nat) × EditorState) := do
-          (EditorState.ask .workspaceSettings).dispatched registered (← twoBuffers)
+          (RegistryRequest.ask .workspaceSettings).dispatched registered (← twoBuffers)
         pure <|
           match (program.runModel editorModel).1 with
           | .ok (.finished answer, _) => answer == ({ roots }, 3)

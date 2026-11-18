@@ -3,9 +3,10 @@
 `excerpts.png` is a view of an excerpt document with each excerpt's header
 drawn as a block above it, as the headless CPU renderer draws it. The gate
 draws the same picture again and compares it with the file: `ffi-test
-excerpt-picture` in `mise run ffi-test` (`lean/FfiTest.lean`,
-`excerptPictureScenario`). The scene is built in Lean and published
-through the display's real binding, its blocks placed by the list the
+excerpt-picture` in `mise run ffi-test`
+(`lean/FfiTest/Editor/ExcerptView.lean`, `excerptPictureScenario`). The
+scene is built in Lean and published through the display's real binding,
+its blocks placed by the list the
 excerpt document's snapshot carries (`Ffi.Snapshot.excerpts`) and made by
 the editor's own rule (`ExcerptView.headers`,
 `lean/Editor/ExcerptView.lean`), in `solarized-dark` as `Themes.shipped`

@@ -1,4 +1,5 @@
 import Editor.VersionControl
+import Editor.VersionControl.HistoryRead
 import Editor.VersionControl.Plumbing
 import Editor.VersionControl.Porcelain
 import Editor.Workspace
@@ -9,9 +10,11 @@ import Editor.Workspace
 `Git.handler git root` answers each request of the version-control port
 (`Editor/VersionControl.lean`) by running `git` in the repository's root as
 a job: each run is one `Process.runWithin` (`Editor/Job.lean`), or a fed
-`Process.runWithInput` for a hunk, a commit and a change's blobs, one for
-each request but `fileAt`, which is two, `changes`, which is five, and
-`addWorktree`, which is up to three, so the child gets its directory's environment, and
+`Process.runWithInput` for a hunk, a commit, a change's blobs and the empty
+tree, one for each request but `fileAt`, which is two, `changes`, which is
+five, or four against no base, `addWorktree`, which is up to three, `log`,
+which is two, `blame`, which is up to three, and `rangeDiff`, which is
+four, so the child gets its directory's environment, and
 is killed with its process group when the job is cancelled. No new binding is needed. Its model is
 `Editor/VersionControl/Model.lean`, and both are held to the contract
 (`Editor/VersionControl/Contract.lean`).
@@ -93,6 +96,30 @@ change:
   a blob, or the change is `unparsable`. A submodule's side is never read:
   it is `Subproject commit <id>`. Each content is decoded by the store's
   escape rule.
+- **changes against no base** (an empty `against`): the revision resolved,
+  then `git hash-object -t tree --stdin` fed nothing, which prints the
+  empty tree's id in the repository's own hash, then the raw diff of the
+  revision against it and the batch as above; there is no merge base, and
+  the reply's base is empty. The reply's tip is always the revision's
+  resolved id.
+- **log**: the revision resolved as `changes` resolves a name, so a
+  refusal reads the same, then `git rev-list --first-parent
+  --max-count=<limit> --no-commit-header --encoding=UTF-8
+  --format=%H%x00%P%x00%an%x00%at%x00%s <id> --`, read by `parseLog`
+  (`Editor/VersionControl/HistoryRead.lean`). `rev-list` is plumbing, so no
+  `log.*` config (`log.showSignature`, `log.mailmap`, `log.decorate`)
+  applies; `--no-commit-header` (git 2.33) leaves only the format, and
+  `--encoding=UTF-8` pins `i18n.logOutputEncoding`.
+- **blame**: the revision resolved, then `git rev-parse --verify --quiet
+  <id>:<path>`, whose exit of 1 is `none`, then `git blame --porcelain
+  --ignore-revs-file= <id> -- <path>`, read by `parseBlame`. The empty
+  `--ignore-revs-file=` clears a user's `blame.ignoreRevsFile`, which
+  would hand an ignored commit's lines to its parents.
+- **rangeDiff**: each of its three names resolved, then `git range-diff
+  --no-color --no-notes --creation-factor=60 <base> <old> <new>` on the
+  ids, git's three-argument form, `<base>..<old>` against `<base>..<new>`,
+  read by `parseRangeDiff`. `--no-color` and `--no-notes` pin its text, and
+  `--creation-factor=60` pins git's default.
 - **addWorktree**: `git rev-parse --verify --quiet refs/heads/<branch>`
   first. With a start, its exit of 0 is refused (128, `a branch named
   '<branch>' already exists`); without one, its exit of 1 is refused (128)
@@ -293,6 +320,31 @@ def diffTreeArguments (old new : String) : Array String :=
 def batchArguments : Array String :=
   #["cat-file", "--batch"]
 
+/-- The format of a log's records: the id, the parents, the author's name,
+the author time and the subject, separated by NULs. -/
+def logFormat : String :=
+  "--format=%H%x00%P%x00%an%x00%at%x00%s"
+
+/-- The arguments of a log of the commit `id`, along first parents, at most
+`limit` commits. -/
+def logArguments (id : String) (limit : Nat) : Array String :=
+  #["rev-list", "--first-parent", s!"--max-count={limit}", "--no-commit-header", "--encoding=UTF-8",
+    logFormat, id, "--"]
+
+/-- The arguments of a blame of `path` at the commit `id`, a user's
+`blame.ignoreRevsFile` cleared. -/
+def blameArguments (id path : String) : Array String :=
+  #["blame", "--porcelain", "--ignore-revs-file=", id, "--", path]
+
+/-- The arguments of a range-diff of `base..old` against `base..new`, each a
+commit's id. -/
+def rangeDiffArguments (base old new : String) : Array String :=
+  #["range-diff", "--no-color", "--no-notes", "--creation-factor=60", base, old, new]
+
+/-- The arguments that print the id of the empty tree, fed nothing. -/
+def emptyTreeArguments : Array String :=
+  #["hash-object", "-t", "tree", "--stdin"]
+
 /-- The arguments that check that a local branch named `branch` exists. -/
 def branchExistsArguments (branch : String) : Array String :=
   #["rev-parse", "--verify", "--quiet", s!"refs/heads/{branch}"]
@@ -432,8 +484,22 @@ def readBlobs (git : String) (root : System.FilePath) (changes : Array Plumbing.
   | .ok ran =>
     return (Plumbing.parseBatch ran.stdout).mapError .unparsable
 
-/-- The change of `revision` against its merge base with `against`
+/-- The id of the empty tree in the repository at `root`, in its own hash
 ("`changes`", in the module docs). -/
+def emptyTreeIn (git : String) (root : System.FilePath) : JobM (Except Error String) := do
+  match
+    outcome
+      (←
+        Process.runWithInput (command git root emptyTreeArguments) .empty statusOutput gitTime) with
+  | .error error =>
+    return .error error
+  | .ok ran =>
+    let id := (File.decodeBytes ran.stdout).trimAscii.toString
+    return if id.isEmpty then .error (.unparsable "hash-object printed no object id") else .ok id
+
+/-- The change of `revision` against its merge base with `against`, or
+against no base when `against` is empty ("`changes`", in the module
+docs). -/
 def changesIn (git : String) (root : System.FilePath) (revision against : String) :
     JobM (Except Error Changes) := do
   let new ←
@@ -442,25 +508,32 @@ def changesIn (git : String) (root : System.FilePath) (revision against : String
       pure id
     | .error error =>
       return .error error
-  let old ←
-    match ← resolveIn git root against with
-    | .ok id =>
-      pure id
-    | .error error =>
-      return .error error
-  let base ←
-    match ← run git root (mergeBaseArguments new old) with
-    | .error (.failed (.code 1) "") =>
-      return .error (.failed (.code 1) s!"{revision} and {against} have no merge base")
-    | .error error =>
-      return .error error
-    | .ok ran =>
-      let base := (File.decodeBytes ran.stdout).trimAscii.toString
-      if base.isEmpty then
-        return .error (.unparsable "merge-base printed no object id")
-      pure base
+  let (base, from_) ←
+    if against.isEmpty then
+      match ← emptyTreeIn git root with
+      | .ok empty =>
+        pure ("", empty)
+      | .error error =>
+        return .error error
+    else
+      let old ←
+        match ← resolveIn git root against with
+        | .ok id =>
+          pure id
+        | .error error =>
+          return .error error
+      match ← run git root (mergeBaseArguments new old) with
+      | .error (.failed (.code 1) "") =>
+        return .error (.failed (.code 1) s!"{revision} and {against} have no merge base")
+      | .error error =>
+        return .error error
+      | .ok ran =>
+        let base := (File.decodeBytes ran.stdout).trimAscii.toString
+        if base.isEmpty then
+          return .error (.unparsable "merge-base printed no object id")
+        pure (base, base)
   let raw ←
-    match ← run git root (diffTreeArguments base new) with
+    match ← run git root (diffTreeArguments from_ new) with
     | .error error =>
       return .error error
     | .ok ran =>
@@ -486,7 +559,52 @@ def changesIn (git : String) (root : System.FilePath) (revision against : String
       pure files
     | .error error =>
       return .error error
-  return .ok { base, files := files.qsort fun a b => decide (a.path < b.path) }
+  return .ok { base, tip := new, files := files.qsort fun a b => decide (a.path < b.path) }
+
+/-- What a run that printed `ran` reads as by `parse`, or `unparsable`. -/
+def parsed {α : Type} (parse : ByteArray → Except String α) (ran : Except Error Process.Ran) :
+    Except Error α :=
+  ran.bind fun ran => (parse ran.stdout).mapError .unparsable
+
+/-- The log of `revision` ("`log`", in the module docs). -/
+def logIn (git : String) (root : System.FilePath) (revision : String) (limit : Nat) :
+    JobM (Except Error (Array LogEntry)) := do
+  match ← resolveIn git root revision with
+  | .error error =>
+    return .error error
+  | .ok id =>
+    return parsed HistoryRead.parseLog (← run git root (logArguments id limit))
+
+/-- The blame of `path` at `revision` ("`blame`", in the module docs). -/
+def blameIn (git : String) (root : System.FilePath) (revision path : String) :
+    JobM (Except Error (Option Blame)) := do
+  let id ←
+    match ← resolveIn git root revision with
+    | .ok id =>
+      pure id
+    | .error error =>
+      return .error error
+  match ← run git root (revisionArguments id path) with
+  | .error (.failed (.code 1) _) =>
+    return .ok none
+  | .error error =>
+    return .error error
+  | .ok _ =>
+    return (parsed HistoryRead.parseBlame (← run git root (blameArguments id path))).map some
+
+/-- The range-diff of `base..old` against `base..new` ("`rangeDiff`", in the
+module docs). -/
+def rangeDiffIn (git : String) (root : System.FilePath) (base old new : String) :
+    JobM (Except Error RangeDiff) := do
+  let mut ids := #[]
+  for name in [base, old, new] do
+    match ← resolveIn git root name with
+    | .ok id =>
+      ids := ids.push id
+    | .error error =>
+      return .error error
+  let (base, old, new) := (ids[0]!, ids[1]!, ids[2]!)
+  return parsed HistoryRead.parseRangeDiff (← run git root (rangeDiffArguments base old new))
 
 /-- Makes a worktree ("`addWorktree`", in the module docs): first checks
 whether `branch` is a local branch, refusing a new branch that is one, or
@@ -611,5 +729,23 @@ def handler (git : String) (root : System.FilePath) : Handler
             (←
               Process.runWithin (worktreeCommand git root (removeWorktreeArguments path))
                   statusOutput worktreeTime))
+  | request@(.log revision limit) => do
+    match request.invalid? with
+    | some detail =>
+      return .error (.invalid detail)
+    | none =>
+      logIn git root revision limit
+  | request@(.blame revision path) => do
+    match request.invalid? with
+    | some detail =>
+      return .error (.invalid detail)
+    | none =>
+      blameIn git root revision path
+  | request@(.rangeDiff base old new) => do
+    match request.invalid? with
+    | some detail =>
+      return .error (.invalid detail)
+    | none =>
+      rangeDiffIn git root base old new
 
 end Editor.VersionControl.Git

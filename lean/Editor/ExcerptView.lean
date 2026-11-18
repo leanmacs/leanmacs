@@ -1,3 +1,4 @@
+import Editor.Display
 import Editor.State
 
 /-!
@@ -21,6 +22,21 @@ by the text that is drawn, whatever the sources did since:
   source is drawn at every excerpt of it. The loop draws them under the
   excerpt buffer's own spans and the search matches (`Editor/Loop.lean`,
   "Decorations").
+- **What was not examined** (`unexamined`, `unexaminedOf`): over each
+  tracked excerpt (`Buffer.ExcerptEntry.viewed`, `Editor/State.lean`,
+  "Excerpt buffers") that no scene has shown, and that is not empty, a span
+  over its bytes in `unexaminedFace`. The loop draws it above the excerpt
+  buffer's own spans and under the search's matches (`Editor/Loop.lean`,
+  "Decorations"), and reads it before the scene's rows mark what they show,
+  so an excerpt is drawn unexamined in the first scene that shows it and
+  plainly from the next.
+
+**Viewed rows.** The excerpts a view shows (`shown`) are those one of its
+rows starts in, `start ≤ row.start < stop`, and an empty excerpt a row
+starts at. A separator row starts at the end of the excerpt above, so it
+shows nothing. The loop asks the display for each view's rows
+(`Display.rowsShown`, with its blocks) once the scene is decorated, and
+marks what they show (`Editor/Loop.lean`, "After each event").
 
 A source's syntax highlights are not this module's: they are the text's own
 spans, translated by the library through the same list
@@ -106,6 +122,44 @@ def sourceSpansOf (state : EditorState) (buffer : Buffer) (snapshot : SnapshotId
   let some (placed, excerpts) ←
     placedOf buffer snapshot (·.entries.any fun entry => !(spansOf entry).isEmpty) | return #[]
   return translated placed fun index => (excerpts.entries[index]?.map spansOf).getD #[]
+
+/-- The face a tracked excerpt no scene has shown is drawn in, which the
+vocabulary declares. -/
+def unexaminedFace : FaceName :=
+  ⟨"review-unexamined"⟩
+
+/-- The indexes of the excerpts of the list `placed` that `rows` show ("Viewed
+rows", in the module docs): each one a row starts in, or an empty one a row
+starts at, in list order. -/
+def shown (placed : Array Excerpt.Placed) (rows : Array Display.Row) : Array Nat :=
+  (placed.zipIdx.filter fun (excerpt, _) =>
+        rows.any fun row =>
+          if excerpt.start == excerpt.stop then row.start == excerpt.start
+          else excerpt.start ≤ row.start && row.start < excerpt.stop).map
+    (·.2)
+
+/-- The spans of what was not examined of an excerpt text whose list is
+`placed`, with the entries `entries`: for each index both have whose entry
+is tracked and not shown by a scene and whose excerpt is not empty, a span
+over its bytes in `unexaminedFace`. -/
+def unexamined (placed : Array Excerpt.Placed) (entries : Array Buffer.ExcerptEntry) :
+    Array Decoration :=
+  (placed.zip entries).filterMap fun (excerpt, entry) =>
+    match entry.viewed with
+    | some viewed =>
+      if !viewed.examined && excerpt.start < excerpt.stop then
+        some ⟨excerpt.start, excerpt.stop, unexaminedFace⟩
+      else none
+    | none => none
+
+/-- The spans of what was not examined drawn in a view of `buffer` that shows
+`snapshot` (`unexamined`): none for a plain buffer, for an excerpt buffer
+with no tracked entry, and when the store refuses the list. It asks the list
+once, and not at all when no entry is tracked. -/
+def unexaminedOf (buffer : Buffer) (snapshot : SnapshotId) : TextM (Array Decoration) := do
+  let some (placed, excerpts) ←
+    placedOf buffer snapshot (·.entries.any (·.viewed.isSome)) | return #[]
+  return unexamined placed excerpts.entries
 
 end ExcerptView
 

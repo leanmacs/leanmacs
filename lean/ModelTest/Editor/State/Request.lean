@@ -1,23 +1,11 @@
 import Editor.Api
-import Editor.Command
-import Editor.Command.Call
 import Editor.Command.Dispatch
-import Editor.Command.Model
-import Editor.Compile.Contribution
-import Editor.Completion
-import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Display
-import Editor.Completion.Styles
-import Editor.DisplayRules
-import Editor.Ex.Line
 import Editor.File
 import Editor.Floating
 import Editor.Invocation
-import Editor.Language
-import Editor.Language.IndentUnit
 import Editor.Layout
-import Editor.Mode
 import Editor.Program
 import Editor.Scene
 import Editor.State
@@ -25,7 +13,6 @@ import Editor.State.Request
 import Editor.Text
 import Editor.UndoTree
 import Editor.Value
-import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Completion
 import ModelTest.Support.Models
@@ -70,21 +57,19 @@ def stateRequests : List StateRequest :=
         asking :=
           #[{ source := "later", later := { job := "j" }, askedFor := "", generation := 1 }] },
     .addCandidates ⟨3⟩ 0 1 (offered #["three"]), .addCandidates ⟨3⟩ 4 1 #[],
-    .sourceAnswered ⟨3⟩ 0 1, .listMatched ⟨3⟩ "" 0 #[], .matchFailed ⟨3⟩ "" 0 "no", .hasJob "count",
+    .sourceAnswered ⟨3⟩ 0 1, .listMatched ⟨3⟩ "" 0 #[], .matchFailed ⟨3⟩ "" 0 "no",
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .themeNames,
-    .commandNames, .keyBindings ⟨0⟩, .categorySources "buffer",
-    .matchCandidates (some "buffer") "w" #["w"], .loadTheme "second", .invoke asked, .quit, .reload,
-    .giveUp "no", .breakOff "far enough", .setRegister "a" { text := "a line\n", linewise := true },
-    .setScrollMargin 2, .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .loadTheme "second", .invoke asked,
+    .quit, .reload, .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2,
+    .split ⟨0⟩ (marker 0 8) (marker 0 9) { axis := .columns, before := true },
     .arrange ⟨0⟩ .promote, .arrange ⟨1⟩ (.exchange none), .arrange ⟨0⟩ .zoom, .arrange ⟨9⟩ .zoom,
     .arrange ⟨0⟩ (.mainCount true 1), .arrange ⟨1⟩ (.edge .left),
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .stack,
     .openWindow ⟨2⟩ (marker 2 8) (marker 2 9) .stack,
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.edge .left),
     .openWindow ⟨9⟩ (marker 0 8) (marker 0 9) .stack,
-    .openWindow ⟨0⟩ (marker 1 8) (marker 0 9) .stack, .displayRules,
+    .openWindow ⟨0⟩ (marker 1 8) (marker 0 9) .stack,
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.float .frame {} false),
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.float (.window ⟨1⟩) {} true),
     .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) (.float (.position ⟨1⟩ (marker 1 3)) {} false),
@@ -97,8 +82,7 @@ def stateRequests : List StateRequest :=
     .show ⟨1⟩ ⟨0⟩ (marker 0 0) (marker 0 1), .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .tab,
     .tab (.select 1), .tab (.rename 1 (some "notes")), .tab (.move 0 1), .tab (.select 0),
     .tab (.close 1), .tab (.close 0), .tab (.select 7), .setLanguage ⟨0⟩ (some "rust"),
-    .setLanguage ⟨0⟩ none, .setLanguage ⟨9⟩ (some "rust"), .languageOf notePath,
-    .indentUnitOf "rust"]
+    .setLanguage ⟨0⟩ none, .setLanguage ⟨9⟩ (some "rust")]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -106,7 +90,7 @@ asks the text store nothing, so a marker's id is written out by hand. -/
 def stateRequestChecks : List Check :=
   let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
   [{  name :=
-        "the at-point requests are their operations: open, choose, retype, retake and close a session, and retype pushes onto what commands typed; with no registry the chain asks nothing and an at-point source answers none"
+        "the at-point requests are their operations: open, choose, retype, retake and close a session, and retype pushes onto what commands typed"
       run :=
         pure <|
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
@@ -125,8 +109,6 @@ def stateRequestChecks : List Check :=
             let (retaken, taken) := shown.handle (.retakeAtPoint "a1z")
             let (closed, gone) := taken.handle .closeAtPoint
             let ((), told) := state.handle (.retype ⟨0⟩ "\x08b")
-            let (names, _) := state.handle (.atPointSources ⟨0⟩ .key)
-            let (region, _) := state.handle (.askAtPoint "line" { view := ⟨0⟩, offset := 0 })
             opened matches .ok () && chose matches .ok () && retyped matches .ok () &&
               retaken matches .ok () &&
               (chosen.atPoint.bind (·.candidates.chosen)) == some 0 &&
@@ -135,8 +117,6 @@ def stateRequestChecks : List Check :=
               closed.toOption.map (·.source) == some "line" &&
               gone.atPoint.isNone &&
               told.retyped == #[(⟨0⟩, "\x08b")] &&
-              names.isEmpty &&
-              region.isNone &&
               (state.handle .closeAtPoint).1.toOption.isNone },
     { name :=
         "setLanguage records a buffer's language by name and clears it, and refuses a buffer there is none of with the state unchanged; a buffer has no language until one is set"
@@ -158,42 +138,6 @@ def stateRequestChecks : List Check :=
               | .error (.noSuchBuffer id) => id == ⟨9⟩
               | _ => false) &&
               same == state },
-    { name :=
-        "with no loop to answer, a path's language is none; a dispatched command that asks is answered the name of the language the loop's table chooses for the path, or none"
-      run :=
-        let program : EditorM (Guarded (Option String × Option String) × EditorState) := do
-          (do
-                  return (← languageOf "/p/main.rs", ← languageOf "/p/notes.txt")).dispatched
-              { languages := Language.shipped.toList } (← twoBuffers)
-        pure <|
-          (EditorState.none.handle (.languageOf "/p/main.rs")).1 == none &&
-            match (program.runModel editorModel).1 with
-            | .ok (.finished answer, _) => answer == (some "rust", none)
-            | _ => false },
-    { name :=
-        "with no loop to answer, a language's indent unit is none; a dispatched command that asks is answered the unit of the loop's entry of that name, the first in the table, or none; and a target's unit is its buffer's language's, or four spaces for a buffer with no language or one the table has no entry of"
-      run :=
-        let table := [{ Language.json with indentUnit := .tab }, Language.rust, Language.json]
-        let program :
-          EditorM
-            (Guarded (List (Option Language.IndentUnit) × List Language.IndentUnit) ×
-              EditorState) :=
-          do
-          (do
-                  let asked := [← indentUnitOf "json", ← indentUnitOf "rust", ← indentUnitOf "toml"]
-                  let unitOf (language : Option String) : EditorM Language.IndentUnit := do
-                    discard <| (⟨0⟩ : BufferId).setLanguage language
-                    let some target := (← editorState).target? ⟨0⟩ | throw TextError.noSuchText
-                    target.indentUnit
-                  let units := [← unitOf (some "json"), ← unitOf none, ← unitOf (some "toml")]
-                  return (asked, units)).dispatched
-              { languages := table } (← twoBuffers)
-        pure <|
-          (EditorState.none.handle (.indentUnitOf "rust")).1 == none &&
-            match (program.runModel editorModel).1 with
-            | .ok (.finished answer, _) =>
-              answer == ([some .tab, some (.spaces 4), none], [.tab, .spaces 4, .spaces 4])
-            | _ => false },
     { name := "a read hands back the whole state and changes nothing"
       run :=
         pure <|
@@ -497,11 +441,11 @@ def stateRequestChecks : List Check :=
           | some state =>
             let (first, one) := state.handle (.startJob "count" [.nat 3])
             let (_, two) := one.handle (.startJob "load" [.str "a", .bool true])
-            replied first == .inr () && state.starts == #[] &&
-              two.starts ==
+            replied first == .inr () && state.outbox.starts == #[] &&
+              two.outbox.starts ==
                 #[{ name := "count", arguments := [.nat 3] },
                   { name := "load", arguments := [.str "a", .bool true] }] &&
-              { two with starts := #[] } == state },
+              { two with outbox.starts := #[] } == state },
     { name :=
         "a request to start a job with a key keeps the key with the start, and a request to cancel a key is appended to the state's cancels, in order, and changes nothing else"
       run :=
@@ -512,10 +456,10 @@ def stateRequestChecks : List Check :=
             let (started, one) := state.handle (.startJob "count" [.nat 3] (some "k"))
             let ((), two) := one.handle (.cancelJob "k")
             let ((), three) := two.handle (.cancelJob "j")
-            replied started == .inr () && state.cancels == #[] &&
-              one.starts == #[{ name := "count", arguments := [.nat 3], key := some "k" }] &&
-              three.cancels == #["k", "j"] &&
-              { three with cancels := #[] } == one },
+            replied started == .inr () && state.outbox.cancels == #[] &&
+              one.outbox.starts == #[{ name := "count", arguments := [.nat 3], key := some "k" }] &&
+              three.outbox.cancels == #["k", "j"] &&
+              { three with outbox.cancels := #[] } == one },
     { name :=
         "attaching a file to a buffer sets its path, its stamp and its line ending, with no save in flight, and leaves the rest of the buffer and the other buffers; the buffer is then found by that path and by no other"
       run :=
@@ -686,7 +630,7 @@ def stateRequestChecks : List Check :=
               without.prompt == none &&
               replied accepted == .inr () &&
               answered == (asking.closePrompt (some "a")).2 &&
-              answered.answered.size == 1 &&
+              answered.outbox.answered.size == 1 &&
               replied refused == .inl .notOpen &&
               same == state },
     { name :=
@@ -834,81 +778,17 @@ def stateRequestChecks : List Check :=
                 other == waiting
             | _ => false },
     { name :=
-        "the handler knows no registry: asked whether a job is registered under a name, it answers yes for any name, as it takes any start, and leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state => state.handle (.hasJob "nope") == (true, state) },
-    { name :=
-        "the handler knows no registry: asked which command an ex name is bound to, it answers none for any name, and leaves the state as it was"
+        "asked to load a theme, the handler takes any name and keeps the latest until the loop takes it out"
       run :=
         pure <|
           match onTextModel twoBuffers with
           | none => false
           | some state =>
-            ["w", "greet", ""].all fun name =>
-              let (bound, after) := state.handle (.ex name)
-              bound == none && after == state },
-    { name :=
-        "the handler knows no registry: asked which ex names are bound, it answers none, and leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (names, after) := state.handle .exNames
-            names == #[] && after == state },
-    { name :=
-        "the handler knows no registry: asked which names commands are registered under, it answers none, and leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (names, after) := state.handle .commandNames
-            names == #[] && after == state },
-    { name :=
-        "the handler knows no input scheme: asked which key sequences reach a command in a view, it answers none, and leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (bound, after) := state.handle (.keyBindings ⟨0⟩)
-            bound == #[] && after == state },
-    { name :=
-        "the handler knows no registry: asked which sources are registered in a category, it answers none, and leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (names, after) := state.handle (.categorySources "x")
-            names == #[] && after == state },
-    { name :=
-        "the handler knows no style: asked to match a text with a category's style, it answers no hit, asks the matcher nothing, and leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (hits, after) := state.handle (.matchCandidates (some "buffer") "w" #["w", "wq"])
-            hits == #[] && after == state },
-    { name :=
-        "the handler knows no registry: asked which themes are registered, it answers none and leaves the state as it was; asked to load a theme, it takes any name and keeps the latest until the loop takes it out"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (names, after) := state.handle .themeNames
             let (first, loaded) := state.handle (.loadTheme "first")
             let (second, again) := loaded.handle (.loadTheme "second")
-            names == #[] && after == state && replied first == .inr () &&
-              replied second == .inr () &&
-              loaded == { state with theme := some "first" } &&
-              again == { state with theme := some "second" } },
+            replied first == .inr () && replied second == .inr () &&
+              loaded == { state with outbox.theme := some "first" } &&
+              again == { state with outbox.theme := some "second" } },
     { name :=
         "the request to have an invocation run next records it after what is recorded, the answer of a prompt that was closed among it, and changes nothing else"
       run :=
@@ -923,10 +803,10 @@ def stateRequestChecks : List Check :=
             let (_, asking) := prompted state
             let (_, answered) := asking.handle (.closePrompt (some "typed"))
             let (_, after) := answered.handle (.invoke second)
-            once.answered == #[first] && twice.answered == #[first, second] &&
-              { twice with answered := #[] } == state &&
-              after.answered == answered.answered.push second &&
-              answered.answered.size == 1 },
+            once.outbox.answered == #[first] && twice.outbox.answered == #[first, second] &&
+              { twice with outbox.answered := #[] } == state &&
+              after.outbox.answered == answered.outbox.answered.push second &&
+              answered.outbox.answered.size == 1 },
     { name :=
         "the request to quit sets the state's flag that the editor was asked to quit and changes nothing else; asked again, the state is as it was"
       run :=
@@ -946,25 +826,8 @@ def stateRequestChecks : List Check :=
           | none => false
           | some state =>
             let (_, asked) := state.handle .reload
-            !state.reload && asked.reload && { asked with reload := false } == state },
-    { name :=
-        "the request by which a command gives up changes nothing of the state: the handler knows no command to end, and the state after it is the state before"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (_, after) := state.handle (.giveUp "no such thing")
-            after == state },
-    { name :=
-        "the request by which a command breaks off changes nothing of the state either: the handler knows no command to end"
-      run :=
-        pure <|
-          match onTextModel twoBuffers with
-          | none => false
-          | some state =>
-            let (_, after) := state.handle (.breakOff "far enough")
-            after == state },
+            !state.outbox.reload && asked.outbox.reload &&
+              { asked with outbox.reload := false } == state },
     { name :=
         "the request to set a register sets the register of that name, in place of the one the name had, and changes nothing else of the state"
       run :=
@@ -979,7 +842,7 @@ def stateRequestChecks : List Check :=
             state.register? "a" == none && set.register? "a" == some word &&
               set == state.setRegister "a" word &&
               replaced.register? "a" == some line &&
-              { replaced with registers := #[] } == state },
+              { replaced with remembered.registers := #[] } == state },
     { name :=
         "the request to set the scroll margin sets the state's margin, in place of the one it had, and changes nothing else of the state: with no prompt open and with one open, and in the state with nothing in it"
       run :=
@@ -1080,15 +943,6 @@ def stateRequestChecks : List Check :=
               replied absent == .inl (.noSuchWindow ⟨9⟩) &&
               same == state &&
               replied last == .inl .lastTile &&
-              kept == moved },
-    { name :=
-        "with no loop to answer, the display rules are none, and asking for them leaves the state as it was"
-      run :=
-        pure <|
-          match onTextModel sidebar with
-          | none => false
-          | some state =>
-            let (rules, after) := state.handle .displayRules
-            rules == #[] && after == state }]
+              kept == moved }]
 
 end ModelTest

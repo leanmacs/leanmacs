@@ -104,18 +104,39 @@ def versionControlModelChecks : List Check :=
             repository.mergeBase "F" "G" == some "F" &&
             repository.mergeBase "L" "G" == none },
     { name :=
-        "a commit in the model freezes HEAD's commit with its parents, and HEAD becomes a new commit whose parent it is; on an unborn branch nothing is frozen"
+        "a commit in the model freezes HEAD's commit with its parents and who wrote it, and HEAD becomes a new commit whose parent it is, with the subject given; on an unborn branch nothing is frozen"
       run :=
         pure <|
           let repository :=
             VersionControlContract.writing (VersionControlContract.clean #[("a", "one")]) "a" "two"
-          let after := (VersionControl.Model.Repository.stageOne repository "a").commit
+          let after := (VersionControl.Model.Repository.stageOne repository "a").commit "next"
           let first := ({ index := #[("a", .file "a")] } : VersionControl.Model.Repository).commit
-          after.commits == #[("head", { files := #[("a", "one")] })] &&
+          after.commits ==
+              #[("head",
+                  { files := #[("a", "one")]
+                    authored := { VersionControl.Model.fixedAuthored with subject := "head" } })] &&
             after.parents == #["head"] &&
             after.headId != "head" &&
             after.committed == #[("a", "two")] &&
+            after.headAuthored.subject == "next" &&
             first.commits == #[] &&
-            first.committed == #[("a", "a")] }]
+            first.committed == #[("a", "a")] &&
+            first.headAuthored.subject == "commit" },
+    { name :=
+        "a commit request keeps its message's subject as git's %s gives it: the first paragraph after any blank lines, each line's trailing white space dropped, its lines joined by a space"
+      run :=
+        pure <|
+          let repository : VersionControl.Model.Repository :=
+            { committed := #[("a", "one")], index := #[("a", .file "two")]
+              worktree := #[("a", "two")] }
+          let (reply, after) :=
+            VersionControl.Model.handle (.commit "\n  Subject line  \nwraps here\t\n\nbody\n")
+              repository
+          let reply : Except VersionControl.Error Unit := reply
+          let logged : Except VersionControl.Error (Array VersionControl.LogEntry) :=
+            (VersionControl.Model.handle (.log "HEAD" 2) after).1
+          reply == .ok () &&
+            (logged.toOption.map fun entries => entries.map (·.authored.subject)) ==
+              some #["  Subject line wraps here", "head"] }]
 
 end ModelTest

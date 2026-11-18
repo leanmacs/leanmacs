@@ -135,6 +135,26 @@ is cited 73 times in 28 files, `docs/dev-practices/the-gate.md` and
 `docs/design/lean-runtime.md` among them; the split keeps those names and
 the root's path resolvable, or updates the citations.
 
+**Done** (roadmap `structural-splits`, phase
+`phase-2-split-lean-integration-test-roots`): split. `lean/ConfigTest.lean`,
+7,419 lines at 5f86580, is now 303: its imports, its module doc, `checks`
+and `main`. Its lists are in 15 test modules under `lean/ConfigTest/Editor/`,
+each the mirror of the module its doc names as its subject, where ModelTest
+keeps the model counterpart where there is one (the host's own lists in
+`lean/ConfigTest/Editor/Headless.lean`, `promptChecks` in
+`lean/ConfigTest/Editor/Minibuffer.lean`). The helpers several modules
+share are in six support modules under `lean/ConfigTest/Support/`, among
+them `Candidates.lean`, which holds `manyPaths` for the prompt checks and
+the benchmark. `Check`, `Context`, `failures`, `run` and `usage` are in
+`lean/ConfigTest/Check.lean`; `run` now takes the list to run as its first
+argument, which `main` passes as `ConfigTest.checks`, the one change to a
+definition. The benchmark is `lean/ConfigTest/Bench.lean` (790 lines),
+`namespace ConfigTest.Bench` unchanged. Everything stays in `namespace
+ConfigTest`, so every `ConfigTest.<name>Checks` citation resolves
+unchanged. The run is the same before and after: `config-test: 204 checks
+passed`. The largest new module is `lean/ConfigTest/Editor/Headless.lean`
+(2,305 lines).
+
 ### The binding's tests: `lean/FfiTest.lean`
 
 **Cohesion**: The root of the `ffi-test` executable, linked exactly like
@@ -154,6 +174,26 @@ root, in `split-lean-integration-test-roots`, low priority.
 `lean/Editor/Ffi.lean`'s conventions, `docs/design/lean-runtime.md` and
 `docs/dev-practices/the-gate.md`.
 
+**Done** (roadmap `structural-splits`, phase
+`phase-2-split-lean-integration-test-roots`): split. `lean/FfiTest.lean`,
+4,412 lines at 5f86580, is now 173: its imports, its module doc, `checks`
+and `main`. Its lists and scenarios are in 27 test modules under
+`lean/FfiTest/Editor/`, each mirroring the module it tests: one per binding
+family with a list of its own (`lean/FfiTest/Editor/Ffi/Document.lean` for
+`lean/Editor/Ffi/Document.lean`), and the mirror of the module tested for
+the lists that test something else (`sceneChecks` in
+`lean/FfiTest/Editor/Display/Real.lean`, `paddingChecks` in
+`lean/FfiTest/Editor/State.lean`, the window-host scenarios in
+`lean/FfiTest/Editor/Window/Real.lean`). The families with no list of their
+own (`Log`, `Text`, `Excerpts`, `Diffs`, `Clipboard`, `Words`) have no test
+module. The helpers several modules share are in six support modules under
+`lean/FfiTest/Support/`, and `Check`, `failures`, `run` and `usage` in
+`lean/FfiTest/Check.lean`. Everything stays in `namespace FfiTest`, so every
+`FfiTest.<name>Checks` citation resolves unchanged. The run is the same
+before and after: `ffi-test: 205 checks passed` and `ffi-test shutdown: 3
+checks passed`. The largest new module is
+`lean/FfiTest/Editor/Display/Real.lean` (435 lines).
+
 ### The contracts against the real bindings: `lean/ContractTest.lean`
 
 **Cohesion**: The root of the `contract-test` executable: 3,378 lines, 37
@@ -169,6 +209,51 @@ library (`Editor/Text/Contract.lean` and its peers).
 **Verdict**: *split* into one module per contract run, behind a thin root,
 in `split-lean-integration-test-roots`, low priority.
 `ContractTest.<name>Checks` is cited 33 times in 13 files.
+
+**Done** (roadmap `structural-splits`, phase
+`phase-2-split-lean-integration-test-roots`): split.
+`lean/ContractTest.lean`, 4,138 lines at 5f86580, is now 428: its imports,
+its module doc and `main`, unchanged. It has no `checks`: `main` is its
+aggregator, and its order is the constraint its doc states (the pool warmed
+first, the pump started once, every run in sequence, then quit and the pump
+ended). Its runs and lists are in 25 test modules under
+`lean/ContractTest/Editor/`: a contract's run in the mirror of that
+contract (`lean/ContractTest/Editor/Display/Contract.lean` for
+`lean/Editor/Display/Contract.lean`), and what only a real binding shows in
+the mirror of that binding (`lean/ContractTest/Editor/Clipboard/Real.lean`).
+The helpers several modules share are in seven support modules under
+`lean/ContractTest/Support/`, and `Check` and `checkFailures` in
+`lean/ContractTest/Check.lean`. Everything stays in `namespace
+ContractTest`, so every `ContractTest.<name>Checks` citation resolves
+unchanged. The one citation that named a list contract-test does not have
+(a `revisionBufferChecks`, in `lean/Editor/VersionControl/Show.lean`) now
+names `ContractTest.statusBufferChecks`, which holds the vc-show checks.
+contract-test's summary line is the same before and after. The largest new
+module is `lean/ContractTest/Editor/SyntaxTree/Real.lean` (713 lines).
+
+**Done** (roadmap `structural-splits`, phase
+`phase-6-merge-main-into-split-layout`): main's version-control review, log
+and blame work (a7f0ab1..825063c) was merged into the split layout at
+8445928. Its two new lists are in test modules that mirror what they test:
+`reviewBufferChecks` in `lean/ContractTest/Editor/VersionControl/Review.lean`,
+and `historyBufferChecks` in `lean/ContractTest/Editor/VersionControl/Log.lean`,
+which also covers the blame view and `vc-review-since`. The keys and jobs
+they share with `statusBufferChecks` (`statusJobs`, `statusKeys`, `toRow` and
+`reviewKeys`) are in the new `lean/ContractTest/Support/VersionControl.lean`,
+and main's changes to the repository writer (commits by their author,
+`ignore-revs`, and the blame section of `pinnedAwayConfig`) are in
+`lean/ContractTest/Support/Git.lean`. `lean/ContractTest.lean` is now 436
+lines, still only its imports, its module doc and `main`; its runs and lists
+are in 27 test modules under `lean/ContractTest/Editor/`, and its helpers in
+eight support modules. contract-test's summary line is main's, byte for byte.
+ConfigTest gained no list: main's two edits to it are in
+`lean/ConfigTest/Support/Lines.lean` (`statusOf`'s modified mark) and
+`lean/ConfigTest/Editor/Loop.lean` (the slow-command check's clock reads).
+Main added no `EditorState` field (there are still 28), no `StateRequest`
+variant (still 64), no binding (still 142, all in the families under
+`lean/Editor/Ffi/`) and nothing to the window example. The phase 2 note
+above is the record of that phase; its "is now 428" and "25 test modules"
+were true then, and this note supersedes them.
 
 ### The editor state: `structure EditorState` in `lean/Editor/State.lean`
 
@@ -219,6 +304,80 @@ of their own (`narrow-state-request-port`). The placement table is what
 keeps the structure from becoming a god struct, so the first follow-up
 adds a row for the outbox.
 
+**Done** (roadmap `structural-splits`, phase
+`phase-3-group-editor-state-fields`): the outbox and the Vim memory are
+grouped; the display readings and file following are not. `EditorState`
+had 34 fields at 816725d (seven were added after 37b1335) and has 28 now.
+The count needs `where`, `awk '/^structure EditorState where/,/^$/'`,
+since `structure EditorState.Remembered` now comes before it in the same
+file. `starts`, `cancels`, `answered`, `reload` and `theme` are the
+fields of `EditorState.Outbox`, the state's `outbox`, in the new module
+`lean/Editor/State/Outbox.lean` with `JobStart`; its docs hold the
+outbox's rules and "Where a new entry goes". `Loop.dispatch` empties it
+whole (`outbox := {}`) and hands it back through `Loop.Ran.outbox`;
+`Loop.Stepped`, the hosts' interface, keeps its five flat fields.
+`registers`, `lastFind` and `lastSearch` are the fields of
+`EditorState.Remembered`, the state's `remembered`, which stays in
+`lean/Editor/State.lean` beside the operations that keep it, under the
+section "What commands remember". `EditorState.lastFind` and
+`EditorState.lastSearch` are now read operations, so the commands that
+read them are unchanged, as are `lean/Editor/Api.lean` and the
+`StateRequest` constructors. `quitting`, which the finding listed with
+the outbox, stays a top-level field of `EditorState`: it is a standing
+request that outlives the command that set it, so that a quit can wait
+for a save, and emptying it with the outbox would drop such a quit.
+`retyped`, which the loop also empties after each command, stays a
+top-level field too: it goes to the input scheme, not the host, and a
+command that broke off does not hand it on. The display readings (`heights`, `padding`,
+`tabBarShown`, `tabBar`, and `candidateList` with them) stay flat because
+nothing reads or writes them as one unit, and file following
+(`autoReload`, `following`) because the two have different owners, a
+command's setting and a reconciler's bookkeeping. The placement table
+("Where a new field goes") gained rows for the outbox, the Vim memory, the
+display readings and the fields the loop's reconcilers keep.
+
+**Done** (roadmap `structural-splits`, phase
+`phase-4-narrow-state-request-port`): `StateRequest` had 84 variants at
+6fbbd9f (nineteen were added after 37b1335) and has 64 now (`awk
+'/^inductive StateRequest/,/^abbrev/' lean/Editor/State/Request.lean |
+grep -cE '^  \|'`), and `EditorState.handle` has no stand-in case left:
+it had 20 at 6fbbd9f. Twenty variants moved, not fourteen: six added after
+the audit were stand-ins too (`hasJob`, `categorySources`,
+`atPointSources`, `askSource`, `askAtPoint`, `matchCandidates`). They went
+to two new sub-ports of `EditorRequest`, both answered in place by the
+loop (`Program.dispatched`, before the guard, so neither request is
+guarded, though the program a control request runs is) and,
+where no loop dispatched a command, by a runner as with nothing registered
+(`RegistryRequest.bare`, `ControlRequest.bare`, the values the stand-ins
+had; for `autoReload`, `false`, which `Files.autoReloadOn` takes where no
+command chose, as the stand-in did). `EditorRequest.registry` (`RegistryRequest`,
+`lean/Editor/Command/Registry.lean`) holds fourteen questions, answered by
+one pure function of what the loop is told (`Loop.Registered.answer`):
+the eleven the finding named, with `autoReloadMode` now `autoReload`,
+config's setting alone, since a command's choice is read from the state
+(`Files.autoReloadOn`); and `hasJob`, `categorySources` and
+`atPointSources`, which now takes the buffer's major and minor modes in
+place of a view. `EditorRequest.control` (`ControlRequest`,
+`lean/Editor/Command/Control.lean`) holds the three control requests and
+`askSource`, `askAtPoint` and `matchCandidates`: the loop acts on each by
+ending the command's program or putting a registered program before its
+rest, not by answering, and `giveUp` and `breakOff` ask the registry
+nothing, so the six are a sub-port apart from the questions. No single read of config's
+readings replaced the questions: the language table cannot be in a reply,
+since `Language` holds a `Mode.SyntaxTree` and `lean/Editor/Mode.lean`
+imports `Editor.Command`, and `ex`, `hasJob`, `categorySources` and
+`atPointSources` are lookups over what the registry holds as functions, so
+a read would have taken at most eight of the fourteen
+(`docs/design/lean-runtime.md`, "The editor's port is a composite", has
+the record). `setMajorMode`, `setBufferMajorMode`, `startJob` and
+`loadTheme` stay state requests: each is a state operation, which the
+handler makes, and the loop gates on a registered name. The operations of
+`lean/Editor/Api.lean` keep their signatures and their answers; they and
+the editor's other modules that asked `EditorState.ask` for a moved
+variant ask `RegistryRequest.ask` or `ControlRequest.ask` now, except
+`lean/Editor/Highlight.lean`, below the API, which builds its `.registry`
+request by hand as it built the `.state` one.
+
 ### The bindings: `lean/Editor/Ffi.lean`
 
 **Cohesion**: The largest non-test file, 4,300 lines: about 450 lines of
@@ -243,6 +402,24 @@ capability, so the interface is not the fault, the file's cohesion is.
 `lean/Editor/Ffi/<Family>.lean`, mirroring the Rust module it binds, with
 `lean/Editor/Ffi.lean` keeping the conventions and importing every family
 so no caller changes (`split-lean-ffi-bindings-by-port`).
+
+**Done** (roadmap `structural-splits`, phase
+`phase-1-split-lean-ffi-bindings-by-port`): split. `lean/Editor/Ffi.lean`
+holds the conventions, an index of the families and no `@[extern]`; it
+imports the 20 families no other family imports, and the rest come in
+through those. The 142 externs (139 at 37b1335; three were added before the
+split) are in 25 modules `lean/Editor/Ffi/<Family>.lean`, one per Rust
+module of `crates/editor-ffi/src/` that defines them, all still in
+`namespace Editor.Ffi`, so no name a caller uses changed. With
+`Editor.Ffi` defining nothing itself, lean-fmt's FMT004 flags an
+`import Editor.Ffi` that another import already brings, so that line was
+dropped from the four files where another import already brings it in:
+`lean/Editor/Display/Real.lean`, `lean/Editor/Job/Real.lean`,
+`lean/Editor/SyntaxTree/Real.lean` and `lean/FfiTest.lean`. The other six
+files that import `Editor.Ffi` keep the line. The word codec the families
+share is `lean/Editor/Ffi/Words.lean`, under `Editor.Ffi.Words`, the one
+place a raw structure is not private to its family. The largest family
+module is `Syntax.lean` (490 lines).
 
 ### The window example: `crates/editor-ffi/examples/window.rs`
 
@@ -270,6 +447,31 @@ concern above, each with its tests, and `main.rs` keeping the wiring, as
 `crates/editor-platform-winit/examples/contract/` already is
 (`split-window-example-decisions`). The decisions are the harness's, not
 the library's, so they stay in the example.
+
+**Done** (roadmap `structural-splits`, phase
+`phase-5-split-window-example-decisions`): split. The example is the
+directory `crates/editor-ffi/examples/window/`, ten files and 3,658 lines
+in all. `main.rs` (541 lines) keeps the program's docs, the wiring
+(`Shared`, `edit`, `watch`, `report`) and `main`, and has no tests. Each
+other concern above is a module, with the tests of what it decides beside
+it: the command line in `command_line.rs` (214 lines, 4 tests); the
+judging in `judge.rs` (546 lines, 8 tests), with `Findings`, which
+`pictured`, `on_demand` and `left_alone` all return; the frame ledger and
+the wrapping renderers in `ledger.rs` (533 lines, 5 tests), with
+`Entered`, `Checked` and `renderer`; the fixture scene and its fonts in
+`scene.rs` (147 lines, 1 test), which holds `family_of` beside `fonts`,
+its one caller, with the one test of it, which was among the command
+line's; and the printing of input in `input.rs` (117 lines), which has no
+tests, as it had none before. The timing tally and its findings, about
+1,480 lines with their tests, are three modules, so that none is over 800
+lines: `tally.rs` (532 lines, 7 tests), what the ledger comes to;
+`timing.rs` (476 lines, 8 tests), with `on_demand`, `timeline` and
+`journalled`; and `alone.rs` (441 lines, 4 tests), with `left_alone`. The
+tenth file, `testing.rs` (111 lines, compiled only for tests), holds the
+builders the tests of five modules share, so that no test module reaches
+into another's. The 37 tests are those that ran before, under their
+modules' paths. The command line, the output and the exit status are
+unchanged. The largest module is `judge.rs` (546 lines).
 
 ### The frame: `crates/editor-layout/src/frame.rs`
 
@@ -431,8 +633,8 @@ running another command, quit, reload, themes, jobs, prompts, files,
 workspaces).
 
 **Interfaces**: Each operation is a program over the editor's port, close
-to one request each, so its breadth is `StateRequest`'s and the text
-port's. Its shape is right; what it forwards to is narrowed by
+to one request each, so its breadth is `StateRequest`'s, the registry's
+and the control sub-port's, and the text port's. Its shape is right; what it forwards to is narrowed by
 `narrow-state-request-port`, which leaves it unchanged from a command's
 side.
 

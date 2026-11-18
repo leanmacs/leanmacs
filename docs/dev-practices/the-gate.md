@@ -74,7 +74,7 @@ What the gate does check of the window, with none open:
   back end: that a window no adapter can present to gives no renderer,
   and that a surface that offers its adapter nothing is refused.
 - **What the window that draws makes of what it saw**, in
-  `crates/editor-ffi` (`examples/window.rs`, whose unit tests `cargo
+  `crates/editor-ffi` (`examples/window/`, whose unit tests `cargo
   test` runs, and which open no window): how its command line is read,
   and which of its options contradict each other; which findings of a
   frame's picture fail the run (a picture past the tolerance, of the
@@ -484,6 +484,21 @@ helper that a second test module comes to need in a support module; don't
 raise the bound. Every list stays in the namespace `ModelTest`, so
 `ModelTest.<name>Checks` names it wherever it lives.
 
+`ffi-test`, `config-test` and `contract-test` are laid out the same way,
+under `lean/FfiTest/`, `lean/ConfigTest/` and `lean/ContractTest/`: the
+checks of `lean/Editor/Ffi/Document.lean` are in
+`lean/FfiTest/Editor/Ffi/Document.lean`, and a run of a port's contract
+against its real binding is in the mirror of that contract
+(`lean/ContractTest/Editor/Display/Contract.lean`). The helpers several
+test modules share are in `<Root>/Support/`; `Check` (and `failures`,
+`run` and `usage`, and config-test's `Context`, where the root has them)
+are in `<Root>/Check.lean`; and the benchmark is in
+`lean/ConfigTest/Bench.lean`. Each root keeps its imports, its `checks`
+aggregator (contract-test's is `main`) and `main`, and every list stays in
+its root's namespace, so `FfiTest.<name>Checks`, `ConfigTest.<name>Checks`
+and `ContractTest.<name>Checks` name it wherever it lives. Put a new check
+in the test module of the module it tests.
+
 The ex command line (`lean/Editor/Ex.lean`) is checked there in layers,
 so that a change to one breaks no other's checks:
 
@@ -494,7 +509,7 @@ so that a change to one breaks no other's checks:
   replaced by an install, which keeps the compiled ones.
 - **The requests a command makes for it**: which command an ex name is
   bound to, answered by the dispatcher from what it is told of the
-  registry (`stateRequestChecks`, `dispatchStateChecks`); an invocation
+  registry (`registryRequestChecks`, `dispatchStateChecks`); an invocation
   to be run after the command (`stateRequestChecks`, `promptChecks`, on
   the driver); and quit (`stateChecks`, `stateRequestChecks`,
   `apiStateChecks`, and one case of the API on the models and on the real
@@ -740,7 +755,10 @@ with that directory written `@DIR@`, must be exactly
 directories first and `.hidden` left out, lists `.hidden` once a `.` is
 typed with no new job, goes into `notes/` with `<Tab>`, opens `todo.md`
 with `C-n` and `<Enter>`, and says why a missing directory lists nothing.
-Every job is joined, so its lines are fixed.
+Every job is joined, so its lines are fixed. Its temporary directory is
+made from the template `/tmp/open-file.XXXXXXXX`, not under `$TMPDIR`,
+so its path has the same length on every machine: the prompt's cursor
+offset is counted over that path, and the scrub cannot rewrite it.
 
 Two more entries of the task run the executable on a real file, and read
 what a fixture's output cannot show: the process's exit status and the

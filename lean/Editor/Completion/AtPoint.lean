@@ -28,7 +28,7 @@ every at-point source is held to (`Editor/Completion/AtPointContract.lean`).
 
 The sources it names are named, never given (`Named`): an at-point source
 runs inside the asking command through a dispatcher request
-(`StateRequest.askAtPoint`, `Editor/Command/Dispatch.lean`), and a reply
+(`ControlRequest.askAtPoint`, `Editor/Command/Dispatch.lean`), and a reply
 cannot hold a program. `Named.ref` turns each into the reference a prompt
 is asked with.
 

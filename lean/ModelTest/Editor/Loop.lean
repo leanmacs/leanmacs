@@ -1784,7 +1784,7 @@ def dispatchStateChecks : List Check :=
       [("split", split), ("fail", failingAfter fun call => discard <| splitting call),
         ("moving", moving)]
   [{  name :=
-        "an at-point source is asked inside the asking command, its requests answered there, and a name nobody registered answers none; a buffer's chain is asked filtered by the occasion"
+        "an at-point source is asked inside the asking command, its requests answered there, and a name nobody registered answers none; a buffer's chain is asked by its modes, filtered by the occasion"
       run :=
         pure <|
           let reading : Completion.AtPoint :=
@@ -1796,19 +1796,20 @@ def dispatchStateChecks : List Check :=
             { Completion.AtPoint.silent "dots" with triggers := ['.'] }
           let registered : Loop.Registered :=
             { atPoint := fun name => [reading, dots].find? (·.name == name)
-              atPointNames := fun _ _ => #["reading", "dots", "nobody"] }
+              atPointNames := fun major _ =>
+                if major == some "notes" then #["reading", "dots", "nobody"] else #[] }
           let asking :
             EditorM
               (Option Completion.Region ×
                 Option Completion.Region ×
                 Array String × Array String × Array String × Array String) :=
             do
-            let asked ← EditorState.ask (.askAtPoint "reading" { view := ⟨0⟩, offset := 0 })
-            let nobody ← EditorState.ask (.askAtPoint "nobody" { view := ⟨0⟩, offset := 0 })
-            let onKey ← EditorState.ask (.atPointSources ⟨0⟩ .key)
-            let onDot ← EditorState.ask (.atPointSources ⟨0⟩ (.trigger '.'))
-            let onPause ← EditorState.ask (.atPointSources ⟨0⟩ (.pause 240))
-            let elsewhere ← EditorState.ask (.atPointSources ⟨9⟩ .key)
+            let asked ← ControlRequest.ask (.askAtPoint "reading" { view := ⟨0⟩, offset := 0 })
+            let nobody ← ControlRequest.ask (.askAtPoint "nobody" { view := ⟨0⟩, offset := 0 })
+            let onKey ← RegistryRequest.ask (.atPointSources (some "notes") #["one"] .key)
+            let onDot ← RegistryRequest.ask (.atPointSources (some "notes") #["one"] (.trigger '.'))
+            let onPause ← RegistryRequest.ask (.atPointSources (some "notes") #["one"] (.pause 240))
+            let elsewhere ← RegistryRequest.ask (.atPointSources (some "text") #["one"] .key)
             return (asked, nobody, onKey, onDot, onPause, elsewhere)
           let program :
             EditorM
@@ -1835,7 +1836,7 @@ def dispatchStateChecks : List Check :=
         let program : EditorM (Guarded (Array DisplayRule) × EditorState × EditorState) := do
           let state ← twoBuffers
           let (ended, after) ←
-            (EditorState.ask .displayRules).dispatched { displayRules := rules } state
+            (RegistryRequest.ask .displayRules).dispatched { displayRules := rules } state
           return (ended, after, state)
         pure <|
           match (program.runModel editorModel).1 with
@@ -2148,7 +2149,7 @@ def dispatchStateChecks : List Check :=
                 match outcome with
                 | .finished reply => some (replied reply)
                 | _ => none
-              return (reply, state.theme, { state with theme := none } == start)
+              return (reply, state.outbox.theme, { state with outbox.theme := none } == start)
             (program.runModel editorModel).1.toOption
           asks "second" == some (some (.inr ()), some "second", true) &&
             asks "nope" == some (some (.inl (.noSuchTheme "nope")), none, true) &&
@@ -2240,12 +2241,12 @@ def dispatchStateChecks : List Check :=
                 Option (Array Completion.Candidate) × Option Completion.Answer) :=
             do
             let start ← editorState
-            let missing ← EditorState.ask (.askSource "nope" { text := "w", view := ⟨0⟩ })
+            let missing ← ControlRequest.ask (.askSource "nope" { text := "w", view := ⟨0⟩ })
             let unchanged := (← editorState) == start
-            let echoed ← EditorState.ask (.askSource "echo" { text := "wq", view := ⟨1⟩ })
+            let echoed ← ControlRequest.ask (.askSource "echo" { text := "wq", view := ⟨1⟩ })
             message "hello"
-            let read ← EditorState.ask (.askSource "said" { text := "", view := ⟨0⟩ })
-            let filtering ← EditorState.ask (.askSource "filtering" { text := "w", view := ⟨0⟩ })
+            let read ← ControlRequest.ask (.askSource "said" { text := "", view := ⟨0⟩ })
+            let filtering ← ControlRequest.ask (.askSource "filtering" { text := "w", view := ⟨0⟩ })
             return (missing, unchanged, echoed, read.map (·.candidates), filtering)
           let program : EditorM (Guarded _ × EditorState) := do
             command.dispatched registered (← EditorState.initial ⟨640, 480⟩)
@@ -2277,9 +2278,9 @@ def dispatchStateChecks : List Check :=
             { sources := fun name => if name == "later" then some later else none
               jobs := (· == "later-pick") }
           let command : EditorM (Option Completion.Answer × Bool × Bool) := do
-            let answered ← EditorState.ask (.askSource "later" { text := "w", view := ⟨0⟩ })
-            return (answered, ← EditorState.ask (.hasJob "later-pick"),
-                ← EditorState.ask (.hasJob "nope"))
+            let answered ← ControlRequest.ask (.askSource "later" { text := "w", view := ⟨0⟩ })
+            return (answered, ← RegistryRequest.ask (.hasJob "later-pick"),
+                ← RegistryRequest.ask (.hasJob "nope"))
           let program : EditorM (Guarded _ × EditorState) := do
             command.dispatched registered (← EditorState.initial ⟨640, 480⟩)
           match (program.runModel editorModel).1 with
@@ -2303,7 +2304,8 @@ def dispatchStateChecks : List Check :=
             let program : EditorM (Guarded (Array String) × Bool) := do
               let start ← EditorState.initial ⟨640, 480⟩
               let (outcome, state) ←
-                (EditorState.ask (.categorySources category) : EditorM (Array String)).dispatched
+                (RegistryRequest.ask (.categorySources category) :
+                        EditorM (Array String)).dispatched
                     registered start
               return (outcome, state == start)
             (program.runModel editorModel).1.toOption
@@ -2324,7 +2326,7 @@ def dispatchStateChecks : List Check :=
             let program : EditorM (Guarded (Array Completion.Hit) × Bool) := do
               let start ← EditorState.initial ⟨640, 480⟩
               let (outcome, state) ←
-                (EditorState.ask (.matchCandidates category "w" candidates) :
+                (ControlRequest.ask (.matchCandidates category "w" candidates) :
                         EditorM (Array Completion.Hit)).dispatched
                     registered start
               return (outcome, state == start)
@@ -2345,7 +2347,7 @@ def dispatchStateChecks : List Check :=
                 else none }
           let asking : EditorM Unit := do
             discard <| createText "early"
-            discard <| EditorState.ask (.askSource "refusing" { text := "", view := ⟨0⟩ })
+            discard <| ControlRequest.ask (.askSource "refusing" { text := "", view := ⟨0⟩ })
             discard <| createText "late"
           let program : EditorM (Guarded Unit × EditorState) := do
             asking.dispatched registered (← EditorState.initial ⟨640, 480⟩)
@@ -2358,7 +2360,7 @@ def dispatchStateChecks : List Check :=
       run :=
         pure <|
           let command : EditorM (Option Completion.Answer) :=
-            EditorState.ask (.askSource "echo" { text := "w", view := ⟨0⟩ })
+            ControlRequest.ask (.askSource "echo" { text := "w", view := ⟨0⟩ })
           (command.runModel editorModel).1.toOption == some none }]
 
 /-- The checks of what the loop gives up after a command (`Editor/Loop.lean`,
@@ -2657,7 +2659,7 @@ def dispatchGiveUpChecks : List Check :=
                 loop.state.echo,
                 loop.state.prompt == state.prompt && loop.state.frame.focused == ⟨1⟩ &&
                   loop.state.wellFormed,
-                loop.state.answered.isEmpty &&
+                loop.state.outbox.answered.isEmpty &&
                   steps.back?.map (·.ended) == some (some (.refused .badRange)))
           (program.runModel editorModel).1.toOption ==
             some (some "abc", [none, none], "go: refused: bad range", true, true) }]
@@ -4824,6 +4826,15 @@ it is refused, for a buffer called `name`. -/
 def notLeaving (name : String) : String :=
   s!"not leaving: {name}"
 
+/-- What the commands `ask-all` and `ask-all-then-fail` of the quit checks
+ask for: a cancel of the key `k`, `other` to be run after the command, a
+reload of config and the theme `second`. -/
+def askAll (_ : Call) : EditorM Unit := do
+  cancelJob "k"
+  Editor.invoke { command := "other" }
+  reloadConfig
+  discard <| loadTheme "second"
+
 /-- What a step of the quit checks is handed: the open command with the
 path of `note.txt` (`C-o n`) and the save command (`C-o w`), as the file
 command checks have them, and six commands written here, under `C-l`:
@@ -4835,7 +4846,9 @@ to be run after it, and `hand-leave-other` (`t`) asks for `leave` and then
 (`r`), and `again-then-fail` (`g`), which asks and is then refused; and two
 ask for the theme `second` to be loaded, which the loop is told is
 registered: `pick` (`p`), and `pick-then-fail` (`k`), which asks and is then
-refused. -/
+refused. Two ask for all of it at once, a cancel of the key `k`, `other` to
+be run after it, a reload and the theme `second`: `ask-all` (`a`), and
+`ask-all-then-fail` (`b`), which asks and is then refused. -/
 def quitKeys : Loop.Keys TestScheme.scheme :=
   {
     dispatchKeys
@@ -4844,7 +4857,8 @@ def quitKeys : Loop.Keys TestScheme.scheme :=
         ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave"),
         ("C-l t", invoke "hand-leave-other"), ("C-l r", invoke "again"),
         ("C-l g", invoke "again-then-fail"), ("C-l p", invoke "pick"),
-        ("C-l k", invoke "pick-then-fail")]
+        ("C-l k", invoke "pick-then-fail"), ("C-l a", invoke "ask-all"),
+        ("C-l b", invoke "ask-all-then-fail")]
       [(Files.openName, fun call => do
           Files.openCommand call
           return none),
@@ -4873,7 +4887,11 @@ def quitKeys : Loop.Keys TestScheme.scheme :=
         ("pick", fun _ => do
           discard <| loadTheme "second"
           return none),
-        ("pick-then-fail", failingAfter fun _ => discard <| loadTheme "second")] with
+        ("pick-then-fail", failingAfter fun _ => discard <| loadTheme "second"),
+        ("ask-all", fun call => do
+          askAll call
+          return none),
+        ("ask-all-then-fail", failingAfter askAll)] with
     registered := { themeNames := #["second"] } }
 
 /-- A driver of the quit checks over the files `files`, with the file
@@ -5103,11 +5121,11 @@ def dispatchQuitChecks : List Check :=
             let (other, went) := fedTo once (presses "C-l o")
             let (failed, lost) := fedTo other (presses "C-l g")
             let (twice, _) := fedTo failed (presses "C-l r")
-            asked steps == #[some false, some true] && !once.loop.state.reload &&
+            asked steps == #[some false, some true] && !once.loop.state.outbox.reload &&
               once.reloads == 1 &&
               asked went == #[some false, some false] &&
               asked lost == #[some false, some false] &&
-              !failed.loop.state.reload &&
+              !failed.loop.state.outbox.reload &&
               failed.reloads == 1 &&
               twice.reloads == 2 &&
               driver.reloads == 0 },
@@ -5123,13 +5141,39 @@ def dispatchQuitChecks : List Check :=
             let (once, steps) := fedTo driver (presses "C-l p")
             let (other, went) := fedTo once (presses "C-l o")
             let (failed, lost) := fedTo other (presses "C-l k")
-            asked steps == #[some none, some (some "second")] && once.loop.state.theme == none &&
+            asked steps == #[some none, some (some "second")] &&
+              once.loop.state.outbox.theme == none &&
               once.themes == #["second"] &&
               asked went == #[some none, some none] &&
               asked lost == #[some none, some none] &&
-              failed.loop.state.theme == none &&
+              failed.loop.state.outbox.theme == none &&
               failed.themes == #["second"] &&
-              driver.themes == #[] }]
+              driver.themes == #[] },
+    { name :=
+        "a step whose command asked for a cancel, an invocation, a reload and a theme at once hands each back, and the state after it has an empty outbox; one whose command asked them all and was then refused hands back none, and its state's outbox is empty too"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (once, steps) := fedTo driver (presses "C-l a")
+            let (failed, lost) := fedTo driver (presses "C-l b")
+            let refused := lost.filterMap id
+            steps.size == 2 &&
+              (steps[1]?.join.any fun step =>
+                step.reload && step.theme == some "second" && step.cancels.contains "k" &&
+                  step.answered == #[{ command := "other" }]) &&
+              once.loop.state.outbox == {} &&
+              once.reloads == 1 &&
+              once.themes == #["second"] &&
+              refused.size == 2 &&
+              refused.all
+                (fun step =>
+                  !step.reload && step.theme == none && !step.cancels.contains "k" &&
+                    step.answered.isEmpty) &&
+              failed.loop.state.outbox == {} &&
+              failed.reloads == 0 &&
+              failed.themes == #[] }]
 
 /-- The compiled quit command (`Ex.quitCommand`), as the system quit checks
 register it. -/

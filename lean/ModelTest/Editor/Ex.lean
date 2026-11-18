@@ -151,7 +151,8 @@ read from the function that makes it. -/
 def exChecks : List Check :=
   let closed (driver : TestDriver) : Bool :=
     let state := driver.loop.state
-    state.prompt == none && state.frame.focused == ⟨0⟩ && state.answered.isEmpty && state.wellFormed
+    state.prompt == none && state.frame.focused == ⟨0⟩ && state.outbox.answered.isEmpty &&
+      state.wellFormed
   let hello : List Argument := [.str "hello there"]
   [{  name :=
         "the ex command opens a prompt labelled with the ex line's label, whose continuation is the ex command itself, with the focus in the minibuffer's view; called with a count and a register first, as a key under the Vim scheme calls it, it asks the same"
@@ -608,7 +609,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, compile-command, recompile, next-error, previous-error, vc-stage-hunk, vc-unstage-hunk, vc-worktrees and vc-commit-accept, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, asks the file source"
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, compile-command, recompile, next-error, previous-error, vc-stage-hunk, vc-unstage-hunk, vc-worktrees, vc-commit-accept, vc-review, vc-review-since and vc-blame, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, asks the file source"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -621,7 +622,8 @@ def exChecks : List Check :=
                 some
                   #["e", "e!", "autoread", "noautoread", "reload", "compile", "compile-command",
                     "recompile", "next-error", "previous-error", "vc-stage-hunk", "vc-unstage-hunk",
-                    "vc-worktrees", "vc-commit-accept"] &&
+                    "vc-worktrees", "vc-commit-accept", "vc-review", "vc-review-since",
+                    "vc-blame"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               (candidatesOf opening).map (·.asking.map (·.source)) == some #["files"] }]
 

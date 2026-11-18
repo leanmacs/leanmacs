@@ -165,9 +165,15 @@ pub const DIRECTORY_TREE: &str = "a tree watch is told of a change in a subdirec
 pub const COALESCED: &str = "writes within the window arrive as one delivery";
 /// Of two watches on one file, one cancelled: the other is told of a
 /// write, and the cancelled one's pending read is never completed.
+///
+/// The file is first made after the cancel. An adapter may tell of a
+/// change made just before a registration as soon as it is live, as
+/// FSEvents does, and a write before the watches would then complete the
+/// read before it was cancelled.
 pub const CANCELLED_SILENT: &str = "a cancelled watch's pending read is never completed";
 /// After shutdown a start is refused as shut down, and a pending read is
-/// never completed.
+/// never completed. As in [`CANCELLED_SILENT`], the file is first made
+/// after the shutdown, so no late notice completes the read before it.
 pub const SHUTDOWN: &str = "after shutdown a start is refused and a pending read never completed";
 
 /// Every property, in the order [`check`] runs them.
@@ -839,7 +845,6 @@ impl<W: Watch + Clone, C: Clock + Clone, G: Ground> Check<'_, W, C, G> {
 
     fn cancelled_silent(&self) -> bool {
         let file = self.fresh("cancelled").join("f");
-        self.ground.write(&file, b"x");
         let target = Target::File(file.clone());
         let mut served = self.served();
         if !(served.started(1, target.clone(), AT_ONCE, self.deadline())
@@ -861,7 +866,6 @@ impl<W: Watch + Clone, C: Clock + Clone, G: Ground> Check<'_, W, C, G> {
     fn shutdown(&self) -> bool {
         let dir = self.fresh("shutdown");
         let file = dir.join("f");
-        self.ground.write(&file, b"x");
         let Some(mut ended) = self.watching(Target::File(file.clone()), AT_ONCE) else {
             return false;
         };

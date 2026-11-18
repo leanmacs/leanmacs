@@ -55,7 +55,10 @@ excerpt buffer `six` of six whole lines of two buffers, headed `h1` to
 4..14, which show `two` twice, gives it a span `0..1` of its own, sets the
 last search to `w`, and shows it; `make-plain` shows a plain buffer `plain`
 of `ex`'s text; and `float-five` floats a buffer `note`, unfocused, at the
-position 5 of the window's view. -/
+position 5 of the window's view. For the viewed checks
+(`excerptDisplayChecks`): `make-tracked` makes an excerpt buffer `tracked`
+of the same six lines as `six`, each excerpt tracked, and shows it; and
+`noop` does nothing, so its step only publishes. -/
 def excerptRegistrations : Array Config.Registration :=
   #[{ name := "make-ex"
       action :=
@@ -150,7 +153,21 @@ def excerptRegistrations : Array Config.Registration :=
       action :=
         .call fun call => do
           let .ok note ← createBuffer "note" "n" | return
-          discard <| note.float (.position call.target.window.id 5) (focus := false) }]
+          discard <| note.float (.position call.target.window.id 5) (focus := false) },
+    { name := "make-tracked"
+      action :=
+        .call fun call => do
+          let .ok first ← createBuffer "first" "one\ntwo\nthree\n" | return
+          let .ok second ← createBuffer "second" "alpha\nbeta\nx\n" | return
+          let ranges :=
+            #[(first, 0, 4), (first, 4, 8), (first, 8, 14), (second, 0, 6), (second, 6, 11),
+              (second, 11, 13)]
+          let list :=
+            ranges.mapIdx fun index (buffer, start, stop) =>
+              { buffer, start, stop, header := s!"h{index + 1}", tracked := true : BufferExcerpt }
+          let .ok tracked ← createExcerptBuffer "tracked" list | return
+          discard <| call.target.window.id.show tracked },
+    { name := "noop", action := .call fun _ => pure () }]
 
 /-- `driver` once the command `name` has run, as an invocation no key
 yielded. -/

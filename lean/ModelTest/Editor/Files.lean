@@ -129,6 +129,36 @@ drawn in by the shipped default: each of its capture names'. -/
 def modelJsonFaces : Array String :=
   #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
 
+/-- The job of the adopt check: it loads the file its one argument names and
+finishes by adopting it (`Files.adopt`), saying the buffer's number. -/
+def adoptWork (arguments : List Argument) : Work := fun _ => do
+  let [.str path] := arguments | throw "adopt-load: its arguments are not a path"
+  match ← File.load path Files.limit with
+  | .ok loaded =>
+    return do
+      if let some buffer← Files.adopt path loaded then
+        message s!"adopted {buffer.index}"
+  | .error _ =>
+    return message "not loaded"
+
+/-- A driver of the language open checks over `languageRegistry`, with `C-o
+j` bound to opening `data.json` and `C-o A` to starting `adopt-load` of
+it, whose job is `adoptWork`; `none` if making the state was refused. -/
+def adoptDriver : Option TestDriver :=
+  let keys :=
+    dispatchKeys [("C-o j", opens (inFiles "data.json")), ("C-o A", invoke "adopt")]
+      [(Files.openName, fun call => do
+          Files.openCommand call
+          return none),
+        ("adopt", fun _ => do
+          discard <| startJob "adopt-load" [.str (inFiles "data.json").toString]
+          return none)]
+  let registered (name : String) : Option (List Argument → Work) :=
+    if name == "adopt-load" then some adoptWork else fileJobs Files.limit name
+  (Loop.Driver.over { keys with registered := languageRegistry.registered } registered
+        (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => { driver with jobs := { files := languageFiles } }
+
 /-- The checks of what opening a file does with its language
 (`Editor/Files.lean`, "Open"; `Editor/Language.lean`), on the loop's driver
 over the editor's models and the model of files. The syntax tree model
@@ -213,7 +243,29 @@ def languageOpenChecks : List Check :=
           | some driver =>
             let opened := openedBy driver "C-o j"
             languageAndMajor opened == some (some "json", some "code") &&
-              highlightedFaces opened.model.syntaxTree == some #["syntax.number"] }]
+              highlightedFaces opened.model.syntaxTree == some #["syntax.number"] },
+    { name :=
+        "adopting a loaded file makes its buffer, attaches the file and sets its language and code without showing it; adopting a path a buffer holds gives that buffer and holds no snapshot"
+      run :=
+        pure <|
+          match adoptDriver with
+          | none => false
+          | some driver =>
+            let adopted := openedBy driver "C-o A"
+            let path := inFiles "data.json"
+            let made := adopted.loop.state.findFile path
+            let buffer := made.bind adopted.loop.state.buffer?
+            let opened := openedBy driver "C-o j"
+            let again := openedBy opened "C-o A" 2
+            let live (driver : TestDriver) := (driver.model.texts.snapshots.filter (·.isSome)).size
+            (buffer.map fun buffer => (buffer.name, buffer.language, buffer.major)) ==
+                some ("data.json", some "json", some "code") &&
+              (showing adopted).map (·.buffer.name) == some "scratch" &&
+              !adopted.loop.state.windows.any (some ·.buffer == made) &&
+              echoOf adopted == made.map (s!"adopted {·.index}") &&
+              echoOf again == (opened.loop.state.findFile path).map (s!"adopted {·.index}") &&
+              again.loop.state.buffers.size == opened.loop.state.buffers.size &&
+              live again == live opened }]
 
 /-- `driver` once its first load job not yet delivered is delivered, with
 the step the delivery handed back: the load among other jobs, a file

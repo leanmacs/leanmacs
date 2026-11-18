@@ -1,5 +1,5 @@
 The fixtures of contract-test's environment checks
-(lean/ContractTest.lean, environmentChecks), which `mise run ffi-test` hands
+(lean/ContractTest/Editor/Process/Environment.lean, environmentChecks), which `mise run ffi-test` hands
 contract-test as its one argument. Both must stay executable (mode 100755).
 
 - mise: stands for mise. `mise env --json` prints a JSON object whose PATH

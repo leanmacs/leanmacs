@@ -69,6 +69,33 @@ def atPointChecks : List Check :=
               failed.loop.state.echo == "at-point-next: refused: bad range"
           | _, _ => false },
     { name :=
+        "the chain asked at point is the one of the focused buffer's major mode and minor modes"
+      run :=
+        pure <|
+          -- `second` answers only on the chain of the buffer's major mode
+          -- and minor mode together; every other pair of modes gets `silent`.
+          let handed := atPointHanded #[] atPoints
+          let chained : Loop.Keys Vim.Default.scheme :=
+            { handed with
+              registered :=
+                { handed.registered with
+                  atPointNames := fun major minors =>
+                    if major == some "notes" && minors == #["one"] then #["second"]
+                    else #["silent"] } }
+          let notes (buffer : Buffer) : Buffer :=
+            { buffer with
+              major := some "notes", minors := #["one"] }
+          let moded : TextM EditorState := do
+            let state ← evilState "" 0
+            return { state with buffers := state.buffers.map (·.map notes) }
+          match (Loop.Driver.over chained (fun _ => none) moded editorModel).toOption with
+          | none => false
+          | some driver =>
+            let opened := evilFed driver "i C-n"
+            opened.loop.state.atPoint.map (·.source) == some "second" &&
+              (opened.loop.state.atPoint.map (·.candidates.all.map (·.text))) ==
+                some #["wq", "w"] },
+    { name :=
         "with no at-point source answering a key says nothing to complete at point; one whose region is away from the cursor is refused outside; one naming a source nobody registered is refused with it; S-TAB with no session does nothing; C-g with no session runs keyboard-quit"
       run :=
         pure <|

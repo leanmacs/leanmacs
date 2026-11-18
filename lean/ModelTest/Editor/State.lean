@@ -1874,7 +1874,8 @@ def stateChecks : List Check :=
               match onTextModel (EditorState.initial ⟨640, 480⟩) with
               | none => false
               | some state =>
-                state.registers.isEmpty && ["", "\"", "a", "+"].all (state.register? · == none) },
+                state.remembered.registers.isEmpty &&
+                  ["", "\"", "a", "+"].all (state.register? · == none) },
         { name :=
             "a register set under a name is read back under that name with its text and whether it is line-wise, and under no other; a second one set under the name replaces it, and a register under another name stays; nothing else of the state changes"
           run :=
@@ -1894,8 +1895,8 @@ def stateChecks : List Check :=
                   both.register? "b" == some line &&
                   again.register? "a" == some line &&
                   again.register? "b" == some line &&
-                  again.registers.size == 2 &&
-                  { again with registers := #[] } == state &&
+                  again.remembered.registers.size == 2 &&
+                  { again with remembered.registers := #[] } == state &&
                   (state.setRegister "" word).register? "" == some word },
         { name :=
             "a new state's scroll margin is no rows; a margin set is the state's, a second one set replaces it, and nothing else of the state changes"
@@ -2198,7 +2199,7 @@ def stateChecks : List Check :=
                     closed.frame.focused == ⟨0⟩ &&
                     closed.frame.windows == asking.frame.windows &&
                     closed.nextView == asking.nextView &&
-                    closed.answered == #[] &&
+                    closed.outbox.answered == #[] &&
                     closed.wellFormed
                 | _ => false },
         { name :=
@@ -2211,9 +2212,9 @@ def stateChecks : List Check :=
                 let (_, asking) := prompted state
                 match asking.closePrompt none, asking.closePrompt (some "héllo") with
                 | (.ok (), cancelled), (.ok (), accepted) =>
-                  accepted.answered ==
+                  accepted.outbox.answered ==
                       #[{ command := "greet", arguments := [.str "héllo", .nat 7] }] &&
-                    { accepted with answered := #[] } == cancelled &&
+                    { accepted with outbox.answered := #[] } == cancelled &&
                     accepted.wellFormed
                 | _, _ => false },
         { name :=
@@ -2229,7 +2230,7 @@ def stateChecks : List Check :=
                 let minibuffer := two.minibufferBuffer?
                 let (_, two) := two.closePrompt (some "b")
                 replied first == .inr ⟨1⟩ && replied second == .inr ⟨2⟩ && minibuffer == some ⟨2⟩ &&
-                  two.answered ==
+                  two.outbox.answered ==
                     #[{ command := "greet", arguments := [.str "a", .nat 7] },
                       { command := "greet", arguments := [.str "b", .nat 7] }] &&
                   two.buffers.size == 3 &&
@@ -2263,7 +2264,7 @@ def stateChecks : List Check :=
                   without.frame.focused == ⟨3⟩ &&
                   closed.frame.focused == ⟨1⟩ &&
                   closed.frame.windows == #[⟨1⟩, ⟨2⟩] &&
-                  closed.answered.size == 1 &&
+                  closed.outbox.answered.size == 1 &&
                   closed.wellFormed },
         { name :=
             "closing a prompt when none is open is refused with notOpen, with or without an answer, and the state is as it was"

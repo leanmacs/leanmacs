@@ -251,7 +251,7 @@ def versionControlWorktreeGitChecks : List Check :=
           reply ==
               .finished
                 (.ok
-                  { base := "B"
+                  { base := "B", tip := "F"
                     files :=
                       #[{ path := "a", old := some "1\n", new := some "2\n" },
                         { path := "c", old := none, new := some "new\n" },
@@ -511,5 +511,186 @@ def versionControlShowChecks : List Check :=
                   directory := "/r/.git",
                   paths := #["/r/.git/HEAD", "/r/.git/index", "/r/.git/packed-refs"]
                   trees := #["/r/.git/refs"] } }]
+
+end ModelTest
+
+namespace ModelTest
+
+open Editor
+
+/-- The git implementation's log of `revision` in `/r` on `model`. -/
+def gitLog (revision : String) (limit : Nat) (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error (Array VersionControl.LogEntry)) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" (.log revision limit) :
+        JobM (Except VersionControl.Error (Array VersionControl.LogEntry))).runModel
+    model
+
+/-- The git implementation's blame of `path` at `revision` in `/r` on
+`model`. -/
+def gitBlame (revision path : String) (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error (Option VersionControl.Blame)) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" (.blame revision path) :
+        JobM (Except VersionControl.Error (Option VersionControl.Blame))).runModel
+    model
+
+/-- The git implementation's range-diff in `/r` on `model`. -/
+def gitRangeDiff (base old new : String) (model : JobModel) :
+    Job.Outcome (Except VersionControl.Error VersionControl.RangeDiff) × JobModel :=
+  (VersionControl.Git.handler "git" "/r" (.rangeDiff base old new) :
+        JobM (Except VersionControl.Error VersionControl.RangeDiff)).runModel
+    model
+
+/-- The command that resolves `name` to a commit in `/r`. -/
+def resolveRun (name : String) : Process.Command :=
+  gitRun #["rev-parse", "--verify", "--quiet", s!"{name}^\{commit}"]
+
+/-- The command a log of the commit `id` runs in `/r`, at most `limit`. -/
+def logRun (id : String) (limit : Nat) : Process.Command :=
+  gitRun
+    #["rev-list", "--first-parent", s!"--max-count={limit}", "--no-commit-header",
+      "--encoding=UTF-8", "--format=%H%x00%P%x00%an%x00%at%x00%s", id, "--"]
+
+/-- The command a blame of `path` at the commit `id` runs in `/r`. -/
+def blameRun (id path : String) : Process.Command :=
+  gitRun #["blame", "--porcelain", "--ignore-revs-file=", id, "--", path]
+
+/-- The checks of the git implementation's history reads
+(`Editor/VersionControl/Git.lean`) on the job model: the command lines of
+a log, a blame, a range-diff and a change against no base, and how what
+they answer is read. -/
+def versionControlHistoryGitChecks : List Check :=
+  let authored : VersionControl.Authored := { author := "Bé", time := 7, subject := "s" }
+  let blamed :=
+    "H 1 1 1\nauthor Bé\nauthor-mail <a@example.com>\nauthor-time 7\nsummary s\nfilename a\n\tone\n"
+  let rangeRun :=
+    gitRun #["range-diff", "--no-color", "--no-notes", "--creation-factor=60", "B", "O", "N"]
+  [{  name :=
+        "a log resolves its revision to a commit, then runs git rev-list --first-parent --max-count=<limit> --no-commit-header --encoding=UTF-8 with the format of five NUL-separated fields, on the id and --, and reads each commit"
+      run :=
+        pure <|
+          let model : JobModel :=
+            {
+              processes :=
+                {
+                  scripts :=
+                    #[printing (resolveRun "main") "H\n",
+                      printing (logRun "H" 3) "H\x00P\x00Bé\x007\x00s\nP\x00\x00a\x001\x00p\n"] } }
+          let (reply, after) := gitLog "main" 3 model
+          reply ==
+              .finished
+                (.ok
+                  #[{ id := "H", parents := #["P"], authored },
+                    { id := "P", authored := { author := "a", time := 1, subject := "p" } }]) &&
+            after.processes.started == #[resolveRun "main", logRun "H" 3] },
+    { name :=
+        "a log of a name rev-parse refuses is not a commit, refused with status 1, and nothing more runs"
+      run :=
+        pure <|
+          let model : JobModel :=
+            { processes := { scripts := #[printing (resolveRun "nope") "" 1] } }
+          let (reply, after) := gitLog "nope" 3 model
+          reply == .finished (.error (.failed (.code 1) "nope is not a commit")) &&
+            after.processes.started == #[resolveRun "nope"] },
+    { name := "a log git prints what cannot be read of is unparsable"
+      run :=
+        pure <|
+          let model : JobModel :=
+            {
+              processes :=
+                {
+                  scripts :=
+                    #[printing (resolveRun "main") "H\n", printing (logRun "H" 3) "H\x00\n"] } }
+          (gitLog "main" 3 model).1 matches .finished (.error (.unparsable _)) },
+    { name :=
+        "a blame resolves its revision, checks the path is there with git rev-parse --verify --quiet <id>:<path>, then runs git blame --porcelain --ignore-revs-file= <id> -- <path> and reads each line's commit and author"
+      run :=
+        pure <|
+          let model : JobModel :=
+            {
+              processes :=
+                {
+                  scripts :=
+                    #[printing (resolveRun "HEAD") "H\n",
+                      printing (gitRun #["rev-parse", "--verify", "--quiet", "H:a"]) "X\n",
+                      printing (blameRun "H" "a") blamed] } }
+          let (reply, after) := gitBlame "HEAD" "a" model
+          reply ==
+              .finished
+                (.ok
+                  (some
+                    { commits := #[("H", authored)], lines := #[{ id := "H", text := "one" }] })) &&
+            after.processes.started ==
+              #[resolveRun "HEAD", gitRun #["rev-parse", "--verify", "--quiet", "H:a"],
+                blameRun "H" "a"] },
+    { name := "a blame of a path rev-parse says the revision lacks is none, and no blame runs"
+      run :=
+        pure <|
+          let model : JobModel :=
+            {
+              processes :=
+                {
+                  scripts :=
+                    #[printing (resolveRun "HEAD") "H\n",
+                      printing (gitRun #["rev-parse", "--verify", "--quiet", "H:nope"]) "" 1] } }
+          let (reply, after) := gitBlame "HEAD" "nope" model
+          reply == .finished (.ok none) &&
+            after.processes.started ==
+              #[resolveRun "HEAD", gitRun #["rev-parse", "--verify", "--quiet", "H:nope"]] },
+    { name :=
+        "a range-diff resolves its three names, then runs git range-diff --no-color --no-notes --creation-factor=60 on the ids, and reads its pairs and keeps its text"
+      run :=
+        pure <|
+          let printed := "1:  1111111 = 1:  2222222 p\n-:  ------- > 2:  3333333 q\n"
+          let model : JobModel :=
+            {
+              processes :=
+                {
+                  scripts :=
+                    #[printing (resolveRun "base") "B\n", printing (resolveRun "old") "O\n",
+                      printing (resolveRun "HEAD") "N\n", printing rangeRun printed] } }
+          let (reply, after) := gitRangeDiff "base" "old" "HEAD" model
+          reply ==
+              .finished
+                (.ok
+                  { pairs :=
+                      #[{ old := some 1, new := some 1, relation := .same },
+                        { old := none, new := some 2, relation := .added }]
+                    text := printed }) &&
+            after.processes.started ==
+              #[resolveRun "base", resolveRun "old", resolveRun "HEAD", rangeRun] },
+    { name :=
+        "a change against no base resolves its revision, hashes the empty tree with git hash-object -t tree --stdin fed nothing, and diffs the revision against it: every file added, the base empty and the tip the revision's id"
+      run :=
+        pure <|
+          let hashRun := gitRun #["hash-object", "-t", "tree", "--stdin"]
+          let model : JobModel :=
+            {
+              processes :=
+                {
+                  scripts :=
+                    #[printing (resolveRun "R") "R\n", printing hashRun "E\n",
+                      printing (gitRun #["diff-tree", "-r", "-z", "--no-renames", "E", "R"])
+                        ":000000 100644 0 a1 A\x00a\x00",
+                      printing (gitRun #["cat-file", "--batch"]) "a1 blob 2\n1\n\n"] } }
+          let (reply, after) := gitChanges "R" "" model
+          reply ==
+              .finished
+                (.ok
+                  { base := "", tip := "R"
+                    files := #[{ path := "a", old := none, new := some "1\n" }] }) &&
+            after.processes.started.map (·.arguments) ==
+              #[(resolveRun "R").arguments, hashRun.arguments,
+                #["diff-tree", "-r", "-z", "--no-renames", "E", "R"], #["cat-file", "--batch"]] &&
+            after.processes.fed.find? (·.1 == hashRun) == some (hashRun, .empty) },
+    { name :=
+        "a log, a blame or a range-diff of a name that starts with - is refused before any process starts"
+      run :=
+        pure <|
+          let refusedFirst {α : Type} :
+            Job.Outcome (Except VersionControl.Error α) × JobModel → Bool
+            | (.finished (.error (.invalid _)), after) => after.processes.started.isEmpty
+            | _ => false
+          refusedFirst (gitLog "-x" 1 {}) && refusedFirst (gitBlame "-x" "a" {}) &&
+            refusedFirst (gitRangeDiff "b" "o" "--n" {}) }]
 
 end ModelTest

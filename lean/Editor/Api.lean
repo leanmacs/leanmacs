@@ -8,8 +8,9 @@ import Editor.Store
 
 The operations a command is written with, beyond the text port's own
 (`Editor/Text.lean`): each is a program over the editor's port (`EditorM`,
-`Editor/Command.lean`) made of state requests (`Editor/State/Request.lean`)
-and text requests. `Editor.lean` imports this module, so config sees them.
+`Editor/Command.lean`) made of state requests (`Editor/State/Request.lean`),
+questions to the registry (`Editor/Command/Registry.lean`), control
+requests (`Editor/Command/Control.lean`) and text requests. `Editor.lean` imports this module, so config sees them.
 
 ## Asking the state
 
@@ -25,6 +26,20 @@ state. What the text store refuses is thrown, as everywhere in `EditorM`.
 The loop that runs a command answers its state requests
 (`Editor/Command/Dispatch.lean`). Run bare, a command finds an editor with
 nothing in it.
+
+## Asking the registry, and the loop's control
+
+- `RegistryRequest.ask request` asks one question of the registry and
+  config (`Editor/Command/Registry.lean`): an ex binding, the language
+  table, a config setting. The loop answers it from what it was told of
+  them; run bare, as with nothing registered.
+- `ControlRequest.ask request` asks the loop to end the command or to run
+  something registered inside it (`Editor/Command/Control.lean`). Run bare,
+  nothing is run and nothing is ended.
+
+Neither is refused. The operations below ask them where they need to, and
+keep their own signatures: a command outside the editor calls the
+operation, such as `exBinding`, `runCommand` or `giveUp`, not the request.
 
 ## Buffers
 
@@ -42,7 +57,10 @@ nothing in it.
   `createExcerptBufferOf name list headers` makes one of ranges of texts,
   which a text no buffer holds may be among. `BufferId.setExcerpts id list`
   replaces its list and its headers, which is how an emptied excerpt
-  goes.
+  goes. An excerpt asked for as `tracked` has what the views show of it
+  recorded (`Editor/State.lean`, "Excerpt buffers"), and
+  `BufferId.setExcerptHeaders id headers` replaces only the entries'
+  headers, keeping what was viewed.
 - `findBuffer name` is the buffer of that name, if there is one. Names are
   unique, so there is at most one.
 - `BufferId.remove` removes a buffer no window shows. Its text is released
@@ -250,7 +268,8 @@ a value, with their `LayoutRefusal`.
   a new window. The window is focused when the rule says so; with no rule
   that matches, when the caller's `focus` says so, `true` unless it is
   given (the compile mode gives `false`, so the focus stays). It reads the
-  rules with a state request the loop answers (`.displayRules`). A docked
+  rules with a question to the registry the loop answers
+  (`RegistryRequest.displayRules`). A docked
   window, at an edge (`Frame.docked`), is a window like any other to every
   operation here, and so is a float (`Frame.floats`). A rule's float
   target opens a float centred in the frame; the spot is handed through.
@@ -392,8 +411,8 @@ cannot be done (`docs/design/concurrency.md`, "Foreground: commands").
   (`Editor/Loop.lean`, "Running an invocation"). The input scheme goes
   back to its state at rest, so a key that entered a state of the scheme's
   has not entered it.
-- **It cannot be caught.** It makes one state request
-  (`StateRequest.giveUp`), at which the loop ends the command's program
+- **It cannot be caught.** It makes one control request
+  (`ControlRequest.giveUp`), at which the loop ends the command's program
   (`Editor/Command/Dispatch.lean`, "A command that gives up"). Nothing is
   thrown, so a `try` round the call does not go on.
 - **Run where no loop dispatches the command** it is refused, with
@@ -412,8 +431,8 @@ motion got to before it failed, with the operator cancelled
 (`Editor/Evil/Operators.lean`).
 
 - **Its type is `EditorM α` for any `α`**, and it cannot be caught, as
-  `giveUp` cannot: it makes one state request (`StateRequest.breakOff`),
-  at which the loop ends the command's program
+  `giveUp` cannot: it makes one control request
+  (`ControlRequest.breakOff`), at which the loop ends the command's program
   (`Editor/Command/Dispatch.lean`, "A command that breaks off").
 - **The loop rolls nothing back.** The texts, the markers and the editor
   state the command reached are kept, as a finished command's are, and
@@ -628,7 +647,7 @@ A command asks for a string without waiting for it
     (`.given (.ofTexts name category names)`).
   - **It is given as a value or named.** `.given source` is run by
     `prompt`; `.named name` is run by the loop, which looks the name up
-    among the registered sources (`StateRequest.askSource`), and a name no
+    among the registered sources (`ControlRequest.askSource`), and a name no
     source is registered under refuses the prompt with `noSuchSource`,
     with no text made.
   - **Each source is asked once, by `prompt`**, in order, inside the
@@ -649,7 +668,7 @@ A command asks for a string without waiting for it
     has its candidates kept apart (`passed`): they are listed after the
     matches, in the order it gave, whatever is typed.
   - **A category may be asked for** (`.category category defaults`): the
-    sources registered in it, by name (`StateRequest.categorySources`),
+    sources registered in it, by name (`RegistryRequest.categorySources`),
     with `defaults` first, each asked by name where one of its name is
     registered in the category and as itself otherwise, then the
     category's other sources, in registration order. A category with no
@@ -716,9 +735,9 @@ at-point sources name (`docs/design/keymaps-and-modes.md`, "Completion at
 point"; `Editor/Completion/AtPoint.lean`).
 
 - `completeAtPoint occasion` asks the chain of the focused window's buffer
-  for the sources that ask on the occasion (`StateRequest.atPointSources`),
+  for the sources that ask on the occasion (`RegistryRequest.atPointSources`),
   and asks each, in order, for its region at the cursor
-  (`StateRequest.askAtPoint`), **stopping at the first that answers**. A
+  (`ControlRequest.askAtPoint`), **stopping at the first that answers**. A
   region that does not hold the cursor, or whose ends are not positions of
   the text, is refused `outside`. The sources it names are asked with the
   region's text (`collectSources`, shared with `prompt`), the region's ends
@@ -806,6 +825,18 @@ refused: a reply that can be is an `Except`, a value. -/
 def EditorState.ask (request : StateRequest) : EditorM request.Reply :=
   ExceptT.lift (Program.request (port := editorPort) (.state request))
 
+/-- Asks the registry or config one question and returns its answer
+("Asking the registry, and the loop's control", in the module docs). It is
+never refused. -/
+def RegistryRequest.ask (request : RegistryRequest) : EditorM request.Reply :=
+  ExceptT.lift (Program.request (port := editorPort) (.registry request))
+
+/-- Asks the loop to end the command, or to run something registered inside
+it, and returns the reply ("Asking the registry, and the loop's control", in
+the module docs). It is never refused. -/
+def ControlRequest.ask (request : ControlRequest) : EditorM request.Reply :=
+  ExceptT.lift (Program.request (port := editorPort) (.control request))
+
 /-- The whole editor state, as it is now. -/
 def editorState : EditorM EditorState :=
   EditorState.ask .read
@@ -821,7 +852,7 @@ the echo area, and nothing after this runs, a `catch` round it included.
 Run where no loop dispatches the command it is refused with
 `badSelection`. -/
 def giveUp {α : Type} (reason : String) : EditorM α := do
-  EditorState.ask (.giveUp reason)
+  ControlRequest.ask (.giveUp reason)
   throw .badSelection
 
 /-- Ends the command here, with `reason`, and keeps what it did ("Breaking
@@ -831,7 +862,7 @@ back in its state at rest, and nothing after this runs, a `catch` round it
 included. Run where no loop dispatches the command it is refused with
 `badSelection`. -/
 def breakOff {α : Type} (reason : String) : EditorM α := do
-  EditorState.ask (.breakOff reason)
+  ControlRequest.ask (.breakOff reason)
   throw .badSelection
 
 /-- Keeps `register` under `name`, in place of the register the name had
@@ -878,31 +909,31 @@ def cancelJob (key : String) : EditorM Unit :=
 runs, and what the name takes (`Ex.Binding`, `Editor/Ex/Line.lean`). `none`
 for a name nobody bound, and where no loop runs the command. -/
 def exBinding (name : String) : EditorM (Option Ex.Binding) :=
-  EditorState.ask (.ex name)
+  RegistryRequest.ask (.ex name)
 
 /-- The ex names that are bound, each once, in the order they were first
 bound. None where no loop runs the command. -/
 def exNames : EditorM (Array String) :=
-  EditorState.ask .exNames
+  RegistryRequest.ask .exNames
 
 /-- The names themes are registered under, each once, in the order they
 were first registered ("Themes", in the module docs). None where no loop
 runs the command. -/
 def themeNames : EditorM (Array String) :=
-  EditorState.ask .themeNames
+  RegistryRequest.ask .themeNames
 
 /-- The names commands are registered under, each once, compiled code's
 first and then config's, in the order they were first registered
 ("Commands", in the module docs). None where no loop runs the command. -/
 def commandNames : EditorM (Array String) :=
-  EditorState.ask .commandNames
+  RegistryRequest.ask .commandNames
 
 /-- The key sequences that reach a command in `view`, as the input scheme
 says in the state this command runs in, each with the command's name and
 its description ("Commands", in the module docs). None where no loop runs
 the command. -/
 def keyBindings (view : ViewId) : EditorM (Array KeyBinding) :=
-  EditorState.ask (.keyBindings view)
+  RegistryRequest.ask (.keyBindings view)
 
 /-- Asks for the theme registered under `name` to be the theme in force,
 once this command has run to its end ("Themes", in the module docs).
@@ -917,7 +948,7 @@ runs, and it is part of this command. `false`, with nothing run, for a
 name no command is registered under, and where no loop runs the
 command. -/
 def runCommand (name : String) (call : Call) : EditorM Bool :=
-  EditorState.ask (.runCommand name call)
+  ControlRequest.ask (.runCommand name call)
 
 /-- Makes the buffer `id` read-only to editing commands, or not, as `on`
 says (`Editor/State.lean`, "Buffers"). Refused with `noSuchBuffer` for a
@@ -939,13 +970,13 @@ def BufferId.setLanguage (id : BufferId) (name : Option String) :
 records as its buffer's language. `none` where no loop runs the
 command. -/
 def languageOf (path : System.FilePath) : EditorM (Option String) :=
-  EditorState.ask (.languageOf path)
+  RegistryRequest.ask (.languageOf path)
 
 /-- The indent unit of the language called `name`: the unit of the
 registry's first entry of that name, or none when the table has none. `none`
 where no loop runs the command. -/
 def indentUnitOf (name : String) : EditorM (Option Language.IndentUnit) :=
-  EditorState.ask (.indentUnitOf name)
+  RegistryRequest.ask (.indentUnitOf name)
 
 /-- One level of indentation in `target`'s buffer: the unit of its
 language's entry, or four spaces (`Language.IndentUnit.default`) for a
@@ -1066,7 +1097,7 @@ def collectSources (sources : List Completion.SourceRef) (query : Completion.Que
     | .named name =>
       resolved := resolved.push (.inr name)
     | .category category defaults =>
-      let names ← EditorState.ask (.categorySources category)
+      let names ← RegistryRequest.ask (.categorySources category)
       resolved :=
         resolved ++
           defaults.toArray.map
@@ -1094,7 +1125,7 @@ def collectSources (sources : List Completion.SourceRef) (query : Completion.Que
                 candidates := (← source.candidates query).map (·.inGroup source.name) })
       | .inr name =>
         let some answered ←
-          EditorState.ask (.askSource name query) | return .error (.noSuchSource name)
+          ControlRequest.ask (.askSource name query) | return .error (.noSuchSource name)
         pure (name, { answered with candidates := answered.candidates.map (·.inGroup name) })
     -- Failing that, the category is the first source's.
     let category := collected.category <|> some answer.category
@@ -1115,7 +1146,7 @@ def collectSources (sources : List Completion.SourceRef) (query : Completion.Que
             all := collected.all ++ answer.candidates, category }
   -- Each job a source that answers later names must be registered.
   for source in collected.asking do
-    unless ← EditorState.ask (.hasJob source.later.job) do
+    unless ← RegistryRequest.ask (.hasJob source.later.job) do
       return .error (.noSuchJob source.later.job)
   -- A source that reads the open buffers' texts is handed a snapshot of
   -- each, the asking view's buffer's first: taken once, here.
@@ -1145,7 +1176,7 @@ prompt keeps what they answered, each source's candidates in its group
 (`Completion.Candidate.inGroup`), in the sources' order: a filtered
 source's apart, to be listed as given, and every other's to be matched.
 The prompt's category is its first reference's. A source given as
-a value is run here; one named is run by the loop (`StateRequest.askSource`),
+a value is run here; one named is run by the loop (`ControlRequest.askSource`),
 and refused, with no text made, with `noSuchSource` when no source is
 registered under its name. A source that answers later
 (`Completion.Source.later`), given or named, is not run: it is recorded as
@@ -1153,7 +1184,7 @@ asking, for `initial`, and the loop starts its job
 (`Editor/Completion/Later.lean`); the prompt is refused, with no text made,
 with `noSuchJob` when no job is registered under its job's name. A category (`.category category defaults`) is
 asked for the names of its registered sources once
-(`StateRequest.categorySources`): each default is asked by name where one
+(`RegistryRequest.categorySources`): each default is asked by name where one
 of its name is registered in the category and as itself otherwise, then
 each other name in the category, in registration order. A category with
 no source and no defaults asks nothing. If a source is refused, so is this
@@ -1200,7 +1231,7 @@ the module docs). It is run inside this command, over the fuzzy port, and
 is not refused. -/
 def matchByCategory (category : String) (text : String) (candidates : Array String) :
     EditorM (Array Completion.Hit) :=
-  EditorState.ask (.matchCandidates (some category) text candidates)
+  ControlRequest.ask (.matchCandidates (some category) text candidates)
 
 /-- Moves the open prompt's choice by `step` through the candidates it has
 listed ("Prompts", in the module docs): from nothing chosen to the first or
@@ -1265,11 +1296,14 @@ structure BufferExcerpt where
   stop : Nat
   /-- The header drawn above it; none when empty. -/
   header : String := ""
+  /-- Whether what the views show of it is tracked (`Buffer.ExcerptEntry.viewed`,
+  `Editor/State.lean`, "Excerpt buffers"). -/
+  tracked : Bool := false
   deriving DecidableEq, Repr
 
 /-- The store's excerpts of `list`, each over its buffer's text, and the
-entries the excerpt buffer keeps of them; `noSuchBuffer` and the first
-buffer there is none of. -/
+entries the excerpt buffer keeps of them, a tracked one with nothing viewed
+yet; `noSuchBuffer` and the first buffer there is none of. -/
 def excerptsOf (list : Array BufferExcerpt) :
     EditorM (Except BufferRefusal (Array Excerpt × Array Buffer.ExcerptEntry)) := do
   let state ← editorState
@@ -1278,7 +1312,10 @@ def excerptsOf (list : Array BufferExcerpt) :
   for item in list do
     let some buffer := state.buffer? item.buffer | return .error (.noSuchBuffer item.buffer)
     excerpts := excerpts.push ⟨buffer.text, item.start, item.stop⟩
-    entries := entries.push { source := buffer.text, header := item.header }
+    entries :=
+      entries.push
+        { source := buffer.text, header := item.header
+          viewed := if item.tracked then some {} else none }
   return .ok (excerpts, entries)
 
 /-- Makes an excerpt buffer called `name` over a new excerpt text of the
@@ -1430,6 +1467,21 @@ def setExcerpts (id : BufferId) (list : Array BufferExcerpt) :
     let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
     let some kept := buffer.excerpts | return .error .notExcerpts
     EditorState.ask (.setExcerptHistory id { kept with entries })
+
+/-- Replaces the headers of the excerpt buffer `id`'s entries with
+`headers`, in list order, an entry past their end keeping its own, and keeps
+everything else of them, what was viewed included
+(`EditorState.setExcerptHistory`). Refused with `noSuchBuffer` for a buffer
+there is none of, and `notExcerpts` for one that is not an excerpt
+buffer. -/
+def setExcerptHeaders (id : BufferId) (headers : Array String) :
+    EditorM (Except BufferRefusal Unit) := do
+  let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
+  let some kept := buffer.excerpts | return .error .notExcerpts
+  let entries :=
+    kept.entries.mapIdx fun index entry =>
+      { entry with header := headers[index]?.getD entry.header }
+  EditorState.ask (.setExcerptHistory id { kept with entries })
 
 end BufferId
 
@@ -2047,7 +2099,7 @@ def BufferId.display (buffer : BufferId) (asking : ViewId) (opener : String)
     if state.minibufferBuffer? == some buffer then
       return .error (.ofMinibuffer minibuffer)
   let some shown := state.buffer? buffer | return .error (.noSuchBuffer buffer)
-  let rules ← EditorState.ask .displayRules
+  let rules ← RegistryRequest.ask .displayRules
   let (decided, focus) := state.displaying rules buffer asking opener focus
   let placed : Except LayoutRefusal ViewId ←
     match decided with
@@ -2288,8 +2340,9 @@ def completeAtPoint (occasion : Completion.Occasion) (silent : Bool := false) :
   let head := range.head
   let spot : Completion.Spot := { view, offset := head, occasion }
   let mut answered : Option (String × Completion.Region) := none
-  for name in ← EditorState.ask (.atPointSources view occasion) do
-    if let some region← EditorState.ask (.askAtPoint name spot) then
+  for name in
+    ← RegistryRequest.ask (.atPointSources target.buffer.major target.buffer.minors occasion) do
+    if let some region← ControlRequest.ask (.askAtPoint name spot) then
       answered := some (name, region)
       break
   let some (name, region) := answered | return .ok false

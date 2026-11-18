@@ -1,4 +1,3 @@
-import Editor.Ffi
 import Editor.SyntaxTree
 import Editor.Text.Real
 

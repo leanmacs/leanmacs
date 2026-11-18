@@ -2,13 +2,15 @@
 //! text, equal to the file checked in at `tests/display/frame.expected`.
 //!
 //! The same scene is published from Lean through the real binding by
-//! `ffi-test display ../tests/display/frame.expected` (lean/FfiTest.lean),
+//! `ffi-test display ../tests/display/frame.expected`
+//! (lean/FfiTest/Editor/Display/Real.lean),
 //! which requires the published frame's text to equal the same file. So the
 //! two sides are compared through one file, and this crate owns it: when
 //! layout's rules change, the file is rewritten here from the text this
 //! test prints on failure, and the Lean check follows.
 //!
-//! The scene, which `lean/FfiTest.lean` builds the same way:
+//! The scene, which `lean/FfiTest/Editor/Display/Real.lean` builds the same
+//! way:
 //!
 //! - cells 8 pixels across and 16 down, tabs 8 columns wide;
 //! - view 1, at 0,0 and 96 by 80 (12 columns; 5 rows, of which its status
