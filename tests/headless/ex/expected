@@ -13,7 +13,7 @@ scene 0x0, focused 3, echo "", echo padding 8, preedit -, published 13, theme "d
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 3 0,0 0x0: "e", scroll 0, selections 1..1, padding 8 0
-status 3: minibuffer.prompt ":", minibuffer.candidate "e", minibuffer.candidate "e!", minibuffer.candidate "next-error", minibuffer.candidate "previous-error", minibuffer.candidate "autoread", minibuffer.candidate "noautoread", minibuffer.candidate "reload", minibuffer.candidate "compile", minibuffer.candidate "compile-command", minibuffer.candidate "recompile", minibuffer.candidate "vc-stage-hunk", minibuffer.candidate "vc-unstage-hunk", minibuffer.candidate "vc-commit-accept"
+status 3: minibuffer.prompt ":", minibuffer.candidate "e", minibuffer.candidate "e!", minibuffer.candidate "next-error", minibuffer.candidate "previous-error", minibuffer.candidate "autoread", minibuffer.candidate "noautoread", minibuffer.candidate "reload", minibuffer.candidate "compile", minibuffer.candidate "compile-command", minibuffer.candidate "recompile", minibuffer.candidate "vc-stage-hunk", minibuffer.candidate "vc-unstage-hunk", minibuffer.candidate "vc-worktrees", minibuffer.candidate "vc-commit-accept"
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
 scene 0x0, focused 4, echo "", echo padding 8, preedit -, published 18, theme "default"
