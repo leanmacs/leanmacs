@@ -461,6 +461,24 @@ A root that is not absolute is refused, and so is one root declared twice.
 A reload that installs takes the roots, and bumps the config generation, so
 the next file opened asks its directory's workspace again.
 
+Config chooses the command that lists a workspace's files, for
+`find-file-in-workspace` (`Editor/Workspace/Lister.lean`), for one root
+with `workspaceLister`, or for every workspace of a project, by its
+identity, with `projectLister`; a root's lister is used before its
+project's, and either before git's and the fallback's:
+
+```lean
+def setup : SetupM Unit := do
+  workspaceLister "/Users/me/src/mono" "fd" #["--type", "f", "--hidden", "--exclude", ".git", "-0"] (nul := true)
+  projectLister (.remote "github.com/me/tool") "rg" #["--files", "--null"] (nul := true)
+```
+
+The lister runs at the workspace's root, and its records are paths
+relative to it. A root that is not absolute is refused, and so is a program
+that names a relative path (a project's own script runs as `sh` with the
+script as its argument), and one root or one project given a lister twice.
+A reload that installs replaces config's listers.
+
 Config gives the compile mode what fits a kind of project with
 `compileContribution` (`Editor/Compile/Contribution.lean`): a minor mode's
 marker files, which turn the mode on in a buffer whose file is under one of
@@ -573,6 +591,10 @@ inductive SetupRequest where
   /-- Declare `root`, an absolute path, a workspace root, of the project
   called `project` when one is given (`Editor/Workspace.lean`). -/
   | workspace (root : System.FilePath) (project : Option String)
+  /-- Declare `declared` the command that lists the files of a workspace
+  root, or of every workspace of a project
+  (`Editor/Workspace/Lister.lean`). -/
+  | workspaceLister (declared : Workspace.DeclaredLister)
   /-- Add `rule` to the display rules, after the ones made before it
   (`Editor/DisplayRules.lean`). -/
   | displayRule (rule : DisplayRule)
@@ -642,6 +664,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .processEnvironment _ => Unit
   | .autoReload _ => Unit
   | .workspace .. => Unit
+  | .workspaceLister _ => Unit
   | .displayRule _ => Unit
   | .shellTimeLimit _ => Unit
   | .syntaxRefreshDelay _ => Unit
@@ -1119,6 +1142,42 @@ def workspace (root : System.FilePath) (project : Option String := none) : Setup
   unless root.isAbsolute do
     throw (relativeWorkspace root)
   ExceptT.lift (Program.request (port := setupPort) (.workspace root project))
+
+/-- The message a workspace lister is refused with when its program names a
+relative path. -/
+def relativeLister (program : String) : String :=
+  s!"a workspace lister's program must be a bare name or an absolute path: {program}; run a script of the project's own as `sh` with the script as its argument"
+
+/-- Declares the command that lists the files of the workspace whose root is
+`root` (`Editor/Workspace/Lister.lean`): `program` with `arguments`, run at
+the root, its standard output the root-relative paths, one a line, or one
+a NUL-ended record with `nul`. It is used in place of git's and the
+fallback's, and of a lister its project declares. Refuses the `setup` for
+a root that is not absolute, for a program that names a relative path,
+which every process service refuses, and for a root given a lister
+twice. -/
+def workspaceLister (root : System.FilePath) (program : String) (arguments : Array String := #[])
+    (nul : Bool := false) : SetupM Unit := do
+  unless root.isAbsolute do
+    throw (relativeWorkspace root)
+  if Process.Command.namesRelative { program, directory := root } then
+    throw (relativeLister program)
+  ExceptT.lift
+      (Program.request (port := setupPort)
+        (.workspaceLister { scope := .root root, program, arguments, nul }))
+
+/-- Declares the command that lists the files of every workspace of the
+project identified by `project` (`Editor/Workspace/Lister.lean`), as
+`workspaceLister` does for one root; a root's own lister is used before
+it. Refuses the `setup` for a program that names a relative path, and for
+a project given a lister twice. -/
+def projectLister (project : Project.Identity) (program : String) (arguments : Array String := #[])
+    (nul : Bool := false) : SetupM Unit := do
+  if Process.Command.namesRelative { program, directory := "/" } then
+    throw (relativeLister program)
+  ExceptT.lift
+      (Program.request (port := setupPort)
+        (.workspaceLister { scope := .project project, program, arguments, nul }))
 
 /-- The message a compile contribution with no marker is refused with. -/
 def compileWithoutMarkers (mode : String) : String :=

@@ -53,7 +53,9 @@ request of the editor's port (`EditorRequest.registry`,
   in effect is a command's choice, which is state (`EditorState.autoReload`),
   or else this.
 - `workspaceSettings` is answered config's workspace roots and the config
-  generation: what the finder is handed.
+  generation: what the finder is handed. Its settings carry config's
+  workspace listers too, which choose what lists a workspace's files
+  (`Editor/Workspace/Lister.lean`).
 - `displayRules` is answered config's display rules, in order
   (`Editor/DisplayRules.lean`).
 - `shellTimeLimit` and `syntaxRefreshDelay` are answered config's shell
@@ -110,7 +112,8 @@ inductive RegistryRequest where
   the state's (`EditorState.autoReload`). -/
   | autoReload
   /-- What the finder is to be handed, config's roots among it, and the
-  config generation. -/
+  config generation; config's workspace listers are among the settings
+  too. -/
   | workspaceSettings
   /-- Config's display rules, in order. -/
   | displayRules

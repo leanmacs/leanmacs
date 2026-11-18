@@ -150,6 +150,10 @@ the model tests run it with outcomes built by hand
   opened after an install asks its directory's workspace again, as an
   install drops every directory's cached environment. A rejected outcome
   changes neither.
+- **An install replaces config's workspace listers**
+  (`Registry.workspaceListers`): the next `find-file-in-workspace` lists
+  with them (`Editor/Workspace/Lister.lean`). A rejected outcome keeps
+  them.
 - **An install replaces config's compile contributions and project
   commands** (`Registry.replaceContributions`, `Registry.projectCommands`):
   a file opened after it turns on the modes they give, and the compile mode
@@ -425,6 +429,7 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
             environment := built.registrations.environment
             autoReload := built.registrations.autoReload.back?.getD false
             workspaceRoots := built.registrations.workspaceRoots
+            workspaceListers := built.registrations.workspaceListers
             generation := state.registry.generation + 1
             displayRules
             shellTimeLimit := built.registrations.shellTimeLimit

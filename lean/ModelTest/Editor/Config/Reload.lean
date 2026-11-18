@@ -640,6 +640,23 @@ def reloadChecks : List Check :=
           (told (reduce []).1 == (#[], 0) && told loaded == (roots, 1) && told kept == (roots, 1) &&
             told bare == (#[], 2)) },
     { name :=
+        "an installed reload puts config's workspace listers in the registry, which tells the loop of them in its workspace settings; a rejected reload keeps them, and a config that declares none clears them"
+      run :=
+        let listers : Array Workspace.DeclaredLister :=
+          #[{ scope := .root "/r", program := "fd", arguments := #["-0"], nul := true },
+            { scope := .project (.remote "github.com/o/r"), program := "rg" }]
+        let declares : SetupM Unit := do
+          workspaceLister "/r" "fd" #["-0"] (nul := true)
+          projectLister (.remote "github.com/o/r") "rg"
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] declares)]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let told (state : Config.State Elaborated) : Array Workspace.DeclaredLister :=
+          state.registry.registered.workspaceSettings.listers
+        pure
+          (told (reduce []).1 == #[] && told loaded == listers && told kept == listers &&
+            told bare == #[]) },
+    { name :=
         "an installed reload puts config's shell time limit in the registry, which tells the loop of it; a rejected reload leaves it, and a config that sets none goes back to none"
       run :=
         let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (shellTimeLimit 5000))]

@@ -933,7 +933,50 @@ def setupChecks : List Check :=
           workspace "/r/tools/"
         pure
           (refusal (workspace "tools") == some (relativeWorkspace "tools") &&
-            refusal twice == some (Config.Registrations.workspaceTwice "/r/tools")) }]
+            refusal twice == some (Config.Registrations.workspaceTwice "/r/tools")) },
+    { name :=
+        "a setup's workspace listers, for a root and for a project, are collected in the order it declared them, with their arguments and whether their records end in a NUL; a setup that declares none collects none"
+      run :=
+        let setup : SetupM Unit := do
+          workspaceLister "/r" "fd" #["--type", "f", "-0"] (nul := true)
+          projectLister (.remote "github.com/o/r") "rg" #["--files"]
+          workspaceLister "/w" "/opt/bin/list"
+        pure
+          (match Config.Registrations.ofSetup setup,
+            Config.Registrations.ofSetup (command "first" (makes "1")) with
+          | .ok collected, .ok bare =>
+            collected.workspaceListers ==
+                #[{ scope := .root "/r", program := "fd", arguments := #["--type", "f", "-0"]
+                    nul := true },
+                  { scope := .project (.remote "github.com/o/r"), program := "rg"
+                    arguments := #["--files"] },
+                  { scope := .root "/w", program := "/opt/bin/list" }] &&
+              bare.workspaceListers.isEmpty
+          | _, _ => false) },
+    { name :=
+        "a setup that declares a lister for a root that is not absolute, one whose program names a relative path, or a lister for one root or one project twice, is refused with a message that says so"
+      run :=
+        let rootTwice : SetupM Unit := do
+          workspaceLister "/r" "fd"
+          workspaceLister "/r/" "rg" #["--files"]
+        let projectTwice : SetupM Unit := do
+          projectLister (.remote "github.com/o/r") "fd"
+          projectLister (.remote "github.com/o/r") "rg"
+        let both : SetupM Unit := do
+          workspaceLister "/r" "fd"
+          projectLister (.root "/r") "fd"
+        pure
+          (refusal (workspaceLister "r" "fd") == some (relativeWorkspace "r") &&
+            refusal (workspaceLister "/r" "bin/list") == some (relativeLister "bin/list") &&
+            refusal (projectLister (.remote "github.com/o/r") "./list") ==
+              some (relativeLister "./list") &&
+            (relativeLister "bin/list").startsWith
+              "a workspace lister's program must be a bare name or an absolute path: bin/list" &&
+            refusal rootTwice == some (Config.Registrations.workspaceListerTwice (.root "/r")) &&
+            refusal projectTwice ==
+              some
+                (Config.Registrations.workspaceListerTwice (.project (.remote "github.com/o/r"))) &&
+            refusal both == none) }]
 
 /-- The checks of what a `setup` says for the key hints: a binding's
 description (`bindKey`'s `desc`) and a prefix's name (`prefixName`). -/

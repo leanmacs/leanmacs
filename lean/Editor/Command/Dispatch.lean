@@ -199,7 +199,8 @@ from the next command.
     `Editor/Files.lean`), a command's choice being the state's;
   - the workspace settings (`workspaceSettings`, from
     `Loop.Registered.workspaceSettings`: config's workspace roots, the git
-    program and the contributions' marker modes) and the config generation
+    program, the contributions' marker modes and config's workspace
+    listers) and the config generation
     (`generation`): a file's open asks, for its directory's workspace
     (`Editor/Workspace/Attach.lean`), and the version-control commands ask,
     for the git program; the gutter's reconciler is handed the same
@@ -492,6 +493,10 @@ structure Loop.Registered where
   /-- The workspace roots config declares (`workspace`, `Editor/Setup.lean`),
   which the finder is handed. -/
   workspaceRoots : Array Workspace.ConfigRoot := #[]
+  /-- The workspace listers config declares (`workspaceLister`,
+  `projectLister`, `Editor/Setup.lean`), which choose what lists a
+  workspace's files (`Editor/Workspace/Lister.lean`). -/
+  workspaceListers : Array Workspace.DeclaredLister := #[]
   /-- The git program (`Workspace.Settings.git`): a bare name, looked up on
   the `PATH`, or an absolute path. -/
   git : String := ({} : Workspace.Settings).git
@@ -543,13 +548,15 @@ structure Loop.Registered where
   atPointNames : Option String → Array String → Array String := fun _ _ => #[]
 
 /-- The workspace settings `registered` says: config's workspace roots, the
-git program, and the marker modes of the compile contributions. What the
-workspace settings are asked for answers (`RegistryRequest.workspaceSettings`),
-and what the loop hands the version-control gutter, so that every reader of
-the git program reads the one. -/
+git program, the marker modes of the compile contributions, and config's
+workspace listers. What the workspace settings are asked for answers
+(`RegistryRequest.workspaceSettings`), and what the loop hands the
+version-control gutter, so that every reader of the git program reads the
+one. -/
 def Loop.Registered.workspaceSettings (registered : Loop.Registered) : Workspace.Settings :=
   { roots := registered.workspaceRoots, git := registered.git
-    markerModes := registered.compile.contributions.map (·.markerMode) }
+    markerModes := registered.compile.contributions.map (·.markerMode)
+    listers := registered.workspaceListers }
 
 /-- The answer to `request`, a question to the registry or config, from what
 `registered` says ("Requests that name something registered", in the module

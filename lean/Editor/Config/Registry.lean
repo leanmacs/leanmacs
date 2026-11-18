@@ -594,6 +594,10 @@ it did not, which a host reads as `auto`. -/
   /-- The workspace roots config declares (`workspace`, `Editor/Setup.lean`),
   in the order it declared them. -/
   workspaceRoots : Array Workspace.ConfigRoot := #[]
+  /-- The workspace listers config declares (`workspaceLister`,
+  `projectLister`, `Editor/Setup.lean`), in the order it declared them:
+  set at every install. -/
+  workspaceListers : Array Workspace.DeclaredLister := #[]
   /-- How many configs have been installed: the config generation a
   directory's cached workspace was found under (`Editor/Workspace.lean`).
   0 while only compiled code is registered. -/
@@ -1114,6 +1118,7 @@ are registered under (`themeNames`), for the command that loads one; the
 names commands are registered under (`names`), each once, for the command
 prompt, so a reload that drops config's command drops it from the prompt;
 config's workspace roots and the config generation, for the finder;
+config's workspace listers, for what lists a workspace's files;
 config's display rules, for a command that displays a buffer; config's
 shell time limit, for `:!`; the language table (`languageTable`), for a
 file's open and a mode's entry; and the compile contributions and config's
@@ -1131,6 +1136,7 @@ def registered (registry : Registry) : Loop.Registered :=
     exNames := registry.exNames, themeNames := registry.themeNames
     commandNames := registry.names
     autoReload := registry.autoReload, workspaceRoots := registry.workspaceRoots
+    workspaceListers := registry.workspaceListers
     generation := registry.generation, displayRules := registry.displayRules
     shellTimeLimit := registry.shellTimeLimit, syntaxRefreshDelay := registry.syntaxRefreshDelay
     languages := registry.languageTable, compile := registry.compileHook
@@ -1203,6 +1209,10 @@ they were made: one at most, in a `setup` that is not refused. -/
   /-- The workspace roots the `setup` declared, in order: a root once at
   most, in a `setup` that is not refused. -/
   workspaceRoots : Array Workspace.ConfigRoot := #[]
+  /-- The workspace listers the `setup` declared (`workspaceLister`,
+  `projectLister`), in order: one for a root or a project at most, in a
+  `setup` that is not refused. -/
+  workspaceListers : Array Workspace.DeclaredLister := #[]
   /-- The display rules the `setup` made (`displayRule`), in order. -/
   displayRules : Array DisplayRule := #[]
   /-- The shell time limits `setup` set (`shellTimeLimit`), in order: one at
@@ -1366,6 +1376,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .autoReload on, collected => ((), { collected with autoReload := collected.autoReload.push on })
   | .workspace root project, collected =>
     ((), { collected with workspaceRoots := collected.workspaceRoots.push { root, project } })
+  | .workspaceLister declared, collected =>
+    ((), { collected with workspaceListers := collected.workspaceListers.push declared })
   | .displayRule rule, collected =>
     ((), { collected with displayRules := collected.displayRules.push rule })
   | .shellTimeLimit milliseconds, collected =>
@@ -1404,6 +1416,11 @@ def autoReloadTwice : String :=
 with. -/
 def workspaceTwice (root : System.FilePath) : String :=
   s!"the workspace root `{root}` is declared twice"
+
+/-- What a `setup` that declares a workspace lister for `scope` twice is
+refused with: one root, or one project. -/
+def workspaceListerTwice (scope : Workspace.ListerScope) : String :=
+  s!"a workspace lister is declared twice for {scope.describe}"
 
 /-- What a `setup` that registers the compile contribution of `mode` twice
 is refused with. -/
@@ -1527,6 +1544,8 @@ def problem? (collected : Registrations) : Option String := do
     return autoReloadTwice
   if let some root := repeated? (collected.workspaceRoots.map (Process.trimmed ·.root)) then
     return workspaceTwice root
+  if let some scope := repeated? (collected.workspaceListers.map (·.scope.trimmed)) then
+    return workspaceListerTwice scope
   if collected.shellTimeLimits.size > 1 then
     return shellTimeLimitTwice
   if collected.syntaxRefreshDelays.size > 1 then
