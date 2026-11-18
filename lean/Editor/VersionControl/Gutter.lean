@@ -37,10 +37,14 @@ diffs are asked with:
 - **A new tracked buffer** gets a head fetch, the job `vc-gutter-head`, keyed
   by the buffer (`headKey`).
 - **A stale one** (its repository moved, `vc-gutter-moved`) gets another
-  fetch, under a new epoch, so the reply of an older one is ignored.
+  fetch, under a new epoch, so the reply of an older one is ignored. One
+  that moved while a fetch is in flight waits for that fetch's content,
+  then fetches again.
 - **A diff** (the job `vc-gutter-diff`, keyed by the buffer, `diffKey`) is
-  started when `HEAD`'s content is held, no diff is in flight, and the
-  buffer's text is at a revision not diffed against it. One diff in flight
+  started when `HEAD`'s content is held, no fetch and no diff is in flight,
+  and the buffer's text is at a revision not diffed against it. So a diff's
+  epoch names the head it reads: none is started against a head a fetch in
+  flight will replace. One diff in flight
   a buffer bounds the work with no timer: an edit made while one is in
   flight is diffed when it lands, at the next publish. Between the two the
   marks are carried through the edits.
@@ -59,11 +63,14 @@ diffs are asked with:
   text released, the snapshot held in place of the last one; the buffer is
   given a gutter, with no mark, if it had none, so the column appears.
   `none` or a failure takes the gutter away. A reply of an older epoch is
-  ignored.
+  ignored. The head it replaces is released even while a diff of an older
+  epoch reads it: a snapshot id is never used again, so that diff reads
+  the text it was given or is refused, and it is ignored either way.
 - **`vc-gutter-diff`** (`diffWork`) asks for the hunks of the head snapshot
   against the buffer's (`Diff.hunks`, under `Files.diffLineLimit`). What it
   comes to (`diffed`): for the latest head, the buffer's gutter becomes the
-  hunks' marks at the revision the buffer's snapshot was taken at
+  hunks' marks, and its revision is recorded as diffed (for an older epoch
+  neither is) at the revision the buffer's snapshot was taken at
   (`marksOf`); the snapshot is released whatever came of it.
 - **`vc-gutter-refs`** (`refsWork`) asks what to watch (`watched`), watches
   that directory and everything under it, coalesced over 100 ms and 256
@@ -352,7 +359,7 @@ def reconcile (registered : String → Bool) (git : String) (state : EditorState
                 { buffer := entry.buffer, epoch := entry.epoch, root := entry.root, git := entry.git
                   path := entry.path } }
     if let some head := entry.head then
-      if entry.diffing.isNone then
+      if entry.diffing.isNone && !entry.fetching then
         if let some buffer := state.buffer? entry.buffer then
           let revision ← buffer.text.revision
           if entry.diffed != some revision then

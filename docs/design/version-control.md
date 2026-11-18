@@ -275,15 +275,21 @@ editor with git integration does.
   fetch or a gc costs at most one spurious fetch of `HEAD`.
 - **Moved** makes each tracked buffer of the root stale, and the next
   publish fetches its file at `HEAD` again under a new epoch, so a reply of
-  an older fetch is ignored.
+  an older fetch is ignored. A move that comes while a fetch is in flight
+  waits for that fetch's content, then fetches once more: one fetch a
+  buffer at a time.
 - **The diff** (`vc-gutter-diff`) is the hunks of the held snapshot against
   a snapshot of the buffer, worked off the editor thread by the diff
   service ([rust-library.md](rust-library.md), "Diff, as built"). One is
   in flight a buffer, with no debounce timer: the reconciler starts one
-  when `HEAD`'s content is held, none is in flight and the buffer's text is
-  at a revision not diffed against it; an edit made meanwhile is diffed
-  when it lands. That bounds the work and leaves no cancelled snapshot to
-  clean up.
+  when `HEAD`'s content is held, no fetch and no diff is in flight and the
+  buffer's text is at a revision not diffed against it; an edit made
+  meanwhile is diffed when it lands. That bounds the work and leaves no
+  cancelled snapshot to clean up. With no diff started during a fetch, a
+  diff's epoch names the head it reads, so a diff of an older epoch, which
+  sets no mark and records no revision, is the only one that can find its
+  head released by a newer fetch: snapshot ids are never used again, so it
+  reads the text it was given or is refused, and either way is ignored.
 - **Carrying.** Between an edit and the diff that follows it the marks are
   carried through the text's log from the revision they were made at to
   the one a view shows ([text-and-display.md](text-and-display.md),

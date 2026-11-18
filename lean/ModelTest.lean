@@ -38770,13 +38770,15 @@ def gutterJobs (name : String) : Option (List Argument → Work) :=
 
 /-- The keys of the gutter checks: the workspace driver checks', with
 `C-g x`, which makes the window's text `new\na\nB\nc\n`, `C-g z`, which
-puts `z\n` at its start, and `C-g k`, which closes the window's buffer; and
-the gutter's command, which its watch job posts. -/
+puts `z\n` at its start, `C-g k`, which closes the window's buffer, and
+`C-g h`, which hands the window's buffer's head fetch a reply of an epoch
+that is not its latest, first content and then a failure; and the gutter's
+command, which its watch job posts. -/
 def gutterKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     (workspaceBindings ++
       [("C-g x", invoke "gutter-edit"), ("C-g z", invoke "gutter-top"),
-        ("C-g k", invoke Buffers.closeName)])
+        ("C-g k", invoke Buffers.closeName), ("C-g h", invoke "gutter-stale-head")])
     (workspaceCommands ++ dispatchedOf VersionControl.gutterCommands ++
       dispatchedOf Buffers.commands ++
       [("gutter-edit", fun call => do
@@ -38785,6 +38787,15 @@ def gutterKeys : Loop.Keys TestScheme.scheme :=
           return none),
         ("gutter-top", fun call => do
           call.target.buffer.text.insert 0 "z\n"
+          return none),
+        ("gutter-stale-head", fun call => do
+          let state ← editorState
+          if let some entry := state.tracked.find? (·.buffer == call.target.window.buffer) then
+            let order : VersionControl.HeadOrder :=
+              { buffer := entry.buffer, epoch := entry.epoch + 1, root := entry.root
+                git := entry.git, path := entry.path }
+            VersionControl.headFetched order (.ok (some "stale\n"))
+            VersionControl.headFetched order (.error (.unparsable "stale"))
           return none)])
 
 /-- A driver of the gutter checks: the workspace driver's world, with the
@@ -38856,6 +38867,20 @@ def gutterChecks : List Check :=
     { committed := #[("src/a.lean", gutterHead)]
       index := #[("src/a.lean", .file "a\nB\nc\nd\n")]
       worktree := #[("src/a.lean", "a\nB\nc\nd\n")] }
+  -- How many head fetches `driver` has run.
+  let heads (driver : TestDriver) : Nat := ((gitStarted driver).filter (· == headRun)).size
+  -- `driver` once `staged` is committed outside the editor, as a commit
+  -- touches the git directory.
+  let committing (driver : TestDriver) : TestDriver :=
+    (meeting driver staged.commit).touch
+      #[("/r/.git/index", .written), ("/r/.git/refs/heads/main", .written)]
+  -- The epoch, staleness and fetching of the tracked entry view 0 shows.
+  let fetchOf (driver : TestDriver) : Option (Nat × Bool × Bool) :=
+    (trackedShown driver).map fun entry => (entry.epoch, entry.stale, entry.fetching)
+  -- The marks of `new\na\nB\nc\n` against the committed `a\nB\nc\nd\n`.
+  let againstCommit : Array GutterMark :=
+    #[{ start := 0, stop := 4, text := "+", face := ⟨"diff.added"⟩ },
+      { start := 10, stop := 10, text := "-", face := ⟨"diff.removed"⟩ }]
   [{  name :=
         "criterion 4: a tracked file's buffer takes its content at HEAD as its old text: its fetch runs rev-parse HEAD:src/a.lean then cat-file blob, and its tracked entry holds a snapshot of HEAD's content"
       run :=
@@ -38969,6 +38994,105 @@ def gutterChecks : List Check :=
               ((showing diffed).bind (·.buffer.gutter)).isSome &&
               (gutterView diffed).map (·.marks) == some #[] &&
               diffed.openWatches == 1 },
+    { name :=
+        "HEAD moving while the first head fetch is in flight fetches again only once that fetch's content is held: the buffer is stale and no second fetch starts; the first reply is held, then exactly one more fetch starts, under the next epoch, with no diff against the head it replaces; its content then replaces the head and its diff leaves no mark"
+      run :=
+        pure <|
+          match gutterDriverOf staged with
+          | none => false
+          | some driver =>
+            let opening := settledBut (fedTo driver (presses "C-o a")).1 VersionControl.headJob
+            let moved := postDelivered (committing opening)
+            let first := finishNamed moved VersionControl.headJob
+            let second := finishNamed first VersionControl.headJob
+            let diffed := finishNamed second VersionControl.diffJob
+            heads opening == 1 && fetchOf opening == some (0, false, true) && heads moved == 1 &&
+              (moved.pending.filter (·.name == VersionControl.headJob)).size == 1 &&
+              fetchOf moved == some (0, true, true) &&
+              heads first == 2 &&
+              fetchOf first == some (1, false, true) &&
+              ((trackedShown first).bind (·.head)).bind (snapshotText first) == some gutterHead &&
+              (pendingOf first VersionControl.diffJob).isNone &&
+              heads diffed == 2 &&
+              fetchOf diffed == some (1, false, false) &&
+              ((trackedShown diffed).bind (·.head)).bind (snapshotText diffed) ==
+                some "a\nB\nc\nd\n" &&
+              (gutterView diffed).map (·.marks) == some #[] },
+    { name :=
+        "a diff in flight when HEAD moves is of the old epoch: the new head is held while it runs, its old head released, and when it lands it sets no mark and records no revision, and a fresh diff against the new head starts, whose marks land"
+      run :=
+        pure <|
+          match gutterDriverOf staged with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let (edited, _) := fedTo opened (presses "C-g x")
+            let moved := postDelivered (committing edited)
+            let fetched := finishNamed moved VersionControl.headJob
+            let old := finishNamed fetched VersionControl.diffJob
+            let fresh := finishNamed old VersionControl.diffJob
+            match (trackedShown opened).bind (·.head) with
+            | none => false
+            | some head =>
+              (pendingOf edited VersionControl.diffJob).isSome &&
+                fetchOf moved == some (1, false, true) &&
+                (pendingOf moved VersionControl.diffJob).isSome &&
+                ((trackedShown fetched).bind (·.head)).bind (snapshotText fetched) ==
+                  some "a\nB\nc\nd\n" &&
+                (snapshotText fetched head).isNone &&
+                (gutterView old).map (·.marks) == (gutterView fetched).map (·.marks) &&
+                (trackedShown old).map (·.diffed) == some none &&
+                (old.pending.filter (·.name == VersionControl.diffJob)).size == 1 &&
+                (gutterView fresh).map (·.marks) == some againstCommit },
+    { name :=
+        "an edit made while HEAD is fetched again starts no diff against the head being replaced: the diff starts once the new head is held, and its marks are against the new head"
+      run :=
+        pure <|
+          match gutterDriverOf staged with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let moved := postDelivered (committing opened)
+            let (edited, steps) := fedTo moved (presses "C-g x")
+            let fetched := finishNamed edited VersionControl.headJob
+            let diffed := finishNamed fetched VersionControl.diffJob
+            fetchOf moved == some (1, false, true) &&
+              !(startNames steps).contains VersionControl.diffJob &&
+              (pendingOf edited VersionControl.diffJob).isNone &&
+              (pendingOf fetched VersionControl.diffJob).isSome &&
+              (gutterView diffed).map (·.marks) == some againstCommit &&
+              (pendingOf (settledOn diffed []) VersionControl.diffJob).isNone },
+    { name :=
+        "a head fetch's reply of an epoch that is not the latest is ignored: its content replaces no head and its failure takes no gutter away"
+      run :=
+        pure <|
+          match gutterDriverOf gutterRepository with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let stale := settledAfter opened "C-g h"
+            (trackedShown opened).isSome && trackedShown stale == trackedShown opened &&
+              ((trackedShown stale).bind (·.head)).bind (snapshotText stale) == some gutterHead &&
+              ((showing stale).bind (·.buffer.gutter)) ==
+                ((showing opened).bind (·.buffer.gutter)) &&
+              ((showing stale).bind (·.buffer.gutter)).isSome },
+    { name :=
+        "the state told of the gutter changes only what its epoch's: a head or a diff of another epoch changes nothing but the diff in flight, and one of the latest holds the head or records the revision"
+      run :=
+        pure <|
+          let entry : Tracked :=
+            { buffer := ⟨0⟩, root := "/r", path := "src/a.lean", git := "git", head := some ⟨3⟩
+              fetching := false, diffing := some (4, ⟨7⟩), diffed := some 2, epoch := 1 }
+          let state := { EditorState.none with tracked := #[entry] }
+          (state.changeGutter (.held ⟨0⟩ 0 (some ⟨9⟩))).tracked == #[entry] &&
+            (state.changeGutter (.diffed ⟨0⟩ 0 4)).tracked == #[{ entry with diffing := none }] &&
+            (state.changeGutter (.held ⟨0⟩ 1 (some ⟨9⟩))).tracked ==
+              #[{ entry with
+                  head := some ⟨9⟩, diffed := none }] &&
+            (state.changeGutter (.diffed ⟨0⟩ 1 4)).tracked ==
+              #[{ entry with
+                  diffing := none, diffed := some 4 }] &&
+            (state.changeGutter (.held ⟨1⟩ 1 (some ⟨9⟩))).tracked == #[entry] },
     { name := "a change to an object or a lock file alone in the git directory posts nothing"
       run :=
         pure <|
