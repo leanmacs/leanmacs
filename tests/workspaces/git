@@ -1,7 +1,8 @@
 #!/bin/sh
 # Stands for `git` in contract-test's workspace checks
-# (lean/ContractTest.lean, workspaceChecks and workspaceFailures). It answers
-# exactly the two command lines the workspace finder runs
+# (workspaceChecks in lean/ContractTest/Editor/Workspace.lean and
+# workspaceFailures in lean/ContractTest/Editor/Workspace/Contract.lean).
+# It answers exactly the two command lines the workspace finder runs
 # (lean/Editor/Workspace.lean, `Git.revParseArguments` and
 # `Git.originArguments`) from files in the directory it runs in, or in the
 # nearest ancestor that has one: `fixture-git` holds the three lines

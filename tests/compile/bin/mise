@@ -1,7 +1,8 @@
 #!/bin/sh
 # Stands for `mise` in contract-test's checks of the shipped modes
-# (lean/ContractTest.lean, projectModeChecks), found first on the child's
-# PATH. `mise tasks ls --json` prints a JSON array of two tasks, `build` and
+# (lean/ContractTest/Editor/Compile/Shipped.lean, projectModeChecks), found
+# first on the child's PATH.
+# `mise tasks ls --json` prints a JSON array of two tasks, `build` and
 # `test`, each with the directory it runs in (`pwd -P`) as its `dir` and a
 # few other fields, as mise does; `mise run <task>` with a file
 # `mise-run-<task>.txt` beside this script writes its lines to standard

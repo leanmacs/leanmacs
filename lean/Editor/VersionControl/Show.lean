@@ -47,7 +47,7 @@ Otherwise it starts `vc-show-read`, keyed `vc-show <root> <revision>:<path>`
   so the old text is drawn as the file is.
 
 Pinned by `ModelTest.revisionBufferChecks` on the models and
-`ContractTest.revisionBufferChecks` over real git.
+`ContractTest.statusBufferChecks` over real git.
 -/
 
 namespace Editor.VersionControl

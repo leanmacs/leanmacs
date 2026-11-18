@@ -190,6 +190,27 @@ library (`Editor/Text/Contract.lean` and its peers).
 in `split-lean-integration-test-roots`, low priority.
 `ContractTest.<name>Checks` is cited 33 times in 13 files.
 
+**Done** (roadmap `structural-splits`, phase
+`phase-2-split-lean-integration-test-roots`): split.
+`lean/ContractTest.lean`, 4,138 lines at 5f86580, is now 428: its imports,
+its module doc and `main`, unchanged. It has no `checks`: `main` is its
+aggregator, and its order is the constraint its doc states (the pool warmed
+first, the pump started once, every run in sequence, then quit and the pump
+ended). Its runs and lists are in 25 test modules under
+`lean/ContractTest/Editor/`: a contract's run in the mirror of that
+contract (`lean/ContractTest/Editor/Display/Contract.lean` for
+`lean/Editor/Display/Contract.lean`), and what only a real binding shows in
+the mirror of that binding (`lean/ContractTest/Editor/Clipboard/Real.lean`).
+The helpers several modules share are in seven support modules under
+`lean/ContractTest/Support/`, and `Check` and `checkFailures` in
+`lean/ContractTest/Check.lean`. Everything stays in `namespace
+ContractTest`, so every `ContractTest.<name>Checks` citation resolves
+unchanged; the one that named a list that does not exist,
+`ContractTest.revisionBufferChecks` in `lean/Editor/VersionControl/Show.lean`,
+now names `ContractTest.statusBufferChecks`, which holds the vc-show checks.
+contract-test's summary line is the same before and after. The largest new
+module is `lean/ContractTest/Editor/SyntaxTree/Real.lean` (713 lines).
+
 ### The editor state: `structure EditorState` in `lean/Editor/State.lean`
 
 **Cohesion**: The module is 3,546 lines, about 900 of them module docs.

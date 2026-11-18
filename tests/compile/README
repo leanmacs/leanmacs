@@ -1,6 +1,7 @@
 The fixtures of contract-test's compile checks and its checks of the
-shipped modes (lean/ContractTest.lean, compileChecks and projectModeChecks),
-whose directory `mise run ffi-test` hands contract-test as its fourth
+shipped modes (compileChecks in lean/ContractTest/Editor/Compile.lean and
+projectModeChecks in lean/ContractTest/Editor/Compile/Shipped.lean), whose
+directory `mise run ffi-test` hands contract-test as its fourth
 argument. Every script must stay executable (mode 100755). None of the
 trees is a member of the repository's Cargo workspace or Lake package, and
 nothing here is ever built.

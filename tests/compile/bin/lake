@@ -1,7 +1,8 @@
 #!/bin/sh
 # Stands for `lake` in contract-test's checks of the shipped modes
-# (lean/ContractTest.lean, projectModeChecks), found first on the child's
-# PATH. `lake build` writes the lines of `lake-build.txt`, beside this
+# (lean/ContractTest/Editor/Compile/Shipped.lean, projectModeChecks), found
+# first on the child's PATH.
+# `lake build` writes the lines of `lake-build.txt`, beside this
 # script, to standard output and exits 1; anything else says what it
 # expected and exits 2. Real Lake writes its last line, `error: build
 # failed`, on standard error; one stream keeps the buffer's lines in the
