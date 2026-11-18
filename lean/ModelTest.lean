@@ -113,12 +113,14 @@ import ModelTest.Editor.Themes.Solarized
 import ModelTest.Editor.TypedPath
 import ModelTest.Editor.UndoTree
 import ModelTest.Editor.Version
+import ModelTest.Editor.VersionControl.Blame
 import ModelTest.Editor.VersionControl.Commit
 import ModelTest.Editor.VersionControl.Contract
 import ModelTest.Editor.VersionControl.Git
 import ModelTest.Editor.VersionControl.Gutter
 import ModelTest.Editor.VersionControl.HistoryRead
 import ModelTest.Editor.VersionControl.Hunk
+import ModelTest.Editor.VersionControl.Log
 import ModelTest.Editor.VersionControl.Model
 import ModelTest.Editor.VersionControl.Plumbing
 import ModelTest.Editor.VersionControl.Porcelain
@@ -1003,7 +1005,11 @@ def checks : List Check :=
     gutterChecks ++
     stageHunkChecks ++
     commitBufferChecks ++
-    reviewBufferChecks
+    reviewBufferChecks ++
+    logViewChecks ++
+    logBufferChecks ++
+    blameViewChecks ++
+    blameBufferChecks
 
 end ModelTest
 

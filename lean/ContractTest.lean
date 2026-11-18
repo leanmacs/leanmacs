@@ -4063,6 +4063,124 @@ def reviewBufferChecks (services : Job.Services) : List Check :=
               other == some "bee\n" &&
               reverted.state.echo == "reverted a hunk of a.txt" }]
 
+/-- The name of the buffer the focused view of `loop` shows. -/
+def focusedName (loop : Loop TestScheme.scheme) : Option String :=
+  loop.state.focusedTarget?.map (·.buffer.name)
+
+/-- The headers of the excerpts of the buffer the focused view of `loop`
+shows that are not empty. -/
+def focusedHeaders (loop : Loop TestScheme.scheme) : Array String :=
+  ((loop.state.focusedTarget?.bind (·.buffer.excerpts)).map fun excerpts =>
+        (excerpts.entries.map (·.header)).filter (!·.isEmpty)).getD
+    #[]
+
+/-- The first 8 characters of the commit `revision` names in the repository
+at `directory`. -/
+def shortRevision (home directory : System.FilePath) (revision : String) : IO String := do
+  return ((← gitIn home directory #["rev-parse", revision]).trimAscii.take 8).toString
+
+/-- The repository of the history buffer checks: on `main`, `HEAD`, written
+by `b` a day after the others, changes `a.txt`'s second line over `B`; the
+branch `feature` adds `f.txt` and then `g.txt` to `B`. -/
+def historyCheckRepository : VersionControl.Model.Repository :=
+  { VersionControlContract.clean
+      #[("a.txt",
+          "1\ntwo\n3\n")] with
+    commits :=
+      #[("B", { files := #[("a.txt", "1\n2\n3\n")] }),
+        ("F1",
+          { parents := #["B"], files := #[("a.txt", "1\n2\n3\n"), ("f.txt", "f\n")]
+            authored := { VersionControl.Model.fixedAuthored with subject := "add f" } }),
+        ("F2",
+          { parents := #["F1"]
+            files := #[("a.txt", "1\n2\n3\n"), ("f.txt", "f\n"), ("g.txt", "g\n")]
+            authored := { VersionControl.Model.fixedAuthored with subject := "add g" } })]
+    parents := #["B"], branches := #[("feature", "F2"), ("base", "B")]
+    headAuthored := { author := "b", time := 1767312000, subject := "change two" } }
+
+/-- The checks of the log buffer (`Editor/VersionControl/Log.lean`), the
+blame view (`Editor/VersionControl/Blame.lean`) and `vc-review-since`
+(`Editor/VersionControl/Review.lean`) over real git, wiring only: their
+jobs run over the library's process, file and diff services and the real
+text store in a temporary repository, every child's git under
+`pinnedAwayConfig`, whose `blame.ignoreRevsFile` names every commit but
+`HEAD`'s, and kept from the system's config. -/
+def historyBufferChecks (services : Job.Services) : List Check :=
+  [{  name :=
+        "criteria 1 and 2 over real git: vc-log feature lists feature's two commits newest first, and visiting the older one's row opens its change as a review buffer with its one header"
+      run :=
+        withConfiguredRepository historyCheckRepository fun home config directory => do
+          let rig ← ProjectRig.over (onIsolatedGit services home config)
+          let some (logged, texts) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"),
+                  { command := VersionControl.logName, arguments := [.str "feature"] }]
+                reviewKeys statusJobs | return false
+          let text ← bufferText rig texts logged "*vc-log: repo@main feature*"
+          let some (visited, _) ←
+            runSettledFrom rig logged texts [toRow 2, { command := VersionControl.logVisitName }]
+                reviewKeys statusJobs | return false
+          let (g, f, b) :=
+            (← shortRevision home directory "feature", ← shortRevision home directory "feature~1",
+              ← shortRevision home directory "base")
+          return text ==
+                some
+                  (s!"repo@main: log of feature\n{g} 2026-01-01 add g (a)\n" ++
+                    s!"{f} 2026-01-01 add f (a)\n{b} 2026-01-01 B (a)\n") &&
+              focusedName visited == some s!"*vc-review: repo@main {f}*" &&
+              focusedHeaders visited == #["f.txt @@ -0,0 +1 @@"] },
+    { name :=
+        "criterion 3 over real git, under a config that ignores every commit but HEAD's in blame: vc-blame in a.txt names on each row the commit that last changed it and its author, HEAD's and b on the changed line alone, the first commit's and a on the others"
+      run :=
+        withConfiguredRepository historyCheckRepository fun home config directory => do
+          let rig ← ProjectRig.over (onIsolatedGit services home config)
+          let some (blamed, texts) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"), { command := VersionControl.blameName }] reviewKeys
+                statusJobs | return false
+          let text ← bufferText rig texts blamed "*vc-blame: a.txt@HEAD*"
+          let (head, base) :=
+            (← shortRevision home directory "HEAD", ← shortRevision home directory "base")
+          return text ==
+              some
+                (s!"{base} a 2026-01-01 | 1\n{head} b 2026-01-02 | two\n" ++
+                  s!"{base} a 2026-01-01 | 3\n") },
+    { name :=
+        "criterion 4 over real git: after vc-review against base and a new commit, vc-review-since shows the new commit's hunk alone; after that commit is amended, vc-review-since opens the range-diff of the branch's commits since, which pairs the amended one !"
+      run :=
+        withConfiguredRepository historyCheckRepository fun home config directory => do
+          let rig ← ProjectRig.over (onIsolatedGit services home config)
+          let some (reviewed, texts) ←
+            runSettled rig directory
+                [openFile (directory / "a.txt"),
+                  { command := VersionControl.reviewName, arguments := [.str "base"] }]
+                reviewKeys statusJobs | return false
+          let reviewedAt ← shortRevision home directory "HEAD"
+          writeMaking (directory / "c.txt") VersionControlContract.tenLines
+          discard <| gitIn home directory #["add", "-A"]
+          discard <|
+              gitIn home directory #["-c", "commit.gpgsign=false", "commit", "-q", "-m", "add c"]
+          let committed ← shortRevision home directory "HEAD"
+          let some (since, texts) ←
+            runSettledFrom rig reviewed texts [{ command := VersionControl.reviewSinceName }]
+                reviewKeys statusJobs | return false
+          writeMaking (directory / "c.txt") VersionControlContract.sixChanged
+          discard <| gitIn home directory #["add", "-A"]
+          discard <|
+              gitIn home directory
+                #["-c", "commit.gpgsign=false", "commit", "-q", "--amend", "-m", "add c"]
+          let some (rewritten, texts) ←
+            runSettledFrom rig since texts [{ command := VersionControl.reviewSinceName }]
+                reviewKeys statusJobs | return false
+          let range ← bufferText rig texts rewritten "*vc-range-diff: repo@main*"
+          return focusedName since == some s!"*vc-review: repo@main since {reviewedAt}*" &&
+              focusedHeaders since == #["c.txt @@ -0,0 +1,10 @@"] &&
+              focusedName rewritten == some "*vc-range-diff: repo@main*" &&
+              range.any fun text =>
+                text.startsWith
+                    s!"repo@main: HEAD was rewritten since {committed}; its commits against base\n" &&
+                  (text.splitOn "\n").any fun line => (line.splitOn " ! ").length > 1 }]
+
 end ContractTest
 
 /-- Runs the text port's contract against its real binding, then the job
@@ -4153,6 +4271,8 @@ def main (arguments : List String) : IO UInt32 := do
   let statusBufferCheckFailed ← ContractTest.checkFailures statusBufferChecks
   let reviewBufferChecks := ContractTest.reviewBufferChecks services
   let reviewBufferCheckFailed ← ContractTest.checkFailures reviewBufferChecks
+  let historyBufferChecks := ContractTest.historyBufferChecks services
+  let historyBufferCheckFailed ← ContractTest.checkFailures historyBufferChecks
   let fileWatchFailed ← ContractTest.fileWatchFailures services
   let fileWatchChecks := ContractTest.fileWatchChecks services
   let fileWatchCheckFailed ← ContractTest.checkFailures fileWatchChecks
@@ -4203,6 +4323,7 @@ def main (arguments : List String) : IO UInt32 := do
       versionControlCheckFailed ++
       statusBufferCheckFailed ++
       reviewBufferCheckFailed ++
+      historyBufferCheckFailed ++
       fileWatchFailed ++
       fileWatchCheckFailed ++
       checkFailed ++
@@ -4228,6 +4349,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties over the library's matcher, and {Editor.JobContract.snapshotProperties.length} snapshot properties over a published table, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, under a user config asking for what its command line pins away, with {versionControlChecks.length} checks of what only git makes (a branch's change asked from two worktrees, a status read of files added with intent to add, what to watch in a linked worktree, and a commit's message under a config that strips one) and {statusBufferChecks.length} checks of the status buffer, of the worktree list, of vc-show, of staging a hunk and of the message buffer over it, and {reviewBufferChecks.length} of the review buffer, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, {Editor.Completion.StyleContract.properties.length} properties of the completion styles hold of the fuzzy style and of the path style over it, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties over the library's matcher, and {Editor.JobContract.snapshotProperties.length} snapshot properties over a published table, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter and {environmentChecks.length} of a child's environment over it, with mise standing in as a fixture, and {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder over the process and file services, with {workspaceChecks.length} checks of it, with git standing in as a fixture, and {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search over the file service, and {shellChecks.length} checks of `:!` over the process service, and {compileChecks.length} of a compile, and {projectModeChecks.length} of the shipped modes with fixture programs, and {Editor.VersionControlContract.properties.length} properties of the version-control interface over real git, in temporary repositories, under a user config asking for what its command line pins away, with {versionControlChecks.length} checks of what only git makes (a branch's change asked from two worktrees, a status read of files added with intent to add, what to watch in a linked worktree, and a commit's message under a config that strips one) and {statusBufferChecks.length} checks of the status buffer, of the worktree list, of vc-show, of staging a hunk and of the message buffer over it, and {reviewBufferChecks.length} of the review buffer, and {historyBufferChecks.length} of the log, the blame and the change since the last review, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, {Editor.Completion.StyleContract.properties.length} properties of the completion styles hold of the fuzzy style and of the path style over it, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

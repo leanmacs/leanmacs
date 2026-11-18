@@ -28,9 +28,11 @@ import Editor.Scene
 import Editor.State
 import Editor.Text
 import Editor.VersionControl
+import Editor.VersionControl.Blame
 import Editor.VersionControl.Commit
 import Editor.VersionControl.Compiled
 import Editor.VersionControl.Hunk
+import Editor.VersionControl.Log
 import Editor.VersionControl.Model
 import Editor.VersionControl.Review
 import Editor.VersionControl.Show
@@ -39,6 +41,7 @@ import Editor.VersionControl.Status
 import Editor.Workspace
 import Editor.Workspace.Attach
 import ModelTest.Support.Driver
+import ModelTest.Support.Files
 import ModelTest.Support.Keys
 import ModelTest.Support.Loop
 import ModelTest.Support.Shell
@@ -241,7 +244,11 @@ to `9`, which put the cursor at the start of that excerpt of the window's
 text. Under `C-y`: `s`, `vc-review-since`; `c`, `z`, `h` and `0`, which
 write the workspace at `/r` a review store of one round against `base`
 whose head is `C`, `Z`, `head` or empty; and `m` and `b`, which open the
-review of the commit `C` or `B` (`startCommitReview`). -/
+review of the commit `C` or `B` (`startCommitReview`). Under `C-l`: `l`,
+`f` and `d`, `vc-log` of `HEAD`, of `feature` and of `-x`; `v` and `r`,
+`vc-log-visit` and `vc-log-refresh`; `a` and `s`, which open `/r/a.txt`
+and `/r/s.txt`; `e`, `k` and `x`, `vc-blame` at `HEAD`, at `B` and at `-x`;
+and `o`, `vc-blame-visit`. -/
 def reviewBindings : List (String × Invocation) :=
   stagingBindings ++
     [("C-t r", { command := VersionControl.reviewName, arguments := [.str "base"] }),
@@ -261,7 +268,16 @@ def reviewBindings : List (String × Invocation) :=
       ("C-y h", { command := "seed-round", arguments := [.str "head"] }),
       ("C-y 0", { command := "seed-round", arguments := [.str ""] }),
       ("C-y m", { command := "review-commit", arguments := [.str "C"] }),
-      ("C-y b", { command := "review-commit", arguments := [.str "B"] })]
+      ("C-y b", { command := "review-commit", arguments := [.str "B"] }),
+      ("C-l l", invoke VersionControl.logName),
+      ("C-l f", { command := VersionControl.logName, arguments := [.str "feature"] }),
+      ("C-l d", { command := VersionControl.logName, arguments := [.str "-x"] }),
+      ("C-l v", invoke VersionControl.logVisitName),
+      ("C-l r", invoke VersionControl.logRefreshName), ("C-l a", opens "/r/a.txt"),
+      ("C-l s", opens "/r/s.txt"), ("C-l e", invoke VersionControl.blameName),
+      ("C-l k", { command := VersionControl.blameName, arguments := [.str "B"] }),
+      ("C-l x", { command := VersionControl.blameName, arguments := [.str "-x"] }),
+      ("C-l o", invoke VersionControl.blameVisitName)]
 
 /-- The mode line of the review buffer checks: the default order resolved over
 the shipped segments and version control's, as a host's registry holds them
@@ -317,14 +333,19 @@ def reviewKeys : Loop.Keys TestScheme.scheme :=
         entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) }
     modeLine := reviewModeLine }
 
-/-- The jobs of the review buffer checks: the hunk checks', with the review's
-read over the version-control model of `repository`
-(`Model.readHandler`). -/
+/-- The jobs of the review buffer checks: the hunk checks', with the review's,
+the log's and the blame's reads over the version-control model of
+`repository` (`Model.readHandler`). -/
 def reviewJobs (repository : VersionControl.Model.Repository) (name : String) :
     Option (List Argument → Work) :=
-  if name == VersionControl.reviewReadJob then
-    some (VersionControl.reviewReadWork fun _ _ => VersionControl.Model.readHandler repository)
-  else stagingJobs name
+  let model : String → System.FilePath → VersionControl.Handler := fun _ _ =>
+    VersionControl.Model.readHandler repository
+  if name == VersionControl.reviewReadJob then some (VersionControl.reviewReadWork model)
+  else
+    if name == VersionControl.logReadJob then some (VersionControl.logReadWork model)
+    else
+      if name == VersionControl.blameReadJob then some (VersionControl.blameReadWork model)
+      else stagingJobs name
 
 /-- A driver of the review buffer checks over `repository`
 (`statusDriverOf`), its frame resized so that its one window is `rows` rows
