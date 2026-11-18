@@ -231,6 +231,30 @@ names `ContractTest.statusBufferChecks`, which holds the vc-show checks.
 contract-test's summary line is the same before and after. The largest new
 module is `lean/ContractTest/Editor/SyntaxTree/Real.lean` (713 lines).
 
+**Done** (roadmap `structural-splits`, phase
+`phase-6-merge-main-into-split-layout`): main's version-control review, log
+and blame work (a7f0ab1..825063c) was merged into the split layout at
+8445928. Its two new lists are in test modules that mirror what they test:
+`reviewBufferChecks` in `lean/ContractTest/Editor/VersionControl/Review.lean`,
+and `historyBufferChecks` in `lean/ContractTest/Editor/VersionControl/Log.lean`,
+which also covers the blame view and `vc-review-since`. The keys and jobs
+they share with `statusBufferChecks` (`statusJobs`, `statusKeys`, `toRow` and
+`reviewKeys`) are in the new `lean/ContractTest/Support/VersionControl.lean`,
+and main's changes to the repository writer (commits by their author,
+`ignore-revs`, and the blame section of `pinnedAwayConfig`) are in
+`lean/ContractTest/Support/Git.lean`. `lean/ContractTest.lean` is now 436
+lines, still only its imports, its module doc and `main`; its runs and lists
+are in 27 test modules under `lean/ContractTest/Editor/`, and its helpers in
+eight support modules. contract-test's summary line is main's, byte for byte.
+ConfigTest gained no list: main's two edits to it are in
+`lean/ConfigTest/Support/Lines.lean` (`statusOf`'s modified mark) and
+`lean/ConfigTest/Editor/Loop.lean` (the slow-command check's clock reads).
+Main added no `EditorState` field (there are still 28), no `StateRequest`
+variant (still 64), no binding (still 142, all in the families under
+`lean/Editor/Ffi/`) and nothing to the window example. The phase 2 note
+above is the record of that phase; its "is now 428" and "25 test modules"
+were true then, and this note supersedes them.
+
 ### The editor state: `structure EditorState` in `lean/Editor/State.lean`
 
 **Cohesion**: The module is 3,546 lines, about 900 of them module docs.
