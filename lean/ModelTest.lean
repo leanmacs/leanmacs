@@ -371,8 +371,10 @@ registered command:
   reconciler `Loop.armedHints` opening, keeping and closing them and
   arming and withdrawing their delay, the hints drawn as the candidate
   list's view and following the walk, the delay handed to the host, a
-  fake display chosen for `key` drawing them, and the pending keys drawn
-  in the selected window's status line.
+  fake display chosen for `key` drawing them, the pending keys drawn
+  in the selected window's status line, and the publish with no step
+  (`Loop.publishHinted`) closing the hints and withdrawing their delay
+  under `.never`, and opening them and arming it under a delay.
 
 What the loop does with a scheme's report of a view is checked with a
 scheme written here, `switching`: the test scheme, with a report of each

@@ -457,7 +457,10 @@ display config chose for the category `key`, once a delay has passed
 (`docs/design/keymaps-and-modes.md`, "The key hints"). They are a
 candidate list with no typed text, held in the state
 (`EditorState.keyHints`, "Key hints" in `Editor/State.lean`), and the loop
-opens, closes and lists them before every publish (`keyHinted`):
+opens, closes and lists them before every publish (`keyHinted`), a step's
+and the one a host makes with no step after an install or a theme switch
+alike (`publishHinted`), so a reload that sets `.never`, or rebinds the
+keys under a pending prefix, closes or opens them with no key typed:
 
 - **The reconciler, `armedHints`** (pure), compares the hints open with
   the keys that can follow now (`keyHints`). They are wanted while some key
@@ -3136,6 +3139,24 @@ reload's bindings move the menu's shortcuts from the next one. -/
 def keyedBy (keys : Keys scheme) (loop : Loop scheme) : Loop scheme :=
   { loop with menu := keys.menu }
 
+/-- The loop once a scene of it is published with the key hints opened,
+closed and listed for the keys that can follow now (`keyHinted`), and
+shown (`shownHints`): the publish of a step (`Stepped.published`) and the
+one a host makes with no step, after an install or a theme switch. Its
+views' status lines are drawn by the mode line `keys` names and padded by
+its padding, its windows laid out by its layout and a prompt's candidates
+listed by its matching and drawn by its displays (`publish`). What the host
+is to do with the hints' delay comes with it, so an install that sets
+`.never`, or binds keys under a pending prefix anew, closes or opens the
+hints with no key typed. -/
+def publishHinted (keys : Keys scheme) (loop : Loop scheme) :
+    EditorM (Loop scheme × HintDelayChange) := do
+  let (hinted, change) ← loop.keyHinted keys
+  let published ←
+    hinted.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
+        keys.inlineMatches keys.displaying (keyHints := hinted.shownHints keys)
+  return (published, change)
+
 /-- `stepped`, a step whose scene is not yet published, once it is
 (`publish`), its views' status lines drawn by the mode line `keys` names
 and padded by its padding, its windows laid out by its layout and a
@@ -3148,17 +3169,13 @@ cancels and spawns (`completionJobs`), then the version-control gutter's
 (`VersionControl.reconcile`), handed the git program of the workspace
 settings `keys` was told of (`Registered.workspaceSettings`, what the
 version-control commands ask for), and it says stop when the editor then
-leaves (`nextOf`) and to go on otherwise. Before the publish the key hints
-are opened, closed and listed for the keys that can follow now
-(`keyHinted`), and the step hands what the host is to do with their delay
-(`Stepped.hintDelay`). The scene comes first, so the
-scene of the step that says stop is the last one. -/
+leaves (`nextOf`) and to go on otherwise. The key hints are opened, closed
+and listed with the publish (`publishHinted`), and the step hands what the
+host is to do with their delay (`Stepped.hintDelay`). The scene comes
+first, so the scene of the step that says stop is the last one. -/
 def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
   do
-  let (hinted, hintDelay) ← stepped.loop.keyHinted keys
-  let loop ←
-    hinted.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
-        keys.inlineMatches keys.displaying (keyHints := hinted.shownHints keys)
+  let (loop, hintDelay) ← stepped.loop.publishHinted keys
   let (loop, starts, cancels) := loop.fileJobs keys
   let (loop, sourceStarts, sourceCancels, spawns) := loop.completionJobs keys
   let (state, gutterStarts, gutterCancels) ←

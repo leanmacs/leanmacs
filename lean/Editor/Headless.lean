@@ -1470,22 +1470,16 @@ match that an install ended, stamped with the old config generation, is
 spawned again here with the new config's style, with no key typed. A
 publish that changes nothing reconciles to nothing.
 
-The key hints are opened, closed and listed for the keys that can follow
-now before the publish (`Loop.keyHinted`), as a step's publish does them,
-and what that says of their delay is carried out (`delayHints`): so an
-install that sets `.never`, or rebinds the keys under a pending prefix,
-closes or opens the hints with no key typed. -/
+The publish is the core's, the one a step's is made of
+(`Loop.publishHinted`): it opens, closes and lists the key hints for the
+keys that can follow now, and what it says of their delay is carried out
+(`delayHints`), so an install that sets `.never`, or rebinds the keys under
+a pending prefix, closes or opens the hints with no key typed. -/
 def publish (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
     IO (Running σ scheme) := do
   let some frame := running.frame | return running
   let keys := running.keys collaborators
-  let (published, running) ←
-    running.attempt collaborators do
-        let (hinted, change) ← frame.keyHinted keys
-        let published ←
-          hinted.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
-              keys.inlineMatches keys.displaying (keyHints := hinted.shownHints keys)
-        return (published, change)
+  let (published, running) ← running.attempt collaborators (frame.publishHinted keys)
   let (published, change) := published.getD (frame, .keep)
   let (frame, starts, cancels, spawns) := published.completionJobs keys
   let running ← { running with frame := some frame }.delayHints collaborators change

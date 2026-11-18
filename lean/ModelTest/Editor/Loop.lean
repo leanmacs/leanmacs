@@ -904,6 +904,19 @@ def listsShown (keys : Loop.Keys TestScheme.scheme) (events : List Event)
     let scene ← scenes.back?
     return (scene.views.extract 1 scene.views.size).map (shownText model)
 
+/-- A run of `C-x` with `before`, then a publish with no step handed `after`
+(`Loop.publishHinted`), as a host publishes after an install: the loop
+and the hint delay change that publish hands back, and the scenes of the
+step and of the publish. `none` when the run was refused. -/
+def publishedHinted (before after : Loop.Keys TestScheme.scheme) :
+    Option ((TestLoop × Loop.HintDelayChange) × Array Scene) :=
+  let program : EditorM (TestLoop × Loop.HintDelayChange) := do
+    let (loop, _) ← stepsWith before { state := ← EditorState.initial ⟨640, 480⟩ } (presses "C-x")
+    loop.publishHinted after
+  match program.runModel editorModel with
+  | (.ok result, model) => some (result, model.display.scenes)
+  | (.error _, _) => none
+
 /-- The checks of when the key hints are shown and where (`Editor/Loop.lean`,
 "Key hints"): the delay armed when a prefix becomes pending and withdrawn
 when the sequence completes or resets (`Loop.armedHints`), the hints shown
@@ -995,7 +1008,29 @@ def keyHintLoopChecks : List Check :=
                 scene.views.all fun view => !view.status.any (·.text == "C-x C-s")) &&
               three.map (holds · "C-x") == #[1] &&
               three.all (·.views.size == 3)
-          | _, _ => false }]
+          | _, _ => false },
+    { name :=
+        "publishHinted, the publish after an install with no step: with hints due under a pending prefix, a publish handed a delay of .never closes them, its scene lists no hints and draws no list while the prefix is still drawn pending, and it hands the delay's withdrawal"
+      run :=
+        pure <|
+          match publishedHinted (hintedKeys 0) (hintedKeys .never) with
+          | some ((loop, change), scenes) =>
+            scenes.map (·.keyHints) == #[afterPrefix, #[]] &&
+              scenes.map (·.views.size) == #[2, 1] &&
+              scenes.all (·.views.any (·.status.contains (pendingField "C-x"))) &&
+              loop.state.keyHints == none &&
+              change == .disarm
+          | none => false },
+    { name :=
+        "publishHinted with no hints open under a pending prefix, a delay of .never, and a publish handed a delay of 500: it opens them at a new generation, its scene shows none yet, and it hands the delay to arm"
+      run :=
+        pure <|
+          match publishedHinted (hintedKeys .never) (hintedKeys 500) with
+          | some ((loop, change), scenes) =>
+            scenes.map (·.keyHints) == #[#[], #[]] && scenes.map (·.views.size) == #[1, 1] &&
+              loop.state.keyHints == some { generation := 1 } &&
+              change == .arm 1 500
+          | none => false }]
 
 /-- What the last scene of a run showed: its echo, its pending keys, and the
 text of each of its views. `none` when the run was refused or published
