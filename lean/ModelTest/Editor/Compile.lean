@@ -1,7 +1,6 @@
 import Editor.Api
 import Editor.Clipboard
 import Editor.Command
-import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Compile
