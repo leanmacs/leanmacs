@@ -44,6 +44,19 @@ the default, for a scheme that says nothing. The loop turns the list into
 the scene's key hints (`Keymap.Continuation.hint`, `Scene.keyHints`),
 dropping the bindings, which are the scheme's own type.
 
+### Which sequences run a command
+
+A scheme reports the key sequences its walk reaches for a view from the
+state with nothing pending whose binding runs a command by name
+(`keyBindings`, each a `KeyBinding`: the keys, the command's name and the
+binding's description), the specific tier's first. Only the scheme can say
+it: a binding is of its own type, so the core cannot tell what command it
+runs, and only the scheme knows which keys it would take as something else
+(the Vim scheme's count digits). It defaults to none. The binding search
+lists them, and the command prompt shows each command's keys from them
+(`Editor/BindingSearch.lean`, `Editor/ExecuteCommand.lean`). The contract's
+`keyBindingsWalk` holds every listed sequence to the walk.
+
 Which keys print text is the same for every scheme (`Key.printed?`): a
 scheme that yields a self-insert for an unbound key asks it what the key
 prints. Which keys are modifiers by themselves is too (`Key.isModifier`):
@@ -93,6 +106,13 @@ view, and the invocation the answer completes, which the loop runs as it
 runs a key's. A scheme that asks nothing answers the state as it was and
 nothing, the default, and the scheme contract holds every scheme to that
 while it is asking nothing.
+
+A second name is reserved the same way: `InputScheme.keysName`, whose
+invocation (`InputScheme.keysInvocation`) carries a key string. The loop
+looks up no command of that name: it feeds the keys to the scheme from
+the state with nothing pending, as if they were pressed, and runs what they
+complete with the scheme's report (`Loop.pressed`). The binding search runs
+a binding so, as its key would.
 
 A scheme is told when a menu item names an invocation for a view
 (`invoked`): the state, and the invocation to run in its place. A menu
@@ -177,6 +197,7 @@ the test scheme, published for other modules' tests.
 |---|---|
 | A new scheme | A value of `InputScheme` in a module of its own, which runs the contract check |
 | Something every scheme must report to the core | A field of `InputScheme`, and a property of the contract, as `continuations` and `continuationsWalk` are |
+| Which key sequences run a command, for the binding search and the command prompt | `keyBindings`, which `keyBindingsWalk` in the contract holds to the walk |
 | What a scheme makes of an invocation no key yielded, such as a menu item's | `invoked`, which `invokedKeepsUnknown` in the contract holds to its default for a name the scheme does not know |
 | Something a scheme says of one view, for the scene, the loop or a command | A field of `InputScheme.Report`, with the default a scheme that says nothing reports |
 | Something one scheme remembers between keys | That scheme's `State`; nothing here |
@@ -208,6 +229,18 @@ structure InputScheme.Report where
   session : Bool := false
   /-- Whether a committed text is inserted in the view. -/
   takesText : Bool := true
+  deriving DecidableEq, Repr
+
+/-- A key sequence the scheme's walk reaches from rest, and the command it
+runs by name: what the binding search lists, and what the command prompt
+shows beside a command's name. -/
+structure KeyBinding where
+  /-- The sequence, as chords. -/
+  keys : List Key
+  /-- The name of the command its binding runs. -/
+  command : String
+  /-- The binding's description, if it has one. -/
+  desc : Option String := none
   deriving DecidableEq, Repr
 
 /-- An input scheme: a state machine over keys, with its own state and
@@ -294,6 +327,12 @@ structure InputScheme where
     (ViewId → List (Keymap Binding)) →
       (List Key → Option String) → ViewId → State → List (Keymap.Continuation Binding) :=
     fun _ _ _ _ => []
+  /-- The key sequences the scheme's walk reaches for the view from the
+  state with nothing pending, whose binding runs a command by name, each
+  with that name and its description, specific tier first; none from a
+  scheme that says nothing. -/
+  keyBindings : (ViewId → List (Keymap Binding)) → ViewId → State → List KeyBinding :=
+    fun _ _ _ => []
 
 /-- `c` as a key hint (`KeyHint`): its key as a key string names it, and what
 it leads to, without the binding, which is the scheme's own. -/
@@ -310,6 +349,18 @@ and runs no command of this name, so no command can be registered under
 it. -/
 def InputScheme.answerName : String :=
   "input-scheme-answer"
+
+/-- The reserved name of an invocation whose one argument is a key string:
+the loop feeds those keys to the input scheme from rest, as if they were
+pressed, and runs what they complete (`Loop.pressed`). No command is looked
+up under it, so none can be registered under it. -/
+def InputScheme.keysName : String :=
+  "input-scheme-keys"
+
+/-- The reserved invocation that presses `keys` (`InputScheme.keysName`),
+the keys written as a key string. -/
+def InputScheme.keysInvocation (keys : List Key) : Invocation :=
+  { command := InputScheme.keysName, arguments := [.str (Key.notations keys)] }
 
 /-- The keys `role` is on in `scheme`'s role table, if it has a row. -/
 def InputScheme.roleKey (scheme : InputScheme) (role : Role) : Option (List Key) :=

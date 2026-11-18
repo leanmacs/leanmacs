@@ -614,7 +614,9 @@ need no model and no fake of a collaborator:
   what a sequence is bound to, which sequences a binding begins with, the
   chord a binding names a key by, the walk through a list of keymaps
   in precedence order, a binding's description, and the keys that can
-  follow a pending prefix, in order, with what the walk makes of each;
+  follow a pending prefix, in order, with what the walk makes of each, and
+  every sequence the walk completes from rest over two tiers, shadowed and
+  unreachable bindings left out;
 - `keyNotationChecks`: key strings (`Editor/Key/Notation.lean`): the keys
   a string names, the strokes it is written as with `<leader>` and
   `<localleader>` and their expansion against leaders, the strings that are
@@ -638,7 +640,10 @@ need no model and no fake of a collaborator:
   among them, which emits on a strict prefix;
 - `continuationsContractChecks`: the contract's property of what can
   follow a pending prefix reports a scheme that lists a prefix key its walk
-  does not continue, and one that lists keys at rest.
+  does not continue, and one that lists keys at rest;
+- `keyBindingsContractChecks`: the contract's property of the key bindings
+  a scheme lists reports a scheme that lists one its walk does not
+  complete, and the test scheme lists those of its keymaps.
 
 The Vim scheme (`Editor/InputScheme/Vim.lean`) is checked the same way,
 with no model:
@@ -660,6 +665,11 @@ with no model:
   prefix (`Vim.State.continuations`): keys of both tiers, an active prefix
   over a state's binding, the pending keymaps while an operator waits, and
   nothing after a count, an operator or the register prefix alone;
+- `vimKeyBindingChecks`: the key bindings the Vim scheme lists
+  (`Vim.State.keyBindings`): the commands of the walk's tiers in the view's
+  state, an active binding first with its description, and no part of
+  speech, no sequence that begins with a count digit, no mode's binding
+  where typing is text and no binding an active prefix shadows;
 - `vimDefaultChecks`: the default states and bindings
   (`Editor/InputScheme/Vim/Default.lean`), observed through the grammar:
   what each default key parses to, and what the scheme reports of the view
@@ -937,12 +947,14 @@ def checks : List Check :=
     schemeHintChecks ++
     schemeContractChecks ++
     continuationsContractChecks ++
+    keyBindingsContractChecks ++
     dispatchChecks ++
     vimEditChecks ++
     vimRegistryChecks ++
     vimGrammarChecks ++
     vimStateChecks ++
     vimHintChecks ++
+    vimKeyBindingChecks ++
     vimDefaultChecks ++
     vimDefaultHintChecks ++
     vimContractChecks ++

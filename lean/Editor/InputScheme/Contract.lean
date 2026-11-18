@@ -78,6 +78,11 @@ the pending keys the scheme reports. Nothing here knows what a binding is.
   it lists as leading to a prefix, typed next, yields nothing and leaves
   that prefix's chords and the key pending. A scheme that lists nothing
   keeps it.
+- `keyBindingsWalk`: each key binding the scheme lists for the view from
+  its initial state (`InputScheme.keyBindings`), typed from that state,
+  yields nothing before its last key and an invocation at its last. So
+  what the binding search offers is a sequence the walk completes. A
+  scheme that lists nothing keeps it.
 
 The contract compares no states: a scheme's state may hold what a reset
 must keep, such as its last edit, and the record carries no equality on it.
@@ -312,11 +317,23 @@ def continuationsWalk : Property :=
                 subject.scheme.pending next == typed.map Key.chord ++ [c.key.chord]
             | .bound .. => true }
 
+/-- Each key binding the scheme lists for the subject's view from its
+initial state, typed from that state, yields nothing before its last key and
+an invocation at its last. -/
+def keyBindingsWalk : Property :=
+  { name :=
+      "each key binding the scheme lists from rest, typed from rest, yields no invocation before its last key and one at its last"
+    holds := fun subject =>
+      (subject.scheme.keyBindings subject.maps subject.view subject.scheme.init).all fun entry =>
+        let yields := (subject.feed entry.keys).2
+        !yields.isEmpty && yields.dropLast.all (·.isNone) && (yields.getLast?.join).isSome }
+
 /-- Every property of the contract. -/
 def properties : List Property :=
   [hasPrefixes, strictPrefixEmitsNothing, strictPrefixIsPending, completeEmits, unboundResets,
     namedCommandRuns, everyRoleHasKey, leaderAndRolesApart, modeCommandRuns, minibufferTakesText,
-    quietKeyKeepsReport, unaskedAnswerYieldsNothing, invokedKeepsUnknown, continuationsWalk]
+    quietKeyKeepsReport, unaskedAnswerYieldsNothing, invokedKeepsUnknown, continuationsWalk,
+    keyBindingsWalk]
 
 /-- The names of the properties that do not hold of `subject`; none when the
 scheme keeps the contract. -/

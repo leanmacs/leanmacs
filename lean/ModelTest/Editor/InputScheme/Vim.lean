@@ -1393,4 +1393,57 @@ def vimHintChecks : List Check :=
           ((scheme.continuations vimNoMaps (fun _ => none) ⟨0⟩ state).map (·.key) ==
             [charKey "g"]) }]
 
+/-- The key bindings the Vim scheme over the default states lists for view 0
+in the state the keys `text` leave it in, with `maps` the active keymaps:
+each binding's keys, command name and description. -/
+def vimKeyBindings (text : String) (maps : ViewId → List (Keymap Vim.Bound) := vimNoMaps) :
+    List (List Key × String × Option String) :=
+  (Vim.State.keyBindings Vim.Default.states maps ⟨0⟩
+        (vimFed text maps ⟨0⟩ Vim.Default.states).1).map
+    fun b => (b.keys, b.command, b.desc)
+
+/-- Active keymaps, for every view, with `SPC f f` bound as a mode's key to
+`open-file`, described `Find file`, and `2 z` bound to `zed`. -/
+def vimFindFileMaps (_ : ViewId) : List (Keymap Vim.Bound) :=
+  [Keymap.ofDescribed
+      [(keys "SPC f f", .mode (.command { name := "open-file" }), some "Find file"),
+        (keys "2 z", .command { name := "zed" }, none)]]
+
+/-- The checks of the key bindings the Vim scheme lists
+(`Vim.State.keyBindings`): those of the walk's tiers that run a command,
+in the state the view is in. -/
+def vimKeyBindingChecks : List Check :=
+  [{  name :=
+        "in normal state the Vim scheme lists i and : with their commands, and no part of speech: not d, j, f, the register prefix or the repeat key"
+      run :=
+        let listed := vimKeyBindings ""
+        let has (text : String) := listed.any (·.1 == keys text)
+        pure
+          (listed.any (· == (keys "i", "insert", none)) &&
+            listed.any (· == (keys ":", "ex", none)) &&
+            !has "d" && !has "j" && !has "f" && !has "\"" && !has ".") },
+    { name :=
+        "an active keymap's binding of SPC f f to a mode's command is listed first with its description, and one whose first key is a count digit is not listed"
+      run :=
+        pure
+          ((vimKeyBindings "" vimFindFileMaps).head? ==
+              some (keys "SPC f f", "open-file", some "Find file") &&
+            !(vimKeyBindings "" vimFindFileMaps).any (·.1 == keys "2 z")) },
+    { name :=
+        "in insert state a mode's binding is not listed, and config's C-w l over the state's own C-w hides C-w"
+      run :=
+        let inInsert := vimKeyBindings "i" vimFindFileMaps
+        let windowRight := vimKeyBindings "i" vimWindowRightMaps
+        pure
+          (!inInsert.any (·.1 == keys "SPC f f") &&
+            windowRight.any (·.1 == keys "C-w l") &&
+            !windowRight.any (·.1 == keys "C-w") &&
+            (vimKeyBindings "i").any (·.1 == keys "C-w")) },
+    { name := "the Vim scheme reports its key bindings through its keyBindings field"
+      run :=
+        let scheme := Vim.scheme vimStates
+        pure
+          ((scheme.keyBindings vimNoMaps ⟨0⟩ scheme.init).map (·.command) ==
+            ["insert", "visual", "undo", "delete-char"]) }]
+
 end ModelTest

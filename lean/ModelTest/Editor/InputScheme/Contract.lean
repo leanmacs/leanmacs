@@ -437,6 +437,28 @@ def continuationsContractChecks : List Check :=
             | .prefix .. => true
             | .bound .. => false) }]
 
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that it lists `q q`, which no keymap binds, as a key binding. -/
+def misreporting : InputScheme :=
+  { TestScheme.scheme with keyBindings := fun _ _ _ => [{ keys := keys "q q", command := "x" }] }
+
+/-- The checks of the scheme contract's property of the key bindings a
+scheme lists (`SchemeContract.keyBindingsWalk`). -/
+def keyBindingsContractChecks : List Check :=
+  [{  name :=
+        "the scheme contract reports a scheme that lists a key binding its walk does not complete, for that property alone"
+      run :=
+        pure (failsOnly (subjectOf misreporting schemeMaps) [SchemeContract.keyBindingsWalk]) },
+    { name :=
+        "the test scheme lists the key bindings of its keymaps, so the contract's property of them has something to hold of"
+      run :=
+        let subject := subjectOf TestScheme.scheme schemeMaps
+        pure
+          ((subject.scheme.keyBindings subject.maps subject.view subject.scheme.init).map
+              (fun b => (b.keys, b.command)) ==
+            [(keys "C-x C-s", "save"), (keys "C-x C-f", "find-file"),
+              (keys "C-x r t", "string-rectangle"), (keys "C-q", "quit")]) }]
+
 /-- The key the Vim checks give the scheme contract as unbound: a named
 key. A key that prints goes on with one strict prefix whatever is bound,
 the register prefix, by naming the register. -/

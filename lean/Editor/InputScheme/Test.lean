@@ -25,6 +25,9 @@ Its rules:
   its state is its keymap prefix, so while keys are pending it lists
   `Keymap.continuations` of the view's keymaps after them, and nothing at
   rest.
+- **Its key bindings are every sequence the walk completes from rest**
+  (`keyBindings`, `Keymap.reachableOver` of the view's keymaps), each with
+  its invocation's command name, whatever the state.
 - **An unbound printable key with nothing pending yields a self-insert**
   (`selfInsert`), an invocation whose argument is the key's character.
   Which keys are printable is the scheme interface's (`Key.printed?`): the
@@ -109,6 +112,13 @@ def continuations (maps : ViewId → List (Keymap Binding)) (names : List Key �
     (view : ViewId) (state : State) : List (Keymap.Continuation Binding) :=
   if state.pending.isEmpty then [] else Keymap.continuations (maps view) state.pending names
 
+/-- The key sequences the walk through the view's keymaps completes from
+rest, each with its invocation's command name and its description. -/
+def keyBindings (maps : ViewId → List (Keymap Binding)) (view : ViewId) (_ : State) :
+    List KeyBinding :=
+  (Keymap.reachableOver (maps view) []).map fun r =>
+    { keys := r.keys, command := r.binding.command, desc := r.desc }
+
 /-- The test scheme. -/
 def scheme : InputScheme :=
   { State, Binding, init := {}, step, pending := (·.pending)
@@ -116,6 +126,7 @@ def scheme : InputScheme :=
     roles
     leader
     localLeader
-    continuations }
+    continuations
+    keyBindings }
 
 end Editor.TestScheme

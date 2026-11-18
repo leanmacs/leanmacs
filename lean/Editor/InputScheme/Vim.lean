@@ -68,6 +68,13 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   keymaps, as the walk's do. Only a keymap prefix lists anything: a count,
   the register prefix or an operator alone lists nothing, and neither does
   a key that waits to name a character or a register.
+- **The key bindings are listed from the same tiers** (`State.keyBindings`,
+  the scheme's `keyBindings`): every sequence the walk completes from the
+  view's state with nothing pending (`Keymap.reachableOver`) whose binding
+  runs a command by name (`Bound.commandName?`). A motion, an operator, a
+  text object, the register prefix and the repeat key run no command alone
+  and are left out, as is a sequence whose first key would be read as a
+  count digit, which typing cannot reach.
 - **A motion alone is a move**, and **a command is run**. A key bound to a
   command name alone (`scheme.command`, as a binding from config is) is
   bound to `Bound.command` of that name, which changes no text and enters
@@ -614,6 +621,17 @@ def Bound.holdsIn (record : StateRecord) : Bound → Bool
   | .within states _ => states.contains record.name
   | _ => true
 
+/-- The name of the command the binding runs alone, if it runs one: a
+command's, through a mode's mark or a list of states. A motion, an
+operator, a text object, the register prefix and the repeat key are parts
+of an edit, or no part of speech, and run no command by name alone, so they
+give none. -/
+def Bound.commandName? : Bound → Option String
+  | .command c => some c.name
+  | .mode bound => bound.commandName?
+  | .within _ bound => bound.commandName?
+  | _ => none
+
 /-- An edit that waits for the answer to a prompt ("Motions that ask", in
 the module docs): the motion that takes the answer as its argument, and
 what was typed before its key. -/
@@ -1025,6 +1043,27 @@ def State.continuations (states : States) (maps : ViewId → List (Keymap Bound)
     let (active, own) := state.tiers states maps view
     Keymap.continuationsOver active own state.walked names
 
+/-- The key sequences the walk for `view` completes from `state` with
+nothing pending, through the tiers `parse` walks (`State.tiers`), whose
+binding runs a command by name (`Bound.commandName?`), each with that name
+and the deciding tier's description, the active keymaps' first. A sequence
+whose first key `parse` would take as a count digit, where typing is not
+text, is left out: typing it cannot reach the binding. -/
+def State.keyBindings (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewId)
+    (state : State) : List KeyBinding :=
+  let rest := state.reset
+  let record := rest.record states view
+  let (active, own) := rest.tiers states maps view
+  (Keymap.reachableOver active own).filterMap fun reached =>
+    let counted :=
+      match reached.keys.head? with
+      | some key => !record.insertsText && (rest.countDigit? key).isSome
+      | none => false
+    if counted then none
+    else
+      reached.binding.commandName?.map fun command =>
+        { keys := reached.keys, command, desc := reached.desc }
+
 /-- One key of the grammar, a key for `view`: the state it leaves, and what
 it parsed to (the rules in the module docs). A digit of a count is taken
 first, where typing is not text; any other key is walked through the
@@ -1157,7 +1196,8 @@ the one being kept for (`State.typedText`). What it reports of a view is
 read off the record of the view's Vim state (`State.report`). A menu
 item's invocation is run as the view's state's run table says
 (`State.invoked`). What can follow a keymap prefix is listed from the tiers
-the grammar walks (`State.continuations`). -/
+the grammar walks (`State.continuations`), and so are the sequences that
+run a command (`State.keyBindings`). -/
 def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
   { State, Binding := Bound, init := {}, step := step states, pending := (·.typed)
     report := State.report states
@@ -1176,6 +1216,7 @@ def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
     committed := fun view text state => state.typedText view text
     answered := State.answered states
     invoked := State.invoked states
-    continuations := State.continuations states }
+    continuations := State.continuations states
+    keyBindings := State.keyBindings states }
 
 end Editor.Vim
