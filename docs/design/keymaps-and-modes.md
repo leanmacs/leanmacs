@@ -2925,6 +2925,7 @@ Which names have something behind them:
 | `repeat`, which no table names: the repeat key's invocation | Built and registered |
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
 | `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
+| `execute-command`, which no table names | Built and registered (`ExecuteCommand.commands`; "Running a command by name"). The scheme binds no key to it (the owner, 2026-11-17); the default config binds `SPC :` |
 | `keyboard-quit` | Built and registered (`Shell.commands`): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
 | The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
@@ -3729,7 +3730,8 @@ asked and what accepting gives).
   history and then the bound names as before; `switch-buffer` for
   `buffer` with `Buffers.source` (`buffers`); `tab-switch` for `tab` with
   `TabCommands.source` (`tabs`); `load-theme` for `theme` with
-  `Themes.source` (`themes`). Each is registered compiled under its name
+  `Themes.source` (`themes`); `execute-command` for `command` with
+  `ExecuteCommand.source` (`commands`). Each is registered compiled under its name
   in its category, in that order, so on the executable's hosts the
   defaults' places are registration order. So config adds candidates to a
   shipped prompt by registering a source in its category, after the
@@ -4754,6 +4756,60 @@ elaborator and the library's file service), the fixture
 `tests/headless/ex`, and the two process checks of the `ffi-test` task,
 which run the executable on a real file.
 
+## Running a command by name
+
+`execute-command` (`lean/Editor/ExecuteCommand.lean`) asks `Command: ` for
+the name of a registered command and runs the one accepted, as Emacs's
+`M-x` does. It reaches a command that has neither a key nor an ex name,
+such as `load-theme` in a config that binds nothing.
+
+- **The candidates are every registered command's name**, compiled code's
+  and config's, `execute-command` itself and the minibuffer's own commands
+  among them, each once: compiled ones first, then config's, in the order
+  they were first registered (`Registry.names`). They come from the
+  completion source `commands` (`ExecuteCommand.source`) of the category
+  `command`, over the state request `commandNames`, which the loop answers
+  from the registry as it is for the step that asks
+  (`Loop.Registered.commandNames`, filled by `Registry.registered`). So a
+  reload that drops one of config's commands drops it from the next
+  prompt; nothing is kept across a reload. Hiding some commands would
+  need a command attribute that does not exist.
+- **Accepting runs the command as a key bound to it would**, with
+  `invoke`: a step of its own after the prompt's, with the window then
+  focused, its store write written back and its failure said under its
+  own name. It is given no argument, so a command that asks for its own
+  (`load-theme`, `ex`, `switch-buffer`, `open-file`) asks in turn. An
+  accepted name is three steps, as an accepted ex line is: the accept,
+  `execute-command` with the name, and the named command.
+- **The answer is resolved as it was listed**, the rule `switch-buffer`
+  and `tab-switch` follow: a name registered exactly is run; otherwise the
+  first command the style chosen for `command` lists for the text, so
+  accepting a typed fragment with nothing chosen runs the top of the list
+  shown. A text nothing matches is said,
+  ``execute-command: no command matches `<text>` ``, and nothing runs. An
+  empty or blank answer runs nothing and says nothing, as the ex line's
+  empty line does.
+- **It hard-codes no matching.** Config adds candidates by registering a
+  source in `command`, replaces them by registering one under `commands`,
+  chooses how they are searched and ordered with
+  `useStyleFor "command" …` (fuzzy by default), and how they are shown
+  with `useDisplayFor`. Recent-first ordering would be such a source or
+  style.
+- **Keys**: the Vim scheme binds no key to it (the owner, 2026-11-17). The
+  default config binds `SPC :` to it, described `Execute command` ("Extending
+  from config"). Showing each command's keys beside it, as its annotation,
+  is the leader-and-key-hints roadmap's phase 6.
+
+Pinned by `ModelTest.executeCommandChecks` (the prompt, its candidates,
+the resolution, a refusal, and a fake style deciding the order, on the
+loop's driver over the editor's models), `dispatchStateChecks` and
+`registryChecks` (the names the loop is told), `sourceContractChecks`
+(the source), `ConfigTest.commandPromptChecks` (compiled and config
+commands listed, and a reload dropping one, through a host),
+`ConfigTest.shippedChecks` (registered compiled, with its source in
+`command`) and `ConfigTest.defaultConfigChecks` (`SPC :` under the default
+config).
+
 ## Extending from config
 
 - Config registers modes, commands, vocabulary and bindings from `setup`,
@@ -4841,6 +4897,7 @@ which run the executable on a real file.
     chunks, so `leaderMap` is defined where such a `setup` is.
   - **The keys follow Doom Emacs's `SPC`**, each with a `desc` and each
     prefix named: `SPC .` and `SPC ,` find a file and switch buffer;
+    `SPC :` executes a command by name ("Running a command by name");
     `SPC f` file (`f f` open, `f s` save); `SPC b` buffer (`b`, `i`, `k`,
     `d`, `s`, `r`); `SPC w` window, Vim's `C-w` keys with `n`, `p`, `c`
     and `w` given back their window meanings; `SPC TAB` tab, Doom's
@@ -4849,12 +4906,14 @@ which run the executable on a real file.
     Doom: `SPC w o` is `window-only`, as evil's map has it, and this
     editor's layout commands (`z`, `m`, `M`, `,`, `.`, `H J K L`, `F`) sit
     on the letters `C-w` gives them. Keys with no registered command are
-    left out. `05-leader.lean` holds the full list. `SPC :` and `SPC ?`
-    are to come with their commands.
+    left out. `05-leader.lean` holds the full list. `SPC ?` is to come
+    with its command. Doom labels `SPC :` `M-x`; here it is
+    `Execute command`, since a Vim-first editor has no `M-x`.
   - **Pinned** by `ConfigTest.defaultConfigChecks`: a reload installs it
-    with no diagnostic and `SPC f f` asks for a path to open, every
-    binding names a registered command, and every prefix under the leader
-    has a name.
+    with no diagnostic, `SPC f f` asks for a path to open and, once that
+    is cancelled, `SPC :` opens the command prompt; every binding names a
+    registered command, `<leader> :` among them with its description; and
+    every prefix under the leader has a name.
 - Built: completion at point from config ("Completion at point").
   `defineAtPoint` registers an at-point source by its name, and config's of
   a shipped name replaces it, so `defineAtPoint (Completion.AtPoint.words
