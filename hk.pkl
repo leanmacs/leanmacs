@@ -18,7 +18,7 @@ local workflow_sources = List(".github/**", "tools/workflow-*.sh", "tests/workfl
 // The full gate, defined once in mise.toml's `ci` task.
 local ci = new Mapping<String, Step> {
     ["mise_ci"] {
-        glob = rust_sources + c_sources + workflow_sources + List("deny.toml", "**/clippy.toml", ".clang-format", "lean/**", "tests/**", "config/**", "tools/stage-bundle.sh")
+        glob = rust_sources + c_sources + workflow_sources + List("deny.toml", "**/clippy.toml", ".clang-format", "lean/**", "packages/**", "tests/**", "config/**", "tools/stage-bundle.sh")
         check = "mise run ci"
         exclusive = true
     }
@@ -48,11 +48,12 @@ local changed = new Mapping<String, Step> {
         exclusive = true
     }
     // Lake links the Rust static library and the C glue into the executables
-    // `ffi-test` runs, so a change to either reruns this step. `tests/` holds
-    // the fixture `ffi-test` runs the editor's headless mode on, and
-    // `config/` the default config `config-test` loads.
+    // `ffi-test` runs, so a change to either reruns this step. `packages/`
+    // holds the default package set the editor is built from, `tests/` the
+    // fixture `ffi-test` runs the editor's headless mode on and the fixture
+    // package set, and `config/` the default config `config-test` loads.
     ["lean"] {
-        glob = rust_sources + c_sources + List("lean/**", "tests/**", "config/**", "mise.toml")
+        glob = rust_sources + c_sources + List("lean/**", "packages/**", "tests/**", "config/**", "mise.toml")
         check = "mise run lean-fmt && mise run ffi-test"
         exclusive = true
     }

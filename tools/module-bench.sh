@@ -37,7 +37,7 @@ fi
 lean_dir=$(cd "$1" && pwd)
 tools=$(cd "$lean_dir/../tools" && pwd)
 fixtures=$(cd "$lean_dir/../tests/headless/bundle" && pwd)
-editor="$lean_dir/.lake/build/bin/editor"
+editor="$lean_dir/../packages/.lake/build/bin/editor"
 config_test="$lean_dir/.lake/build/bin/config-test"
 sysroot=$(cd "$lean_dir" && lean --print-prefix)
 toolchain_lib="$sysroot/lib/lean"

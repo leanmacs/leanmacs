@@ -109,6 +109,11 @@ run = [
   # driver, with the same `cargo` that fails, so a package's model tests
   # reach no `rustlib` either.
   'PATH="$PWD/no-cargo:$PATH" sh ../tools/package-set.sh test ../tests/packages',
+  # And a step refuses a set it would run over nothing of: the default set
+  # (packages/lakefile.toml) holds no package yet, so the step must exit 2.
+  # Its output is shown only when it does not. When the default set gains
+  # its first package, this line needs another set with none.
+  "status=0; out=$(sh ../tools/package-set.sh test ../packages 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -q 'names no package of the set'; } || { printf '%s\\n' \"$out\"; exit 1; }",
 ]
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
@@ -132,6 +137,12 @@ env = { LEAN_CC = "/usr/bin/cc" }
 # the lakefile does not reach.
 run = [
   "lake build --wfail",
+  # The editor, from the default package set (packages/lakefile.toml): the
+  # package-set build, a facet the core's lakefile defines, writes the
+  # set's root module, builds it and links
+  # packages/.lake/build/bin/editor (docs/design/packages.md, "The package
+  # set and its build").
+  "lake -d ../packages build --wfail :editor",
   # The fixture set (tests/packages/lakefile.toml): its editor, linked by
   # the package-set build, each of its packages' default targets, with the
   # package's own linters on, and each package's linked test, an executable
@@ -270,22 +281,22 @@ run = [
   ".lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default",
   # The demonstration. With no arguments the editor is the window mode on
   # an empty buffer, which opens a window, so the gate never runs that.
-  ".lake/build/bin/editor demo",
+  "../packages/.lake/build/bin/editor demo",
   # The headless mode, on the fixture checked in under tests/headless: it
   # loads the config directory, runs the script, and must print exactly
   # `expected`. Every path is an argument.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/expected -",
   # The same, with a script that sends keys with their identity: each goes
   # through the library's window input, as a window's would, and must be
   # printed back with its logical key, physical key and modifiers
   # (`keys-expected`).
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/keys-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/keys-expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/keys-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/keys-expected -",
   # The same, with a script that enters insert state, commits text as an
   # input method would and asks for the scene: the editor loop's frame is
   # made at the first window event, and the view's snapshot must hold the
   # text, read from the library (`scene-expected`). Its second half reloads and runs a job once the
   # frame exists, and each must be followed by a scene.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/scene-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/scene-expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/scene-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/scene-expected -",
   # Keys dispatched to commands, on a config of its own (tests/headless/
   # dispatch): a key sequence config binds runs its command, the interrupt
   # key stops one that loops over requests and rolls back its edit, the next
@@ -293,19 +304,19 @@ run = [
   # argument, whose result the job's command says in the echo area
   # (`dispatch/expected`). A command that is not stopped loops for longer
   # than the time limit.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/dispatch/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/dispatch/expected -",
   # The finder-session config fixture (tests/headless/finder-session): it
   # loads, and its command, run by its key `C-c h`
   # and by its ex name `finder-hello`, says `finder-session: config loaded`
   # in the echo area each time (`finder-session/expected`).
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/finder-session/config ../tests/headless/finder-session/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/finder-session/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/finder-session/config ../tests/headless/finder-session/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/finder-session/expected -",
   # The file commands the editor ships, on a config of its own (tests/
   # headless/files): `save-buffer`, which no config registers, says the
   # scratch buffer has no file, and a command of config's opens a path that
   # is not absolute, which starts the compiled job `load-file` and is
   # refused by the library before it asks the file system, so the run
   # touches no file (`files/expected`).
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/files/config ../tests/headless/files/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/files/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/files/config ../tests/headless/files/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/files/expected -",
   # A prompt, on a config of its own (tests/headless/prompt), under the
   # editor's input scheme: a command of config's asks for a prompt, a
   # key that prints is typed into the minibuffer, whose view the scene
@@ -314,7 +325,7 @@ run = [
   # receives the answer says it in the echo area; `<Escape>` cancels with
   # `minibuffer-cancel`, and that command does not run (`prompt/expected`).
   # It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/prompt/config ../tests/headless/prompt/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/prompt/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/prompt/config ../tests/headless/prompt/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/prompt/expected -",
   # A prompt with candidates, on a config of its own (tests/headless/
   # candidates), under the editor's input scheme and with the library's
   # fuzzy matcher: a command of config's asks with three candidates, a key
@@ -329,7 +340,7 @@ run = [
   # compiled command `minibuffer-insert`, puts the first listed candidate
   # in the input, the prompt still open (`candidates/expected`). It touches
   # no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/candidates/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/candidates/expected -",
   # Named themes, on a config of its own (tests/headless/themes) that
   # defines two themes and names the first: the scene line names the theme
   # each scene was drawn in, the first after the reload, the second after
@@ -337,13 +348,13 @@ run = [
   # reload between, and the shipped `solarized-dark` and `fairy-floss`
   # after it as each is answered with its name (`themes/expected`). It
   # touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/themes/config ../tests/headless/themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/themes/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/themes/config ../tests/headless/themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/themes/expected -",
   # A shipped theme named by config, on a config of its own
   # (tests/headless/shipped-themes) that names `solarized-light`: the scene
   # after the reload is drawn in it, and the one after `load-theme` is
   # answered with `fairy-floss` in that (`shipped-themes/expected`). It
   # touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/shipped-themes/config ../tests/headless/shipped-themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/shipped-themes/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/shipped-themes/config ../tests/headless/shipped-themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/shipped-themes/expected -",
   # The segmented mode line, on a config of its own (tests/headless/
   # mode-line) that defines a segment and lists the mode line for each side,
   # one name nobody registered among them: the reload says that name, on a
@@ -351,19 +362,19 @@ run = [
   # its left fields, ` | ` and its right ones, in the listing's order, with
   # their paddings, in insert state, in normal state and with the ex prompt
   # open (`mode-line/expected`). It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/mode-line/config ../tests/headless/mode-line/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/mode-line/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/mode-line/config ../tests/headless/mode-line/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/mode-line/expected -",
   # The frame padding (tests/headless/padding): a config that sets it to 12
   # points; each scene prints the window's view padded 12 across and down,
   # the echo padded 12, and with the ex prompt open the minibuffer's view
   # padded 12 across and none down (`padding/expected`). It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/padding/config ../tests/headless/padding/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/padding/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/padding/config ../tests/headless/padding/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/padding/expected -",
   # The monocle layout (tests/headless/monocle): a config that chooses it
   # and binds keys to split the window and to focus the next one; each
   # scene shows only the focused window's view, in the whole area above
   # the bottom row: view 0, view 0 again after the split, view 1 once it is
   # focused, and view 1, the asker, above the minibuffer's view with the ex
   # prompt open (`monocle/expected`). It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/monocle/config ../tests/headless/monocle/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/monocle/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/monocle/config ../tests/headless/monocle/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/monocle/expected -",
   # Two windows on one buffer (tests/headless/two-windows), under the
   # default layout, with the same keys: in a frame of 640 by 120 the window
   # is split over twelve lines, the second view's cursor goes to the last
@@ -371,7 +382,7 @@ run = [
   # appends to its first line. The last scene shows both views side by
   # side with the edit, each with its own cursor and scroll anchor, moved
   # by the edit (`two-windows/expected`). It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/two-windows/config ../tests/headless/two-windows/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/two-windows/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/two-windows/config ../tests/headless/two-windows/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/two-windows/expected -",
   # The manual split layout (tests/headless/manual-splits): a config that
   # chooses it and binds no key, so the Vim scheme's own `C-w` keys reach
   # the window commands. `C-w s` puts the new window above and focuses it,
@@ -379,32 +390,32 @@ run = [
   # `C-w C-w` wraps from the last window to the first, and `C-w C-c` three
   # times closes two windows and is refused on the last, with the reason in
   # the echo area (`manual-splits/expected`). It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/manual-splits/config ../tests/headless/manual-splits/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/manual-splits/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/manual-splits/config ../tests/headless/manual-splits/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/manual-splits/expected -",
   # The dividers and the selected window's mode line (tests/headless/
   # window-dividers), under the manual split layout and the Vim scheme's
   # `C-w` keys: `C-w v` puts a divider between two side-by-side windows,
   # `C-w s` adds one across the stacked pair, none is along the frame's
   # edges, and `C-w C-w` moves `mode-line.active` to the window it focuses
   # (`window-dividers/expected`). It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/window-dividers/config ../tests/headless/window-dividers/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/window-dividers/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/window-dividers/config ../tests/headless/window-dividers/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/window-dividers/expected -",
   # The window commands in insert state (tests/headless/insert-window-keys):
   # a config that binds every key of the Vim scheme's `C-w` table with
   # `bindKey`. `C-w v` puts view 1 on the right, under master-and-stack,
   # and `C-w h` and `C-w l` in insert state focus view 0 and view 1 again
   # without leaving insert state, so the text typed after them goes on
   # where it was (`insert-window-keys/expected`). It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/insert-window-keys/config ../tests/headless/insert-window-keys/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/insert-window-keys/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/insert-window-keys/config ../tests/headless/insert-window-keys/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/insert-window-keys/expected -",
   # Vim's word delete in insert state (tests/headless/insert-word-delete):
   # a config that binds no key under `C-w`, so `C-w` deletes the word
   # before the bar and the `l` after it is text (`insert-word-delete/expected`).
   # It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/insert-word-delete/config ../tests/headless/insert-word-delete/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/insert-word-delete/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/insert-word-delete/config ../tests/headless/insert-word-delete/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/insert-word-delete/expected -",
   # Completion at point's auto popup (tests/headless/at-point), on the shared
   # config: two characters typed in insert state, then `advance 240` on the
   # headless mode's fake clock fires the pause of the shipped `words` source,
   # whose session lists the words that match; `C-n` previews the first and
   # `RET` accepts it (`at-point/expected`). It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/at-point/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/at-point/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/at-point/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/at-point/expected -",
   # Display rules (tests/headless/display-rules): a config whose one rule
   # names the right edge the default layout lacks is installed with the
   # rule left out, and says so in its report's `rule:` line and in the
@@ -413,27 +424,27 @@ run = [
   # the stack, focused, while main keeps the buffer being edited, and `:ls`
   # again focuses the list's window (`display-rules/expected`). It touches
   # no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/display-rules/config ../tests/headless/display-rules/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/display-rules/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/display-rules/config ../tests/headless/display-rules/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/display-rules/expected -",
   # A sidebar (tests/headless/edge-sidebar): a config that chooses a left
   # edge of 25 percent and a rule that sends a mode's buffers there; the
   # buffer a command makes is docked in the strip, focused by direction,
   # moved into the tiles and back with `C-w H`, made main with `C-w m` and
   # closed with `C-w C-c`, and `C-w H` on the last tile is refused with the
   # reason in the echo area (`edge-sidebar/expected`). It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/edge-sidebar/config ../tests/headless/edge-sidebar/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/edge-sidebar/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/edge-sidebar/config ../tests/headless/edge-sidebar/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/edge-sidebar/expected -",
   # Floats a display rule opens (tests/headless/float-rule): a config whose
   # rules send what two commands open to a transient and to a pinned float;
   # each opens centred in the tiled area, listed after view 0 and focused,
   # the transient one closes when `C-w C-p` moves the focus, the pinned one
   # stays, and `C-w F` moves it into the tiles, where it joins the stack
   # (`float-rule/expected`). It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/float-rule/config ../tests/headless/float-rule/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/float-rule/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/float-rule/config ../tests/headless/float-rule/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/float-rule/expected -",
   # A float anchored at the cursor (tests/headless/float-anchor): a config
   # whose command opens a transient float at the cursor without the focus;
   # it is placed directly under the cursor's row, closes when `C-f` scrolls
   # the row out of the view, and on the last row shown is flipped above it
   # (`float-anchor/expected`). It touches no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/float-anchor/config ../tests/headless/float-anchor/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/float-anchor/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/float-anchor/config ../tests/headless/float-anchor/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/float-anchor/expected -",
   # Tabs (tests/headless/tabs): under the default layout, `C-w c` makes a
   # second tab and the tab bar appears above the bottom row, its chip of the
   # tab in view in `tab-bar.selected`; `C-w p` and `C-w n` show each tab as
@@ -441,14 +452,14 @@ run = [
   # are refused with the reason in the echo area; `tab-rename` and
   # `tab-switch` go through the minibuffer (`tabs/expected`). It touches no
   # file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/tabs/config ../tests/headless/tabs/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/tabs/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/tabs/config ../tests/headless/tabs/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/tabs/expected -",
   # Evil, with no config: the script has no `reload`, so nothing of the
   # config directory is loaded, and every command its keys run is one the
   # editor ships. `i` begins an insert and the keys that print are typed
   # text, `<Escape>` returns to normal state, and `0` moves to the line's
   # start: the scenes show the text, the cursor and the state's name in the
   # status line (`evil-expected`).
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/evil-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/evil-expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/evil-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/evil-expected -",
   # The ex command line, with no config (tests/headless/ex): the script has
   # no `reload`, so the ex command and every ex name are the ones the
   # editor ships. Two of its lines are opened with the `:` key, as a user
@@ -457,7 +468,7 @@ run = [
   # prompt, whose listing of the working directory is waited for and not
   # printed, and `q` quits the editor: the loop ends, the `scene` line after
   # it is not run, and the status is 0 (`ex/expected`). It writes no file.
-  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/ex/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/ex/expected -",
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/ex/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/ex/expected -",
   # `e`, an edit, `w` and `q` on a real file, as a process. Lean spawns no
   # child (docs/design/overview.md), so the check is here: this entry is one
   # shell, which makes a temporary directory and removes it by a trap when
@@ -469,11 +480,11 @@ run = [
   # and no line of the output may start with `commands:`, which the `show`
   # line after the quit would print. Nothing outside the temporary
   # directory is written, and the task's time limit ends a run that hangs.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" ../tests/headless/ex/save-quit-script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note-expected && ! printf '%s\\n' \"$out\" | grep -q '^commands:'",
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" ../tests/headless/ex/save-quit-script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note-expected && ! printf '%s\\n' \"$out\" | grep -q '^commands:'",
   # The same with `wq` in place of `w` and `q` (`ex/wq-script`): the quit
   # waits for the save, so the script has a `join` after the `wq` line,
   # which ends when the save's result has ended the loop.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" ../tests/headless/ex/wq-script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note-expected && ! printf '%s\\n' \"$out\" | grep -q '^commands:'",
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" ../tests/headless/ex/wq-script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note-expected && ! printf '%s\\n' \"$out\" | grep -q '^commands:'",
   # An evil session on a real file, as a process, with no config
   # (tests/headless/session): `:e`, a count and an operator (`2dw`), a dot
   # repeat, an undo, a change with typed text and its dot repeat, a visual
@@ -486,7 +497,7 @@ run = [
   # `@DIR@`, must be exactly `session/expected` (the text, the cursor, the
   # selection, the state and the echo of every scene), and the copy must
   # hold the bytes of `session/verse-expected`.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/session/verse.txt \"$dir/verse.txt\" && sed \"s|@FILE@|$dir/verse.txt|\" ../tests/headless/session/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/session/expected - && cmp \"$dir/verse.txt\" ../tests/headless/session/verse-expected",
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/session/verse.txt \"$dir/verse.txt\" && sed \"s|@FILE@|$dir/verse.txt|\" ../tests/headless/session/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/session/expected - && cmp \"$dir/verse.txt\" ../tests/headless/session/verse-expected",
   # `open-file`'s prompt over real files, as a process, with no config
   # (tests/headless/open-file): the file source lists the directory typed so
   # far through the library's file service, directories first with
@@ -504,7 +515,7 @@ run = [
   # byte offset over the absolute path typed, which the scrub cannot
   # rewrite, so the directory is made from a template under `/tmp`, not
   # under `$TMPDIR`: its path is always 23 bytes, on every machine.
-  "dir=$(mktemp -d /tmp/open-file.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/open-file/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/open-file/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/open-file/expected -",
+  "dir=$(mktemp -d /tmp/open-file.XXXXXXXX) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/headless/open-file/tree \"$dir/tree\" && sed \"s|@DIR@|$dir|g\" ../tests/headless/open-file/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/open-file/expected -",
   # A view that follows its cursor, as a process, with no config
   # (tests/headless/view): the script sizes the frame, opens a file of 120
   # lines with `:e`, and moves the cursor 100 lines down, with a scene
@@ -520,7 +531,7 @@ run = [
   # editor must exit with status 0, and its output, with the temporary
   # directory's path written `@DIR@`, must be exactly `view/expected`. The
   # file is not written.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/view/lines.txt \"$dir/lines.txt\" && sed \"s|@FILE@|$dir/lines.txt|\" ../tests/headless/view/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/view/expected - && cmp \"$dir/lines.txt\" ../tests/headless/view/lines.txt",
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/view/lines.txt \"$dir/lines.txt\" && sed \"s|@FILE@|$dir/lines.txt|\" ../tests/headless/view/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/view/expected - && cmp \"$dir/lines.txt\" ../tests/headless/view/lines.txt",
   # `j` and `k` aiming for a display column, as a process, with no config
   # (tests/headless/column): the script opens a file of three lines, one
   # with a tab and one with a wide character, with `:e`, and moves the
@@ -536,7 +547,7 @@ run = [
   # `@FILE@`. The editor must exit with status 0, and its output, with the
   # temporary directory's path written `@DIR@`, must be exactly
   # `column/expected`. The file is not written.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/column/lines.txt \"$dir/lines.txt\" && sed \"s|@FILE@|$dir/lines.txt|\" ../tests/headless/column/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/column/expected - && cmp \"$dir/lines.txt\" ../tests/headless/column/lines.txt",
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/column/lines.txt \"$dir/lines.txt\" && sed \"s|@FILE@|$dir/lines.txt|\" ../tests/headless/column/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/column/expected - && cmp \"$dir/lines.txt\" ../tests/headless/column/lines.txt",
   # Milestone 1 over the whole program, with no config
   # (tests/headless/milestone): the headless mode with `--render`, whose
   # display is the real binding over the library's layout in cells of 8 by
@@ -557,7 +568,7 @@ run = [
   # temporary directory's path written `@DIR@`, must be exactly
   # `milestone/expected`, and the copy must hold the bytes of
   # `milestone/source-expected`.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/milestone/source.txt \"$dir/source.txt\" && sed \"s|@FILE@|$dir/source.txt|\" ../tests/headless/milestone/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless --render \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/milestone/expected - && cmp \"$dir/source.txt\" ../tests/headless/milestone/source-expected",
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/milestone/source.txt \"$dir/source.txt\" && sed \"s|@FILE@|$dir/source.txt|\" ../tests/headless/milestone/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless --render \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/milestone/expected - && cmp \"$dir/source.txt\" ../tests/headless/milestone/source-expected",
   # The display fixture: the scene `editor-layout`'s own test lays out
   # (crates/editor-layout/tests/frame_fixture.rs), published from Lean
   # through the display's real binding, must give the frame checked in at
@@ -620,19 +631,19 @@ run = [
   # status 2, with the usage on stderr: an option it does not know, and two
   # files, `demo x` among them. (A word that is no mode is a file to open,
   # and `demo` is a mode only on its own.)
-  "status=0; .lake/build/bin/editor --bogus || status=$?; test \"$status\" -eq 2",
-  "status=0; .lake/build/bin/editor a b || status=$?; test \"$status\" -eq 2",
-  "status=0; .lake/build/bin/editor demo x || status=$?; test \"$status\" -eq 2",
+  "status=0; ../packages/.lake/build/bin/editor --bogus || status=$?; test \"$status\" -eq 2",
+  "status=0; ../packages/.lake/build/bin/editor a b || status=$?; test \"$status\" -eq 2",
+  "status=0; ../packages/.lake/build/bin/editor demo x || status=$?; test \"$status\" -eq 2",
   # The headless mode with only a config directory and a script, from the
   # build tree, outside a bundle: there is no toolchain to use, so it is
   # status 2 with a line on stderr saying so, before the usage
   # (lean/Editor/Headless/CommandLine.lean). `bundle-test` runs the same
   # command line from a bundle.
-  "status=0; err=$(.lake/build/bin/editor headless ../tests/headless/config ../tests/headless/script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 2 && test \"${err#editor: no Lean toolchain}\" != \"$err\"",
+  "status=0; err=$(../packages/.lake/build/bin/editor headless ../tests/headless/config ../tests/headless/script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 2 && test \"${err#editor: no Lean toolchain}\" != \"$err\"",
   # A script that cannot be read is status 1, with nothing on stdout and a
   # line on stderr that starts `editor: ` and says why. No file of that name
   # is checked in.
-  "status=0; err=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/no-such-script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 1 && test \"${err#editor: }\" != \"$err\"",
+  "status=0; err=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/no-such-script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 1 && test \"${err#editor: }\" != \"$err\"",
   # The packages of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps"): each package's
   # linked test, its checks against the Rust library, and its
@@ -642,6 +653,11 @@ run = [
   # `expected`. The fixture package's command runs there, so its package
   # was built by that build and is in the generated root.
   "sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
+  # And the editor of the default set, which does not hold the fixture
+  # package, has no such command: on the same config and script its
+  # headless mode must print `run greeting-hello: no such command`. So the
+  # command above came from the set, not from the core.
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/packages/greeting/tests/headless/hello/config ../tests/packages/greeting/tests/headless/hello/script) && printf '%s\\n' \"$out\" | grep -qxF 'run greeting-hello: no such command'",
 ]
 
 # The headless mode run from a bundle, as the installed editor will be
@@ -682,7 +698,7 @@ description = "Stage the app bundle's layout in a temporary directory and run th
 depends = ["lean"]
 dir = "lean"
 timeout = "120s"
-run = '''lean_dir=$PWD && dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && .lake/build/bin/config-test bench-modules "$sysroot" .lake/build/lib/lean Editor >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" "$dir/Leanmacs.app" .lake/build/bin/editor "$sysroot" .lake/build/lib/lean olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" - && cp "$fixtures/Info.plist" "$dir/Leanmacs.app/Contents/Info.plist" && env -i "$dir/Leanmacs.app/Contents/MacOS/editor" --version | diff "$fixtures/version-expected" - && "$lean_dir/.lake/build/bin/editor" --version | grep -qxF 'Leanmacs, a development build: not run from an app bundle, so it has no version, build ID or commit''''
+run = '''lean_dir=$PWD && dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && .lake/build/bin/config-test bench-modules "$sysroot" .lake/build/lib/lean Editor >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" "$dir/Leanmacs.app" ../packages/.lake/build/bin/editor "$sysroot" .lake/build/lib/lean olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" - && cp "$fixtures/Info.plist" "$dir/Leanmacs.app/Contents/Info.plist" && env -i "$dir/Leanmacs.app/Contents/MacOS/editor" --version | diff "$fixtures/version-expected" - && "$lean_dir/../packages/.lake/build/bin/editor" --version | grep -qxF 'Leanmacs, a development build: not run from an app bundle, so it has no version, build ID or commit''''
 
 # The build ID (crates/editor-release, `build_id`): LEANMACS_BUILD_ID when
 # it is set, else HEAD's committer time in UTC, the time landing sets. CI's
@@ -1049,7 +1065,7 @@ env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-
 description = "Opt-in, never part of ci: open a window and report what of the keyboard reaches the Lean loop, with the latency of each key (lean/Editor/WindowCheck.lean). Needs a display"
 depends = ["lean"]
 dir = "lean"
-run = ".lake/build/bin/editor window-check"
+run = "../packages/.lake/build/bin/editor window-check"
 
 # Opt-in: the editor on a file, in a window (lean/Editor/Window/Real.lean).
 # Do not add it to `ci` or to hk.pkl: it opens a window and stays until it
@@ -1067,7 +1083,7 @@ run = ".lake/build/bin/editor window-check"
 description = "Opt-in, never part of ci: open a file, or an empty buffer, in the editor's window (lean/Editor/Window/Real.lean); `mise run edit -- [options] [<file>]`. Needs a display"
 depends = ["lean"]
 dir = "lean"
-run = 'lean_dir=$PWD && sysroot=$(lean --print-prefix) && cd "$MISE_ORIGINAL_CWD" && "$lean_dir/.lake/build/bin/editor" --sysroot "$sysroot" --oleans "$lean_dir/.lake/build/lib/lean"'
+run = 'lean_dir=$PWD && sysroot=$(lean --print-prefix) && cd "$MISE_ORIGINAL_CWD" && "$lean_dir/../packages/.lake/build/bin/editor" --sysroot "$sysroot" --oleans "$lean_dir/.lake/build/lib/lean"'
 
 # Opt-in: milestone 1's figures with no window, for the phase body
 # (docs/dev-practices/on-demand-checks.md, "Milestone 1, measured"). Run it

@@ -25,6 +25,8 @@ name = "fixture-set"
 name = "greeting-loud"
 path = "greeting-loud"
 
+# The default set, and through it the core and, once there are any, the
+# default packages: the gate's package steps reach those through this set.
 [[require]]
-name = "editor-core"
-path = "../../lean"
+name = "default-set"
+path = "../../packages"

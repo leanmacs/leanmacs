@@ -42,8 +42,14 @@
 #
 # - `${EDITOR_LINUX_CACHE:-.linux-ci}`, a directory of the host at the root of
 #   the checkout (ignored by git): `home/` holds the toolchains (rustup's,
-#   elan's, mise's installs) and `work/` the copy of the source with Lake's
-#   build output. It is not under `target/`, so `cargo clean` leaves it alone.
+#   elan's, mise's installs) and `work/` the copy of the source with the
+#   core's Lake build output and the formatter's clone (`lean/.lake`). It is
+#   not under `target/`, so `cargo clean` leaves it alone. Only `lean/.lake`
+#   is kept from one run to the next: the copy removes everything else, the
+#   build output of the package sets and of the packages among it
+#   (`packages/.lake`, `tests/packages/**/.lake`), so every run writes the
+#   sets' roots again, rebuilds the fixture packages and links the editors.
+#   That is seconds on top of the core's modules, which are kept.
 # - The Docker volume `${EDITOR_LINUX_VOLUME:-editor-linux-ci-cargo}`: Cargo's
 #   home and Cargo's `target/`. These two must not be on a directory mounted
 #   from macOS. With them there, clean runs of the gate failed within seconds
@@ -60,7 +66,8 @@
 #
 # `--clean` empties the copy's `lean/.lake/build/` and Cargo's `target/` before
 # the gate runs, and keeps the toolchains and Cargo's registry: everything is
-# compiled again and nothing is downloaded again.
+# compiled again and nothing is downloaded again. The sets' and the packages'
+# build output needs no emptying: no run keeps it.
 #
 # The same file is the script that runs inside the container (`inside …`),
 # where it is read from the copy.
@@ -122,8 +129,9 @@ inside_ci() {
   mise run ci || status=$?
   echo "linux: \`mise run ci\` exited $status after $(($(date +%s) - start)) s (clean build: $clean)"
   if [ "$status" -eq 0 ]; then
-    (cd /work/lean/.lake/build/bin && ls -l editor ffi-test config-test contract-test model-test)
-    ldd /work/lean/.lake/build/bin/editor
+    ls -l /work/packages/.lake/build/bin/editor
+    (cd /work/lean/.lake/build/bin && ls -l ffi-test config-test contract-test model-test)
+    ldd /work/packages/.lake/build/bin/editor
   fi
   return "$status"
 }
@@ -147,7 +155,7 @@ inside_typed_check() {
     xdotool key dead_acute e
   ) &
   local typist=$! report status=0
-  report=$(/work/lean/.lake/build/bin/editor window-check --seconds 5 "$@") || status=$?
+  report=$(/work/packages/.lake/build/bin/editor window-check --seconds 5 "$@") || status=$?
   wait "$typist" || true
   printf '%s\n' "$report"
   [ "$status" -eq 0 ] || die "the keyboard check exited $status"
@@ -170,7 +178,7 @@ inside_editor_session() {
   dir=$(mktemp -d)
   cp /work/tests/window/session.txt "$dir/session.txt"
   : >"$log"
-  /work/lean/.lake/build/bin/editor --report "$dir/session.txt" 2>"$log" &
+  /work/packages/.lake/build/bin/editor --report "$dir/session.txt" 2>"$log" &
   pid=$!
   (
     window=$(timeout 10 xdotool search --sync --name 'editor: window check' | head -n 1)

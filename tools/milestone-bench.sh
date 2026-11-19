@@ -11,11 +11,13 @@
 # are handed back with the command and the machine line it prints. They are
 # headless figures: the cell shaper, the CPU renderer, and no glyphs drawn.
 #
-# `$1` is the Lean package's directory, where the built editor is.
+# `$1` is the core's directory, `lean/`: the built editor is the default
+# package set's, beside it (`packages/.lake/build/bin/editor`), and the
+# `.olean` files are the core's.
 set -euo pipefail
 
 lean_dir=$(cd "$1" && pwd)
-editor="$lean_dir/.lake/build/bin/editor"
+editor="$lean_dir/../packages/.lake/build/bin/editor"
 sysroot=$(cd "$lean_dir" && lean --print-prefix)
 oleans="$lean_dir/.lake/build/lib/lean"
 config="$lean_dir/../tests/headless/config"
