@@ -263,8 +263,8 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 - **The packages a step runs over** are those of the set that are path
   dependencies and hold a Lean library, other than the core, which the
   gate's own tasks cover. A step exits 2 when there is none, so it cannot
-  pass by running over nothing, and `lean-test` shows that on the default
-  set while it holds no package.
+  pass by running over nothing, and `lean-test` shows that on a set kept
+  for it, `tests/empty-set`, which requires the core alone.
 - **The gate gives the steps the fixture set**, which requires the default
   set. So the default packages are run over through it from phase 5 on,
   and the default set's own `editor` is built beside it, for the standing
@@ -318,8 +318,8 @@ feature moves.
 ### Manifests: a set's build fetches nothing
 
 **Every Lake root has its `lake-manifest.json` committed**: the core, the
-default set, the fixture set, each fixture package and the formatter's
-host.
+default set, the fixture set, each fixture package, the empty set and the
+formatter's host.
 
 - **A set's manifest holds path entries only.** With it present, a
   dependency the manifest does not hold fails the build (`dependency … not
@@ -347,7 +347,8 @@ host.
 
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
-`lean/` holds a copy of it**: `lean-fmt` refuses a root with no
+`lean/` holds a copy of it** (the default set, the fixture set and its two
+packages, the empty set and the formatter's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file when Lake is run in that
 directory. `tools/toolchain-check.sh`, first in `lean-test`, fails when a
 tracked copy differs from the pin, naming it. A bump of the pin

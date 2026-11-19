@@ -1362,9 +1362,10 @@ package's tests are by convention are in
   reads no lakefile.
 - **A step cannot pass over nothing.** With no package to run over it
   exits 2, as it does for a query Lake fails and for a command line it
-  does not take. `lean-test` shows it: `package-set.sh test ../packages`
-  must exit 2 while the default set holds no package. When the default set
-  gains one, that line needs another set with none.
+  does not take. `lean-test` shows it: `package-set.sh test
+  ../tests/empty-set` must exit 2 and say why. `tests/empty-set` is a set
+  kept for this: it requires the core alone and never gains a package, as
+  the default set will.
 - **A package with no test driver fails `test`**, since Lake refuses to
   test it.
 - **The fixture's own checks.** `greeting`: three checks in its driver
@@ -1393,7 +1394,8 @@ sh tools/toolchain-check.sh
 
 First in `mise run lean-test`. `lean/lean-toolchain` is the pin every task
 reads, and each Lake root outside `lean/` holds a copy of it: the default
-set, the fixture set, each fixture package and the formatter's host
+set, the fixture set, each fixture package, the empty set and the
+formatter's host
 ([packages.md](../design/packages.md), "The toolchain copies"). The check
 compares every tracked file named `lean-toolchain` with the pin, byte for
 byte, prints each that differs and exits 1.

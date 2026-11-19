@@ -110,11 +110,10 @@ run = [
   # driver, with the same `cargo` that fails, so a package's model tests
   # reach no `rustlib` either.
   'PATH="$PWD/no-cargo:$PATH" sh ../tools/package-set.sh test ../tests/packages',
-  # And a step refuses a set it would run over nothing of: the default set
-  # (packages/lakefile.toml) holds no package yet, so the step must exit 2.
-  # Its output is shown only when it does not. When the default set gains
-  # its first package, this line needs another set with none.
-  "status=0; out=$(sh ../tools/package-set.sh test ../packages 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -q 'names no package of the set'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # And a step refuses a set it would run over nothing of: the fixture set
+  # tests/empty-set requires the core alone, so it holds no package and the
+  # step must exit 2, saying so. Its output is shown only when it does not.
+  "status=0; out=$(sh ../tools/package-set.sh test ../tests/empty-set 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -q 'names no package of the set'; } || { printf '%s\\n' \"$out\"; exit 1; }",
 ]
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.

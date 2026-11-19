@@ -197,7 +197,8 @@ set: `packages/` is the default set, a Lake package whose `require`s are
 the core and, as features move out of the core, the default packages,
 each a Lake package in a directory of its own under `packages/`. The
 fixture set and its two fixture packages, used by tests alone, are under
-`tests/packages/`, and the Lean formatter's host package is
+`tests/packages/`, a set with no package under `tests/empty-set/`, and the
+Lean formatter's host package is
 `tools/lean-fmt/` ([packages.md](packages.md), "The package set and its
 build"). The core's parts:
 

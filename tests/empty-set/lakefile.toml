@@ -1,0 +1,13 @@
+# A package set with no package (docs/design/packages.md, "The package set
+# and its build"), used by one check alone: it requires the core and nothing
+# else, and it stays that way. `mise run lean-test` hands it to a package
+# step (tools/package-set.sh), which must refuse it with exit 2: a step
+# cannot pass by running over nothing. The default set (packages/) will not
+# do for that, since it gains packages.
+#
+# Nothing builds an editor from it.
+name = "empty-set"
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
