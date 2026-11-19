@@ -9,6 +9,7 @@ import FfiTest.Editor.Ffi.Document
 import FfiTest.Editor.Ffi.Events
 import FfiTest.Editor.Ffi.Files
 import FfiTest.Editor.Ffi.Fuzzy
+import FfiTest.Editor.Ffi.Grep
 import FfiTest.Editor.Ffi.Interrupt
 import FfiTest.Editor.Ffi.Inverse
 import FfiTest.Editor.Ffi.MainThread
@@ -79,6 +80,7 @@ def checks (_ : Unit) : List Check :=
     fileChecks () ++
     processChecks () ++
     watchChecks () ++
+    grepChecks () ++
     documentChecks () ++
     snapshotChecks () ++
     transactionChecks () ++

@@ -325,7 +325,18 @@ it, a `.ignore`, `.git/info/exclude`, hidden files, a binary file, CRLF
 rows and a row that is not UTF-8, against a naive scan of the files no
 ignore rule leaves out; the walk's order by name; `holds` asked once a row
 across the reader's blocks; and a NUL past the first block. `mise run
-deny` holds that only the adapter depends on the libraries.
+deny` holds that only the adapter depends on the libraries, and that only
+`editor-ffi` depends on the adapter. `editor-ffi`'s grep service
+(`src/grep.rs`) is tested on the fake: how a start's words and strings
+cross, which are refused, how a delivery and each refusal cross, and a
+start read from words run on a service over the fake; and `mise run lint`
+refuses the adapter's constructor anywhere in that crate but the process's
+one service (`crates/editor-ffi/clippy.toml`). `ffi-test`'s grep checks
+(`FfiTest.grepChecks`) start a search through the C functions in a
+temporary directory, with an open buffer's snapshot in place of a file and
+an ignored file left out, read its deliveries from the real completion
+queue, and check a refused pattern's sentence, cancelling, and the
+decoding of a reply.
 
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:

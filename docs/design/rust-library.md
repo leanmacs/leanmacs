@@ -1537,6 +1537,23 @@ text:
 asks git (`git ls-files`): a file force-added though an ignore file names
 it is listed by the finder and left out of a search.
 
+**Across the boundary**, `crates/editor-ffi/src/grep.rs` is the seventh
+service behind the completion queue (source 7), in the watch service's
+shape: `editor_ffi_grep_start(id, words, strings, snapshots)` takes the
+limits, the bound and the lengths as words, the root, the pattern and the
+overlays' paths end to end, and a snapshot handle for each overlay, whose
+text is cloned (no text copied) and searched as its chunks;
+`editor_ffi_grep_next(id, wait)`, `editor_ffi_grep_take(wait, out)`,
+`editor_ffi_grep_cancel`, `editor_ffi_grep_pending` and
+`editor_ffi_grep_shutdown` forward to the process's one service, over
+`RipgrepFiles`, `RegexEngine` and `editor_text::is_word_character`. A
+reply is a status (started, each refusal, found), words, a detail and the
+paths; a found reply's words are each file's path length, source and
+matches, then its end (more, complete or truncated with the counts, or the
+walk's refusal). Lean resolves each overlay's `File.Source` to a handle
+before it starts, so a snapshot it no longer holds is refused there and
+never crosses; the bindings are `lean/Editor/Ffi/Grep.lean`.
+
 `crates/editor-grep/clippy.toml` holds the crate's tests, the rule's and
 the service's among them, to the fake: no `std::fs`, no `Path` method that
 asks the disk, no clock of the machine's, and not the adapter's

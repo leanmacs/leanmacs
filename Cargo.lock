@@ -442,6 +442,8 @@ dependencies = [
  "editor-fs-std",
  "editor-fuzzy",
  "editor-fuzzy-nucleo",
+ "editor-grep",
+ "editor-grep-ripgrep",
  "editor-layout",
  "editor-platform",
  "editor-platform-arboard",

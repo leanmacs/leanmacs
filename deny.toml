@@ -282,7 +282,12 @@
 # nothing depended on it. Licences: `ignore` and the `grep-*` crates are
 # Unlicense OR MIT, and `encoding_rs` adds BSD-3-Clause for its data; the
 # gate checks no licence, so whether they are acceptable is the owner's to
-# confirm.
+# confirm. The adapter's own entry came in the commit in which `editor-ffi`
+# came to depend on it, for the process's grep service: with the entry's
+# wrapper naming another crate, it fails ("crate 'editor-grep-ripgrep =
+# 0.1.0' is explicitly banned"); and in that commit `editor-ffi` joined the
+# wrappers of `editor-grep`'s entry: with the wrapper not yet there, it
+# fails on that edge ("crate 'editor-grep = 0.1.0' is explicitly banned").
 #
 # For the diff of a reload (2026-11-16, the daily-driver floor's phase 5),
 # whose entries came in the commit that added the line diff port's adapter,
@@ -458,7 +463,8 @@ deny = [
   { crate = "regex-syntax", wrappers = ["editor-search-regex", "regex-cursor", "regex-automata", "regex", "proptest", "globset"], reason = "the regex syntax's tree is built by the search engine port's adapter alone, from the pattern tree of editor-search, so no pattern string in the library's syntax is ever made by a crate of the workspace; the other wrappers are the third-party crates that depend on it: regex-cursor and regex-automata, regex, tree-sitter's, proptest, for its generated strings, and globset, ignore's, which compiles an ignore file's globs to regexes inside the library" },
   { crate = "editor-search", wrappers = ["editor-search-regex", "editor-ffi", "editor-grep", "editor-grep-ripgrep"], reason = "the search engine port, the pattern syntax and the rule of which match have three users: the port's adapter, which implements it and runs its contract; the crate that wires the library together, whose two C functions ask the rule over the adapter; and project search's core, which compiles a pattern once and asks it of every row and open buffer under a root, so a match on disk is one `/` finds in the buffer; the files port's adapter takes the engine's fake, `Literal`, for its tests alone, by a dev-dependency; another is a decision, so it is made here" },
   { crate = "editor-search-regex", wrappers = ["editor-ffi"], reason = "the search engine's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
-  { crate = "editor-grep", wrappers = ["editor-grep-ripgrep"], reason = "the files port, the rule of a search and the search service have one user so far: the port's adapter, which implements it and runs its contract and the rule over real files; another is a decision, so it is made here" },
+  { crate = "editor-grep", wrappers = ["editor-grep-ripgrep", "editor-ffi"], reason = "the files port, the rule of a search and the search service have two users: the port's adapter, which implements it and runs its contract and the rule over real files, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
+  { crate = "editor-grep-ripgrep", wrappers = ["editor-ffi"], reason = "the files adapter is linked only by the crate that wires the library together, for the process's grep service; everything else reaches files through the port, and editor-grep's tests through its fake" },
   { crate = "ignore", wrappers = ["editor-grep-ripgrep"], reason = "ripgrep's walk stays behind the files port: only its adapter crate may name its types" },
   { crate = "globset", wrappers = ["ignore"], reason = "ripgrep's globs are ignore's, behind the files port with it: no crate of the workspace may name them" },
   { crate = "grep-searcher", wrappers = ["editor-grep-ripgrep"], reason = "ripgrep's reader stays behind the files port: only its adapter crate may name its types" },

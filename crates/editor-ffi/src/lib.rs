@@ -190,7 +190,8 @@
 //! A service is work the library does for a Lean job that takes time: a
 //! timer ([`timers`]), a load or a save of a file ([`files`]), a
 //! command run to its end ([`processes`]), a watch on a file or a
-//! directory ([`watches`]), and a line diff of two snapshots ([`diffs`]).
+//! directory ([`watches`]), a line diff of two snapshots ([`diffs`]), and a
+//! search of the files under a directory ([`grep`]).
 //! A job that waits must not hold a thread, so a request to
 //! a service is never a blocking call. Every service follows these rules:
 //!
@@ -565,6 +566,7 @@ pub mod events;
 pub mod excerpts;
 pub mod files;
 pub mod fuzzy;
+pub mod grep;
 pub mod interrupt;
 pub mod inverse;
 pub mod log;

@@ -116,6 +116,17 @@ editor-watch = { path = "../editor-watch" }
 # `clippy.toml` here keeps the adapter out of everything but that one
 # static. Through it the static library Lean links holds notify.
 editor-watch-notify = { path = "../editor-watch-notify" }
+# The grep service: the Files port, its fake and its contract, the rule of
+# a project search, and the service that owns each search, which the C
+# functions of `src/grep.rs` forward to.
+editor-grep = { path = "../editor-grep" }
+# The real files, walked and read with ripgrep's libraries, for the
+# process's grep service. This is the crate that wires the library
+# together, so it is the one that links the adapter; `clippy.toml` here
+# keeps the adapter out of everything but that one static. Through it the
+# static library Lean links holds ignore and grep-searcher, which have no
+# system dependency.
+editor-grep-ripgrep = { path = "../editor-grep-ripgrep" }
 
 [dev-dependencies]
 # The temporary directory the wiring test (`tests/files.rs`) owns: the one

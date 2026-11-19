@@ -117,6 +117,16 @@
 # taken off, it fails with "use of a disallowed method
 # `editor_watch_notify::NotifyWatch::system`".
 #
+# An eighth place is marked, for project search's real files:
+# `editor_grep_ripgrep::RipgrepFiles::new` is on the list. Its one caller
+# is the static `GREP` in `src/grep.rs`, the process's grep service, under
+# its own `expect`. The unit tests there run on the port's fake,
+# `editor_grep::fake::FakeFiles`, and Lean's `ffi-test` reaches real files
+# only through the C functions. Seen to bite once by hand, on 2026-11-19:
+# with a unit test added to `src/grep.rs` that calls the constructor,
+# `mise run lint` fails with "use of a disallowed method
+# `editor_grep_ripgrep::RipgrepFiles::new`".
+#
 # What this does not hold is what `crates/editor-text/clippy.toml` says of
 # its own list: it is a list of names.
 
@@ -127,6 +137,8 @@ disallowed-methods = [
   { path = "editor_process_std::StdProcesses::system", reason = "real processes are started in one place, the process's process service; its unit tests run on `FakeProcesses`, and the wiring tests reach real processes only through the C functions" },
   # The watch port's real adapter.
   { path = "editor_watch_notify::NotifyWatch::system", reason = "real files are watched in one place, the process's watch service; its unit tests run on `FakeWatch`, and the wiring tests reach a real watch only through the C functions" },
+  # The files port's real adapter, for project search.
+  { path = "editor_grep_ripgrep::RipgrepFiles::new", reason = "real files are searched in one place, the process's grep service; its unit tests run on `FakeFiles`, and the wiring tests reach real files only through the C functions" },
   # The desktop's clipboard: what it holds is the person's.
   { path = "editor_platform_arboard::SystemClipboard::open", reason = "no test reads or writes the desktop's clipboard: the process's clipboard is opened in one place, for Lean's window mode; every test is on `MemoryClipboard`" },
   # A renderer on a window: it needs a window, and a real adapter.
