@@ -48,8 +48,15 @@
 #    an empty environment (`env -i`: no `HOME`, `PATH` or `LEAN_PATH`) and
 #    `/` as the working directory: it must exit 0 and print exactly
 #    `expected`, whose command calls compiled code of `Init` and of
-#    `Editor`, so the copy found its toolchain and `.olean` files from its
-#    own path;
+#    `Editor`, and whose root imports `Lean`, so the copy found its
+#    toolchain and `.olean` files from its own path, Lean's among them;
+# 5a. runs the copy's `editor headless --generate` the same way on a copy of
+#    the fixture `tests/headless/generate`, whose config directory holds
+#    `init.lean` alone: the config must load, printing the fixture's
+#    `expected` and the information that no lakefile is generated; the
+#    directory must then hold a `lean-toolchain` that is
+#    `lean/lean-toolchain` byte for byte, and no `lakefile.toml`, since the
+#    bundle holds no package set for a lakefile to require;
 # 5b. runs the copy's `editor --version` the same way, with an empty
 #    environment from `/`: it must print exactly `Leanmacs <version>`,
 #    `build <build ID>` and `commit <commit>`, so the Lean plist reader
@@ -418,6 +425,23 @@ out=$(cd / && env -i "$app/Contents/MacOS/$executable" headless "$dir/config" "$
 printf '%s\n' "$out"
 printf '%s\n' "$out" | diff "$fixtures/expected" - || fail "the headless mode printed other than tests/headless/bundle/expected"
 step "the copy's headless mode, with an empty environment from /, printed tests/headless/bundle/expected"
+
+# 5a. The generated files: the toolchain file, and no lakefile.
+generate=$(cd "$lean_dir/../tests/headless/generate" && pwd)
+cp -R "$generate/config" "$dir/generate-config"
+cp "$generate/script" "$dir/generate-script"
+out=$(cd / && env -i "$app/Contents/MacOS/$executable" headless --generate "$dir/generate-config" "$dir/generate-script") ||
+  fail "the headless mode with --generate from the copy failed"
+printf '%s\n' "$out"
+printf '%s\n' "$out" | grep -v '^diagnostic: config:0:0: information: ' | diff "$generate/expected" - ||
+  fail "the headless mode with --generate printed other than tests/headless/generate/expected"
+printf '%s\n' "$out" | grep -q '^diagnostic: config:0:0: information: no lakefile.toml is generated' ||
+  fail "the headless mode with --generate did not say that no lakefile is generated"
+cmp -s "$dir/generate-config/lean-toolchain" "$lean_dir/lean-toolchain" ||
+  fail "the generated lean-toolchain is not lean/lean-toolchain"
+[ ! -e "$dir/generate-config/lakefile.toml" ] ||
+  fail "a lakefile.toml was generated, though the bundle holds no package set to require"
+step "the copy's headless mode with --generate loaded the config, and generated lean-toolchain and no lakefile"
 
 # 5b. What the copy says of its build, read from its own Info.plist.
 # Whether the bundle at $1 says version $2, build $3 and commit $4.

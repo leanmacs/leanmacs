@@ -435,8 +435,8 @@ package_facet editorRootTransImports pkg : Array String := do
 (`lake -d <set dir> query :editorBase`; `setBase`): `Editor`, then the
 entry module of each package of the set outside the core. It is what the
 generated root hands `Editor.Main.run`, and what the bundle's module files
-are the closure of (`editorApp`, `mise run bundle-test`). It reads no
-source and builds nothing. -/
+are the closure of, with `Std` and `Lean` (`editorApp`,
+`mise run bundle-test`). It reads no source and builds nothing. -/
 package_facet editorBase pkg : Array String := do
   return Job.pure ((setBase (← setEntries pkg)).map (·.toString))
 
@@ -799,9 +799,11 @@ directory.
 
 It holds `Contents/MacOS/editor`, a copy of the set's `editor`; under
 `Contents/Resources/lean`, the `.olean`, `.olean.server` and
-`.olean.private` files of the modules the set's config base imports
-(`setBase`; the closure `config-test bench-modules` lists, over the set's
-`.olean` directories, `moduleDirectories`), from the toolchain Lake runs
+`.olean.private` files of the modules the set's config base imports and of
+every module of `Std` and `Lean`, which a config file may import
+(`setBase`, then `Std` and `Lean`; the closure `config-test bench-modules`
+lists, over the set's `.olean` directories, `moduleDirectories`), from the
+toolchain Lake runs
 on, which is the pinned one, and from the core and each package of the set
 whose modules the base holds, all in the bundle's one directory, laid out
 by `tools/stage-bundle.sh` as `bundle-test` lays them out; `Contents/Info.plist`
@@ -838,7 +840,8 @@ package_facet editorApp pkg : FilePath := do
   let some core := (← getWorkspace).findPackageByKey? __name__
     | error "the core's package is not in the workspace"
   -- The set's config base and the directories its modules are in, which
-  -- the bundle's module files are the closure of and are copied from.
+  -- the bundle's module files are the closure of, with `Std` and `Lean`,
+  -- and are copied from.
   let base := (setBase (← setEntries pkg)).map (·.toString)
   let searched := ":".intercalate ((← moduleDirectories pkg).map (·.toString)).toList
   let exe ← fetch <| pkg.facet `editor
@@ -902,7 +905,8 @@ package_facet editorApp pkg : FilePath := do
           let modules ←
             captureProc
                 { cmd := lister.toString
-                  args := #["bench-modules", sysroot.toString, searched] ++ base }
+                  args :=
+                    #["bench-modules", sysroot.toString, searched] ++ base ++ #["Std", "Lean"] }
           IO.FS.writeFile closure (modules ++ "\n")
           proc (quiet := true)
               { cmd := stager.toString
