@@ -317,7 +317,9 @@ the marks before the move, and a move across more than one edge or to
 another tree puts back nothing. The loop's following of the editor
 state's marks (`Editor/Marks/Follow.lean`) is checked on the text model
 (`markFollowChecks`): a mark whose line an edit removed is erased, and one
-a command decided about is not.
+a command decided about is not; the marker a mark put back replaced is
+given up; and, through the loop, a mark's marker is given up once the mark
+is erased by a charwise delete or by `dd`, or put back by an undo.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that the rectangles of its views are

@@ -49,7 +49,8 @@ rule a finished command's are given up by (`EditorState.givenUpPlaces`).
 A buffer whose text refuses is left as it was, and the first refusal is
 handed back.
 
-Pinned by `ModelTest.evilMarkChecks`.
+Pinned by `ModelTest.markFollowChecks`, the markers given up among them;
+the marks erased and put back by keys by `ModelTest.evilMarkChecks`.
 -/
 
 namespace Editor
