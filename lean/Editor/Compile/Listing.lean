@@ -1,6 +1,7 @@
 import Editor.Api
 import Editor.Compile.Contribution
 import Editor.Job
+import Editor.ProjectMode
 
 /-!
 # Computed commands: a contribution's listing, run in its mode's root

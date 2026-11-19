@@ -234,8 +234,8 @@ imported. So is `compile` (`Editor/Compile.lean`): a build or test command
 run per workspace, its output streamed into the workspace's compilation
 buffer; its registrations (`Editor/Compile/Compiled.lean`) are not
 imported either. What a minor mode gives it, its markers, named commands
-and error formats (`Editor/Compile/Contribution.lean`, with the formats of
-`Editor/Compile/Errors.lean`), comes with `Editor/Setup.lean`, which
+and error formats (`Editor/ProjectMode.lean`, with the formats of
+`Editor/ProjectMode/Format.lean`), comes with `Editor/Setup.lean`, which
 registers it (`compileContribution`, `projectCommands`). The formats that
 ship (`Editor/Compile/Shipped.lean`) are imported, so config can build on
 them.

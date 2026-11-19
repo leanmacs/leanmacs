@@ -7,7 +7,7 @@ import Editor.Workspace.Finder
 
 How a buffer whose file opens comes to have the minor modes the registered
 compile contributions' markers turn on (`Editor/Workspace.lean`, "Modes on
-markers"; `Editor/Compile/Contribution.lean`). Written over the editor API
+markers"; `Editor/ProjectMode.lean`). Written over the editor API
 and the marker search (`Workspace.presentMarkers`,
 `Editor/Workspace/Finder.lean`). A command may not wait and a job may, so it
 is, as finding a workspace is (`Editor/Workspace/Attach.lean`), a call that

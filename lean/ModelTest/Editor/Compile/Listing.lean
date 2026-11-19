@@ -1,7 +1,6 @@
 import Editor.Command
 import Editor.Command.Dispatch
 import Editor.Compile.Contribution
-import Editor.Compile.Errors
 import Editor.Compile.Listing
 import Editor.Completion.Candidate
 import Editor.Config.Registry
@@ -19,6 +18,8 @@ import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
+import Editor.ProjectMode
+import Editor.ProjectMode.Format
 import Editor.Scene
 import Editor.Setup
 import Editor.State

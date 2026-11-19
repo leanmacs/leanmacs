@@ -15,6 +15,8 @@ import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Model
 import Editor.Program
+import Editor.ProjectMode
+import Editor.ProjectMode.Format
 import Editor.Scene
 import Editor.Setup
 import Editor.State

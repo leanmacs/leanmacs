@@ -3,7 +3,6 @@ import Editor.Clipboard.Model
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Model
-import Editor.Compile.Contribution
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -25,6 +24,7 @@ import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.Process.Environment
 import Editor.Program
+import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.Text

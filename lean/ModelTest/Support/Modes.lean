@@ -1,7 +1,6 @@
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
-import Editor.Compile.Contribution
 import Editor.Config.Owner
 import Editor.Config.Registry
 import Editor.Config.Stores
@@ -17,6 +16,7 @@ import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
+import Editor.ProjectMode
 import Editor.Role
 import Editor.Scene
 import Editor.State

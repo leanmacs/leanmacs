@@ -2,7 +2,6 @@ import Editor.Api
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Model
-import Editor.Compile.Contribution
 import Editor.Completion.Candidate
 import Editor.Completion.Displays
 import Editor.Completion.Later
@@ -38,6 +37,7 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
+import Editor.ProjectMode
 import Editor.Role
 import Editor.Scene
 import Editor.State

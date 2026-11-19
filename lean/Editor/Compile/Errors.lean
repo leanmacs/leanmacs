@@ -1,28 +1,18 @@
-import Editor.Value
+import Editor.ProjectMode.Format
 
 /-!
-# Error formats: locations in a compilation's output
+# Error formats, read: locations in a compilation's output
 
 What the compile mode (`Editor/Compile.lean`, "Locations") finds in the
 lines of a compilation's output: a file, a line, maybe a column, and a
 severity. Pure Lean with no outside world, so it is its own model and has
-no port, and free of the editor API, so that a minor mode's config can name
-and build formats (phase 5 of the shell-and-compile roadmap).
+no port, and free of the editor API.
 
-## Formats are data
-
-An error format (`Format`) is a record: its name; a pattern over one
-output line (`Pattern`), whose pieces say which part of the line gives the
-file, the line, the column, the severity and the message (`Part`);
-optionally a pattern of a following line that continues it
-(`continuation`); optionally a pattern of the line before it that gives its
-severity and message (`lead`), for a tool that prints the location on the
-line after its message, as rustc does; the words that name each severity
-(`severities`, `Severity.words` by default) and the severity of a line that
-names none (`severity`, an error by default); and what the tool calls the
-first column (`columnBase`, 1 by default, as GNU and rustc count; Lean
-counts from 0). A field a later format needs is added with a default, so
-every existing format is unchanged.
+An error format is data (`Format`, `Editor/ProjectMode/Format.lean`), which
+a minor mode's contribution carries and config names and builds. That
+module is the core's: the setup port and the registry hold formats. This
+one is the compile mode's: it is what reads output with them, the matcher
+and what it yields.
 
 ## The matcher
 
@@ -51,16 +41,6 @@ could not be checked on the models; and it searches a text or a snapshot,
 where locations are read from output lines as strings before they are any
 text. A format this matcher cannot express is the measured problem that
 would put a regex behind a port.
-
-## The general format
-
-`Format.general`, the format every run falls back to; the tool-specific
-formats (rustc's, Lean's) ship in `Editor/Compile/Shipped.lean`. It reads
-GNU's `file:line:col: message` and `file:line: message`, with an optional
-`error`, `warning` or `note` after the location. The file stops at a colon,
-a space or a tab, so a compilation's header (`r@main in /r: make`), an
-indented help line and its last line are no locations. A line that names
-no severity is an error.
 
 ## Reading, sites and `scan`
 
@@ -100,107 +80,6 @@ Pinned by `ModelTest.compileErrorChecks`.
 -/
 
 namespace Editor.Compile
-
-/-- How bad a location is. -/
-inductive Severity where
-  /-- An error. -/
-  | error
-  /-- A warning. -/
-  | warning
-  /-- A note. -/
-  | note
-  deriving DecidableEq, Repr
-
-/-- The severity's name, as it crosses in a tree. -/
-def Severity.name : Severity → String
-  | .error => "error"
-  | .warning => "warning"
-  | .note => "note"
-
-/-- The severity a name is (`Severity.name`), if it is one. -/
-def Severity.ofName? : String → Option Severity
-  | "error" => some .error
-  | "warning" => some .warning
-  | "note" => some .note
-  | _ => none
-
-/-- The words that name each severity, as GNU's tools write them. -/
-def Severity.words : List (String × Severity) :=
-  [("error", .error), ("warning", .warning), ("note", .note)]
-
-/-- What a captured piece's text gives. -/
-inductive Part where
-  /-- The file. -/
-  | file
-  /-- The line. -/
-  | line
-  /-- The column. -/
-  | column
-  /-- The severity's word. -/
-  | severity
-  /-- The location's message. -/
-  | message
-  deriving DecidableEq, Repr
-
-/-- What one piece of a pattern matches. -/
-inductive Atom where
-  /-- Exactly `text`. -/
-  | literal (text : String)
-  /-- One or more of `0` to `9`. -/
-  | digits
-  /-- One or more spaces or tabs. -/
-  | blanks
-  /-- One or more characters, none of them in `excluded`. -/
-  | noneOf (excluded : List Char)
-  /-- One of `words`, tried in order. -/
-  | oneOf (words : List String)
-  /-- Every character to the line's end, maybe none. -/
-  | rest
-  deriving DecidableEq, Repr
-
-/-- A piece of a pattern: an atom, and the part its text gives, if any. -/
-structure Piece where
-  /-- What it matches. -/
-  atom : Atom
-  /-- The part its text gives. -/
-  into : Option Part := none
-  deriving DecidableEq, Repr
-
-/-- A step of a pattern: pieces in sequence, all of them or, for an
-optional step, maybe none. -/
-structure Step where
-  /-- Its pieces. -/
-  pieces : List Piece
-  /-- Whether it may be skipped. -/
-  optional : Bool := false
-  deriving DecidableEq, Repr
-
-/-- A pattern over one line, anchored at both ends ("The matcher", in the
-module docs). -/
-abbrev Pattern :=
-  List Step
-
-/-- An error format ("Formats are data", in the module docs). -/
-structure Format where
-  /-- Its name. -/
-  name : String
-  /-- The pattern of a location's line. -/
-  pattern : Pattern
-  /-- The pattern of a following line that continues a location. -/
-  continuation : Option Pattern := none
-  /-- The words that name each severity. -/
-  severities : List (String × Severity) := Severity.words
-  /-- The severity of a line with no severity part, or a word not in
-  `severities`. -/
-  severity : Severity := .error
-  /-- What the tool calls the first column. -/
-  columnBase : Nat := 1
-  /-- The pattern of the line before a location's line that gives its
-  severity and message, as rustc prints `error[E0308]: mismatched types`
-  before ` --> src/main.rs:4:18`; none for a format whose location is on its
-  message's line. -/
-  lead : Option Pattern := none
-  deriving DecidableEq, Repr
 
 /-- A part a match captured: its text and its byte range in the line. -/
 structure Capture where
@@ -336,29 +215,6 @@ def Format.read? (format : Format) (text : String) (lead : Captures := #[]) : Op
       start := (spans.map (·.start)).foldl min file.start
       stop := (spans.map (·.stop)).foldl max file.stop, message := (of .message).map (·.text) }
 
-/-- A step of the pieces `pieces`. -/
-def step (pieces : List Piece) : Step :=
-  { pieces }
-
-/-- An optional step of the pieces `pieces`. -/
-def optionalStep (pieces : List Piece) : Step :=
-  { pieces, optional := true }
-
-/-- The general format ("The general format", in the module docs). -/
-def Format.general : Format :=
-  { name := "general"
-    pattern :=
-      [step
-          [{ atom := .noneOf [':', ' ', '\t'], into := some .file }, { atom := .literal ":" },
-            { atom := .digits, into := some .line }],
-        optionalStep [{ atom := .literal ":" }, { atom := .digits, into := some .column }],
-        step [{ atom := .literal ":" }],
-        optionalStep
-          [{ atom := .blanks },
-            { atom := .oneOf ["error", "warning", "note"], into := some .severity },
-            { atom := .literal ":" }],
-        step [{ atom := .rest }]] }
-
 /-- A location of a compilation ("Reading, sites and `scan`", in the module
 docs). -/
 structure Site where
@@ -386,15 +242,6 @@ structure Site where
   /-- Its message, if its format read one. -/
   message : Option String := none
   deriving DecidableEq, Repr
-
-/-- An optional value as a tree: `null` for none. -/
-def optional {α : Type} (encode : α → Value) : Option α → Value
-  | some value => encode value
-  | none => .null
-
-/-- The field `name` of `fields`. -/
-def field (fields : List (String × Value)) (name : String) : Value :=
-  ((fields.find? (·.1 == name)).map (·.2)).getD .null
 
 /-- A site as a tree. -/
 def Site.encode (site : Site) : Value :=

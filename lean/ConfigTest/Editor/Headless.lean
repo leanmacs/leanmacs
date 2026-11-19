@@ -14,7 +14,6 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Compile
 import Editor.Compile.Compiled
-import Editor.Compile.Contribution
 import Editor.Compile.Listing
 import Editor.Completion
 import Editor.Completion.AtPoint
@@ -77,6 +76,7 @@ import Editor.Package
 import Editor.PackageSet
 import Editor.Process.Environment
 import Editor.Program
+import Editor.ProjectMode
 import Editor.Scene
 import Editor.Setup
 import Editor.State

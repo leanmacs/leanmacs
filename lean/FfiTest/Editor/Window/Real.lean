@@ -1,5 +1,4 @@
 import Editor.Clipboard.InProcess
-import Editor.Compile.Contribution
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -12,6 +11,7 @@ import Editor.Menu
 import Editor.Menu.Compiled
 import Editor.PackageSet
 import Editor.Process.Environment
+import Editor.ProjectMode
 import Editor.Window
 import Editor.Window.Real
 import Editor.Workspace

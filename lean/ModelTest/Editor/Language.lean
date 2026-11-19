@@ -1,5 +1,4 @@
 import Editor.Command.Dispatch
-import Editor.Compile.Contribution
 import Editor.Config.Owner
 import Editor.Config.Registry
 import Editor.DisplayRules
@@ -7,6 +6,7 @@ import Editor.Language
 import Editor.Language.IndentUnit
 import Editor.Mode
 import Editor.Process.Environment
+import Editor.ProjectMode
 import Editor.Scene
 import Editor.Workspace
 import ModelTest.Check

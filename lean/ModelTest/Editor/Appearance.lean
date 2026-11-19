@@ -1,5 +1,4 @@
 import Editor.Appearance
-import Editor.Compile.Contribution
 import Editor.Config.Owner
 import Editor.Config.Registry
 import Editor.Config.Reload
@@ -11,6 +10,7 @@ import Editor.Layout
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
+import Editor.ProjectMode
 import Editor.Setup
 import Editor.TabBar
 import Editor.Themes.Compiled

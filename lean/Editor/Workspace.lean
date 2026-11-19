@@ -57,7 +57,7 @@ It imports only the plain trees and the pure part of a child's environment
   workspace's files is chosen in `Editor/Workspace/Lister.lean`.
 - **Modes on markers** (`searchedFrom`, `markerSearchPaths`, `onModes`): a
   minor mode's markers (`MarkerMode`, a compile contribution's,
-  `Editor/Compile/Contribution.lean`) are looked for from a file's
+  `Editor/ProjectMode.lean`) are looked for from a file's
   directory up to and including its workspace root, and never above it,
   so one worktree's modes are found within that worktree; a file with no
   workspace looks in its own directory alone. A mode is on at the nearest

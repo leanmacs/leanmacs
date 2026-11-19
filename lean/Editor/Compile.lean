@@ -5,6 +5,8 @@ import Editor.Compile.Errors
 import Editor.Compile.Listing
 import Editor.File
 import Editor.Mode
+import Editor.ProjectMode
+import Editor.ProjectMode.Format
 import Editor.Shell
 import Editor.Workspace.Modes
 
@@ -143,7 +145,8 @@ is still said.
 
 ## Locations
 
-The error formats (`Editor/Compile/Errors.lean`) find the locations of a
+The error formats (`Editor/ProjectMode/Format.lean`), read by the matcher
+(`Editor/Compile/Errors.lean`), find the locations of a
 run's output as its lines arrive, not at its end: `compilation-output` and
 `finished` scan the lines they have just appended (`noteSites`, `scan`),
 from the row and byte offset where they start (`append`'s answer), with the
@@ -213,7 +216,7 @@ first. Three commands visit a location and make it the current one:
 ## The hook
 
 Minor modes give the compile mode what fits a kind of project
-(`Compile.Contribution`, `Editor/Compile/Contribution.lean`). A buffer's
+(`Compile.Contribution`, `Editor/ProjectMode.lean`). A buffer's
 on-modes (`Workspace.onModesOf`, `Editor/Workspace/Modes.lean`), nearest
 root first, then in registration order, decide where a run goes, what
 `compile` offers and how the output is read. The contributions are asked of

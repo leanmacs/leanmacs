@@ -1,5 +1,4 @@
 import Editor.Command.Call
-import Editor.Compile.Contribution
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Displays
@@ -17,6 +16,7 @@ import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
+import Editor.ProjectMode
 import Editor.Store
 import Editor.TabBar
 import Editor.Window
@@ -494,7 +494,7 @@ script as its argument), and one root or one project given a lister twice.
 A reload that installs replaces config's listers.
 
 Config gives the compile mode what fits a kind of project with
-`compileContribution` (`Editor/Compile/Contribution.lean`): a minor mode's
+`compileContribution` (`Editor/ProjectMode.lean`): a minor mode's
 marker files, which turn the mode on in a buffer whose file is under one of
 them inside its workspace, its named commands, and its error formats. And
 it gives one project, by its identity, its own commands and settings for a
@@ -662,7 +662,7 @@ inductive SetupRequest where
   (`Editor/Language.lean`). -/
   | language (language : Language)
   /-- Register `contribution`, what its minor mode gives the compile mode
-  (`Editor/Compile/Contribution.lean`). -/
+  (`Editor/ProjectMode.lean`). -/
   | compileContribution (contribution : Compile.Contribution)
   /-- Give one project its own commands and settings for a mode
   (`Compile.ProjectCommands`). -/
@@ -1284,7 +1284,7 @@ def compileWithoutMarkers (mode : String) : String :=
 /-- Registers `contribution`, what the minor mode `contribution.mode` gives
 the compile mode: its markers, which turn the mode on in a buffer whose
 file is under one of them inside its workspace, its named commands and its
-error formats (`Editor/Compile/Contribution.lean`). Config's contribution of
+error formats (`Editor/ProjectMode.lean`). Config's contribution of
 a mode's name replaces a package's of that name whole. Refuses the
 `setup` for a contribution with no marker; the editor refuses one registered
 twice, or naming a command twice. -/

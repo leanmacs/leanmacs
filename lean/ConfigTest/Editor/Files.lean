@@ -7,7 +7,6 @@ import ConfigTest.Support.Syntax
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
-import Editor.Compile.Contribution
 import Editor.Compile.Errors
 import Editor.Compile.Shipped
 import Editor.Completion
@@ -38,6 +37,8 @@ import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Process.Environment
 import Editor.Program
+import Editor.ProjectMode
+import Editor.ProjectMode.Format
 import Editor.Scene
 import Editor.Setup
 import Editor.Text

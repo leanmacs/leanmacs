@@ -1,5 +1,6 @@
 import Editor.Compile
 import Editor.Compile.Errors
+import Editor.ProjectMode.Format
 import Editor.Store
 import Editor.Value
 import Editor.Workspace

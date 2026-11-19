@@ -1,6 +1,6 @@
-import Editor.Compile.Contribution
 import Editor.Compile.Shipped
 import Editor.Json
+import Editor.ProjectMode
 import ModelTest.Check
 import ModelTest.Support.Compile
 

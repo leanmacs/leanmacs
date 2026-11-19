@@ -4,7 +4,6 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Command.Model
-import Editor.Compile.Contribution
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
@@ -21,6 +20,7 @@ import Editor.File
 import Editor.Language
 import Editor.Mode
 import Editor.Program
+import Editor.ProjectMode
 import Editor.State
 import Editor.TabCommands
 import Editor.Text

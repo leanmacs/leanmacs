@@ -8,7 +8,6 @@ import Editor.Command
 import Editor.Command.Real
 import Editor.Compile
 import Editor.Compile.Contribution
-import Editor.Compile.Errors
 import Editor.Compile.Listing
 import Editor.Compile.Shipped
 import Editor.Ffi.Processes

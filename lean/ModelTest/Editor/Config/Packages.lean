@@ -1,5 +1,4 @@
 import Editor.Command.Call
-import Editor.Compile.Contribution
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Display
@@ -17,6 +16,7 @@ import Editor.Menu
 import Editor.Mode
 import Editor.Package
 import Editor.Process.Environment
+import Editor.ProjectMode
 import Editor.Setup
 import Editor.TabBar
 import Editor.Value

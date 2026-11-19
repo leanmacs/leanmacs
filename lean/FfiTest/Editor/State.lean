@@ -3,7 +3,6 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Command.Real
-import Editor.Compile.Contribution
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Displays
@@ -28,6 +27,7 @@ import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Program
+import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.SyntaxTree

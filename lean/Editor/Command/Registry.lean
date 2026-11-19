@@ -1,9 +1,9 @@
-import Editor.Compile.Contribution
 import Editor.Completion.Candidate
 import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.InputScheme
 import Editor.Language.IndentUnit
+import Editor.ProjectMode
 import Editor.Workspace
 
 /-!

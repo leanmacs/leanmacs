@@ -239,7 +239,7 @@ no file name can be meant by (`Language.problems`), is refused.
 ## Compile contributions
 
 A compile contribution (`Compile.Contribution`,
-`Editor/Compile/Contribution.lean`) is held by owner like a mode, in a
+`Editor/ProjectMode.lean`) is held by owner like a mode, in a
 `ContributionEntry`, and replaced as a set (`replaceContributions`).
 `compileContributions` is the registration order the compile mode uses,
 each mode once: config's contributions in the order its `setup` registered

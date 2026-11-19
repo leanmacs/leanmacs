@@ -3,7 +3,6 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Command.Model
-import Editor.Compile.Contribution
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
@@ -31,6 +30,7 @@ import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
+import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.TabBar

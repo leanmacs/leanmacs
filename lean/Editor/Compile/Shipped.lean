@@ -1,5 +1,5 @@
-import Editor.Compile.Contribution
 import Editor.Json
+import Editor.ProjectMode
 
 /-!
 # The shipped error formats and minor modes of the compile mode

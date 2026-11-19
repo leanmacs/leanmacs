@@ -1,47 +1,16 @@
 import Editor.Compile.Errors
-import Editor.Workspace
+import Editor.ProjectMode
 
 /-!
-# Compile contributions: what a minor mode gives the compile mode
+# What the compile mode makes of contributions: offers and formats in use
 
-What makes the compile mode (`Editor/Compile.lean`) fit a kind of project,
-as data a minor mode registers (`docs/design/keymaps-and-modes.md`, "The
-compile mode, as built"). Pure, with no editor API, so that config can
-name and build it (`compileContribution` and `projectCommands`,
-`Editor/Setup.lean`).
-
-## A contribution
-
-A contribution (`Contribution`) is registered under its minor mode's name
-(`mode`): the names of its marker files (`markers`), which turn the mode on
-in a buffer whose file is under one of them inside its workspace
-(`Editor/Workspace.lean`, "Modes on markers"); its named commands
-(`commands`, each a name such as `build` and a command line); its error
-formats (`formats`, `Editor/Compile/Errors.lean`); and whether its root is
-its outermost marker in the workspace rather than its nearest
-(`outermost`). Registering a `Mode`
-record of the same name is optional: a buffer's minor modes are by name.
-A contribution's commands may also be computed (`listing`, "Computed
-commands"). A field a later phase needs is added with a default, so every
-contribution written before stays valid.
-
-## Computed commands
-
-A contribution's `listing` is a program, run in the mode's root, whose
-standard output its `read` turns into named commands, as `mise-mode` reads
-`mise tasks ls --json`. When it runs, where what it gave is kept and how a
-failure is said are `Editor/Compile/Listing.lean`'s. A named command may
-carry the directory it runs in (`NamedCommand.directory`), resolved
-against its mode's root, as a mise task runs in its own `dir`.
-
-## Project commands
-
-Config can give one project (by its identity, `Project.Identity`) its own
-named commands and settings for a mode (`ProjectCommands`). They have one
-source, the hook the loop is told (`Hook.projects`), which holds config's
-latest; a project's are read from it by its identity (`Hook.projectsOf`,
-`Hook.settingsOf`), so every worktree of that codebase has them, no other
-project does, and a reload's change is read at once.
+A contribution is what a minor mode gives the compile mode
+(`Editor/Compile.lean`), as data a package or config registers
+(`Contribution`, `ProjectCommands` and the hook the loop is told, `Hook`,
+all in `Editor/ProjectMode.lean`, a core module). This module is the
+compile mode's: the rules by which it turns the registered contributions
+into the commands it offers in a buffer and the error formats it reads a
+run's output with. Pure, with no editor API.
 
 ## The rules
 
@@ -61,94 +30,12 @@ project does, and a reload's change is read at once.
   in on-mode order, then `Format.general`. A mode whose contribution is not
   registered, as after a reload that dropped it, gives none.
 
-Pinned by `ModelTest.setupChecks`, `ModelTest.registryChecks` and
-`ModelTest.compileHookChecks`.
+Pinned by `ModelTest.compileHookChecks`.
 -/
 
 namespace Editor
 
 namespace Compile
-
-/-- A named command a minor mode gives: a name, such as `build`, the command
-line it runs, and where it runs when that is not its mode's root. -/
-structure NamedCommand where
-  /-- Its name. -/
-  name : String
-  /-- The command line, as `/bin/sh -c` is handed it. -/
-  line : String
-  /-- Where it runs, resolved against its mode's root; none for the root. -/
-  directory : Option System.FilePath := none
-  deriving BEq, Repr
-
-/-- How a contribution's commands are also computed ("Computed commands",
-in the module docs): `program arguments…`, run in the mode's root, whose
-standard output `read` turns into named commands. -/
-structure Listing where
-  /-- The program, a bare name looked up on the child's `PATH`, or an
-  absolute path. -/
-  program : String
-  /-- Its arguments. -/
-  arguments : Array String := #[]
-  /-- What its standard output gives, or why it gives nothing. -/
-  read : ByteArray → Except String (Array NamedCommand)
-
-/-- What a minor mode gives the compile mode ("A contribution", in the
-module docs). -/
-structure Contribution where
-  /-- The minor mode's name, which is the contribution's. -/
-  mode : String
-  /-- The names of its marker files. -/
-  markers : Array String
-  /-- Its named commands, in order: the first is `compile`'s default. -/
-  commands : Array NamedCommand := #[]
-  /-- Its error formats, in the order they are tried. -/
-  formats : Array Format := #[]
-  /-- Whether its root is its outermost marker in the workspace, not its
-  nearest (`Editor/Workspace.lean`, "Modes on markers"). -/
-  outermost : Bool := false
-  /-- How its commands are also computed, if they are ("Computed commands",
-  in the module docs). -/
-  listing : Option Listing := none
-
-/-- The contribution's mode, markers and root rule, as the marker search is
-handed them. -/
-def Contribution.markerMode (contribution : Contribution) : Workspace.MarkerMode :=
-  { mode := contribution.mode, markers := contribution.markers,
-    outermost := contribution.outermost }
-
-/-- What config gives one project for one mode ("Project commands", in the
-module docs). -/
-structure ProjectCommands where
-  /-- The project, by its identity. -/
-  project : Project.Identity
-  /-- The minor mode. -/
-  mode : String
-  /-- Its named commands for the mode, in order. -/
-  commands : Array NamedCommand := #[]
-  /-- Its settings for the mode, by name. -/
-  settings : List (String × Value) := []
-  deriving BEq, Repr
-
-/-- What the loop is told of the registered contributions: the
-contributions in registration order (`Registry.compileContributions`), and
-config's project commands. -/
-structure Hook where
-  /-- The contributions, in registration order. -/
-  contributions : Array Contribution := #[]
-  /-- Config's project commands, in the order config gave them. -/
-  projects : Array ProjectCommands := #[]
-
-/-- Config's project commands for the project of `identity`, in the order
-config gave them ("Project commands", in the module docs). -/
-def Hook.projectsOf (hook : Hook) (identity : Project.Identity) : Array ProjectCommands :=
-  hook.projects.filter (·.project == identity)
-
-/-- The settings config gives the project of `identity` for the mode
-`mode`; none when it gives none ("Project commands", in the module
-docs). -/
-def Hook.settingsOf (hook : Hook) (identity : Project.Identity) (mode : String) :
-    List (String × Value) :=
-  (((hook.projectsOf identity).find? (·.mode == mode)).map (·.settings)).getD []
 
 /-- A named command offered in a buffer: its mode, its name, its line and
 the mode's root, where it runs. -/
