@@ -11,7 +11,11 @@ reads nothing itself, so `model-test` pins it
 
 - **Four paths** are the Lean toolchain's directory, the directory of the
   editor's `.olean` files, the config directory and the script, wherever the
-  executable is.
+  executable is. The `.olean` directory is a search path: one directory, or
+  several joined with `:`, searched in order; outside a bundle the
+  directories the build recorded for the executable are searched after
+  them (`Editor/ModuleLookup.lean`, "The record"), so the core's directory
+  alone is enough for an editor the package-set build linked.
 - **Two paths** are the config directory and the script, and the two module
   directories are resolved from the executable's path
   (`Editor/ModuleLookup.lean`): in a bundle, the bundle's. Outside one there
@@ -33,8 +37,9 @@ structure Arguments where
   render : Bool
   /-- The Lean toolchain's directory. -/
   sysroot : String
-  /-- The directory of the editor's `.olean` files. -/
-  oleans : String
+  /-- The directories of the editor's `.olean` files, in the order they
+  are searched; never empty. -/
+  oleans : List String
   /-- The config directory. -/
   config : String
   /-- The script file. -/
@@ -50,9 +55,12 @@ def noToolchain : String :=
   "no Lean toolchain: give <sysroot> <olean dir> before the config directory, or run the executable from an app bundle"
 
 /-- What `arguments`, the command line after `headless`, asks for, for an
-executable at `appPath`; or why it is refused: the empty string when the
-usage alone says it, as for a number of paths it does not take. -/
-def read (appPath : String) (arguments : List String) : Except String Arguments :=
+executable at `appPath` for which the build recorded the `.olean`
+directories `recorded` (`ModuleLookup.recorded`, which the edge reads); or
+why it is refused: the empty string when the usage alone says it, as for a
+number of paths it does not take. -/
+def read (appPath : String) (arguments : List String) (recorded : List String := []) :
+    Except String Arguments :=
   let (render, paths) :=
     match arguments with
     | "--render" :: paths => (true, paths)
@@ -68,9 +76,10 @@ def read (appPath : String) (arguments : List String) : Except String Arguments 
     -- Four paths give both directories and two give neither, so both are
     -- known together: in a bundle, or given. Outside a bundle two paths
     -- name no toolchain, whatever the build recorded for the executable.
-    let directories := ModuleLookup.resolve appPath explicit
+    let directories := ModuleLookup.resolve appPath explicit recorded
     match directories.sysroot, directories.oleans with
-    | some sysroot, some oleans => .ok { render, sysroot, oleans, config, script }
+    | some sysroot, directory :: rest =>
+      .ok { render, sysroot, oleans := directory :: rest, config, script }
     | _, _ => .error noToolchain
   | _, _ => .error ""
 

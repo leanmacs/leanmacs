@@ -83,7 +83,7 @@ def configCheck (sysroot oleans : String) : IO Bool := do
   let printed ← IO.mkRef (#[] : Array String)
   let directives ← IO.ofExcept ((Editor.Headless.script configScript).mapError IO.userError)
   let shipped ←
-    Editor.Headless.shipped setPackages sysroot oleans configDirectory
+    Editor.Headless.shipped setPackages sysroot [oleans] configDirectory
         (fun line => printed.modify (·.push line)) .headless (fakeClock := true)
   let failure ←
     Editor.Headless.run

@@ -1,0 +1,16 @@
+# The script the gate has an editor's headless mode run for the package
+# `shipped-themes` (tools/package-set.sh run), against the config in
+# `config/`, which names a declaration of the package,
+# `ShippedThemes.themes`. What it prints must be exactly `expected`. It
+# touches no file.
+
+# The config elaborates and installs: the base it is elaborated on holds
+# the package's modules, found in the package's own `.olean` directory,
+# which the build recorded for the editor.
+reload
+settle
+
+# The command config defined says the names of the themes the package
+# ships, read from the package's declaration, in the echo area.
+run shipped-theme-names
+scene

@@ -126,7 +126,7 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
       | none =>
         pure staged.services
     let shipped :=
-      Headless.shippedOver EditorCore.EditorPackage.packages "" "" "" staged.emit services
+      Headless.shippedOver EditorCore.EditorPackage.packages "" [] "" staged.emit services
         staged.published staged.held
     let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
       let real ← RealSyntaxTree.new snapshots

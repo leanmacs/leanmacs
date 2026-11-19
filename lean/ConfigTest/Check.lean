@@ -49,6 +49,11 @@ structure Context where
   once the first of them has asked for it (`Context.fileWaits`); none until
   then. -/
   waits : IO.Ref (Option Job.Completions)
+  /-- The Lean toolchain's directory, as the executable was handed it. -/
+  sysroot : String
+  /-- The directories of the `.olean` files the base was imported from, as
+  the executable was handed them (`oleanDirs`). -/
+  oleanDirs : List System.FilePath
   /-- The directory of the syntax fixtures (`tests/syntax`), whose Rust
   fixtures the indent checks read. -/
   syntaxFixtures : System.FilePath
@@ -79,21 +84,30 @@ def failures (checks : List Check) : IO (List String) :=
     catch error =>
       return some s!"{check.name} ({error})"
 
+/-- The directories a directory argument of the executable names: one, or
+several joined with `:`, as the editor reads its own
+(`ModuleLookup.searchPath`). -/
+def oleanDirs (argument : String) : List System.FilePath :=
+  (ModuleLookup.searchPath argument).map System.FilePath.mk
+
 /-- Imports the base once and runs every check: names on stderr the ones that
 failed, and returns the exit status, 0 when all hold and 1 otherwise.
 
 `sysroot` is the Lean toolchain's directory and `oleanDir` the directory
-holding the package's `.olean` files. -/
+holding the package's `.olean` files, or several joined with `:`
+(`oleanDirs`). -/
 def run (checks : Context → List Check) (sysroot oleanDir : String)
     (syntaxFixtures defaultConfig : System.FilePath) : IO UInt8 := do
   let real :=
-    Config.Elaborate.elaborator { sysroot, oleanDir, imports := #[`Editor, `ConfigFixture] }
+    Config.Elaborate.elaborator
+      { sysroot, oleanDirs := oleanDirs oleanDir, imports := #[`Editor, `ConfigFixture] }
   -- Compiled code writes to the fixture's cell before the base is imported.
   let bumped ← ConfigFixture.bump
   let base ← real.base
   let context : Context :=
     { elaborator := { real with base := pure base }, base, bumped, ids := ← IO.mkRef 100
-      waits := ← IO.mkRef none, syntaxFixtures, defaultConfig }
+      waits := ← IO.mkRef none, sysroot, oleanDirs := oleanDirs oleanDir, syntaxFixtures
+      defaultConfig }
   let checks := checks context
   let failed ← failures checks
   for name in failed do

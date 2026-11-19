@@ -14,13 +14,15 @@ namespace ModelTest
 open Editor
 
 /-- The checks of the headless mode's command line
-(`Editor/Headless/CommandLine.lean`): four paths anywhere, two in a bundle,
-and what is refused. -/
+(`Editor/Headless/CommandLine.lean`): four paths anywhere, the `.olean`
+directory among them a search path that the recorded directories follow
+outside a bundle; two in a bundle; and what is refused. -/
 def headlessCommandLineChecks : List Check :=
   let installed := "/Applications/Leanmacs.app/Contents/MacOS/editor"
   let outside := "/opt/leanmacs/bin/editor"
-  let read (appPath : String) (arguments : List String) : Option Headless.Arguments :=
-    (Headless.read appPath arguments).toOption
+  let recorded := ["/w/lean/.lake/build/lib/lean", "/w/packages/themes/.lake/build/lib/lean"]
+  let read (appPath : String) (arguments : List String) (recorded : List String := []) :
+    Option Headless.Arguments := (Headless.read appPath arguments recorded).toOption
   let refusal (appPath : String) (arguments : List String) : Option String :=
     match Headless.read appPath arguments with
     | .error reason => some reason
@@ -29,10 +31,10 @@ def headlessCommandLineChecks : List Check :=
   let refused (appPath : String) (arguments : List String) : Bool :=
     refusal appPath arguments == some ""
   let explicit (render : Bool) : Headless.Arguments :=
-    { render, sysroot := "/s", oleans := "/o", config := "/c", script := "/t" }
+    { render, sysroot := "/s", oleans := ["/o"], config := "/c", script := "/t" }
   let bundled (render : Bool) : Headless.Arguments :=
     { render, sysroot := "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain"
-      oleans := "/Applications/Leanmacs.app/Contents/Resources/lean/editor", config := "/c"
+      oleans := ["/Applications/Leanmacs.app/Contents/Resources/lean/editor"], config := "/c"
       script := "/t" }
   [{  name :=
         "four paths are the toolchain, the .olean directory, the config directory and the script, wherever the executable is"
@@ -41,13 +43,26 @@ def headlessCommandLineChecks : List Check :=
           (read outside ["/s", "/o", "/c", "/t"] == some (explicit false) &&
             read installed ["/s", "/o", "/c", "/t"] == some (explicit false)) },
     { name :=
+        "the .olean directory of four paths is a search path: the directories a colon joins, in order; outside a bundle the directories the build recorded for the executable follow them, and in a bundle nothing is added"
+      run :=
+        pure
+          (read outside ["/s", "/o:/p", "/c", "/t"] ==
+              some { explicit false with oleans := ["/o", "/p"] } &&
+            read outside ["/s", "/o", "/c", "/t"] recorded ==
+              some { explicit false with oleans := "/o" :: recorded } &&
+            read installed ["/s", "/o:/p", "/c", "/t"] recorded ==
+              some { explicit false with oleans := ["/o", "/p"] } &&
+            read installed ["/c", "/t"] recorded == some (bundled false)) },
+    { name :=
         "two paths are the config directory and the script, and an executable in a bundle imports from the bundle's two directories"
       run := pure (read installed ["/c", "/t"] == some (bundled false)) },
-    { name := "two paths outside a bundle are refused, because there is no toolchain, and say so"
+    { name :=
+        "two paths outside a bundle are refused, because there is no toolchain, and say so, whatever the build recorded for the executable"
       run :=
         pure
           (refusal outside ["/c", "/t"] == some Headless.noToolchain &&
-            refusal outside ["--render", "/c", "/t"] == some Headless.noToolchain) },
+            refusal outside ["--render", "/c", "/t"] == some Headless.noToolchain &&
+            (Headless.read outside ["/c", "/t"] recorded).toOption.isNone) },
     { name := "--render is read before two paths and before four"
       run :=
         pure

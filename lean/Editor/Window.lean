@@ -23,13 +23,14 @@ before the first event (`Options.starts`). It reads nothing itself, so
   bundle (`Editor/ModuleLookup.lean`). Outside one there is no default: Lean
   cannot run `lean --print-prefix` (that would spawn a process), so with
   none given no config is loaded, and the echo area says so (`noToolchain`).
-- **`--oleans`** is the directory of the editor's `.olean` files. When not
-  given it is the bundle's, `Contents/Resources/lean/editor`, for an
-  executable in a bundle. Outside one it is the directory the build that
-  linked the executable recorded beside it (`Editor/ModuleLookup.lean`,
-  "The record"), which the edge reads; an executable with no record has no
-  default, so with a toolchain and no `--oleans` no config is loaded, and
-  the echo area says to give it (`noModules`).
+- **`--oleans`** is the directory of the editor's `.olean` files: one, or
+  several joined with `:`, searched in order. When not given it is the
+  bundle's, `Contents/Resources/lean/editor`, for an executable in a
+  bundle. Outside one the directories the build that linked the executable
+  recorded beside it (`Editor/ModuleLookup.lean`, "The record"), which the
+  edge reads, are searched, after any `--oleans` gives; an executable with
+  no record has no default, so with a toolchain and no `--oleans` no config
+  is loaded, and the echo area says to give it (`noModules`).
 - **`--config`** is the config directory. When not given it is `leanmacs`
   under `$XDG_CONFIG_HOME`, or under `$HOME/.config` when that is unset or
   empty. A default directory that does not exist loads nothing and says
@@ -132,9 +133,9 @@ structure Options where
   configGiven : Bool
   /-- The Lean toolchain's directory, if one was given. -/
   sysroot : Option String
-  /-- The directory of the editor's `.olean` files; none when there is none
-  to use (`ModuleLookup.resolve`). -/
-  oleans : Option String
+  /-- The directories of the editor's `.olean` files, in the order they are
+  searched; empty when there is none to use (`ModuleLookup.resolve`). -/
+  oleans : List String
   /-- Whether an input method may compose: `false` with `--no-ime`. -/
   composition : Bool
   /-- Whether the window mode prints its report to stderr once the window
@@ -273,9 +274,9 @@ it exists. -/
 def Options.configPlan (options : Options) (defaultExists : Bool) : ConfigPlan :=
   match options.sysroot, options.oleans, options.config with
   | none, _, _ => .skip (some noToolchain)
-  | some _, none, _ => .skip (some noModules)
-  | some _, some _, none => .skip none
-  | some _, some _, some directory =>
+  | some _, [], _ => .skip (some noModules)
+  | some _, _ :: _, none => .skip none
+  | some _, _ :: _, some directory =>
     if options.configGiven || defaultExists then .load directory else .skip none
 
 /-- What the window mode posts to the editor loop before the first event. -/

@@ -52,7 +52,7 @@ asked to show is `scratch`; 1 otherwise, saying why on stderr. The process start
 run's. -/
 def windowHostScenario (file : Option String) : IO UInt8 := do
   let options : Editor.Window.Options :=
-    { file, config := none, configGiven := false, sysroot := none, oleans := none
+    { file, config := none, configGiven := false, sysroot := none, oleans := []
       composition := true, report := true }
   -- The window mode's shutdown, which first asks the window to minimise: a
   -- scripted window records that only while it runs, and runs until it is
@@ -145,7 +145,7 @@ saying why on stderr. -/
 def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 := do
   let options : Editor.Window.Options :=
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
-      oleans := some oleanDir, composition := true }
+      oleans := [oleanDir], composition := true }
   let status ←
     Editor.Window.host EditorCore.EditorPackage.packages .scripted options (.load configDir)
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
@@ -165,7 +165,7 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
 /-- The window mode as the editor at `editorPath` starts it when run
 directly with `--sysroot <sysroot> --config <configDir>` and no `--oleans`:
 the command line is read by `Window.parse`, given that executable's path,
-so the directory of the editor's `.olean` files is the default for it,
+so the directories of the editor's `.olean` files are the default for it,
 which the edge reads from the record the build wrote beside that
 executable (`Window.environmentAt`), and the host runs on the library's
 scripted platform as in `windowHostConfigScenario`, on the same fixture
@@ -209,7 +209,7 @@ render session was started; 1 otherwise, saying why on stderr. What the
 window mode prints of the failure is on stderr, for the gate to read. -/
 def windowHostUndrawnScenario (file : String) : IO UInt8 := do
   let options : Editor.Window.Options :=
-    { file := some file, config := none, configGiven := false, sysroot := none, oleans := none
+    { file := some file, config := none, configGiven := false, sysroot := none, oleans := []
       composition := true }
   let status ←
     Editor.Window.host EditorCore.EditorPackage.packages .scriptedUndrawn options (.skip none)

@@ -223,16 +223,20 @@ where
       (state.1, state.2.push pkg)
 
 /-- The text of a set's root module, for the entry modules `entries` in the
-order they register. It imports the config base, `Editor`, for the link
-alone (`Editor/Main.lean`, "This module names no package, and not the
-config base"), then the executable's entry, then each entry module; and its
-`main` is one call of `Editor.Main.run` with the entry modules' `packages`
-appended in that order. -/
-def rootSource (entries : Array Name) : String :=
+order they register and the config base `base` (`setBase`). It imports the
+core's base, `Editor`, for the link alone (`Editor/Main.lean`, "This module
+names no package, and not the config base"), then the executable's entry,
+then each entry module; and its `main` is one call of `Editor.Main.run`
+with the entry modules' `packages` appended in that order, and the base as
+an array of names. Every module of the base is among its imports, so each
+is linked into the executable, which the elaborator requires of a module it
+imports at runtime. -/
+def rootSource (entries base : Array Name) : String :=
   let imports := entries.foldl (fun text name => text ++ s!"import {name}\n") ""
   let lists :=
     if entries.isEmpty then "#[]"
     else " ++ ".intercalate (entries.map fun name => s!"{name}.packages").toList
+  let names := ", ".intercalate (base.map fun name => s!"`{name}").toList
   s!"import Editor
 import Editor.Main
 {imports}
@@ -244,9 +248,11 @@ the Lake packages of a package set, each after the packages it requires.
 Do not edit it: the build writes it again.
 -/
 
-/-- The editor, with the packages of the set's Lake packages. -/
+/-- The editor, with the packages of the set's Lake packages, and the
+modules config is elaborated on: `Editor`, then the entry module of each
+package of the set outside the core. -/
 def main (args : List String) : IO UInt32 :=
-  Editor.Main.run ({lists}) args
+  Editor.Main.run ({lists}) #[{names}] args
 "
 
 /-- Writes `text` to `file`, making its directory, unless the file holds
@@ -267,8 +273,33 @@ declares it. -/
 def setRootName : Name :=
   `EditorSetRoot
 
+/-- The entry modules of the set `pkg`, in the order they register
+(`setPackages`, `entryModule?`), each with whether its Lake package is this
+one, the core. -/
+def setEntries (pkg : Package) : FetchM (Array (Bool × Name)) := do
+  let ws ← getWorkspace
+  let mut entries : Array (Bool × Name) := #[]
+  for dep in setPackages ws pkg do
+    match ← entryModule? dep with
+    | some mod =>
+      entries := entries.push (dep.keyName == __name__, mod.name)
+    | none =>
+      pure ()
+  return entries
+
+/-- The config base of a set, from its entry modules (`setEntries`): the
+modules its editor elaborates config on. `Editor`, the core's base
+(`Editor.lean`), then the entry module of each package of the set outside
+the core, in the order they register, so that config can name what a
+package of the set declares: an entry module imports its package's modules.
+The core's own entry module is not in it: the core's base is `Editor`, and
+what config sees of the core does not change with the set
+(`docs/design/packages.md`, "The package set and its build"). -/
+def setBase (entries : Array (Bool × Name)) : Array Name :=
+  #[`Editor] ++ (entries.filter (!·.1)).map (·.2)
+
 /-- The root module of the set `pkg`, written from the entry modules of the
-set's packages (`setPackages`, `entryModule?`, `rootSource`) to
+set's packages (`setEntries`, `setBase`, `rootSource`) to
 `<set>/.lake/build/root/EditorSetRoot.lean`, and only when its text would
 change, so a build with nothing to do writes nothing.
 
@@ -279,39 +310,40 @@ That library takes this package's Lean options, so a warning in the root
 fails the build. Lake builds an executable's root the same way
 (`LeanExe.root`). -/
 def setRoot (pkg : Package) : FetchM Module := do
-  let ws ← getWorkspace
-  let mut entries : Array Name := #[]
-  for dep in setPackages ws pkg do
-    match ← entryModule? dep with
-    | some mod =>
-      entries := entries.push mod.name
-    | none =>
-      pure ()
+  let entries ← setEntries pkg
   let lib : LeanLib :=
     ⟨pkg, `EditorSet,
       { srcDir := pkg.config.buildDir / "root", roots := #[], leanOptions := coreLeanOptions }⟩
   let root : Module := { lib, name := setRootName }
-  writeIfChanged root.leanFile (rootSource entries)
+  writeIfChanged root.leanFile (rootSource (entries.map (·.2)) (setBase entries))
   return root
 
-/-- The record of where the `.olean` files of a set's packages are, written
-beside the editor the set's build links, at `<executable>.oleans`: one
-directory a line, the core's first, then that of each other package of the
-set that holds a Lean library, in the order they register (`setPackages`).
-
-The editor is linked into the set's build directory, and each package's
-modules are built in that package's own, so no directory relative to the
-executable holds the modules config is elaborated on. An editor run
-directly, outside a bundle, reads this record for its default `.olean`
-directory (`Editor/ModuleLookup.lean`, "The record"). It is written only
-when its text would change. -/
-def writeModuleRecord (pkg : Package) (executable : FilePath) : FetchM Unit := do
+/-- The `.olean` directories of the set `pkg`: the core's first, then that
+of each other package of the set that holds a Lean library, in the order
+they register (`setPackages`). They are what the set's editor searches for
+the modules of its config base (`setBase`). -/
+def moduleDirectories (pkg : Package) : FetchM (Array FilePath) := do
   let ws ← getWorkspace
   let some core := ws.findPackageByKey? __name__
     | error "the core's package is not in the workspace"
   let others :=
     (setPackages ws pkg).filter fun dep => dep.keyName != __name__ && !dep.leanLibs.isEmpty
-  let directories := #[core.leanLibDir] ++ others.map (·.leanLibDir)
+  return #[core.leanLibDir] ++ others.map (·.leanLibDir)
+
+/-- The record of where the `.olean` files of a set's packages are, written
+beside the editor the set's build links, at `<executable>.oleans`: one
+directory a line (`moduleDirectories`), the core's first, then that of each
+other package of the set that holds a Lean library, in the order they
+register.
+
+The editor is linked into the set's build directory, and each package's
+modules are built in that package's own, so no directory relative to the
+executable holds the modules config is elaborated on. An editor run
+directly, outside a bundle, reads this record and searches every directory
+of it (`Editor/ModuleLookup.lean`, "The record"). It is written only when
+its text would change. -/
+def writeModuleRecord (pkg : Package) (executable : FilePath) : FetchM Unit := do
+  let directories ← moduleDirectories pkg
   writeIfChanged (executable.toString ++ ".oleans")
       (directories.foldl (fun text directory => text ++ s!"{directory}\n") "")
 
@@ -371,6 +403,15 @@ writes the root when its text would change and builds nothing. -/
 package_facet editorRootTransImports pkg : Array String := do
   let root ← setRoot pkg
   (← root.transImports.fetch).mapM fun modules => return modules.map (·.name.toString)
+
+/-- The config base of a package set, one module a line
+(`lake -d <set dir> query :editorBase`; `setBase`): `Editor`, then the
+entry module of each package of the set outside the core. It is what the
+generated root hands `Editor.Main.run`, and what the bundle's module files
+are the closure of (`editorApp`, `mise run bundle-test`). It reads no
+source and builds nothing. -/
+package_facet editorBase pkg : Array String := do
+  return Job.pure ((setBase (← setEntries pkg)).map (·.toString))
 
 /-- The file of the executable `editorLinked` links for the module `mod`:
 in the `bin/` of the module's package, named as the module is with a dash
@@ -727,10 +768,12 @@ directory.
 
 It holds `Contents/MacOS/editor`, a copy of the set's `editor`; under
 `Contents/Resources/lean`, the `.olean`, `.olean.server` and
-`.olean.private` files of the modules `Editor` imports (the closure
-`config-test bench-modules` lists), from the toolchain Lake runs on, which
-is the pinned one, and from the core, laid out by
-`tools/stage-bundle.sh` as `bundle-test` lays them out; `Contents/Info.plist`
+`.olean.private` files of the modules the set's config base imports
+(`setBase`; the closure `config-test bench-modules` lists, over the set's
+`.olean` directories, `moduleDirectories`), from the toolchain Lake runs
+on, which is the pinned one, and from the core and each package of the set
+whose modules the base holds, all in the bundle's one directory, laid out
+by `tools/stage-bundle.sh` as `bundle-test` lays them out; `Contents/Info.plist`
 (`appInfoPlist`), with the version from `app/version` (`appVersionFile`,
 `parseAppVersion`, which fails the build on a malformed line) and the build
 ID and the commit from `LEANMACS_BUILD_ID` and `LEANMACS_COMMIT`
@@ -763,6 +806,10 @@ package_facet editorApp pkg : FilePath := do
   requireArm64Mac
   let some core := (← getWorkspace).findPackageByKey? __name__
     | error "the core's package is not in the workspace"
+  -- The set's config base and the directories its modules are in, which
+  -- the bundle's module files are the closure of and are copied from.
+  let base := (setBase (← setEntries pkg)).map (·.toString)
+  let searched := ":".intercalate ((← moduleDirectories pkg).map (·.toString)).toList
   let exe ← fetch <| pkg.facet `editor
   let lister ← «config-test».fetch
   let library ← Editor.fetch
@@ -824,13 +871,13 @@ package_facet editorApp pkg : FilePath := do
           let modules ←
             captureProc
                 { cmd := lister.toString
-                  args := #["bench-modules", sysroot.toString, core.leanLibDir.toString, "Editor"] }
+                  args := #["bench-modules", sysroot.toString, searched] ++ base }
           IO.FS.writeFile closure (modules ++ "\n")
           proc (quiet := true)
               { cmd := stager.toString
                 args :=
                   #["--closure", closure.toString, staged.toString, exe.toString, sysroot.toString,
-                    core.leanLibDir.toString, "olean", "olean.server", "olean.private"] }
+                    searched, "olean", "olean.server", "olean.private"] }
           IO.FS.writeFile (staged / "Contents" / "Info.plist") plist
           -- The system's tools, by absolute path: mise's PATH may hold others of
           -- the same name (a Python package installs an `xattr` with no `-r`).

@@ -23,13 +23,20 @@ still leaves out the compiler.
 
 ## The base
 
-`base` imports the modules it is given (`Editor`, for the editor) from their
-`.olean` files and elaborates `open Editor`, so config needs no prefix. The
-session core calls it once per process.
+`base` imports the modules it is given from their `.olean` files and
+elaborates `open Editor`, so config needs no prefix. The session core calls
+it once per process. The editor's base is its package set's: `Editor`, then
+the entry module of each package of the set outside the core
+(`Editor/Main.lean`, "The base"); a host that is handed none uses `Editor`
+alone.
 
-- **Paths are arguments.** The search path is exactly the package's `.olean`
-  directory and `lib/lean` under the toolchain's directory. It is not Lean's
-  `initSearchPath`, which also reads `LEAN_PATH` from the environment.
+- **Paths are arguments.** The search path is exactly the `.olean`
+  directories it is given, in order, and then `lib/lean` under the
+  toolchain's directory: the core's directory, and that of each package
+  whose modules the base holds (`Editor/ModuleLookup.lean`). A base module
+  that is in none of them fails the import, naming the module. It is not
+  Lean's `initSearchPath`, which also reads `LEAN_PATH` from the
+  environment.
 - **One copy of a module's globals.** `enableInitializersExecution` and
   `importModules (loadExts := true)` are what make interpreted config and
   compiled code see the same values. The import runs no initialiser of a
@@ -40,14 +47,13 @@ session core calls it once per process.
   runs on a job thread while the editor thread is running, and Lean
   documents running initialisers as unsafe beside other threads. This
   module does not import `Editor` to make it so: it is a core module, and
-  the base imports features that are not the core's
-  (`docs/design/packages.md`). Each root that links this module imports
-  `Editor` beside it (the root the package-set build generates for the
-  editor, `ConfigTest/Check.lean`, `FfiTest/Editor/Window/Real.lean`), and
-  the gate checks on Lake's module
-  graph that every root that reaches this module reaches `Editor`
-  (`tools/core-imports-check.sh`). `Settings.imports` still defaults to the
-  name `Editor`, which is data.
+  the base is not (`docs/design/packages.md`). Each root that links this
+  module imports `Editor` beside it (the root the package-set build
+  generates for the editor, which also imports each entry module its base
+  names; `ConfigTest/Check.lean`; `FfiTest/Editor/Window/Real.lean`), and
+  the gate checks on Lake's module graph that every root that reaches this
+  module reaches `Editor` (`tools/core-imports-check.sh`).
+  `Settings.imports` still defaults to the name `Editor`, which is data.
 - **Config cannot name a binding.** `Editor` never imports `Editor.Ffi`
   (`Editor.lean`), so the base does not hold it.
 
@@ -93,10 +99,13 @@ abbrev State :=
 structure Settings where
   /-- The Lean toolchain's directory: its modules are under `lib/lean`. -/
   sysroot : System.FilePath
-  /-- The directory holding the `.olean` files of the editor's package. -/
-  oleanDir : System.FilePath
-  /-- The modules of the base. The editor's is `Editor`; tests and the
-  benchmark add to it. -/
+  /-- The directories holding the `.olean` files of the base's modules,
+  in the order they are searched: the core's, and each package's whose
+  modules the base holds. -/
+  oleanDirs : List System.FilePath
+  /-- The modules of the base. The core's is `Editor`; the editor's adds
+  the entry module of each package of its set, and tests and the benchmark
+  add to it. -/
   imports : Array Lean.Name := #[`Editor]
 
 /-- The options every elaboration runs with: synchronously, so that every
@@ -139,7 +148,7 @@ imported modules' initialisers must be safe to run beside the threads that
 are running, and those of the editor's base are not run at all (see the
 module docs). -/
 unsafe def importUnsafe (settings : Settings) : IO Lean.Environment := do
-  Lean.searchPathRef.set [settings.oleanDir, settings.sysroot / "lib" / "lean"]
+  Lean.searchPathRef.set (settings.oleanDirs ++ [settings.sysroot / "lib" / "lean"])
   Lean.enableInitializersExecution
   Lean.importModules (settings.imports.map fun module => { module }) options (loadExts := true)
 

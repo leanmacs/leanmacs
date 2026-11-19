@@ -12,7 +12,7 @@ import Editor.WindowCheck.Real
 Lean owns the process. `Editor.Main.run` is what the executable's `main`
 calls: it acts on the mode the command line selects
 (`Editor/Executable.lean`, which pins the dispatch as a pure function),
-handing the hosts the packages it is given.
+handing the hosts the packages and the config base it is given.
 
 `editor demo` only shows the build works: it calls the Rust library and
 prints what comes back, and it runs one command against the library through
@@ -59,14 +59,32 @@ that defines a package, which `tools/host-imports-check.sh` checks on
 Lake's module graph.
 
 It does not import the config base, `Editor` (`Editor.lean`), either: the
-base imports features that are not the core's, and this is a core module
-(`Editor/Core.lean` imports it). The elaborator adapter the hosts bring
+base is not a core module, and this is one (`Editor/Core.lean` imports it).
+The elaborator adapter the hosts bring
 (`Editor/Config/Elaborate.lean`, "The base") imports the base's modules
 from their `.olean` files at runtime, and each must already be linked into
 the executable, so that the import runs no initialiser. So the root that
 calls `run` imports the base beside this module, for the link alone, and
 `tools/core-imports-check.sh` checks that every root that links the
 adapter does.
+
+## The base
+
+Config is elaborated on a base of modules, and the base is the package
+set's, handed to `run` as names: `Editor`, the core's base, then the entry
+module of each package of the set outside the core, in the order they
+register (`<P>.EditorPackage`; `docs/design/packages.md`, "The package set
+and its build"). So config can name what a package of the set declares:
+the entry module imports the package's modules. The generated root writes
+the list and imports each module of it, so each is linked. The core's own
+entry module is not in it: what config sees of the core is what `Editor`
+imports.
+
+`run` passes the base to the headless mode and to the window mode, which
+hand it to the elaborator with the directories its modules are found in
+(`Editor/ModuleLookup.lean`): outside a bundle those the build recorded for
+the executable, one a package, and in a bundle the bundle's one. A set with
+no package beside the core's hands `Editor` alone.
 -/
 
 namespace Editor.Main
@@ -100,8 +118,9 @@ def demo : IO UInt32 := do
   return if sum == 5 && !leanOnMain && serviceOnMain && appended then 0 else 1
 
 /-- Runs the mode the command line `args` selects (`Executable.mode`),
-with `packages` as the packages the hosts register. The match is
-exhaustive on purpose: it must act on every mode.
+with `packages` as the packages the hosts register and `base` as the
+modules config is elaborated on ("The base", in the module docs). The match
+is exhaustive on purpose: it must act on every mode.
 
 With `demo`, the demonstration. With `--version`, the build's version, build
 ID and commit on stdout and status 0, or, when its bundle's `Info.plist`
@@ -114,8 +133,8 @@ opened. Any other command line, an empty one too, is the window mode's,
 which opens a window, on a file when one is given, and exits 0 when the
 window ran, 1 when it could not be opened, and 2, with its usage, for a
 command line it does not take. The headless mode and the window mode are
-each handed `packages`. -/
-def run (packages : Array Package) (args : List String) : IO UInt32 := do
+each handed `packages` and `base`. -/
+def run (packages : Array Package) (base : Array Lean.Name) (args : List String) : IO UInt32 := do
   match Editor.Executable.mode args with
   | .demo =>
     demo
@@ -133,10 +152,10 @@ def run (packages : Array Package) (args : List String) : IO UInt32 := do
       IO.eprintln text
     pure status
   | .headless rest =>
-    Editor.Headless.main packages rest
+    Editor.Headless.main packages base rest
   | .windowCheck options =>
     Editor.WindowCheck.main options
   | .window arguments =>
-    Editor.Window.main packages arguments
+    Editor.Window.main packages base arguments
 
 end Editor.Main

@@ -55,7 +55,8 @@ config session on fakes. The checks here pin what only real collaborators can
 show:
 
 - `elaboratorChecks`: the real elaborator behaves as the fake of its port
-  assumes, and compiled code and config share state;
+  assumes, compiled code and config share state, and the base's modules are
+  looked for in every directory it is given, in order;
 - `directoryChecks`: the directory source, each check in a temporary
   directory of its own;
 - `hostChecks`: the phase's acceptance tests through the headless host, with

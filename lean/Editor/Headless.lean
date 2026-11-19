@@ -2530,9 +2530,12 @@ def drawnDisplay (snapshots : SnapshotReader) : IO Host.Display := do
 /-- The collaborators the executable's hosts are made of, over the jobs'
 `services`, the table of snapshots `published` and what jobs hold `held`:
 `packages` as the packages the host registers, the real elaborator over the
-toolchain in `sysroot` and the editor's `.olean` files in `oleanDir`, the
-config directory `configDir` as the source, `emit` as the output and stderr
-as the log. Its input scheme is the Vim scheme's default
+toolchain in `sysroot` and the editor's `.olean` files in the directories
+`oleans`, searched in order, the config directory `configDir` as the
+source, `emit` as the output and stderr as the log. Config is elaborated on
+`base`, the modules it names: `Editor` alone unless the caller hands the
+base of its package set (`Editor/Main.lean`, "The base"), each module of
+which must be linked into the executable and found in `oleans`. Its input scheme is the Vim scheme's default
 (`Vim.Default.scheme`), which is the host's type and no package's. Its
 display is the recorder and its clipboard its own, as a host's are by
 default.
@@ -2543,10 +2546,13 @@ register is said there and in each package's module.
 
 It is apart from `shipped`, which makes what it is over, so that the
 collaborators can be made with no pump started. -/
-def shippedOver (packages : Array Package) (sysroot oleanDir configDir : String)
-    (emit : String → IO Unit) (services : Job.Services) (published : Snapshots)
-    (held : Job.HeldSnapshots) : Collaborators Config.Elaborate.State Vim.Default.scheme :=
-  { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
+def shippedOver (packages : Array Package) (sysroot : String) (oleans : List String)
+    (configDir : String) (emit : String → IO Unit) (services : Job.Services) (published : Snapshots)
+    (held : Job.HeldSnapshots) (base : Array Lean.Name := #[`Editor]) :
+    Collaborators Config.Elaborate.State Vim.Default.scheme :=
+  { elaborator :=
+      Config.Elaborate.elaborator
+        { sysroot, oleanDirs := oleans.map System.FilePath.mk, imports := base },
     source := Config.Directory.source configDir, emit, services, published, held, requests := 1,
     wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6, packages
     log := IO.eprintln }
@@ -2566,12 +2572,14 @@ registers: `shippedOver` the library's timer service,
 file service, process service, watch service and diff service for the
 jobs, the library's matcher (`Fuzzy.real`), which the loop's match jobs ask,
 and the environments they share for the mode `host` (`reportedEnvironments`).
+Config is elaborated on `base`, `Editor` alone by default (`shippedOver`).
 
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
 queues ends. -/
-def shipped (packages : Array Package) (sysroot oleanDir configDir : String)
-    (emit : String → IO Unit) (host : Process.Host) (fakeClock : Bool := false) :
+def shipped (packages : Array Package) (sysroot : String) (oleans : List String)
+    (configDir : String) (emit : String → IO Unit) (host : Process.Host) (fakeClock : Bool := false)
+    (base : Array Lean.Name := #[`Editor]) :
     IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
@@ -2593,18 +2601,19 @@ def shipped (packages : Array Package) (sysroot oleanDir configDir : String)
   let timers := (clock.map (·.timers)).getD (Job.realTimers completions)
   let environments ← IO.mkRef ({ host } : Process.Environments)
   let collaborators :=
-    shippedOver packages sysroot oleanDir configDir emit
+    shippedOver packages sysroot oleans configDir emit
       { completions, timers
         files := Job.realFiles completions published.reader held
         processes := Job.realProcesses completions refused timers timed
         fileWatches := Job.realFileWatches completions watches
         diffs := Job.realDiffs completions published.reader held refusedDiffs
         environments := reportedEnvironments environments 4, fuzzy := Fuzzy.real
-        snapshots := Job.realSnapshots published.reader } published held
+        snapshots := Job.realSnapshots published.reader } published held base
   return { collaborators with clock }
 
 /-- The headless mode of the executable, handed the packages its host
-registers and the command line after
+registers, the base config is elaborated on (`Editor/Main.lean`, "The
+base") and the command line after
 `headless`: `editor headless [--render] [<sysroot> <olean dir>] <config dir>
 <script file>`, read by `Headless.read` (`Editor/Headless/CommandLine.lean`).
 Registers `packages`, in order, loads the config in `configDir` with the real elaborator,
@@ -2631,17 +2640,29 @@ it (`drawnDisplay`), in place of the recorder. The script's `agree`, `idle`
 and `journal` read that display's frame and that loop. The session is
 stopped before the queues are quit.
 
-The Lean toolchain's directory and the directory holding the editor
-package's `.olean` files are the first two of four paths, or, with two, the
-bundle's, resolved from the executable's path, which `main` reads at the
-edge (`IO.appPath`; `Editor/ModuleLookup.lean`). Nothing is read from the
-environment. The working directory is read once, at the edge, as the
+The Lean toolchain's directory and the directories holding the `.olean`
+files of the base's modules are the first two of four paths, the second a
+search path whose directories are followed by the ones the build recorded
+for the executable, or, with two, the bundle's, resolved from the
+executable's path; `main` reads that path and the record at the edge
+(`IO.appPath`, `ModuleLookup.recorded` with the real file read;
+`Editor/ModuleLookup.lean`). Nothing is read from the environment. The working directory is read once, at the edge, as the
 editor's (`Collaborators.workingDirectory`): where `:!` runs for a buffer
 with neither a workspace nor a file; no path of the command line is read
 against it. -/
-def main (packages : Array Package) (arguments : List String) : IO UInt32 := do
-  let { render := drawn, sysroot, oleans := oleanDir, config := configDir, script := scriptPath } ←
-    match read (← IO.appPath).toString arguments with
+def main (packages : Array Package) (base : Array Lean.Name) (arguments : List String) :
+    IO UInt32 := do
+  let appPath := (← IO.appPath).toString
+  -- The record the build wrote beside the executable, read at the edge: a
+  -- record that is not there, or cannot be read, names no directory.
+  let readFile (path : System.FilePath) : IO (Option String) := do
+    try
+      return some (← IO.FS.readFile path)
+    catch _ =>
+      return none
+  let recorded ← ModuleLookup.recorded appPath readFile
+  let { render := drawn, sysroot, oleans, config := configDir, script := scriptPath } ←
+    match read appPath arguments recorded with
     | .ok read =>
       pure read
     | .error reason =>
@@ -2660,7 +2681,8 @@ def main (packages : Array Package) (arguments : List String) : IO UInt32 := do
     if let .error reason← Ffi.renderHeadless then
       IO.eprintln s!"editor: the headless render session could not be started: {reason}"
       return 1
-  let shipped ← shipped packages sysroot oleanDir configDir IO.println .headless (fakeClock := true)
+  let shipped ←
+    shipped packages sysroot oleans configDir IO.println .headless (fakeClock := true) base
   let workingDirectory ← IO.currentDir
   let failure ←
     run

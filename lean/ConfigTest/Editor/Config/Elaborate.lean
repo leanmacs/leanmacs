@@ -163,6 +163,31 @@ def elaboratorChecks (context : Context) : List Check :=
         let result ←
           onBase context "init.lean"
               "initialize discard (IO.mkRef 0)\ndef setup : SetupM Unit := pure ()"
-        return rejected "init.lean" result }]
+        return rejected "init.lean" result },
+    { name :=
+        "the base's modules are looked for in every directory the elaborator is given, in order: a module in the second of two directories is imported, and with that directory left out the import is refused, naming the module"
+      run := do
+        -- The first directory is an empty one of the check's own; the rest
+        -- are the ones this executable was handed. The module is linked
+        -- into this executable, so importing it runs no initialiser.
+        let empty ← IO.FS.createTempDir
+        try
+          let imported (directories : List System.FilePath) : IO (Except String Unit) := do
+            try
+              discard <|
+                  Config.Elaborate.importBase
+                    { sysroot := context.sysroot, oleanDirs := directories
+                      imports := #[`ConfigFixture] }
+              return .ok ()
+            catch error =>
+              return .error (toString error)
+          let found ← imported (empty :: context.oleanDirs)
+          let refused ← imported [empty]
+          return found.isOk &&
+              match refused with
+              | .error reason => (reason.splitOn "ConfigFixture").length > 1
+              | .ok _ => false
+        finally
+          IO.FS.removeDirAll empty }]
 
 end ConfigTest

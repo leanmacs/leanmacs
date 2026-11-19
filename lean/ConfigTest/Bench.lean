@@ -195,7 +195,7 @@ config through a host, and prints how long each took. -/
 def start (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
   let real :=
     Config.Elaborate.elaborator
-      { sysroot, oleanDir, imports := (modules.map String.toName).toArray }
+      { sysroot, oleanDirs := oleanDirs oleanDir, imports := (modules.map String.toName).toArray }
   let before ← IO.monoNanosNow
   let base ← real.base
   let imported := (← IO.monoNanosNow) - before
@@ -208,7 +208,7 @@ def start (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
 /-- `bench-reload`: twenty reloads of each of the three configs, each reload
 with the text changed, and prints the median and the maximum of each. -/
 def reload (sysroot oleanDir : String) : IO UInt8 := do
-  let rig ← Rig.start (Config.Elaborate.elaborator { sysroot, oleanDir })
+  let rig ← Rig.start (Config.Elaborate.elaborator { sysroot, oleanDirs := oleanDirs oleanDir })
   -- The first load imports the base; it is not one of the twenty.
   discard <| rig.reload (oneLine 0)
   let configs :=
@@ -227,7 +227,7 @@ every module the import read, one a line and unescaped, so that
 def modules (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
   let environment ←
     Config.Elaborate.importBase
-        { sysroot, oleanDir, imports := (modules.map String.toName).toArray }
+        { sysroot, oleanDirs := oleanDirs oleanDir, imports := (modules.map String.toName).toArray }
   for name in environment.allImportedModuleNames do
     IO.println (name.toString (escape := false))
   return 0
@@ -235,7 +235,7 @@ def modules (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
 /-- `bench-soak`: `count` reloads of the fifty-definition config, each with
 the text changed, and prints the mean time of one. -/
 def soak (sysroot oleanDir : String) (count : Nat) : IO UInt8 := do
-  let rig ← Rig.start (Config.Elaborate.elaborator { sysroot, oleanDir })
+  let rig ← Rig.start (Config.Elaborate.elaborator { sysroot, oleanDirs := oleanDirs oleanDir })
   discard <| rig.reload (fiftyDefinitions 0)
   let mut total := 0
   for round in [1:count + 1] do
@@ -378,7 +378,7 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
       if line.startsWith "reload " || line.startsWith "diagnostic: " then
         reloads.modify (·.push line)
   -- The base is imported once, here, and every host is handed it.
-  let adapter := Config.Elaborate.elaborator { sysroot, oleanDir }
+  let adapter := Config.Elaborate.elaborator { sysroot, oleanDirs := oleanDirs oleanDir }
   let base ← adapter.base
   let elaborator := { adapter with base := pure base }
   let ids ← IO.mkRef (1 : UInt64)
@@ -571,7 +571,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
   let timers := Job.realTimers completions
-  let elaborator := Config.Elaborate.elaborator { sysroot, oleanDir }
+  let elaborator := Config.Elaborate.elaborator { sysroot, oleanDirs := oleanDirs oleanDir }
   let ids ← IO.mkRef (1 : UInt64)
   let refused ← IO.mkRef 0
   -- The editor thread reads the clock when it prints that it ran `noop`, and
@@ -685,8 +685,8 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
               #[{ name := "noop", action := .plain (pure ()) },
                 { name := "make-buffers", action := .plain makeWordBuffers }] })
     let shipped :=
-      Headless.shippedOver packages sysroot oleanDir "" emit services published
-        (← Job.HeldSnapshots.new)
+      Headless.shippedOver packages sysroot (ModuleLookup.searchPath oleanDir) "" emit services
+        published (← Job.HeldSnapshots.new)
     let host ←
       Headless.start
           { shipped with
@@ -892,7 +892,7 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
       refused.modify (· + 1)
   let host ←
     Headless.start (scheme := TestScheme.scheme)
-        { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir }
+        { elaborator := Config.Elaborate.elaborator { sysroot, oleanDirs := oleanDirs oleanDir }
           source := { chunks := pure #[] }, emit, services, published, held, requests := 1
           wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
           packages :=

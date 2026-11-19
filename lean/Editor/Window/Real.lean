@@ -236,14 +236,16 @@ it could not be opened, when nothing could draw in it (`nothingDrew`, said
 on stderr, and in the echo area while the loop still runs), or when the loop
 ended with an error. The editor's working directory is `workingDirectory`
 (`Headless.Collaborators.workingDirectory`): the process's, which `main`
-read at the edge. -/
+read at the edge. Config is elaborated on `base`, `Editor` alone unless
+`main` hands on its package set's (`Editor/Main.lean`, "The base"). -/
 def host (packages : Array Package) (platform : Ffi.Platform) (options : Options)
     (plan : ConfigPlan) (display : Ffi.Display) (clipboard : ClipboardHandler) (said : Array String)
     (shutdown : IO Unit) (processes : Process.Host) (patience : Option Nat := some configPatience)
-    (workingDirectory : System.FilePath := "/") : IO UInt32 := do
+    (workingDirectory : System.FilePath := "/") (base : Array Lean.Name := #[`Editor]) :
+    IO UInt32 := do
   let shipped ←
-    Headless.shipped packages (options.sysroot.getD "") (options.oleans.getD "")
-        (options.config.getD "") IO.eprintln processes
+    Headless.shipped packages (options.sysroot.getD "") options.oleans (options.config.getD "")
+        IO.eprintln processes (base := base)
   let collaborators :=
     { shipped with
       display := hostDisplay display platform
@@ -330,15 +332,16 @@ def environmentAt (appPath : String) : IO Environment := do
       xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME", home := ← IO.getEnv "HOME", appPath
       recordedOleans := ← ModuleLookup.recorded appPath readFile }
 
-/-- `editor [<file>]`, with the packages its host registers and the command
-line's `arguments`: reads the world at
+/-- `editor [<file>]`, with the packages its host registers, the base
+config is elaborated on and the command line's `arguments`: reads the world at
 the edge, opens the system's display and clipboard, and runs `host` on the
 real window, with `shutdown`. A command line it does not take is the reason
 and the usage on stderr, and status 2. It exits explicitly, with the status
 `host` gave. When the system's quit was let go ahead, the platform may have
 ended the process with status 0 inside the run instead (the window port's
 rule; AppKit's terminate on macOS), once `shutdown` had run. -/
-def main (packages : Array Package) (arguments : List String) : IO UInt32 := do
+def main (packages : Array Package) (base : Array Lean.Name) (arguments : List String) :
+    IO UInt32 := do
   let environment ← environmentAt (← IO.appPath).toString
   let options ←
     match parse environment arguments with
@@ -372,7 +375,7 @@ def main (packages : Array Package) (arguments : List String) : IO UInt32 := do
   let home := environment.home.filter (!·.isEmpty) |>.map System.FilePath.mk
   let status ←
     host packages .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
-        (.window home) (workingDirectory := environment.workingDirectory)
+        (.window home) (workingDirectory := environment.workingDirectory) (base := base)
   IO.Process.exit status.toUInt8
 
 end Editor.Window

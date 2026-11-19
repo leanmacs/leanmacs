@@ -88,7 +88,13 @@
 #    command line tools (it loads no `libxcselect`).
 # 6. Run the relinked editor with an empty environment, from a working
 #    directory outside the stage, on the staged toolchain and `.olean`
-#    files:
+#    files. Its config base is its set's: `Editor`, then the entry module
+#    of each default package and of the fixture package, and the relinked
+#    editor has no record of where their `.olean` files are, so it is given
+#    both directories, joined with `:`: the staged pieces' (`core/lib`,
+#    the core's and the default packages') and the one the package's build
+#    wrote (`package/.lake/build/lib/lean`), which holds the fixture
+#    package's entry module:
 #    - `editor headless … tests/headless/config tests/headless/script` must
 #      print exactly `tests/headless/expected`, the standing fixture, but
 #      for one word: the relinked editor is linked from a set that holds
@@ -542,8 +548,10 @@ step="6 (run)"
 echo "6. run the relinked editor"
 # The relinked editor's mode `$1` on the config `$2` and the script `$3`,
 # with an empty environment, from a working directory outside the stage.
+# It has no record, so it is given every directory its config base's
+# modules are in: the staged pieces', then the package's own.
 run_editor() {
-  (cd "$work/elsewhere" && /usr/bin/env -i "$relinked" "$1" "$stage/toolchain" "$stage/core/lib" "$2" "$3")
+  (cd "$work/elsewhere" && /usr/bin/env -i "$relinked" "$1" "$stage/toolchain" "$stage/core/lib:$package/.lake/build/lib/lean" "$2" "$3")
 }
 out=$(run_editor headless "$headless/config" "$headless/script") ||
   fail "the relinked editor's headless mode failed on tests/headless"
