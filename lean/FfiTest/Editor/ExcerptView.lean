@@ -15,7 +15,7 @@ import Editor.Scene
 import Editor.State
 import Editor.Text
 import Editor.Text.Real
-import FfiTest.Support.Pictures
+import Editor.Themes.Picture
 import FfiTest.Support.Scenes
 
 /-!
@@ -28,6 +28,8 @@ says what it shows.
 -/
 
 namespace FfiTest
+
+open Editor.Themes.Picture
 
 /-- The size of the excerpt picture, a theme picture's. -/
 def excerptPictureSize : Editor.Size :=

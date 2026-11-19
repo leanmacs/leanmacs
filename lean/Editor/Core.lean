@@ -30,6 +30,7 @@ import Editor.Shell.Compiled
 import Editor.SyntaxTree.Contract
 import Editor.TabCommands.Compiled
 import Editor.Themes.Compiled
+import Editor.Themes.Picture
 import Editor.VersionControl.Compiled
 import Editor.VersionControl.Contract
 import Editor.Watch.Contract

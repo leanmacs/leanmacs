@@ -568,10 +568,10 @@ none. What replaced each edge is an interface the core owns.
 
 ## The module map
 
-Every module under `lean/Editor/`, 255 of them
-(`find lean/Editor -name '*.lean' | wc -l`; 254 at `6ba99de5`, and phase 4
-added `Editor.Main`), is **core** or part of a **feature that could become
-a package**. The counts below add up to 255: 169 core and 86 in 21
+Every module under `lean/Editor/`, 256 of them
+(`find lean/Editor -name '*.lean' | wc -l`; 254 at `6ba99de5`, phase 4
+added `Editor.Main` and phase 5 `Editor.Themes.Picture`), is **core** or part of a **feature that could become
+a package**. The counts below add up to 256: 169 core and 87 in 21
 features.
 
 - **Core** is what a host with no packages needs to start and run: the
@@ -646,6 +646,7 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.TabCommands.Compiled` | 1 | feature: tab-commands | no |
 | `Editor.Themes`, `Editor.Themes.Check` | 2 | feature: themes | yes |
 | `Editor.Themes.Compiled` | 1 | feature: themes | no |
+| `Editor.Themes.Picture`, the theme picture check | 1 | feature: themes | in tests |
 | `Editor.VersionControl.Compiled` | 1 | feature: version-control | no |
 | `Editor.VersionControl.Model`, `.Contract` | 2 | feature: version-control | in tests |
 | `Editor.VersionControl` and 16 of the modules under it (all but `.Compiled`, `.Model` and `.Contract`) | 17 | feature: version-control | yes |
@@ -851,7 +852,7 @@ For each feature, from Lake's direct imports (`lake query
 
 #### `themes`
 
-- **Modules** (3): `Themes`, `Themes.Check`, `Themes.Compiled`.
+- **Modules** (4): `Themes`, `Themes.Check`, `Themes.Compiled`, `Themes.Picture`.
 - **Core modules that import it**: none.
 - **Other features' modules that import it**: none.
 - **Other features it imports**: evil (`InputScheme.Vim.Default`).

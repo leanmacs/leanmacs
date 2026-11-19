@@ -1,17 +1,21 @@
-# The shipped themes' reference images
+# The themes' reference images
 
-Each file here is one shipped theme's picture of the fixture file
+Each file here is one theme's picture of the fixture file
 `source.lean`, as the headless CPU renderer draws it. The gate draws the
 same picture again and compares it with the file: `ffi-test
 theme-pictures` in `mise run ffi-test`
-(`lean/FfiTest/Editor/Themes/Shipped.lean`, `themePicturesScenario`).
-The scene is built in Lean and published through the display's real
-binding, in the theme as `Themes.Shipped.themes` holds it
-(`lean/Editor/Themes/Shipped.lean`), so what is compared is what the
-editor sends, not a theme written again in Rust.
+(`FfiTest.themePictures`, `lean/FfiTest.lean`), which runs the core's theme
+picture check (`lean/Editor/Themes/Picture.lean`,
+`themePicturesScenario`) on the built-in theme, `default`
+(`Theme.builtin`, `lean/Editor/Face.lean`), and on each shipped palette as
+`Themes.Shipped.themes` holds it (`lean/Editor/Themes/Shipped.lean`). The
+scene is built in Lean and published through the display's real binding,
+so what is compared is what the editor sends, not a theme written again in
+Rust.
 
 | File | Size | Bytes | sha256 |
 |---|---|---|---|
+| `default.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15549 | `3344637de4787fddcf636603b3650b983ed153599ede4e2a985be06ce8b4d836` |
 | `solarized-dark.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15495 | `efa5fb8bb590520c13310a3182c840534328c0dae8f5ddf10d247bfd31cfe715` |
 | `solarized-light.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15464 | `fe37d976ac452e208cd19eed0ac85696e066f76731f61c23e00f6cf40840abea` |
 | `fairy-floss.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16054 | `6048381627cfee308b70a1eb3ff54167343f5d48e9755d75353a683d448fcd6f` |
@@ -35,7 +39,7 @@ while its background runs to both edges:
 - a block cursor on that `h`, in the face of the Vim scheme's visual state
   (`cursor.visual`): the paper on the cursor colour;
 - the mode line across the bottom, the shipped one of a selected window
-  in visual state (`FfiTest.themeStatus`, `lean/Editor/ModeLine.lean`):
+  in visual state (`Themes.Picture.themeStatus`, `lean/Editor/ModeLine.lean`):
   on the left the `VISUAL` badge in `mode-line.state.visual`, the paper on
   the theme's visual accent, with 8 points of it each side of the text,
   then `source.lean` in `mode-line.buffer`; on the right, ending at the
@@ -70,7 +74,10 @@ agent that implemented it: Solarized's two came out the same bytes, since
 Solarized's selection colour is its `mode-line`'s, base02; Fairy Floss's
 changed in the status row alone, rows 132 to 159, whose background went
 from the theme's line highlight, 62, 61, 50, to its selection, 73, 72, 62,
-found by decoding the old and the new file. Looking at them
+found by decoding the old and the new file. `default.png` was made when the picture check became the core's
+(2026-11-19) and looked at, enlarged four times, by the agent that made
+it: the same scene in the placeholder palette, the badge the palette's
+magenta. Looking at them
 checks that they show text, a selection and a cursor; it does not judge
 how the theme looks, which is left to the owner's day-to-day use.
 

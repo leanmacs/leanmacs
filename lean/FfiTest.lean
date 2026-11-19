@@ -24,6 +24,7 @@ import FfiTest.Editor.Ffi.Transaction
 import FfiTest.Editor.Ffi.Watches
 import FfiTest.Editor.Ffi.Window
 import FfiTest.Editor.State
+import FfiTest.Editor.Themes.Picture
 import FfiTest.Editor.Themes.Shipped
 import FfiTest.Editor.Window.Real
 import FfiTest.Editor.WindowCheck.Real
@@ -57,8 +58,10 @@ Some behaviour needs a process of its own, so it is a scenario chosen by an
 argument (see `main`): `exit <code>` for the exit status, `shutdown` and
 `exit-while-blocked` because quitting the queues is for good, and `overflow`
 because it ends in an abort. `theme-pictures <dir> <font>` compares the
-shipped themes' pictures of a fixture file with their reference
-images (`themePicturesScenario`), and with `--write` makes them again. `mise run ffi-test` runs the checks and every
+pictures of the theme `default` and of the shipped palettes, of a fixture
+file, with their reference images (`themePictures`, which runs the core's
+theme picture check, `Editor/Themes/Picture.lean`), and with `--write`
+makes them again. `mise run ffi-test` runs the checks and every
 scenario but `overflow`, under a time limit, and is part of the gate.
 `mise run ffi-overflow` runs `overflow`, on demand only: on macOS every abort
 leaves a crash report on the machine.
@@ -100,6 +103,16 @@ def checks (_ : Unit) : List Check :=
     paddingChecks () ++
     renderChecks ()
 
+/-- The `theme-pictures` scenario: the theme picture check
+(`Themes.Picture.themePicturesScenario`) over the reference images in
+`dir` and the font file `font`, on the theme `default` (`defaultRoles`)
+and the shipped palettes (`shippedRoles`), guarding that the light
+palette's picture is not the dark one's reference. With `write` it writes
+the references. -/
+def themePictures (dir font : String) (write : Bool) : IO UInt8 :=
+  Editor.Themes.Picture.themePicturesScenario "ffi-test theme-pictures" dir font write
+    (defaultRoles :: shippedRoles) (some ("solarized-light", "solarized-dark"))
+
 end FfiTest
 
 /-- With no arguments, runs the checks: exits 0 when all hold, and 1 after
@@ -136,9 +149,9 @@ def main (args : List String) : IO UInt32 := do
   | ["display", fixture] =>
     IO.Process.exit (← FfiTest.displayScenario fixture)
   | ["theme-pictures", dir, font] =>
-    IO.Process.exit (← FfiTest.themePicturesScenario dir font false)
+    IO.Process.exit (← FfiTest.themePictures dir font false)
   | ["theme-pictures", dir, font, "--write"] =>
-    IO.Process.exit (← FfiTest.themePicturesScenario dir font true)
+    IO.Process.exit (← FfiTest.themePictures dir font true)
   | ["excerpt-picture", dir, font] =>
     IO.Process.exit (← FfiTest.excerptPictureScenario dir font false)
   | ["excerpt-picture", dir, font, "--write"] =>

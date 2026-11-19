@@ -6,34 +6,25 @@ import Editor.Ffi.Display
 import Editor.Ffi.Document
 import Editor.Ffi.Marker
 import Editor.Ffi.Snapshot
-import Editor.Ffi.Transaction
 import Editor.Ffi.Window
 import Editor.Menu
 import Editor.Scene
 import Editor.Text
 import Editor.Text.Real
+import Editor.Themes.Picture
 
 /-!
 # FFI tests: support: Scenes
 
-Scenes published to a display: a marker in a document, a range marker, and the
-scene fixture with its menu. Shared by several test modules; it holds no checks
+Scenes published to a display: the scene fixture with its menu, and, by the
+names they had here, the marker in a document and the range marker of the
+theme picture check (`Editor/Themes/Picture.lean`). Shared by several test modules; it holds no checks
 of its own.
 -/
 
 namespace FfiTest
 
-/-- Marks `document` with `marker`, and returns its number. -/
-def markIn (document : Editor.Ffi.Document) (marker : Editor.Ffi.Marker) : IO Nat := do
-  match ← document.mark marker with
-  | .ok number =>
-    return number.toNat
-  | .error refusal =>
-    throw (IO.userError s!"the fixture's marker was refused: {repr refusal}")
-
-/-- A selection marker of the one range from `anchor` to `head`. -/
-def rangeMarker (anchor head : UInt64) : Editor.Ffi.Marker :=
-  .selection { ranges := #[{ anchor, head }] }
+export Editor.Themes.Picture (markIn rangeMarker)
 
 /-- What `sceneChecks` publish from: one text, "ab\ncd\nef", its markers, and
 the binding over a table that holds its snapshot alone, with a theme to

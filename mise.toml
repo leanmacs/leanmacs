@@ -599,9 +599,10 @@ run = [
   # tests/display/frame.expected; the scene must come back as sent; and a
   # move asked through the binding must land on the frame's next row.
   ".lake/build/bin/ffi-test display ../tests/display/frame.expected",
-  # The shipped themes' pictures: the fixture file tests/render/themes/
+  # The themes' pictures (the core's theme picture check,
+  # lean/Editor/Themes/Picture.lean): the fixture file tests/render/themes/
   # source.lean, published from Lean through the display's real binding in
-  # `solarized-dark`, `solarized-light` and `fairy-floss`, over a display
+  # `default`, `solarized-dark`, `solarized-light` and `fairy-floss`, over a display
   # of the one fixture font given here, and drawn by the CPU renderer, must
   # match
   # `tests/render/themes/<name>.png` within 2 of 255 a channel; in each,
@@ -1259,13 +1260,13 @@ run = "cargo run --locked --package editor-render-wgpu --example reference -- te
 # It draws the shipped themes' pictures of the fixture file
 # `tests/render/themes/source.lean`, as `ffi-test theme-pictures` in the
 # `ffi-test` task does, and writes them to
-# `tests/render/themes/solarized-dark.png`, `solarized-light.png` and
+# `tests/render/themes/default.png`, `solarized-dark.png`, `solarized-light.png` and
 # `fairy-floss.png`. Run it when a shipped theme's definition, the fixture, the font, the
 # painter, the blend or the rasteriser's pins change. Then look at the
 # files enlarged before committing them, and update the table in
 # `tests/render/themes/README.md`.
 [tasks.theme-references]
-description = "Opt-in, never part of ci: draw the shipped themes' pictures (Solarized dark and light, Fairy Floss) of the fixture file and write them to tests/render/themes, their reference images. Look at the files before committing them"
+description = "Opt-in, never part of ci: draw the pictures of the theme default and of the shipped themes (Solarized dark and light, Fairy Floss) of the fixture file and write them to tests/render/themes, their reference images. Look at the files before committing them"
 depends = ["lean"]
 dir = "lean"
 run = ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/fonts/NotoSansMono-Regular.subset.ttf --write"
