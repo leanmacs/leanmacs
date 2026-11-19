@@ -2190,6 +2190,12 @@ structure EditorState where
   (`Editor/TypedPath.lean`). A host that knows it sets it once, with the
   working directory; none until then. -/
   home : Option System.FilePath := none
+  /-- The editor's state directory, where what is kept across a restart
+  lives (`docs/design/lean-runtime.md`, "Where state lives"): the working
+  sets of each workspace (`Editor/WorkingSet/Disk.lean`). A host that has
+  one sets it once, with the working directory; none until then, and a
+  host that has none keeps nothing across a restart. -/
+  stateDirectory : Option System.FilePath := none
   /-- When the tab bar is shown (`Editor/TabBar.lean`): config's choice, as
   the last publish was handed it (`Loop.publish`); while there are two tabs
   or more before any. -/
@@ -2859,6 +2865,14 @@ def initial (size : Size) (shape : Shape := .exclusive) : TextM EditorState := d
       windows := #[{ id := ⟨0⟩, buffer := ⟨0⟩, scroll, selection }]
       frame := { size, windows := #[⟨0⟩], focused := ⟨0⟩ }
       recent := #[⟨0⟩] }
+
+/-- The state as a host hands it to its loop when it first makes it: with
+the host's working directory, home directory and state directory, which no
+command changes after. -/
+def hostedBy (workingDirectory : System.FilePath) (home stateDirectory : Option System.FilePath)
+    (state : EditorState) : EditorState :=
+  { state with
+    workingDirectory, home, stateDirectory }
 
 /-- The state with every transient float but `keep` closed: each leaves
 `floats` and `windows`, its markers the caller's to give up. The focus is

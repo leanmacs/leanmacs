@@ -77,6 +77,7 @@ import Editor.TabBar
 import Editor.TabCommands
 import Editor.TabCommands.Compiled
 import Editor.Text
+import Editor.Text.Model
 import Editor.Text.Real
 import Editor.Themes
 import Editor.Watch
@@ -2017,6 +2018,24 @@ def shippedChecks (_ : Unit) : List Check :=
             [ProjectSearch.job, ProjectSearch.loadJob].all fun name =>
               registry.jobs.any fun entry =>
                 entry.registration.name == name && entry.owner == .compiled },
+    { name :=
+        "the headless host handed a state directory starts its loop with it, as its working directory and home, and one handed none starts with none"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let services : Job.Services := { completions, timers := clock.timers }
+        let published ← Snapshots.new
+        let held ← Job.HeldSnapshots.new
+        let over (stateDirectory : Option System.FilePath) :=
+          (Headless.shippedOver "" "" "" (fun _ => pure ()) services published held
+              stateDirectory).hosting
+        let given := ((over (some "/state")).start.runModel {}).1
+        let none_ := ((over none).start.runModel {}).1
+        return (match given, none_ with
+          | .ok given, .ok none_ =>
+            given.state.stateDirectory == some "/state" && none_.state.stateDirectory == none &&
+              given.state.workingDirectory == "/"
+          | _, _ => false) },
     { name :=
         "the executable's hosts start with working-set-add, working-set-open and working-set-visit registered compiled, the mode working-set, and the job working-set-files"
       run := do

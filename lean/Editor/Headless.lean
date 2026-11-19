@@ -985,6 +985,13 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   hands here); the headless mode reads nothing from the
   environment, so its is none, and a `~` there says the home is not known. -/
   home : Option System.FilePath := none
+  /-- The state directory, which `start` writes into the editor state
+  (`EditorState.stateDirectory`): where what is kept across a restart
+  lives. The window mode's is `--state`, or its default under
+  `XDG_STATE_HOME` or `HOME` (`Window.Options.stateDirectory`); the
+  headless mode reads nothing from the environment and its command line
+  names none, so its is none and it keeps nothing across a restart. -/
+  stateDirectory : Option System.FilePath := none
   /-- How the host makes its display, over the read half of the table of
   snapshots the text binding publishes (`published`). The headless mode's
   is a recorder in `cells`; a host that draws is handed the real binding. -/
@@ -2126,20 +2133,26 @@ structure Host where
   /-- The loop. -/
   thread : Task (Except IO.Error Unit)
 
+/-- The collaborators whose `start` makes the loop with their working
+directory, home directory and state directory in its first state
+(`EditorState.hostedBy`). -/
+def Collaborators.hosting {σ : Type} {scheme : InputScheme}
+    (collaborators : Collaborators σ scheme) : Collaborators σ scheme :=
+  let made := collaborators.start
+  { collaborators with
+    start := do
+      let loop ← made
+      return { loop with
+          state :=
+            loop.state.hostedBy collaborators.workingDirectory collaborators.home
+              collaborators.stateDirectory } }
+
 /-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`.
 The loop it makes, when it is first needed, has the collaborators' working
-directory and home directory in its state (`Collaborators.workingDirectory`,
-`Collaborators.home`). -/
+directory, home directory and state directory in its state
+(`Collaborators.hosting`). -/
 def start {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) : IO Host := do
-  let made := collaborators.start
-  let collaborators :=
-    { collaborators with
-      start := do
-        let loop ← made
-        return { loop with
-            state :=
-              { loop.state with
-                workingDirectory := collaborators.workingDirectory, home := collaborators.home } } }
+  let collaborators := collaborators.hosting
   let progress ← IO.mkRef {}
   let thread ← IO.asTask (prio := .dedicated) (loop collaborators progress)
   return { requests := collaborators.requests, posted := ← IO.mkRef 0, progress, thread }
@@ -2681,9 +2694,10 @@ It is apart from `shipped`, which makes what it is over, so that what the
 hosts are handed as compiled code can be read with no pump started
 (`ConfigTest.shippedChecks`). -/
 def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit)
-    (services : Job.Services) (published : Snapshots) (held : Job.HeldSnapshots) :
+    (services : Job.Services) (published : Snapshots) (held : Job.HeldSnapshots)
+    (stateDirectory : Option System.FilePath := none) :
     Collaborators Config.Elaborate.State Vim.Default.scheme :=
-  { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
+  { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir }, stateDirectory,
     source := Config.Directory.source configDir, emit, services, published, held, requests := 1,
     wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
     commands :=
@@ -2747,7 +2761,8 @@ Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
 queues ends. -/
 def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (host : Process.Host)
-    (fakeClock : Bool := false) : IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
+    (fakeClock : Bool := false) (stateDirectory : Option System.FilePath := none) :
+    IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
@@ -2777,7 +2792,7 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (h
         diffs := Job.realDiffs completions published.reader held refusedDiffs
         greps := Job.realGreps completions published.reader held greps
         environments := reportedEnvironments environments 4, fuzzy := Fuzzy.real
-        snapshots := Job.realSnapshots published.reader } published held
+        snapshots := Job.realSnapshots published.reader } published held stateDirectory
   return { collaborators with clock }
 
 /-- The headless mode of the executable, handed the command line after

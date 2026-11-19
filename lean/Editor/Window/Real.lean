@@ -241,7 +241,7 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
     (workingDirectory : System.FilePath := "/") : IO UInt32 := do
   let shipped ←
     Headless.shipped (options.sysroot.getD "") options.oleans (options.config.getD "") IO.eprintln
-        processes
+        processes (stateDirectory := options.stateDirectory)
   let collaborators :=
     { shipped with
       display := hostDisplay display platform
@@ -321,7 +321,8 @@ rule; AppKit's terminate on macOS), once `shutdown` had run. -/
 def main (arguments : List String) : IO UInt32 := do
   let environment : Environment :=
     { workingDirectory := (← IO.currentDir).toString, xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME"
-      home := ← IO.getEnv "HOME", appPath := (← IO.appPath).toString }
+      xdgStateHome := ← IO.getEnv "XDG_STATE_HOME", home := ← IO.getEnv "HOME"
+      appPath := (← IO.appPath).toString }
   let options ←
     match parse environment arguments with
     | .ok options =>

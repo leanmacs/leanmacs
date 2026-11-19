@@ -44,6 +44,26 @@ def windowOptionChecks : List Check :=
     | .error message => message.endsWith Window.usage
     | .ok _ => false
   [{  name :=
+        "the state directory is --state's, resolved against the working directory; else leanmacs under XDG_STATE_HOME, else under HOME's .local/state when that is unset or empty; and none when neither is set"
+      run :=
+        let unset := { windowEnvironment with xdgStateHome := none }
+        let xdg := { windowEnvironment with xdgStateHome := some "/xdg-state" }
+        let empty := { windowEnvironment with xdgStateHome := some "" }
+        let homeless :=
+          { windowEnvironment with
+            xdgStateHome := none, home := none }
+        pure
+          ((parsed [] xdg).map (·.state) == some (some "/xdg-state/leanmacs") &&
+            (parsed [] unset).map (·.state) == some (some "/home/ada/.local/state/leanmacs") &&
+            (parsed [] empty).map (·.state) == some (some "/home/ada/.local/state/leanmacs") &&
+            (parsed [] homeless).map (·.state) == some none &&
+            (parsed ["--state", "/s"] xdg).map (·.state) == some (some "/s") &&
+            (parsed ["--state", "here"]).map (·.state) == some (some "/work/project/here") &&
+            (parsed ["--state", "/s"]).map (·.stateDirectory) ==
+              some (some (System.FilePath.mk "/s"))) },
+    { name := "--state with no directory after it is refused, with the usage"
+      run := pure (refused ["--state"] && refused ["f", "--state"]) },
+    { name :=
         "a relative file is resolved against the working directory, and an absolute one is kept as it is"
       run :=
         pure
@@ -56,8 +76,8 @@ def windowOptionChecks : List Check :=
           (parsed [] ==
               some
                 { file := none, config := some "/xdg/leanmacs", configGiven := false,
-                  sysroot := none, oleans := "/opt/leanmacs/bin/../lib/lean",
-                  composition := true } &&
+                  state := some "/home/ada/.local/state/leanmacs", sysroot := none,
+                  oleans := "/opt/leanmacs/bin/../lib/lean", composition := true } &&
             (parsed ["--no-ime"]).map (·.file) == some none) },
     { name :=
         "a Finder start: no arguments, / as the working directory, HOME set and XDG_CONFIG_HOME unset, in a bundle: no file, config from ~/.config/leanmacs, and the bundle's toolchain and .olean files"
@@ -86,7 +106,8 @@ def windowOptionChecks : List Check :=
           (parsed ["f"] ==
               some
                 { file := some "/work/project/f", config := some "/xdg/leanmacs",
-                  configGiven := false, sysroot := none, oleans := "/opt/leanmacs/bin/../lib/lean",
+                  configGiven := false, state := some "/home/ada/.local/state/leanmacs",
+                  sysroot := none, oleans := "/opt/leanmacs/bin/../lib/lean",
                   composition := true } &&
             (parsed ["f"] unset).bind (·.config) == some "/home/ada/.config/leanmacs" &&
             (parsed ["f"] empty).bind (·.config) == some "/home/ada/.config/leanmacs" &&
@@ -97,7 +118,7 @@ def windowOptionChecks : List Check :=
         let given : Option Window.Options :=
           some
             { file := some "/work/project/f", config := some "/c", configGiven := true,
-              sysroot := some "/s"
+              state := some "/home/ada/.local/state/leanmacs", sysroot := some "/s"
               oleans := "/o", composition := false }
         pure
           (parsed ["--config", "/c", "--sysroot", "/s", "--oleans", "/o", "--no-ime", "f"] ==
@@ -221,6 +242,23 @@ def windowStartChecks : List Check :=
           | _ => driver)
         driver
   [{  name :=
+        "the window mode's state directory, --state's or the default under XDG_STATE_HOME, is the loop's first state's, as the host hands it over (EditorState.hostedBy); with neither variable set it has none"
+      run :=
+        let firstState (options : Option Window.Options) : Option (Option System.FilePath) := do
+          let driver ← compiledDriver
+          let options ← options
+          return (driver.loop.state.hostedBy "/work/project" none
+                options.stateDirectory).stateDirectory
+        let xdg := { windowEnvironment with xdgStateHome := some "/xdg-state" }
+        let homeless :=
+          { windowEnvironment with
+            xdgStateHome := none, home := none }
+        pure
+          (firstState (parsed ["--state", "/s"]) == some (some (System.FilePath.mk "/s")) &&
+            firstState (Window.parse xdg [] |>.toOption) ==
+              some (some (System.FilePath.mk "/xdg-state/leanmacs")) &&
+            firstState (Window.parse homeless [] |>.toOption) == some none) },
+    { name :=
         "the window mode started with no file opens nothing: it posts what it has to say and the reload, and no open; and the editor loop it starts holds one buffer, scratch, empty, with one window on it"
       run :=
         let empty := (parsed []).map (·.starts (.load "/xdg/leanmacs") #["hi"])
