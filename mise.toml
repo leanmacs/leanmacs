@@ -148,7 +148,10 @@ run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xa
 description = "Rewrite the C and C++ sources in the style .clang-format sets"
 run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xargs -0 clang-format -i"
 
-# Runs the built executables only (no Lake), so it needs just `lean` before it.
+# Runs the built executables, so it needs just `lean` before it. Its one use
+# of Lake is the host imports check, which asks Lake for module imports
+# (`lake query`): that builds nothing and writes nothing under lean/, so it
+# may run beside `lean-fmt`, the other task that waits for `lean`.
 # The time limit turns a hang into a failure: a deadlock in the main-thread
 # hand-off, or a process that waits for a task still blocked in the library.
 # It bounds each command, not the task, and is set well above the slowest:
@@ -156,11 +159,21 @@ run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xa
 # temporary repositories, takes about 15 s on a developer's Mac and 50 to
 # 60 s on the macOS runner while the gate's other tasks run beside it.
 [tasks.ffi-test]
-description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean) and the editor executable"
+description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean) and the editor executable"
 depends = ["lean"]
 dir = "lean"
 timeout = "180s"
 run = [
+  # The host's modules import no feature module, on Lake's module graph
+  # (tools/host-imports-check.sh; docs/dev-practices/the-gate.md, "The host
+  # imports check"): the modules `Main` imports, other than the module that
+  # lists the packages (`Editor.PackageSet`), reach neither that module nor a
+  # module it imports. Three `lake query` calls, about half a second each.
+  "sh ../tools/host-imports-check.sh",
+  # And the check bites: pointed at the root `ConfigTest`, which imports the
+  # packages, it must find them and exit 1. Its output is shown only when it
+  # does not.
+  "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
   # developer's shell must not reach it.
