@@ -14,6 +14,11 @@ views improve review accuracy. The design rests on plausible transfers, so
 the editor should record enough about its own use (which hunks were viewed,
 which findings led to a change) to check them.
 
+A second research pass (2026-11-18) verified the main review findings
+against primary sources and added the evidence on anchoring, framing and
+explanations. It and the review tools proposed from it are in
+[review-interface.md](review-interface.md).
+
 ## What review needs
 
 Review is where a human builds a model of a change. With agents, the author
@@ -173,6 +178,9 @@ adapter could replace it.
 | Finding severity and confidence are text in the comment body | Parse them, until rdm exposes fields |
 
 These are candidates for changes in rdm itself.
+The review interface adds more (author identity, comment fields,
+structured plans, intent and decisions, phase reorder); they are listed
+in [review-interface.md](review-interface.md#what-rdm-needs).
 
 ## Navigation and understanding
 
