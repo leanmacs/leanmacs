@@ -2987,10 +2987,14 @@ builds one sets `jumps` on its entry.
   need not be the focused window, nor the only buffer over its text.
 - **A mark whose line is deleted is erased** (`mark_adjust`), a buffer's
   mark or a global mark: `m a`, `dd` and `` `a `` says E20. A line is
-  deleted when one edit removes its row with its line break, or, for the
-  last row, with the line break before it, as `dd` on the last line
-  does. A deletion of part of the line keeps the mark at the column the
-  deletion left. The loop reads each mark's line once an event has been
+  deleted when one edit takes its row with its line break and either
+  started before the row or stops at a row's start, as `dd` does; or, for
+  the last row, takes it with the line break before it, as `dd` on the
+  last line does. So the first line of `3cc`, and of a charwise delete
+  from a line's start into a later line, keeps its marks, as Vim's
+  `op_change` and `op_delete` truncate that line and delete only the lines
+  after it. A deletion of part of the line keeps the mark at the column
+  the deletion left. The loop reads each mark's line once an event has been
   handled and compares it with what the next event changed
   (`Editor/Marks.lean`, `Editor/Marks/Follow.lean`).
 - **Undo and redo put the lowercase marks back** (`u_undoredo`): each step

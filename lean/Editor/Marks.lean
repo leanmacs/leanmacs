@@ -17,12 +17,25 @@ the loop runs them once an event has been handled
   mark, that mark is erased"). The line of each mark's marker is read when
   an event has been handled (`Line`): where its row starts, and where it
   stops, after its line break. At the next, the patch of what changed since
-  says whether one edit removed the whole row with its line break
-  (`Line.removedBy`). A deletion of part of the row keeps the mark, which
-  its marker carries to where the deletion left it. The last row has no
-  line break of its own, so it is removed only with the line break before
-  it, as `dd` on the last line removes it; the only row of a text is never
-  removed, so `dd` on a buffer's only line keeps its mark.
+  says whether one edit removed the line (`Line.removedBy`), which Vim 9.1
+  decides by which lines its `del_lines` deletes whole:
+  - A row an edit takes whole, with its line break, is removed when the
+    edit started before the row: the rows after the first of a linewise
+    delete, and the rows between the first and the last of a charwise
+    delete or change across lines (whose `op_delete` truncates the first
+    line, deletes the lines between and joins the last onto the first).
+  - The row an edit starts at the start of is removed only when the edit
+    stops at a row's start, as `dd`'s edit does. One that stops inside a
+    later row leaves the row's remainder as the line it was: the first
+    line of `3cc` (whose `op_change` deletes the lines after the first and
+    truncates the first) and of a charwise delete from a line's start into
+    a later line both keep their marks.
+  - The last row has no line break of its own, so it is removed only with
+    the line break before it, as `dd` on the last line removes it. The
+    only row of a text is never removed by an edit, since the same edit
+    is `dd`'s and `0D`'s on a text of one line.
+  - A deletion of part of a row keeps the mark, which its marker carries
+    to where the deletion left it.
 - **Undo and redo put the lowercase marks back** (Vim's `u_undoredo`,
   "Lowercase marks are restored when using undo and redo"). Each node of
   the buffer's undo tree is given the lowercase marks as they were at the
@@ -87,11 +100,15 @@ structure Line where
   deriving DecidableEq, Repr
 
 /-- Whether `edit`, an edit of the text the line was read in, removes the
-whole line: its row with its line break, or, for the last row, with the
-line break before it. -/
+line ("A mark's line is erased when its line is deleted", in the module
+docs): it takes the row with its line break, and starts before the row or
+stops at a row's start; or, for the last row, it takes the row with the line
+break before it. -/
 def Line.removedBy (line : Line) (edit : Edit) : Bool :=
   if line.last then edit.old.start < line.start && line.stop ≤ edit.old.stop
-  else edit.old.start ≤ line.start && line.stop ≤ edit.old.stop
+  else
+    edit.old.start ≤ line.start && line.stop ≤ edit.old.stop &&
+      (edit.old.start < line.start || edit.old.stopPoint.column == 0)
 
 /-- Whether one of the edits of `patch`, from the revision the line was read
 at, removes the whole line. -/

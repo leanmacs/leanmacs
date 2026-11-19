@@ -13,9 +13,10 @@ namespace ModelTest
 open Editor
 
 /-- The edit that replaced the bytes from `start` up to `stop` of the text
-before, as a patch carries one; the points are not read. -/
-def markEdit (start stop : Nat) (inserted : Nat := 0) : Edit :=
-  { old := { start, stop, startPoint := ⟨0, 0⟩, stopPoint := ⟨0, 0⟩ }
+before, as a patch carries one. Of its points only the column `stop` is at
+is read: `stopColumn`, 0 for an edit that stops at a row's start. -/
+def markEdit (start stop : Nat) (inserted : Nat := 0) (stopColumn : Nat := 0) : Edit :=
+  { old := { start, stop, startPoint := ⟨0, 0⟩, stopPoint := ⟨0, stopColumn⟩ }
     new := { start, stop := start + inserted, startPoint := ⟨0, 0⟩, stopPoint := ⟨0, 0⟩ } }
 
 /-- The line of a mark held by marker 0 of text 0, from `start` up to `stop`. -/
@@ -44,6 +45,13 @@ def markRuleChecks : List Check :=
       run :=
         return !(markLine 4 8).removedBy (markEdit 4 7) && !(markLine 4 8).removedBy (markEdit 5 8) &&
             !(markLine 4 8).removedBy (markEdit 0 6) && !(markLine 4 8).removedBy (markEdit 4 4 5) },
+    { name :=
+        "an edit from a row's start that stops inside a later row keeps the row, as the first line of a linewise change or a charwise delete is kept, and removes the rows after it it takes whole"
+      run :=
+        return !(markLine 0 2).removedBy (markEdit 0 5 (stopColumn := 1)) &&
+            (markLine 2 4).removedBy (markEdit 0 5 (stopColumn := 1)) &&
+            !(markLine 4 6).removedBy (markEdit 0 5 (stopColumn := 1)) &&
+            (markLine 0 2).removedBy (markEdit 0 4) },
     { name := "the last row is removed only with the line break before it"
       run :=
         return (markLine 4 7 true).removedBy (markEdit 3 7) &&
