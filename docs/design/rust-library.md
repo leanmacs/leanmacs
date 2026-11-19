@@ -1318,6 +1318,24 @@ is a second question of the same crate, behind a second port
   searchers written in its tests: one that claims fewer errors than a
   span has, one that misses the best spans, one that reports past the
   limit, one that reports nothing, and one that reports past the text.
+- **The adapter** is `crates/editor-fuzzy-triple-accel` (`TripleAccel`),
+  over `triple_accel`, pinned `=0.4.0` (MIT, used unmodified). It asks
+  `levenshtein_search_simd_with_opts` with Levenshtein costs, the best
+  spans and no anchor, and reports each match as a `Span`; it chooses
+  nothing. The library finds every span within `k` edits with no limit on
+  the pattern's length, and its "fewest errors" is exactly what a pure
+  model states. On x86 it takes SIMD paths chosen at run time, through
+  `unsafe`; elsewhere, Apple silicon included, its scalar path, which is
+  O(text × pattern). No triple_accel type is public, and `deny.toml` lets
+  no other crate depend on the library. It is held to the port's contract
+  and to two cases of its own: one substitution is found with one error,
+  and a pattern with no span near enough reports none.
+- **Set aside**: `diff-match-patch-rs` 0.5.1, whose `match_main` is
+  bitap: it refuses a pattern over 32 characters and scores nearness and
+  errors together, which no simple model can state. **Risk**: triple_accel
+  is unmaintained (2021). If it measures slow, or an advisory lands, the
+  port lets another library (`diff-match-patch-rs`, `sassy`) replace it
+  with no change above the port.
 
 ### Search, as built
 

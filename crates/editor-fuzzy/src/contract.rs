@@ -257,7 +257,8 @@ const SEARCH_ROUNDS: u64 = 400;
 /// Whether [`SEARCH_SWEEP`] holds of `searcher`: patterns of at most five
 /// characters and texts of at most twelve, from the first three of
 /// [`ALPHABETS`], each allowed up to two errors. [`FEWEST`] is asked only
-/// of the ASCII ones.
+/// of the ASCII ones, and none is asked of the empty pattern, which
+/// [`locate`] never asks a searcher.
 fn search_sweep_holds(searcher: &mut impl Searcher) -> bool {
     let mut generator = Generator(7);
     (0..SEARCH_ROUNDS).all(|round| {
@@ -266,10 +267,12 @@ fn search_sweep_holds(searcher: &mut impl Searcher) -> bool {
         let text = generator.text(alphabet, 12);
         let k = u32::try_from(generator.below(3)).unwrap_or(0);
         let ascii = pattern.is_ascii() && text.is_ascii();
-        spans_within(searcher, &pattern, &text, k)
-            && (!ascii || fewest_holds(searcher, &pattern, &text, k))
-            && none_holds(searcher, &pattern, &text, k)
-            && boundaries_hold(searcher, &pattern, &text, k)
+        // The port is never asked with the empty pattern.
+        pattern.is_empty()
+            || spans_within(searcher, &pattern, &text, k)
+                && (!ascii || fewest_holds(searcher, &pattern, &text, k))
+                && none_holds(searcher, &pattern, &text, k)
+                && boundaries_hold(searcher, &pattern, &text, k)
     })
 }
 

@@ -206,7 +206,12 @@ on the published fake, `Scan`, and on searchers that answer canned spans;
 the port's contract, `contract::check_searcher`, against an exhaustive
 oracle, is tested on `Scan` and on searchers written to break each of its
 properties. The crate's `clippy.toml` refuses the clocks, every file of
-the disk and both adapters' constructors in all of it. `mise run deny` holds that only the
+the disk and both adapters' constructors in all of it. The searcher's real
+adapter, over `triple_accel` (`crates/editor-fuzzy-triple-accel`), is held
+to that contract, which sweeps generated texts from a fixed seed, and to
+its own two cases: one substitution is found with one error, and a
+pattern with no span near enough reports none. `mise run deny` holds that
+only that adapter depends on the library. `mise run deny` holds that only the
 adapter depends on the library. It checks no licence: the library's is
 MPL-2.0, and whether that is acceptable in this workspace is the owner's
 to confirm.

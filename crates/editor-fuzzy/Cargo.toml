@@ -9,5 +9,6 @@ publish = false
 # No dependency and no dev-dependency: the ports name no matching library,
 # and the rules are tested on scorers and searchers written in its tests.
 # The library that scores is behind the scorer port, in
-# `editor-fuzzy-nucleo`.
+# `editor-fuzzy-nucleo`; the one that searches with errors allowed is
+# behind the searcher port, in `editor-fuzzy-triple-accel`.
 [dependencies]

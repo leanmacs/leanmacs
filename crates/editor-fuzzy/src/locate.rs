@@ -59,6 +59,9 @@ pub trait Searcher {
     /// least one span with the fewest errors any span of the text has,
     /// when that is at most `max_errors`, and none when no span is within
     /// them; more spans, of the same or more errors, are its own to report.
+    ///
+    /// It is never asked with the empty pattern: [`locate`] answers that
+    /// itself.
     fn spans(&mut self, pattern: &str, text: &str, max_errors: u32) -> Vec<Span>;
 }
 
