@@ -31,11 +31,18 @@
 #      `Config/EvilKeys.lean` and `init.lean`, each file seeing every file
 #      before it through the one import it is given;
 #    - one file: `init.lean` alone.
+#    - a `setup` defined in the second of three files, and in the first of
+#      two, as the old form allowed: the file that defines it and the files
+#      after it become `init.lean`, in order, so the root itself defines
+#      the `setup` the editor runs, and a command it registers runs;
+#    - a `private` declaration that a later file uses: the two files become
+#      `init.lean`, since a private name is visible in its own module alone.
 # 4. The script refuses, with status 1 and the directory left as it was: a
 #    directory that already holds an `init.lean`; one where two files give
 #    one module name; a file whose name gives no module name, having no
-#    letter after its digits; and a `Config/<Name>.lean` that is already
-#    there. It converts nothing, with status 0, in a directory with no
+#    letter after its digits; a `Config/<Name>.lean` that is already
+#    there; and a file that would go in `init.lean` before another and
+#    leaves a namespace open, which it must name. It converts nothing, with status 0, in a directory with no
 #    `.lean` file.
 #
 # It exits 0 and prints one line when all of that holds, and otherwise says
@@ -124,6 +131,64 @@ def setup : SetupM Unit :=
 LEAN
 converted "$work/one" "./init.lean " only "reload 1: installed, 1 files, 1 commands" "one file"
 
+# A `setup` defined in a file before the last, as the old form allowed: the
+# file that defines it and the files after it become `init.lean`, so the
+# root itself defines the `setup` the editor runs.
+write "$work/earlier/10-greet.lean" <<'LEAN'
+def greet : EditorM Unit :=
+  message "earlier"
+LEAN
+write "$work/earlier/20-setup.lean" <<'LEAN'
+namespace Inner
+
+def value : Nat := 1
+
+end Inner
+
+open Inner
+
+def setup : SetupM Unit :=
+  command "greet" greet
+LEAN
+write "$work/earlier/30-checks.lean" <<'LEAN'
+-- A file after the one that defines `setup`: it sees that file's
+-- declarations, and not what that file opened. Were `Inner` still open
+-- here, `value` below would be ambiguous.
+def value : Nat := 2
+
+def useValue : Nat := value
+
+def alsoSetup : SetupM Unit :=
+  setup
+LEAN
+converted "$work/earlier" "./Config/Greet.lean ./init.lean " greet \
+  "reload 1: installed, 2 files, 1 commands" "a setup defined in the second of three files"
+
+write "$work/first/10-setup.lean" <<'LEAN'
+def setup : SetupM Unit :=
+  command "first" (message "first")
+LEAN
+write "$work/first/20-more.lean" <<'LEAN'
+def more : SetupM Unit :=
+  setup
+LEAN
+converted "$work/first" "./init.lean " first "reload 1: installed, 1 files, 1 commands" \
+  "a setup defined in the first of two files"
+
+# A private declaration is visible in its own module alone, and the old
+# form's files were one module: the file that declares one stays with the
+# files after it.
+write "$work/private/10-helpers.lean" <<'LEAN'
+private def secret : String :=
+  "kept"
+LEAN
+write "$work/private/90-setup.lean" <<'LEAN'
+def setup : SetupM Unit :=
+  command "tell" (message secret)
+LEAN
+converted "$work/private" "./init.lean " tell "reload 1: installed, 1 files, 1 commands" \
+  "a private declaration a later file uses"
+
 # 4. What the script refuses is left as it was.
 refused() {
   before=$(cd "$1" && find . -type f -exec cksum {} + | LC_ALL=C sort)
@@ -155,6 +220,21 @@ printf 'def a : Nat := 1\n' >"$work/taken/10-keys.lean"
 printf 'def setup : SetupM Unit := pure ()\n' >"$work/taken/90-setup.lean"
 printf 'mine\n' >"$work/taken/Config/Keys.lean"
 refused "$work/taken" "a Config/<Name>.lean that is already there"
+
+write "$work/open/10-setup.lean" <<'LEAN'
+def setup : SetupM Unit :=
+  pure ()
+
+namespace LeftOpen
+
+def inside : Nat := 1
+LEAN
+write "$work/open/20-more.lean" <<'LEAN'
+def more : Nat := 2
+LEAN
+refused "$work/open" "a file that would go in init.lean before another and leaves a namespace open"
+grep -q '10-setup.lean' "$work/refusal" ||
+  fail "a file that leaves a namespace open: the refusal does not name the file"
 
 mkdir "$work/empty"
 printf 'notes\n' >"$work/empty/notes.txt"

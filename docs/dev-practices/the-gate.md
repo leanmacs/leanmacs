@@ -1303,10 +1303,21 @@ directory the script makes and removes.
      `init.lean` and `Config/Leader.lean` and no other file, and on it the
      editor must print `migrated-expected`: the config loads and its command
      runs.
-  3. The script must refuse, with status 1 and the directory left as it
-     was, a directory that already holds an `init.lean` and one where two
-     files give one module name, and convert nothing in a directory with no
-     `.lean` file.
+  3. More shapes of the old form, each written in the temporary directory,
+     converted, and loaded by the editor, which must install it and run a
+     command of it: three files, the second named `20-evil-keys.lean` and
+     the last using a declaration of the first; one file; a `setup` defined
+     in the second of three files, whose root must hold that file and the
+     one after it, each seeing what the old form let it see and no more; a
+     `setup` defined in the first of two; and a `private` declaration that
+     a later file uses.
+  4. The script must refuse, with status 1 and the directory left as it
+     was: a directory that already holds an `init.lean`; two files that
+     give one module name; a file whose name has no letter after its
+     digits; a `Config/<Name>.lean` that is already there; and a file that
+     would go in `init.lean` before another and leaves a namespace open,
+     which the refusal must name. It must convert nothing in a directory
+     with no `.lean` file.
 - **The generated files** (`tools/config-package-check.sh`, on
   `tests/headless/generate`, whose config directory holds `init.lean`
   alone).

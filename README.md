@@ -164,11 +164,14 @@ mise run config-migrate                 # ~/.config/leanmacs
 mise run config-migrate -- <config dir> # another directory
 ```
 
-Each file but the last becomes `Config/<Name>.lean` and the last becomes
-`init.lean`; each gets the header and an import of the file before it. The
-converted config loads when its `setup` was defined in its last file. If
-`setup` was in an earlier file, the editor says that `init.lean` defines
-none: move the definition there.
+The file that defines `setup` becomes `init.lean`, with the files after it
+when there are any, in order. Each file before it becomes
+`Config/<Name>.lean`, with the header and an import of the file before it,
+so each still sees every file before it. For most configs, whose `setup`
+is in the last file, that is: the last file is `init.lean` and the others
+are under `Config/`. The converted config loads as the old one did. The
+script refuses the few directories it cannot convert, changes nothing
+then, and says which file to change.
 
 From source, `mise run edit` loads the same directory, or another given
 with `--config <dir>`. The app reads it too. Started from Finder it gets launchd's

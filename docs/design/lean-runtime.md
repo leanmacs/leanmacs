@@ -682,13 +682,31 @@ lean-toolchain       generated when absent
   `.lean` files directly in it is config in the form of byte-ordered chunks
   with no header, which the editor loaded before config was modules. The
   reload is rejected with one diagnostic that names the files and the fix,
-  `mise run config-migrate`, which converts the directory
-  (`tools/config-migrate.sh`): each file but the last, in byte order,
-  becomes `Config/<Name>.lean`, the last becomes `init.lean`, and each gets
-  the header and an import of the file before it, which keeps what each
-  chunk saw. The converted config loads when its `setup` was defined in its
-  last file; one whose `setup` was in an earlier file is then refused with
-  the rule above until the definition is moved to `init.lean`.
+  `mise run config-migrate`, which converts the directory so that it loads
+  as it did (`tools/config-migrate.sh`).
+  - The files, in byte order, are cut at the first that defines `setup` or
+    declares something `private`. Each file before it becomes
+    `Config/<Name>.lean`, with the header and an import of the file before
+    it, which keeps what each chunk saw. That file and the ones after it
+    become `init.lean`, in order, each but the last in a `section`, so
+    what it opened ends where the chunk ended.
+  - The cut is what the two forms' difference asks for. The old form ran
+    the `setup` of whichever chunk defined it, and the editor now runs the
+    one the root itself defines: a `setup` in an imported module could not
+    be defined again in the root, so its file is the root's. And the old
+    form's chunks were one module, so a `private` declaration of one was
+    visible in the next, which it is not across modules.
+  - With `setup` in the last chunk and nothing private before it, the
+    common shape, the last file is `init.lean` and every other is under
+    `Config/`.
+  - It tells from the text, a line at a time, with no Lean. When no line is
+    seen to define `setup`, every file goes in `init.lean`, which always
+    loads.
+  - One shape is refused by name, with nothing changed: a file that would
+    go in `init.lean` before another and leaves a namespace, a section or a
+    `mutual` block open at its end. In the old form that ended with the
+    chunk; in one file it would swallow the files after it, and the script
+    cannot name what to close.
 - **The editor generates the two other files when they are absent, and
   never rewrites one that is there** (`lean/Editor/Config/LakePackage.lean`).
   The lakefile requires the package set the editor was built from, by its

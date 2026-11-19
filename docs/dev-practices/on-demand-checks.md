@@ -82,20 +82,26 @@ directory, which is why it is no part of the gate: the gate runs the same
 script on a temporary copy of a fixture
 ([the-gate.md](the-gate.md), "The config directory").
 
-- Each file but the last, in byte order, is moved to `Config/<Name>.lean`,
-  `<Name>` being its name without its leading digits, in upper camel case,
-  and the last to `init.lean`. Each gets `import Editor`, an import of the
-  file before it, and `open Editor`, so each still sees every file before
-  it.
-- It prints each move, and changes nothing but the files it moves.
-- **The converted config loads when its `setup` was defined in its last
-  file.** The editor runs the `setup` that `init.lean` defines and no
-  other, so a config whose `setup` was in an earlier file is converted and
-  then refused, with a diagnostic that says the root defines none, until
-  the definition is moved to `init.lean`.
-- It refuses, and changes nothing, a directory that already holds an
-  `init.lean`, two files that give one module name, and a file whose name
-  gives none.
+- The files, in byte order, are cut at the first that defines `setup` or
+  declares something `private`. For most configs that is the last file.
+- Each file before it is moved to `Config/<Name>.lean`, `<Name>` being its
+  name without its leading digits, in upper camel case. It gets
+  `import Editor`, an import of the file before it, and `open Editor`, so
+  each still sees every file before it.
+- That file and the ones after it become `init.lean`, in order, each but
+  the last in a `section` of its own. So the root itself defines the
+  `setup` the editor runs, wherever the old config defined it, and a
+  private declaration stays in one module with the files that use it.
+- It tells where `setup` is from the text, a line at a time. When no line
+  is seen to define it, every file goes in `init.lean`.
+- It prints what it did, and changes nothing but the files it moves.
+- It refuses, and changes nothing: a directory that already holds an
+  `init.lean`; among the files that would move to `Config/`, two that give
+  one module name, one whose name gives none, and one whose
+  `Config/<Name>.lean` is already there; and a file that would go in
+  `init.lean` before another and leaves a namespace, a section or a
+  `mutual` block open at its end, which it names: close it in the file, or
+  move the definition of `setup` to the last file.
 
 ## What config may import, measured on demand
 
