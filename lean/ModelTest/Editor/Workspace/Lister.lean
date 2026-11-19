@@ -103,13 +103,23 @@ def workspaceListerChecks : List Check :=
             (Workspace.Lister.git "git").relative "./a" == "./a" &&
             (Workspace.Lister.git "git").relative "src/b.lean" == "src/b.lean" },
     { name :=
+        "the fallback declares find's exit 1, past a directory it cannot read or an entry that vanishes, a partial listing that still answers; git's and config's declare none, so any exit but 0 fails them"
+      run :=
+        pure <|
+          let configured :=
+            Workspace.lister (settings #[declared (.root "/w") "fd"]) (some (at_ "/w" none))
+          Workspace.Lister.fallback.partialListing == [1] &&
+            (Workspace.Lister.git "git").partialListing == [] &&
+            configured.partialListing == [] },
+    { name :=
         "a lister round-trips through plain arguments, git's, the fallback and config's with arguments of its own among them; arguments that are no lister decode to none"
       run :=
         pure <|
           let configured :=
             Workspace.lister (settings #[declared (.root "/w") "fd"]) (some (at_ "/w" none))
           [Workspace.Lister.git "/usr/bin/git", Workspace.Lister.fallback, configured,
-                  { configured with arguments := #[] }].all
+                  { configured with arguments := #[] },
+                  { configured with partialListing := [1, 2] }].all
               (fun lister => Workspace.Lister.ofArguments? lister.toArguments == some lister) &&
             Workspace.Lister.ofArguments? [] == none &&
             Workspace.Lister.ofArguments? configured.toArguments.dropLast == none &&

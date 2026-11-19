@@ -62,7 +62,9 @@ category `workspace-file`, answered by the job `workspace-files`
 (`answer`): it decodes the lister from the query's context and the root
 from its place, runs the lister at the root and fzf over its output with
 the typed text (`found`), and delivers the first matches, each made
-relative (`Lister.relative`), as one batch. A failure throws, naming the
+relative (`Lister.relative`), as one batch. A lister's exit in its
+`partialListing`, `find`'s 1 past a directory it cannot read, still
+answers what it listed. A failure throws, naming the
 program and the lister's origin, and the echo area says
 `workspace-files: <message>`. A new text cancels the job, which kills its
 child. So no key waits on the lister or the filter: they run only in the
@@ -159,13 +161,15 @@ def searched (state : EditorState) (settings : Settings) (call : Call) : Except 
 def promptLabel (label : String) : String :=
   s!"Find file in {label}: "
 
-/-- The filtering of `lister` at `root`: the lister's command there, and
-`filter`, fzf at the root reading the lister's records by default. -/
+/-- The filtering of `lister` at `root`: the lister's command there, its
+partial-listing statuses, and `filter`, fzf at the root reading the
+lister's records by default. -/
 def filtering (lister : Lister) (root : System.FilePath)
     (filter : Process.Command :=
       Completion.Filtering.fzf root (if lister.nul then .nul else .newline)) :
     Completion.Filtering :=
-  { lister := lister.command root, filter, separator := if lister.nul then .nul else .newline }
+  { lister := lister.command root, filter, separator := if lister.nul then .nul else .newline
+    partialListing := lister.partialListing }
 
 /-- The matches `filtering` answers for `text`, each made relative to the
 root by `lister` (`Lister.relative`); or why not, naming the lister's

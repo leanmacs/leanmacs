@@ -1542,6 +1542,9 @@ accepting hands the continuation the chosen candidate.
     delivers the first `limit` (200 by default) as **one batch**, an empty
     one included, so an answer of no matches replaces the previous text's
     at once;
+  - treats a lister exit status the source declares a partial listing
+    (`partialListing`, none by default; `find`'s 1 for the workspace
+    finder's fallback) as an answer of the records it printed;
   - treats a filter exit status the source declares (fzf's 1) as no
     matches, which is no failure; any other exit, a time-out (10 s by
     default for each run) or a refusal fails the source through

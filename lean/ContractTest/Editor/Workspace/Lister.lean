@@ -112,6 +112,29 @@ def workspaceListerChecks (services : Job.Services) (fixtures : System.FilePath)
           writeMaking (base / "a") "a\n"
           writeMaking (base / "d" / "e") "e\n"
           writeMaking (base / "x" / ".git" / "config") "c\n"
-          listsAt services fixtures .fallback base #["a", "d/e"] }]
+          listsAt services fixtures .fallback base #["a", "d/e"] },
+    { name :=
+        "the fallback over the real process service lists the files find can read when it meets a directory of mode 000 and exits 1; run as root, which reads that directory, its file is listed too"
+      run :=
+        withBase fun base => do
+          writeMaking (base / "a") "a\n"
+          writeMaking (base / "d" / "e") "e\n"
+          writeMaking (base / "locked" / "hidden") "h\n"
+          let locked := base / "locked"
+          IO.setAccessRights locked {}
+          try
+            -- Root reads a directory of mode 000, and find then lists it.
+            let readable ←
+              try
+                discard <| locked.readDir
+                pure true
+              catch _ =>
+                pure false
+            let expected := if readable then #["a", "d/e", "locked/hidden"] else #["a", "d/e"]
+            listsAt services fixtures .fallback base expected
+          finally
+            -- Restored, so the temporary directory can be removed.
+            IO.setAccessRights locked
+                { user := { read := true, write := true, execution := true } } }]
 
 end ContractTest

@@ -20,7 +20,10 @@ choice, per source.
 - **The lister runs first** (`Process.runWithin`), its output held whole up
   to `listBytes` (64 MiB by default). A refusal, a time-out, or an exit
   that is not 0 fails the source, naming the program
-  (`<program>: exited with status 2: <first line of stderr>`).
+  (`<program>: exited with status 2: <first line of stderr>`), unless the
+  exit is in `partialListing`: a lister that declares one, as `find`'s 1
+  past a directory it cannot read, still answers the records it printed.
+  None is declared by default.
 - **The filter is fed the lister's output** with the typed text appended to
   its arguments, as one argument. No shell sees it, so no text typed into
   a prompt can run a command.
@@ -53,6 +56,7 @@ choice, per source.
 | A new record separator | A constructor of `Separator` and its byte in `Separator.byte` |
 | A source rooted somewhere per query | The function of the query `answer` is given |
 | A new policy default (`limit`, `filterBytes`, `time`) | A field default of `Filtering` |
+| A lister whose non-zero exit still answers its records | Its statuses in `partialListing`, set by the caller that knows the lister |
 
 Pinned on the job model and the loop's driver by
 `ModelTest.filteringChecks`, and over real processes with a fixture filter
@@ -95,6 +99,9 @@ structure Filtering where
   time : Nat := 10000
   /-- The filter's exit statuses that mean no candidate matched. -/
   noMatches : List Nat := [1]
+  /-- The lister's exit statuses that still answer the records it printed:
+  a listing it could make only in part. -/
+  partialListing : List Nat := []
   deriving DecidableEq, Repr
 
 namespace Filtering
@@ -157,7 +164,13 @@ def found (filtering : Filtering) (text : String) : JobM (Except String (Array S
       return .error s!"{lister.program}: {error.describe}"
     | .ok ran =>
       pure ran
-  if listed.exit != .code 0 then
+  match listed.exit with
+  | .code 0 =>
+    pure ()
+  | .code status =>
+    unless filtering.partialListing.contains status do
+      return .error (ended lister.program listed)
+  | .signal _ =>
     return .error (ended lister.program listed)
   let filter := filtering.filterFor text
   let records ←

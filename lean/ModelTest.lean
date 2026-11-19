@@ -462,8 +462,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   (`Editor/Completion/Filtering.lean`): its job on the job model with
   canned process answers, the lister then the filter fed its output with
   the typed text as one argument, the first records delivered in one batch,
-  a cut head's whole records, the no-matches statuses and the failures
-  naming the program, a lister's or a filter's time-out among them; and through the loop on the driver, a new text
+  a cut head's whole records, the no-matches statuses, a lister's
+  partial-listing statuses and the failures naming the program, a lister's or a filter's time-out among them; and through the loop on the driver, a new text
   cancelling the old generation, a stale batch never listed, the filter's
   order kept with the style's ranges, and a missing filter said in the
   echo area;
@@ -946,7 +946,8 @@ Listing a workspace's files is checked in Lean alone too:
   (`Editor/Workspace/Lister.lean`), pure: config's lister for the root,
   then for the project, then git's for a workspace git found, then the
   fallback; their exact command lines, the fallback's records without
-  `./`, and a lister as plain arguments;
+  `./`, its exit 1 a partial listing and no other's, and a lister as plain
+  arguments;
 - `findFileChecks`: `find-file-in-workspace`
   (`Editor/Workspace/FindFile.lean`) on the loop's driver over the
   editor's models and the job model of the workspace driver's world, each
@@ -954,7 +955,8 @@ Listing a workspace's files is checked in Lean alone too:
   of project navigation's phase 2, the lister run in the buffer's workspace
   alone, config's listers, the fallback, the accept through `open-file`,
   the label, the working directory of a buffer with no workspace, the
-  refusals, and that no step runs a process.
+  refusals, that no step runs a process, and a fallback that exits 1
+  still listing what it printed.
 -/
 
 namespace ModelTest

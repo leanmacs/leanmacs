@@ -417,6 +417,36 @@ def findFileChecks : List Check :=
                   { processes := { scripts := #[failing] } }).1 with
             | .finished (.error said) =>
               said == "git: exited with status 128: fatal: no, listing with the git lister"
-            | _ => false }]
+            | _ => false },
+    { name :=
+        "a fallback find that exits 1, as it does past a directory it cannot read or an entry that vanishes, still lists the records it printed, without ./; git's lister exiting 1 still fails the source, naming its origin"
+      run :=
+        pure <|
+          let partly : Process.Script :=
+            { command := Workspace.Lister.fallback.command "/x"
+              reply :=
+                .ok {
+                    exit := .code 1, stdout := nul ["./a.txt", "./d/e.txt"]
+                    stderr := "find: ./locked: Permission denied".toUTF8 } }
+          let gitPartly : Process.Script := { partly with command := git.command "/w" }
+          match driver with
+          | none => false
+          | some driver =>
+            let driver :=
+              { driver with
+                jobs :=
+                  { driver.jobs with
+                    processes :=
+                      { driver.jobs.processes with
+                        scripts := #[partly] ++ driver.jobs.processes.scripts } } }
+            let inX := drainedAfter (settledAfter driver "C-o x") "C-o f"
+            listedTexts inX == some #["a.txt", "d/e.txt"] &&
+              match
+                ((Workspace.FindFile.found (Workspace.FindFile.filtering git "/w") git "").runModel
+                    { processes := { scripts := #[gitPartly] } }).1 with
+              | .finished (.error said) =>
+                said ==
+                  "git: exited with status 1: find: ./locked: Permission denied, listing with the git lister"
+              | _ => false }]
 
 end ModelTest

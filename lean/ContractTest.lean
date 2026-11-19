@@ -262,8 +262,10 @@ text, each in a temporary directory of its own and git isolated from the
 user's config: git's lister lists a repository's tracked and untracked
 files and none that `.gitignore`, `info/exclude` or the global excludes
 file ignore; it lists a linked worktree's own files at its root and not at
-the main checkout's; and the fallback lists a directory's files without
-`./` and none under a `.git` directory. Every child is reaped.
+the main checkout's; the fallback lists a directory's files without
+`./` and none under a `.git` directory; and, past a directory of mode 000,
+which makes `find` exit 1, it still lists the files it could read (all of
+them when run as root). Every child is reaped.
 
 The cases of the editor API (`Editor/Api/Cases.lean`) are played on the
 real text binding, with a recorder as the display and nothing watched

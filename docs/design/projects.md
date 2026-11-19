@@ -147,7 +147,13 @@ nothing. The first that answers wins:
    find . -type f -not -path '*/.git/*' -print0
    ```
 
-   Its records lose their leading `./`.
+   Its records lose their leading `./`. `find` exits 1 when it meets a
+   directory it cannot read (a root-owned one, or one macOS's privacy
+   controls guard under `$HOME`) or an entry that vanishes while it walks,
+   and still prints every other file, so the fallback declares 1 a partial
+   listing (`Lister.partialListing`): the files it read are listed, not
+   none. Git's lister and config's declare none, so any exit of theirs
+   but 0 fails the source.
 
 Each runs at the workspace's root, and no shell sees its arguments.
 

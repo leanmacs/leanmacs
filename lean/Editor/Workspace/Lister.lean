@@ -33,7 +33,13 @@ The first that answers wins.
    are listed too.
 4. **The fallback**, for any other workspace and for no workspace:
    `find . -type f -not -path '*/.git/*' -print0`. Its records start with
-   `./`, which they lose (`Lister.relative`).
+   `./`, which they lose (`Lister.relative`). `find` exits 1 when it meets
+   a directory it cannot read or an entry that vanishes while it walks,
+   and still prints every other file, so the fallback declares 1 a partial
+   listing (`Lister.partialListing`, honoured by
+   `Completion.Filtering.partialListing`): the files it could read are
+   listed. Git's lister and config's declare none, so any exit of theirs
+   but 0 fails the source.
 
 No shell is involved: each argument is one argument, so `*/.git/*` reaches
 `find` as it is written. A remote location's lister is not chosen here: a
@@ -95,6 +101,9 @@ structure Lister where
   nul : Bool
   /-- A prefix each record loses when it has it: `./` for `find`. -/
   strip : String := ""
+  /-- The exit statuses, other than 0, after which its records still
+  answer: a listing it made only in part. `[1]` for `find`. -/
+  partialListing : List Nat := []
   deriving DecidableEq, Repr
 
 namespace Lister
@@ -106,11 +115,12 @@ def git (git : String) : Lister :=
     arguments := #["ls-files", "-z", "--cached", "--others", "--exclude-standard"], nul := true }
 
 /-- The fallback: `find . -type f -not -path '*/.git/*' -print0`, whose
-records lose their `./`. -/
+records lose their `./`, and whose exit 1, past a directory it cannot read,
+still answers the files it listed. -/
 def fallback : Lister :=
   { origin := .fallback, program := "find"
     arguments := #[".", "-type", "f", "-not", "-path", "*/.git/*", "-print0"], nul := true
-    strip := "./" }
+    strip := "./", partialListing := [1] }
 
 /-- The lister of what config declared. -/
 def ofDeclared (declared : DeclaredLister) : Lister :=
@@ -131,11 +141,13 @@ def relative (lister : Lister) (record : String) : String :=
   else record
 
 /-- `lister` as plain arguments: its origin's name, its program, whether it
-is NUL-separated, its prefix, how many arguments it has, then each of
-them. -/
+is NUL-separated, its prefix, how many partial-listing statuses it has, then
+each of them, how many arguments it has, then each of them. -/
 def toArguments (lister : Lister) : List Argument :=
   [.str lister.origin.name, .str lister.program, .bool lister.nul, .str lister.strip,
-      .nat lister.arguments.size] ++
+      .nat lister.partialListing.length] ++
+    lister.partialListing.map .nat ++
+    [.nat lister.arguments.size] ++
     lister.arguments.toList.map .str
 
 /-- The strings `arguments` are, if they are all strings. -/
@@ -146,12 +158,19 @@ def stringsOf? (arguments : List Argument) : Option (Array String) :=
 
 /-- The lister `arguments` are (`Lister.toArguments`), if they are one. -/
 def ofArguments? : List Argument → Option Lister
-  | .str origin :: .str program :: .bool nul :: .str strip :: .nat count :: rest => do
+  | .str origin :: .str program :: .bool nul :: .str strip :: .nat statuses :: rest => do
     let origin ← Origin.ofName? origin
+    let partialListing ←
+      (rest.take statuses).mapM fun
+          | .nat status => some status
+          | _ => none
+    if partialListing.length != statuses then
+      none
+    let .nat count :: rest := rest.drop statuses | none
     let arguments ← stringsOf? rest
     if arguments.size != count then
       none
-    return { origin, program, arguments, nul, strip }
+    return { origin, program, arguments, nul, strip, partialListing }
   | _ => none
 
 end Lister

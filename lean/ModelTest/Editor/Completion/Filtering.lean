@@ -243,6 +243,21 @@ def filteringChecks : List Check :=
               some (.inl "/usr/bin/git: exited with status 128: fatal: not a git repository") &&
             model.posted.isEmpty },
     { name :=
+        "a lister exit declared as a partial listing still answers: its records are fed to the filter and the filter's are answered; with no status declared, as by default, the same exit fails, naming the lister's program, its status and its standard error"
+      run :=
+        pure <|
+          let f := filtering
+          let partly : Process.Script :=
+            { command := lister, reply := ran "ab\nxa\nzz\n" 1 "find: ./locked: Permission denied" }
+          let scripts : Array Process.Script :=
+            #[partly, { command := f.filterFor "a", reply := ran "xa\nab\n" }]
+          matched { f with partialListing := [1] } scripts "a" == some (.inr #["xa", "ab"]) &&
+            matched { f with partialListing := [2] } scripts "a" ==
+              some (.inl "/usr/bin/git: exited with status 1: find: ./locked: Permission denied") &&
+            matched f scripts "a" ==
+              some (.inl "/usr/bin/git: exited with status 1: find: ./locked: Permission denied") &&
+            f.partialListing == [] },
+    { name :=
         "a filter that outlives its time limit answers an error naming the filter's program and the time-out, and the job posts nothing"
       run :=
         pure <|
