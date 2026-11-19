@@ -438,6 +438,9 @@ structure Shown where
   name : String
   /-- The indices of the drifted quotes' buffers. -/
   drifted : Array Nat := #[]
+  /-- For each excerpt it shows, in order, the indices among the set's
+  ranges of the ranges in it. -/
+  excerpts : Array (Array Nat) := #[]
   deriving DecidableEq, Repr
 
 /-- The name of the local value a set's buffer keeps (`Shown`). -/
@@ -448,28 +451,42 @@ def localName : String :=
 def Shown.encode (shown : Shown) : Value :=
   .record
     [("root", .str shown.root), ("name", .str shown.name),
-      ("drifted", .list (shown.drifted.toList.map Value.nat))]
+      ("drifted", .list (shown.drifted.toList.map Value.nat)),
+      ("excerpts",
+        .list (shown.excerpts.toList.map fun members => .list (members.toList.map Value.nat)))]
 
 /-- What a set's buffer keeps, from a tree. -/
 def Shown.decode? : Value → Option Shown
-  | .record [("root", .str root), ("name", .str name), ("drifted", .list drifted)] => do
-    let drifted ←
-      drifted.toArray.mapM fun
-          | .nat index => some index
+  |
+  .record
+      [("root", .str root), ("name", .str name), ("drifted", .list drifted),
+        ("excerpts", .list excerpts)] =>
+    do
+    let nats (items : List Value) : Option (Array Nat) :=
+      items.toArray.mapM fun
+        | .nat index => some index
+        | _ => none
+    let excerpts ←
+      excerpts.toArray.mapM fun
+          | .list members => nats members
           | _ => none
-    return { root, name, drifted }
+    return { root, name, drifted := ← nats drifted, excerpts }
   | _ => none
 
 /-- What the buffer `id` keeps as a set's buffer, if it is one. -/
 def shownOf (state : EditorState) (id : BufferId) : Option Shown :=
   (state.value? id localName).bind Shown.decode?
 
+/-- Removes the buffers of `indices`, drifted quotes a set's buffer showed. -/
+def removeQuotes (indices : Array Nat) : EditorM Unit := do
+  for index in indices do
+    discard <| (⟨index⟩ : BufferId).remove
+
 /-- Removes the drifted quotes' buffers the set's buffer `id` shows, and
 forgets them. -/
 def freeDrifted (id : BufferId) : EditorM Unit := do
   let some shown := shownOf (← editorState) id | return
-  for index in shown.drifted do
-    discard <| (⟨index⟩ : BufferId).remove
+  removeQuotes shown.drifted
   discard <| id.setValue localName { shown with drifted := #[] }.encode
 
 end Editor.WorkingSet

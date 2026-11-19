@@ -2037,7 +2037,7 @@ def shippedChecks (_ : Unit) : List Check :=
               given.state.workingDirectory == "/"
           | _, _ => false) },
     { name :=
-        "the executable's hosts start with working-set-add, working-set-open and working-set-visit registered compiled, the mode working-set, and the job working-set-files"
+        "the executable's hosts start with working-set-add, working-set-open, working-set-visit, working-set-remove, working-set-note and working-set-refresh registered compiled, the mode working-set, and the jobs working-set-files, working-set-load, working-set-write and working-set-save"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -2045,10 +2045,12 @@ def shippedChecks (_ : Unit) : List Check :=
           Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
             (← Snapshots.new) (← Job.HeldSnapshots.new)
         let registry := Headless.compiled shipped
-        return [WorkingSet.addName, WorkingSet.openName, WorkingSet.visitName].all
+        return [WorkingSet.addName, WorkingSet.openName, WorkingSet.visitName,
+                  WorkingSet.removeName, WorkingSet.noteName, WorkingSet.refreshName].all
               (fun name => (registry.find? name).any (·.owner == .compiled)) &&
             shipped.modes.any (·.name == WorkingSet.modeName) &&
-            [WorkingSet.filesJob].all fun name =>
+            [WorkingSet.filesJob, WorkingSet.loadJob, WorkingSet.writeJob, WorkingSet.saveJob].all
+              fun name =>
               registry.jobs.any fun entry =>
                 entry.registration.name == name && entry.owner == .compiled },
     { name :=

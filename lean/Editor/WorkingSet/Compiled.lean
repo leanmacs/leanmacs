@@ -10,11 +10,14 @@ set and a set opened as an excerpt buffer of its ranges
 `compiled` when its loop starts, before any config
 (`Editor/Config/Registry.lean`, "Compiled commands").
 
-- **`WorkingSet.commands`**: `working-set-add`, `working-set-open` and
-  `working-set-visit`.
+- **`WorkingSet.commands`**: `working-set-add`, `working-set-open`,
+  `working-set-visit`, `working-set-remove`, `working-set-note` and
+  `working-set-refresh`.
 - **`WorkingSet.modes`**: `working-set`, a set's buffer's mode, whose
   activate key (`RET` in the Vim scheme's normal state) runs
-  `working-set-visit`.
+  `working-set-visit`, whose refresh key runs `working-set-refresh`, and
+  whose locals `d` and `n` run `working-set-remove` and
+  `working-set-note`.
 - **`WorkingSet.jobs`**: `working-set-files`, which loads the files of a
   set's ranges that no buffer holds, keyed by the set's buffer's name; and
   `working-set-load`, `working-set-write` and `working-set-save`, which
@@ -32,7 +35,10 @@ namespace Editor.WorkingSet
 def commands : Array Config.Registration :=
   #[{ name := addName, action := .call addCommand },
     { name := openName, action := .call openCommand },
-    { name := visitName, action := .call visitCommand }]
+    { name := visitName, action := .call visitCommand },
+    { name := removeName, action := .call removeCommand },
+    { name := noteName, action := .call noteCommand },
+    { name := refreshName, action := .call refreshCommand }]
 
 /-- The working sets' mode, as a host registers it for the owner
 `compiled`. -/

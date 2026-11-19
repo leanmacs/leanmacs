@@ -175,6 +175,60 @@ def workingSetRunChecks : List Check :=
               WorkingSet.namesOf (kept other) == #["other", "demo"] &&
               (rangesOf answered "demo").map (·.stored.quote) ==
                 #["bravo two\ncharlie three\n", "alpha one\n"] },
+    { name :=
+        "working-set-remove drops the range under the cursor from the set and its excerpt from the buffer, and the set left empty is still listed"
+      run :=
+        pure <|
+          match withA with
+          | none => false
+          | some driver =>
+            let shownSet :=
+              ran (evilFed (addedDemo driver) "<Escape>") WorkingSet.openName [.str "demo"]
+            let removed := ran shownSet WorkingSet.removeName
+            (rangesOf removed "demo").isEmpty &&
+              excerptRead removed (setBuffer "demo") == some "" &&
+              WorkingSet.namesOf (kept removed) == #["demo"] &&
+              removed.loop.state.echo == "demo: removed a.txt:2" },
+    { name :=
+        "working-set-note asks with the range's note, and the answer is the stored note and its excerpt's header; two ranges in one excerpt each keep their own"
+      run :=
+        pure <|
+          match withA with
+          | none => false
+          | some driver =>
+            let first := evilFed (addedDemo driver) "<Escape>"
+            let second :=
+              evilFed (ran (evilFed first "g g j j V j") WorkingSet.addName [.str "demo"])
+                "<Escape>"
+            let shownSet := ran second WorkingSet.openName [.str "demo"]
+            let asked := ran shownSet WorkingSet.noteName
+            let one := ran shownSet WorkingSet.noteName [.str "one", .bool true, .nat 0]
+            let two := ran one WorkingSet.noteName [.str "two", .bool true, .nat 1]
+            asked.loop.state.prompt.map (·.label) == some "Note: " &&
+              (rangesOf two "demo").map (·.stored.note) == #["one", "two"] &&
+              headersOf two (setBuffer "demo") == #["a.txt:2 · one · two"] &&
+              excerptRead two (setBuffer "demo") == some "bravo two\ncharlie three\ndelta four\n" },
+    { name :=
+        "working-set-refresh after a drifted range's text is put back in its file's buffer finds it again: placed, under its line"
+      run :=
+        pure <|
+          match withA with
+          | none => false
+          | some driver =>
+            let added := ran (evilFed driver "2 j") WorkingSet.addName [.str "demo"]
+            let gone := closed added "a.txt"
+            let cut :=
+              onDisk gone "a.txt" "alpha one\nbravo two\ndelta four\necho five\nfoxtrot six\n"
+            let shownSet := ran (opened cut "b.txt") WorkingSet.openName [.str "demo"]
+            let typedBack :=
+              evilFed (opened shownSet "a.txt") s!"2 G o {typed "charlie three"} <Escape>"
+            let back := ran typedBack Buffers.switchName [.str (setBuffer "demo")]
+            let refreshed := ran back WorkingSet.refreshName
+            (rangesOf shownSet "demo").map (·.hold) == #[.drifted] &&
+              shown back == some (setBuffer "demo") &&
+              headersOf refreshed (setBuffer "demo") == #["a.txt:3"] &&
+              excerptRead refreshed (setBuffer "demo") == some "charlie three\n" &&
+              refreshed.loop.state.echo == "demo: 1 ranges, 0 drifted" },
     { name := "working-set-open of a name the workspace has no set of says so, and opens nothing"
       run :=
         pure <|

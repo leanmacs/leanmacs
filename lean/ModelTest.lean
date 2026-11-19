@@ -1079,8 +1079,9 @@ alone too:
   and opened as the set's buffer, edited through it, visited and returned
   from; a row of project search's results pinned as its file's range; a
   selection across two files refused; a cursor's row; a range added twice;
-  overlapping ranges in one excerpt; the prompt; and a set there is none
-  of;
+  overlapping ranges in one excerpt; the prompt; a set there is none of;
+  and `working-set-remove`, `working-set-note` and `working-set-refresh`
+  in the set's buffer;
 - `workingSetDiskChecks`: the sets on disk (`Editor/WorkingSet/Disk.lean`)
   on that driver with the state directory `/state` and the version-control
   interface's model at `/r`, the second acceptance criterion: three ranges

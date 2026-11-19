@@ -207,6 +207,15 @@ def workingSetDiskChecks : List Check :=
               (kept added).disk == .unreadable reason &&
                 bytesOn added storePath == some text.toUTF8 &&
                 (rangesOf added "demo").size == 1 },
+    { name := "working-set-remove writes the set without the range removed"
+      run :=
+        pure <|
+          match diskDriver with
+          | none => false
+          | some driver =>
+            let shownSet := ran (threeAdded driver) WorkingSet.openName [.str "demo"]
+            let removed := ran shownSet WorkingSet.removeName
+            (storedDemo removed).map (·.start.line) == #[3, 6] },
     { name := "with no repository the commit written is empty"
       run :=
         pure <|
