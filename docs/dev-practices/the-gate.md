@@ -1248,7 +1248,10 @@ default: the root to `Editor.Core`, the core's root module
 (`lean/Editor/Core.lean`), and the moving names to `Editor.Compile`,
 `Editor.Themes.Solarized`, `Editor.Themes.FairyFloss` and
 `Editor.Themes.Shipped`, each meaning that module and every module under
-it. It checks three rules, in order, and stops at the first that fails:
+it. Two options, `--base <module>` and `--elaborator <module>`, name the
+config base and the elaborator adapter in place of the editor's; the gate
+uses them to see the third rule fail. It checks three rules, in order, and
+stops at the first that fails:
 
 | Rule | Exit when it fails |
 |---|---|
@@ -1279,12 +1282,21 @@ it. It checks three rules, in order, and stops at the first that fails:
   does, so it follows a module that is renamed or moved, and an import
   written in any form. It makes six queries, one for the root and one for
   each root of the build, builds nothing and writes nothing under `lean/`.
-- **The gate sees it bite, twice.** `ffi-test` runs it pointed at the root
+- **The gate sees each rule bite.** `ffi-test` runs it pointed at the root
   `Editor`, the config base, which imports the compile mode, and requires
-  exit 1; and pointed at the root `Editor.Setup`, which imports no moving
-  module and is not the whole core, and requires exit 3. A command line it
-  does not take, a query Lake fails and an empty answer are exit 2, so
-  none can stand in for a finding.
+  exit 1; pointed at the root `Editor.Setup`, which imports no moving
+  module and is not the whole core, and requires exit 3; and told with
+  `--base Editor.Core` that the config base is a module no executable's
+  root imports, and requires exit 4, with the roots that link the
+  elaborator named.
+- **It refuses to pass for no reason.** A command line it does not take, a
+  query Lake fails, an empty answer and a third rule that would be about
+  no root are exit 2, before any rule is reported, so none can stand in
+  for a finding or for a pass. The last is the case where no root of the
+  build reaches the elaborator adapter, which is what a renamed adapter, or
+  a generated root missing from the script's list of roots, would look
+  like. `ffi-test` sees that too: told with `--elaborator Editor.Core` that
+  the adapter is a module no root reaches, it must exit 2 and say why.
 - **What it does not claim.** It names the two features that move in this
   roadmap. A feature that is still the core's (the ex line, files,
   version control and the rest) is imported by core modules, and the

@@ -3,13 +3,17 @@
 # on Lake's module graph (docs/design/packages.md, "The core imports
 # check"): a package may depend on the core, and the core on no package.
 #
-#   tools/core-imports-check.sh [<root module> [<moving name>...]]
+#   tools/core-imports-check.sh [--base <module>] [--elaborator <module>]
+#                                [<root module> [<moving name>...]]
 #
 # Run it in `lean/`. The root module defaults to `Editor.Core`, the core's
 # root. A moving name is a module that is not the core's, with every module
 # under it; they default to the compile mode and the shipped palettes
 # (`moving`, below). They are named, never derived: "what the root does not
-# reach" would pass whatever the core imported.
+# reach" would pass whatever the core imported. `--base` names the config
+# base and `--elaborator` the elaborator adapter, in place of the editor's
+# (`base` and `elaborator`, below): the gate uses them to see the third
+# rule fail.
 #
 # It checks three things, in this order, and stops at the first that fails:
 #
@@ -29,9 +33,12 @@
 #    config links every module config may import. Otherwise it prints each
 #    root that does not, one a line, and exits 4.
 #
-# It exits 0 when all three hold. It exits 2 for a command line it does not
-# take, when Lake fails a query, and when Lake answers nothing for a root,
-# which would make the check pass for no reason.
+# It exits 0 when all three hold. It exits 2, before it reports on any
+# rule, for a command line it does not take, when Lake fails a query, when
+# Lake answers nothing for a root, and when no root of the build reaches
+# the elaborator adapter: each would make a rule hold of nothing, so the
+# check would pass for no reason. The last is what a renamed adapter, or a
+# list of roots that has fallen behind the build, would look like.
 #
 # It asks Lake (`lake query`) and reads no source text:
 # `+<module>:transImports` is a module's transitive imports, one module a
@@ -51,9 +58,24 @@ built="Main ModelTest ConfigTest FfiTest ContractTest"
 moving="Editor.Compile Editor.Themes.Solarized Editor.Themes.FairyFloss Editor.Themes.Shipped"
 
 usage() {
-  echo "usage: tools/core-imports-check.sh [<root module> [<moving name>...]]" >&2
+  echo "usage: tools/core-imports-check.sh [--base <module>] [--elaborator <module>] [<root module> [<moving name>...]]" >&2
   exit 2
 }
+
+# The options, each with the module it names, before the root.
+while [ "$#" -gt 0 ]; do
+  case $1 in
+    --base | --elaborator)
+      [ "$#" -ge 2 ] || usage
+      case $2 in
+        '' | -* | *[!A-Za-z0-9_.]*) usage ;;
+      esac
+      if [ "$1" = --base ]; then base=$2; else elaborator=$2; fi
+      shift 2
+      ;;
+    *) break ;;
+  esac
+done
 
 # A module name is dot-separated identifiers: no option and no white space.
 for argument in "$@"; do
@@ -100,22 +122,12 @@ is_moving() {
 
 core=$(closure "$root") || exit 2
 
-# 1. The root's closure holds no moving module.
-found=$(
-  printf '%s\n' "$core" | while IFS= read -r module; do
-    if is_moving "$module"; then
-      printf '%s\n' "$module"
-    fi
-  done
-)
-if [ -n "$found" ]; then
-  echo "core-imports-check: $root reaches these modules, which are not the core's ($moving):" >&2
-  printf '%s\n' "$found"
-  exit 1
-fi
-
-# 2 and 3 read what each root of the build reaches.
+# What each root of the build reaches: for the second rule, the `Editor.…`
+# modules among them that are outside the root's closure and not moving;
+# for the third, the roots that reach the elaborator adapter, and those of
+# them that do not reach the config base.
 outside=
+elaborating=
 unbased=
 for target in $built; do
   reached=$(closure "$target") || exit 2
@@ -138,11 +150,33 @@ for target in $built; do
   if [ -n "$missing" ]; then
     outside=$(printf '%s\n%s\n' "$outside" "$missing")
   fi
-  if printf '%s\n' "$reached" | grep -qxF "$elaborator" &&
-    ! printf '%s\n' "$reached" | grep -qxF "$base"; then
-    unbased=$(printf '%s\n%s\n' "$unbased" "$target")
+  if printf '%s\n' "$reached" | grep -qxF "$elaborator"; then
+    elaborating=$(printf '%s\n%s\n' "$elaborating" "$target")
+    if ! printf '%s\n' "$reached" | grep -qxF "$base"; then
+      unbased=$(printf '%s\n%s\n' "$unbased" "$target")
+    fi
   fi
 done
+
+# The third rule must be about some root, or it holds of nothing.
+if [ -z "$elaborating" ]; then
+  echo "core-imports-check: no root of the build ($built) reaches $elaborator, so no root is checked for the config base" >&2
+  exit 2
+fi
+
+# 1. The root's closure holds no moving module.
+found=$(
+  printf '%s\n' "$core" | while IFS= read -r module; do
+    if is_moving "$module"; then
+      printf '%s\n' "$module"
+    fi
+  done
+)
+if [ -n "$found" ]; then
+  echo "core-imports-check: $root reaches these modules, which are not the core's ($moving):" >&2
+  printf '%s\n' "$found"
+  exit 1
+fi
 
 # 2. Every `Editor.…` module the build reaches is in the root's closure.
 if [ -n "$outside" ]; then
