@@ -884,6 +884,7 @@ structure Command where
 inductive Bound where
   | motion     (name : String)
   | charMotion (name : String)      -- a motion that takes the character the next key names
+  | charCommand (command : Command) -- a command that takes the character the next key names
   | promptMotion (name label : String) -- a motion that takes a text typed in the minibuffer
   | operator   (operator : Operator)
   | textObject (name : String)
@@ -913,7 +914,14 @@ inductive Bound where
   register prefix is: a key that prints names the character, a digit
   included, and `TAB` names a tab. It completes the move, or the operator
   waiting over the motion, with that argument. Any other key resets the
-  edit begun, as `f<Escape>` does in Vim.
+  edit begun, as `f<Escape>` does in Vim. `` ` `` and `'` are motions of
+  this kind too: the character names a mark ("The jump list and marks").
+- **`charCommand`** is a command that takes the character the next key
+  names: `m`. It waits as `charMotion` does, and the character completes
+  `Edit.run` with it as the argument, compiled first, before the count and
+  the register. Typed while an operator waits it resets, as every
+  command's key does, and it is the last change only if its command
+  changes text (`m` changes none).
 - **`register`** is the key that begins a register's name (`"`). See
   Registers.
 - **`repeat`** is the repeat key (`.`). It is a part of speech and not a
@@ -933,6 +941,7 @@ inductive Edit where
   | move    (motion : String) (count : Option Nat) (argument : Option String := none)
   | operate (operator : Operator) (over : Over) (count : Option Nat) (register : Option String)
   | run     (command : Command) (count : Option Nat) (register : Option String)
+            (argument : Option String := none)   -- the character a `charCommand` was given
   | replay  (change : Edit) (inserted : Option String)   -- the last change, and its typed text, editing keys' marks in it
 ```
 
@@ -960,7 +969,7 @@ scheme's one rule for it:
 |---|---|
 | `move m c a` | `move`, with `[.str m, .nat c]`, or `[.str m, .str a, .nat c]` when the motion has an argument |
 | `operate o over c r` | `operate`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""`. A motion's argument, when it has one, is a string right after its name: `[.str o.name, .str "motion", .str m, .str a, .nat c, .str r]` |
-| `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
+| `run cmd c r` | `cmd.name`, with `[.nat c, .str r]`, or `[.str a, .nat c, .str r]` when the command takes a character `a` (`charCommand`) |
 | `replay change inserted` | `repeat`, with `[.bool session, .str text, .str command]` and then the change's own arguments: whether the change began an insert session, the text typed in it, and the command the change compiles to |
 
 **A motion's argument, when it has one, is the string right after the
@@ -2034,8 +2043,11 @@ options (`cpoptions` with `c`, `wrapscan`, `magic`, `noignorecase`):
 - **Under an operator every search is exclusive**, so the two rules for an
   exclusive motion that ends in column 1 apply: `d*` from a line's start to
   the next line's start deletes the line, line-wise.
+- **Every search is a jump** (`Vocabulary.Motion.jumps`): `/`, `?`, `n`,
+  `N`, `*` and `#` record where they start from in the window's jump list
+  when they find a match ("The jump list and marks").
 - **Not built**: search offsets (`/foo/e`), search history, `incsearch`,
-  the jump list, `ignorecase` and `smartcase`.
+  `ignorecase` and `smartcase`.
 
 **The character finds** (`:help f`, `:help t`, `:help ;`):
 
@@ -2889,6 +2901,111 @@ reads no `winheight` or `winwidth`; `equalalways` balances every window,
 where Vim leaves larger ones alone; and focus by direction measures from
 the window's top-left corner, not the cursor ("Open questions").
 
+### The jump list and marks
+
+Vim 9.1's jump list and marks (`:help jumplist`, `:help jump-motions`,
+`:help mark-motions`), as `mark.c`'s `setpcmark`, `cleanup_jumplist`,
+`movemark` and `getmark_buf_fnum` implement them. The list's rules are
+plain data (`lean/Editor/JumpList.lean`); where the places are is editor
+state (`lean/Editor/State.lean`, "The jump list and marks"); the decisions
+over places are `lean/Editor/Jumps.lean`'s, and going to a closed file's
+place `lean/Editor/Jumps/Go.lean`'s; the keys are evil's
+(`lean/Editor/Evil/Jumps.lean`, `lean/Editor/Evil/Marks.lean`).
+
+**Places are markers.** A jump list's entry, a mark and the
+previous-context mark are anchor markers of a buffer's text
+([text-and-display.md](text-and-display.md), "Who holds what"), with the
+bias `after`, so they follow every edit made before them, and a line
+broken or opened right at one carries it down with its line, as Vim's
+`mark_col_adjust` carries a mark when a line is split before it. A buffer
+that is closed releases its text and its markers, so the places held in
+it are first **detached** into its file's path, row and column in
+characters; going to one visits the file, and once a buffer holds that
+file again they are held by its markers again. A closed buffer with no
+file has its places dropped.
+
+**The jump motions** record the place the cursor starts from when they do
+not fail, with an operator or without (`Vocabulary.Motion.jumps`): `G`,
+`gg`, `/`, `?`, `n`, `N`, `*`, `#`, `%`, `` ` `` and `'`. `gg`, `*` and `#`
+are not in `:help jump-motions`' list, and Vim 9.1's `nv_goto` and
+`normal_search` set the previous-context mark for them all the same. So do
+the commands that start editing another file: opening a file
+(`open-file`, the `find-file-*` commands and compile's visits, all through
+`Files.open` and `Files.visit`) and `switch-buffer`. `(`, `)`, `{`, `}`,
+`[[`, `]]`, `H`, `M`, `L`, `:s` and `:tag` are not built, and whoever
+builds one sets `jumps` on its entry.
+
+**The jump list**, one per window, of at most 100 entries:
+
+- **Record** (`setpcmark`): the cursor's place is the window's
+  previous-context mark and the list's last entry, the oldest dropped past
+  100, and the index one past the end. Nothing is removed then.
+- **Clean up** (`cleanup_jumplist`), at the start of every `C-o` and
+  `C-i`: an entry is dropped when a later entry has the same buffer, or
+  file, and the same line, read from the markers then, so entries that
+  edits brought onto one line are one. The index goes with its entry, and
+  one past the end stays one past the end.
+- **`C-o` and `C-i`** (`movemark`, −count and +count, 1 by default; `TAB`
+  is `C-i`'s other spelling): a step that lands outside the list does
+  nothing and says nothing (Vim beeps). From one past the end, the first
+  step after a jump, the cursor's place is recorded first and the step is
+  taken from the entry before it. The step goes to the entry's exact line
+  and column, showing its buffer in the window, or visiting its file; the
+  index moves at once, before the file is loaded, and the visit records no
+  jump of its own.
+- **A split copies the list** to the new window, which then moves through
+  its own.
+- `:help jumplist`'s worked example is pinned step by step on the pure
+  list (`ModelTest.jumpListChecks`) and, scaled to eight lines, by keys
+  (`ModelTest.evilJumpChecks`).
+
+**Marks:**
+
+- **`m{a-z}`** sets a mark of the buffer, **`m{A-Z}`** a global mark, which
+  remembers its buffer and, through it, its file, and **`m'`** and
+  **`` m` ``** the previous-context mark, which is a record of a jump and so
+  also appends to the jump list. Setting a mark is no jump. Any other
+  character says `E191: Argument must be a letter or forward/backward
+  quote`.
+- **`` `{x} ``** goes to the mark's exact position, exclusive under an
+  operator, and **`'{x}`** to its line's first non-blank, line-wise under
+  an operator. Both are jumps, with an operator or without, so **`''`**
+  and **``` `` ```**, which go to the previous-context mark, go back and
+  forth between two places.
+- **A mark not set** says `E20: Mark not set`, and **a character that names
+  no mark** `E78: Unknown mark`. The motion fails, so an operator waiting
+  for it is given up with the message.
+- **A global mark in another buffer**: with no operator, the window shows
+  that buffer, or visits the closed buffer's file, the cursor goes to the
+  mark, and one jump is recorded. Under an operator the motion fails with
+  E20, as `getmark_buf_fnum` gives no line there.
+- **A mark motion reads the marks of the window it is made in** and of the
+  buffer that window shows (`Vocabulary.From.view`, `From.buffer`), which
+  need not be the focused window, nor the only buffer over its text.
+
+**Not built**: the special marks `[`, `]`, `<`, `>`, `.`, `^`, `"` and
+`0` to `9`; `:marks`, `:jumps`, `:delmarks` and `:keepjumps`;
+`jumpoptions=stack`; `g;` and `g,`, the change list; keeping marks across
+restarts (viminfo, shada); and `m` in the visual states.
+
+**Recorded departures**, not pinned against Vim:
+
+- **A deleted line's mark is kept**, collapsed to where the deletion was,
+  as a marker is. Vim deletes a named mark when its line is deleted
+  (`mark_adjust`'s `one_adjust`).
+- **Text typed right at a place is typed before it**: the bias `after`
+  that carries a place down with a line broken at it also moves it past a
+  character typed at it, where Vim leaves a mark's column as it was.
+- **A buffer's lowercase marks go when the buffer is closed**, where Vim
+  keeps them, since `:bd` does not wipe the buffer.
+- **The previous-context mark is a place with its buffer**: `''` after a
+  jump into another buffer goes back to that buffer, as a global mark
+  does. Vim's `w_pcmark` is a position of the current buffer.
+- **A place inside a range a command deleted keeps its collapsed
+  position** when the command is rolled back: the loop restores the
+  windows' selection and scroll markers alone
+  ([concurrency.md](concurrency.md), "Rollback").
+
 ### Tab commands as built
 
 Status: built, by window management's phase 5
@@ -2966,7 +3083,7 @@ Which names have something behind them:
 
 | Names | State |
 |---|---|
-| The twenty-eight motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
+| The thirty motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
 | `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (`Evil.commands`) |
 | `self-insert`, which no table names: typed text | Built and registered |
 | `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
@@ -2985,14 +3102,15 @@ Which names have something behind them:
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
 | The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
 | The tab commands `tabKeys` names: `tab-next`, `tab-previous`, `tab-new`, `tab-close`, `tab-switch`, `tab-select-1` … `tab-select-9`; and `tab-rename`, `tab-move-right`, `tab-move-left`, with no key | Built and registered (`TabCommands.commands`, `lean/Editor/TabCommands.lean`; "Tab commands as built") |
+| `jump-backward`, `jump-forward`, `set-mark` | Built and registered (`Evil.commands`; "The jump list and marks") |
 | `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (`Evil.commands`, `lean/Editor/Evil/Clipboard.lean`); the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
 
 | Table | Keys |
 |---|---|
-| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse; `n` search-next, `N` search-previous, `*` word-search-forward, `#` word-search-backward, `%` matching-bracket |
+| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse; `n` search-next, `N` search-previous, `*` word-search-forward, `#` word-search-backward, `%` matching-bracket; `` ` `` mark-exact, `'` mark-line, each a motion that takes the character the next key names, a mark |
 | `objects` | `i w` inner-word, `a w` a-word, `i W` inner-bigword, `a W` a-bigword, `i "` `a "`, `i '` `a '`, `` i ` `` `` a ` `` the quote objects, `i (` `i )` `i b` inner-paren, `a (` `a )` `a b` a-paren, `i [` `i ]` inner-bracket, `a [` `a ]` a-bracket, `i {` `i }` `i B` inner-brace, `a {` `a }` `a B` a-brace, `a f` a-function, `i f` inner-function, `a c` a-class, `i c` inner-class, `a a` an-argument, `i a` inner-argument: in normal state's pending keymaps, read only while an operator waits, and in both visual states' keymaps |
 | `operators` | `d` delete, `c` change (enters insert), `y` yank (changes no text) |
-| `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex, `C-g` keyboard-quit; `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
+| `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex, `C-g` keyboard-quit, `C-o` jump-backward, `C-i` and `TAB` jump-forward; `m` set-mark, a command that takes the character the next key names (`Bound.charCommand`); `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
 | `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `C-w` insert-delete-word-backward, `RET` at-point-return, `TAB` at-point-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down, `C-SPC` at-point-complete, `C-n` at-point-next, `C-p` at-point-previous, `S-TAB` at-point-backtab, `C-g` at-point-quit (each enters no state, and none is a change dot repeat replays) |
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |

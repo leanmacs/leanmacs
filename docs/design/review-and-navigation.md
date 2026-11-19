@@ -193,7 +193,7 @@ callers and callees always, not on demand, and brought code to the reader.
 | Feature | What it is | Built on |
 |---|---|---|
 | Pickers | Fuzzy finders over files, symbols, buffers, anything | Fuzzy matching, tables |
-| Jump list | Positions held by anchors, so they survive edits | Anchors |
+| Jump list | Positions held by anchors, so they survive edits. Built, with Vim's marks: `C-o`, `C-i`, `m`, `` ` `` and `'`, each window's list of anchor markers, a closed buffer's places kept as its file's rows and columns ([keymaps-and-modes.md](keymaps-and-modes.md), "The jump list and marks") | Anchors |
 | Working sets | Named, pinned collections of locations that persist | Persistent tables, anchors |
 | References and callers as excerpts | Results shown as code in an excerpt buffer, not a list of file names | Excerpt buffers, code index |
 | Neighbour strip | Callers and callees of the function at the cursor, always visible | Code index, block decorations |

@@ -268,8 +268,15 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   sorted by offset and mapped in one walk. Measured: 32 bytes allocated for
   each of ten thousand anchors, on a megabyte of text, beyond what the same
   transaction allocates with none.
-- Who holds what, later: a view's selection, a scroll position, a comment's
-  place and a jump-list entry are each a marker Lean holds the id of. A Rust
+- Who holds what: a view's selection, a scroll position, a comment's place,
+  a jump-list entry and a mark are each a marker Lean holds the id of. The
+  jump list's entries, the previous-context mark and the marks are built:
+  anchor markers with the bias `after`, held in the editor state as places
+  (`lean/Editor/State.lean`, "The jump list and marks"), detached into a
+  file's path, row and column when their buffer is closed, and given up by
+  the loop once no place holds them
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "The jump list and
+  marks"). A Rust
   consumer that holds positions of its own (layout's cache keys) maps values
   with the mapper.
 
@@ -3915,7 +3922,9 @@ frame journal and the renderer's counters.
   has one, and a flag.
 - **How many markers a text should hold.** Every transaction costs the ends
   held. There is no bound and no policy, and no marker survives a restart.
-  The command loop, and whatever holds comments and jump lists, decide.
+  The command loop, and whatever holds comments and jump lists, decide. A
+  window's jump list holds at most 100 entries, Vim's limit, and a
+  clean-up drops those that edits brought onto one line.
 - **A marker set by a transaction.** A transaction could name a marker to
   set to its selection after. It does not: the author places its marker
   with a second request, and the one writer path stays one argument
