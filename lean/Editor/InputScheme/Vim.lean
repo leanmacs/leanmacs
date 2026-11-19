@@ -21,7 +21,7 @@ A key sequence parses to an `Edit`, and an edit compiles to an invocation
 |---|---|
 | `move m c a` | `moveCommand`, with `[.str m, .nat c]`, or `[.str m, .str a, .nat c]` when the motion has an argument |
 | `operate o over c r` | `operateCommand`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""`. A motion's argument, when it has one, is a string right after its name: `[.str o.name, .str "motion", .str m, .str a, .nat c, .str r]` |
-| `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
+| `run cmd c r` | `cmd.name`, with `[.nat c, .str r]`, or `[.str a, .nat c, .str r]` when the command takes a character `a` |
 | `select obj c` | `selectObjectCommand` (`select-object`), with `[.str obj, .nat c]` |
 | A motion that asks | `askCommand` (`minibuffer-ask`), with `[.str label]`; the edit is compiled when the answer comes ("Motions that ask") |
 | `replay change inserted` | `repeatCommand`, with `[.bool session, .str text, .str command]` and then the change's own arguments: whether the change began an insert session, the text typed in it, and the command the change compiles to |
@@ -146,7 +146,24 @@ the key after it, which names the character it finds.
 - **Any other key resets the edit begun**: `f` then `<Escape>` does
   nothing and leaves nothing pending, as in Vim.
 
-## Motions that ask
+## Commands that take a character
+
+`m` is bound to `Bound.charCommand`: the command waits for the key after
+it, which names the character it is run with, as a motion that takes a
+character waits (above).
+
+- **The key is kept as typed** (`State.awaitsChar`, `Awaiting.command`),
+  so it is pending alone, and it folds the count being typed into the
+  multiplier.
+- **The next key is read before counts and keymaps**, as for a motion: a
+  key that prints names the character. It completes `Edit.run` with the
+  character as its argument, compiled as the character first, then the
+  count and the register (`[.str a, .nat c, .str r]`).
+- **Any other key resets the edit begun**, and so does the key itself while
+  an operator waits, as every command's does.
+- **It is the last change only if its command changes text**, as any
+  command: `m` changes none, so `.` after it repeats the change before.
+
 
 `/` and `?` are bound to `Bound.promptMotion`: the motion's argument is a
 text typed in the minibuffer, so the edit cannot complete at the key.
@@ -454,6 +471,9 @@ inductive Bound where
   /-- The motion of this vocabulary name, which takes the character the next
   key names as its argument: `f`, `t`, `F` and `T`. -/
   | charMotion (name : String)
+  /-- A command that takes the character the next key names as its first
+  argument: `m`. -/
+  | charCommand (command : Command)
   /-- The motion of this vocabulary name, which takes as its argument a text
   typed in the minibuffer, asked for with a prompt labelled `label`: `/`
   and `?`. -/
@@ -498,8 +518,11 @@ inductive Edit where
   | move (motion : String) (count : Option Nat) (argument : Option String := none)
   /-- Apply an operator to a target. -/
   | operate (operator : Operator) (over : Over) (count : Option Nat) (register : Option String)
-  /-- Run a command. -/
-  | run (command : Command) (count : Option Nat) (register : Option String)
+  /-- Run a command, given `argument` when it takes the character the next
+  key names. -/
+  |
+  run (command : Command) (count : Option Nat) (register : Option String)
+    (argument : Option String := none)
   /-- Replay `change`, the last change, with `inserted`, the text typed in
   the insert session it began, or none when it began none. -/
   | replay (change : Edit) (inserted : Option String)
@@ -547,7 +570,7 @@ def enters : Edit → Option String
 def withCount (count : Nat) : Edit → Edit
   | .move motion _ argument => .move motion (some count) argument
   | .operate operator over _ register => .operate operator over (some count) register
-  | .run command _ register => .run command (some count) register
+  | .run command _ register argument => .run command (some count) register argument
   | .replay change inserted => .replay change inserted
   | .select object _ => .select object (some count)
 
@@ -567,8 +590,9 @@ def compile : Edit → Invocation
       arguments :=
         [.str operator.name, .str kind, .str name] ++ argument.toList.map .str ++
           [.nat (count.getD 0), .str (register.getD "")] }
-  | .run command count register =>
-    { command := command.name, arguments := [.nat (count.getD 0), .str (register.getD "")] }
+  | .run command count register argument =>
+    { command := command.name
+      arguments := argument.toList.map .str ++ [.nat (count.getD 0), .str (register.getD "")] }
   | .replay change inserted =>
     let compiled := change.compile
     { command := repeatCommand
@@ -686,6 +710,15 @@ def register (states : States) (record : StateRecord) : States :=
 
 end States
 
+/-- What the key after a key that takes a character is read for
+(`State.awaitsChar`). -/
+inductive Awaiting where
+  /-- The motion of this vocabulary name (`Bound.charMotion`). -/
+  | motion (name : String)
+  /-- This command (`Bound.charCommand`). -/
+  | command (command : Command)
+  deriving DecidableEq, Repr
+
 /-- What the Vim scheme remembers between keys. -/
 structure State where
   /-- The name of the Vim state of each view that is not in the initial
@@ -703,9 +736,10 @@ structure State where
   /-- Whether the register prefix was the last key, so that the next key
   names the register. -/
   awaitsRegister : Bool := false
-  /-- The motion that waits for the character the next key names, if a key
-  bound to one was the last key (`Bound.charMotion`). -/
-  awaitsChar : Option String := none
+  /-- The motion or the command that waits for the character the next key
+  names, if a key bound to one was the last key (`Bound.charMotion`,
+  `Bound.charCommand`). -/
+  awaitsChar : Option Awaiting := none
   /-- The operator waiting for its target, if one was typed. -/
   operator : Option Operator := none
   /-- The keymap prefix walked so far, within the edit begun. -/
@@ -960,8 +994,17 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
     ({ state.reset with asking := some asking }, .ask label)
   | .charMotion name =>
     ({ state with
-        typed, multiplier := state.count, digits := none, awaitsChar := some name, walked := [] },
+        typed, multiplier := state.count, digits := none, awaitsChar := some (.motion name)
+        walked := [] },
       .nothing)
+  | .charCommand command =>
+    match state.operator with
+    | some _ => (state.reset, .nothing)
+    | none =>
+      ({ state with
+          typed, multiplier := state.count, digits := none, awaitsChar := some (.command command)
+          walked := [] },
+        .nothing)
   | .textObject name =>
     match state.operator with
     | some operator =>
@@ -1079,15 +1122,19 @@ def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : View
     if state.asking.any (·.minibuffer != some view) then { state with asking := none } else state
   let record := state.record states view
   let typed := state.typed ++ [key.chord]
-  if let some name := state.awaitsChar then
-    match Key.character? key with
-    | some char =>
+  if let some awaiting := state.awaitsChar then
+    match Key.character? key, awaiting with
+    | some char, .motion name =>
       match state.operator with
       | some operator =>
         state.finish states view
           (.operate operator (.motion name (some char)) state.count state.register)
       | none => state.finish states view (.move name state.count (some char))
-    | none => (state.reset, .nothing)
+    | some char, .command command =>
+      let (next, parsed) :=
+        state.finish states view (.run command state.count state.register (some char))
+      (next.ran states view command, parsed)
+    | none, _ => (state.reset, .nothing)
   else
     if state.awaitsRegister then
       match key.printed? with

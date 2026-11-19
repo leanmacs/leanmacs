@@ -26,6 +26,17 @@ namespace ModelTest
 
 open Editor
 
+/-- The command of the Vim checks that takes the character the next key
+names: it changes no text and enters no state. -/
+def vimMark : Vim.Command :=
+  { name := "mark" }
+
+/-- Active keymaps, for every view, with `m` bound to `vimMark` as a command
+that takes a character (`Vim.Bound.charCommand`), and `.` to the repeat
+key, which the checks' states do not bind. -/
+def vimMarkMaps (_ : ViewId) : List (Keymap Vim.Bound) :=
+  [vimKeymap [("m", .charCommand vimMark), (".", .repeat)]]
+
 /-- The checks of the Vim scheme's edits (`Editor/InputScheme/Vim.lean`):
 the invocation each compiles to, and what an edit says of itself. -/
 def vimEditChecks : List Check :=
@@ -56,6 +67,15 @@ def vimEditChecks : List Check :=
         pure
           ((Vim.Edit.run { name := "put-after" } (some 2) (some "+")).compile ==
             { command := "put-after", arguments := [.nat 2, .str "+"] }) },
+    { name :=
+        "an edit that runs a command with a character compiles to that command, with the character first, then the count and the register"
+      run :=
+        pure
+          ((Vim.Edit.run vimMark (some 2) (some "+") (some "a")).compile ==
+              { command := "mark", arguments := [.str "a", .nat 2, .str "+"] } &&
+            (Vim.Edit.run vimMark none none (some "a")).compile ==
+              { command := "mark", arguments := [.str "a", .nat 0, .str ""] } &&
+            (Vim.Edit.run vimMark none none (some "a")).changes == false) },
     { name :=
         "a motion's argument compiles to a string right after the motion's name, in a move and over a motion, so the register stays the last argument; a count put in its place keeps the argument"
       run :=
@@ -331,6 +351,24 @@ def vimGrammarChecks : List Check :=
             escapedYields == [none, none] &&
             decide (escaped = vimInit) &&
             (vimFed "f <Escape> w" active).2.getLast? == some (some (vimMove "word"))) },
+    { name :=
+        "a key bound to a command that takes a character is pending alone; the key after it names the character and runs the command with it, the count and the register; a key that names none resets, and so does the key after an operator"
+      run :=
+        let mark (char : String) (count : Nat) (register : String) : Invocation :=
+          { command := "mark", arguments := [.str char, .nat count, .str register] }
+        let (escaped, escapedYields) := vimFed "m <Escape>" vimMarkMaps
+        let (afterOperator, operatorYields) := vimFed "d m a" vimMarkMaps
+        pure
+          ((vimFed "m a" vimMarkMaps).2 == [none, some (mark "a" 0 "")] &&
+            (vimParsed "m a" vimMarkMaps).2 ==
+              [.nothing, .edit (.run vimMark none none (some "a"))] &&
+            (vimFed "2 m a" vimMarkMaps).2.getLast? == some (some (mark "a" 2 "")) &&
+            (vimFed "\" x m a" vimMarkMaps).2.getLast? == some (some (mark "a" 0 "x")) &&
+            (vimFed "m '" vimMarkMaps).2.getLast? == some (some (mark "'" 0 "")) &&
+            escapedYields == [none, none] &&
+            decide (escaped = vimInit) &&
+            operatorYields == [none, none, none] &&
+            decide (afterOperator = vimInit)) },
     { name :=
         "a key bound to a motion that asks yields the command that opens its prompt, with the label, and resets the edit begun: nothing is pending, nothing is the last change, and the edit waits with the operator, the count and the register typed before it"
       run :=
@@ -830,6 +868,19 @@ which Vim state a view is in, how one is entered, and what the grammar
 reads of a state's record. -/
 def vimStateChecks : List Check :=
   [{  name :=
+        "after a key bound to a command that takes a character the state awaits the character for that command, with the key pending; after the key that names none nothing is pending; and the command with its character is never the last change, so . repeats the change before it"
+      run :=
+        let deleteChar : Vim.Edit := .run { name := "delete-char", changes := true } none none
+        pure
+          ((vimFed "m" vimMarkMaps).1.awaitsChar == some (.command vimMark) &&
+            vimPending "m" vimMarkMaps == keys "m" &&
+            vimPending "m <Escape>" vimMarkMaps == [] &&
+            (vimFed "m <Escape>" vimMarkMaps).1.awaitsChar == none &&
+            (vimFed "m a" vimMarkMaps).1.lastChange == none &&
+            (vimFed "x m a" vimMarkMaps).1.lastChange == some deleteChar &&
+            (vimParsed "x m a ." vimMarkMaps).2.getLast? ==
+              some (.edit (.replay deleteChar none))) },
+    { name :=
         "the Vim scheme reports a view with no entry by the initial record: its cursor shape in the face cursor. and its name, one status field, its name in capitals in the badge face mode-line.state. and its name, its shape, no selecting, no insert session, and a view that takes no text"
       run :=
         let scheme := Vim.scheme vimStates
@@ -1385,6 +1436,9 @@ def vimHintChecks : List Check :=
             (vimHints "\"" vimNoMaps Vim.Default.states).isEmpty &&
             (vimHints "f" vimNoMaps Vim.Default.states).isEmpty &&
             (vimHints "" vimNoMaps Vim.Default.states).isEmpty) },
+    { name :=
+        "a command that takes a character, typed alone, leaves no keymap prefix walked and lists nothing"
+      run := pure (vimHints "m" vimMarkMaps).isEmpty },
     { name := "the Vim scheme reports what can follow through its continuations field"
       run :=
         let scheme := Vim.scheme vimStates
@@ -1414,6 +1468,9 @@ def vimFindFileMaps (_ : ViewId) : List (Keymap Vim.Bound) :=
 in the state the view is in. -/
 def vimKeyBindingChecks : List Check :=
   [{  name :=
+        "a command that takes a character is not listed by its key alone, which runs nothing until a character follows, as a motion that takes one is not"
+      run := pure !((vimKeyBindings "" vimMarkMaps).any (·.1 == keys "m")) },
+    { name :=
         "in normal state the Vim scheme lists i and : with their commands, and no part of speech: not d, j, f, the register prefix or the repeat key"
       run :=
         let listed := vimKeyBindings ""

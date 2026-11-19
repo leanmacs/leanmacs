@@ -723,26 +723,31 @@ The Vim scheme (`Editor/InputScheme/Vim.lean`) is checked the same way,
 with no model:
 
 - `vimEditChecks`: what an edit compiles to, the layout of each kind of
-  invocation, and what an edit says of itself;
+  invocation, a command's with a character first, and what an edit says
+  of itself;
 - `vimRegistryChecks`: the registry of Vim states: looking a state up by
   its name, and registering one. A record holds keymaps and so has no
   equality: the checks compare records by their fields (`vimSeen`);
 - `vimGrammarChecks`: the grammar: which keymaps a key is looked up in,
-  and what a key sequence parses to and yields;
+  and what a key sequence parses to and yields, a command that takes a
+  character (`m`) among them;
 - `vimStateChecks`: Vim states: which state a view is in, how one is
   entered, what the scheme reports of a view in a state, what the grammar
   reads of a state's record (typed text, an operator over the selection),
   the last change, and a mode's keys under the Vim scheme: a hand-tuned
   key is typed text in insert state, and `Mode.check` reads every state's
-  keymaps;
+  keymaps; and a command that takes a character awaiting it, and never
+  the last change;
 - `vimHintChecks`: what the Vim scheme lists as able to follow a keymap
   prefix (`Vim.State.continuations`): keys of both tiers, an active prefix
   over a state's binding, the pending keymaps while an operator waits, and
-  nothing after a count, an operator or the register prefix alone;
+  nothing after a count, an operator, the register prefix or a command
+  that takes a character alone;
 - `vimKeyBindingChecks`: the key bindings the Vim scheme lists
   (`Vim.State.keyBindings`): the commands of the walk's tiers in the view's
   state, an active binding first with its description, and no part of
-  speech, no sequence that begins with a count digit, no mode's binding
+  speech, no command that takes a character by its key alone, no sequence
+  that begins with a count digit, no mode's binding
   where typing is text and no binding an active prefix shadows;
 - `vimDefaultChecks`: the default states and bindings
   (`Editor/InputScheme/Vim/Default.lean`), observed through the grammar:
