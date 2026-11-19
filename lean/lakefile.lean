@@ -302,18 +302,56 @@ one. -/
 package_facet editor pkg : FilePath := do
   linkAsEditor (← setRoot pkg) (pkg.binDir / "editor")
 
+/-- The file of the executable `editorLinked` links for the module `mod`:
+in the `bin/` of the module's package, named as the module is with a dash
+for each dot (`GreetingTest.Linked` gives `GreetingTest-Linked`). -/
+def linkedFile (mod : Module) : FilePath :=
+  mod.pkg.binDir / mod.name.toStringWithSep "-" (escape := false)
+
+/-- An executable rooted at a module, linked as the editor is
+(`linkAsEditor`), at `linkedFile`: `lake -d <package> build
++<module>:editorLinked`. It is how a package outside the core gets a test
+executable linked with the glue and the Rust archive, which only this
+package can name (`linkedTestModule?`, `tools/package-set.sh`). -/
+module_facet editorLinked mod : FilePath := do
+  linkAsEditor mod (linkedFile mod)
+
+/-- The module of the linked test of the Lake package `pkg`, when it has
+one: `<P>Test.Linked`, `<P>` being the package's name in upper camel case,
+held by a library of `pkg`, with its source file. It is the root of one
+executable linked as the editor is (`editorLinked`): the tests of a package
+that need the Rust library, as `ffi-test` and `config-test` are the
+core's. -/
+def linkedTestModule? (pkg : Package) : IO (Option Module) := do
+  let .str namespace_ base := toUpperCamelCase pkg.baseName | return none
+  match pkg.findModule? (.str (.str namespace_ (base ++ "Test")) "Linked") with
+  | some mod =>
+    if ← mod.leanFile.pathExists then
+      return some mod
+    else
+      return none
+  | none =>
+    return none
+
 /-- The packages of a set that a step of the gate runs over
 (`tools/package-set.sh`; `lake -d <set dir> query :editorPackages`): the
 packages of the set (`setPackages`) that are path dependencies and hold a
 Lean library, other than this one, the core, which the gate's own tasks
-cover. One line a package: its name and its directory, separated by a
-tab. -/
+cover. One line a package, its fields separated by tabs: its name, its
+directory, the module of its linked test (`linkedTestModule?`) and the
+executable `editorLinked` links for it, the last two `-` for a package with
+no linked test. -/
 package_facet editorPackages pkg : Array String := do
   let ws ← getWorkspace
-  let lines :=
-    (setPackages ws pkg).filterMap fun dep =>
-      if dep.keyName == __name__ || !dep.remoteUrl.isEmpty || dep.leanLibs.isEmpty then none
-      else some s!"{dep.baseName.toString (escape := false)}\t{dep.dir}"
+  let mut lines : Array String := #[]
+  for dep in setPackages ws pkg do
+    if dep.keyName == __name__ || !dep.remoteUrl.isEmpty || dep.leanLibs.isEmpty then
+      continue
+    let linked :=
+      match ← linkedTestModule? dep with
+      | some mod => s!"{mod.name}\t{linkedFile mod}"
+      | none => "-\t-"
+    lines := lines.push s!"{dep.baseName.toString (escape := false)}\t{dep.dir}\t{linked}"
   return Job.pure lines
 
 /-- The editor. `supportInterpreter` exports the executable's symbols, so

@@ -133,8 +133,9 @@ env = { LEAN_CC = "/usr/bin/cc" }
 run = [
   "lake build --wfail",
   # The fixture set (tests/packages/lakefile.toml): its editor, linked by
-  # the package-set build, and each of its packages' default targets, with
-  # the package's own linters on (tools/package-set.sh;
+  # the package-set build, each of its packages' default targets, with the
+  # package's own linters on, and each package's linked test, an executable
+  # linked as the editor is (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps").
   "sh ../tools/package-set.sh build ../tests/packages",
 ]
@@ -628,6 +629,7 @@ run = [
   "status=0; err=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/no-such-script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 1 && test \"${err#editor: }\" != \"$err\"",
   # The packages of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps"): each package's
+  # linked test, its checks against the Rust library, and its
   # headless fixtures (`<package>/tests/headless/<name>/`), run on the
   # editor the package-set build linked from the fixture set
   # (tests/packages/.lake/build/bin/editor), must print exactly their
