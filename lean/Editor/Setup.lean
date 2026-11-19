@@ -538,9 +538,12 @@ inductive SetupRequest where
   /-- Bind the key sequence `keys`, as written, placeholders in place, to
   the command called `command`, holding in the scheme's states named in
   `states`, or as the leader rule says when it names none, described by
-  `desc` for the key hints if it is given. The name is looked up when the
-  keys are typed. -/
-  | bind (keys : List Key.Stroke) (command : String) (states : List String) (desc : Option String)
+  `desc` for the key hints if it is given, in the keymap of the prompt
+  category `category` when it is given and the global keymap otherwise.
+  The name is looked up when the keys are typed. -/
+  |
+  bind (keys : List Key.Stroke) (command : String) (states : List String) (desc : Option String)
+    (category : Option String)
   /-- Name the prefix `keys`, as written, placeholders in place, `name`, for
   the key hints. -/
   | prefixName (keys : List Key.Stroke) (name : String)
@@ -759,12 +762,15 @@ leaders in force when the registry makes its keymaps. With `states`, the
 binding holds only in the scheme's states named there; with none, it holds
 everywhere, except that one under the leader or the localleader does not
 hold where typing is text. With `desc`, the binding is described by it in
-the key hints (`(desc := "Find file")`).
+the key hints (`(desc := "Find file")`). With `category`, the binding holds
+only in the minibuffer of a prompt of that category, ahead of every other
+keymap there (`(category := some "workspace-file")`); a sequence may be
+bound once in each category and once globally.
 
 Refuses the `setup` for a key string that is not keys, with the key
 parser's reason, which names the stroke, and for one that names no keys. -/
 def bindKey (keys : String) (command : String) (states : List SchemeState := [])
-    (desc : Option String := none) : SetupM Unit := do
+    (desc : Option String := none) (category : Option String := none) : SetupM Unit := do
   match Key.parseStrokes keys with
   | .error reason =>
     throw reason
@@ -772,7 +778,8 @@ def bindKey (keys : String) (command : String) (states : List SchemeState := [])
     throw (boundToNoKeys command)
   | .ok strokes =>
     ExceptT.lift
-        (Program.request (port := setupPort) (.bind strokes command (states.map (·.name)) desc))
+        (Program.request (port := setupPort)
+          (.bind strokes command (states.map (·.name)) desc category))
 
 /-- The message the prefix name `name` given to no keys is refused with. -/
 def prefixNamedNoKeys (name : String) : String :=

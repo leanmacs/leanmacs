@@ -106,6 +106,11 @@ def problemUnder (scheme : InputScheme) (setup : SetupM Unit) : Option String :=
   | .ok collected => collected.problemUnder? scheme
   | .error _ => none
 
+/-- The binding of the key string `text` to `command` in the prompt category
+`category`. -/
+def inCategory (text command category : String) : Config.KeyBinding :=
+  { binding text command with category := some category }
+
 /-- The checks of the registry (`Editor/Config/Registry.lean`). -/
 def registryChecks : List Check :=
   [{  name :=
@@ -381,6 +386,81 @@ def registryChecks : List Check :=
         pure
           ((led #[binding "<leader>" "open"]).keyEquivalent? "open" == none &&
             ((led #[binding "s-o" "open"]).keyEquivalent? "open").isSome) },
+    { name :=
+        "the active keymaps of the open prompt's minibuffer view begin with its category's keymap, over the global one; another view, a prompt of another category and a prompt with no category do not have its bindings"
+      run :=
+        let registry : Config.Registry :=
+          ({} : Config.Registry).replaceBindings .config
+            #[binding "C-c g" "global", inCategory "C-c g" "in-c" "c",
+              inCategory "C-c h" "only-c" "c"]
+        let prompted (category : Option String) (state : EditorState) : EditorState :=
+          { state with
+            prompt :=
+              some
+                { label := "P: ", view := ⟨0⟩, asker := ⟨1⟩, continuation := invoke "answer"
+                  candidates := { category } } }
+        let lookup (state : EditorState) (view : ViewId) (text : String) : Lookup Invocation :=
+          Keymap.resolve (registry.activeMaps TestScheme.scheme state view) (keys text)
+        pure <|
+          match onTextModel (withModes "major" []) with
+          | none => false
+          | some state =>
+            let opened := prompted (some "c") state
+            (registry.activeMaps TestScheme.scheme opened ⟨0⟩).length == 2 &&
+              lookup opened ⟨0⟩ "C-c g" == .bound (invoke "in-c") &&
+              lookup opened ⟨0⟩ "C-c h" == .bound (invoke "only-c") &&
+              lookup opened ⟨1⟩ "C-c g" == .bound (invoke "global") &&
+              lookup opened ⟨1⟩ "C-c h" == .unbound &&
+              lookup (prompted (some "d") state) ⟨0⟩ "C-c g" == .bound (invoke "global") &&
+              lookup (prompted (some "d") state) ⟨0⟩ "C-c h" == .unbound &&
+              (registry.activeMaps TestScheme.scheme (prompted none state) ⟨0⟩).length == 1 &&
+              lookup (prompted none state) ⟨0⟩ "C-c g" == .bound (invoke "global") },
+    { name :=
+        "the registry's keymap leaves a category's bindings out; the category's keymap holds them, bound by the leader and states rules, config's over compiled code's for one sequence; the menu bar's key equivalent never reads them"
+      run :=
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceBindings .compiled
+                #[inCategory "C-x t" "compiled" "c", inCategory "s-o" "open" "c"]).replaceBindings
+            .config
+            #[inCategory "C-x t" "config" "c", inCategory "<leader> a" "a" "c",
+              { inCategory "C-x s" "s" "c" with states := ["insert"] }]
+        let inC : Keymap Invocation := registry.categoryKeymap apartScheme "c"
+        pure
+          (boundTo registry "C-x t" == none && boundTo registry "s-o" == none &&
+            inC.find? (keys "C-x t") == some (invoke "config") &&
+            inC.find? (keys "C-c a") == some (apartMode "a") &&
+            inC.find? (keys "C-x s") == some (apartState ["insert"] "s") &&
+            (registry.categoryKeymap apartScheme "d").bindings.isEmpty &&
+            registry.keyEquivalent? "open" == none) },
+    { name :=
+        "one sequence may be bound globally and in a category, and in two categories; bound twice in one category, as written or as it expands, it is refused, naming the category"
+      run :=
+        let apart : SetupM Unit := do
+          bindKey "C-o e" "a"
+          bindKey "C-o e" "b" (category := some "c")
+          bindKey "C-o e" "d" (category := some "e")
+        let written : SetupM Unit := do
+          bindKey "C-o e" "a" (category := some "c")
+          bindKey "C-o e" "b" (category := some "c")
+        let refusedWith (setup : SetupM Unit) : Option String :=
+          match Config.Registrations.ofSetup setup with
+          | .error said => some said
+          | .ok _ => none
+        pure
+          (refusedWith apart == none && problemUnder spaceScheme apart == none &&
+            refusedWith written ==
+              some "the keys `C-o e` are bound twice in the prompt category `c`" &&
+            problemUnder spaceScheme
+                (do
+                  bindKey "<leader> e" "a" (category := some "c")
+                  bindKey "SPC e" "b" (category := some "c")) ==
+              some
+                "the keys `SPC e` are bound twice in the prompt category `c`: as `<leader> e` and as `SPC e`" &&
+            problemUnder spaceScheme
+                (do
+                  bindKey "<leader> e" "a" (category := some "c")
+                  bindKey "SPC e" "b") ==
+              none) },
     { name :=
         "replacing an owner's modes leaves the others', and the latest mode of a name is the one found"
       run :=

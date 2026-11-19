@@ -85,6 +85,16 @@ leader moves every binding written with it, and every mode's suffix
 - otherwise, what it binds a key bound to a command name to
   (`InputScheme.command`).
 
+**A binding may hold in one prompt category alone** (`KeyBinding.category`,
+`bindKey … (category := some "<category>")`). Such a binding is left out of
+the global keymap (`keymap`) and held in its category's keymap
+(`categoryKeymap`), bound by the same rules, oldest first, so config's
+binding of a sequence is over compiled code's. `activeMaps` puts the open
+prompt's category's keymap first among the active keymaps of the prompt's
+minibuffer view, ahead of its modes' and the global one. A minor mode could
+not carry such a key: under the Vim scheme a mode's key does not hold where
+typing is text, and a plain command binding does.
+
 **Two bindings of one sequence are refused**, whatever states each names:
 `keymap` holds a sequence once, so the later would hide the earlier in
 every state. `Registrations.problem?` compares bindings' keys as written,
@@ -94,6 +104,9 @@ the leaders in force under the scheme the config is built for (the ones
 config set, else the scheme's), so `<leader> f` with `SPC f` under the
 `SPC` leader is bound twice too, and the message names both ways the keys
 were written (`keysBoundTwice`). `Config.build` asks it after `problem?`.
+Both compare bindings within one category: a sequence may be bound
+globally and in a category, or in two categories, and twice in one
+category is refused naming it (`keysWrittenTwiceIn`, `keysBoundTwiceIn`).
 
 **The key hints read two labels.** A binding's description (`desc`,
 `bindKey … (desc := …)`) rides on its `KeyBinding`, so `keymap` puts it on
@@ -119,9 +132,9 @@ command bound only to a longer sequence, a named key or a chord without
 the system key shows none. A chord one of the menu's system items already
 shows (`s-q` Quit, `s-h` Hide, `M-s-h` Hide Others) is skipped: AppKit
 matches the system item first, so the command would never run by it, and
-the command shows its next chord, or none. Mode-local bindings, an input
-scheme's own keys and a binding written with a placeholder are not looked
-at: the menu bar is the application's, and a sequence under the leader is
+the command shows its next chord, or none. Mode-local bindings, a prompt
+category's bindings, an input scheme's own keys and a binding written with
+a placeholder are not looked at: the menu bar is the application's, and a sequence under the leader is
 never a key equivalent.
 
 ## Modes
@@ -432,6 +445,9 @@ structure KeyBinding where
   states : List String := []
   /-- The binding's description for the key hints, if it has one. -/
   desc : Option String := none
+  /-- The prompt category whose minibuffer the binding holds in
+  (`categoryKeymap`); none for a binding of the global keymap. -/
+  category : Option String := none
   deriving DecidableEq, Repr
 
 /-- The binding of the keys `keys`, as chords, to the command called
@@ -956,26 +972,52 @@ def prefixName? (registry : Registry) (scheme : InputScheme) (keys : List Key) :
         (Key.expand leaders entry.prefixName.keys).map Key.chord == keys).map
     (·.prefixName.name)
 
-/-- The keymap of every owner's bindings for `scheme`: each key sequence,
-expanded against the leaders in force, bound to what the scheme says runs
-the command of its name: in the binding's states when it names any, as a
-mode's key when the expanded keys begin with the leader or the localleader,
-and as a command otherwise ("Key bindings", in the module docs). The
-entries are bound oldest first, so of two owners that bind one sequence the
-later owner's is the keymap's. A binding's description is on its entry. -/
-def keymap (registry : Registry) (scheme : InputScheme) : Keymap scheme.Binding :=
-  let leaders := registry.leaders scheme
-  let underLeader (keys : List Key) : Bool :=
+/-- What `binding` is bound to under `scheme`, with `leaders` in force, and
+its expanded keys: in the binding's states when it names any, as a mode's
+key when the expanded keys begin with the leader or the localleader, and as
+a command otherwise ("Key bindings", in the module docs). -/
+def bound (scheme : InputScheme) (leaders : Key.Leaders) (binding : KeyBinding) :
+    List Key × scheme.Binding :=
+  let keys := Key.expand leaders binding.keys
+  let underLeader :=
     [leaders.leader, leaders.localLeader].any fun leader =>
       !leader.isEmpty && leader.isPrefixOf keys
+  let command := binding.command
+  let bound :=
+    if !binding.states.isEmpty then scheme.stateCommand binding.states command
+    else if underLeader then scheme.modeCommand command else scheme.command command
+  (keys, bound)
+
+/-- The keymap of every owner's bindings of the prompt category `category`
+(`none` for the global keymap) for `scheme`, each bound as `bound` says,
+oldest first, so of two owners that bind one sequence the later owner's is
+the keymap's. A binding's description is on its entry. -/
+def keymapOf (registry : Registry) (scheme : InputScheme) (category : Option String) :
+    Keymap scheme.Binding :=
+  let leaders := registry.leaders scheme
   Keymap.ofDescribed
-    (registry.bindings.toList.map fun entry =>
-      let keys := Key.expand leaders entry.binding.keys
-      let command := entry.binding.command
-      let bound :=
-        if !entry.binding.states.isEmpty then scheme.stateCommand entry.binding.states command
-        else if underLeader keys then scheme.modeCommand command else scheme.command command
+    ((registry.bindings.toList.filter (·.binding.category == category)).map fun entry =>
+      let (keys, bound) := bound scheme leaders entry.binding
       (keys, bound, entry.binding.desc))
+
+/-- The keymap of every owner's bindings for `scheme` that are in no prompt
+category: each key sequence, expanded against the leaders in force, bound
+to what the scheme says runs the command of its name: in the binding's
+states when it names any, as a mode's key when the expanded keys begin
+with the leader or the localleader, and as a command otherwise ("Key
+bindings", in the module docs). The entries are bound oldest first, so of
+two owners that bind one sequence the later owner's is the keymap's. A
+binding's description is on its entry. -/
+def keymap (registry : Registry) (scheme : InputScheme) : Keymap scheme.Binding :=
+  registry.keymapOf scheme none
+
+/-- The keymap of the prompt category `category` for `scheme`: every owner's
+bindings given that category, bound as the global keymap's are, oldest
+first, so config's binding of a sequence is over compiled code's ("Key
+bindings", in the module docs). -/
+def categoryKeymap (registry : Registry) (scheme : InputScheme) (category : String) :
+    Keymap scheme.Binding :=
+  registry.keymapOf scheme (some category)
 
 /-- The key equivalent the menu bar shows for the command `command`: the
 last chord the bindings bind to it alone that is one character with the
@@ -986,7 +1028,7 @@ def keyEquivalent? (registry : Registry) (command : String) (taken : List KeyEqu
     Option KeyEquivalent :=
   let keymap : Keymap String :=
     Keymap.ofList
-      (registry.bindings.toList.filterMap fun entry =>
+      ((registry.bindings.toList.filter (·.binding.category.isNone)).filterMap fun entry =>
         (Key.Stroke.keys? entry.binding.keys).map (·, entry.binding.command))
   (keymap.keysFor (· == command)).reverse.findSome? fun
     | [chord] =>
@@ -1064,19 +1106,27 @@ def modeKeymaps (registry : Registry) (scheme : InputScheme) (name : String) :
   (registry.lineage name).flatMap fun mode => mode.keymaps scheme leaders
 
 /-- The active keymaps of `view` in `state` for `scheme`, in precedence
-order: the keymaps of each minor mode of the view's buffer, the one added
-last first, then its major mode's, then the global keymap of every owner's
-key bindings (`keymap`). A view with no window has the global keymap
-alone. -/
+order: for the open prompt's minibuffer view, when the prompt has a
+category, that category's keymap (`categoryKeymap`); then the keymaps of
+each minor mode of the view's buffer, the one added last first, then its
+major mode's, then the global keymap of every owner's key bindings in no
+category (`keymap`). A view with no window has the global keymap alone. -/
 def activeMaps (registry : Registry) (scheme : InputScheme) (state : EditorState) (view : ViewId) :
     List (Keymap scheme.Binding) :=
   let global := registry.keymap scheme
   match state.target? view with
   | none => [global]
   | some target =>
+    let category :=
+      match state.prompt with
+      | some prompt =>
+        if prompt.view == view then
+          (prompt.candidates.category.map (registry.categoryKeymap scheme)).toList
+        else []
+      | none => []
     let minors := target.buffer.minors.toList.flatMap (registry.modeKeymaps scheme)
     let major := (target.buffer.major.map (registry.modeKeymaps scheme)).getD []
-    minors ++ major ++ [global]
+    category ++ minors ++ major ++ [global]
 
 /-- The names the uses for `mode` (`none` for every buffer) give: config's
 in the order it made them, then compiled code's. -/
@@ -1340,10 +1390,11 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((),
       { collected with commands := collected.commands.push { name, action := .store store step } })
   | .job name work, collected => ((), { collected with jobs := collected.jobs.push { name, work } })
-  | .bind keys command states desc, collected =>
+  | .bind keys command states desc category, collected =>
     ((),
       { collected with
-        bindings := collected.bindings.push { keys := chordStrokes keys, command, states, desc } })
+        bindings :=
+          collected.bindings.push { keys := chordStrokes keys, command, states, desc, category } })
   | .prefixName keys name, collected =>
     ((),
       { collected with
@@ -1482,6 +1533,11 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
         return item
   none
 
+/-- What a `setup` that binds the keys written `keys` twice in the prompt
+category `category` is refused with. -/
+def keysWrittenTwiceIn (category : String) (keys : List Key.Stroke) : String :=
+  s!"the keys `{Key.strokeNotations keys}` are bound twice in the prompt category `{category}`"
+
 /-- What is wrong with what was collected, if anything: a store declared
 twice, a command name or a job name registered twice, a face set twice, a
 theme defined twice, a theme named twice (by its first two names), a
@@ -1568,8 +1624,13 @@ def problem? (collected : Registrations) : Option String := do
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command
-  if let some keys := repeated? (collected.bindings.map (·.keys)) then
-    return s!"the keys `{Key.strokeNotations keys}` are bound twice"
+  if let some (category, keys) :=
+      repeated? (collected.bindings.map fun binding => (binding.category, binding.keys)) then
+    match category with
+    | none =>
+      return s!"the keys `{Key.strokeNotations keys}` are bound twice"
+    | some category =>
+      return keysWrittenTwiceIn category keys
   if let some keys := repeated? (collected.prefixNames.map (·.keys)) then
     return prefixNamedTwice keys
   if let some name := repeated? (collected.ex.map (·.name)) then
@@ -1618,6 +1679,13 @@ one sequence `keys` under the leaders in force is refused with. -/
 def keysBoundTwice (keys : List Key) (first second : List Key.Stroke) : String :=
   s!"the keys `{Key.notations keys}` are bound twice: as `{Key.strokeNotations first}` and as `{Key.strokeNotations second}`"
 
+/-- What a `setup` whose bindings in the prompt category `category` written
+as `first` and as `second` are the one sequence `keys` under the leaders in
+force is refused with. -/
+def keysBoundTwiceIn (category : String) (keys : List Key) (first second : List Key.Stroke) :
+    String :=
+  s!"the keys `{Key.notations keys}` are bound twice in the prompt category `{category}`: as `{Key.strokeNotations first}` and as `{Key.strokeNotations second}`"
+
 /-- What a `setup` whose prefix names written as `first` and as `second` name
 the one prefix `keys` under the leaders in force is refused with. -/
 def prefixNamedTwiceAs (keys : List Key) (first second : List Key.Stroke) : String :=
@@ -1647,8 +1715,17 @@ What `problem?` refuses is wrong under every scheme; this is what is wrong
 under this one, so `Config.build` asks it of a `setup` `problem?` let by. -/
 def problemUnder? (collected : Registrations) (scheme : InputScheme) : Option String := do
   let leaders := scheme.leaders collected.leader collected.localLeader
-  if let some (keys, first, second) := expandedTwice leaders (collected.bindings.map (·.keys)) then
-    return keysBoundTwice keys first second
+  let categories :=
+    (collected.bindings.map (·.category)).foldl
+      (fun seen category => if seen.contains category then seen else seen.push category) #[]
+  for category in categories do
+    let written := (collected.bindings.filter (·.category == category)).map (·.keys)
+    if let some (keys, first, second) := expandedTwice leaders written then
+      match category with
+      | none =>
+        return keysBoundTwice keys first second
+      | some category =>
+        return keysBoundTwiceIn category keys first second
   if let some (keys, first, second) :=
       expandedTwice leaders (collected.prefixNames.map (·.keys)) then
     return prefixNamedTwiceAs keys first second

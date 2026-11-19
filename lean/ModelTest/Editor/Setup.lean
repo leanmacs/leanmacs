@@ -287,6 +287,19 @@ def setupChecks : List Check :=
                 { keys := [.localLeader, .key (charKey "x")], command := "run"
                   states := ["insert", "visual"] }]) },
     { name :=
+        "a setup that binds a key string in a prompt category collects the binding with that category, and one that names none with none"
+      run :=
+        let setup : SetupM Unit := do
+          bindKey "C-o e" "x" (category := some "workspace-file")
+          bindKey "C-o f" "y"
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.bindings ==
+              #[{ keys := strokes "C-o e", command := "x", category := some "workspace-file" },
+                { keys := strokes "C-o f", command := "y" }]) },
+    { name :=
         "a setup that sets the leader and the localleader collects them, the localleader as strokes over the leader, and one that sets neither has none"
       run :=
         let setup : SetupM Unit := do
