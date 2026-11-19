@@ -30,7 +30,7 @@ def markRows : List (String × String × String) :=
     ("m a g g O x <Escape> ` a", "ab\nc|d", "x\nab\nc|d"),
     -- A mark not set, a character that names none, and m with one.
     ("` b", "a|b", Evil.markNotSet), ("' b", "a|b", Evil.markNotSet),
-    ("` 1", "a|b", Evil.unknownMark), ("m 1", "a|b", Evil.badMarkName),
+    ("` !", "a|b", Evil.unknownMark), ("m 1", "a|b", Evil.badMarkName),
     ("` `", "a|b", Evil.markNotSet),
     -- '' and `` go back and forth; m ' sets the previous-context mark and
     -- records a jump.
@@ -204,11 +204,11 @@ def evilMarkChecks : List Check :=
           [("m A d d ` A", "ab\nc|d\nef", "ab\n|ef"),
             ("m A d d g g ` A", "ab\ncd\ne|f", "ab\nc|d")] },
     { name :=
-        "recorded departure (task marks-numbered-file-marks): the numbered marks are not built, so ` 0, ` 9 and ' 0 say E78, where Vim's go to the numbered mark's file or say E20 when it is not set"
+        "recorded departure (task marks-numbered-file-marks): the numbered marks are not built, so ` 0, ` 1, ` 9 and ' 0 say E78, where Vim's go to the numbered mark's file or say E20 when it is not set"
       run :=
         evilRows
-          [("` 0", "a|b", Evil.unknownMark), ("` 9", "a|b", Evil.unknownMark),
-            ("' 0", "a|b", Evil.unknownMark)] },
+          [("` 0", "a|b", Evil.unknownMark), ("` 1", "a|b", Evil.unknownMark),
+            ("` 9", "a|b", Evil.unknownMark), ("' 0", "a|b", Evil.unknownMark)] },
     { name :=
         "recorded departure (task marks-change-and-yank-marks): the change marks are not built, so after y w, ` [ and ` ] say E78 and m [ says E191, where Vim's go to the start and end of the text yanked and m [ sets the mark"
       run :=
