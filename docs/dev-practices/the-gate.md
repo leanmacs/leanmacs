@@ -361,6 +361,20 @@ library's grep service on real files in `contract-test`, beside its
 the models (`ModelTest.projectSearchRunChecks`) and over the real bindings
 in a temporary directory (`ContractTest.projectSearchChecks`).
 
+Working sets are pinned the same way. Their decisions are Lean's and run
+in `model-test`: the stored form and its JSON (`ModelTest.workingSetChecks`),
+the re-find ladder against the fuzzy model
+(`ModelTest.workingSetRefindChecks`), and, on the loop's driver over the
+models, where ranges are held (`workingSetPlaceChecks`), the commands
+(`workingSetRunChecks`, the phase's first acceptance criterion) and the
+store under a state directory of the file model's, through a restart
+(`workingSetDiskChecks`, the second). `contract-test` runs both criteria
+once over the real bindings (`ContractTest.workingSetChecks`): the library's
+file service, text store and fuzzy matcher and real git, in a repository and
+a state directory of its own, both temporary, with the file rewritten by
+`IO.FS.writeFile` between two hosts. No check reads `$HOME` or
+`$XDG_STATE_HOME`: every state directory is handed in.
+
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:
 
