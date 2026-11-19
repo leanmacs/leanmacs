@@ -537,6 +537,29 @@ run = [
   # printed, and `q` quits the editor: the loop ends, the `scene` line after
   # it is not run, and the status is 0 (`ex/expected`). It writes no file.
   "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/ex/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/ex/expected -",
+  # The compile mode, on the default editor, with three fixtures written
+  # before the compile mode moves out of the core into a default package
+  # (the packages roadmap's phase 6), so that what they print is a baseline
+  # the move must keep. `compile-ex-names`: each of its six ex names, typed
+  # on the ex line of an editor that has compiled nothing, reaches its
+  # command (`compile-ex-names/expected`). The echoes name the working
+  # directory by its last name, `lean`, where this task runs.
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/compile-ex-names/config ../tests/headless/compile-ex-names/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/compile-ex-names/expected -",
+  # `compile-config`: a config that names the compile mode's declarations
+  # (a shipped contribution with one field overridden, a format of its own,
+  # project commands) elaborates on the editor's base and its command runs
+  # (`compile-config/expected`).
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/compile-config/config ../tests/headless/compile-config/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/compile-config/expected -",
+  # `compile-run`: a compile over a real process, in a temporary working
+  # directory, which this entry's one shell makes and removes by a trap:
+  # the child writes one error line and blocks until `kill-compilation`
+  # kills it, `next-error` and `previous-error` step over its one location,
+  # and `recompile` runs the line again. The output holds the temporary
+  # directory's path, so it is not compared with a file: each line of
+  # `compile-run/holds` must be part of a line of it. The config is the one
+  # that registers nothing, and every path handed to the editor is
+  # absolute, since it runs in the temporary directory.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && sysroot=$(lean --print-prefix) && here=$PWD && out=$(cd \"$dir\" && \"$here/../packages/.lake/build/bin/editor\" headless \"$sysroot\" \"$here/.lake/build/lib/lean\" \"$here/../tests/headless/compile-ex-names/config\" \"$here/../tests/headless/compile-run/script\") && while IFS= read -r line; do printf '%s\\n' \"$out\" | grep -qF -- \"$line\" || { printf '%s\\n' \"$out\"; echo \"ffi-test: the compile run did not print a line holding: $line\"; exit 1; }; done < ../tests/headless/compile-run/holds",
   # `e`, an edit, `w` and `q` on a real file, as a process. Lean spawns no
   # child (docs/design/overview.md), so the check is here: this entry is one
   # shell, which makes a temporary directory and removes it by a trap when

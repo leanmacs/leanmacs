@@ -1,0 +1,18 @@
+# A config that is written on the compile mode's declarations
+# (`config/10-compile.lean`): it overrides one field of the shipped
+# `Compile.cargoMode`, registers a contribution with a format of its own
+# and the commands of one project, and defines a command over
+# `Compile.Format.read?` and `Compile.shipped`. What it prints must be
+# exactly `expected`. It names no path of the machine, starts no process
+# and touches no file.
+
+# The config elaborates and installs: the base config is elaborated on
+# holds the compile mode's declarations.
+reload
+settle
+
+# The command config defined says what its format reads of `at src/x.rs
+# line 4`, the file and the line, and the modes of the contributions that
+# ship, in the echo area.
+run compile-reading
+scene

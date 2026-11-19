@@ -1,0 +1,64 @@
+# A compile over a real process, in a host: the child writes one error line
+# and then blocks until it is killed, so the run is the same every time.
+# What the host prints holds the working directory's path, which is a
+# temporary directory of the run's own, so it is not compared with a file:
+# each line of `holds`, beside this script, must be part of a line of it.
+#
+# The config registers nothing, so every ex name typed is one a package
+# compiled into the editor bound. The working directory holds no
+# `src/a.rs`.
+
+reload
+settle
+
+# `compile` asks for the line, and the answer starts the run: the job
+# `compile-run` starts the child under `/bin/sh -c`. The clock is moved
+# past the job's pause after its first post, and the scene shows the
+# compilation buffer with the header line and the child's line, whose
+# location is a span in the face `compilation.error`.
+key : Semicolon shift
+commit compile
+key <Enter> Enter -
+commit printf 'src/a.rs:3:5: error: boom\n'; exec sleep 600
+key <Enter> Enter -
+advance 50
+settle
+scene
+
+# `next-error` visits the first location: its file is not there, which the
+# echo area says with the path resolved against the directory the run ran
+# in.
+key : Semicolon shift
+commit next-error
+key <Enter> Enter -
+settle
+scene
+
+# `previous-error` from the first location has none before it.
+key : Semicolon shift
+commit previous-error
+key <Enter> Enter -
+scene
+
+# `kill-compilation` cancels the job, which kills the child, and the last
+# line says so.
+key : Semicolon shift
+commit kill-compilation
+key <Enter> Enter -
+join
+scene
+
+# `recompile` runs the line again with no prompt, in the same buffer,
+# emptied: the scene shows the header and the one line again. It is killed
+# as the first was, so the script leaves no child.
+key : Semicolon shift
+commit recompile
+key <Enter> Enter -
+advance 50
+settle
+scene
+key : Semicolon shift
+commit kill-compilation
+key <Enter> Enter -
+join
+scene

@@ -1,0 +1,52 @@
+# The six ex names of the compile mode, each typed on the ex line of an
+# editor that has compiled nothing: every name reaches its command, which
+# says what it has to say of an editor in that state. What it prints must
+# be exactly `expected`.
+#
+# The echoes name the working directory by its last name, and the gate runs
+# the editor in `lean/`, so they read `in lean`. No line holds the
+# directory's whole path, and the script starts no process and touches no
+# file.
+
+reload
+settle
+
+# `next-error` and `previous-error` go to a location of the last
+# compilation. Nothing was compiled, so there is none, and each says so.
+key : Semicolon shift
+commit next-error
+key <Enter> Enter -
+scene
+
+key : Semicolon shift
+commit previous-error
+key <Enter> Enter -
+scene
+
+# `recompile` runs the last command again, and there is no last command.
+key : Semicolon shift
+commit recompile
+key <Enter> Enter -
+scene
+
+# `kill-compilation` stops the compilation that is running, and none is.
+key : Semicolon shift
+commit kill-compilation
+key <Enter> Enter -
+scene
+
+# `compile` asks for the command to run, with the prompt `Compile
+# command: `, whose scene shows the minibuffer. `<Escape>` cancels it, so
+# nothing is started.
+key : Semicolon shift
+commit compile
+key <Enter> Enter -
+scene
+key <Escape> Escape -
+
+# `compile-command` offers the commands the modes of the working directory
+# give. No mode is on there, so it has none to offer.
+key : Semicolon shift
+commit compile-command
+key <Enter> Enter -
+scene

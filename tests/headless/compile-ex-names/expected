@@ -1,0 +1,34 @@
+reload 1: installed, 1 chunks, 0 commands
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "next-error: no locations in lean", echo padding 8, preedit -, published 5, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "previous-error: no locations in lean", echo padding 8, preedit -, published 11, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "recompile: nothing has been compiled in lean", echo padding 8, preedit -, published 17, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "kill-compilation: nothing is compiling in lean", echo padding 8, preedit -, published 23, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 0x0, focused 7, echo "", echo padding 8, preedit -, published 29, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 7 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 7: minibuffer.prompt "Compile command: "
+key arrived: <Escape> Escape -
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "compile-command: no mode gives commands in lean", echo padding 8, preedit -, published 36, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
