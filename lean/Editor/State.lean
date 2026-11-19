@@ -3862,7 +3862,11 @@ def addExcerptBuffer (name : String) (text : TextId) (history : UndoTree)
 
 /-- Removes the buffer `id`: its slot is empty from then on, its id is never
 used again, and it leaves the order buffers were used in (`recent`). Its
-text is the caller's to release. Refused, with the
+text is the caller's to release. Every place held in it (`Place.held`) is
+dropped with it, from each window's jump list and previous-context mark
+and from the global marks (`remembered.globalMarks`), and its own marks go
+with its slot; a caller that keeps them detaches them into its file first
+(`Jumps.detach`, `Editor/Jumps.lean`). Refused, with the
 state unchanged, with `noSuchBuffer` for a buffer there is none of, and
 with `shown`, and the first such view, while a window shows it. -/
 def removeBuffer (id : BufferId) (state : EditorState) : Except BufferRefusal Unit × EditorState :=
