@@ -102,7 +102,7 @@ pub const PROPERTIES: [&str; 13] = [
 /// Holds `files` to the contract in fresh subdirectories of `dir`, which
 /// is there and empty, made through `ground`, and returns the names of the
 /// properties that fail: none when it keeps them all.
-pub fn check(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> Vec<&'static str> {
+pub fn check(files: &impl Files, ground: &impl Ground, dir: &Path) -> Vec<&'static str> {
     let steps: [(&'static str, Step<_, _>); 13] = [
         (ORDER, order),
         (HIDDEN, hidden),
@@ -130,10 +130,10 @@ pub fn check(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> Vec<&'
 }
 
 /// One property: whether `files` keeps it in `dir`.
-type Step<F, G> = fn(&mut F, &G, &Path) -> bool;
+type Step<F, G> = fn(&F, &G, &Path) -> bool;
 
 /// The paths a walk of `root` visits, or none when it is refused.
-fn walked(files: &mut impl Files, root: &Path) -> Option<Vec<PathBuf>> {
+fn walked(files: &impl Files, root: &Path) -> Option<Vec<PathBuf>> {
     let mut seen = Vec::new();
     files
         .walk(root, &mut |path| {
@@ -149,7 +149,7 @@ type Rows = Vec<(usize, usize, String)>;
 
 /// What a read of `path` visits, as (number, offset, text), with `holds`
 /// holding for every row, and what it came to; none when refused.
-fn read_all(files: &mut impl Files, path: &Path) -> Option<(Read, Rows)> {
+fn read_all(files: &impl Files, path: &Path) -> Option<(Read, Rows)> {
     let mut rows = Vec::new();
     let read = files
         .rows(path, &mut |_| true, &mut |row| {
@@ -163,7 +163,7 @@ fn read_all(files: &mut impl Files, path: &Path) -> Option<(Read, Rows)> {
 /// The rows `bytes` reads as when every row is held, written to a file in
 /// `dir`.
 fn rows_of(
-    files: &mut impl Files,
+    files: &impl Files,
     ground: &impl Ground,
     dir: &Path,
     bytes: &[u8],
@@ -183,21 +183,21 @@ fn row(number: usize, offset: usize, text: &str) -> (usize, usize, String) {
     (number, offset, text.to_owned())
 }
 
-fn order(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn order(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     for name in ["b", "a-c", "a/b", "a/a/z", "a0"] {
         ground.write(&dir.join(name), b"x\n");
     }
     walked(files, dir) == Some(paths(&["a/a/z", "a/b", "a-c", "a0", "b"]))
 }
 
-fn hidden(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn hidden(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     for name in [".hidden", ".git/config", "d/.x", "d/y", ".d/z", "e"] {
         ground.write(&dir.join(name), b"x\n");
     }
     walked(files, dir) == Some(paths(&["d/y", "e"]))
 }
 
-fn excluded(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn excluded(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     for name in ["keep", "skip", "gen/x", "gen/y/z", "sub/skip", "sub/keep"] {
         ground.write(&dir.join(name), b"x\n");
     }
@@ -206,17 +206,17 @@ fn excluded(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
     walked(files, dir) == Some(paths(&["keep", "sub/keep", "sub/skip"]))
 }
 
-fn files_only(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn files_only(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     ground.make_dir(&dir.join("empty"));
     ground.write(&dir.join("d/f"), b"x");
     walked(files, dir) == Some(paths(&["d/f"]))
 }
 
-fn empty(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn empty(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     rows_of(files, ground, dir, b"") == Some((Read::Searched, Vec::new()))
 }
 
-fn numbered(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn numbered(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     rows_of(files, ground, dir, "x\nyé\n\nz\n".as_bytes())
         == Some((
             Read::Searched,
@@ -229,18 +229,18 @@ fn numbered(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
         ))
 }
 
-fn last_row(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn last_row(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     rows_of(files, ground, dir, b"a\nbc")
         == Some((Read::Searched, vec![row(0, 0, "a"), row(1, 2, "bc")]))
         && rows_of(files, ground, dir, b"\n") == Some((Read::Searched, vec![row(0, 0, "")]))
 }
 
-fn carriage_return(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn carriage_return(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     rows_of(files, ground, dir, b"a\r\nb\r\n")
         == Some((Read::Searched, vec![row(0, 0, "a\r"), row(1, 3, "b\r")]))
 }
 
-fn lossy(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn lossy(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     rows_of(files, ground, dir, b"a\xffb\nc")
         == Some((
             Read::Searched,
@@ -248,7 +248,7 @@ fn lossy(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
         ))
 }
 
-fn holds(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn holds(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     let path = dir.join("f");
     ground.write(&path, b"one\ntwo\nthree\nfour\n");
     let mut asked = Vec::new();
@@ -267,7 +267,7 @@ fn holds(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
     read == Ok(Read::Searched) && asked == ["one", "two", "three", "four"] && visited == [0, 1, 3]
 }
 
-fn stop(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn stop(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     for name in ["a", "b", "c"] {
         ground.write(&dir.join(name), b"x\nx\nx\n");
     }
@@ -284,13 +284,13 @@ fn stop(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
     walk.is_ok() && seen == paths(&["a"]) && read == Ok(Read::Searched) && visited == 1
 }
 
-fn binary(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn binary(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     rows_of(files, ground, dir, b"x\nx\0y\nx\n") == Some((Read::Binary, Vec::new()))
 }
 
-fn refused(files: &mut impl Files, ground: &impl Ground, dir: &Path) -> bool {
+fn refused(files: &impl Files, ground: &impl Ground, dir: &Path) -> bool {
     ground.write(&dir.join("f"), b"x");
-    let kind = |files: &mut _, path: &Path| match Files::walk(files, path, &mut |_| Flow::Go) {
+    let kind = |files: &_, path: &Path| match Files::walk(files, path, &mut |_| Flow::Go) {
         Ok(()) => None,
         Err(refusal) => Some(refusal.kind),
     };
@@ -350,11 +350,7 @@ mod tests {
     }
 
     impl Files for Flawed {
-        fn walk(
-            &mut self,
-            root: &Path,
-            visit: &mut dyn FnMut(&Path) -> Flow,
-        ) -> Result<(), Refusal> {
+        fn walk(&self, root: &Path, visit: &mut dyn FnMut(&Path) -> Flow) -> Result<(), Refusal> {
             if self.flaw == Flaw::RefusesAsFailed {
                 return Err(Refusal::new(RefusalKind::Failed, "no"));
             }
@@ -381,7 +377,7 @@ mod tests {
         }
 
         fn rows(
-            &mut self,
+            &self,
             path: &Path,
             holds: &mut dyn FnMut(&str) -> bool,
             visit: &mut dyn FnMut(Row<'_>) -> Flow,
@@ -444,8 +440,8 @@ mod tests {
         let dir = Path::new("/fake/contract");
         ground.make_dir(dir);
         match flaw {
-            None => check(&mut fake.clone(), &ground, dir),
-            Some(flaw) => check(&mut Flawed { inner: fake, flaw }, &ground, dir),
+            None => check(&fake, &ground, dir),
+            Some(flaw) => check(&Flawed { inner: fake, flaw }, &ground, dir),
         }
     }
 

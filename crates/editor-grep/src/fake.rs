@@ -152,7 +152,7 @@ impl FakeFiles {
 }
 
 impl Files for FakeFiles {
-    fn walk(&mut self, root: &Path, visit: &mut dyn FnMut(&Path) -> Flow) -> Result<(), Refusal> {
+    fn walk(&self, root: &Path, visit: &mut dyn FnMut(&Path) -> Flow) -> Result<(), Refusal> {
         let walked = self
             .listing(root)?
             .into_iter()
@@ -166,7 +166,7 @@ impl Files for FakeFiles {
     }
 
     fn rows(
-        &mut self,
+        &self,
         path: &Path,
         holds: &mut dyn FnMut(&str) -> bool,
         visit: &mut dyn FnMut(Row<'_>) -> Flow,
@@ -253,7 +253,7 @@ mod tests {
     use super::FakeFiles;
     use crate::{Files, Flow, Read, RefusalKind};
 
-    fn walked(files: &mut FakeFiles, root: &str) -> Vec<PathBuf> {
+    fn walked(files: &FakeFiles, root: &str) -> Vec<PathBuf> {
         let mut seen = Vec::new();
         files
             .walk(Path::new(root), &mut |path| {
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn a_tree_built_with_files_and_exclusions_is_walked_by_its_rules() {
-        let mut files = FakeFiles::new()
+        let files = FakeFiles::new()
             .file("/w/b.txt", "b")
             .file("/w/a/x.txt", "x")
             .file("/w/.hidden", "h")
@@ -275,32 +275,32 @@ mod tests {
             .excluded("/w/gen");
 
         assert_eq!(
-            walked(&mut files, "/w"),
+            walked(&files, "/w"),
             [PathBuf::from("a/x.txt"), PathBuf::from("b.txt")]
         );
     }
 
     #[test]
     fn a_hidden_or_excluded_root_is_walked_itself() {
-        let mut files = FakeFiles::new()
+        let files = FakeFiles::new()
             .file("/w/.config/a", "a")
             .excluded("/w/.config");
 
-        assert_eq!(walked(&mut files, "/w/.config"), [PathBuf::from("a")]);
+        assert_eq!(walked(&files, "/w/.config"), [PathBuf::from("a")]);
     }
 
     #[test]
     fn a_file_that_is_not_there_is_not_found_and_a_directory_is_not_read() {
-        let mut files = FakeFiles::new().file("/w/a", "a");
-        let kind = |files: &mut FakeFiles, path: &str| {
+        let files = FakeFiles::new().file("/w/a", "a");
+        let kind = |files: &FakeFiles, path: &str| {
             files
                 .rows(Path::new(path), &mut |_| true, &mut |_| Flow::Go)
                 .unwrap_err()
                 .kind
         };
 
-        assert_eq!(kind(&mut files, "/w/b"), RefusalKind::NotFound);
-        assert_eq!(kind(&mut files, "/w"), RefusalKind::Failed);
+        assert_eq!(kind(&files, "/w/b"), RefusalKind::NotFound);
+        assert_eq!(kind(&files, "/w"), RefusalKind::Failed);
         assert_eq!(
             files.rows(Path::new("/w/a"), &mut |_| true, &mut |_| Flow::Go),
             Ok(Read::Searched)
@@ -310,9 +310,9 @@ mod tests {
     #[test]
     fn clones_share_one_tree_and_the_ground_changes_it() {
         let files = FakeFiles::new().file("/w/a", "a");
-        let mut clone = files.clone();
+        let clone = files.clone();
         files.ground().remove(Path::new("/w/a"));
 
-        assert!(walked(&mut clone, "/w").is_empty());
+        assert!(walked(&clone, "/w").is_empty());
     }
 }

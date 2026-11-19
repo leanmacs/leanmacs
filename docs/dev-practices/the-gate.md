@@ -307,7 +307,11 @@ which `mise run lint` holds the crate's tests to
 (`crates/editor-grep/clippy.toml`: no `std::fs`, no `Path` method that
 asks the disk, no clock of the machine's, and not the adapter's
 constructor). The port's contract is tested there on the fake and on
-implementations written to break each rule.
+implementations written to break each rule. The rule of which matches a
+search answers is tested on the fake and the search engine's fake: walk
+order, offsets, open buffers' texts in place of their files, the word
+class, the limits, stopping, and that the pattern is compiled once a
+branch a search, on an engine that counts what it compiles.
 
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:

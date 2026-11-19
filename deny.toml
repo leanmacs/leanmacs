@@ -251,6 +251,14 @@
 # of `editor-search`'s entry: with the wrapper not yet there, it fails on
 # that edge ("crate 'editor-search = 0.1.0' is explicitly banned").
 #
+# For project search (2026-11-19, navigation-and-windows phase 4). The
+# port's crate, `editor-grep`, had no entry while nothing depended on it:
+# an entry with no wrappers bans the crate itself ("crate 'editor-grep =
+# 0.1.0' is explicitly banned"). When it came to depend on `editor-search`,
+# for the rule of which matches a row holds, it joined that entry's
+# wrappers: with the wrapper not yet there, it fails on that edge ("crate
+# 'editor-search = 0.1.0' is explicitly banned").
+#
 # For the diff of a reload (2026-11-16, the daily-driver floor's phase 5),
 # whose entries came in the commit that added the line diff port's adapter,
 # `editor-diff-imara`, and the diff service of `editor-ffi`. `imara-diff`:
@@ -423,7 +431,7 @@ deny = [
   { crate = "regex-cursor", wrappers = ["editor-search-regex"], reason = "the regex library stays behind the search engine port: only its adapter crate may name its types" },
   { crate = "regex-automata", wrappers = ["regex-cursor", "regex"], reason = "regex-cursor's engines are built on it, and so are regex's, tree-sitter's for a query's `#match?` predicates; it stays behind the search engine port and the Syntax port with them: no crate of the workspace may name it" },
   { crate = "regex-syntax", wrappers = ["editor-search-regex", "regex-cursor", "regex-automata", "regex", "proptest"], reason = "the regex syntax's tree is built by the search engine port's adapter alone, from the pattern tree of editor-search, so no pattern string in the library's syntax is ever made; the other wrappers are the third-party crates that depend on it: regex-cursor and regex-automata, regex, tree-sitter's, and proptest, for its generated strings" },
-  { crate = "editor-search", wrappers = ["editor-search-regex", "editor-ffi"], reason = "the search engine port, the pattern syntax and the rule of which match have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose two C functions ask the rule over the adapter; a third is a decision, so it is made here" },
+  { crate = "editor-search", wrappers = ["editor-search-regex", "editor-ffi", "editor-grep"], reason = "the search engine port, the pattern syntax and the rule of which match have three users: the port's adapter, which implements it and runs its contract; the crate that wires the library together, whose two C functions ask the rule over the adapter; and project search's core, which compiles a pattern once and asks it of every row and open buffer under a root, so a match on disk is one `/` finds in the buffer; a fourth is a decision, so it is made here" },
   { crate = "editor-search-regex", wrappers = ["editor-ffi"], reason = "the search engine's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
   { crate = "imara-diff", wrappers = ["editor-diff-imara"], reason = "the diff library stays behind the line diff port: only its adapter crate may name its types" },
   { crate = "editor-diff", wrappers = ["editor-diff-imara", "editor-ffi"], reason = "the line diff port and the core that makes a script have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose diff service makes a script over the adapter and whose text binding applies one; a third is a decision, so it is made here" },

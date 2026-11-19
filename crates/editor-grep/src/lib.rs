@@ -7,8 +7,9 @@
 //! crate defines it, publishes a fake of it ([`fake::FakeFiles`]) and the
 //! contract every implementation keeps ([`contract::check`]); the real
 //! adapter, over ripgrep's libraries `ignore` and `grep-searcher`, is
-//! another crate (`editor-grep-ripgrep`). The crate has no dependencies and
-//! knows nothing about Lean.
+//! another crate (`editor-grep-ripgrep`). Above the port, [`search`] is the
+//! rule of which matches a search answers, over the pattern syntax and the
+//! engine port of `editor-search`. The crate knows nothing about Lean.
 //!
 //! # The rules of the port
 //!
@@ -42,18 +43,56 @@
 //! - [`Flow::Stop`] from a visit ends the walk or the read: nothing more is
 //!   visited.
 //!
+//! # The rule of a search
+//!
+//! [`search`] (or [`Search::prepare`] then [`Search::run`]) answers every
+//! match of a pattern under a root, as files with their matches
+//! ([`Found`]), in the walk's order.
+//!
+//! - **Before any walk**, a root that is not absolute or has a `..`
+//!   component is refused ([`refusal_before_search`]), and so is a pattern
+//!   that does not parse or that the engine refuses
+//!   ([`RefusalKind::Invalid`], with the sentence the echo area says, such
+//!   as `E54: Unmatched \(`).
+//! - **One pattern syntax and one match rule**: the pattern is
+//!   `editor-search`'s, compiled once a search
+//!   ([`editor_search::CompiledPattern`]) and asked of each row as one
+//!   piece, with the text's word class for `\<` and `\>`. So a match found
+//!   on disk is one `/` finds in the buffer. A row holds when it has a
+//!   match that is not empty, and an empty match is never answered.
+//! - **An open buffer's text is searched in place of its file**
+//!   ([`Overlay`]) when the walk reaches the file's path, compared as it is
+//!   spelled: its matches are asked of its pieces, rows counted by line
+//!   feeds, and it is answered with [`Source::Buffer`]. An overlay the walk
+//!   does not reach (its file is ignored, or not on disk) is not searched,
+//!   so ignore rules hold for open buffers too.
+//! - **A path** is the root as the request spelled it, joined with the
+//!   walk's path under it.
+//! - **A file that cannot be read, or is binary, has no match**, and the
+//!   walk goes on. Only the root's refusal ends a search.
+//! - **The limits** ([`Limits`]): a search answers at most so many files
+//!   with a match and so many matches. The match or file past one is not
+//!   answered, the walk stops, and the summary says
+//!   [`Summary::truncated`]; a file is cut short at the matches limit.
+//! - **Stopping**: `stopped` is asked before each file and each row; once
+//!   it says so nothing more is read.
+//!
 //! # Where an addition goes
 //!
 //! | Addition | Where | Pinned by |
 //! |---|---|---|
+//! | A rule of what a search answers | [`Search::run`] | The rule's tests, on the fake and `editor_search::Literal` |
 //! | Another rule of what is walked or read | The module docs here, and a property of [`contract`] | The property, on the fake and on implementations written to break it; the adapter's own tests for what only real ignore files show |
 //! | Another failure the editor decides on | A variant of [`RefusalKind`] | The property that asks for it |
 //! | Another way for a test to set the fake up | A method of [`fake::FakeFiles`] | The fake's tests |
 
 pub mod contract;
 pub mod fake;
+mod rule;
 
 use std::path::{Component, Path};
+
+pub use rule::{Found, Limits, Match, Overlay, Request, Search, Source, Summary, Text, search};
 
 /// Whether a walk or a read goes on after a visit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -127,18 +166,21 @@ pub enum RefusalKind {
 /// The files under a directory, as far as a project search needs them. The
 /// module docs have the rules; [`contract::check`] holds an implementation
 /// to them.
+///
+/// Its methods take `&self`, so a walk's visit can read the file it is
+/// visited with: a search reads each file as the walk reaches it.
 pub trait Files {
     /// Visits each file under `root` that the walk leaves in, by its path
     /// relative to `root`, in the walk's order, until a visit says
     /// [`Flow::Stop`]. A root that cannot be walked is a refusal, never a
     /// panic.
-    fn walk(&mut self, root: &Path, visit: &mut dyn FnMut(&Path) -> Flow) -> Result<(), Refusal>;
+    fn walk(&self, root: &Path, visit: &mut dyn FnMut(&Path) -> Flow) -> Result<(), Refusal>;
 
     /// Reads the file at `path` a row at a time, asks `holds` of each row's
     /// text, and visits the rows it held for, until a visit says
     /// [`Flow::Stop`]. A file that cannot be read is a refusal.
     fn rows(
-        &mut self,
+        &self,
         path: &Path,
         holds: &mut dyn FnMut(&str) -> bool,
         visit: &mut dyn FnMut(Row<'_>) -> Flow,

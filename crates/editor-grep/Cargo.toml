@@ -6,7 +6,12 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-# No dependency and no dev-dependency yet: the port names no walking or
-# reading library, and it is tested on its published fake. The real adapter,
-# over ripgrep's libraries, is `editor-grep-ripgrep`.
+# The port names no walking or reading library, and everything here is
+# tested on its published fake. The real adapter, over ripgrep's libraries,
+# is `editor-grep-ripgrep`.
 [dependencies]
+# The pattern syntax, the engine port and the rule of which matches a row
+# holds: a search compiles its pattern once with `CompiledPattern` and asks
+# it of every row and every open buffer's text, so a match found on disk is
+# one the buffer's `/` finds. Its tests run on the engine's fake, `Literal`.
+editor-search = { path = "../editor-search" }

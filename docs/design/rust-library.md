@@ -1461,6 +1461,33 @@ the root's refusals. It is seen to bite on implementations written in its
 tests. What each ignore file means is not in it, since the fake has none:
 the adapter's own tests pin it.
 
+**The rule of a search** is core logic (`editor_grep::search`, or
+`Search::prepare` then `Search::run`), over the files port and
+`editor-search`'s engine port:
+
+- Before any walk, a root that is not absolute or has a `..` component is
+  refused, and so is a pattern that does not parse or that the engine
+  refuses, with the sentence `/` says (`E54: Unmatched \(`).
+- **One pattern syntax, Vim's, and one match rule.** The pattern is
+  compiled once a search (`editor_search::CompiledPattern`, which compiles
+  each top-level branch once and is asked of many texts; `matches` and
+  `search` of a single text are built on it) and asked of each row as one
+  piece, with the text's word class. A row holds when it has a match that
+  is not empty; an empty match is never answered. So a match on disk is
+  one `/` finds in the buffer, and the `search-match` drawn over the
+  results agrees with what was found.
+- **An open buffer's text is searched in place of its file** when the walk
+  reaches the file's path, compared as spelled: its matches are asked of
+  its pieces, rows counted by line feeds, answered with source `Buffer`. An
+  overlay the walk does not reach is not searched, so ignore rules hold
+  for open buffers too.
+- A file that cannot be read, or is binary, has no match; only the root's
+  refusal ends a search.
+- **Limits**: at most so many files with a match and so many matches. The
+  one past a limit is not answered, the walk stops, and the summary says
+  it was truncated; a file is cut short at the matches limit.
+- `stopped` is asked before each file and each row.
+
 `crates/editor-grep/clippy.toml` holds the crate's tests, the rule's and
 the service's among them, to the fake: no `std::fs`, no `Path` method that
 asks the disk, no clock of the machine's, and not the adapter's
