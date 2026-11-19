@@ -153,6 +153,7 @@ import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.WindowCommands
 import ModelTest.Editor.WorkingSet
+import ModelTest.Editor.WorkingSet.Refind
 import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
 import ModelTest.Editor.Workspace.Contract
@@ -1054,7 +1055,14 @@ alone too:
 - `workingSetChecks`: the stored form, pure: the document's JSON round trip
   and the refusals of one it cannot read, a newer version first; a
   workspace's key; a range captured from a text and its points found
-  again; the headers; and the excerpts' grouping by file and merging.
+  again; the headers; and the excerpts' grouping by file and merging;
+- `workingSetRefindChecks`: the re-find ladder
+  (`Editor/WorkingSet/Refind.lean`), against the fuzzy model: exact, moved
+  past lines inserted above, the copy whose context matches over the
+  nearer one and the nearer of two alike, changed with one character
+  edited, drifted when deleted and when a short quote was edited, a long
+  quote found by its ends or drifted without its last lines, text that is
+  not ASCII, and a stored point past the text's end.
 
 Listing a workspace's files is checked in Lean alone too:
 
@@ -1225,6 +1233,7 @@ def checks : List Check :=
     projectSearchChecks ++
     projectSearchRunChecks ++
     workingSetChecks ++
+    workingSetRefindChecks ++
     driverChecks ++
     promptChecks ++
     candidateChecks ++
