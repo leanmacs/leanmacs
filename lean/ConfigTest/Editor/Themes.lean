@@ -1,6 +1,7 @@
 import ConfigTest.Check
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
+import ConfigTest.Support.Themes
 import Editor.Completion
 import Editor.Config.Directory
 import Editor.Config.Elaborate
@@ -24,7 +25,6 @@ import Editor.Scene
 import Editor.Text.Real
 import Editor.Themes
 import Editor.Themes.Compiled
-import Editor.Themes.Shipped
 
 /-!
 # Config tests: `Editor/Themes.lean`
@@ -38,12 +38,13 @@ namespace ConfigTest
 open Editor
 
 /-- What compiled code hands the hosts of the theme checks: the command that
-loads a theme and the themes that ship (`Editor/Themes/Compiled.lean`), and
+loads a theme and the theme `default` (`Editor/Themes/Compiled.lean`), the
+fixture themes (`ConfigTest/Support/Themes.lean`), and
 the minibuffer's commands and its mode, which its prompt is answered with. -/
 def themeCompiled : Compiled :=
   { commands := Themes.package.registered.commands ++ Minibuffer.package.registered.commands,
     modes := Minibuffer.package.registered.modes
-    themes := #[Themes.defaultTheme] ++ Themes.Shipped.themes }
+    themes := #[Themes.defaultTheme] ++ fixtureThemes }
 
 /-- The face `default` of the theme `second` the theme checks' config
 defines: a background of its own. -/

@@ -1,4 +1,5 @@
 import ConfigTest.Check
+import ConfigTest.Support.Themes
 import Editor.Display.Real
 import Editor.Face
 import Editor.Ffi.Display
@@ -13,7 +14,6 @@ import Editor.Text
 import Editor.Text.Real
 import Editor.Themes.Check
 import Editor.Themes.Compiled
-import Editor.Themes.Shipped
 
 /-!
 # Config tests: `Editor/Themes/Check.lean`
@@ -28,13 +28,14 @@ namespace ConfigTest
 open Editor
 
 /-- The themes whose cursors `cursorResolutionChecks` lay out, each with
-what it is called in a failure: every shipped theme, and two built-in themes
+what it is called in a failure: the built-in theme, the fixture themes
+(`ConfigTest/Support/Themes.lean`), and two built-in themes
 whose `cursor.normal` is redefined to set one colour alone, a background or
 a foreground, so the other falls through to the default face's. -/
 def resolutionThemes : Array (String × Theme) :=
   let alone (face : Face) : Theme :=
     (Theme.builtin.filter (·.name != ⟨"cursor.normal"⟩)).push { name := ⟨"cursor.normal"⟩, face }
-  (#[Themes.defaultTheme] ++ Themes.Shipped.themes).map (fun named => (named.name, named.theme)) ++
+  (#[Themes.defaultTheme] ++ fixtureThemes).map (fun named => (named.name, named.theme)) ++
     #[("a background alone", alone { background := some (Color.rgb 200 0 0) }),
       ("a foreground alone", alone { foreground := some (Color.rgb 0 200 0) })]
 
@@ -51,7 +52,7 @@ frame text is read: what a frame says is layout's. -/
 def cursorResolutionChecks (_ : Unit) : List Check :=
   [{
       name :=
-        "the completeness check's colours of each cursor face, in every shipped theme and in themes whose cursor sets one colour alone, are the ones the real layout paints it in",
+        "the completeness check's colours of each cursor face, in the built-in theme, in the fixture themes and in themes whose cursor sets one colour alone, are the ones the real layout paints it in",
       run := do
         let document ← Ffi.Document.new "ab\ncd"
         let .ok selection ←

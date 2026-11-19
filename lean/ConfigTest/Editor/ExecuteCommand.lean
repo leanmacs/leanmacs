@@ -3,12 +3,12 @@ import ConfigTest.Support.Configs
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
+import ConfigTest.Support.Themes
 import Editor.BindingSearch.Compiled
 import Editor.Config.Packages
 import Editor.Event
 import Editor.ExecuteCommand.Compiled
 import Editor.Themes.Compiled
-import Editor.Themes.Shipped
 
 /-!
 # Config tests: `Editor/ExecuteCommand.lean`
@@ -26,14 +26,15 @@ open Editor
 
 /-- What compiled code hands the hosts of the command prompt's checks: the
 minibuffer's commands and its mode, the command prompt, the binding search
-and the command that loads a theme, and the themes that ship. -/
+and the command that loads a theme, the theme `default` and the fixture
+themes (`ConfigTest/Support/Themes.lean`). -/
 def commandCompiled : Compiled :=
   { minibufferCompiled with
     commands :=
       Minibuffer.package.registered.commands ++ ExecuteCommand.package.registered.commands ++
         BindingSearch.package.registered.commands ++
         Themes.package.registered.commands
-    themes := #[Themes.defaultTheme] ++ Themes.Shipped.themes }
+    themes := #[Themes.defaultTheme] ++ fixtureThemes }
 
 /-- A chunk whose `setup` defines the style `starts`, which keeps the
 candidates a text starts, in their order, chooses it for the categories
@@ -65,7 +66,7 @@ categories `command` and `binding`, keeps each listing short and in the
 source's order, so no check pins the library matcher's order. -/
 def commandPromptChecks (context : Context) : List Check :=
   [{  name :=
-        "criteria 1, 2 and 3: the command prompt lists the commands compiled code registers and config's, config's in the order registered; a reload whose config no longer registers zz-mine drops it from the candidates; from a config that binds neither execute-command nor load-theme, calling execute-command, accepting load-theme and then solarized-dark puts that theme in force, as the scene line names it; a config command bound to SPC f f shows SPC f f as its annotation; the binding search lists SPC y y with its command and description, and accepting it runs yy-said"
+        "criteria 1, 2 and 3: the command prompt lists the commands compiled code registers and config's, config's in the order registered; a reload whose config no longer registers zz-mine drops it from the candidates; from a config that binds neither execute-command nor load-theme, calling execute-command, accepting load-theme and then fixture-dark puts that theme in force, as the scene line names it; a config command bound to SPC f f shows SPC f f as its annotation; the binding search lists SPC y y with its command and description, and accepting it runs yy-said"
       run :=
         withHost context [("10-commands.lean", commandChunk true)]
           (fun session => do
@@ -93,7 +94,7 @@ def commandPromptChecks (context : Context) : List Check :=
             session.ask [.run ExecuteCommand.name]
             unless ← answered Themes.loadName do
               return false
-            unless ← answered Themes.Solarized.dark.name do
+            unless ← answered fixtureDark.name do
               return false
             let after ← drawnIn
             session.ask [.run BindingSearch.name]
@@ -106,7 +107,7 @@ def commandPromptChecks (context : Context) : List Check :=
                 listsAfter compiled ExecuteCommand.label [Themes.loadName] &&
                 listsAfter dropped ExecuteCommand.label ["zz-other  SPC f f"] &&
                 before.endsWith s!", theme {Theme.defaultName.quote}" &&
-                after.endsWith s!", theme {Themes.Solarized.dark.name.quote}" &&
+                after.endsWith s!", theme {fixtureDark.name.quote}" &&
                 listsAfter searching BindingSearch.label ["SPC y y  yy-said  Say it"] &&
                 said == "said".quote &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))

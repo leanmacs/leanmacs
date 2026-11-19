@@ -15,8 +15,6 @@ import Editor.Scene
 import Editor.State
 import Editor.Text
 import Editor.Text.Real
-import Editor.Themes.Shipped
-import Editor.Themes.Solarized
 import FfiTest.Support.Pictures
 import FfiTest.Support.Scenes
 
@@ -93,7 +91,8 @@ def topOf (picture : Editor.Ffi.Picture) (indices : Array Nat) : Option Nat :=
   indices.foldl (fun top index => some (min (top.getD (row index)) (row index))) none
 
 /-- The excerpt-picture scenario over the reference image
-`dir/excerpts.png` and the font file `font`, in `solarized-dark`: it draws
+`dir/excerpts.png` and the font file `font`, in the built-in theme
+(`Theme.builtin`, the theme `default`): it draws
 the scene (`excerptPicture`) and, with `write`, writes it to that file
 (`mise run excerpt-reference`); without, it compares it with the file
 within `pictureTolerance`, guards that the file is the scene's size and at
@@ -105,11 +104,7 @@ scene with no blocks. Exits 0 after a line naming what held, or 1 after
 `FAILED:` lines. -/
 def excerptPictureScenario (dir font : String) (write : Bool) : IO UInt8 := do
   let fontBytes ← IO.FS.readBinFile font
-  let some named := Editor.Themes.Shipped.themes.find? (·.name == "solarized-dark")
-    |
-    IO.eprintln "FAILED: no shipped theme is named solarized-dark"
-    return 1
-  let theme := named.theme
+  let theme := Editor.Theme.builtin
   let cursor := Editor.Vim.cursorFace "normal"
   let scene ← excerptPicture fontBytes theme true cursor
   let path := System.FilePath.mk dir / "excerpts.png"
@@ -142,12 +137,12 @@ def excerptPictureScenario (dir font : String) (write : Bool) : IO UInt8 := do
     failed := failed ++ ["the scene with no blocks is the scene with them"]
   -- The header's face with the paper behind it: what differs is where its
   -- background is.
-  let paper := Editor.Themes.Solarized.published.base03
+  let paper := Editor.Palette.placeholder.paper
   let papered :=
     theme.push { name := Editor.ExcerptView.headerFace, face := { background := some paper } }
   let plainHeaders ← excerptPicture fontBytes papered true cursor
   let behind := differing scene plainHeaders
-  unless commonest scene behind == some Editor.Themes.Solarized.published.base02 do
+  unless commonest scene behind == some Editor.Palette.placeholder.raised do
     failed :=
       failed ++
         ["the pixels the header's background changes are not mostly block-header's background"]

@@ -197,8 +197,8 @@ show:
   that makes `mode-line` taller sizes the next scene by the new heights,
   which `agree`, asked with no event between, shows;
 - `cursorResolutionChecks`: the completeness check's model of a cursor's
-  colours (`Themes.effective`) is the real layout's: for every shipped
-  theme, and two whose cursor sets one colour alone, each cursor face's
+  colours (`Themes.effective`) is the real layout's: for the built-in
+  theme, the fixture themes and two whose cursor sets one colour alone, each cursor face's
   frame is the frame of a mirror theme that sets the modelled colours;
 - `themeChecks`: named themes through a host over the display's real
   binding: `load-theme` switches the frame to the chosen theme with config's

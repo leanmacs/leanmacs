@@ -614,7 +614,7 @@ run = [
   # `excerptPictureScenario`): an
   # excerpt document's view with each excerpt's header as a block above it,
   # drawn by the CPU renderer through the display's real binding in
-  # solarized-dark, must match tests/render/excerpts/excerpts.png within the
+  # the built-in theme, must match tests/render/excerpts/excerpts.png within the
   # same tolerance; the scene with no blocks must differ from it, the
   # header's background must be block-header's, and the cursor's cell must
   # be lower than with no blocks (tests/render/excerpts/README.md). It
@@ -1279,7 +1279,7 @@ run = ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/f
 # rasteriser's pins change. Then look at the file enlarged before
 # committing it, and update `tests/render/excerpts/README.md`.
 [tasks.excerpt-reference]
-description = "Opt-in, never part of ci: draw the excerpt picture (an excerpt document's view with header blocks, in solarized-dark) and write it to tests/render/excerpts/excerpts.png, its reference image. Look at the file before committing it"
+description = "Opt-in, never part of ci: draw the excerpt picture (an excerpt document's view with header blocks, in the built-in theme) and write it to tests/render/excerpts/excerpts.png, its reference image. Look at the file before committing it"
 depends = ["lean"]
 dir = "lean"
 run = ".lake/build/bin/ffi-test excerpt-picture ../tests/render/excerpts ../tests/fonts/NotoSansMono-Regular.subset.ttf --write"
