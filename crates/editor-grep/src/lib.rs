@@ -9,7 +9,11 @@
 //! adapter, over ripgrep's libraries `ignore` and `grep-searcher`, is
 //! another crate (`editor-grep-ripgrep`). Above the port, [`search`] is the
 //! rule of which matches a search answers, over the pattern syntax and the
-//! engine port of `editor-search`. The crate knows nothing about Lean.
+//! engine port of `editor-search`, and [`service::Service`] is what the
+//! editor asks: searches owned under ids of the caller's, each on a thread
+//! of its own, their matches delivered a read at a time, each read
+//! completed through a closure the service is given. The crate knows
+//! nothing about Lean.
 //!
 //! # The rules of the port
 //!
@@ -82,6 +86,7 @@
 //! | Addition | Where | Pinned by |
 //! |---|---|---|
 //! | A rule of what a search answers | [`Search::run`] | The rule's tests, on the fake and `editor_search::Literal` |
+//! | A rule of the service (what a delivery holds, what cancelling means) | [`service::Service`] | The service's tests, on the fake behind a gate the test holds |
 //! | Another rule of what is walked or read | The module docs here, and a property of [`contract`] | The property, on the fake and on implementations written to break it; the adapter's own tests for what only real ignore files show |
 //! | Another failure the editor decides on | A variant of [`RefusalKind`] | The property that asks for it |
 //! | Another way for a test to set the fake up | A method of [`fake::FakeFiles`] | The fake's tests |
@@ -89,6 +94,7 @@
 pub mod contract;
 pub mod fake;
 mod rule;
+pub mod service;
 
 use std::path::{Component, Path};
 

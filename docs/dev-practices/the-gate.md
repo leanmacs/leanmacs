@@ -311,7 +311,12 @@ implementations written to break each rule. The rule of which matches a
 search answers is tested on the fake and the search engine's fake: walk
 order, offsets, open buffers' texts in place of their files, the word
 class, the limits, stopping, and that the pattern is compiled once a
-branch a search, on an engine that counts what it compiles.
+branch a search, on an engine that counts what it compiles. The service
+that owns each search is tested on the fake behind a gate the test holds
+in front of every read: a delivery's bound and a file cut across
+deliveries, the end delivered last, a search held back while its reader
+takes nothing, cancelling mid-file and before the start is answered, an
+id in use, and shutdown. Nothing sleeps; every wait is bounded.
 
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:

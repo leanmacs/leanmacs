@@ -1488,6 +1488,21 @@ the adapter's own tests pin it.
   it was truncated; a file is cut short at the matches limit.
 - `stopped` is asked before each file and each row.
 
+**The service** (`editor_grep::service::Service`, in the shape of the
+watch service) owns each search under an id of the caller's, on a thread
+of its own that makes its port and engine with a factory. A start returns
+at once; the thread refuses what the rule refuses before any walk and
+keeps `Started` or the refusal, completing the id. Each `next(id, wait)`
+is a read, completed when anything is there to deliver: every file found
+and not yet taken, in walk order, up to `bound` matches, a file with more
+than `bound` cut into several deliveries under one path, drained when it
+is taken. The end (the summary, or the root's refusal) comes in the
+delivery that takes the last file, and frees the id. The search waits
+while `bound` matches or more are kept and not taken, so memory is bounded
+and a slow reader slows its search. `cancel` makes its `stopped` true and
+completes nothing more; an id in use is refused; `shutdown` cancels every
+search and waits for every thread.
+
 `crates/editor-grep/clippy.toml` holds the crate's tests, the rule's and
 the service's among them, to the fake: no `std::fs`, no `Path` method that
 asks the disk, no clock of the machine's, and not the adapter's
