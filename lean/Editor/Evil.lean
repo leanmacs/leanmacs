@@ -1,6 +1,7 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Indent
+import Editor.Jumps
 import Editor.Vocabulary
 
 /-!
@@ -415,9 +416,11 @@ rule of the call's report, and the selection is one range of the report's
 shape, from the anchor it had where the report says a motion extends the
 selection, and with both ends on the new head otherwise. The wanted column
 it hands the motion is the one the window keeps when this is called, read
-from the editor state. A call that names no motion (`noMotionNamed`) and a
-name with no motion (`noSuchMotion`) are each said in the echo area, and
-nothing moves. -/
+from the editor state. A motion that is a jump (`Vocabulary.Motion.jumps`)
+and did not fail records the place the cursor starts from in the window's
+jump list first (`Jumps.record`). A call that names no motion
+(`noMotionNamed`) and a name with no motion (`noSuchMotion`) are each said
+in the echo area, and nothing moves. -/
 def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   let counted (rest : List Argument) : Option Nat :=
     match rest with
@@ -441,6 +444,9 @@ def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   -- The kept column holds only while the cursor is where it was kept.
   let wanted := (kept.filter (·.head == range.head)).map (·.column)
   let raw ← motion.target text { head := range.head, count, wanted, argument }
+  -- A jump records where the cursor starts from, before it moves.
+  if motion.jumps && !raw.failed then
+    Jumps.record view
   let head ← rested (restOf call.report) text raw.head
   let anchor := if call.report.selecting then range.anchor else head
   call.target.select { ranges := #[⟨anchor, head⟩], shape := call.report.shape }

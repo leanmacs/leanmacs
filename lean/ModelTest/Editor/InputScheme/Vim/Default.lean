@@ -556,7 +556,31 @@ def vimDefaultChecks : List Check :=
       run :=
         pure <|
           vimDefaultCommand "C-w F" == some { name := WindowCommands.floatName } &&
-            (vimDefault "C-w F").2.head? == some .nothing }]
+            (vimDefault "C-w F").2.head? == some .nothing },
+    { name :=
+        "C-o, C-i and TAB each run a command evil registers that changes no text and enters no state: C-i and TAB the same one, and C-o another"
+      run :=
+        pure <|
+          let registered := Evil.commands.map (·.name)
+          match vimDefaultCommand "C-o", vimDefaultCommand "C-i", vimDefaultCommand "TAB" with
+          | some back, some on, some tab =>
+            back != on && on == tab &&
+              [back, on].all
+                (fun command =>
+                  registered.contains command.name && !command.changes && command.enters.isNone) &&
+              ["C-o", "C-i", "TAB"].all fun text =>
+                (vimDefault text).1.current == [] && (vimDefault text).1.lastChange == none
+          | _, _, _ => false },
+    { name :=
+        "the motions that record a jump are exactly gg's, G's, the searches' (/, ?, n, N, * and #) and %'s, Vim 9.1's jump motions that are built"
+      run :=
+        pure <|
+          let jumping := (Evil.motions.filter (·.jumps)).map (·.name)
+          let documented :=
+            #["first-line", "last-line", "search-forward", "search-backward", "search-next",
+              "search-previous", "word-search-forward", "word-search-backward", "matching-bracket"]
+          jumping.all documented.contains && documented.all jumping.contains &&
+            jumping.size == documented.size }]
 
 /-- The strict prefixes of `keys` that are not empty, shortest first. -/
 def vimStrictPrefixes (keys : List Key) : List (List Key) :=

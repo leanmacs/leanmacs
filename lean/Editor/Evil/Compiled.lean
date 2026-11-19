@@ -1,6 +1,7 @@
 import Editor.Config.Registry
 import Editor.Evil
 import Editor.Evil.Clipboard
+import Editor.Evil.Jumps
 import Editor.Evil.Motions
 import Editor.Evil.Objects
 import Editor.Evil.Operators
@@ -43,6 +44,7 @@ they hold when config fails to load, and a reload does not replace them.
   | `clipboard-cut`, `clipboard-copy` (`Evil.cutName`, `Evil.copyName`) | `Evil.cut`, `Evil.copy`: they give up, nothing being selected, where no run table runs `"+d` or `"+y` in their place (`Editor/Evil/Clipboard.lean`) |
   | `clipboard-paste` (`Evil.pasteName`) | `Evil.paste`: the clipboard's text at the bar where the call's report is exclusive, and before the cursor otherwise |
   | `select-all` (`Evil.selectAllName`) | `Evil.selectAll`: every line selected, where the call's report selects lines |
+  | `jump-backward`, `jump-forward` | `Evil.jumpBackward`, `Evil.jumpForward`: Vim's `C-o` and `C-i`, a step back or on through the window's jump list by the count (`Editor/Evil/Jumps.lean`) |
 
   The seven of the second and third rows enter a state only when a key
   that enters it runs them: the scheme enters the state, at the key, and
@@ -103,6 +105,8 @@ def commands : Array Config.Registration :=
     { name := "insert-down", action := .call (insertMove motions down.name) },
     { name := cutName, action := .call cut }, { name := copyName, action := .call copy },
     { name := pasteName, action := .call paste },
-    { name := selectAllName, action := .call selectAll }]
+    { name := selectAllName, action := .call selectAll },
+    { name := "jump-backward", action := .call jumpBackward },
+    { name := "jump-forward", action := .call jumpForward }]
 
 end Editor.Evil

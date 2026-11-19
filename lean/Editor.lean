@@ -7,6 +7,7 @@ import Editor.Compile.Shipped
 import Editor.Completion.Filtering
 import Editor.Completion.Words
 import Editor.Evil.Clipboard
+import Editor.Evil.Jumps
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
 import Editor.Evil.Scroll
@@ -16,7 +17,6 @@ import Editor.Evil.Undo
 import Editor.ExecuteCommand
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
-import Editor.Jumps.Go
 import Editor.Minibuffer
 import Editor.Setup
 import Editor.TabCommands

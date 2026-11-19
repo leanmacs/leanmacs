@@ -521,7 +521,9 @@ gives up, and so does one whose motion failed where the cursor is; one
 whose motion failed after it moved leaves the cursor where the motion got
 to and breaks off ("What an operator takes", in the module docs). A
 doubled operator with a count above 1 on the last line gives up too ("The
-doubled operator on the last line", in the module docs). -/
+doubled operator on the last line", in the module docs). A motion that is a
+jump and did not fail records the place the cursor started from in the
+window's jump list (`Jumps.record`). -/
 def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.Motion)
     (objects : Array Vocabulary.TextObject) (call : Call) : EditorM Unit := do
   -- A motion's argument, when it has one, is the string after its name.
@@ -566,6 +568,10 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
         call.target.select { ranges := #[⟨reached, reached⟩], shape := before.shape }
         discard <| call.target.window.id.setWanted none
         breakOff (taken.said.getD (cannotMove name))
+      -- A jump under an operator records where the cursor started from, as
+      -- one without does.
+      if motion.jumps then
+        Jumps.record call.target.window.id
       pure
           ({ stretch := ← stretch operator text head taken, head, rest := min head taken.head,
              register, before },

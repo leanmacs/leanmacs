@@ -49,6 +49,7 @@ import ModelTest.Editor.Display.Model
 import ModelTest.Editor.DisplayRules
 import ModelTest.Editor.Evil
 import ModelTest.Editor.Evil.Clipboard
+import ModelTest.Editor.Evil.Jumps
 import ModelTest.Editor.Evil.Motions
 import ModelTest.Editor.Evil.Objects
 import ModelTest.Editor.Evil.Operators
@@ -815,6 +816,12 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   count before it, a change with an insert session and its typed and
   committed text, the editing keys of insert state in a session
   (`insertKeysRepeatRows`), and what is not repeated;
+- `evilJumpChecks`: `C-o`, `C-i` and `TAB` through the jumps that `gg`,
+  `G`, the searches and `%` record (`Editor/Evil/Jumps.lean`), to the
+  exact column, with a count, under an operator, as `:help jumplist`'s
+  example scaled to eight lines, an entry following lines inserted above
+  it, a failed search and the motions that are no jump recording nothing,
+  and a split's copy of the list moved through on its own;
 - `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
   All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
   item (`clipRan`), in each Vim state, on the clipboard model.
@@ -1187,6 +1194,7 @@ def checks : List Check :=
     evilIndentChecks ++
     evilUndoChecks ++
     evilRepeatChecks ++
+    evilJumpChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++
