@@ -157,7 +157,7 @@ def reachChecks : List Check :=
               refused.loop.state.echo != "probe: reached local /r for /r in view 0" &&
               refused.jobs.processes.started.isEmpty },
     { name :=
-        "an order crosses as arguments and back, its roots with and without a project and the arguments it carries, and arguments that are no order read as none; the work started with them fails, naming the continuation's job"
+        "an order crosses as arguments and back, its roots with and without a project and the arguments it carries, and arguments that are no order, a carried count past the arguments that follow it among them, read as none; the work started with them fails, naming the continuation's job"
       run :=
         let orders : List Workspace.Reach.Order :=
           [{ path := "/u", git := "git", generation := 0, view := ⟨0⟩ },
@@ -166,14 +166,26 @@ def reachChecks : List Check :=
             { path := "/w", git := "git", generation := 1, view := ⟨1⟩
               carried := [.str "b", .nat 4]
               roots := #[{ root := "/c", project := some "c" }] }]
+        -- A real order's arguments with the carried count (slot 4) overstated,
+        -- so the read fails at the count and not at an earlier slot.
+        let bare : Workspace.Reach.Order :=
+          { path := "/u", git := "git", generation := 0, view := ⟨1⟩ }
+        let carrying := { bare with carried := [.str "b"] }
+        let overcounted := [bare.arguments.set 4 (.nat 3), carrying.arguments.set 4 (.nat 2)]
         let failed :=
           match ((Workspace.Reach.work probe [.nat 1] ()).runModel {}).1 with
           | .failed said => some said
           | _ => none
         pure
-          (orders.all
+          ((bare :: carrying :: orders).all
               (fun order => Workspace.Reach.Order.ofArguments? order.arguments == some order) &&
-            [[], [.str "/u"], [.str "/u", .str "git", .nat 0, .nat 1, .str "/t"]].all
+            overcounted ==
+              ([[.str "/u", .str "git", .nat 0, .nat 1, .nat 3],
+                  [.str "/u", .str "git", .nat 0, .nat 1, .nat 2, .str "b"]] :
+                List (List Argument)) &&
+            (([[], [.str "/u"], [.str "/u", .str "git", .nat 0, .nat 1, .str "/t"]] :
+                    List (List Argument)) ++
+                  overcounted).all
               (Workspace.Reach.Order.ofArguments? · == none) &&
             failed.map (·.startsWith s!"{probeJob}: ") == some true) }]
 
