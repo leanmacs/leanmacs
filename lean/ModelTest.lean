@@ -108,6 +108,7 @@ import ModelTest.Editor.ModuleLookup
 import ModelTest.Editor.Process.Environment
 import ModelTest.Editor.Process.Model
 import ModelTest.Editor.Program
+import ModelTest.Editor.ProjectSearch
 import ModelTest.Editor.Scene
 import ModelTest.Editor.Scroll
 import ModelTest.Editor.Setup
@@ -1208,6 +1209,7 @@ def checks : List Check :=
     indentLevelChecks ++
     apiStateChecks ++
     insertExcerptChecks ++
+    projectSearchChecks ++
     driverChecks ++
     promptChecks ++
     candidateChecks ++
