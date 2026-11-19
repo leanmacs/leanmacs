@@ -1,4 +1,5 @@
 import Editor.Command.Append
+import Editor.Config.LakePackage
 import Editor.Executable
 import Editor.Headless
 import Editor.Package
@@ -23,8 +24,8 @@ running build, read from its bundle's `Info.plist`, or that it is a
 development build when it runs from outside a bundle
 (`Editor/Version.lean`).
 
-`editor headless [--render] [<sysroot> <olean dir>] <config dir> <script file>`
-is the headless mode (`Editor/Headless.lean`): it loads the config in a
+`editor headless [--render] [--generate] [<sysroot> <olean dir>] <config dir>
+<script file>` is the headless mode (`Editor/Headless.lean`): it loads the config in a
 directory, runs a script against it and prints what happened, for
 integration tests; with `--render` what it publishes is drawn by the
 library's headless render session. The toolchain's directory and the
@@ -85,6 +86,20 @@ hand it to the elaborator with the directories its modules are found in
 (`Editor/ModuleLookup.lean`): outside a bundle those the build recorded for
 the executable, one a package, and in a bundle the bundle's one. A set with
 no package beside the core's hands `Editor` alone.
+
+## The generated files
+
+A config directory is a Lake package, so that Lean's language server checks
+a config file as the editor elaborates it
+(`Editor/Config/LakePackage.lean`). The editor creates the directory's
+`lakefile.toml` and `lean-toolchain` when they are absent, and what it
+writes them from comes with it: the generated root hands `run` the Lake
+name of the package set and the text of the core's `lean-toolchain`
+(`Config.LakePackage.Origin`), and `run` passes them to the two hosts. The
+set's directory is not handed in: an editor finds it at each start
+(`Editor/ModuleLookup.lean`, "The set"), and one that finds none writes no
+lakefile. The window mode generates the files; the headless mode only when
+its command line says `--generate`.
 -/
 
 namespace Editor.Main
@@ -133,8 +148,11 @@ opened. Any other command line, an empty one too, is the window mode's,
 which opens a window, on a file when one is given, and exits 0 when the
 window ran, 1 when it could not be opened, and 2, with its usage, for a
 command line it does not take. The headless mode and the window mode are
-each handed `packages` and `base`. -/
-def run (packages : Array Package) (base : Array Lean.Name) (args : List String) : IO UInt32 := do
+each handed `packages`, `base` and `origin`, the set's Lake name and the
+toolchain pin, from which they generate a config directory's lakefile and
+toolchain file ("The generated files", in the module docs). -/
+def run (packages : Array Package) (base : Array Lean.Name) (origin : Config.LakePackage.Origin)
+    (args : List String) : IO UInt32 := do
   match Editor.Executable.mode args with
   | .demo =>
     demo
@@ -152,10 +170,10 @@ def run (packages : Array Package) (base : Array Lean.Name) (args : List String)
       IO.eprintln text
     pure status
   | .headless rest =>
-    Editor.Headless.main packages base rest
+    Editor.Headless.main packages base origin rest
   | .windowCheck options =>
     Editor.WindowCheck.main options
   | .window arguments =>
-    Editor.Window.main packages base arguments
+    Editor.Window.main packages base origin arguments
 
 end Editor.Main

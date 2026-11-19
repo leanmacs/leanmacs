@@ -229,11 +229,14 @@ order they register and the config base `base` (`setBase`). It imports the
 core's base, `Editor`, for the link alone (`Editor/Main.lean`, "This module
 names no package, and not the config base"), then the executable's entry,
 then each entry module; and its `main` is one call of `Editor.Main.run`
-with the entry modules' `packages` appended in that order, and the base as
-an array of names. Every module of the base is among its imports, so each
-is linked into the executable, which the elaborator requires of a module it
-imports at runtime. -/
-def rootSource (entries base : Array Name) : String :=
+with the entry modules' `packages` appended in that order, the base as an
+array of names, and what the build says of the editor for the files it
+generates in a config directory (`Editor/Config/LakePackage.lean`,
+`Origin`): `setName`, the Lake name of the set, and `pin`, the text of the
+core's `lean-toolchain`. Every module of the base is among its imports, so
+each is linked into the executable, which the elaborator requires of a
+module it imports at runtime. -/
+def rootSource (entries base : Array Name) (setName pin : String) : String :=
   let imports := entries.foldl (fun text name => text ++ s!"import {name}\n") ""
   let lists :=
     if entries.isEmpty then "#[]"
@@ -250,11 +253,13 @@ the Lake packages of a package set, each after the packages it requires.
 Do not edit it: the build writes it again.
 -/
 
-/-- The editor, with the packages of the set's Lake packages, and the
-modules config is elaborated on: `Editor`, then the entry module of each
-package of the set outside the core. -/
+/-- The editor, with the packages of the set's Lake packages, the modules
+config is elaborated on, `Editor` and then the entry module of each package
+of the set outside the core, and the set's Lake name and the toolchain pin,
+for the lakefile and the toolchain file it generates in a config
+directory. -/
 def main (args : List String) : IO UInt32 :=
-  Editor.Main.run ({lists}) #[{names}] args
+  Editor.Main.run ({lists}) #[{names}] \{ setName := {setName.quote}, pin := {pin.quote} } args
 "
 
 /-- Writes `text` to `file`, making its directory, unless the file holds
@@ -301,7 +306,8 @@ def setBase (entries : Array (Bool × Name)) : Array Name :=
   #[`Editor] ++ (entries.filter (!·.1)).map (·.2)
 
 /-- The root module of the set `pkg`, written from the entry modules of the
-set's packages (`setEntries`, `setBase`, `rootSource`) to
+set's packages (`setEntries`, `setBase`, `rootSource`), the set's Lake name
+and the text of the core's `lean-toolchain`, to
 `<set>/.lake/build/root/EditorSetRoot.lean`, and only when its text would
 change, so a build with nothing to do writes nothing.
 
@@ -317,7 +323,15 @@ def setRoot (pkg : Package) : FetchM Module := do
     ⟨pkg, `EditorSet,
       { srcDir := pkg.config.buildDir / "root", roots := #[], leanOptions := coreLeanOptions }⟩
   let root : Module := { lib, name := setRootName }
-  writeIfChanged root.leanFile (rootSource (entries.map (·.2)) (setBase entries))
+  let ws ← getWorkspace
+  let some core := ws.findPackageByKey? __name__
+    | error "the core's package is not in the workspace"
+  -- The pin is the core's: every copy of it in the repository is held to
+  -- that one file (`tools/toolchain-check.sh`).
+  let pin ← IO.FS.readFile (core.dir / "lean-toolchain")
+  writeIfChanged root.leanFile
+      (rootSource (entries.map (·.2)) (setBase entries) (pkg.baseName.toString (escape := false))
+        pin)
   return root
 
 /-- The `.olean` directories of the set `pkg`: the core's first, then that
@@ -349,6 +363,16 @@ def writeModuleRecord (pkg : Package) (executable : FilePath) : FetchM Unit := d
   writeIfChanged (executable.toString ++ ".oleans")
       (directories.foldl (fun text directory => text ++ s!"{directory}\n") "")
 
+/-- The record of where a package set is, written beside the editor the
+set's build links, at `<executable>.set`: the set's directory, absolute,
+on one line. An editor run directly, outside a bundle, reads it
+(`Editor/ModuleLookup.lean`, "The set") to name the set in the lakefile it
+generates for a config directory, so that Lean's language server, started
+there, finds the modules config imports. It is written only when its text
+would change. -/
+def writeSetRecord (pkg : Package) (executable : FilePath) : FetchM Unit := do
+  writeIfChanged (executable.toString ++ ".set") s!"{← IO.FS.realPath pkg.dir}\n"
+
 /-- The editor of a package set: `lake -d <set dir> build :editor` gives
 `<set>/.lake/build/bin/editor`.
 
@@ -358,8 +382,8 @@ declares no target. This facet is the package-set build
 the set's root module (`setRoot`), builds it with every module it imports,
 each in its own package's build directory, and links it as the editor is
 linked (`linkAsEditor`). Beside the executable it records where the
-`.olean` files of the set's packages are (`writeModuleRecord`), which an
-editor run directly reads. It is defined here because the link's objects and
+`.olean` files of the set's packages are (`writeModuleRecord`) and where
+the set itself is (`writeSetRecord`), which an editor run directly reads. It is defined here because the link's objects and
 arguments are the core's knowledge, and a lakefile cannot import another's
 definitions; a facet reaches every package of a workspace that holds this
 one.
@@ -370,6 +394,7 @@ the config session, so Lean's elaborator is linked in. -/
 package_facet editor pkg : FilePath := do
   let executable := pkg.binDir / "editor"
   writeModuleRecord pkg executable
+  writeSetRecord pkg executable
   linkAsEditor (← setRoot pkg) executable
 
 /-- The root module of a package set, written and not built:

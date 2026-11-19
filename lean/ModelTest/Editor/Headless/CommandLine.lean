@@ -16,7 +16,8 @@ open Editor
 /-- The checks of the headless mode's command line
 (`Editor/Headless/CommandLine.lean`): four paths anywhere, the `.olean`
 directory among them a search path that the recorded directories follow
-outside a bundle; two in a bundle; and what is refused. -/
+outside a bundle; two in a bundle; `--render` and `--generate` before them;
+and what is refused. -/
 def headlessCommandLineChecks : List Check :=
   let installed := "/Applications/Leanmacs.app/Contents/MacOS/editor"
   let outside := "/opt/leanmacs/bin/editor"
@@ -31,9 +32,10 @@ def headlessCommandLineChecks : List Check :=
   let refused (appPath : String) (arguments : List String) : Bool :=
     refusal appPath arguments == some ""
   let explicit (render : Bool) : Headless.Arguments :=
-    { render, sysroot := "/s", oleans := ["/o"], config := "/c", script := "/t" }
+    { render, generate := false, sysroot := "/s", oleans := ["/o"], config := "/c", script := "/t" }
   let bundled (render : Bool) : Headless.Arguments :=
-    { render, sysroot := "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain"
+    { render, generate := false
+      sysroot := "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain"
       oleans := ["/Applications/Leanmacs.app/Contents/Resources/lean/editor"], config := "/c"
       script := "/t" }
   [{  name :=
@@ -76,6 +78,24 @@ def headlessCommandLineChecks : List Check :=
         pure
           (read installed ["--render", "/c", "/t"] == some (bundled true) &&
             read outside ["--render", "/s", "/o", "/c", "/t"] == some (explicit true)) },
+    { name :=
+        "--generate is read before two paths and before four, alone, after --render and before it; without it nothing is generated"
+      run :=
+        pure
+          (read installed ["--generate", "/c", "/t"] ==
+              some { bundled false with generate := true } &&
+            read outside ["--generate", "/s", "/o", "/c", "/t"] ==
+              some { explicit false with generate := true } &&
+            read outside ["--render", "--generate", "/s", "/o", "/c", "/t"] ==
+              some { explicit true with generate := true } &&
+            read installed ["--generate", "--render", "/c", "/t"] ==
+              some { bundled true with generate := true } &&
+            (read outside ["/s", "/o", "/c", "/t"]).map (·.generate) == some false) },
+    { name := "an option given twice is refused with no reason beyond the usage line"
+      run :=
+        pure
+          (refused installed ["--generate", "--generate", "/c", "/t"] &&
+            refused installed ["--render", "--render", "/c", "/t"]) },
     { name :=
         "no path, one, three and five, and an option it does not know, are refused with no reason beyond the usage line, inside a bundle and outside one"
       run :=

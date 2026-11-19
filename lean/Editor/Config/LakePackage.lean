@@ -70,6 +70,23 @@ structure Set where
   directory : String
   deriving DecidableEq, Repr
 
+/-- What the build says of the editor it links, for the generated files: the
+Lake name of the package set it is built from, and the toolchain pin. The
+root the package-set build generates hands it to the executable's entry
+(`Editor/Main.lean`); where the set is on this machine is not in it, since
+an editor may be copied (`Editor/ModuleLookup.lean`, "The set"). -/
+structure Origin where
+  /-- The Lake name of the package set. -/
+  setName : String
+  /-- The text of the core's `lean-toolchain`. -/
+  pin : String
+  deriving DecidableEq, Repr
+
+/-- The package set of an editor of `origin` whose set directory is
+`directory`, when it knows one. -/
+def Origin.set (origin : Origin) (directory : Option String) : Option Set :=
+  directory.map fun directory => { name := origin.setName, directory }
+
 /-- `text` as a TOML basic string: in double quotes, with a backslash before
 each backslash and each double quote. -/
 def quoted (text : String) : String :=

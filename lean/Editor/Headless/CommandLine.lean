@@ -3,8 +3,8 @@ import Editor.ModuleLookup
 /-!
 # The headless mode's command line
 
-`editor headless [--render] [<sysroot> <olean dir>] <config dir> <script file>`
-(`Editor/Headless.lean`). This module is the pure part of it: what the
+`editor headless [--render] [--generate] [<sysroot> <olean dir>] <config dir>
+<script file>` (`Editor/Headless.lean`). This module is the pure part of it: what the
 command line after `headless` asks for, given where the executable is. It
 reads nothing itself, so `model-test` pins it
 (`ModelTest.headlessCommandLineChecks`).
@@ -23,10 +23,17 @@ reads nothing itself, so `model-test` pins it
   the headless mode never runs without one, and never looks for one
   relative to the working directory.
 - **`--render`**, before the paths, draws what the host publishes.
+- **`--generate`**, before the paths, lets the headless mode write into the
+  config directory: it creates the lakefile and the toolchain file a
+  directory lacks, as the window mode does
+  (`Editor/Config/LakePackage.lean`). Without it the headless mode writes
+  nothing there, which is what lets the gate run it on the config
+  directories checked in under `tests/`.
 
-The two directories are given both or neither, so three or five paths are
-refused, and so is any other first argument starting with `--`. Nothing is
-read from the environment.
+The two options come in either order, each at most once. The two
+directories are given both or neither, so three or five paths are refused,
+and so is any other argument starting with `--` before the paths. Nothing
+is read from the environment.
 -/
 
 namespace Editor.Headless
@@ -35,6 +42,9 @@ namespace Editor.Headless
 structure Arguments where
   /-- Whether to draw (`--render`). -/
   render : Bool
+  /-- Whether to create the config directory's lakefile and toolchain file
+  when they are absent (`--generate`). -/
+  generate : Bool
   /-- The Lean toolchain's directory. -/
   sysroot : String
   /-- The directories of the editor's `.olean` files, in the order they
@@ -48,7 +58,7 @@ structure Arguments where
 
 /-- The headless mode's command line, after `headless`. -/
 def usage : String :=
-  "headless [--render] [<sysroot> <olean dir>] <config dir> <script file>"
+  "headless [--render] [--generate] [<sysroot> <olean dir>] <config dir> <script file>"
 
 /-- Why two paths are refused outside a bundle, and what to give: the
 `.olean` directory is a search path, and config is elaborated on the base of
@@ -65,25 +75,26 @@ why it is refused: the empty string when the usage alone says it, as for a
 number of paths it does not take. -/
 def read (appPath : String) (arguments : List String) (recorded : List String := []) :
     Except String Arguments :=
-  let (render, paths) :=
-    match arguments with
-    | "--render" :: paths => (true, paths)
-    | paths => (false, paths)
+  let (options, paths) := arguments.span (·.startsWith "--")
+  let render := options.contains "--render"
+  let generate := options.contains "--generate"
+  -- Each option at most once, and none the mode does not know.
+  let known := options.all (["--render", "--generate"].contains ·) && options.eraseDups == options
   let named : Option (ModuleLookup.Given × String × String) :=
     match paths with
     | [config, script] => some ({}, config, script)
     | [sysroot, oleans, config, script] =>
       some ({ sysroot := some sysroot, oleans := some oleans }, config, script)
     | _ => none
-  match paths.head?.filter (·.startsWith "--"), named with
-  | none, some (explicit, config, script) =>
+  match known, named with
+  | true, some (explicit, config, script) =>
     -- Four paths give both directories and two give neither, so both are
     -- known together: in a bundle, or given. Outside a bundle two paths
     -- name no toolchain, whatever the build recorded for the executable.
     let directories := ModuleLookup.resolve appPath explicit recorded
     match directories.sysroot, directories.oleans with
     | some sysroot, directory :: rest =>
-      .ok { render, sysroot, oleans := directory :: rest, config, script }
+      .ok { render, generate, sysroot, oleans := directory :: rest, config, script }
     | _, _ => .error noToolchain
   | _, _ => .error ""
 

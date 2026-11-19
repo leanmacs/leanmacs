@@ -432,6 +432,14 @@ run = [
   # converted loads; and what that script refuses it leaves as it was
   # (tools/config-migrate-check.sh).
   "sh ../tools/config-migrate-check.sh ../packages/.lake/build/bin/editor \"$(lean --print-prefix)\" .lake/build/lib/lean",
+  # The config directory as a Lake package (tests/headless/generate, whose
+  # config directory holds `init.lean` alone): on a temporary copy, the
+  # default set's `editor headless --generate` creates `lean-toolchain`,
+  # equal to `lean/lean-toolchain`, and a `lakefile.toml` that requires the
+  # set by its directory, and the config loads; a second run rewrites
+  # neither; and a run without `--generate` on another copy writes neither
+  # (tools/config-package-check.sh). The line it prints is required.
+  "out=$(sh ../tools/config-package-check.sh ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; printf '%s\\n' \"$out\" | grep -qxF 'config-package: generated lakefile.toml and lean-toolchain, the config loaded, and a second run wrote nothing'",
   # The finder-session config fixture (tests/headless/finder-session): it
   # loads, and its command, run by its key `C-c h`
   # and by its ex name `finder-hello`, says `finder-session: config loaded`
@@ -768,6 +776,13 @@ run = [
   # package fixtures' (`package-names` of shipped-themes, `config` of
   # compile); this is the window mode's.
   ".lake/build/bin/ffi-test window-host-base \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/base/config",
+  # The same wiring handed a generator, as the editor's `main` hands it one,
+  # on a temporary copy of tests/window/title-bar/config, which holds a root
+  # and neither generated file: the start-up reload must create the
+  # directory's `lean-toolchain` and `lakefile.toml` and load the config, so
+  # the window mode hands the session the generator it was handed. It
+  # writes in the temporary directory alone, which a trap removes.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../tests/window/title-bar/config \"$dir/config\" && .lake/build/bin/ffi-test window-host-generate \"$(lean --print-prefix)\" .lake/build/lib/lean \"$dir/config\"",
   # The same wiring as the editor starts it when run directly, with
   # `--sysroot` and no `--oleans`: the command line is read for the default
   # set's editor, so the `.olean` directory is the one that executable
@@ -917,6 +932,17 @@ run = [
 # packages' module files beside the core's: a bundle has no record, and the
 # editor is given no directory.
 #
+# Then the generated files (tests/headless/generate, whose config
+# directory holds `init.lean` alone): the bundle's `editor headless
+# --generate`, on a copy of it, must load the config and print the fixture's
+# `expected` and one line more, the information that no lakefile is
+# generated; leave a `lean-toolchain` that is `lean/lean-toolchain` byte for
+# byte; and leave no `lakefile.toml`. A staged bundle holds no
+# `Contents/Resources/lean/set`, the package set a lakefile would require,
+# so the editor in it knows no set directory and writes no lakefile, and the
+# app's is the same until it ships a set. It then prints `bundle-test: the
+# bundle generated lean-toolchain and no lakefile, and the config loaded`.
+#
 # Then `editor --version` (lean/Editor/Version.lean), through `IO.appPath`
 # and the real file read: the fixture's `Info.plist`, which holds only the
 # three keys with a fake stamp, is copied into the staged `Contents/`, and
@@ -928,7 +954,7 @@ description = "Stage the app bundle's layout in a temporary directory, with the 
 depends = ["lean"]
 dir = "lean"
 timeout = "120s"
-run = '''lean_dir=$PWD && dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && base=$(lake -d ../packages query :editorBase | tr '\n' ' ') && oleans=$(paste -s -d : ../packages/.lake/build/bin/editor.oleans) && .lake/build/bin/config-test bench-modules "$sysroot" "$oleans" $base >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" "$dir/Leanmacs.app" ../packages/.lake/build/bin/editor "$sysroot" "$oleans" olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" - && themes=$lean_dir/../packages/shipped-themes/tests/headless/shipped-themes && cp -R "$themes/config" "$dir/themes-config" && cp "$themes/script" "$dir/themes-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/themes-config" "$dir/themes-script") && printf '%s\n' "$out" | diff "$themes/expected" - && names=$lean_dir/../packages/shipped-themes/tests/headless/package-names && cp -R "$names/config" "$dir/names-config" && cp "$names/script" "$dir/names-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/names-config" "$dir/names-script") && printf '%s\n' "$out" | diff "$names/expected" - && compile=$lean_dir/../packages/compile/tests/headless/config && cp -R "$compile/config" "$dir/compile-config" && cp "$compile/script" "$dir/compile-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/compile-config" "$dir/compile-script") && printf '%s\n' "$out" | diff "$compile/expected" - && cp "$fixtures/Info.plist" "$dir/Leanmacs.app/Contents/Info.plist" && env -i "$dir/Leanmacs.app/Contents/MacOS/editor" --version | diff "$fixtures/version-expected" - && "$lean_dir/../packages/.lake/build/bin/editor" --version | grep -qxF 'Leanmacs, a development build: not run from an app bundle, so it has no version, build ID or commit''''
+run = '''lean_dir=$PWD && dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && base=$(lake -d ../packages query :editorBase | tr '\n' ' ') && oleans=$(paste -s -d : ../packages/.lake/build/bin/editor.oleans) && .lake/build/bin/config-test bench-modules "$sysroot" "$oleans" $base >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" "$dir/Leanmacs.app" ../packages/.lake/build/bin/editor "$sysroot" "$oleans" olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" - && themes=$lean_dir/../packages/shipped-themes/tests/headless/shipped-themes && cp -R "$themes/config" "$dir/themes-config" && cp "$themes/script" "$dir/themes-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/themes-config" "$dir/themes-script") && printf '%s\n' "$out" | diff "$themes/expected" - && names=$lean_dir/../packages/shipped-themes/tests/headless/package-names && cp -R "$names/config" "$dir/names-config" && cp "$names/script" "$dir/names-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/names-config" "$dir/names-script") && printf '%s\n' "$out" | diff "$names/expected" - && compile=$lean_dir/../packages/compile/tests/headless/config && cp -R "$compile/config" "$dir/compile-config" && cp "$compile/script" "$dir/compile-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/compile-config" "$dir/compile-script") && printf '%s\n' "$out" | diff "$compile/expected" - && generate=$lean_dir/../tests/headless/generate && cp -R "$generate/config" "$dir/generate-config" && cp "$generate/script" "$dir/generate-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless --generate "$dir/generate-config" "$dir/generate-script") && printf '%s\n' "$out" | grep -v '^diagnostic: config:0:0: information: ' | diff "$generate/expected" - && printf '%s\n' "$out" | grep -q '^diagnostic: config:0:0: information: no lakefile.toml is generated' && cmp -s "$dir/generate-config/lean-toolchain" "$lean_dir/lean-toolchain" && test ! -e "$dir/generate-config/lakefile.toml" && echo 'bundle-test: the bundle generated lean-toolchain and no lakefile, and the config loaded' && cp "$fixtures/Info.plist" "$dir/Leanmacs.app/Contents/Info.plist" && env -i "$dir/Leanmacs.app/Contents/MacOS/editor" --version | diff "$fixtures/version-expected" - && "$lean_dir/../packages/.lake/build/bin/editor" --version | grep -qxF 'Leanmacs, a development build: not run from an app bundle, so it has no version, build ID or commit''''
 
 # The build ID (crates/editor-release, `build_id`): LEANMACS_BUILD_ID when
 # it is set, else HEAD's committer time in UTC, the time landing sets. CI's

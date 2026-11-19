@@ -1,0 +1,13 @@
+# The script the gate has an editor's headless mode run, with `--generate`,
+# against a temporary copy of the config in `config/`, which holds only
+# `init.lean` (tools/config-package-check.sh for an editor run from the
+# checkout; `mise run bundle-test` for the staged bundle's). What it prints
+# must be exactly `expected`, apart from what a bundled editor says of the
+# lakefile it does not generate.
+
+# The config directory's generated files are created before the root is
+# elaborated, and the config loads.
+reload
+settle
+
+run loaded

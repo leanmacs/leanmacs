@@ -54,6 +54,24 @@ names the core's directory, then that of each default package
 The record is no part of a bundle: the bundle's layout is the rule there,
 and the record names directories of the machine that built it.
 
+## The set
+
+An editor also knows where the package set it was built from is, when that
+directory is there (`setDirectory?`): the lakefile it generates for a
+config directory requires the set by its directory
+(`Editor/Config/LakePackage.lean`), so that Lean's language server, started
+in the config directory, finds the modules config imports.
+
+- **Outside a bundle** the build writes the set's directory beside the
+  executable it links, in `<executable>.set` (`setRecordPath`): one line,
+  absolute. An executable with no such record, a staged or relinked one,
+  knows no set directory.
+- **In a bundle** it is `<bundle>/Contents/Resources/lean/set`, by the
+  bundle's layout, as the other two directories are. A bundle does not hold
+  that directory yet: the app ships no package set to name, so an editor in
+  a bundle knows none, and generates no lakefile.
+- A directory that is not there is none, in either case.
+
 Nothing is read from the environment: `LEAN_PATH` and every other variable
 are ignored, as the elaborator ignores them. The executable's path is read
 at each edge, from `IO.appPath`, with the record through `recorded`: the
@@ -132,5 +150,39 @@ def resolve (appPath : String) (explicit : Given) (recorded : List String := [])
     { sysroot := explicit.sysroot <|> some (resources / "toolchain").toString
       oleans := if explicit.oleans.isSome then given else [(resources / "editor").toString] }
   | none => { sysroot := explicit.sysroot, oleans := given ++ recorded }
+
+/-- The file the package-set build writes beside an executable it links, to
+say where the package set it was built from is ("The set", in the module
+docs): `<executable>.set`. -/
+def setRecordPath (appPath : String) : System.FilePath :=
+  appPath ++ ".set"
+
+/-- The directory a set record's text names: its first line that is not
+empty; none when it has none. -/
+def setRecordedIn (text : String) : Option String :=
+  ((text.splitOn "\n").filter (!·.isEmpty)).head?
+
+/-- The directory of the package set the executable at `appPath` was built
+from, when it is there: in a bundle, `Contents/Resources/lean/set`, and
+outside one the directory the record `setRecordPath` names, read through
+`readFile`, which answers a file's text or none when it cannot be read.
+`isDirectory` says whether a path is a directory that is there: a
+directory that is not is no set directory, so nothing is named that could
+not be required. The edge passes the real reads, and the model tests
+fakes. -/
+def setDirectory? {m : Type → Type} [Monad m] (appPath : String)
+    (readFile : System.FilePath → m (Option String)) (isDirectory : System.FilePath → m Bool) :
+    m (Option String) := do
+  let named ←
+    match bundle? appPath with
+    | some bundle =>
+      pure (some (bundle / "Contents" / "Resources" / "lean" / "set").toString)
+    | none =>
+      pure ((← readFile (setRecordPath appPath)).bind setRecordedIn)
+  match named with
+  | some directory =>
+    return if ← isDirectory directory then some directory else none
+  | none =>
+    return none
 
 end Editor.ModuleLookup

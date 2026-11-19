@@ -17,8 +17,9 @@ open Editor
 in a bundle; outside one no toolchain, and every `.olean` directory the build
 recorded for the executable, or none; a directory argument read as
 directories joined with `:`, used before the recorded ones outside a bundle
-and in place of the bundle's in one; and the record, read through a
-reader. -/
+and in place of the bundle's in one; the record, read through a
+reader; and the directory of the set the executable was built from, by its
+own record outside a bundle and by the bundle's layout in one. -/
 def moduleLookupChecks : List Check :=
   let bundled (bundle : String) : ModuleLookup.Directories :=
     { sysroot := some s!"{bundle}/Contents/Resources/lean/toolchain"
@@ -107,6 +108,43 @@ def moduleLookupChecks : List Check :=
         pure
           (read built record == (["/a/lib", "/b/lib"], [s!"{built}.oleans"]) &&
             read built [] == ([], [s!"{built}.oleans"]) &&
-            read installed record == ([], [])) }]
+            read installed record == ([], [])) },
+    { name :=
+        "the record of an executable's set is the file <executable>.set, and the directory it names is its first line that is not empty"
+      run :=
+        pure
+          (ModuleLookup.setRecordPath built == "/w/packages/.lake/build/bin/editor.set" &&
+            ModuleLookup.setRecordedIn "/w/packages\n" == some "/w/packages" &&
+            ModuleLookup.setRecordedIn "\n/w/my set\n/other\n" == some "/w/my set" &&
+            ModuleLookup.setRecordedIn "" == none &&
+            ModuleLookup.setRecordedIn "\n" == none) },
+    { name :=
+        "the set directory of an executable outside a bundle is the one its record names, when that is a directory that is there; with no record, or a record that names a directory that is gone, there is none"
+      run :=
+        let directory (files : List (String × String)) (directories : List String) :
+          Option String :=
+          Id.run
+            (ModuleLookup.setDirectory? built
+              (fun path => pure ((files.find? (·.1 == path.toString)).map (·.2))) fun path =>
+              pure (directories.contains path.toString))
+        let record := [(s!"{built}.set", "/w/packages\n")]
+        pure
+          (directory record ["/w/packages"] == some "/w/packages" &&
+            directory [] ["/w/packages"] == none &&
+            directory record [] == none) },
+    { name :=
+        "the set directory of an executable in a bundle is Contents/Resources/lean/set when the bundle holds that directory, and none when it does not; no record is read"
+      run :=
+        let directory (directories : List String) : Option String × List String :=
+          Id.run
+            ((ModuleLookup.setDirectory? (m := StateM (List String)) installed
+                  (fun path => do
+                    modify (· ++ [path.toString])
+                    return some "/elsewhere\n")
+                  fun path => pure (directories.contains path.toString)).run
+              [])
+        let inBundle := "/Applications/Leanmacs.app/Contents/Resources/lean/set"
+        pure
+          (directory [inBundle] == (some inBundle, []) && directory ["/elsewhere"] == (none, [])) }]
 
 end ModelTest

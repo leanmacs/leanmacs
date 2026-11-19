@@ -541,8 +541,8 @@ cancels the jobs that are left, and prints nothing more.
   nothing.
 
 `main` is the executable's headless mode,
-`editor headless [--render] [<sysroot> <olean dir>] <config dir> <script file>`,
-handed the command line after `headless`, which `Headless.read` reads
+`editor headless [--render] [--generate] [<sysroot> <olean dir>] <config dir>
+<script file>`, handed the command line after `headless`, which `Headless.read` reads
 (`Editor/Headless/CommandLine.lean`): the toolchain's directory and the
 editor's `.olean` directory are given, or, from an executable in an app
 bundle, are the bundle's (`Editor/ModuleLookup.lean`). It is `run`
@@ -2645,11 +2645,36 @@ def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : Strin
         snapshots := Job.realSnapshots published.reader } published held files
   return { collaborators with clock }
 
+/-- What generates the lakefile and the toolchain file of the config
+directory `configDir`, for the editor at `appPath` that the build says
+`origin` of: files are created in that directory, never overwritten
+(`Config.Directory.create`); the pin is the build's; and the package set is
+the build's name for it at the directory the editor finds for itself
+(`ModuleLookup.setDirectory?`, with the real file read and directory
+test), or none when it finds none, and then no lakefile is written. Both
+executable hosts make theirs with it, at the edge. -/
+def generatorAt (origin : Config.LakePackage.Origin) (appPath : String) (configDir : String) :
+    IO Config.Generator := do
+  let readFile (path : System.FilePath) : IO (Option String) := do
+    try
+      return some (← IO.FS.readFile path)
+    catch _ =>
+      return none
+  let isDirectory (path : System.FilePath) : IO Bool := do
+    try
+      path.isDir
+    catch _ =>
+      return false
+  let directory ← ModuleLookup.setDirectory? appPath readFile isDirectory
+  return {
+      create := Config.Directory.create configDir, pin := origin.pin
+      set := origin.set directory }
+
 /-- The headless mode of the executable, handed the packages its host
 registers, the base config is elaborated on (`Editor/Main.lean`, "The
 base") and the command line after
-`headless`: `editor headless [--render] [<sysroot> <olean dir>] <config dir>
-<script file>`, read by `Headless.read` (`Editor/Headless/CommandLine.lean`).
+`headless`: `editor headless [--render] [--generate] [<sysroot> <olean dir>]
+<config dir> <script file>`, read by `Headless.read` (`Editor/Headless/CommandLine.lean`).
 Registers `packages`, in order, loads the config in `configDir` with the real elaborator,
 runs the script as `run` does, with the output on stdout, then shuts the
 library's process service down, which kills and reaps every child it
@@ -2665,6 +2690,12 @@ Before the loop starts it warms the pool, so the first burst of jobs finds
 every thread made, and starts the completion pump on a dedicated task. The
 host's jobs wait on the library's timer service and its file service, which
 reads the snapshots the loop publishes.
+
+**`--generate`** lets the headless mode write into the config directory:
+before anything is elaborated, a reload creates the `lakefile.toml` and the
+`lean-toolchain` the directory lacks (`generatorAt`,
+`Editor/Config/LakePackage.lean`). Without it nothing is written there,
+and the lakefile is only read.
 
 **`--render`** draws what the host publishes: the library's headless
 render session is started (`Ffi.renderHeadless`), a render loop over the
@@ -2684,8 +2715,8 @@ executable's path; `main` reads that path and the record at the edge
 editor's (`Collaborators.workingDirectory`): where `:!` runs for a buffer
 with neither a workspace nor a file; no path of the command line is read
 against it. -/
-def main (packages : Array Package) (base : Array Lean.Name) (arguments : List String) :
-    IO UInt32 := do
+def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.LakePackage.Origin)
+    (arguments : List String) : IO UInt32 := do
   let appPath := (← IO.appPath).toString
   -- The record the build wrote beside the executable, read at the edge: a
   -- record that is not there, or cannot be read, names no directory.
@@ -2695,7 +2726,7 @@ def main (packages : Array Package) (base : Array Lean.Name) (arguments : List S
     catch _ =>
       return none
   let recorded ← ModuleLookup.recorded appPath readFile
-  let { render := drawn, sysroot, oleans, config := configDir, script := scriptPath } ←
+  let { render := drawn, generate, sysroot, oleans, config := configDir, script := scriptPath } ←
     match read appPath arguments recorded with
     | .ok read =>
       pure read
@@ -2718,10 +2749,18 @@ def main (packages : Array Package) (base : Array Lean.Name) (arguments : List S
   let shipped ←
     shipped packages base sysroot oleans configDir IO.println .headless (fakeClock := true)
   let workingDirectory ← IO.currentDir
+  -- Only with `--generate` may the headless mode write into the config
+  -- directory: then it creates the lakefile and the toolchain file the
+  -- directory lacks, as the window mode does.
+  let generator ←
+    if generate then
+      some <$> generatorAt origin appPath configDir
+    else
+      pure none
   let failure ←
     run
         { shipped with
-          workingDirectory
+          generator, workingDirectory
           display :=
             if drawn then drawnDisplay else fun snapshots => Host.Display.recorder cells snapshots
           render := if drawn then some Render.library else none }

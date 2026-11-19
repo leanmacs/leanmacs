@@ -1,9 +1,12 @@
 import ConfigFixture
 import Editor
 import Editor.Clipboard.InProcess
+import Editor.Config.Directory
+import Editor.Config.LakePackage
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
+import Editor.Config.Session
 import Editor.DisplayRules
 import Editor.Ffi.Display
 import Editor.Ffi.Render
@@ -22,9 +25,11 @@ import EditorCore.EditorPackage
 # FFI tests: `Editor/Window/Real.lean`
 
 The tests of `Editor/Window/Real.lean`: the `window-host`, `window-host-config`,
-`window-host-base`, `window-host-direct` and `window-host-undrawn` scenarios
-(`windowHostScenario`, `windowHostConfigScenario`, `windowHostBaseScenario`,
-`windowHostDirectScenario`, `windowHostUndrawnScenario`), of `Window.host`. The
+`window-host-base`, `window-host-generate`, `window-host-direct` and
+`window-host-undrawn` scenarios (`windowHostScenario`,
+`windowHostConfigScenario`, `windowHostBaseScenario`,
+`windowHostGenerateScenario`, `windowHostDirectScenario`,
+`windowHostUndrawnScenario`), of `Window.host`. The
 root module `FfiTest` runs them, and each scenario's own doc says what it shows.
 
 It imports the config base, `Editor`, for the link alone: the window host
@@ -198,6 +203,52 @@ def windowHostBaseScenario (sysroot oleanDir configDir : String) : IO UInt8 := d
     return 1
   IO.println
       "ffi-test window-host-base: config that names a module of the base outside Editor loaded: the window mode elaborated it on the base it was handed"
+  return 0
+
+/-- The window mode's wiring (`Editor.Window.host`) handed a generator, as
+the editor's `main` hands it one: config is loaded at start from
+`configDir`, a directory of the caller's own that holds a root and neither
+generated file, with a generator that creates files in that directory, for
+a made-up pin and a made-up package set. The start-up reload must create
+the directory's `lean-toolchain`, holding the pin, and its `lakefile.toml`,
+requiring the set, and load the config, which keeps the standard title
+bar. So the window host hands the session the generator it was handed: a
+host that dropped it would leave the directory as it was. 0 when the window
+mode ended with status 0, the window was opened with the standard title
+bar and both files hold what they must; 1 otherwise, saying why on
+stderr. It writes in `configDir` alone. -/
+def windowHostGenerateScenario (sysroot oleanDir configDir : String) : IO UInt8 := do
+  let options : Editor.Window.Options :=
+    { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
+      oleans := [oleanDir], composition := true }
+  let pin := "leanprover/lean4:made-up\n"
+  let set : Editor.Config.LakePackage.Set := { name := "made-up-set", directory := "/made/up" }
+  let generator : Editor.Config.Generator :=
+    { create := Editor.Config.Directory.create configDir, pin, set := some set }
+  let status ←
+    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
+        (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
+        none) (generator := some generator)
+  unless status == 0 do
+    IO.eprintln s!"ffi-test window-host-generate: the window mode ended with status {status}"
+    return 1
+  let opened ← Editor.Ffi.windowOpenedWith .scripted
+  unless opened == some (true, .standard) do
+    IO.eprintln
+        s!"ffi-test window-host-generate: the window was opened with {repr opened}, not the standard title bar: the config was not loaded"
+    return 1
+  let held (name : String) : IO (Option String) := Editor.Config.Directory.read configDir name
+  unless (← held Editor.Config.LakePackage.toolchainName) == some pin do
+    IO.eprintln "ffi-test window-host-generate: no lean-toolchain holding the pin was created"
+    return 1
+  unless
+    (← held Editor.Config.LakePackage.lakefileName) ==
+      some (Editor.Config.LakePackage.lakefile set) do
+    IO.eprintln "ffi-test window-host-generate: no lakefile.toml requiring the set was created"
+    return 1
+  IO.println
+      "ffi-test window-host-generate: the window mode created the config directory's lakefile and toolchain file, and loaded the config"
   return 0
 
 /-- The window mode as the editor at `editorPath` starts it when run

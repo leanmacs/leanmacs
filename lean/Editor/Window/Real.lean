@@ -239,12 +239,15 @@ ended with an error. The editor's working directory is `workingDirectory`
 (`Headless.Collaborators.workingDirectory`): the process's, which `main`
 read at the edge. Config is elaborated on `base`, which every caller
 names: `main` hands on its package set's (`Editor/Main.lean`, "The base"),
-and a test with no set `Editor` alone. -/
+and a test with no set `Editor` alone. `generator` is what creates the
+config directory's lakefile and toolchain file when they are absent: `main`
+hands its own, and with none, the default, nothing is written into the
+config directory. -/
 def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Platform)
     (options : Options) (plan : ConfigPlan) (display : Ffi.Display) (clipboard : ClipboardHandler)
     (said : Array String) (shutdown : IO Unit) (processes : Process.Host)
-    (patience : Option Nat := some configPatience) (workingDirectory : System.FilePath := "/") :
-    IO UInt32 := do
+    (patience : Option Nat := some configPatience) (workingDirectory : System.FilePath := "/")
+    (generator : Option Config.Generator := none) : IO UInt32 := do
   let shipped ←
     Headless.shipped packages base (options.sysroot.getD "") options.oleans (options.config.getD "")
         IO.eprintln processes
@@ -252,7 +255,7 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
     { shipped with
       display := hostDisplay display platform
       clipboard := pure clipboard
-      workingDirectory
+      generator, workingDirectory
       home := processes.home }
   display.present
   let host ← Headless.start collaborators
@@ -343,16 +346,19 @@ def environmentAt (appPath : String) : IO Environment := do
       recordedOleans := ← ModuleLookup.recorded appPath readFile }
 
 /-- `editor [<file>]`, with the packages its host registers, the base
-config is elaborated on and the command line's `arguments`: reads the world at
+config is elaborated on, what the build says of the editor for the files
+it generates in the config directory (`origin`) and the command line's
+`arguments`: reads the world at
 the edge, opens the system's display and clipboard, and runs `host` on the
 real window, with `shutdown`. A command line it does not take is the reason
 and the usage on stderr, and status 2. It exits explicitly, with the status
 `host` gave. When the system's quit was let go ahead, the platform may have
 ended the process with status 0 inside the run instead (the window port's
 rule; AppKit's terminate on macOS), once `shutdown` had run. -/
-def main (packages : Array Package) (base : Array Lean.Name) (arguments : List String) :
-    IO UInt32 := do
-  let environment ← environmentAt (← IO.appPath).toString
+def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.LakePackage.Origin)
+    (arguments : List String) : IO UInt32 := do
+  let appPath := (← IO.appPath).toString
+  let environment ← environmentAt appPath
   let options ←
     match parse environment arguments with
     | .ok options =>
@@ -383,9 +389,17 @@ def main (packages : Array Package) (base : Array Lean.Name) (arguments : List S
       unavailable
   -- `auto` takes mise under the home directory first, when `HOME` names one.
   let home := environment.home.filter (!·.isEmpty) |>.map System.FilePath.mk
+  -- The window mode may write into the config directory it loads: a reload
+  -- creates the lakefile and the toolchain file the directory lacks.
+  let generator ←
+    match options.config with
+    | some directory =>
+      some <$> Headless.generatorAt origin appPath directory
+    | none =>
+      pure none
   let status ←
     host packages base .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
-        (.window home) (workingDirectory := environment.workingDirectory)
+        (.window home) (workingDirectory := environment.workingDirectory) (generator := generator)
   IO.Process.exit status.toUInt8
 
 end Editor.Window

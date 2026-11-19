@@ -170,6 +170,10 @@ def main (args : List String) : IO UInt32 := do
     let status ← FfiTest.windowHostBaseScenario sysroot oleanDir configDir
     Editor.Ffi.quit
     IO.Process.exit status
+  | ["window-host-generate", sysroot, oleanDir, configDir] =>
+    let status ← FfiTest.windowHostGenerateScenario sysroot oleanDir configDir
+    Editor.Ffi.quit
+    IO.Process.exit status
   | ["window-host-direct", editorPath, sysroot, configDir] =>
     let status ← FfiTest.windowHostDirectScenario editorPath sysroot configDir
     Editor.Ffi.quit
