@@ -273,10 +273,8 @@ the one chosen.
 - **A buffer with no workspace** has no project: the command says
   `find-file-in-project: <buffer> is in no project` and opens nothing.
 
-Keys come with project navigation's phase 5, and stepping out of the file
-finder into this picker with the typed text with phase 4; the arguments
-`find-file-in-workspace` is handed after the location are where that text
-goes.
+Keys come with project navigation's phase 5. Stepping out of the file
+finder into this picker with the typed text is phase 4's (below).
 
 ### Reaching a workspace not yet found
 
@@ -301,6 +299,41 @@ and its sentence for a directory in no repository.
   continuation is code, which the arguments cannot carry; one name would
   need the workspace layer to know version control, or the continuation to
   become a command run by name.
+
+## Stepping out of the finder
+
+From inside the workspace finder, a key steps out to the project's
+workspaces without losing what was typed: `ws/fin`, the key, choose the
+other worktree, and the finder there opens with `ws/fin` typed and its
+list matched against it. Built by project navigation's phase 4
+(`lean/Editor/Workspace/FindInProject.lean`).
+
+- **The key** is `C-x C-d`, bound by compiled code to
+  `find-file-in-another-workspace` in the keymap of the prompt category
+  `workspace-file` alone, so it holds only while the workspace finder is
+  open and takes no key from another prompt or buffer. Why that key, and
+  the category keymap it is in, is in
+  [keymaps-and-modes.md](keymaps-and-modes.md) ("The minibuffer", "Active
+  keymaps"). Config binds another key the same way:
+  `bindKey "C-o e" "find-file-in-another-workspace" (category := some
+  "workspace-file")`.
+- **What it does.** It reads the finder's text, closes the finder (which
+  cancels its listing job), and asks `find-file-in-project`'s picker from
+  the window the finder was asked from. The picker's own input starts
+  empty: the text is for the finder the choice opens.
+- **The text is carried** after what is asked in the picker's
+  continuation, then on the choose order, then to `find-file-in-workspace`
+  as an argument after the location, which types it into the input
+  (`FindFile.typedArguments`), so the source's first job is asked with it.
+  A worktree the table does not know is reached with the text as an
+  argument the reach's order carries (`Reach.Order.carried`) through the
+  find job.
+- **A buffer with no project** is refused as `find-file-in-project`
+  refuses it, after the finder has closed, so the message shows: a prompt
+  hides the echo row. Run with no prompt open, or in a prompt of another
+  category, it says so and changes nothing.
+- **Deferred**: going back from the picker to the first finder. Leaving
+  the picker is the minibuffer's cancel.
 
 ## A buffer's workspace
 
@@ -459,6 +492,10 @@ open when the table has it: found or registered this session.
   project's workspaces, the repository's worktrees and the table's, finds
   a worktree not yet found when it is chosen, and runs
   `find-file-in-workspace` there (above).
+- `project-navigation` phase 4 (built): `C-x C-d` in the workspace finder
+  steps out to the project's workspaces, and the finder of the one chosen
+  opens with the text typed before the escape ("Stepping out of the
+  finder").
 - Tasks `project-scoped-buffers-and-pickers` (scoping pickers by workspace)
   and `remote-workspace-execution` (running in a `reachable` location).
 

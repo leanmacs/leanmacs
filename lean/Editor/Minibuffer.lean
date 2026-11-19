@@ -104,6 +104,7 @@ loop runs the command with the focused window, which is the minibuffer's.
 | A command that acts on the open prompt | Here, with its name, over an operation of `Editor/Api.lean`; its registration in `Editor/Minibuffer/Compiled.lean` |
 | A key every scheme should have in the minibuffer | A role the mode fills |
 | A key one scheme has in the minibuffer | That scheme's own table |
+| A key one prompt category has in the minibuffer | A binding given that category (`KeyBinding.category`, `Editor/Config/Registry.lean`) |
 
 ## Taking a batch
 

@@ -2979,6 +2979,7 @@ Which names have something behind them:
 | `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
 | `execute-command`, which no table names | Built and registered (`ExecuteCommand.commands`; "Running a command by name"). The scheme binds no key to it (the owner, 2026-11-17); the default config binds `SPC :` |
 | `search-bindings`, which no table names | Built and registered (`BindingSearch.commands`; "Searching the bindings"). The scheme binds no key to it, as for `execute-command`; the default config binds `SPC ?` |
+| `find-file-in-another-workspace`, which no table names | Built and registered (`Workspace.commands`). Compiled code binds `C-x C-d` to it in the prompt category `workspace-file` (`Workspace.bindings`), not in a state's table, so it holds in the `minibuffer` state while the workspace finder is open and nowhere else ("The minibuffer", under Modes) |
 | `keyboard-quit` | Built and registered (`Shell.commands`): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
 | The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
@@ -3467,7 +3468,7 @@ One pure function resolves what is active for a view, in precedence order:
 ```lean
 def Config.Registry.activeMaps (registry : Registry) (scheme : InputScheme)
     (state : EditorState) (view : ViewId) : List (Keymap scheme.Binding)
--- minor modes, then the major mode, then global
+-- the open prompt's category, then minor modes, then the major mode, then global
 ```
 
 As built. The global keymap is every owner's key bindings
@@ -3484,7 +3485,21 @@ walked after the active ones ("Which keymaps a key is looked up in").
   the same for suffixes.
 - **`activeMaps`** is each minor mode's keymaps, the minor added last
   first, then the major mode's, then the global keymap (every owner's key
-  bindings). A view with no window has the global keymap alone.
+  bindings in no prompt category). A view with no window has the global
+  keymap alone.
+- **A prompt category's keymap comes first** for the open prompt's
+  minibuffer view, when the prompt has a category
+  (`Prompt.candidates.category`): `Registry.categoryKeymap`, every owner's
+  bindings given that category (`KeyBinding.category`), bound by the same
+  leader and states rules as the global keymap's, oldest first, so
+  config's binding of a sequence is over compiled code's. Those bindings
+  are in no other keymap, and the menu bar never shows them. It is a
+  keymap of its own, not a minor mode per category, because under the Vim
+  scheme a mode's key does not hold where typing is text, which is the
+  minibuffer state, while a plain command binding of the active tier does,
+  ahead of the state's own table ("Which keymaps a key is looked up in").
+  An at-point session's candidates are not a prompt and get none. Built by
+  project navigation's phase 4 (`lean/Editor/Config/Registry.lean`).
 - **The loop computes them from its own state.** The active keymaps depend
   on the buffers' modes, which only the loop's state holds, so the loop's
   `Keys.maps` is a function of the editor state and the view, which the
@@ -3550,8 +3565,9 @@ own, and that window has the focus.
 
 - **There is no second path for keys.** The loop steps every key for the
   focused view, and while a prompt is open that is the minibuffer's view.
-  The active keymaps of that view are its buffer's modes' and then the
-  global keymap ("Active keymaps"), as for any view.
+  The active keymaps of that view are its prompt category's, when the
+  prompt has one, then its buffer's modes' and then the global keymap
+  ("Active keymaps").
 - **"Its own keymap" is a compiled major mode**, `minibuffer`
   (`Minibuffer.mode`), which fills four roles: `activate` with the command
   `minibuffer-accept`, `quit` with `minibuffer-cancel`, and `next-item`
@@ -3572,6 +3588,28 @@ own, and that window has the focus.
   window while the prompt is open; keys then go there, and the prompt
   waits. A binding of the global keymap holds in the minibuffer's view as
   in any view.
+- **A prompt category may have keys of its own**: a binding given the
+  category (`bindKey … (category := some "<category>")`,
+  `KeyBinding.category`) holds in the minibuffer of a prompt of that
+  category alone, ahead of every other keymap there ("Active keymaps").
+  Compiled code binds one: `C-x C-d` runs `find-file-in-another-workspace`
+  in the category `workspace-file`, the escape from the workspace finder
+  to the project's workspaces with the text typed so far
+  ([projects.md](projects.md), "Stepping out of the finder"), described
+  `Find in another workspace`.
+  - **Prior art.** Doom Emacs's vertico module binds `consult-dir` to
+    `C-x C-d` in `vertico-map`, the minibuffer's keymap while a vertico
+    prompt is open: from inside a file prompt, pick another directory,
+    projects among its sources, and go on finding there.
+  - **Not consult's narrowing keys.** Consult narrows with `<` and a
+    letter (`consult-narrow-key`); those keys print, so they are text in
+    the Vim scheme's `minibuffer` state.
+  - **Free under the Vim scheme.** Neither `C-x` nor `C-d` is in
+    `minibufferCommands` or in any compiled or default config binding.
+    Vim's own command line gives `C-x` no meaning, and `C-d` (which lists
+    matches there, not built here) takes nothing as the second stroke.
+    Bound in the category alone, `C-x` stays unbound in every other prompt
+    and buffer.
 
 **A scheme is told when the minibuffer's view opens, and every scheme
 takes text there.**
@@ -5022,6 +5060,17 @@ runs its command, through a host) and `ConfigTest.defaultConfigChecks`
     the later binding would hide the earlier in every state, not only in
     its own. A sequence bound in some states and something else in others
     is not built.
+  - **`bindKey … (category := some "workspace-file")` binds a key in one
+    prompt category's keymap**, which holds in the minibuffer of a prompt
+    of that category alone, ahead of every other keymap there ("Active
+    keymaps"). The duplicate rule is per category: a sequence may be bound
+    globally and in a category, or in two categories, and twice in one
+    category is refused naming it (`keysWrittenTwiceIn`,
+    `keysBoundTwiceIn`). Config's binding of a sequence in a category is
+    over compiled code's there, so config can rebind the escape key or
+    add another, and a config binding of another key to
+    `find-file-in-another-workspace` in `workspace-file` steps out as
+    `C-x C-d` does.
   - **Deferred**: a key that reaches the leader from insert state, as
     general.el's `:non-normal-prefix` does.
 - Built: labels for the key hints from config. `bindKey "<leader> f f"
