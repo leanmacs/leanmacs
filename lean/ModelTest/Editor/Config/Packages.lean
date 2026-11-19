@@ -241,6 +241,38 @@ def packageChecks : List Check :=
             styleOf overridden "pick" == ("mine", "config") &&
             (chooses (pure ())).registry.styleDefaults == state.registry.styleDefaults) },
     { name :=
+        "two packages contributing one compile mode resolve to the later package's contribution, listed once, at the place the mode was first registered; config's contribution of that mode replaces both, in config's place"
+      run :=
+        let contributing (name : String) (modes : List (String × String)) : Package :=
+          { name
+            setup :=
+              for (mode, marker) in modes do
+                compileContribution { mode, markers := #[marker] } }
+        let (state, refused) :=
+          packaged
+            #[contributing "first" [("make-mode", "Makefile"), ("other-mode", "other")],
+              contributing "second" [("third-mode", "third"), ("make-mode", "GNUmakefile")]]
+        let listed (state : Config.State Elaborated) : Array (String × Array String) :=
+          state.registry.compileContributions.map fun contribution =>
+            (contribution.mode, contribution.markers)
+        let config : SetupM Unit :=
+          compileContribution { mode := "make-mode", markers := #["config.mk"] }
+        let (installed, _) := reduceFrom state [.requested, .finished (accepted ["a"] config)]
+        let (dropped, _) := reduceFrom installed [.requested, .finished (accepted ["a"] (pure ()))]
+        pure
+          (refused.isEmpty &&
+            listed state ==
+              #[("make-mode", #["GNUmakefile"]), ("other-mode", #["other"]),
+                ("third-mode", #["third"])] &&
+            state.registry.compileHook.contributions.map (·.mode) ==
+              #["make-mode", "other-mode", "third-mode"] &&
+            state.registry.registered.compile.contributions.map (·.mode) ==
+              #["make-mode", "other-mode", "third-mode"] &&
+            listed installed ==
+              #[("make-mode", #["config.mk"]), ("other-mode", #["other"]),
+                ("third-mode", #["third"])] &&
+            listed dropped == listed state) },
+    { name :=
         "a package that sets something only config may choose is refused, for each such setting, and the message names the package and the setting"
       run :=
         pure <|

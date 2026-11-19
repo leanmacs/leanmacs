@@ -671,8 +671,10 @@ The config session's decisions are tested here too, with no elaborator:
   that sets what only config may choose register nothing and are reported
   by name, and the others register; a reload leaves a package's entries,
   its style default and its store's cell; config's command and binding
-  replace a package's until a reload drops them; and a package's
-  `useStyleFor` is a default config's `useStyleFor` overrides;
+  replace a package's until a reload drops them; a package's
+  `useStyleFor` is a default config's `useStyleFor` overrides; and of two
+  packages that contribute one compile mode the later package's is the one
+  listed, once, where the mode was first registered;
 - `completionPackageChecks`, `modeLinePackageChecks` and
   `languagePackageChecks`: the packages of what ships in core modules
   register it, in order: the shipped styles and displays

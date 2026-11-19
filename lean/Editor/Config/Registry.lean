@@ -240,11 +240,14 @@ no file name can be meant by (`Language.problems`), is refused.
 A compile contribution (`Compile.Contribution`,
 `Editor/Compile/Contribution.lean`) is held by owner like a mode, in a
 `ContributionEntry`, and replaced as a set (`replaceContributions`).
-`compileContributions` is the registration order the compile mode uses:
-config's contributions in the order its `setup` registered them, then the
-others whose names config does not register, in their order. So config's
+`compileContributions` is the registration order the compile mode uses,
+each mode once: config's contributions in the order its `setup` registered
+them, then the packages' whose modes config does not register, each mode
+at the place it was first registered, as its latest entry. So config's
 contribution of a package's one's name replaces it whole, markers, commands
-and formats, in config's place, until a reload drops it. Config's project
+and formats, in config's place, until a reload drops it; and of two
+packages that contribute one mode the later package's is the one used,
+whole, where the first one's was. Config's project
 commands (`projectCommands`) are config's alone, replaced by each install.
 The loop is told both (`compileHook`, `Loop.Registered.compile`).
 
@@ -878,14 +881,18 @@ def replaceContributions (registry : Registry) (owner : Owner)
         contributions.map fun contribution => { owner, contribution } }
 
 /-- The compile contributions in registration order ("Compile
-contributions", in the module docs): config's in its order, then the others
-whose names config does not register. -/
+contributions", in the module docs), each mode once: config's in its order,
+then the other owners' whose modes config does not register, each mode at
+the place it was first registered, as its latest entry. So of two packages
+that contribute one mode the later package's is the one used, as of two
+entries of any name, and what reads the list by a mode's first entry finds
+that one. -/
 def compileContributions (registry : Registry) : Array Compile.Contribution :=
   let config := (registry.contributions.filter (·.owner == .config)).map (·.contribution)
-  let others :=
-    (registry.contributions.filter (·.owner != .config)).map (·.contribution) |>.filter
-      fun contribution => !config.any (·.mode == contribution.mode)
-  config ++ others
+  let entries := (registry.contributions.filter (·.owner != .config)).map (·.contribution)
+  let modes := (entries.map (·.mode)).toList.eraseDups.toArray
+  let others := modes.filterMap fun mode => entries.findRev? (·.mode == mode)
+  config ++ others.filter fun contribution => !config.any (·.mode == contribution.mode)
 
 /-- What the loop is told of the compile contributions: them in
 registration order, and config's project commands. -/

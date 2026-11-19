@@ -4484,8 +4484,10 @@ buffer while editing goes on.
   formats, whether its root is its outermost marker, and a listing that
   computes more commands.
   The registration order is config's contributions in its order, then the
-  compiled ones config does not register; config's contribution of a
-  compiled one's name replaces it whole. A contribution with no marker,
+  packages' config does not register, each mode once, at the place it was
+  first registered; config's contribution of a
+  package's one's name replaces it whole, and of two packages that
+  contribute one mode the later package's is the one used. A contribution with no marker,
   one registered twice and one naming a command twice refuse the `setup`.
 - **On-modes.** A buffer's markers turn their modes on inside its
   workspace, each with its root ("A buffer's modes"): its nearest marker's
