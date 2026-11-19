@@ -35,25 +35,39 @@ def probe : Workspace.Reach.Continuation :=
     reached := fun order location =>
       message s!"probe: reached {location.describe} for {order.path} in view {order.view.index}" }
 
-/-- The jobs of the checks: the workspace driver's and the probe's find. -/
+/-- The probe, its find under `probe-carry`, saying the arguments its order
+carried once it reaches a workspace. -/
+def carrier : Workspace.Reach.Continuation :=
+  { probe with
+    job := "probe-carry"
+    reached := fun order _ => message s!"probe: carried {repr order.carried}" }
+
+/-- The jobs of the checks: the workspace driver's and the probes' finds. -/
 def jobs (name : String) : Option (List Argument → Work) :=
-  if name == probeJob then some (Workspace.Reach.work probe) else workspaceJobs name
+  if name == probeJob then some (Workspace.Reach.work probe)
+  else if name == carrier.job then some (Workspace.Reach.work carrier) else workspaceJobs name
 
 /-- The commands of the checks: `reach-w`, `reach-x` and `reach-r` reach `/w`,
-`/x` and `/r` through the probe, from the window's view. -/
+`/x` and `/r` through the probe, from the window's view, and `carry-w`
+reaches `/w` through `carrier`, carrying the text `b`. -/
 def commands : List (String × Dispatched) :=
   workspaceCommands ++
-    [("/w", "reach-w"), ("/x", "reach-x"), ("/r", "reach-r")].map fun (path, name) =>
-      (name, fun call => do
-        Workspace.Reach.reach probe path "git" call.target.window.id
-        return none)
+    ([("/w", "reach-w"), ("/x", "reach-x"), ("/r", "reach-r")].map fun (path, name) =>
+      ((name, fun call => do
+          Workspace.Reach.reach probe path "git" call.target.window.id
+          return none) :
+        String × Dispatched)) ++
+    [("carry-w", fun (call : Call) => do
+        Workspace.Reach.reach carrier "/w" "git" call.target.window.id (carried := [.str "b"])
+        return none)]
 
-/-- The keys of the checks: the workspace driver's, and `C-r w`, `C-r x` and
-`C-r r` (`commands`). -/
+/-- The keys of the checks: the workspace driver's, and `C-r w`, `C-r x`,
+`C-r r` and `C-r c` (`commands`). -/
 def keys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     (workspaceBindings ++
-      [("C-r w", invoke "reach-w"), ("C-r x", invoke "reach-x"), ("C-r r", invoke "reach-r")])
+      [("C-r w", invoke "reach-w"), ("C-r x", invoke "reach-x"), ("C-r r", invoke "reach-r"),
+        ("C-r c", invoke "carry-w")])
     commands
 
 /-- The driver of the checks: the workspace driver's with the jobs
@@ -93,6 +107,15 @@ def reachChecks : List Check :=
               finds reached "/w" == 1 &&
               (table.workspace? (.local "/w")).map (·.branch) == some (some (.named "feature")) &&
               table.cached? "/w" 0 == some (some (.local "/w")) },
+    { name := "arguments a caller carries through the find job reach its continuation on the order"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some driver =>
+            let reached := settledAfter driver "C-r c"
+            reached.loop.state.echo == s!"probe: carried {repr ([.str "b"] : List Argument)}" &&
+              finds reached "/w" == 1 },
     { name :=
         "a path the table caches under the generation goes to the continuation at once: no job starts and the finder does not run again"
       run :=
@@ -134,12 +157,15 @@ def reachChecks : List Check :=
               refused.loop.state.echo != "probe: reached local /r for /r in view 0" &&
               refused.jobs.processes.started.isEmpty },
     { name :=
-        "an order crosses as arguments and back, its roots with and without a project, and arguments that are no order read as none; the work started with them fails, naming the continuation's job"
+        "an order crosses as arguments and back, its roots with and without a project and the arguments it carries, and arguments that are no order read as none; the work started with them fails, naming the continuation's job"
       run :=
         let orders : List Workspace.Reach.Order :=
           [{ path := "/u", git := "git", generation := 0, view := ⟨0⟩ },
             { path := "/a b/é", git := "/usr/bin/git", generation := 3, view := ⟨2⟩
-              roots := #[{ root := "/c", project := some "c" }, { root := "/e" }] }]
+              roots := #[{ root := "/c", project := some "c" }, { root := "/e" }] },
+            { path := "/w", git := "git", generation := 1, view := ⟨1⟩
+              carried := [.str "b", .nat 4]
+              roots := #[{ root := "/c", project := some "c" }] }]
         let failed :=
           match ((Workspace.Reach.work probe [.nat 1] ()).runModel {}).1 with
           | .failed said => some said

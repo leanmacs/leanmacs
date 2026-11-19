@@ -988,7 +988,8 @@ Listing a workspace's files is checked in Lean alone too:
   on the workspace driver: the find job started and its answer recorded
   and handed on, a cached answer handed on with no job, a path in no
   repository said by the gone sentence and cached, an unregistered job
-  said under the continuation's name, and the order's round trip.
+  said under the continuation's name, the arguments a caller carries
+  through the find job handed on, and the order's round trip.
 -/
 
 namespace ModelTest

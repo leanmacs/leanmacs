@@ -28,9 +28,14 @@ answer for the path under that generation (`Workspace.Table.cached?`):
 - **None**, a directory found to be in no repository: the continuation's
   gone sentence is said.
 - **No answer**: the continuation's job is started, unkeyed, with an order
-  (`Order`): the path, the git program, config's roots, the generation and
-  the view, as plain arguments. A start that is refused is said as
-  `<name>: <refusal>`.
+  (`Order`): the path, the git program, config's roots, the generation, the
+  view and the arguments the caller carries (`reach`'s `carried`), as plain
+  arguments, the carried ones after their count. A start that is refused is
+  said as `<name>: <refusal>`.
+
+The continuation is handed the order in every case, so what a caller
+carries reaches it whether or not a job ran: `find-file-in-project` carries
+the text typed in the file finder it stepped out of.
 
 ## The job and its command
 
@@ -67,17 +72,27 @@ structure Order where
   generation : Nat
   /-- The view that asked. -/
   view : ViewId
+  /-- Plain arguments the caller hands its own continuation through the find
+  job. -/
+  carried : List Argument := []
   deriving DecidableEq, Repr
 
-/-- The order as the arguments a job is started with. -/
+/-- The order as the arguments a job is started with: the path, the git
+program, the generation, the view, the count of the carried arguments and
+they, then the roots. -/
 def Order.arguments (order : Order) : List Argument :=
-  [.str order.path.toString, .str order.git, .nat order.generation, .nat order.view.index] ++
+  [.str order.path.toString, .str order.git, .nat order.generation, .nat order.view.index,
+      .nat order.carried.length] ++
+    order.carried ++
     order.roots.toList.flatMap rootArguments
 
 /-- The order `arguments` are, if they are one (`Order.arguments`). -/
 def Order.ofArguments? : List Argument → Option Order
-  | .str path :: .str git :: .nat generation :: .nat view :: roots =>
-    (rootsOf? roots).map fun roots => { path, git, roots, generation, view := ⟨view⟩ }
+  | .str path :: .str git :: .nat generation :: .nat view :: .nat count :: rest =>
+    if rest.length < count then none
+    else
+      (rootsOf? (rest.drop count)).map fun roots =>
+        { path, git, roots, generation, view := ⟨view⟩, carried := rest.take count }
   | _ => none
 
 /-- What a command does once it reaches a workspace, and how it says it could
@@ -93,11 +108,12 @@ structure Continuation where
   reached : Order → Location → EditorM Unit
 
 /-- Reaches the workspace at `path` for `continuation`, from `view`, with the
-git program `git` ("Reaching", in the module docs). -/
-def reach (continuation : Continuation) (path : System.FilePath) (git : String) (view : ViewId) :
-    EditorM Unit := do
+git program `git`, handing the continuation `carried` on its order
+("Reaching", in the module docs). -/
+def reach (continuation : Continuation) (path : System.FilePath) (git : String) (view : ViewId)
+    (carried : List Argument := []) : EditorM Unit := do
   let (settings, generation) ← RegistryRequest.ask .workspaceSettings
-  let order : Order := { path, git, roots := settings.roots, generation, view }
+  let order : Order := { path, git, roots := settings.roots, generation, view, carried }
   match (← editorState).workspaces.cached? path generation with
   | some (some location) =>
     continuation.reached order location
