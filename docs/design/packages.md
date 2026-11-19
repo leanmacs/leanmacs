@@ -260,6 +260,13 @@ mode, which the base imported, left the core.
   `tests/empty-set` has the base `Editor` alone: it loads config, and a
   config that names `Compile.cargoMode` is rejected there with `Unknown
   identifier`.
+- **What left the core's base with the compile mode**: the four modules of
+  it that `Editor` reached, and `Editor.Json`, the JSON reader, a core
+  module `Editor` reached only through the shipped modes. The default
+  editor's config still sees all five, through the compile package's
+  entry module. Config on an editor without that package does not see
+  `Editor.Json`; nothing else of the core left the base (computed from
+  the import lines before and after the move).
 - **Config can name a default package's declarations**, the palettes'
   among them (`ShippedThemes.themes`), which it could not before:
   a side effect of the rule, pinned by the fixture
