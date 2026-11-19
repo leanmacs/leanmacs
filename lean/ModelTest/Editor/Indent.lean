@@ -7,9 +7,9 @@ import Editor.Mode
 import Editor.Program
 import Editor.Scene
 import Editor.SyntaxTree
+import Editor.Test.Models
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Models
 import ModelTest.Support.Modes
 
 /-!
@@ -23,6 +23,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A node of the indents query, for the indent rule's checks: its capture's
 name, where it starts, and its first and last rows. -/

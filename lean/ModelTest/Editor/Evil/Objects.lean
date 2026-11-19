@@ -10,12 +10,12 @@ import Editor.Loop.Driver
 import Editor.ModeLine
 import Editor.Scene
 import Editor.State
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Vocabulary
 import ModelTest.Check
 import ModelTest.Support.Evil
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 import ModelTest.Support.OperatorRows
 import ModelTest.Support.Vim
 
@@ -29,6 +29,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The badge a scene's mode line shows first for a selected view in the
 Vim state view 0 is in after the keys `typed` under the grammar alone: the

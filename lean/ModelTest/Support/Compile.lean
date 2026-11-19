@@ -30,16 +30,16 @@ import Editor.ProjectMode.Listing
 import Editor.Scene
 import Editor.Setup
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
+import Editor.Test.Listing
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.Shell
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
-import ModelTest.Support.Keys
-import ModelTest.Support.Listing
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.Shell
 
 /-!
 # Model tests: support: Compile
@@ -47,13 +47,14 @@ import ModelTest.Support.Shell
 The compile commands' world: their jobs, keys, bindings and driver, the error
 formats they read, the compile hook's setup, and the driver of the compile
 mode's checks of a listing, over the listing checks' world
-(`ModelTest/Support/Listing.lean`). Shared by several test modules
+(`Editor/Test/Listing.lean`). Shared by several test modules
 under `ModelTest/Editor/`; it holds no checks of its own.
 -/
 
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The jobs of the compile checks: the shell checks', the compile's run job
 and its listing job. -/

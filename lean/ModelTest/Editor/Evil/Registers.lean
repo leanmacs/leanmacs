@@ -15,12 +15,12 @@ import Editor.Loop.Driver
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Vocabulary
 import ModelTest.Check
 import ModelTest.Support.Evil
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 import ModelTest.Support.OperatorRows
 
 /-!
@@ -33,6 +33,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What a step of the replace checks is handed: evil's commands, with
 `<F5>` bound in an active keymap to the operator `replace`, which no

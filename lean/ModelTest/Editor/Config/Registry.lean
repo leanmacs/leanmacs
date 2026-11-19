@@ -36,13 +36,13 @@ import Editor.Role
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
+import Editor.Test.Config
+import Editor.Test.Keys
+import Editor.Test.Models
 import Editor.Text
 import Editor.Window
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Config
-import ModelTest.Support.Keys
-import ModelTest.Support.Models
 import ModelTest.Support.Modes
 
 /-!
@@ -56,6 +56,7 @@ root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A registration of the job `name`, which finishes with a command that
 makes the text `text`. -/

@@ -20,9 +20,9 @@ import Editor.Scene
 import Editor.State
 import Editor.TabBar
 import Editor.TabCommands
+import Editor.Test.Completion
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Completion
 import ModelTest.Support.Evil
 import ModelTest.Support.Windows
 
@@ -36,6 +36,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The windows of each tab of `state`, as indices, in order. -/
 def tabOrder (state : EditorState) : List (List Nat) :=

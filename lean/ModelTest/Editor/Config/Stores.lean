@@ -2,9 +2,9 @@ import Editor.Config.Diagnostic
 import Editor.Config.Owner
 import Editor.Config.Stores
 import Editor.Store
+import Editor.Test.Config
 import Editor.Value
 import ModelTest.Check
-import ModelTest.Support.Config
 
 /-!
 # Model tests: `Editor/Config/Stores.lean`
@@ -16,6 +16,7 @@ The model tests of `Editor/Config/Stores.lean`: `storeChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A declaration of the store `name` at `version`, which starts at the
 number 0 and accepts any number. It migrates a number written at version 1 by

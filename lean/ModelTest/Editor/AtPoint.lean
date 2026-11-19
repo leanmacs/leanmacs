@@ -22,14 +22,14 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.AtPoint
 import ModelTest.Support.Evil
-import ModelTest.Support.Models
-import ModelTest.Support.States
 
 /-!
 # Model tests: `Editor/AtPoint.lean`
@@ -41,6 +41,7 @@ The model tests of `Editor/AtPoint.lean`: `atPointChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of asking for completion at point (`Editor/Api.lean`,
 "Completion at point", `Editor/AtPoint.lean`), on the evil driver over the

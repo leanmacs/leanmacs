@@ -25,25 +25,30 @@ import Editor.Scene
 import Editor.Shell
 import Editor.Shell.Compiled
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Workspace
 import Editor.Text
 import Editor.Text.Model
 import Editor.Value
 import Editor.Workspace
 import Editor.Workspace.Attach
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Workspace
 
 /-!
-# Model tests: support: Shell
+# The test kit: Shell
 
 The shell command's jobs, bindings, commands and replies. Shared by several test
 modules under `ModelTest/Editor/`; it holds no checks of its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -141,4 +146,4 @@ def withDisplayRules (driver : TestDriver) (rules : Array DisplayRule) : TestDri
     keys :=
       { driver.keys with registered := { driver.keys.registered with displayRules := rules } } }
 
-end ModelTest
+end Editor.Test

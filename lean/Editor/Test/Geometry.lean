@@ -2,14 +2,19 @@ import Editor.Layout
 import Editor.Scene
 
 /-!
-# Model tests: support: Geometry
+# The test kit: Geometry
 
 Rectangles and the sample areas and window counts the layouts are checked over.
 Shared by several test modules under `ModelTest/Editor/`; it holds no checks of
 its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -70,4 +75,4 @@ def splitsReached (splits : Nat) : List Splits :=
         (all ++ next, next))
       ([Splits.tile], [Splits.tile]) |>.1
 
-end ModelTest
+end Editor.Test

@@ -12,13 +12,13 @@ import Editor.Loop.Driver
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Gutter.lean`
@@ -30,6 +30,7 @@ The model tests of `Editor/Gutter.lean`: `gutterCarryChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- An edit of a patch: the bytes `start` up to `stop` before replaced by
 `count` bytes. The points are not looked at by the carry. -/

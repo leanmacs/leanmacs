@@ -21,14 +21,14 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Buffers
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Models
-import ModelTest.Support.States
 
 /-!
 # Model tests: `Editor/DisplayRules.lean`
@@ -40,6 +40,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of display rules (`Editor/DisplayRules.lean`): which rule a
 buffer's facts choose, and which targets a layout lacks; and where a

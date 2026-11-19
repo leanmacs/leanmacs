@@ -5,16 +5,21 @@ import Editor.Fuzzy.Model
 import Editor.Program
 
 /-!
-# Model tests: support: Completion
+# The test kit: Completion
 
 Candidates and completion styles written as data: a prompt's candidates from
 their texts (`offered`) and the hits a style answers over the fuzzy model
 (`styled`), with `ranked`, which runs a program over the fuzzy port against the
 fuzzy model. Shared by several test modules under `ModelTest/Editor/`; it holds
 no checks of its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -34,4 +39,4 @@ def styled (style : Completion.Style) (text : String) (candidates : Array String
     Array Completion.Hit :=
   ranked (style.hits text candidates)
 
-end ModelTest
+end Editor.Test

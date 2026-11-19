@@ -3,9 +3,9 @@ import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Scene
+import Editor.Test.Keys
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Keys
 
 /-!
 # Model tests: `Editor/InputScheme.lean`
@@ -17,6 +17,7 @@ The model tests of `Editor/InputScheme.lean`: `schemeChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The key strings the scheme fixtures are written with. -/
 def schemeKeyStrings : List String :=

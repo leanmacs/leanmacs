@@ -24,12 +24,12 @@ import Editor.State.Request
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Model
 import Editor.TabBar
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import Editor.Workspace
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.States
 
 /-!
 # Model tests: support: Modes
@@ -42,6 +42,7 @@ its own.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A mode called `name` that fills each of `roles` with a command named
 after the mode and the role, and derives from `parent`, if given. -/

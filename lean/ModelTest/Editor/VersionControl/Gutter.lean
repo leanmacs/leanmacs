@@ -24,6 +24,12 @@ import Editor.Process.Model
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.Text
 import Editor.Text.Model
 import Editor.VersionControl
@@ -35,14 +41,8 @@ import Editor.VersionControl.Model
 import Editor.Workspace
 import Editor.Workspace.Model
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
 import ModelTest.Support.Git
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Shell
 import ModelTest.Support.VersionControl
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/VersionControl/Gutter.lean`
@@ -54,6 +54,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The jobs of the gutter checks: the status buffer checks', and the
 version-control gutter's. -/

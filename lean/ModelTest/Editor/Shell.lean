@@ -22,15 +22,15 @@ import Editor.Process.Model
 import Editor.Scene
 import Editor.Shell
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Prompts
+import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.Text.Model
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Prompts
-import ModelTest.Support.Shell
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/Shell.lean`
@@ -42,6 +42,7 @@ The model tests of `Editor/Shell.lean`: `shellChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What each child of the shell checks does. -/
 def shellScripts : Array Process.Script :=

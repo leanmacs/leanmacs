@@ -11,10 +11,10 @@ import Editor.Loop.Driver
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Loop
 import Editor.Text
 import ModelTest.Check
 import ModelTest.Support.Evil
-import ModelTest.Support.Loop
 import ModelTest.Support.Vim
 
 /-!
@@ -27,6 +27,7 @@ The model tests of `Editor/Evil/Undo.lean`: `evilUndoChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- One change of each kind, for the checks of `u` and `C-r`: the text and
 the cursor it is made from, its keys, and the text and the cursor from

@@ -29,18 +29,18 @@ import Editor.Process.Model
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Jobs
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.Prompts
+import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.Watch.Model
 import ModelTest.Check
 import ModelTest.Editor.Minibuffer
-import ModelTest.Support.Driver
-import ModelTest.Support.Jobs
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.Prompts
-import ModelTest.Support.States
 
 /-!
 # Model tests: `Editor/Loop/Driver.lean`
@@ -55,6 +55,7 @@ each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- `newDriver` whose jobs reach the directory `fileRoot`, holding the file
 `note.txt` with `FileCases.noteBytes`. -/

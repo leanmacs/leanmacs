@@ -13,12 +13,12 @@ import Editor.ModeLine
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
+import Editor.Test.Completion
+import Editor.Test.Config
+import Editor.Test.Keys
 import Editor.Text
 import Editor.Themes.Check
 import ModelTest.Check
-import ModelTest.Support.Completion
-import ModelTest.Support.Config
-import ModelTest.Support.Keys
 
 /-!
 # Model tests: `Editor/Face/Vocabulary.lean`
@@ -30,6 +30,7 @@ root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The faces the code on this branch draws, read from the values that draw
 them, not from their text: the cursors and status fields the shipped Vim

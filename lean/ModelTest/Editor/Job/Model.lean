@@ -12,9 +12,9 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
+import Editor.Test.Jobs
 import Editor.Text.Model
 import ModelTest.Check
-import ModelTest.Support.Jobs
 
 /-!
 # Model tests: `Editor/Job/Model.lean`
@@ -26,6 +26,7 @@ The model tests of `Editor/Job/Model.lean`: `jobModelChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of the job port's pure model (`Editor/Job/Model.lean`). -/
 def jobModelChecks : List Check :=

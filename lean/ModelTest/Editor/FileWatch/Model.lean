@@ -9,9 +9,9 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
+import Editor.Test.Jobs
 import Editor.Text.Model
 import ModelTest.Check
-import ModelTest.Support.Jobs
 
 /-!
 # Model tests: `Editor/FileWatch/Model.lean`
@@ -23,6 +23,7 @@ root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What the watch model answers a start of `target` coalesced as
 `coalescing`, made at `now`. -/

@@ -14,11 +14,11 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Scene
+import Editor.Test.Jobs
 import Editor.Text
 import Editor.Text.Model
 import ModelTest.Check
 import ModelTest.Support.AtPoint
-import ModelTest.Support.Jobs
 
 /-!
 # Model tests: `Editor/Completion/Words.lean`
@@ -30,6 +30,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The order `words`' job is started with in the checks: the region `al`
 at the end of `alpha beta al`, from view 0, over the snapshots 0, 1 and 2. -/

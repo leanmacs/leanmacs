@@ -32,14 +32,14 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 
 /-!
 # Model tests: support: Buffers
@@ -52,6 +52,7 @@ no checks of its own.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What a step of the buffer command checks is handed. The commands are the
 ones compiled code registers for files, the minibuffer, the buffers and the

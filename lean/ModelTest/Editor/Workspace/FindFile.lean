@@ -12,18 +12,18 @@ import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Model
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Prompts
+import Editor.Test.Workspace
 import Editor.Workspace
 import Editor.Workspace.FindFile
 import Editor.Workspace.Lister
 import Editor.Workspace.Model
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
 import ModelTest.Support.FindFile
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Prompts
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/Workspace/FindFile.lean`
@@ -35,6 +35,7 @@ root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 namespace FindFileTest
 

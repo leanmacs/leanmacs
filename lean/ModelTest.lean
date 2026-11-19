@@ -175,10 +175,14 @@ test: the checks of `Editor/State.lean` are in `ModelTest/Editor/State.lean`
 is in the test module of that contract, such as `displayFailures` in
 `ModelTest/Editor/Display/Contract.lean`. A test module keeps the helpers
 only its checks use. Helpers and fakes that several test modules use are in
-small support modules under `ModelTest/Support/`, each of one kind of
-fixture, and `ModelTest.Check` holds the `Check` type and `failures`. Each
-module imports the editor's modules and the model test modules it uses, and
-no others. Everything is in the namespace `ModelTest`, so a list is
+small support modules, each of one kind of fixture: under
+`ModelTest/Support/`, and, for the ones a package's tests are also written
+on, under `Editor/Test/` (the core's test kit, in the namespace
+`Editor.Test`, which the core publishes as a test double;
+`docs/design/packages.md`, "What a package may import").
+`ModelTest.Check` holds the `Check` type and `failures`. Each module
+imports the editor's modules and the model test modules it uses, and no
+others. Every check list is in the namespace `ModelTest`, so a list is
 `ModelTest.<name>Checks` whichever module holds it. This module keeps only
 `checks`, which runs them in order, and `main`.
 

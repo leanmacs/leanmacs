@@ -35,6 +35,9 @@ import Editor.Scene
 import Editor.State
 import Editor.State.Request
 import Editor.TabBar
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.UndoTree
@@ -42,10 +45,7 @@ import Editor.Value
 import Editor.Watch.Model
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 import ModelTest.Support.Modes
-import ModelTest.Support.States
 
 /-!
 # Model tests: `Editor/Command/Dispatch.lean`
@@ -62,6 +62,7 @@ module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A command that makes a text of each of `labels`, in order, and returns
 how many it made. -/

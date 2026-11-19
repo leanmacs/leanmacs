@@ -15,11 +15,11 @@ import Editor.Scene
 import Editor.Shell
 import Editor.TabCommands
 import Editor.TabCommands.Compiled
+import Editor.Test.Keys
 import Editor.Text
 import Editor.WindowCommands
 import Editor.WindowCommands.Compiled
 import ModelTest.Check
-import ModelTest.Support.Keys
 import ModelTest.Support.Vim
 
 /-!
@@ -32,6 +32,7 @@ The root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The record of the default Vim state view 0 is in after the keys `text`
 names. -/

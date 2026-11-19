@@ -21,12 +21,12 @@ import Editor.Minibuffer.Compiled
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Config
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Config
 import ModelTest.Support.Evil
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 import ModelTest.Support.OperatorRows
 import ModelTest.Support.Vim
 
@@ -41,6 +41,7 @@ its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- Where each of `offsets` rests in a text holding `contents` under the
 rule `rest` (`Evil.rested`), on the text model; none when one was

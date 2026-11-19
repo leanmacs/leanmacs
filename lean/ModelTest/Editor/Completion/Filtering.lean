@@ -10,14 +10,14 @@ import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Model
 import Editor.State
+import Editor.Test.Completion
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Prompts
 import ModelTest.Check
 import ModelTest.Editor.Completion.Later
 import ModelTest.Support.Candidates
-import ModelTest.Support.Completion
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Prompts
 
 /-!
 # Model tests: `Editor/Completion/Filtering.lean`
@@ -29,6 +29,7 @@ The root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 namespace FilteringTest
 

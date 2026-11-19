@@ -27,6 +27,12 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.Text
 import Editor.VersionControl
 import Editor.VersionControl.Blame
@@ -41,12 +47,6 @@ import Editor.VersionControl.Stage
 import Editor.VersionControl.Status
 import Editor.Workspace
 import Editor.Workspace.Attach
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Shell
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: support: VersionControl
@@ -61,6 +61,7 @@ test modules under `ModelTest/Editor/`; it holds no checks of its own.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The jobs of the status buffer checks: the workspace driver checks', and
 the status buffer's read and apply jobs. -/

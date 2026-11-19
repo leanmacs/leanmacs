@@ -7,11 +7,11 @@ import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Files
 import Editor.Text
 import Editor.Window
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
 
 /-!
 # Model tests: `Editor/Window.lean`
@@ -25,6 +25,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What the window mode is told of the world by the checks of its command
 line: a working directory, both variables a config directory is found by,

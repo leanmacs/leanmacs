@@ -40,6 +40,16 @@ import Editor.Scene
 import Editor.Scroll
 import Editor.State
 import Editor.TabBar
+import Editor.Test.Completion
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Geometry
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.Prompts
+import Editor.Test.States
+import Editor.Test.Workspace
 import Editor.Text
 import Editor.Text.Contract
 import Editor.Text.Model
@@ -47,20 +57,10 @@ import Editor.UndoTree
 import Editor.Value
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Completion
-import ModelTest.Support.Driver
 import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
-import ModelTest.Support.Files
 import ModelTest.Support.Frame
-import ModelTest.Support.Geometry
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.Prompts
-import ModelTest.Support.States
 import ModelTest.Support.Views
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/State.lean`
@@ -79,6 +79,7 @@ each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The views of `state`'s frame and their rectangles, in drawing order
 (`EditorState.rects`). -/

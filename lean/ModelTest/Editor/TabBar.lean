@@ -14,12 +14,12 @@ import Editor.Program
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import ModelTest.Check
 import ModelTest.Support.Evil
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.States
 import ModelTest.Support.Views
 import ModelTest.Support.Windows
 
@@ -33,6 +33,7 @@ The model tests of `Editor/TabBar.lean`: `tabBarChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of the tab bar (`Editor/TabBar.lean`): the line it shows,
 its strip above the minibuffer's (`EditorState.tabBarRect?`), and, on the

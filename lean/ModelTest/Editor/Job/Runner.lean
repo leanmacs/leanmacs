@@ -17,11 +17,11 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
+import Editor.Test.Jobs
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import ModelTest.Check
-import ModelTest.Support.Jobs
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Job/Runner.lean`
@@ -35,6 +35,7 @@ runner's watch waits on the fake of the watch service. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- How `wait` ended; `none` while it is in flight. -/
 def ended (wait : IO.Promise Job.Completion) : BaseIO (Option Job.Completion) := do
@@ -47,7 +48,7 @@ def ended (wait : IO.Promise Job.Completion) : BaseIO (Option Job.Completion) :=
 `deadline`, as the runner does. `log` gets the wait's id when it ends,
 on the thread that ended it, so the order of a log is the order the waits
 ended in. -/
-def Rig.wait (rig : Rig) (deadline : Nat) (log : IO.Ref (Array UInt64)) :
+def _root_.Editor.Test.Rig.wait (rig : Rig) (deadline : Nat) (log : IO.Ref (Array UInt64)) :
     BaseIO (UInt64 × IO.Promise Job.Completion) := do
   let (id, wait) ← rig.services.completions.register
   BaseIO.chainTask wait.result? (fun _ => log.modify (·.push id)) (sync := true)

@@ -5,8 +5,8 @@ import Editor.InputScheme.Vim.Default
 import Editor.Keymap
 import Editor.Role
 import Editor.Scene
+import Editor.Test.Keys
 import Editor.Text
-import ModelTest.Support.Keys
 
 /-!
 # Model tests: support: Vim
@@ -19,6 +19,7 @@ and the scheme that ships. Shared by several test modules under
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The delete operator of the Vim checks: it changes text and names no
 state. -/

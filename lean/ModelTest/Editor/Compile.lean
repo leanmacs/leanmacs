@@ -41,6 +41,13 @@ import Editor.State.Request
 import Editor.Store
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Model
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
+import Editor.Test.Models
+import Editor.Test.Prompts
+import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.Text
 import Editor.Text.Model
 import Editor.UndoTree
@@ -53,13 +60,6 @@ import Editor.Workspace.Model
 import Editor.Workspace.Modes
 import ModelTest.Check
 import ModelTest.Support.Compile
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
-import ModelTest.Support.Keys
-import ModelTest.Support.Models
-import ModelTest.Support.Prompts
-import ModelTest.Support.Shell
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/Compile.lean`
@@ -74,6 +74,7 @@ runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The world of the compile checks: the workspace driver checks' world, and a
 second clone of the same origin at `/clone/r`, on `main`. -/

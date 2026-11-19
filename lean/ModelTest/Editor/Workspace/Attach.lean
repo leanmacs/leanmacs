@@ -18,14 +18,14 @@ import Editor.Scene
 import Editor.State
 import Editor.State.Request
 import Editor.Store
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Workspace
 import Editor.Text.Model
 import Editor.Value
 import Editor.Workspace
 import Editor.Workspace.Attach
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/Workspace/Attach.lean`
@@ -37,6 +37,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The two git commands the finder runs in `directory`. -/
 def gitAsked (directory : System.FilePath) : Array Process.Command :=

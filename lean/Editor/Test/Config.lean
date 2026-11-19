@@ -21,24 +21,29 @@ import Editor.Process.Model
 import Editor.Scene
 import Editor.State
 import Editor.Store
+import Editor.Test.Jobs
+import Editor.Test.Keys
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import Editor.UndoTree
 import Editor.Value
-import ModelTest.Support.Jobs
-import ModelTest.Support.Keys
-import ModelTest.Support.Models
 
 /-!
-# Model tests: support: Config
+# The test kit: Config
 
 Config fixtures: plain registered commands, faces and themes defined by a
 config, its bindings, and the loop context a config is elaborated with. Shared
 by several test modules under `ModelTest/Editor/`; it holds no checks of its
 own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -120,4 +125,4 @@ def argumentText : Argument → String
   | .str value => value
   | .bool value => toString value
 
-end ModelTest
+end Editor.Test

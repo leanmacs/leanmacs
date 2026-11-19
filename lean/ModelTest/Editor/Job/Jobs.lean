@@ -6,8 +6,8 @@ import Editor.Job.Jobs
 import Editor.Job.Runner
 import Editor.Job.Table
 import Editor.Program
+import Editor.Test.Jobs
 import ModelTest.Check
-import ModelTest.Support.Jobs
 
 /-!
 # Model tests: `Editor/Job/Jobs.lean`
@@ -19,6 +19,7 @@ The model tests of `Editor/Job/Jobs.lean`: `ownerChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What `finish` gave, as a check compares it: the job's id and name, and
 how it ended. -/

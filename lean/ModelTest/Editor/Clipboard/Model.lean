@@ -2,8 +2,8 @@ import Editor.Clipboard
 import Editor.Clipboard.Contract
 import Editor.Clipboard.Model
 import Editor.Program
+import Editor.Test.Models
 import ModelTest.Check
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Clipboard/Model.lean`
@@ -15,6 +15,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A clipboard written for the test that breaks the contract: it accepts
 every write and keeps none, so a read answers what it held before. -/

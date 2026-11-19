@@ -2,8 +2,8 @@ import Editor.Display
 import Editor.Floating
 import Editor.Layout
 import Editor.Scene
+import Editor.Test.Geometry
 import ModelTest.Check
-import ModelTest.Support.Geometry
 
 /-!
 # Model tests: `Editor/Floating.lean`
@@ -15,6 +15,7 @@ The model tests of `Editor/Floating.lean`: `floatChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- Whether `rect` is inside `area`. -/
 def inside (area rect : Rect) : Bool :=

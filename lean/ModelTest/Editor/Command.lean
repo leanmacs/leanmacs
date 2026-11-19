@@ -15,6 +15,7 @@ import Editor.State
 import Editor.State.Request
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Model
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import Editor.UndoTree
@@ -22,7 +23,6 @@ import Editor.Watch
 import Editor.Watch.Model
 import ModelTest.Check
 import ModelTest.Support.Display
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Command.lean`
@@ -34,6 +34,7 @@ The model tests of `Editor/Command.lean`: `commandPortChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of the editor's composite port (`Editor/Command.lean`): what
 its model runner does with each sub-port's requests. -/

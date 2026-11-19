@@ -1,8 +1,8 @@
 import Editor.Event
 import Editor.Key.Notation
 import Editor.Keymap
+import Editor.Test.Keys
 import ModelTest.Check
-import ModelTest.Support.Keys
 
 /-!
 # Model tests: `Editor/Key/Notation.lean`
@@ -14,6 +14,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- Whether `text` is a key string that names exactly `keys`. -/
 def parses (text : String) (keys : List Key) : Bool :=

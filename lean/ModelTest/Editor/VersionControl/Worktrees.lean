@@ -13,6 +13,11 @@ import Editor.Role
 import Editor.Scene
 import Editor.State
 import Editor.Store
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.VersionControl
 import Editor.VersionControl.Contract
 import Editor.VersionControl.Model
@@ -21,13 +26,8 @@ import Editor.VersionControl.Worktrees
 import Editor.Workspace
 import Editor.Workspace.Model
 import ModelTest.Check
-import ModelTest.Support.Driver
 import ModelTest.Support.Git
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Shell
 import ModelTest.Support.VersionControl
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/VersionControl/Worktrees.lean`
@@ -40,6 +40,7 @@ doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The worktrees of the worktree list checks: `/r` on `main`, `/d` detached
 and `/w` on `feature`. -/

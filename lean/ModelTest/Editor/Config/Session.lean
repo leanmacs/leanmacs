@@ -4,9 +4,9 @@ import Editor.Config.Session
 import Editor.InputScheme.Test
 import Editor.Program
 import Editor.Setup
+import Editor.Test.Models
 import ModelTest.Check
 import ModelTest.Support.Elaborator
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Config/Session.lean`
@@ -18,6 +18,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The names and the states of an outcome's chunks, if it built any. -/
 def builtChunks (outcome : Config.Outcome Elaborated) : Option (Array (String × Elaborated)) :=

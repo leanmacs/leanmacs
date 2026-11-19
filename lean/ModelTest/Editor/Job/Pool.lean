@@ -1,6 +1,6 @@
 import Editor.Job.Pool
+import Editor.Test.Jobs
 import ModelTest.Check
-import ModelTest.Support.Jobs
 
 /-!
 # Model tests: `Editor/Job/Pool.lean`
@@ -12,6 +12,7 @@ The model tests of `Editor/Job/Pool.lean`: `poolChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- Whether `threads` are all different, and are exactly the threads of
 `others`. -/

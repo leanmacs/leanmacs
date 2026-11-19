@@ -3,17 +3,17 @@ import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Process
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.VersionControl
 import Editor.VersionControl.Contract
 import Editor.VersionControl.Model
 import Editor.VersionControl.Show
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Shell
 import ModelTest.Support.VersionControl
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/VersionControl/Show.lean`
@@ -25,6 +25,7 @@ The root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The repository of the revision buffer checks: `src/a.lean` holds `a` in
 `HEAD` and the working tree, and `old` at the tag `v1`. -/

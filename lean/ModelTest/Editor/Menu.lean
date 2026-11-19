@@ -36,16 +36,16 @@ import Editor.Role
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Driver
 import ModelTest.Support.Evil
 import ModelTest.Support.Frame
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Menu.lean`
@@ -57,6 +57,7 @@ runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The menu bar the frame driver over `registry` publishes once the window
 has said its size; `none` without one. -/

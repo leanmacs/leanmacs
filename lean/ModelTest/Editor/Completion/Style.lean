@@ -5,8 +5,8 @@ import Editor.Config.Owner
 import Editor.Fuzzy
 import Editor.Fuzzy.Model
 import Editor.Program
+import Editor.Test.Completion
 import ModelTest.Check
-import ModelTest.Support.Completion
 
 /-!
 # Model tests: `Editor/Completion/Style.lean`
@@ -19,6 +19,7 @@ check the shipped styles (`Editor/Completion/Styles.lean`). The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- Every list of length at most `length` of `letters`, the empty list
 first. -/

@@ -13,10 +13,10 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
+import Editor.Test.Jobs
 import Editor.Text
 import Editor.Text.Model
 import ModelTest.Check
-import ModelTest.Support.Jobs
 
 /-!
 # Model tests: `Editor/Job/Contract.lean`
@@ -32,6 +32,7 @@ its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A rig whose runner reads snapshots from `table`, each slot a text or
 `none` for one released (`Job.Services.snapshots`). -/

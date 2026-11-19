@@ -10,10 +10,10 @@ import Editor.Job.Model
 import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
+import Editor.Test.Jobs
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
-import ModelTest.Support.Jobs
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/File/Cases.lean`
@@ -26,6 +26,7 @@ the cases across the text port and the job port on both models. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What a job's model holds, as what a run of the job's command is handed:
 each snapshot the job's loads made that was not released, under the job's

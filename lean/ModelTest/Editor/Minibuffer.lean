@@ -17,15 +17,15 @@ import Editor.Program
 import Editor.Role
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.Prompts
+import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.Prompts
-import ModelTest.Support.States
 
 /-!
 # Model tests: `Editor/Minibuffer.lean`
@@ -37,6 +37,7 @@ The model tests of `Editor/Minibuffer.lean`: `promptModeChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What reading the text `text` comes to on `driver`'s models. -/
 def readOn (driver : TestDriver) (text : TextId) : TextError ⊕ String :=

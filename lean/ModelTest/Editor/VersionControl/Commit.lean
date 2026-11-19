@@ -9,6 +9,11 @@ import Editor.Process
 import Editor.Process.Model
 import Editor.Role
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
+import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.VersionControl
 import Editor.VersionControl.Commit
 import Editor.VersionControl.Compiled
@@ -16,13 +21,8 @@ import Editor.VersionControl.Git
 import Editor.VersionControl.Model
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
 import ModelTest.Support.Git
-import ModelTest.Support.Keys
-import ModelTest.Support.Shell
 import ModelTest.Support.VersionControl
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/VersionControl/Commit.lean`
@@ -34,6 +34,7 @@ The root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The message `C-v m` types in the hunk and message buffer checks. -/
 def stagingMessage : String :=

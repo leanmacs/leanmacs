@@ -5,6 +5,8 @@ import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
+import Editor.Test.Driver
+import Editor.Test.Workspace
 import Editor.VersionControl.Contract
 import Editor.VersionControl.Git
 import Editor.VersionControl.Model
@@ -24,6 +26,7 @@ doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 namespace FindInProjectTest
 

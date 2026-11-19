@@ -9,9 +9,9 @@ import Editor.Mode
 import Editor.Program
 import Editor.Role
 import Editor.Scene
+import Editor.Test.Keys
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Keys
 import ModelTest.Support.Vim
 
 /-!
@@ -25,6 +25,7 @@ The model tests of `Editor/InputScheme/Vim.lean`: `vimEditChecks`,
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of the Vim scheme's edits (`Editor/InputScheme/Vim.lean`):
 the invocation each compiles to, and what an edit says of itself. -/

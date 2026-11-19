@@ -23,14 +23,14 @@ import Editor.Loop.Driver
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Vocabulary
 import Editor.Watch.Model
 import ModelTest.Check
 import ModelTest.Support.Evil
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Evil/Repeat.lean`
@@ -42,6 +42,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The oracle table's rows for `.`: the keys, the text before with the
 cursor as a bar, and the text after. A count before `.` replaces the

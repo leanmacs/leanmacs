@@ -34,16 +34,16 @@ import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
+import Editor.Test.Completion
+import Editor.Test.Config
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.Prompts
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
-import ModelTest.Support.Completion
-import ModelTest.Support.Config
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.Prompts
 
 /-!
 # Model tests: support: Candidates
@@ -57,6 +57,7 @@ prompt and its candidate list. Shared by several test modules under
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The candidates the prompts of the candidate checks are asked with. The
 one a check types whole, `w`, is last, and two before it hold a `w`. -/

@@ -14,12 +14,12 @@ import Editor.ModeLine
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.WindowCommands
 import ModelTest.Check
 import ModelTest.Support.Evil
-import ModelTest.Support.States
 import ModelTest.Support.Windows
 
 /-!
@@ -32,6 +32,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The state of the window driver over `count` windows under `layout`,
 `focus` focused, once the keys `typed` name were pressed. -/

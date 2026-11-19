@@ -1,9 +1,9 @@
 import Editor.Fuzzy
 import Editor.Fuzzy.Contract
 import Editor.Fuzzy.Model
+import Editor.Test.Completion
+import Editor.Test.Models
 import ModelTest.Check
-import ModelTest.Support.Completion
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Fuzzy/Model.lean`
@@ -15,6 +15,7 @@ The model tests of `Editor/Fuzzy/Model.lean`: `fuzzyChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A matcher written for the tests that break the contract: a candidate
 matches when `matched` says so of the pattern and the candidate, and the

@@ -2,12 +2,12 @@ import Editor.Command
 import Editor.Command.Model
 import Editor.Display
 import Editor.Program
+import Editor.Test.Models
 import Editor.Text
 import Editor.Watch
 import Editor.Watch.Model
 import ModelTest.Check
 import ModelTest.Support.Display
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Watch/Model.lean`
@@ -19,6 +19,7 @@ The model tests of `Editor/Watch/Model.lean`: `watchChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of the watch port's model (`Editor/Watch/Model.lean`): what
 only the model has, an arrival a test places and a clock a command's

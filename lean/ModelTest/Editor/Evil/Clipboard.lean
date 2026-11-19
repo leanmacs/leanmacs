@@ -27,14 +27,14 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Watch.Model
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Evil
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 import ModelTest.Support.Vim
 
 /-!
@@ -47,6 +47,7 @@ root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The registry of the clipboard command checks: the `menu` package's
 bindings, for the owner `compiled`, an owner that is not config, and

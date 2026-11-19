@@ -1,10 +1,10 @@
 import Editor.ModeLine
 import Editor.Scene
 import Editor.State
+import Editor.Test.Config
 import Editor.Text
 import ModelTest.Check
 import ModelTest.Editor.ExcerptView
-import ModelTest.Support.Config
 import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
 
@@ -18,6 +18,7 @@ The model tests of `Editor/ModeLine.lean`: `modeLineChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The texts of `fields`, each with its face's name. -/
 def textsAndFaces (fields : Array StatusField) : Array (String × String) :=

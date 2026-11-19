@@ -11,9 +11,9 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
+import Editor.Test.Jobs
 import Editor.Text.Model
 import ModelTest.Check
-import ModelTest.Support.Jobs
 
 /-!
 # Model tests: `Editor/Process/Model.lean`
@@ -27,6 +27,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A command that sleeps for ten minutes in `processRoot`, as the process
 checks script it. -/

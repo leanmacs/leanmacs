@@ -1,9 +1,9 @@
 import Editor.Ex.Line
 import Editor.Invocation
 import Editor.Program
+import Editor.Test.Models
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Ex/Line.lean`
@@ -15,6 +15,7 @@ The model tests of `Editor/Ex/Line.lean`: `exLineChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of an ex line (`Editor/Ex/Line.lean`): what a line typed on
 the ex command line parses to, and the invocation an ex binding makes of a

@@ -1,8 +1,8 @@
 import Editor.Api.Cases
 import Editor.Command
 import Editor.Command.Model
+import Editor.Test.Models
 import Editor.Text
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Api/Cases.lean`
@@ -14,6 +14,7 @@ The model tests of `Editor/Api/Cases.lean`: `apiCaseFailures`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The names of the cases of the editor API (`Editor/Api/Cases.lean`) that
 do not hold of the editor's models, each played from models with no

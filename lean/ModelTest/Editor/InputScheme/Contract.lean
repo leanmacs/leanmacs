@@ -8,9 +8,9 @@ import Editor.Invocation
 import Editor.Keymap
 import Editor.Role
 import Editor.Scene
+import Editor.Test.Keys
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Keys
 import ModelTest.Support.Vim
 
 /-!
@@ -24,6 +24,7 @@ says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/

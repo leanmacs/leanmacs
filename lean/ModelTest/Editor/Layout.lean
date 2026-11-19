@@ -1,7 +1,7 @@
 import Editor.Layout
 import Editor.Scene
+import Editor.Test.Geometry
 import ModelTest.Check
-import ModelTest.Support.Geometry
 
 /-!
 # Model tests: `Editor/Layout.lean`
@@ -13,6 +13,7 @@ The model tests of `Editor/Layout.lean`: `layoutChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of the layouts (`Editor/Layout.lean`): master-and-stack's
 rectangles tile the area for any number of windows, any count of main's

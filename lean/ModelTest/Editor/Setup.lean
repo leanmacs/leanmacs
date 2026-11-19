@@ -38,15 +38,15 @@ import Editor.Scene
 import Editor.Setup
 import Editor.Store
 import Editor.TabBar
+import Editor.Test.Config
+import Editor.Test.Keys
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import Editor.Value
 import Editor.Window
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Config
-import ModelTest.Support.Keys
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Setup.lean`
@@ -58,6 +58,7 @@ The model tests of `Editor/Setup.lean`: `setupChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The message a `setup` was refused with, if it was. -/
 def refusal (setup : SetupM Unit) : Option String :=

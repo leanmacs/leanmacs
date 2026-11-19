@@ -6,6 +6,10 @@ import Editor.Process
 import Editor.Process.Model
 import Editor.Role
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.Text
 import Editor.VersionControl
 import Editor.VersionControl.Contract
@@ -14,12 +18,8 @@ import Editor.VersionControl.Model
 import Editor.VersionControl.Status
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Driver
 import ModelTest.Support.Git
-import ModelTest.Support.Keys
-import ModelTest.Support.Shell
 import ModelTest.Support.VersionControl
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/VersionControl/Status.lean`
@@ -32,6 +32,7 @@ what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What the status buffer of `r@main` shows of the contract's first
 repository (`VersionControlContract.criterionStatus`): the head line, then

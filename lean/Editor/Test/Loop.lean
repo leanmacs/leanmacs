@@ -27,26 +27,31 @@ import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
+import Editor.Test.Config
+import Editor.Test.Keys
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.UndoTree
 import Editor.Value
 import Editor.Watch
 import Editor.Workspace
-import ModelTest.Support.Config
-import ModelTest.Support.Keys
-import ModelTest.Support.Models
-import ModelTest.Support.States
 
 /-!
-# Model tests: support: Loop
+# The test kit: Loop
 
 The command loop stepped on the editor's models, with keymaps and commands
 written in the test (`Dispatched`), and what a check reads of a step. Shared by
 several test modules under `ModelTest/Editor/`; it holds no checks of its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -243,4 +248,4 @@ def hintRows (hints : Array KeyHint)
       { listed := (Completion.Keys.candidates hints).map (Completion.Listed.of ·)
         category := some Completion.Keys.category }).text
 
-end ModelTest
+end Editor.Test

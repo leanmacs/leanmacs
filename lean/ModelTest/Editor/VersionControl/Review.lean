@@ -5,6 +5,9 @@ import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
 import Editor.Text
 import Editor.Text.Model
 import Editor.VersionControl
@@ -14,9 +17,6 @@ import Editor.VersionControl.Review
 import Editor.VersionControl.ReviewHunks
 import ModelTest.Check
 import ModelTest.Editor.VersionControl.ReviewHunks
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
-import ModelTest.Support.Keys
 import ModelTest.Support.VersionControl
 
 /-!
@@ -29,6 +29,7 @@ The root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 open Editor.VersionControl
 
 /-- `lean/Pkg/B.lean` on the branch of `reviewRepository`: `twentyLines` with

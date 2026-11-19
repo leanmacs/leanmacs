@@ -38,9 +38,12 @@
 #
 # - A test double (`is_double`): the pure models of the ports, the
 #   contracts and cases, the fakes, the test scheme, the loop's driver, the
-#   reading of what a package registers (`Editor.Config.Packages`) and the
-#   theme picture check (`Editor.Themes.Picture`). A test module and the
-#   linked test may import one; a library module may not.
+#   reading of what a package registers (`Editor.Config.Packages`), the
+#   theme picture check (`Editor.Themes.Picture`) and the core's test kit,
+#   `Editor.Test` and everything under it: the support its own model tests
+#   are written on (`Editor.Test.…`) and the rig of its checks over the
+#   real services (`Editor.Test.Linked.…`). A test module and the linked
+#   test may import one; a library module may not.
 # - An internal module (`internal_reason`): the hosts and the executable's
 #   modules, the loop and its dispatch, the config session, the raw
 #   bindings, the real bindings of the ports and what runs them, the
@@ -108,6 +111,7 @@ is_double() {
     Editor.Completion.Fake | Editor.Job.Fake) return 0 ;;
     Editor.InputScheme.Test | Editor.Loop.Driver) return 0 ;;
     Editor.Config.Packages | Editor.Themes.Picture) return 0 ;;
+    Editor.Test | Editor.Test.*) return 0 ;;
     Editor.*.Model | Editor.*.Model.*) return 0 ;;
     Editor.*Contract | Editor.*.Cases) return 0 ;;
   esac

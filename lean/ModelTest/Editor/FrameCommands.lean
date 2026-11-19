@@ -12,10 +12,10 @@ import Editor.InputScheme.Test
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Keys
 import ModelTest.Check
-import ModelTest.Support.Driver
 import ModelTest.Support.Frame
-import ModelTest.Support.Keys
 
 /-!
 # Model tests: `Editor/FrameCommands.lean`
@@ -27,6 +27,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of the frame's commands (`Editor/FrameCommands.lean`,
 `Editor/FrameCommands/Compiled.lean`) and of the frame's last reported

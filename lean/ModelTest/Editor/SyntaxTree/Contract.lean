@@ -1,5 +1,5 @@
 import Editor.SyntaxTree.Model
-import ModelTest.Support.Models
+import Editor.Test.Models
 
 /-!
 # Model tests: `Editor/SyntaxTree/Contract.lean`
@@ -11,6 +11,7 @@ root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The names of the syntax tree interface's contract properties that do
 not hold of its model. -/

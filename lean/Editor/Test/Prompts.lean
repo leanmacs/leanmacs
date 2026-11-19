@@ -35,27 +35,32 @@ import Editor.Role
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
+import Editor.Test.Config
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.Value
 import Editor.Workspace
-import ModelTest.Support.Config
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.States
 
 /-!
-# Model tests: support: Prompts
+# The test kit: Prompts
 
 Prompts and the minibuffer: the commands, bindings and registry of the prompt
 checks and the driver they run on, and what a scene shows of an open
 prompt: the minibuffer's status line and the candidate list's view. Shared by several test modules under
 `ModelTest/Editor/`; it holds no checks of its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -244,4 +249,4 @@ def pickShown (driver : TestDriver) : Option (Array StatusField) := do
             ((#[] : Array StatusField), 0)).1
   return status ++ rows
 
-end ModelTest
+end Editor.Test

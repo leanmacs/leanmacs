@@ -2,13 +2,13 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Job
 import Editor.Job.Model
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Workspace
 import Editor.Workspace.Model
 import Editor.Workspace.Reach
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/Workspace/Reach.lean`
@@ -20,6 +20,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 namespace ReachTest
 

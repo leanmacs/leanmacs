@@ -13,21 +13,26 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
-import ModelTest.Support.Models
 
 /-!
-# Model tests: support: Jobs
+# The test kit: Jobs
 
 Jobs run on the job model and on the runner over its fakes (`Rig`): the fakes'
 roots, how long a check waits, a job's outcome as a check compares it, and a
 table of published snapshots.
 Shared by several test modules under `ModelTest/Editor/`; it holds no checks of
 its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -244,4 +249,4 @@ def ben : Config.Owner :=
 def atOnce : FileWatch.Coalescing :=
   { window := 0, bound := 100 }
 
-end ModelTest
+end Editor.Test

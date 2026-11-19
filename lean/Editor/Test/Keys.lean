@@ -8,14 +8,19 @@ import Editor.Role
 import Editor.Scene
 
 /-!
-# Model tests: support: Keys
+# The test kit: Keys
 
 Keys and key maps for fixtures: the keys a key string names, an invocation by
 name, and maps of a scheme written by hand. Shared by several test modules under
 `ModelTest/Editor/`; it holds no checks of its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -83,4 +88,4 @@ def roleless : InputScheme :=
 def roleKeys (role : Role) : List Key :=
   (TestScheme.scheme.roleKey role).getD []
 
-end ModelTest
+end Editor.Test

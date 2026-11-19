@@ -4,8 +4,8 @@ import Editor.Completion
 import Editor.Completion.Candidate
 import Editor.Completion.Keys
 import Editor.Scene
+import Editor.Test.Models
 import ModelTest.Check
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Completion/Keys.lean`
@@ -19,6 +19,7 @@ The `key` source is also held to the sources' contract
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- Hints of a sample prefix: a described binding, an undescribed one, a
 named prefix and an unnamed one. -/

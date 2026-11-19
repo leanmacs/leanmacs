@@ -1,8 +1,8 @@
 import Editor.Compile.Contribution
 import Editor.ProjectMode
+import Editor.Test.Listing
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Listing
 
 /-!
 # Model tests: `Editor/Compile/Contribution.lean`
@@ -14,6 +14,7 @@ The root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of the commands the compile mode offers
 (`Compile.offers`, `Editor/Compile/Contribution.lean`): pure, over the

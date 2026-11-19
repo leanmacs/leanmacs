@@ -44,24 +44,29 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Jobs
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
-import ModelTest.Support.Driver
-import ModelTest.Support.Jobs
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 
 /-!
-# Model tests: support: Files
+# The test kit: Files
 
 The file commands' keys, files and driver, and what a check reads of a buffer's
 file and its reload. Shared by several test modules under `ModelTest/Editor/`;
 it holds no checks of its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -370,4 +375,4 @@ def noteRewritten : Option TestDriver :=
     rewritten (finishNamed (fedTo driver (presses "C-o n")).1 Files.loadJob) (inFiles "note.txt")
       reloadedBytes
 
-end ModelTest
+end Editor.Test

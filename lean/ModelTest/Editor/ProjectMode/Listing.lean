@@ -12,17 +12,17 @@ import Editor.ProjectMode
 import Editor.ProjectMode.Listing
 import Editor.State
 import Editor.Store
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
+import Editor.Test.Listing
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.Workspace
 import Editor.Workspace.Modes
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
-import ModelTest.Support.Keys
-import ModelTest.Support.Listing
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.Shell
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/ProjectMode/Listing.lean`
@@ -41,6 +41,7 @@ commands `compile-command` offers and runs, is checked with the compile mode
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The bindings of the listing checks: the shell checks', and the keys
 that open the listing checks' files (`listingFiles`). -/

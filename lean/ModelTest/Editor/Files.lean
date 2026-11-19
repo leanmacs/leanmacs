@@ -44,6 +44,13 @@ import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Model
 import Editor.SyntaxTree.Model.Query
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Jobs
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.Prompts
 import Editor.Text
 import Editor.Text.Model
 import Editor.UndoTree
@@ -51,14 +58,7 @@ import Editor.Value
 import Editor.Watch.Model
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
-import ModelTest.Support.Jobs
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 import ModelTest.Support.Modes
-import ModelTest.Support.Prompts
 
 /-!
 # Model tests: `Editor/Files.lean`
@@ -75,6 +75,7 @@ The root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What reading `snapshot` is refused with in `driver`'s text model:
 `some none` when it reads. -/

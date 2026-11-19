@@ -16,14 +16,14 @@ import Editor.Loop.Driver
 import Editor.ModeLine
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
+import Editor.Test.Prompts
 import Editor.Text
 import Editor.Text.Model
 import ModelTest.Check
 import ModelTest.Support.Buffers
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
-import ModelTest.Support.Keys
-import ModelTest.Support.Prompts
 
 /-!
 # Model tests: `Editor/Buffers.lean`
@@ -35,6 +35,7 @@ The model tests of `Editor/Buffers.lean`: `bufferCommandChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The buffer's fields of the status line of the view `view` in the last
 scene `driver`'s display recorded, a view that is not selected: what

@@ -12,10 +12,10 @@ import Editor.Loop.Driver
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Loop
 import Editor.Text
 import Editor.Text.Contract
 import ModelTest.Support.Evil
-import ModelTest.Support.Loop
 
 /-!
 # Model tests: support: Excerpt
@@ -27,6 +27,7 @@ modules under `ModelTest/Editor/`; it holds no checks of its own.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The stamp of the file `one.txt` the excerpt buffer checks give source
 buffer `one` (`excerptRegistrations`, `one-changed`). -/

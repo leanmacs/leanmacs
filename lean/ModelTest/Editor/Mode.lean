@@ -9,9 +9,9 @@ import Editor.Mode
 import Editor.Program
 import Editor.Role
 import Editor.Scene
+import Editor.Test.Keys
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Keys
 
 /-!
 # Model tests: `Editor/Mode.lean`
@@ -23,6 +23,7 @@ The model tests of `Editor/Mode.lean`: `modeRecordChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A mode the mode checks run on: `listing`, which fills two roles and has
 one suffix, each with a command of its own. -/

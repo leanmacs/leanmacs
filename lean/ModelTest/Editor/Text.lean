@@ -1,8 +1,8 @@
 import Editor.Program
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import ModelTest.Check
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Text.lean`
@@ -14,6 +14,7 @@ The model tests of `Editor/Text.lean`: `originChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of the user's origin (`Origin.user`) and of how a refusal is
 described to the user (`TextError.describe`). -/

@@ -26,17 +26,17 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.Prompts
 import Editor.Text
 import Editor.Themes
 import Editor.Themes.Compiled
 import Editor.Value
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.Prompts
 
 /-!
 # Model tests: `Editor/Themes.lean`
@@ -48,6 +48,7 @@ The model tests of `Editor/Themes.lean`: `themeChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The command `other` of the theme command's checks: it says `other`. -/
 def saysOther : Dispatched := fun _ => do

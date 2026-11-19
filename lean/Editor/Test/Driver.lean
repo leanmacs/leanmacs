@@ -27,27 +27,32 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Completion
+import Editor.Test.Jobs
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.TypedPath
 import Editor.Workspace
-import ModelTest.Support.Completion
-import ModelTest.Support.Jobs
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.States
 
 /-!
-# Model tests: support: Driver
+# The test kit: Driver
 
 The loop's driver over the editor's models and the job model (`TestDriver`),
 with the keys and jobs it is built with and what a check reads back from it.
 Shared by several test modules under `ModelTest/Editor/`; it holds no checks of
 its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -314,4 +319,4 @@ committed into the minibuffer, and the accept key. -/
 def exLine (line : String) : List Event :=
   presses "C-e e" ++ [.commit line] ++ presses "C-e y"
 
-end ModelTest
+end Editor.Test

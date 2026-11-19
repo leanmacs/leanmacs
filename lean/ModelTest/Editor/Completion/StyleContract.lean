@@ -4,8 +4,8 @@ import Editor.Completion.StyleContract
 import Editor.Completion.Styles
 import Editor.Fuzzy
 import Editor.Program
+import Editor.Test.Completion
 import ModelTest.Check
-import ModelTest.Support.Completion
 
 /-!
 # Model tests: `Editor/Completion/StyleContract.lean`
@@ -18,6 +18,7 @@ says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The names of the style contract's properties that do not hold of
 `style`, its fuzzy requests answered by the fuzzy model. -/

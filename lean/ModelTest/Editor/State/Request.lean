@@ -10,13 +10,13 @@ import Editor.Program
 import Editor.Scene
 import Editor.State
 import Editor.State.Request
+import Editor.Test.Completion
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import Editor.UndoTree
 import Editor.Value
 import ModelTest.Check
-import ModelTest.Support.Completion
-import ModelTest.Support.Models
-import ModelTest.Support.States
 
 /-!
 # Model tests: `Editor/State/Request.lean`
@@ -28,6 +28,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The requests a well-formed state is seen to stay well formed under, on
 `hiddenBuffer`, whose buffers' texts are 0, 1 and 2: each kind of request,

@@ -4,12 +4,12 @@ import Editor.Display
 import Editor.Program
 import Editor.Scene
 import Editor.Scroll
+import Editor.Test.Models
 import Editor.Text
 import Editor.Watch
 import Editor.Watch.Model
 import ModelTest.Check
 import ModelTest.Support.Display
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Scroll.lean`
@@ -22,6 +22,7 @@ each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What the follow policy answers for a view of `text` whose scroll anchor
 is at `anchor` and whose cursor is at `head`: the offset to place the anchor

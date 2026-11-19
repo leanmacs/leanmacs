@@ -1,7 +1,7 @@
 import Editor.Event
 import Editor.Keymap
+import Editor.Test.Keys
 import ModelTest.Check
-import ModelTest.Support.Keys
 
 /-!
 # Model tests: `Editor/Keymap.lean`
@@ -13,6 +13,7 @@ The model tests of `Editor/Keymap.lean`: `keymapChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of a keymap's lookup (`Editor/Keymap.lean`): what a sequence
 is bound to, which sequences a binding begins with, and the form of a key a

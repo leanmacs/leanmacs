@@ -23,6 +23,10 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.State
 import Editor.TabCommands
+import Editor.Test.Completion
+import Editor.Test.Keys
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.Themes
@@ -30,10 +34,6 @@ import Editor.Workspace
 import Editor.Workspace.FindFile
 import Editor.Workspace.FindInProject
 import ModelTest.Check
-import ModelTest.Support.Completion
-import ModelTest.Support.Keys
-import ModelTest.Support.Models
-import ModelTest.Support.States
 
 /-!
 # Model tests: `Editor/Completion/Contract.lean`
@@ -45,6 +45,7 @@ The root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The contract's runner on the editor's models (`Completion.Contract.Runner`):
 the source asked with `text` from the focused view of `twoBuffers`, dispatched

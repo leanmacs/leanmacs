@@ -17,14 +17,19 @@ import Editor.Watch
 import Editor.Watch.Model
 
 /-!
-# Model tests: support: Models
+# The test kit: Models
 
 The editor's models (`editorModel`), and programs over the ports run on their
 models. Shared by several test modules under `ModelTest/Editor/`; it holds no
 checks of its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -109,4 +114,4 @@ def onTextModel {α : Type} (program : TextM α) : Option α :=
   | .ok value => some value
   | .error _ => none
 
-end ModelTest
+end Editor.Test

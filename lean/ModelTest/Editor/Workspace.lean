@@ -18,14 +18,14 @@ import Editor.ProjectMode.Format
 import Editor.Scene
 import Editor.State
 import Editor.State.Request
+import Editor.Test.Driver
+import Editor.Test.Models
+import Editor.Test.States
+import Editor.Test.Workspace
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Models
-import ModelTest.Support.States
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/Workspace.lean`
@@ -38,6 +38,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of projects, workspaces and locations as data
 (`Editor/Workspace.lean`): how an `origin` URL is normalised, how a project

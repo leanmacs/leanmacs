@@ -29,11 +29,11 @@ import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
+import Editor.Test.Driver
+import Editor.Test.Models
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
-import ModelTest.Support.Driver
-import ModelTest.Support.Models
 
 /-!
 # Model tests: support: Frame
@@ -45,6 +45,7 @@ under `ModelTest/Editor/`; it holds no checks of its own.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The registry of the frame command checks: the frame's commands, and the
 ex line's, whose `quit` the frame's `s-q` names, and the frame's bindings,

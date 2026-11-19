@@ -8,22 +8,27 @@ import Editor.Layout
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Completion
+import Editor.Test.Geometry
 import Editor.Text
 import Editor.UndoTree
 import Editor.Value
-import ModelTest.Support.Completion
-import ModelTest.Support.Geometry
 
 /-!
-# Model tests: support: States
+# The test kit: States
 
 Editor states the checks start from: windows, buffers, tabs, docked and floating
 windows, open prompts with their candidates and listings, and a session at
 point. Shared by several test modules under
 `ModelTest/Editor/`; it holds no checks of its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -207,4 +212,4 @@ def stateSession (typed : String := "a") : AtPointSession :=
   { view := ⟨0⟩, buffer := ⟨0⟩, source := "line", start := ⟨⟨0⟩, 90⟩, stop := ⟨⟨0⟩, 91⟩
     typed, shown := typed }
 
-end ModelTest
+end Editor.Test

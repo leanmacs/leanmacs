@@ -45,14 +45,14 @@ import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.TabBar
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import Editor.UndoTree
 import Editor.Value
 import Editor.Workspace
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 import ModelTest.Support.Modes
 import ModelTest.Support.Vim
 
@@ -68,6 +68,7 @@ scene, history and registers. Shared by several test modules under
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- Texts of the resting rule's checks, each with every position it has, in
 order, and where each rests under `onCell` and under `offLineBreak`,

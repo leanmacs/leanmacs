@@ -19,15 +19,15 @@ import Editor.Process.Environment
 import Editor.ProjectMode
 import Editor.Setup
 import Editor.TabBar
+import Editor.Test.Config
+import Editor.Test.Keys
+import Editor.Test.Models
 import Editor.Value
 import Editor.Window
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Editor.Config.Reload
-import ModelTest.Support.Config
 import ModelTest.Support.Elaborator
-import ModelTest.Support.Keys
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Config/Packages.lean`
@@ -40,6 +40,7 @@ what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A package called `name` that registers one thing of every kind an owner
 holds, each named after `name`, and a style default for the category

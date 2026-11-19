@@ -3,8 +3,8 @@ import Editor.Config.Registry
 import Editor.ModeLine
 import Editor.ModeLine.Compiled
 import Editor.Package
+import Editor.Test.Config
 import ModelTest.Check
-import ModelTest.Support.Config
 
 /-!
 # Model tests: `Editor/ModeLine/Compiled.lean`
@@ -16,6 +16,7 @@ The root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of the `mode-line` package (`Editor/ModeLine/Compiled.lean`):
 what it registers is the shipped segments. -/

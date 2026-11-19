@@ -16,11 +16,11 @@ import Editor.Scene
 import Editor.State
 import Editor.TabCommands
 import Editor.TabCommands.Compiled
+import Editor.Test.Loop
+import Editor.Test.States
 import Editor.Text
 import Editor.WindowCommands.Compiled
 import ModelTest.Support.Evil
-import ModelTest.Support.Loop
-import ModelTest.Support.States
 
 /-!
 # Model tests: support: Windows
@@ -33,6 +33,7 @@ checks of its own.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- Active keymaps, for every view, that bind each key string of `table` to
 the command name beside it, as config's `bindKey` binds one. -/

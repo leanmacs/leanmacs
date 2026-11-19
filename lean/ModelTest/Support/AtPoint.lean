@@ -29,13 +29,13 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import Editor.Workspace
 import ModelTest.Support.Evil
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 
 /-!
 # Model tests: support: AtPoint
@@ -49,6 +49,7 @@ several test modules under `ModelTest/Editor/`; it holds no checks of its own.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The contract's runner of at-point sources on the editor's models
 (`Completion.AtPointContract.Runner`): the at-point source asked at

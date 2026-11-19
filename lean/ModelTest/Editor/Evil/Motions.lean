@@ -19,6 +19,8 @@ import Editor.Menu
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import Editor.UndoTree
@@ -28,8 +30,6 @@ import Editor.Watch.Model
 import ModelTest.Check
 import ModelTest.Support.Display
 import ModelTest.Support.Evil
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 import ModelTest.Support.OperatorRows
 
 /-!
@@ -43,6 +43,7 @@ its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The counts every motion is swept with, as a move's invocation carries
 one: 0, which is no count, a count of 1, a count inside most of the texts,

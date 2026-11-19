@@ -2,7 +2,6 @@ import Editor.Api.Cases
 import Editor.Api.Theorems
 import Editor.AtPoint.Compiled
 import Editor.BindingSearch.Compiled
-import Editor.Buffers.Compiled
 import Editor.Clipboard.Contract
 import Editor.Completion.AtPointContract
 import Editor.Completion.Compiled
@@ -13,22 +12,17 @@ import Editor.Completion.StyleContract
 import Editor.Display.Contract
 import Editor.Evil.Compiled
 import Editor.Evil.Theorems
-import Editor.Ex.Compiled
 import Editor.ExecuteCommand.Compiled
-import Editor.File.Cases
-import Editor.Files.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Contract
 import Editor.Json
 import Editor.Language.Compiled
-import Editor.Loop.Driver
 import Editor.Main
 import Editor.Menu.Compiled
-import Editor.Minibuffer.Compiled
 import Editor.ModeLine.Compiled
-import Editor.Shell.Compiled
-import Editor.SyntaxTree.Contract
 import Editor.TabCommands.Compiled
+import Editor.Test.Listing
+import Editor.Test.Prompts
 import Editor.Themes.Compiled
 import Editor.Themes.Picture
 import Editor.VersionControl.Compiled
@@ -66,10 +60,15 @@ The core modules no other core module imports: the modules that define
 the packages still in the core (`….Compiled`), the contracts, fakes, cases
 and theorems, the executable's entry (`Editor.Main`, which brings the
 hosts, the executable's modes and `Editor.Command.Append`), `Editor.Json`,
-and the driver of the loop that tests run it with (`Editor.Loop.Driver`).
-Everything else comes with them. The theorem modules are also the config
-base's imports (`Editor.lean`); they are named here because no core module
-imports the base.
+and the test kit the core publishes for a package's tests (`Editor.Test.…`,
+`Editor/Test/`: `Editor.Test.Listing` and `Editor.Test.Prompts`, which
+import the rest of it). Everything else comes with them: the kit is the
+support the core's own model tests are written on, so it imports the
+driver of the loop that tests run it with (`Editor.Loop.Driver`) and the
+modules that define the packages its fixtures register, and those are not
+named here again. The theorem modules are also the config base's imports
+(`Editor.lean`); they are named here because no core module imports the
+base.
 
 ## The check
 

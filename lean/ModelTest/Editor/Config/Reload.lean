@@ -41,16 +41,16 @@ import Editor.Setup
 import Editor.State
 import Editor.Store
 import Editor.TabBar
+import Editor.Test.Config
+import Editor.Test.Keys
+import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import Editor.Value
 import Editor.Window
 import Editor.Workspace
 import ModelTest.Check
-import ModelTest.Support.Config
 import ModelTest.Support.Elaborator
-import ModelTest.Support.Keys
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Config/Reload.lean`
@@ -62,6 +62,7 @@ The model tests of `Editor/Config/Reload.lean`: `reloadChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The state the reducer reaches from `state` through `events`, and every
 effect on the way. -/

@@ -69,6 +69,16 @@ import Editor.State
 import Editor.State.Request
 import Editor.SyntaxTree
 import Editor.TabBar
+import Editor.Test.Completion
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Geometry
+import Editor.Test.Jobs
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.Prompts
+import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.UndoTree
@@ -80,19 +90,9 @@ import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.AtPoint
 import ModelTest.Support.Candidates
-import ModelTest.Support.Completion
 import ModelTest.Support.Display
-import ModelTest.Support.Driver
 import ModelTest.Support.Evil
-import ModelTest.Support.Files
-import ModelTest.Support.Geometry
-import ModelTest.Support.Jobs
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 import ModelTest.Support.Modes
-import ModelTest.Support.Prompts
-import ModelTest.Support.States
 import ModelTest.Support.Views
 import ModelTest.Support.Vim
 
@@ -124,6 +124,7 @@ runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A report of the scheme `switching`, unlike the default in every field
 the scene shows: a block in a face of its own, one status field, an
@@ -1392,8 +1393,8 @@ def dispatchRollbackChecks : List Check :=
           let keys : Loop.Keys tallying :=
             { maps := fun _ _ =>
                 [Keymap.ofList
-                    [(ModelTest.keys "C-c b", invoke "boom"),
-                      (ModelTest.keys "C-c s", invoke "stamp")]]
+                    [(Editor.Test.keys "C-c b", invoke "boom"),
+                      (Editor.Test.keys "C-c s", invoke "stamp")]]
               command? := fun name =>
                 ([("boom", boom), ("stamp", stamp)].find? (·.1 == name)).map (·.2) }
           let program : EditorM (List (Nat × Nat) × String) := do
@@ -1429,7 +1430,7 @@ def dispatchRollbackChecks : List Check :=
           let keys := dispatchKeys [("C-c r", invoke "release")] [("release", release)]
           let ran : EditorM (String × String) := do
             let state ← twoBuffers
-            let ran ← Loop.run keys state (invoke "release") (ModelTest.keys "C-c r")
+            let ran ← Loop.run keys state (invoke "release") (Editor.Test.keys "C-c r")
             return (ran.state.echo, ← (⟨1⟩ : TextId).read)
           (match (ran.runModel editorModel).1 with
             | .ok (echo, other) =>
@@ -2697,8 +2698,8 @@ def dispatchCloseViewChecks : List Check :=
   let keys : Loop.Keys remembering :=
     { maps := fun _ _ =>
         [Keymap.ofList
-            [(ModelTest.keys "C-c 1", invoke "focus"), (ModelTest.keys "C-c x", invoke "close"),
-              (ModelTest.keys "C-c f", invoke "fail")]]
+            [(Editor.Test.keys "C-c 1", invoke "focus"), (Editor.Test.keys "C-c x", invoke "close"),
+              (Editor.Test.keys "C-c f", invoke "fail")]]
       command? := fun name =>
         ([("focus", focus),
                   ("close", fun call => do
@@ -2767,9 +2768,9 @@ def dispatchMinibufferNoticeChecks : List Check :=
   let keys : Loop.Keys noticing :=
     { maps := fun _ _ =>
         [Keymap.ofList
-            [(ModelTest.keys "C-c a", invoke "ask"), (ModelTest.keys "C-c f", invoke "fail"),
-              (ModelTest.keys "C-c y", invoke "accept"), (ModelTest.keys "C-c s", invoke "swap"),
-              (ModelTest.keys "C-c n", invoke "idle")]]
+            [(Editor.Test.keys "C-c a", invoke "ask"), (Editor.Test.keys "C-c f", invoke "fail"),
+              (Editor.Test.keys "C-c y", invoke "accept"),
+              (Editor.Test.keys "C-c s", invoke "swap"), (Editor.Test.keys "C-c n", invoke "idle")]]
       command? := fun name =>
         ([("ask", ran asks), ("fail", failingAfter fun _ => asks), ("idle", ran (pure ())),
                   ("accept", ran (discard acceptPrompt)),

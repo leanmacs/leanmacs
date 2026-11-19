@@ -22,12 +22,12 @@ import Editor.Scene
 import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Model
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import Editor.Vocabulary
 import ModelTest.Check
 import ModelTest.Support.Evil
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 import ModelTest.Support.OperatorRows
 import ModelTest.Support.Vim
 
@@ -42,6 +42,7 @@ them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- `indentDriver` over `fixture`, its syntax tree model saying the tree of
 the text's last edit is not delivered (`SyntaxTreeModel.delivered`): what a

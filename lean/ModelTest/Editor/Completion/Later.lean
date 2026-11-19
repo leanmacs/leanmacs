@@ -19,14 +19,14 @@ import Editor.Process.Model
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.Test.Completion
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Prompts
 import Editor.Text
 import Editor.Text.Model
 import ModelTest.Check
 import ModelTest.Support.Candidates
-import ModelTest.Support.Completion
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Prompts
 
 /-!
 # Model tests: `Editor/Completion/Later.lean`
@@ -38,6 +38,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- `driver` with the job that posted `arguments` delivering them, as the
 command `minibuffer-candidates`, as a host delivers a job's post

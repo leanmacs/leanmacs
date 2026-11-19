@@ -1,11 +1,11 @@
 import Editor.State
+import Editor.Test.Driver
 import Editor.VersionControl
 import Editor.VersionControl.Blame
 import Editor.VersionControl.Review
 import ModelTest.Check
 import ModelTest.Editor.VersionControl.Log
 import ModelTest.Editor.VersionControl.Review
-import ModelTest.Support.Driver
 import ModelTest.Support.VersionControl
 
 /-!
@@ -19,6 +19,7 @@ says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 open Editor.VersionControl
 
 /-- The checks of the blame's pure view (`Editor/VersionControl/Blame.lean`,

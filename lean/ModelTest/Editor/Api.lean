@@ -25,6 +25,11 @@ import Editor.Program
 import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
+import Editor.Test.Completion
+import Editor.Test.Driver
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.UndoTree
@@ -34,12 +39,7 @@ import Editor.Watch.Model
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Candidates
-import ModelTest.Support.Completion
-import ModelTest.Support.Driver
 import ModelTest.Support.Evil
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.States
 
 /-!
 # Model tests: `Editor/Api.lean`
@@ -54,6 +54,7 @@ shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- `command` run dispatched from `twoBuffers` with nothing told of the
 registry, on the editor's models: how it ended, the state it left, and the

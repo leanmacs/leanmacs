@@ -16,12 +16,12 @@ import Editor.Loop.Driver
 import Editor.Minibuffer
 import Editor.Minibuffer.Compiled
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
+import Editor.Test.Prompts
 import ModelTest.Check
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
-import ModelTest.Support.Prompts
 
 /-!
 # Model tests: `Editor/BindingSearch.lean`
@@ -33,6 +33,7 @@ root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The command `marked` of the binding search's checks: it says `marked`,
 then what it was called with (`calledWith`). -/

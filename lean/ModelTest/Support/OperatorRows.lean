@@ -9,11 +9,11 @@ import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Scene
 import Editor.State
+import Editor.Test.Keys
+import Editor.Test.Loop
+import Editor.Test.Models
 import Editor.Text
 import ModelTest.Support.Evil
-import ModelTest.Support.Keys
-import ModelTest.Support.Loop
-import ModelTest.Support.Models
 
 /-!
 # Model tests: support: OperatorRows
@@ -26,6 +26,7 @@ own.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- One row of an oracle table of the operators: keys, the text and the
 cursor they are pressed from, and what Vim leaves. -/
@@ -85,7 +86,7 @@ def breaksOff (before keys after : String) : OperatorRow :=
 /-- What is wrong with the row, if anything: what its keys left when that
 is not what the row says, and a key string that names no keys. -/
 def wrong (row : OperatorRow) : Option String :=
-  if (ModelTest.keys row.keys).isEmpty then some s!"{repr row.keys} names no keys"
+  if (Editor.Test.keys row.keys).isEmpty then some s!"{repr row.keys} names no keys"
   else
     let edited :=
       match row.tree with

@@ -6,15 +6,15 @@ import Editor.Process
 import Editor.Process.Model
 import Editor.ProjectMode
 import Editor.Setup
+import Editor.Test.Driver
+import Editor.Test.Keys
+import Editor.Test.Shell
 import Editor.Workspace
 import Editor.Workspace.Model
 import Editor.Workspace.Modes
-import ModelTest.Support.Driver
-import ModelTest.Support.Keys
-import ModelTest.Support.Shell
 
 /-!
-# Model tests: support: Listing
+# The test kit: Listing
 
 A contribution with a listing, `t-mode`, and its world: the repositories it
 is found in, what its listing prints in each, and what a driver is asked
@@ -24,9 +24,14 @@ no package outside the core, and the compile mode's checks of what it makes
 of a listing (`ModelTest/Editor/Compile.lean`,
 `ModelTest/Editor/Compile/Contribution.lean`) use the same world. It holds no
 checks of its own.
+
+Published for a package's tests: it is a module of the core's test kit, a
+test double in the namespace `Editor.Test`, which a package's test modules
+may import and its library may not (`docs/design/packages.md`, "What a
+package may import"). The core's own model tests are written on it.
 -/
 
-namespace ModelTest
+namespace Editor.Test
 
 open Editor
 
@@ -118,4 +123,4 @@ def settledNames (driver : TestDriver) (keys : String) : TestDriver × Array Str
 def startedCount (driver : TestDriver) (command : Process.Command) : Nat :=
   (driver.jobs.processes.started.filter (· == command)).size
 
-end ModelTest
+end Editor.Test

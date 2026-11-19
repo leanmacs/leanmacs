@@ -1,6 +1,6 @@
+import Editor.Test.Jobs
 import Editor.WindowCheck
 import ModelTest.Check
-import ModelTest.Support.Jobs
 
 /-!
 # Model tests: `Editor/WindowCheck.lean`
@@ -13,6 +13,7 @@ them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- A key press that produced `text`. -/
 def pressed (text : String) : WindowCheck.Input :=

@@ -20,19 +20,19 @@ import Editor.ProjectMode.Listing
 import Editor.Scene
 import Editor.Setup
 import Editor.State
+import Editor.Test.Driver
+import Editor.Test.Files
+import Editor.Test.Keys
+import Editor.Test.Models
+import Editor.Test.Prompts
+import Editor.Test.Shell
+import Editor.Test.Workspace
 import Editor.Text
 import Editor.Workspace
 import Editor.Workspace.Model
 import Editor.Workspace.Modes
 import ModelTest.Check
 import ModelTest.Support.Compile
-import ModelTest.Support.Driver
-import ModelTest.Support.Files
-import ModelTest.Support.Keys
-import ModelTest.Support.Models
-import ModelTest.Support.Prompts
-import ModelTest.Support.Shell
-import ModelTest.Support.Workspace
 
 /-!
 # Model tests: `Editor/Compile/Shipped.lean`
@@ -45,6 +45,7 @@ what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- What cargo prints of rustc's error in the probe crate, after its
 `Compiling` line: the message, its location and the snippet under it. -/

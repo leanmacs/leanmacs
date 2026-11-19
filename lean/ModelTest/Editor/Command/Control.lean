@@ -1,8 +1,8 @@
 import Editor.Api
 import Editor.Command.Control
+import Editor.Test.Models
+import Editor.Test.States
 import ModelTest.Check
-import ModelTest.Support.Models
-import ModelTest.Support.States
 
 /-!
 # Model tests: `Editor/Command/Control.lean`
@@ -14,6 +14,7 @@ The root module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of what a runner answers a control request where no loop
 dispatched the command (`ControlRequest.bare`,

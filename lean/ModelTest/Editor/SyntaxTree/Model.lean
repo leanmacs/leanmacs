@@ -5,9 +5,9 @@ import Editor.SyntaxTree.Contract
 import Editor.SyntaxTree.Model
 import Editor.SyntaxTree.Model.Json
 import Editor.SyntaxTree.Model.Query
+import Editor.Test.Models
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/SyntaxTree/Model.lean`
@@ -19,6 +19,7 @@ module `ModelTest` runs them; its module doc says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The model, but a question of captures in a range answers the whole
 text's: a model that breaks the range rule. -/

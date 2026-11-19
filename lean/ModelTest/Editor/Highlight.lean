@@ -17,11 +17,11 @@ import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Model
 import Editor.SyntaxTree.Model.Query
+import Editor.Test.Models
+import Editor.Test.States
 import Editor.Text
 import ModelTest.Check
-import ModelTest.Support.Models
 import ModelTest.Support.Modes
-import ModelTest.Support.States
 
 /-!
 # Model tests: `Editor/Highlight.lean`
@@ -34,6 +34,7 @@ says what each shows.
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- The checks of the capture-to-face rule (`Editor/Highlight.lean`), pure:
 the shipped default, the fallback of a dotted capture to its first

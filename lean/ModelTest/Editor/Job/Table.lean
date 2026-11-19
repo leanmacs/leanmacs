@@ -1,7 +1,7 @@
 import Editor.Config.Owner
 import Editor.Job.Table
+import Editor.Test.Jobs
 import ModelTest.Check
-import ModelTest.Support.Jobs
 
 /-!
 # Model tests: `Editor/Job/Table.lean`
@@ -13,6 +13,7 @@ The model tests of `Editor/Job/Table.lean`: `tableChecks`. The root module
 namespace ModelTest
 
 open Editor
+open Editor.Test
 
 /-- An entry of a job table as a check compares it: its id, its owner's name,
 its name and its handle. -/
