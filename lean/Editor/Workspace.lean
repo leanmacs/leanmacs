@@ -40,7 +40,9 @@ It imports only the plain trees and the pure part of a child's environment
   directory that holds the common git directory; else the root's.
 - **Labelling a workspace** (`Workspace.label`): `name@branch`, or
   `name@<the root's last component>` when it is detached or has no branch,
-  so two workspaces of one project are told apart.
+  so two workspaces of one project are told apart. The rule is
+  `Workspace.labelOf`, which a worktree the table does not know yet is
+  labelled by too.
 - **The finder's shared rules** are here too, pure, so the model and the
   real finder (`Editor/Workspace/Model.lean`, `Editor/Workspace/Finder.lean`)
   take them from one place: the config adapter (`fromConfig?`, the deepest
@@ -341,12 +343,18 @@ def Location.name : Location → String
 
 namespace Workspace
 
-/-- How a workspace is shown (`Workspace.label`, in the module docs):
-`name@branch`, or `name@<the root's last component>`. -/
+/-- How a checkout of the project named `name`, at `location` with `branch`
+checked out, is shown (`Workspace.label`, in the module docs):
+`name@branch`, or `name@<the root's last component>`. The one rule, for a
+workspace of the table and for a worktree not yet found alike. -/
+def labelOf (name : String) (branch : Option Branch) (location : Location) : String :=
+  match branch with
+  | some (.named branch) => s!"{name}@{branch}"
+  | _ => s!"{name}@{location.name}"
+
+/-- How a workspace is shown (`labelOf`). -/
 def label (workspace : Workspace) : String :=
-  match workspace.branch with
-  | some (.named branch) => s!"{workspace.project.name}@{branch}"
-  | _ => s!"{workspace.project.name}@{workspace.location.name}"
+  labelOf workspace.project.name workspace.branch workspace.location
 
 /-- The name a buffer keeps its workspace's location under, as a
 buffer-local value (`Location.encode`). -/

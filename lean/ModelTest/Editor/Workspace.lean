@@ -81,6 +81,22 @@ def workspaceDataChecks : List Check :=
           { location := .local "/m", project := Project.of "/m" none none none }
         pure ([onMain, detached, marked].map Workspace.label == ["r@main", "r@w", "m@m"]) },
     { name :=
+        "a worktree not yet found is labelled by the one rule a workspace is: labelOf gives r@d for a detached /a/d, r@fix on fix, name@<last component> for no branch and for a registered root, and agrees with label"
+      run :=
+        let project := Project.of "/r" (some "/r/.git") (some origin) none
+        let workspaces : List Workspace :=
+          [{ location := .local "/r", branch := some (.named "main"), project },
+            { location := .local "/w", branch := some .detached, project },
+            { location := .reachable "ssh" "host" "/srv/r", project }]
+        pure <|
+          Workspace.labelOf "r" (some .detached) (.local "/a/d") == "r@d" &&
+            Workspace.labelOf "r" (some (.named "fix")) (.local "/u") == "r@fix" &&
+            Workspace.labelOf "r" none (.local "/a/d/") == "r@d" &&
+            Workspace.labelOf "r" none (.reachable "ssh" "host" "/srv/r") == "r@r" &&
+            workspaces.all fun workspace =>
+              Workspace.labelOf workspace.project.name workspace.branch workspace.location ==
+                workspace.label },
+    { name :=
         "a local location can read files, run commands and watch files; one reachable by a command and one known only by its branch can do none of them"
       run :=
         let all : Location.Capabilities :=
