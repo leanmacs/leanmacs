@@ -1372,6 +1372,19 @@ package's tests are by convention are in
   the default set will.
 - **A package with no test driver fails `test`**, since Lake refuses to
   test it.
+- **`run` says what it ran, and the gate requires it.** A step's exit
+  status says nothing failed, not that anything ran. So `run` prints a line
+  for each linked test and each headless fixture (`package-set: linked test
+  <module> of <package>`, `package-set: headless fixture <name> of
+  <package>`) and a last line with the counts, and `ffi-test` keeps the
+  output and requires the fixture package's linked test, `hello`, `reply`
+  and `package-set: ran 1 linked test and 2 headless fixtures over 2
+  packages`. A fixture or a linked test that is renamed, moved or no longer
+  found by the naming convention fails that line.
+- **`run` refuses a directory that is not a whole fixture.** A directory
+  under a package's `tests/headless/` with no `config/`, no `script` or no
+  `expected` is exit 2, naming what is missing, and so is a set whose
+  packages hold no linked test and no fixture at all.
 - **The fixture's own checks.** `greeting`: three checks in its driver
   (`GreetingTest/Greeting.lean`), a linked test that reads its text back
   from the Rust library (`GreetingTest/Linked.lean`), and the fixture
@@ -1385,8 +1398,10 @@ package's tests are by convention are in
   with no doc string in `Greeting.lean` fails `mise run lean` (in its
   `lean-test` step, where `lake test` first builds the library under the
   package's linter options); a misformatted line fails `mise run lean-fmt`
-  (`would-format`); and a changed `expected` fails `mise run ffi-test`
-  with the diff.
+  (`would-format`); a changed `expected` fails `mise run ffi-test`
+  with the diff; a fixture with its `script` moved away is refused by `run`
+  with exit 2; and with the `reply` fixture moved away `mise run ffi-test`
+  fails saying which line the package steps did not print.
 - **`run` builds nothing**, so `ffi-test` still only runs what `lean`
   built, and may run beside `lean-fmt`.
 

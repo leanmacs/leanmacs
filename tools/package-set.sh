@@ -46,12 +46,21 @@
 #   `script` and `expected`, run on the set's editor
 #   (`<set dir>/.lake/build/bin/editor headless <sysroot> <core olean dir>
 #   <fixture>/config <fixture>/script`), whose output must be exactly
-#   `expected`. `run` builds nothing: `build` comes first.
+#   `expected`. `run` builds nothing: `build` comes first. It prints a
+#   line for each thing it runs, `package-set: linked test <module> of
+#   <package>` and `package-set: headless fixture <name> of <package>`, and
+#   a last line with the counts, `package-set: ran <n> linked test(s) and
+#   <m> headless fixture(s) over <k> package(s)`, so a caller can require
+#   that what it is there to run did run.
 #
 # It exits 0 when the step passed for every package, and with the failing
 # command's status at the first that did not. It exits 2 for a command line
 # it does not take, when Lake fails the query, and when Lake names no
 # package for the set, so that a step cannot pass by running over nothing.
+# For the same reason `run` exits 2 for a directory under a package's
+# `tests/headless/` that is not a whole fixture (no `config/`, no `script`
+# or no `expected`), which it would otherwise skip in silence, and when the
+# set's packages hold no linked test and no headless fixture at all.
 set -eu
 
 usage() {
@@ -104,10 +113,16 @@ case $step in
     ;;
 esac
 
+# What `run` ran, for its last line.
+count=0
+linked_count=0
+fixture_count=0
+
 # The list is read on a descriptor of its own, so that no command of a step
 # can take it for its input.
 while IFS=$tab read -r name dir linked linked_exe <&3; do
   echo "package-set: $step $name ($dir)"
+  count=$((count + 1))
   case $step in
     test)
       lake -d "$dir" test --wfail
@@ -128,18 +143,37 @@ while IFS=$tab read -r name dir linked linked_exe <&3; do
       ;;
     run)
       if [ "$linked" != - ]; then
-        echo "package-set: linked test $linked"
+        echo "package-set: linked test $linked of $name"
         (cd "$dir" && "$linked_exe" "$sysroot" "$oleans")
+        linked_count=$((linked_count + 1))
       fi
-      for fixture in "$dir"/tests/headless/*/; do
-        fixture=${fixture%/}
-        [ -f "$fixture/script" ] || continue
-        echo "package-set: headless fixture $fixture"
+      for fixture in "$dir"/tests/headless/*; do
+        # With no entry under `tests/headless/` the pattern stays as written.
+        [ -e "$fixture" ] || continue
+        for part in config script expected; do
+          if [ ! -e "$fixture/$part" ]; then
+            echo "package-set: $fixture is no headless fixture: it has no \`$part\`" >&2
+            exit 2
+          fi
+        done
+        echo "package-set: headless fixture ${fixture##*/} of $name"
         out=$("$editor" headless "$sysroot" "$oleans" "$fixture/config" "$fixture/script")
         printf '%s\n' "$out" | diff "$fixture/expected" -
+        fixture_count=$((fixture_count + 1))
       done
       ;;
   esac
 done 3<<LIST
 $packages
 LIST
+
+if [ "$step" = run ]; then
+  if [ "$linked_count" -eq 0 ] && [ "$fixture_count" -eq 0 ]; then
+    echo "package-set: the packages of the set in $set_dir hold no linked test and no headless fixture, so there is nothing to run" >&2
+    exit 2
+  fi
+  plural() {
+    if [ "$1" -eq 1 ]; then printf '%s %s' "$1" "$2"; else printf '%s %ss' "$1" "$2"; fi
+  }
+  echo "package-set: ran $(plural "$linked_count" "linked test") and $(plural "$fixture_count" "headless fixture") over $(plural "$count" package)"
+fi

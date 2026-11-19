@@ -258,7 +258,7 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 | `test` | `lake -d <package> test --wfail`; a package with no test driver fails the step | `lean-test`, with the `cargo` that fails first on the `PATH` |
 | `build` | Once, the set's `editor`; then `lake -d <package> build --wfail`, the package's default targets under its own linter options; and its linked test's executable | `lean` |
 | `fmt` (`format` rewrites) | `lean-fmt format --check` and `lean-fmt check`, with `--root <package>`, from the formatter's host | `lean-fmt` (`lean-format`) |
-| `run` | The linked test, in the package's directory; then each headless fixture on the set's `editor`, compared with its `expected` | `ffi-test` |
+| `run` | The linked test, in the package's directory; then each headless fixture on the set's `editor`, compared with its `expected`. It prints what it ran, and the gate requires the fixture packages' linked test and fixtures among it | `ffi-test` |
 
 - **The packages a step runs over** are those of the set that are path
   dependencies and hold a Lean library, other than the core, which the

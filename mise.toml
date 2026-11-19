@@ -663,7 +663,14 @@ run = [
   # (tests/packages/.lake/build/bin/editor), must print exactly their
   # `expected`. The fixture package's command runs there, so its package
   # was built by that build and is in the generated root.
-  "sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
+  #
+  # The step's exit status says nothing failed, not that anything ran, so
+  # its output is kept and must hold the line of each thing it is here to
+  # run: the fixture package's linked test, its fixture `hello`, the
+  # fixture `reply` of the package that requires it, and the count of all
+  # three. A fixture or a linked test that is renamed, moved or no longer
+  # found fails this line.
+  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: ran 1 linked test and 2 headless fixtures over 2 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
   # And the editor of the default set, which does not hold the fixture
   # package, has no such command: on the same config and script its
   # headless mode must print `run greeting-hello: no such command`. So the
