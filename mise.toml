@@ -831,6 +831,36 @@ description = "Opt-in, never part of ci; macOS only: measure what each import se
 depends = ["lean"]
 run = "tools/module-bench.sh lean"
 
+# Opt-in: run it by hand, on macOS on arm64, from a shell that is not itself
+# sandboxed, and do not add it to `ci` or to hk.pkl: the gate runs on Linux
+# too, where it is refused with the reason, and it copies the 3 GB toolchain.
+# Unlike the benchmarks it asserts: it fails at the first step that does not
+# hold, naming it.
+#
+# The user-side link, checked (tools/user-link-check.sh): can an `editor` be
+# linked on a user's Mac from pieces the app ships, with the clang and
+# ld64.lld the Lean toolchain bundles and no Xcode command line tools? It
+# stages the toolchain, the editor's `.olean` files, objects, glue object and
+# Rust archive as `lean` built them, and link stubs made from the built
+# editor's import table (tools/link-stubs.sh), in a temporary directory;
+# shows that a sandbox (tools/user-link/sandbox.sb) makes the tools, both
+# SDKs, the real toolchain and the repository unreachable; builds the
+# trivial package tests/user-link/package and links an `editor` from it
+# inside that sandbox with the staged `lake`; signs it ad hoc; and runs its
+# headless mode on tests/headless and on tests/user-link, where the
+# package's command must run. It then shows the linker opened nothing
+# outside the stage, and prints the staged pieces and the medians of five
+# timed runs. `tools/user-link-check.sh lean --linker system` is the
+# baseline: the same link with /usr/bin/cc and the SDK. The decision and the
+# figures are in docs/design/lean-runtime.md, "A link on the user's machine,
+# measured". It takes about half a minute. The staged copies are made with
+# `cp -c`, which clones on APFS; where it cannot clone, the stage is about
+# 3.4 GB of temporary disk.
+[tasks.user-link-check]
+description = "Opt-in, never part of ci; macOS on arm64 only: link an editor from the trivial package tests/user-link/package and the staged pieces with the Lean toolchain's own clang and ld64.lld, in a sandbox where the Xcode command line tools cannot be reached, sign it ad hoc and run its headless mode (tools/user-link-check.sh). It asserts"
+depends = ["lean"]
+run = "tools/user-link-check.sh lean"
+
 # Opt-in: run it by hand on a quiet machine, and do not add it to `ci` or to
 # hk.pkl. It measures and asserts nothing: its numbers depend on the machine
 # and on what else the machine is doing, so none of them is a pass or a fail.

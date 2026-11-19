@@ -1,0 +1,13 @@
+# The editor's modules as a prebuilt Lake package, for the user-side link
+# check (tools/user-link-check.sh; docs/design/lean-runtime.md, "A link on
+# the user's machine, measured"). The check copies this file and
+# lake-manifest.json into `<stage>/core`, beside `lib/`, which holds the
+# `.olean` file of each of the editor's modules.
+#
+# It has no target, so Lake builds nothing of it and writes nothing into
+# its directory. What it gives the package that requires it is its library
+# directory on the search path Lake hands `lean`: `buildDir` and
+# `leanLibDir` make that `<stage>/core/lib`.
+name = "editor-core"
+buildDir = "."
+leanLibDir = "lib"
