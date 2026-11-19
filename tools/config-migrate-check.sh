@@ -45,8 +45,10 @@
 #    one module name; a file whose name gives no module name, having no
 #    letter after its digits; a `Config/<Name>.lean` that is already
 #    there; a file that would go in `init.lean` before another and leaves a
-#    namespace open, or closes one it did not open, which it must name. It
-#    converts nothing, with status 0, in a directory with no `.lean` file.
+#    namespace open, or closes one it did not open, which it must name; a
+#    file that already starts with an import header, which it must name;
+#    and a root spelt `Init.lean`, naming it and `init.lean`. It converts
+#    nothing, with status 0, in a directory with no `.lean` file.
 #
 # It exits 0 and prints one line when all of that holds, and otherwise says
 # what does not and exits 1. Everything it writes is in a temporary
@@ -282,6 +284,37 @@ LEAN
 refused "$work/closes" "a file that would go in init.lean before another and closes what it did not open"
 grep -q '10-setup.lean' "$work/refusal" ||
   fail "a file that closes what it did not open: the refusal does not name the file"
+
+# A file that already starts with an import header is not the old form:
+# converting it would put a second header after its own. A root spelt
+# otherwise than init.lean is one, and so is any other headed file.
+write "$work/headed/10-keys.lean" <<'LEAN'
+def keys : Nat := 1
+LEAN
+write "$work/headed/90-setup.lean" <<'LEAN'
+-- The setup.
+import Editor
+open Editor
+
+def setup : SetupM Unit :=
+  pure ()
+LEAN
+refused "$work/headed" "a file that already starts with an import header"
+grep -q '90-setup.lean' "$work/refusal" ||
+  fail "a file that already starts with an import header: the refusal does not name the file"
+
+write "$work/misspelt/Init.lean" <<'LEAN'
+import Editor
+open Editor
+
+def setup : SetupM Unit :=
+  pure ()
+LEAN
+refused "$work/misspelt" "a root spelt Init.lean"
+grep -q 'Init.lean' "$work/refusal" ||
+  fail "a root spelt Init.lean: the refusal does not name the file"
+grep -q 'init.lean' "$work/refusal" ||
+  fail "a root spelt Init.lean: the refusal does not name init.lean"
 
 mkdir "$work/empty"
 printf 'notes\n' >"$work/empty/notes.txt"

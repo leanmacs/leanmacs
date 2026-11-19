@@ -1317,8 +1317,10 @@ directory the script makes and removes.
      give one module name; a file whose name has no letter after its
      digits; a `Config/<Name>.lean` that is already there; a file that
      would go in `init.lean` before another and leaves a namespace open, or
-     closes one it did not open, which the refusal must name. It must
-     convert nothing in a directory with no `.lean` file.
+     closes one it did not open, which the refusal must name; a file that
+     already starts with an import header, which the refusal must name; and
+     a root spelt `Init.lean`, the refusal naming it and `init.lean`. It
+     must convert nothing in a directory with no `.lean` file.
 - **The generated files** (`tools/config-package-check.sh`, on
   `tests/headless/generate`, whose config directory holds `init.lean`
   alone).

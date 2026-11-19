@@ -57,7 +57,12 @@
 # It refuses, and changes nothing, exit status 1:
 #
 # - a directory that is not there, and one that already holds an
-#   `init.lean`;
+#   `init.lean`, named exactly so;
+# - a file that already starts with a header (`import`, `prelude` or
+#   `module`, after any blank lines and comments), which it names: that is
+#   no file of the old form, and putting a header before its text would
+#   leave its own after the first command. A root spelt otherwise than
+#   `init.lean` (`Init.lean`) is such a file: rename it;
 # - a file that would move to `Config/` whose name gives no module name
 #   (after its digits it must be letters, digits, `-` and `_`, starting
 #   with a letter), two such files that give one name, and a
@@ -101,7 +106,11 @@ refuse() {
 }
 
 [ -d "$dir" ] || refuse "there is no directory $dir"
-[ ! -e "$dir/init.lean" ] || refuse "$dir already holds an init.lean: it is not a config in the old form"
+# By exactly its name: on a file system that ignores case, `init.lean`
+# exists when `Init.lean` does, and that file is refused below, by name.
+if (cd "$dir" && ls -a) | grep -qxF init.lean; then
+  refuse "$dir already holds an init.lean: it is not a config in the old form"
+fi
 
 # The `.lean` files directly in the directory, in the byte order of their
 # names, one a line. A name with a newline in it is not a config file's.
@@ -141,6 +150,20 @@ declares_private() {
   grep -Eq '^(@\[[^]]*\][[:space:]]*)*private[[:space:]]' "$1"
 }
 
+# Whether the file `$1` starts with a header: whether its first line that
+# is not blank, a line comment or in a block comment starts with `import`,
+# `prelude` or `module`.
+starts_with_header() {
+  awk '
+    in_comment { if (index($0, "-/")) in_comment = 0; next }
+    /^[[:space:]]*$/ { next }
+    /^[[:space:]]*--/ { next }
+    /^[[:space:]]*\/-/ { if (!index(substr($0, index($0, "/-") + 2), "-/")) in_comment = 1; next }
+    { found = ($0 ~ /^(import|prelude|module)([^A-Za-z0-9_]|$)/); exit }
+    END { exit !found }
+  ' "$1"
+}
+
 # How many more lines of the file `$1` start with `namespace`, `section` or
 # `mutual` than start with `end`: 0 when it leaves nothing open.
 left_open() {
@@ -175,6 +198,8 @@ names=
 count=0
 while IFS= read -r file; do
   count=$((count + 1))
+  ! starts_with_header "$dir/$file" ||
+    refuse "$file already starts with an import header, so it is not a config in the old form: a config the editor loads has its root in a file named exactly init.lean, which imports the modules under Config/; rename it to init.lean if it is the root"
   if [ "$count" -lt "$first" ]; then
     name=$(module_of "$file")
     case "$name" in
