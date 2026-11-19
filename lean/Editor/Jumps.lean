@@ -44,8 +44,10 @@ commands, going to a place in a closed file, is the upper module's
 - **Erase rows** (`eraseRows`, Vim's `del_lines`, which runs
   `mark_adjust` with `MAXLNUM` over the lines it deletes): a command that
   deletes whole lines erases the buffer's lowercase marks on them, the
-  rows read before the edit. Global marks stay, as Vim's do: their markers
-  go to where the deletion left them. The linewise delete and change call
+  rows read before the edit. Global marks stay on the line, as Vim's do:
+  their markers go to where the deletion left them, the line's start,
+  where Vim keeps their column (a recorded departure, task
+  `global-mark-keeps-column-on-line-delete`). The linewise delete and change call
   it (`Editor/Evil/Operators.lean`), since the edit alone does not say
   which lines they delete (`Editor/Marks.lean`, "A mark's line is erased
   when its line is deleted").

@@ -14,7 +14,10 @@ not an excerpt buffer:
    last publish, an edit since removed (`Marks.Line.removedIn`) is erased.
    A global mark is not: as Vim's `mark_adjust` moves an uppercase mark
    of a deleted line to the line that takes its place, its marker stays
-   where the deletion left it.
+   where the deletion left it. That matches Vim's line, not its column:
+   Vim keeps the mark's column, and the marker here is at the start of
+   the line (a recorded departure, task
+   `global-mark-keeps-column-on-line-delete`).
 2. **Put back**: the lowercase marks the buffer's history puts back for
    the move its undo tree made since (`Marks.History.follow`) are set
    again, each held by a new place marker (`Marks.placeMarker`) at its

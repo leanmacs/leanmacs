@@ -2989,7 +2989,8 @@ builds one sets `jumps` on its entry.
   `m a`, `dd` and `` `a `` says E20. A global mark is not: it stays on the
   line that takes the deleted line's place, as Vim's uppercase marks do
   (`one_adjust_nodel`; `:help mark-motions`, "The line number of the mark
-  remains correct, even if you insert/delete lines"). A line is
+  remains correct, even if you insert/delete lines"). Its column is not
+  kept, a recorded departure (below). A line is
   deleted when one edit takes its row with its line break and either
   started before the row or stops at a row's start, as `dd` does; or, for
   the last row, takes it with the line break before it, as `dd` on the
@@ -3061,6 +3062,13 @@ matches Vim changes that check deliberately:
   leave `` `a `` saying E20, where Vim's `u_undoredo` puts back the marks
   of each step it undoes. Undoing one step at a time puts them back. Task
   `marks-counted-undo-redo-restore`.
+- **A global mark whose line is deleted keeps its line but not its
+  column**: its marker stays where the deletion left it, the start of the
+  line that takes the deleted line's place, so on `ab`, `c|d`, `ef`,
+  `m A`, `dd` and `` `A `` lands on column 0 of `ef`, where Vim's
+  `one_adjust_nodel` changes only the mark's line number and keeps its
+  column (`e|f`). And `dd` on the last line collapses the marker onto the
+  end of the line above. Task `global-mark-keeps-column-on-line-delete`.
 
 ### Tab commands as built
 

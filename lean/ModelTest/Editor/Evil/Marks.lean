@@ -198,6 +198,12 @@ def evilMarkChecks : List Check :=
         "recorded departure (task marks-typed-text-at-mark-keeps-column): text typed right at a mark is typed before it, so m a, i x and ` a lands after the x, where Vim keeps the mark's column"
       run := evilRows [("m a i x <Escape> ` a", "a|b", "ax|b")] },
     { name :=
+        "recorded departure (task global-mark-keeps-column-on-line-delete): a global mark whose line is deleted keeps its line but not its column, so m A, dd and ` A lands at the start of the line that takes its place, where Vim keeps the column; and dd on the last line collapses its marker onto the end of the line above, so ` A lands on that line's last character"
+      run :=
+        evilRows
+          [("m A d d ` A", "ab\nc|d\nef", "ab\n|ef"),
+            ("m A d d g g ` A", "ab\ncd\ne|f", "ab\nc|d")] },
+    { name :=
         "under an operator a mark that is not set gives the operator up, saying so, with the text as it was"
       run :=
         pure <|
