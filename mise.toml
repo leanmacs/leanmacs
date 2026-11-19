@@ -882,6 +882,42 @@ depends = ["lean"]
 dir = "lean"
 run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-prompt \"$(lean --print-prefix)\" .lake/build/lib/lean 600"
 
+# Opt-in: do not add it to `ci` or to hk.pkl. It runs real git and the fzf
+# `[tools]` pins over a repository of 100,000 files.
+#
+# `bench-workspace-files` measures `find-file-in-workspace`
+# (lean/Editor/Workspace/FindFile.lean) over a real repository, 120 keys a
+# row, each of `m`, `1`, `2`, `f`, `3` and `4` committed into the open
+# prompt. Rows: a key in a prompt with no candidates, the floor; a key in the
+# finder's prompt, each joined, from sending it to the editor thread having
+# handled it and published its scene, and the time from that key to the
+# post of the batch for its text, the updated list, which takes in the
+# source's 50 ms pause, `git ls-files` and fzf; and a key in the finder's
+# prompt with the keys 120 ms apart, nothing joined, so each arrives while
+# the job of the text before it runs its lister or its filter. Then the
+# lister and the filter alone, outside the editor, 20 runs each. It says
+# whether the two finder rows' keys are within bound: median at most twice
+# the floor's, 99th percentile under 1 ms (`docs/design/concurrency.md`, "A
+# key in the workspace finder, measured").
+#
+# The repository is made by tools/workspace-bench-repo.sh in a temporary
+# directory, removed on exit; WORKSPACE_BENCH_REPO names a checkout to
+# measure instead. The host is a headless host on the real queue and the
+# library's process and file services; LEAN_NUM_THREADS and
+# LEAN_STACK_SIZE_KB are removed from the environment, as for `job-bench`.
+[tasks.find-file-bench]
+description = "Opt-in, never part of ci: measure what a key costs in find-file-in-workspace's prompt over a repository of 100,000 files, and the time from a key to its updated list (lean/ConfigTest/Bench.lean). It asserts nothing"
+depends = ["lean"]
+dir = "lean"
+run = '''
+if [ -n "${WORKSPACE_BENCH_REPO:-}" ]; then
+  repo=$WORKSPACE_BENCH_REPO
+else
+  dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && repo=$dir/repo && sh ../tools/workspace-bench-repo.sh "$repo" || exit 1
+fi
+env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-workspace-files "$(lean --print-prefix)" .lake/build/lib/lean "$repo" 120
+'''
+
 # Opt-in: do not add it to `ci` or to hk.pkl. It opens a window on this
 # desktop.
 #

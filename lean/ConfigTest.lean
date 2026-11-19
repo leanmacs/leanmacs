@@ -293,7 +293,9 @@ of the default config (`config/default`), which `defaultConfigChecks` read.
 `bench-jobs` is the job benchmark (`ConfigTest.Bench.jobs`;
 `mise run job-bench`), which the gate never runs either, and so is
 `bench-prompt`, the prompt benchmark (`ConfigTest.Bench.prompt`;
-`mise run prompt-bench`).
+`mise run prompt-bench`), and `bench-workspace-files`, the workspace
+finder's (`ConfigTest.Bench.workspaceFiles`; `mise run find-file-bench`),
+handed the repository it searches.
 
 Any other command line is reported, with the exit status 2.
 
@@ -336,6 +338,18 @@ def main (args : List String) : IO UInt32 := do
           ConfigTest.Bench.prompt sysroot oleanDir samples
         catch error =>
           IO.eprintln s!"config-test: bench-prompt: {error}"
+          pure 1
+      IO.Process.exit status
+    | none =>
+      ConfigTest.usage
+  | ["bench-workspace-files", sysroot, oleanDir, repository, samples] =>
+    match samples.toNat? with
+    | some samples =>
+      let status ←
+        try
+          ConfigTest.Bench.workspaceFiles sysroot oleanDir repository samples
+        catch error =>
+          IO.eprintln s!"config-test: bench-workspace-files: {error}"
           pure 1
       IO.Process.exit status
     | none =>
