@@ -1309,15 +1309,16 @@ directory the script makes and removes.
      the last using a declaration of the first; one file; a `setup` defined
      in the second of three files, whose root must hold that file and the
      one after it, each seeing what the old form let it see and no more; a
-     `setup` defined in the first of two; and a `private` declaration that
-     a later file uses.
+     `setup` defined in the first of two; a `private` declaration that
+     a later file uses; and a `setup` that no line is seen to declare,
+     where every file must become `init.lean`.
   4. The script must refuse, with status 1 and the directory left as it
      was: a directory that already holds an `init.lean`; two files that
      give one module name; a file whose name has no letter after its
-     digits; a `Config/<Name>.lean` that is already there; and a file that
-     would go in `init.lean` before another and leaves a namespace open,
-     which the refusal must name. It must convert nothing in a directory
-     with no `.lean` file.
+     digits; a `Config/<Name>.lean` that is already there; a file that
+     would go in `init.lean` before another and leaves a namespace open, or
+     closes one it did not open, which the refusal must name. It must
+     convert nothing in a directory with no `.lean` file.
 - **The generated files** (`tools/config-package-check.sh`, on
   `tests/headless/generate`, whose config directory holds `init.lean`
   alone).

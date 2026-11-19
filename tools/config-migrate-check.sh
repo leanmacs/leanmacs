@@ -36,14 +36,17 @@
 #      after it become `init.lean`, in order, so the root itself defines
 #      the `setup` the editor runs, and a command it registers runs;
 #    - a `private` declaration that a later file uses: the two files become
-#      `init.lean`, since a private name is visible in its own module alone.
+#      `init.lean`, since a private name is visible in its own module alone;
+#    - a `setup` that no line is seen to declare (a doc comment before its
+#      `def` on the line): every file becomes `init.lean`, each but the
+#      last in a section of its own, and the script says so.
 # 4. The script refuses, with status 1 and the directory left as it was: a
 #    directory that already holds an `init.lean`; one where two files give
 #    one module name; a file whose name gives no module name, having no
 #    letter after its digits; a `Config/<Name>.lean` that is already
-#    there; and a file that would go in `init.lean` before another and
-#    leaves a namespace open, which it must name. It converts nothing, with status 0, in a directory with no
-#    `.lean` file.
+#    there; a file that would go in `init.lean` before another and leaves a
+#    namespace open, or closes one it did not open, which it must name. It
+#    converts nothing, with status 0, in a directory with no `.lean` file.
 #
 # It exits 0 and prints one line when all of that holds, and otherwise says
 # what does not and exits 1. Everything it writes is in a temporary
@@ -189,6 +192,37 @@ LEAN
 converted "$work/private" "./init.lean " tell "reload 1: installed, 1 files, 1 commands" \
   "a private declaration a later file uses"
 
+# A `setup` declared so that no line starts its declaration (here a doc
+# comment before `def` on its line): the script cannot tell where `setup`
+# is, and every file goes in `init.lean`, each but the last in a section of
+# its own, which loads.
+write "$work/unseen/10-greet.lean" <<'LEAN'
+namespace Greeting
+
+def text : String :=
+  "unseen"
+
+end Greeting
+
+open Greeting
+
+def greet : EditorM Unit :=
+  message text
+LEAN
+write "$work/unseen/20-keys.lean" <<'LEAN'
+def keys : SetupM Unit :=
+  command "greet" greet
+LEAN
+write "$work/unseen/90-setup.lean" <<'LEAN'
+/-- The config's setup. -/ def setup : SetupM Unit := do
+  keys
+  command "again" greet
+LEAN
+converted "$work/unseen" "./init.lean " again "reload 1: installed, 1 files, 2 commands" \
+  "a setup no line is seen to declare"
+grep -q 'no line of any file was seen to define setup' "$work/moves" ||
+  fail "a setup no line is seen to declare: the script did not say it kept every file together"
+
 # 4. What the script refuses is left as it was.
 refused() {
   before=$(cd "$1" && find . -type f -exec cksum {} + | LC_ALL=C sort)
@@ -235,6 +269,19 @@ LEAN
 refused "$work/open" "a file that would go in init.lean before another and leaves a namespace open"
 grep -q '10-setup.lean' "$work/refusal" ||
   fail "a file that leaves a namespace open: the refusal does not name the file"
+
+write "$work/closes/10-setup.lean" <<'LEAN'
+def setup : SetupM Unit :=
+  pure ()
+
+end Stray
+LEAN
+write "$work/closes/20-more.lean" <<'LEAN'
+def more : Nat := 2
+LEAN
+refused "$work/closes" "a file that would go in init.lean before another and closes what it did not open"
+grep -q '10-setup.lean' "$work/refusal" ||
+  fail "a file that closes what it did not open: the refusal does not name the file"
 
 mkdir "$work/empty"
 printf 'notes\n' >"$work/empty/notes.txt"

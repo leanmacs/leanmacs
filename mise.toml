@@ -430,8 +430,9 @@ run = [
   # order with no header is refused, with a diagnostic that names the files
   # and `mise run config-migrate`; a copy that tools/config-migrate.sh
   # converted loads, and so do directories of one file, of three, with
-  # `setup` defined before the last file, and with a private declaration a
-  # later file uses; and what that script refuses it leaves as it was
+  # `setup` defined before the last file, with a private declaration a
+  # later file uses, and with a `setup` no line is seen to declare; and
+  # what that script refuses it leaves as it was
   # (tools/config-migrate-check.sh).
   "sh ../tools/config-migrate-check.sh ../packages/.lake/build/bin/editor \"$(lean --print-prefix)\" .lake/build/lib/lean",
   # The config directory as a Lake package (tests/headless/generate, whose
