@@ -1,6 +1,5 @@
 import Editor.Compile.Compiled
 import Editor.Config.Packages
-import Editor.Config.Registry
 import ModelTest.Check
 
 /-!

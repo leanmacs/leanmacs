@@ -1,13 +1,12 @@
 import Editor.Api
 import Editor.Clipboard
 import Editor.Command
-import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Compile
 import Editor.Compile.Contribution
 import Editor.Compile.Errors
+import Editor.Compile.Shipped
 import Editor.Completion.Candidate
-import Editor.Config.Registry
 import Editor.Display
 import Editor.Display.Model
 import Editor.DisplayRules
@@ -24,7 +23,6 @@ import Editor.Job
 import Editor.Job.Model
 import Editor.Language
 import Editor.Layout
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Process
@@ -1624,7 +1622,47 @@ def compileHookChecks : List Check :=
               languageAndMajor opened == some (some "model-rs", some "code") &&
               opened.model.syntaxTree.attached.map (·.2) == #["json"] &&
               shownMinors opened == some #["cargo-mode"] &&
-              shownOnModes opened == some #[{ mode := "cargo-mode", root := "/r/crate" }] }]
+              shownOnModes opened == some #[{ mode := "cargo-mode", root := "/r/crate" }] },
+    { name :=
+        "a setup that overrides one field of a shipped contribution, { Compile.cargoMode with commands := … }: over the shipped contributions the hook's cargo-mode has the setup's one command with the shipped marker, root rule and rustc format, and lake-mode and mise-mode follow"
+      run :=
+        let setup : SetupM Unit :=
+          compileContribution
+            { Compile.cargoMode with
+              commands := #[{ name := "build", line := "cargo build --release" }] }
+        let hook := (hookRegistry setup Compile.shipped).compileHook
+        pure
+          (hook.contributions.map (·.mode) == #["cargo-mode", "lake-mode", "mise-mode"] &&
+            (hook.contributions[0]?.map fun cargo =>
+                (cargo.commands.map (·.line), cargo.markers, cargo.outermost,
+                  cargo.formats.map (·.name))) ==
+              some (#["cargo build --release"], #["Cargo.toml"], true, #["rustc"])) },
+    { name :=
+        "a setup that registers a compile contribution with a format of its own, and project commands, installs them: the format reads its line and the project's commands are kept"
+      run :=
+        let atFormat : Compile.Format :=
+          { name := "at"
+            pattern :=
+              [Compile.step
+                  [{ atom := .literal "at " }, { atom := .noneOf [' '], into := some .file },
+                    { atom := .literal " line " }, { atom := .digits, into := some .line }]] }
+        let setup : SetupM Unit := do
+          compileContribution
+              { mode := "a-mode", markers := #["a.toml"]
+                commands := #[{ name := "build", line := "make" }], formats := #[atFormat] }
+          projectCommands (.remote "github.com/o/r") "a-mode" [("lint", "make lint")]
+              [("profile", .str "dev")]
+        let hook := (hookRegistry setup).compileHook
+        pure
+          (hook.contributions.map (·.mode) == #["a-mode"] &&
+            (hook.contributions.map fun contribution =>
+                contribution.formats.map fun format =>
+                  (format.read? "at src/x.rs line 4").map fun reading =>
+                    (reading.file, reading.line)) ==
+              #[#[some ("src/x.rs", 4)]] &&
+            hook.projects.map
+                (fun entry => (entry.mode, entry.commands.map (·.line), entry.settings)) ==
+              #[("a-mode", #["make lint"], [("profile", Value.str "dev")])]) }]
 
 /-- `driver` in which `t-list` cannot be run in `/t2`: the program is not
 found. -/

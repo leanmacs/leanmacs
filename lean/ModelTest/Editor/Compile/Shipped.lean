@@ -1,15 +1,12 @@
-import Editor.Command.Dispatch
 import Editor.Compile.Contribution
 import Editor.Compile.Errors
 import Editor.Compile.Shipped
 import Editor.Completion.Candidate
-import Editor.Config.Registry
 import Editor.Event
 import Editor.File.Model
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job.Model
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Process
 import Editor.Process.Model
