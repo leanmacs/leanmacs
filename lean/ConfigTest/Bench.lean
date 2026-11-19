@@ -1,14 +1,14 @@
 import ConfigTest.Support.Candidates
+import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import Editor.Api
+import Editor.AtPoint.Compiled
 import Editor.Clipboard
 import Editor.Clipboard.InProcess
 import Editor.Command
-import Editor.Compile.Contribution
 import Editor.Completion
 import Editor.Completion.AtPoint
-import Editor.Completion.Displays
-import Editor.Completion.Styles
+import Editor.Completion.Compiled
 import Editor.Config.Elaborate
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -32,13 +32,15 @@ import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
-import Editor.Menu
 import Editor.Minibuffer
 import Editor.Minibuffer.Compiled
 import Editor.Mode
-import Editor.ModeLine
+import Editor.ModeLine.Compiled
+import Editor.Package
+import Editor.PackageSet
 import Editor.Program
 import Editor.Scene
+import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
@@ -509,6 +511,20 @@ def askingMany (count : Nat) : Config.Registration :=
           prompt "Pick: " { command := "picked" } ""
             [.given (.ofTexts "many" "pick" (manyPaths count))]) }
 
+/-- The `at-point` package with no use of an at-point source: what it
+registers (`Package.registered`) replayed under its name, less its uses, so
+the insert rows' host without completion at point differs from the other's
+in that alone. -/
+def atPointUnused : Package :=
+  let registered := AtPoint.package.registered
+  let replayed : Compiled :=
+    { commands := registered.commands, jobs := registered.jobs, sources := registered.sources }
+  { name := AtPoint.package.name
+    setup := do
+      replayed.package.setup
+      for atPoint in registered.atPoints do
+        defineAtPoint atPoint }
+
 /-- What the 99th percentile of a key's latency must stay under, in
 nanoseconds: 1 ms. -/
 def keyBound : Nat :=
@@ -585,10 +601,13 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
             jobs := requests + 2, environment := requests + 3, posts := requests + 4,
             pauseEvents := requests + 5,
-            commands :=
-              (Minibuffer.package.registered.commands.push (askingMany count)).push
-                { name := "noop", action := .plain (pure ()) }
-            modes := Minibuffer.package.registered.modes, inlineMatches := inline }
+            packages :=
+              #[Completion.package, ModeLine.package, Minibuffer.package,
+                Compiled.package
+                  {
+                    commands :=
+                      #[askingMany count, { name := "noop", action := .plain (pure ()) }] }]
+            inlineMatches := inline }
     try
       let ask : IO Unit := do
         host.send (.run "ask-many")
@@ -653,19 +672,27 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     let services : Job.Services :=
       { completions := waits, timers := clock.timers, fuzzy := Fuzzy.real
         snapshots := Job.realSnapshots published.reader }
+    let shippedPackages :=
+      if atPoint then PackageSet.shipped
+      else
+        PackageSet.shipped.map fun package =>
+          if package.name == AtPoint.package.name then atPointUnused else package
+    let packages :=
+      shippedPackages.push
+        (Compiled.package
+          {
+            commands :=
+              #[{ name := "noop", action := .plain (pure ()) },
+                { name := "make-buffers", action := .plain makeWordBuffers }] })
     let shipped :=
-      Headless.shippedOver sysroot oleanDir "" emit services published (← Job.HeldSnapshots.new)
+      Headless.shippedOver packages sysroot oleanDir "" emit services published
+        (← Job.HeldSnapshots.new)
     let host ←
       Headless.start
           { shipped with
             source := { chunks := pure #[] }, requests, wakeups := requests + 1
             jobs := requests + 2, environment := requests + 3, posts := requests + 4
-            pauseEvents := requests + 5, clock := some clock, log := fun _ => pure ()
-            atPointUses := if atPoint then shipped.atPointUses else #[]
-            commands :=
-              shipped.commands ++
-                #[{ name := "noop", action := .plain (pure ()) },
-                  { name := "make-buffers", action := .plain makeWordBuffers }] }
+            pauseEvents := requests + 5, clock := some clock, log := fun _ => pure () }
     try
       host.send (.run "make-buffers")
       unless (← host.join patience) == .settled do
@@ -722,13 +749,9 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
             wakeups := requests + 1, jobs := requests + 2, environment := requests + 3,
             posts := requests + 4, pauseEvents := requests + 5,
-            commands :=
-              (Files.package.registered.commands ++ Minibuffer.package.registered.commands).push
-                { name := "noop", action := .plain (pure ()) }
-            compiledJobs := Files.package.registered.jobs,
-            sources := Files.package.registered.sources
-            styleDefaults := Files.package.registered.styleDefaults,
-            modes := Minibuffer.package.registered.modes
+            packages :=
+              #[Completion.package, ModeLine.package, Files.package, Minibuffer.package,
+                Compiled.package { commands := #[{ name := "noop", action := .plain (pure ()) }] }]
             workingDirectory := "/big" }
     try
       let ask : IO Unit := do
@@ -872,16 +895,17 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
         { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir }
           source := { chunks := pure #[] }, emit, services, published, held, requests := 1
           wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
-          commands :=
-            Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
-              Workspace.package.registered.commands ++
-              #[{ name := "noop", action := .plain (pure ()) },
-                { name := "ask-plain"
-                  action := .plain (discard <| Editor.prompt "Plain: " { command := "noop" } "") }]
-          compiledJobs := Files.package.registered.jobs ++ Workspace.package.registered.jobs
-          sources := Files.package.registered.sources ++ Workspace.package.registered.sources,
-          styleDefaults := Files.package.registered.styleDefaults
-          modes := Minibuffer.package.registered.modes, workingDirectory := repository }
+          packages :=
+            #[Completion.package, ModeLine.package, Files.package, Minibuffer.package,
+              Workspace.package,
+              Compiled.package
+                {
+                  commands :=
+                    #[{ name := "noop", action := .plain (pure ()) },
+                      { name := "ask-plain"
+                        action :=
+                          .plain (discard <| Editor.prompt "Plain: " { command := "noop" } "") }] }]
+          workingDirectory := repository }
   try
     let joined (what : String) : IO Unit := do
       unless (← host.join patience) == .settled do

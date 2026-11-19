@@ -10,6 +10,7 @@ import Editor.Ffi.Window
 import Editor.FrameCommands.Compiled
 import Editor.Menu
 import Editor.Menu.Compiled
+import Editor.PackageSet
 import Editor.Process.Environment
 import Editor.Window
 import Editor.Window.Real
@@ -55,8 +56,9 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     Editor.Ffi.windowRequest .scripted .minimise
     Editor.Window.shutdown
   let status ←
-    Editor.Window.host .scripted options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[] shutdown .headless
+    Editor.Window.host Editor.PackageSet.shipped .scripted options (.skip none)
+        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[] shutdown
+        .headless
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host: the window mode ended with status {status}"
     return 1
@@ -105,7 +107,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
       return 1
     -- The menu bar crossed whole, from Lean through the scene to the
     -- scripted window's record and back: the standard one, with the keys
-    -- the compiled bindings give it, asked once, since it never changed.
+    -- the packages' bindings give it, asked once, since it never changed.
     let menus :=
       ((← Editor.Ffi.windowAsked .scripted).getD #[]).filterMap fun
         | .menu menu => some menu
@@ -136,9 +138,9 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := oleanDir, composition := true }
   let status ←
-    Editor.Window.host .scripted options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
-        none)
+    Editor.Window.host Editor.PackageSet.shipped .scripted options (.load configDir)
+        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
+        Editor.Window.shutdown .headless (patience := none)
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host-config: the window mode ended with status {status}"
     return 1
@@ -163,8 +165,9 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
     { file := some file, config := none, configGiven := false, sysroot := none, oleans := ""
       composition := true }
   let status ←
-    Editor.Window.host .scriptedUndrawn options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless
+    Editor.Window.host Editor.PackageSet.shipped .scriptedUndrawn options (.skip none)
+        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
+        Editor.Window.shutdown .headless
   unless status == 1 do
     IO.eprintln s!"ffi-test window-host-undrawn: the window mode ended with status {status}, not 1"
     return 1

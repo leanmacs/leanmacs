@@ -8,7 +8,7 @@ reload
 settle
 
 # `user-link-hello` is the package's one command (tests/user-link/package,
-# `UserLinkFixture.commands`): the shipped host has no command of that name.
+# `UserLinkFixture.package`): the shipped host has no command of that name.
 # It says its greeting in the echo area, which `scene` prints.
 run user-link-hello
 scene

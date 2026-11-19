@@ -1,14 +1,12 @@
 import ConfigTest.Check
 import Editor.Clipboard
 import Editor.Clipboard.InProcess
-import Editor.Compile.Contribution
 import Editor.Completion
-import Editor.Completion.AtPoint
-import Editor.Completion.Displays
-import Editor.Completion.Styles
+import Editor.Completion.Compiled
 import Editor.Config.Diagnostic
 import Editor.Config.Directory
 import Editor.Config.Elaborate
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Session
 import Editor.Ex.Line
@@ -24,12 +22,13 @@ import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
-import Editor.Menu
 import Editor.Mode
-import Editor.ModeLine
+import Editor.ModeLine.Compiled
+import Editor.Package
 import Editor.Process
 import Editor.Program
 import Editor.Scene
+import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
@@ -95,10 +94,15 @@ structure Stage (σ : Type) where
   /-- Every entry the host has logged, oldest first. -/
   log : IO.Ref (Array String)
 
-/-- What compiled code hands a host: its commands, its jobs, its key
-bindings, its modes, its ex bindings, its themes, its languages, its completion sources, how long
+/-- What a check hands a host to register before any config: packages, and
+registrations written as arrays, its commands, its jobs, its key
+bindings, its modes, its ex bindings, its themes, its languages, its completion sources, which the
+host is handed as the package `test` (`Compiled.package`); and how long
 a command may take before it is logged, and the major mode the scratch buffer starts in. -/
 structure Compiled where
+  /-- The packages the host is handed, in order, before the package `test`
+  of the arrays below. -/
+  packages : Array Package := #[]
   /-- The compiled commands. -/
   commands : Array Config.Registration := #[]
   /-- The compiled jobs. -/
@@ -115,7 +119,8 @@ structure Compiled where
   languages : Array Language := #[]
   /-- The compiled completion sources. -/
   sources : Array Completion.Source := #[]
-  /-- Compiled code's style for a category (`Headless.Collaborators.styleDefaults`). -/
+  /-- The package's style for a category, each a category and a style's
+  name (`useStyleFor` in a package). -/
   styleDefaults : Array (String × String) := #[]
   /-- How long a command may take before it is logged, in milliseconds. -/
   slowAfter : Nat := Loop.slowAfter
@@ -124,8 +129,53 @@ structure Compiled where
   on-enter action runs. -/
   major : Option String := none
 
+/-- The name of the package a stage makes of a `Compiled`'s arrays. -/
+def Compiled.packageName : String :=
+  "test"
+
+/-- The arrays of `compiled` as one package, `test`, which replays each
+through the setup port: its commands, jobs, key bindings, modes, ex
+bindings, themes, languages, completion sources and style defaults. One
+`setup` registers a name once, so a check that hands a host two
+registrations of one name hands them in two packages
+(`Compiled.packages`). -/
+def Compiled.package (compiled : Compiled) : Package :=
+  { name := Compiled.packageName
+    setup := do
+      for registration in compiled.commands do
+        match registration.action with
+        | .plain run =>
+          command registration.name run
+        | .call run =>
+          commandWith registration.name run
+        | .store store step =>
+          ExceptT.lift
+              (Program.request (port := setupPort) (.storeCommand registration.name store step))
+      for job in compiled.jobs do
+        workJob job.name job.work
+      for binding in compiled.bindings do
+        ExceptT.lift
+            (Program.request (port := setupPort)
+              (.bind binding.keys binding.command binding.states binding.desc binding.category))
+      for mode in compiled.modes do
+        defineMode mode
+      for binding in compiled.ex do
+        ExceptT.lift (Program.request (port := setupPort) (.ex binding))
+      for named in compiled.themes do
+        defineTheme named.name named.theme
+      for language in compiled.languages do
+        defineLanguage language
+      for source in compiled.sources do
+        defineSource source
+      for (category, name) in compiled.styleDefaults do
+        useStyleFor category name }
+
 /-- A stage for a host over `elaborator` and `source`, with what `compiled`
-hands it. Hosts follow one another on one queue: each gets source ids of its
+hands it: the packages `completion` and `mode-line`, so every stage's host
+has the shipped styles, displays and segments, then `compiled.packages`,
+then the package `test` of its arrays (`Compiled.package`). A `compiled`
+whose arrays one `setup` would refuse fails the stage, naming why: such a
+host would start without them. Hosts follow one another on one queue: each gets source ids of its
 own, so none takes a late event of an earlier one for its own. Its jobs wait
 in a table of waits of its own, unless it is handed one (`waits`), as a
 stage over a real service is. Its jobs ask the library's matcher
@@ -134,6 +184,8 @@ stage over a real service is. Its jobs ask the library's matcher
 def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
     (source : Config.Source) (compiled : Compiled := {}) (waits : Option Job.Completions := none)
     (fuzzy : FuzzyHandler := Fuzzy.real) : IO (Stage σ) := do
+  if let .error reason := compiled.package.collected then
+    throw (IO.userError s!"the stage's registrations are refused: {reason}")
   let output ← IO.mkRef #[]
   let threads ← IO.mkRef #[]
   let log ← IO.mkRef #[]
@@ -159,10 +211,8 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           published, held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
           jobs := requests + 2, environment := requests + 3
           posts := requests + 4, pauseEvents := requests + 5
-          commands := compiled.commands, compiledJobs := compiled.jobs,
-          bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
-          themes := compiled.themes, languages := compiled.languages, sources := compiled.sources,
-          styleDefaults := compiled.styleDefaults
+          packages :=
+            #[Completion.package, ModeLine.package] ++ compiled.packages ++ #[compiled.package]
           log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter
           clock := some clock,
           start := do

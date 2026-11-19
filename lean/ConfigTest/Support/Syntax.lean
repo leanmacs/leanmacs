@@ -20,6 +20,7 @@ import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
 import Editor.Mode
+import Editor.PackageSet
 import Editor.Scene
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
@@ -94,6 +95,7 @@ def rustObjectsText : String :=
 
 /-- Runs `check` against a host of the Vim scheme that ships, made over the
 collaborators the executable's hosts are made of (`Headless.shippedOver`),
+handed the packages that ship (`PackageSet.shipped`),
 with the real elaborator, a config directory of `files` and the services of
 a stage of its own; its syntax tree is the real binding over the library's
 syntax service, which after an attach, and before a question of a text's
@@ -122,7 +124,9 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
           pure { staged.services with files := faked.files }
       | none =>
         pure staged.services
-    let shipped := Headless.shippedOver "" "" "" staged.emit services staged.published staged.held
+    let shipped :=
+      Headless.shippedOver PackageSet.shipped "" "" "" staged.emit services staged.published
+        staged.held
     let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
       let real ← RealSyntaxTree.new snapshots
       return fun request => do

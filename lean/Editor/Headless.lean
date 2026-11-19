@@ -1,8 +1,4 @@
-import Editor.AtPoint.Compiled
-import Editor.BindingSearch.Compiled
-import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
-import Editor.Compile.Compiled
 import Editor.Config.Directory
 import Editor.Config.Display
 import Editor.Config.Elaborate
@@ -11,11 +7,6 @@ import Editor.Config.Reload
 import Editor.Display.Real
 import Editor.Display.Recorder
 import Editor.Event.Queue
-import Editor.Evil.Compiled
-import Editor.Ex.Compiled
-import Editor.ExecuteCommand.Compiled
-import Editor.Files.Compiled
-import Editor.FrameCommands.Compiled
 import Editor.Headless.CommandLine
 import Editor.InputScheme.Vim.Default
 import Editor.Job.Fake
@@ -23,18 +14,10 @@ import Editor.Job.Jobs
 import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Loop
-import Editor.Menu.Compiled
-import Editor.Minibuffer.Compiled
-import Editor.Shell.Compiled
 import Editor.SyntaxTree.Real
-import Editor.TabCommands.Compiled
 import Editor.Text.Real
-import Editor.Themes.Compiled
-import Editor.VersionControl.Compiled
 import Editor.Watch.Real
 import Editor.Window
-import Editor.WindowCommands.Compiled
-import Editor.Workspace.Compiled
 
 /-!
 # The headless host
@@ -876,73 +859,17 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   under, with its wait's id as its code (`Running.pause`), and the key hint
   delay too (`Running.delayHints`). -/
   pauseEvents : UInt64
-  /-- The compiled commands: registered for the owner `compiled` when the
-  loop starts, before any config. -/
-  commands : Array Config.Registration := #[]
-  /-- The compiled jobs: registered for the owner `compiled` when the loop
-  starts, before any config. A command starts one by its name. `jobs` is
-  the name of a source id, above. -/
-  compiledJobs : Array Config.JobRegistration := #[]
-  /-- The compiled key bindings: registered for the owner `compiled` when
-  the loop starts, before any config. -/
-  bindings : Array Config.KeyBinding := #[]
-  /-- The menu bar the loop's scenes name, before its command items' keys
-  are filled from the registry at each step (`Config.Registry.menuOf`);
-  `none` for a host with no menu bar. -/
-  menu : Option Menu := none
-  /-- The compiled modes: registered for the owner `compiled` when the loop
-  starts, before any config. -/
-  modes : Array Mode := #[]
-  /-- The compiled ex bindings (`Editor/Ex/Line.lean`): registered for the
-  owner `compiled` when the loop starts, before any config. -/
-  ex : Array Ex.Binding := #[]
-  /-- The compiled themes (`Editor/Themes/Compiled.lean`): registered for
-  the owner `compiled` when the loop starts, before any config. -/
-  themes : Array NamedTheme := #[]
-  /-- The compiled languages (`Editor/Language.lean`): registered for the
-  owner `compiled` when the loop starts, before any config. -/
-  languages : Array Language := #[]
-  /-- The compiled segments of the mode line (`Editor/ModeLine.lean`):
-  registered for the owner `compiled` when the loop starts, before any
-  config. The default is the shipped set, so every host draws the shipped
-  mode line unless it is told otherwise. -/
-  segments : Array Segment := ModeLine.shipped
-  /-- The compiled compile contributions (`Editor/Compile/Contribution.lean`):
-  registered for the owner `compiled` when the loop starts, before any
-  config. The default is none, for a host that wants none; the executable's
-  hosts are handed the shipped ones (`shippedOver`). -/
-  contributions : Array Compile.Contribution := #[]
-  /-- The compiled completion sources (`Editor/Completion.lean`):
-  registered for the owner `compiled` when the loop starts, before any
-  config. The default is none; the executable's hosts are handed the
-  shipped ones (`shippedOver`). -/
-  sources : Array Completion.Source := #[]
-  /-- The compiled completion styles (`Editor/Completion/Style.lean`):
-  registered for the owner `compiled` when the loop starts, before any
-  config. The default is the shipped set (`Completion.Styles.shipped`), so
-  every host's config can choose `fuzzy` and `orderless`. -/
-  styles : Array Completion.Style := Completion.Styles.shipped
-  /-- Compiled code's style for a category, each a category and a style's
-  name (`Config.Registry.styleDefaults`): applied when the host starts
-  (`compiled`). -/
-  styleDefaults : Array (String × String) := #[]
-  /-- The compiled completion displays (`Editor/Completion/Display.lean`):
-  registered for the owner `compiled` when the loop starts, before any
-  config. The default is the shipped set (`Completion.Displays.shipped`), so
-  every host's config can choose `minibuffer` and replace it to set its
-  rows. -/
-  displays : Array Completion.Display := Completion.Displays.shipped
-  /-- The compiled at-point sources (`Editor/Completion/AtPoint.lean`):
-  registered for the owner `compiled` when the loop starts, before any
-  config. The default is none; the executable's hosts are handed the
-  shipped ones (`shippedOver`). -/
-  atPoints : Array Completion.AtPoint := #[]
-  /-- The compiled uses of at-point sources, each a mode or `none` for every
-  buffer and a source's name (`Config.Registry.atPointNames`): registered
-  for the owner `compiled` when the loop starts. The default is none; the
-  executable's hosts use `words` in every buffer (`shippedOver`). -/
-  atPointUses : Array (Option String × String) := #[]
-  /-- Where a log entry goes: a command that took longer than `slowAfter`.
+  /-- The packages the host registers when its loop starts, in order, before
+  any config (`Config.State.ofPackages`, `Editor/Config/Packages.lean`):
+  every command, job, key binding, mode, ex name, theme, segment, language,
+  compile contribution, completion source, style and display, at-point
+  source and menu the host has before config is one of theirs. The default
+  is none, and a host handed none starts with an empty registry and
+  publishes no menu bar; the executable's hosts are handed the packages
+  that ship (`Editor/PackageSet.lean`). -/
+  packages : Array Package := #[]
+  /-- Where a log entry goes: a command that took longer than `slowAfter`,
+  and a package the host refused as its loop started (`Running.new`).
   The editor thread calls it. It is not `emit`: the output is what a test
   compares, and a log entry depends on how long the machine took. -/
   log : String → IO Unit := fun _ => pure ()
@@ -1452,8 +1379,8 @@ over the registry's segments, a name nobody registered left out
 (`Config.Registry.resolve`); the frame padding config set, or the editor's
 8 (`Loop.padding`); the layout config chose, or the default
 (`Layout.default`); when config chose the tab bar to be shown, or while
-there are two tabs or more (`TabBar.Shown.several`); the host's menu bar with its key equivalents filled
-from the registry's bindings (`Config.Registry.menuOf`); and the
+there are two tabs or more (`TabBar.Shown.several`); the menu bar the registry's menus make, with its key equivalents filled
+from the registry's bindings (`Config.Registry.menuBar?`), or none while no menu is registered; and the
 completion styles config chose by category over the registry's styles, or
 the fuzzy style (`Config.Registry.matching`); and the completion displays
 config chose by category over the registry's displays, or the minibuffer
@@ -1471,7 +1398,7 @@ def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     padding := running.config.framePadding.getD Loop.padding
     layout := some (running.config.layout.getD Layout.default)
     tabBar := some (running.config.tabBar.getD .several)
-    menu := collaborators.menu.map running.config.registry.menuOf
+    menu := running.config.registry.menuBar?
     matching := running.config.registry.matching, inlineMatches := collaborators.inlineMatches
     displaying := running.config.registry.displaying
     prefixNames := running.config.registry.prefixName? scheme
@@ -2032,37 +1959,23 @@ structure Progress where
   reload has finished (`Window.titleBarAtOpen`). -/
   titleBar : Option Window.TitleBar := none
 
-/-- The registry a host starts with: what compiled code hands it, its
-commands, jobs, key bindings, modes, ex bindings, themes, segments and
-languages, compile contributions, completion sources, completion styles
-and completion displays, for the owner `compiled`, before any config. -/
-def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
-    Config.Registry :=
-  (((((((((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs
-                                                      .compiled
-                                                      collaborators.compiledJobs).replaceBindings
-                                                  .compiled collaborators.bindings).replaceModes
-                                              .compiled collaborators.modes).replaceEx
-                                          .compiled collaborators.ex).replaceThemes
-                                      .compiled collaborators.themes).replaceSegments
-                                  .compiled collaborators.segments).replaceLanguages
-                              .compiled collaborators.languages).replaceContributions
-                          .compiled collaborators.contributions).replaceSources
-                      .compiled collaborators.sources).replaceStyles
-                  .compiled collaborators.styles).replaceDisplays
-              .compiled collaborators.displays).replaceAtPoints
-          .compiled collaborators.atPoints).replaceAtPointUses
-      .compiled collaborators.atPointUses |>
-    fun registry => { registry with styleDefaults := collaborators.styleDefaults }
+/-- What the editor thread holds as its loop starts: the config state its
+packages make (`Config.State.ofPackages`: each of `collaborators.packages`
+registered in order, for the owner named after it, before any config), no
+texts, the display its collaborators make over the table of snapshots the
+text binding publishes, the clipboard they make, the syntax tree they make
+over the same table, no jobs, an empty mailbox and no frame.
 
-/-- What the editor thread holds as its loop starts: the compiled registry
-(`compiled`), no texts, the display its collaborators make over the table of
-snapshots the text binding publishes, the clipboard they make, the syntax
-tree they make over the same table, no jobs, an empty mailbox and no frame. -/
+A package that is refused is skipped, and what it was refused with is
+handed to the collaborators' log, prefixed with `package: `; the others
+register and the loop starts. -/
 def Running.new {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
-    IO (Running σ scheme) :=
+    IO (Running σ scheme) := do
+  let (config, refused) := Config.State.ofPackages collaborators.packages
+  for message in refused do
+    collaborators.log s!"package: {message}"
   return {
-      config := { registry := compiled collaborators }
+      config
       texts := RealTexts.over collaborators.published
       display := ← collaborators.display collaborators.published.reader
       clipboard := ← collaborators.clipboard
@@ -2076,8 +1989,8 @@ it publishes in `progress` how many markers it has reached, whether a reload
 is running, how many jobs are, and the title bar the installed config
 chose.
 
-Before the first event it registers what compiled code hands it (`compiled`),
-and tells the library its interrupt key; when it ends it leaves the library with
+Before the first event it registers the packages it is handed
+(`Running.new`), and tells the library its interrupt key; when it ends it leaves the library with
 none, so that no key raises the flag while no loop takes keys off the
 queue. -/
 def loop {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme)
@@ -2645,82 +2558,26 @@ def drawnDisplay (snapshots : SnapshotReader) : IO Host.Display := do
 
 /-- The collaborators the executable's hosts are made of, over the jobs'
 `services`, the table of snapshots `published` and what jobs hold `held`:
-the real elaborator over the toolchain in `sysroot` and the editor's
-`.olean` files in `oleanDir`, the config directory `configDir` as the
-source, `emit` as the output and stderr as the log, and, as its compiled
-ones, the file commands with their jobs, the minibuffer's commands with its
-mode, evil's commands, the ex line's commands with the ex names that ship,
-the buffer commands, the frame's commands with their bindings, the window
-commands, the command that loads a theme
-with the themes that ship, the command prompt, `execute-command`, which
-lists every registered command, the binding search, `search-bindings`, which
-lists every binding the scheme reaches, the workspace commands with the job that finds a
-file's workspace and the workspace finder's escape key (`Workspace.package.registered.bindings`), the shell's command with the job that runs `:!`, the
-compile mode's commands, its jobs, its mode and the contributions that ship,
-`cargo-mode`, `lake-mode` and `mise-mode` (`Editor/Compile.lean`,
-`Editor/Compile/Shipped.lean`), the status buffer's commands, its jobs and
-its mode (`Editor/VersionControl/Compiled.lean`), the `code` mode with the languages that ship
-(`Editor/Language.lean`), and the menu bar (`Menu.standard`) with its
-items' bindings (`Menu.package.registered.bindings`). Its display is the recorder and its
-clipboard its own, as a host's are by default.
+`packages` as the packages the host registers, the real elaborator over the
+toolchain in `sysroot` and the editor's `.olean` files in `oleanDir`, the
+config directory `configDir` as the source, `emit` as the output and stderr
+as the log. Its input scheme is the Vim scheme's default
+(`Vim.Default.scheme`), which is the host's type and no package's. Its
+display is the recorder and its clipboard its own, as a host's are by
+default.
 
-It is apart from `shipped`, which makes what it is over, so that what the
-hosts are handed as compiled code can be read with no pump started
-(`ConfigTest.shippedChecks`). -/
-def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit)
-    (services : Job.Services) (published : Snapshots) (held : Job.HeldSnapshots) :
-    Collaborators Config.Elaborate.State Vim.Default.scheme :=
+It names no package: the executable passes the packages that ship
+(`Editor/PackageSet.lean`), and what those register is said there and in
+each package's module.
+
+It is apart from `shipped`, which makes what it is over, so that the
+collaborators can be made with no pump started. -/
+def shippedOver (packages : Array Package) (sysroot oleanDir configDir : String)
+    (emit : String → IO Unit) (services : Job.Services) (published : Snapshots)
+    (held : Job.HeldSnapshots) : Collaborators Config.Elaborate.State Vim.Default.scheme :=
   { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
     source := Config.Directory.source configDir, emit, services, published, held, requests := 1,
-    wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
-    commands :=
-      Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
-        Evil.package.registered.commands ++
-        Ex.package.registered.commands ++
-        Buffers.package.registered.commands ++
-        FrameCommands.package.registered.commands ++
-        WindowCommands.package.registered.commands ++
-        TabCommands.package.registered.commands ++
-        Themes.package.registered.commands ++
-        ExecuteCommand.package.registered.commands ++
-        BindingSearch.package.registered.commands ++
-        Workspace.package.registered.commands ++
-        Shell.package.registered.commands ++
-        Compile.package.registered.commands ++
-        AtPoint.package.registered.commands ++
-        VersionControl.package.registered.commands ++
-        VersionControl.gutterPackage.registered.commands
-    bindings :=
-      FrameCommands.package.registered.bindings ++ Menu.package.registered.bindings ++
-        Workspace.package.registered.bindings
-    menu := some Menu.standard
-    compiledJobs :=
-      Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
-        Shell.package.registered.jobs ++
-        Compile.package.registered.jobs ++
-        AtPoint.package.registered.jobs ++
-        VersionControl.package.registered.jobs ++
-        VersionControl.gutterPackage.registered.jobs
-    modes :=
-      Minibuffer.package.registered.modes ++ Compile.package.registered.modes ++
-        VersionControl.package.registered.modes ++
-        Language.modes
-    ex := Ex.package.registered.ex
-    themes := Themes.package.registered.themes, languages := Language.shipped
-    segments := ModeLine.shipped ++ VersionControl.package.registered.segments,
-    contributions := Compile.package.registered.contributions
-    sources :=
-      Ex.package.registered.sources ++ Buffers.package.registered.sources ++
-        TabCommands.package.registered.sources ++
-        Themes.package.registered.sources ++
-        ExecuteCommand.package.registered.sources ++
-        BindingSearch.package.registered.sources ++
-        AtPoint.package.registered.sources ++
-        Files.package.registered.sources ++
-        Workspace.package.registered.sources
-    styleDefaults := Files.package.registered.styleDefaults
-    atPoints := AtPoint.package.registered.atPoints
-    atPointUses := AtPoint.package.registered.atPointUses
+    wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6, packages
     log := IO.eprintln }
 
 /-- The environments every job of a host shares, over `state`
@@ -2733,7 +2590,8 @@ def reportedEnvironments (state : IO.Ref Process.Environments) (source : UInt64)
     (discard <| Ffi.postEvent .editor source 0 text : IO Unit).catchExceptions fun _ => pure ()
 
 /-- The collaborators the executable's hosts are made of, the headless
-mode's and the window mode's: `shippedOver` the library's timer service,
+mode's and the window mode's, with `packages` as the packages the host
+registers: `shippedOver` the library's timer service,
 file service, process service, watch service and diff service for the
 jobs, the library's matcher (`Fuzzy.real`), which the loop's match jobs ask,
 and the environments they share for the mode `host` (`reportedEnvironments`).
@@ -2741,8 +2599,9 @@ and the environments they share for the mode `host` (`reportedEnvironments`).
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
 queues ends. -/
-def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (host : Process.Host)
-    (fakeClock : Bool := false) : IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
+def shipped (packages : Array Package) (sysroot oleanDir configDir : String)
+    (emit : String → IO Unit) (host : Process.Host) (fakeClock : Bool := false) :
+    IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
@@ -2763,7 +2622,7 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (h
   let timers := (clock.map (·.timers)).getD (Job.realTimers completions)
   let environments ← IO.mkRef ({ host } : Process.Environments)
   let collaborators :=
-    shippedOver sysroot oleanDir configDir emit
+    shippedOver packages sysroot oleanDir configDir emit
       { completions, timers
         files := Job.realFiles completions published.reader held
         processes := Job.realProcesses completions refused timers timed
@@ -2773,10 +2632,11 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (h
         snapshots := Job.realSnapshots published.reader } published held
   return { collaborators with clock }
 
-/-- The headless mode of the executable, handed the command line after
+/-- The headless mode of the executable, handed the packages its host
+registers and the command line after
 `headless`: `editor headless [--render] [<sysroot> <olean dir>] <config dir>
 <script file>`, read by `Headless.read` (`Editor/Headless/CommandLine.lean`).
-Loads the config in `configDir` with the real elaborator,
+Registers `packages`, in order, loads the config in `configDir` with the real elaborator,
 runs the script as `run` does, with the output on stdout, then shuts the
 library's process service down, which kills and reaps every child it
 started, quits the queues and exits explicitly: with status 0 when the script ran to its end or
@@ -2808,7 +2668,7 @@ environment. The working directory is read once, at the edge, as the
 editor's (`Collaborators.workingDirectory`): where `:!` runs for a buffer
 with neither a workspace nor a file; no path of the command line is read
 against it. -/
-def main (arguments : List String) : IO UInt32 := do
+def main (packages : Array Package) (arguments : List String) : IO UInt32 := do
   let { render := drawn, sysroot, oleans := oleanDir, config := configDir, script := scriptPath } ←
     match read (← IO.appPath).toString arguments with
     | .ok read =>
@@ -2829,7 +2689,7 @@ def main (arguments : List String) : IO UInt32 := do
     if let .error reason← Ffi.renderHeadless then
       IO.eprintln s!"editor: the headless render session could not be started: {reason}"
       return 1
-  let shipped ← shipped sysroot oleanDir configDir IO.println .headless (fakeClock := true)
+  let shipped ← shipped packages sysroot oleanDir configDir IO.println .headless (fakeClock := true)
   let workingDirectory ← IO.currentDir
   let failure ←
     run

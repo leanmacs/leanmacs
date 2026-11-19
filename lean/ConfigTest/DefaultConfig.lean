@@ -5,10 +5,12 @@ import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import ConfigTest.Support.Syntax
 import Editor.Config.Directory
+import Editor.Config.Packages
 import Editor.Config.Registry
+import Editor.Config.Reload
 import Editor.Headless
 import Editor.InputScheme.Vim.Default
-import Editor.Job.Fake
+import Editor.PackageSet
 import Editor.Workspace.FindFile
 import Editor.Workspace.FindInProject
 
@@ -44,19 +46,17 @@ def defaultBuilt (context : Context) : IO Config.Registrations := do
         IO.userError
           s!"the default config was rejected: {outcome.diagnostics.toList.map (·.message)}"
 
-/-- The registry a host of the executable starts with
-(`Headless.shippedOver`), with the default config's bindings, prefix names
+/-- The registry a host of the executable starts with, the one the packages
+that ship make (`Config.State.ofPackages` of `PackageSet.shipped`), with the
+default config's bindings, prefix names
 and leaders installed for the owner `.config`, as a reload installs them
 (`Config.Reload.install`). -/
 def defaultRegistry (registrations : Config.Registrations) : IO Config.Registry := do
-  let completions ← Job.Completions.new
-  let clock ← Job.FakeClock.new completions
-  let shipped :=
-    Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-      (← Snapshots.new) (← Job.HeldSnapshots.new)
+  let (state, _) : Config.State Config.Elaborate.State × Array String :=
+    Config.State.ofPackages PackageSet.shipped
   let registry :=
-    ((Headless.compiled shipped).replaceBindings .config registrations.bindings).replacePrefixNames
-      .config registrations.prefixNames
+    (state.registry.replaceBindings .config registrations.bindings).replacePrefixNames .config
+      registrations.prefixNames
   return { registry with
       leader := registrations.leader, localLeader := registrations.localLeader }
 

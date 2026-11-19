@@ -6,15 +6,19 @@ import ConfigTest.Support.Lines
 import ConfigTest.Support.Syntax
 import Editor.Api
 import Editor.Appearance
+import Editor.AtPoint.Compiled
 import Editor.Buffers
+import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
 import Editor.Command
 import Editor.Command.Call
 import Editor.Compile
+import Editor.Compile.Compiled
 import Editor.Compile.Contribution
 import Editor.Compile.Listing
 import Editor.Completion
 import Editor.Completion.AtPoint
+import Editor.Completion.Compiled
 import Editor.Completion.Display
 import Editor.Completion.Displays
 import Editor.Completion.Paths
@@ -33,9 +37,11 @@ import Editor.Display
 import Editor.DisplayRules
 import Editor.Event
 import Editor.Event.Queue
+import Editor.Evil.Compiled
 import Editor.Ex
 import Editor.Ex.Compiled
 import Editor.Ex.Line
+import Editor.ExecuteCommand.Compiled
 import Editor.Face
 import Editor.Ffi.Counter
 import Editor.Ffi.Events
@@ -44,7 +50,7 @@ import Editor.File
 import Editor.FileWatch
 import Editor.Files
 import Editor.Files.Compiled
-import Editor.Fuzzy
+import Editor.FrameCommands.Compiled
 import Editor.Fuzzy.Real
 import Editor.Headless
 import Editor.InputScheme
@@ -54,11 +60,11 @@ import Editor.Invocation
 import Editor.Job
 import Editor.Job.Fake
 import Editor.Job.Jobs
-import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.Job.Table
 import Editor.Keymap
 import Editor.Language
+import Editor.Language.Compiled
 import Editor.Layout
 import Editor.Loop
 import Editor.Menu
@@ -67,6 +73,7 @@ import Editor.Minibuffer
 import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
+import Editor.Package
 import Editor.PackageSet
 import Editor.Process.Environment
 import Editor.Program
@@ -80,11 +87,13 @@ import Editor.TabCommands.Compiled
 import Editor.Text
 import Editor.Text.Real
 import Editor.Themes
+import Editor.Themes.Compiled
 import Editor.Watch
 import Editor.Window
 import Editor.WindowCommands.Compiled
 import Editor.Workspace
 import Editor.Workspace.Attach
+import Editor.Workspace.Compiled
 import Editor.Workspace.FindFile
 import Editor.Workspace.FindInProject
 import Editor.Workspace.Modes
@@ -327,6 +336,33 @@ def hostChecks (context : Context) : List Check :=
                "text 0: \"\"", "text 1: \"v1\"", "reload 2: installed, 2 chunks, 1 commands",
                "run greet: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\"",
                "text 2: \"v2\""] },
+    { name :=
+        "a host handed no packages starts with an empty registry and no menu bar: no command, job, binding, mode, ex name, theme, segment, language, contribution, source, style, display, at-point source or use, no style default, no store and no menu, and nothing is logged"
+      run := do
+        let stage ← Stage.new context context.elaborator (Config.Directory.source "no-config")
+        let collaborators := { stage.collaborators with packages := #[] }
+        let running ← Headless.Running.new collaborators
+        let registry := running.config.registry
+        return registry.ownersByKind.size == 17 && registry.ownersByKind.all (·.isEmpty) &&
+            registry.styleDefaults.isEmpty &&
+            registry.menuBar? == none &&
+            (Headless.Running.keys collaborators running 0).menu == none &&
+            running.config.packages.isEmpty &&
+            running.config.cells.cells.isEmpty &&
+            (← stage.log.get).isEmpty },
+    { name :=
+        "a host hands each package it refuses to its log, prefixed with package, and registers the others: of two packages of one name the second is refused, and the host starts with the first's command and the third's"
+      run := do
+        let saying (name said : String) : Package :=
+          { name, setup := Editor.command said (message said) }
+        let stage ← Stage.new context context.elaborator (Config.Directory.source "no-config")
+        let collaborators :=
+          { stage.collaborators with
+            packages := #[saying "one" "first", saying "one" "again", saying "two" "third"] }
+        let running ← Headless.Running.new collaborators
+        return running.config.registry.names == #["first", "third"] &&
+            running.config.packages == #["one", "two"] &&
+            (← stage.log.get) == #[s!"package: {Package.namedTwice "one"}"] },
     { name := "a type error keeps the old config"
       run :=
         withHost context greetConfig fun session => do
@@ -1631,7 +1667,7 @@ def hostLoopChecks (context : Context) : List Check :=
         withRunning context
           (fun collaborators =>
             { collaborators with
-              start := throw .noSuchText, commands := dispatchCompiled.commands })
+              start := throw .noSuchText, packages := #[dispatchCompiled.package] })
           fun collaborators running stage => do
           let running ← running.run collaborators { command := "stamp" }
           return running.frame.isNone &&
@@ -1642,20 +1678,22 @@ def hostLoopChecks (context : Context) : List Check :=
         withRunning context
           (fun collaborators =>
             { collaborators with
-              commands :=
-                #[{ name := "mark"
-                    action :=
-                      .call fun call => do
-                        if let [.str text] := call.arguments then
-                          discard <| call.target.window.id.insertAtSelections text }]
-              compiledJobs :=
-                #[{ name := "poster"
-                    work := fun _ =>
-                      Work.of
-                        (fun _ => do
-                          post { command := "mark", arguments := [.str "p"] }
-                          sleep 10)
-                        fun _ => pure () }] })
+              packages :=
+                #[Compiled.package
+                    { commands :=
+                        #[{ name := "mark"
+                            action :=
+                              .call fun call => do
+                                if let [.str text] := call.arguments then
+                                  discard <| call.target.window.id.insertAtSelections text }]
+                      jobs :=
+                        #[{ name := "poster"
+                            work := fun _ =>
+                              Work.of
+                                (fun _ => do
+                                  post { command := "mark", arguments := [.str "p"] }
+                                  sleep 10)
+                                fun _ => pure () }] }] })
           fun collaborators running stage => do
           let (first, running) ← running.startJob collaborators "poster"
           let some first := first | return false
@@ -1723,6 +1761,27 @@ def hostLoopChecks (context : Context) : List Check :=
           return (← session.output.get).contains "job 1 spinner: interrupted" &&
               !(← Ffi.interruptRaised) &&
               (← session.scene) == ("job 1 spinner: interrupted".quote, #[viewLine "ab" 2]) },
+    { name :=
+        "a host handed two packages has their commands in list order as its loop starts, with no reload asked, and runs one; after a reload config's command is listed after them"
+      run :=
+        let making (name : String) (commands : List String) : Package :=
+          { name
+            setup :=
+              for command in commands do
+                Editor.command command (discard <| createText s!"{name}'s {command}") }
+        withHost context greetConfig
+          (fun session => do
+            session.ask [.show, .run "shared", .show]
+            let started ← session.lines
+            session.ask [.reload]
+            session.ask [.show]
+            return started ==
+                  #["commands: a shared b", "run shared: ok", "commands: a shared b",
+                    "text 0: \"\"", "text 1: \"second's shared\""] &&
+                (← session.lines).extract started.size ==
+                  #["reload 1: installed, 2 chunks, 1 commands", "commands: a shared b greet",
+                    "text 0: \"\"", "text 1: \"second's shared\""])
+          { packages := #[making "first" ["a", "shared"], making "second" ["shared", "b"]] } },
     { name :=
         "a host is handed compiled jobs: a compiled command starts one before any config is loaded, a reload that installs does not cancel it, and once the clock lets it go its command runs"
       run :=
@@ -1937,87 +1996,82 @@ def reloadEchoChecks (context : Context) : List Check :=
           let made ← session.echo
           return before == ("", #[]) && isGreetError made }]
 
-/-- The checks of what the executable's hosts are handed as compiled code
-(`Headless.shippedOver`, which `Headless.shipped` makes them with), on the
-registry a host starts with (`Headless.compiled`) and the test scheme's
-keymap of its bindings. Its services are a fake clock's over a table of
-waits of its own, which no pump reads: nothing here starts a job. -/
+/-- The registry a host of the executable starts with: the one the packages
+that ship make (`Config.State.ofPackages` of `PackageSet.shipped`), which is
+what `Headless.Running.new` starts from for a host handed them. -/
+def shippedRegistry : Config.Registry :=
+  let (state, _) : Config.State Config.Elaborate.State × Array String :=
+    Config.State.ofPackages PackageSet.shipped
+  state.registry
+
+/-- The checks of what the executable's hosts start with: the registry the
+packages that ship make (`shippedRegistry`), each entry for the owner named
+after its package, and the test scheme's keymap of its bindings. Nothing
+here starts a host or a job. -/
 def shippedChecks (_ : Unit) : List Check :=
   [{  name :=
-        "the executable's hosts start with the source files registered compiled in the category file, its job files, the style path, and the file category matched with path"
+        "the executable's hosts start with the source files registered by the files package in the category file, its job files, the style path, and the file category matched with path, the completion package's"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
+        let registry := shippedRegistry
         return registry.sources.any
-              (fun entry => entry.source.name == "files" && entry.owner == .compiled) &&
+              (fun entry => entry.source.name == "files" && entry.owner == Files.package.owner) &&
             registry.sourcesIn Completion.Paths.category == #["files"] &&
             registry.jobs.any
               (fun entry =>
-                entry.registration.name == Completion.Paths.job && entry.owner == .compiled) &&
+                entry.registration.name == Completion.Paths.job &&
+                  entry.owner == Files.package.owner) &&
             (registry.style? "path").isSome &&
             (registry.matching.styleFor (some Completion.Paths.category)).name == "path" &&
-            registry.matching.ownerFor (some Completion.Paths.category) == .compiled },
+            registry.matching.ownerFor (some Completion.Paths.category) ==
+              Completion.package.owner &&
+            registry.styleDefaults == #[(Completion.Paths.category, "path")] },
     { name :=
-        "the executable's hosts start with find-file-in-workspace registered compiled, the source workspace-files registered compiled in the category workspace-file, which it alone is in, filtered and answered later by its job workspace-files, registered compiled"
+        "the executable's hosts start with find-file-in-workspace registered by the workspace package, the source workspace-files registered by it in the category workspace-file, which it alone is in, filtered and answered later by its job workspace-files, registered by it"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
-        return (registry.find? Workspace.FindFile.name).any (·.owner == .compiled) &&
+        let registry := shippedRegistry
+        return (registry.find? Workspace.FindFile.name).any (·.owner == Workspace.package.owner) &&
             registry.sources.any
               (fun entry =>
-                entry.source.name == Workspace.FindFile.sourceName && entry.owner == .compiled &&
+                entry.source.name == Workspace.FindFile.sourceName &&
+                  entry.owner == Workspace.package.owner &&
                   entry.source.filtered &&
                   entry.source.later.map (·.job) == some Workspace.FindFile.job) &&
             registry.sourcesIn Workspace.FindFile.category == #[Workspace.FindFile.sourceName] &&
             registry.jobs.any
               (fun entry =>
-                entry.registration.name == Workspace.FindFile.job && entry.owner == .compiled) },
+                entry.registration.name == Workspace.FindFile.job &&
+                  entry.owner == Workspace.package.owner) },
     { name :=
-        "the executable's hosts start with find-file-in-project registered compiled, the source project-workspaces registered compiled in the category project-workspace, which it alone is in, answered later by its job project-workspaces, and that job, project-workspace-choose and project-workspace-find registered compiled"
+        "the executable's hosts start with find-file-in-project registered by the workspace package, the source project-workspaces registered by it in the category project-workspace, which it alone is in, answered later by its job project-workspaces, and that job, project-workspace-choose and project-workspace-find registered by it"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
+        let registry := shippedRegistry
         let jobs :=
           [Workspace.FindInProject.job, Workspace.FindInProject.chooseJob,
             Workspace.FindInProject.findJob]
-        return (registry.find? Workspace.FindInProject.name).any (·.owner == .compiled) &&
+        return (registry.find? Workspace.FindInProject.name).any
+              (·.owner == Workspace.package.owner) &&
             registry.sources.any
               (fun entry =>
                 entry.source.name == Workspace.FindInProject.sourceName &&
-                  entry.owner == .compiled &&
+                  entry.owner == Workspace.package.owner &&
                   entry.source.later.map (·.job) == some Workspace.FindInProject.job) &&
             registry.sourcesIn Workspace.FindInProject.category ==
               #[Workspace.FindInProject.sourceName] &&
             jobs.all fun name =>
               registry.jobs.any
-                (fun entry => entry.registration.name == name && entry.owner == .compiled) },
+                (fun entry =>
+                  entry.registration.name == name && entry.owner == Workspace.package.owner) },
     { name :=
-        "the executable's hosts start with find-file-in-another-workspace registered compiled and one compiled binding of it, C-x C-d in the prompt category workspace-file, described Find in another workspace; the global keymap does not bind C-x"
+        "the executable's hosts start with find-file-in-another-workspace registered by the workspace package and one binding of it, the package's, C-x C-d in the prompt category workspace-file, described Find in another workspace; the global keymap does not bind C-x"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
+        let registry := shippedRegistry
         let escapes :=
           registry.bindings.filter (·.binding.command == Workspace.FindInProject.escapeName)
         let global : Keymap Invocation := registry.keymap TestScheme.scheme
-        return (registry.find? Workspace.FindInProject.escapeName).any (·.owner == .compiled) &&
+        return (registry.find? Workspace.FindInProject.escapeName).any
+              (·.owner == Workspace.package.owner) &&
             escapes.map (fun entry => (entry.owner, entry.binding)) ==
-              #[(.compiled,
+              #[(Workspace.package.owner,
                   { keys := (keysOf "C-x C-d").map .key
                     command := Workspace.FindInProject.escapeName
                     category := some Workspace.FindFile.category
@@ -2025,119 +2079,101 @@ def shippedChecks (_ : Unit) : List Check :=
             global.find? (keysOf "C-x") == none &&
             !global.continues (keysOf "C-x") },
     { name :=
-        "the executable's hosts start with the source words registered compiled in the category word, its job words registered compiled, the at-point source words registered compiled, and a modeless buffer's at-point chain is words"
+        "the executable's hosts start with the source words registered by the at-point package in the category word, its job words registered by it, the at-point source words registered by it, and a modeless buffer's at-point chain is words"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
+        let registry := shippedRegistry
         return registry.sources.any
-              (fun entry => entry.source.name == "words" && entry.owner == .compiled) &&
+              (fun entry => entry.source.name == "words" && entry.owner == AtPoint.package.owner) &&
             registry.sourcesIn Completion.Words.category == #["words"] &&
             registry.jobs.any
               (fun entry =>
-                entry.registration.name == Completion.Words.job && entry.owner == .compiled) &&
+                entry.registration.name == Completion.Words.job &&
+                  entry.owner == AtPoint.package.owner) &&
             registry.atPoints.any
-              (fun entry => entry.atPoint.name == "words" && entry.owner == .compiled) &&
+              (fun entry =>
+                entry.atPoint.name == "words" && entry.owner == AtPoint.package.owner) &&
             registry.atPointNames none #[] == #["words"] &&
             registry.unknownAtPoints == #[] },
     { name :=
-        "the executable's hosts start with the code mode and the languages rust, json, markdown, toml and lean, in that order, registered for the owner compiled"
+        "the executable's hosts start with the code mode and the languages rust, json, markdown, toml and lean, in that order, registered by the languages package"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
+        let registry := shippedRegistry
         return registry.modes.any
-              (fun entry => entry.mode.name == Language.codeName && entry.owner == .compiled) &&
+              (fun entry =>
+                entry.mode.name == Language.codeName && entry.owner == Language.package.owner) &&
             (registry.mode? Language.codeName).any (·.syntaxTreeOfLanguage) &&
-            registry.languages.map (fun entry => (entry.language.name, entry.owner == .compiled)) ==
+            registry.languages.map
+                (fun entry => (entry.language.name, entry.owner == Language.package.owner)) ==
               #[("rust", true), ("json", true), ("markdown", true), ("toml", true),
                 ("lean", true)] },
     { name :=
-        "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, each registered for the owner compiled; with switch-buffer, list-buffers and close-buffer registered for it, and the ex names b, ls and bd bound to them"
+        "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, the first two commands the frame-commands package's and quit the ex package's, and the three bindings the frame-commands package's; with switch-buffer, list-buffers and close-buffer registered by the buffers package, and the ex names b, ls and bd bound to them"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
+        let registry := shippedRegistry
         let bound (text : String) : Option Invocation :=
           (registry.keymap TestScheme.scheme).find? (keysOf text)
-        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        let ownedBy (package : Package) (name : String) : Bool :=
+          (registry.find? name).any (·.owner == package.owner)
+        let frameKeys :=
+          (registry.bindings.filter (·.owner == FrameCommands.package.owner)).map
+            (·.binding.command)
         let ex (name : String) : Option String := (registry.ex? name).map (·.command)
         return bound "C-s-f" == some { command := "toggle-fullscreen" } &&
             bound "s-m" == some { command := "minimise-window" } &&
             bound "s-q" == some { command := Ex.quitName } &&
-            compiled "toggle-fullscreen" &&
-            compiled "minimise-window" &&
-            compiled Ex.quitName &&
-            [Buffers.switchName, Buffers.listName, Buffers.closeName].all compiled &&
+            ownedBy FrameCommands.package "toggle-fullscreen" &&
+            ownedBy FrameCommands.package "minimise-window" &&
+            ownedBy Ex.package Ex.quitName &&
+            frameKeys == #["toggle-fullscreen", "minimise-window", Ex.quitName] &&
+            [Buffers.switchName, Buffers.listName, Buffers.closeName].all
+              (ownedBy Buffers.package) &&
             ex "b" == some Buffers.switchName &&
             ex "ls" == some Buffers.listName &&
             ex "bd" == some Buffers.closeName },
     { name :=
-        "the executable's hosts start with every window command registered for the owner compiled, every command the Vim scheme's C-w table names among them"
+        "the executable's hosts start with every window command registered by the window-commands package, every command the Vim scheme's C-w table names among them"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
-        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        let registry := shippedRegistry
+        let compiled (name : String) : Bool :=
+          (registry.find? name).any (·.owner == WindowCommands.package.owner)
         return !WindowCommands.package.registered.commands.isEmpty &&
             WindowCommands.package.registered.commands.all (compiled ·.name) &&
             Vim.Default.windowKeys.all (compiled ·.2) },
     { name :=
-        "the executable's hosts start with every tab command registered for the owner compiled, every command the Vim scheme's tab table names among them"
+        "the executable's hosts start with every tab command registered by the tab-commands package, every command the Vim scheme's tab table names among them"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
-        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        let registry := shippedRegistry
+        let compiled (name : String) : Bool :=
+          (registry.find? name).any (·.owner == TabCommands.package.owner)
         return !TabCommands.package.registered.commands.isEmpty &&
             TabCommands.package.registered.commands.all (compiled ·.name) &&
             Vim.Default.tabKeys.all (compiled ·.2) },
     { name :=
-        "the executable's hosts start with the completion sources that ship registered for the owner compiled, so config can ask for each by name: the ex line's history and its names, the buffers, the tabs, the themes and the commands; and with the command prompt, execute-command, registered for that owner"
+        "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names, the buffers, the tabs, the themes and the commands; and with the command prompt, execute-command, registered by the execute-command package"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
-        let compiled (name : String) : Bool :=
-          registry.sources.any fun entry => entry.source.name == name && entry.owner == .compiled
-        return [Ex.historySource.name, Ex.namesSource.name, Buffers.source.name,
-                  TabCommands.source.name, Themes.source.name, ExecuteCommand.source.name].all
-              (fun name => compiled name && (registry.source? name).isSome) &&
-            (registry.find? ExecuteCommand.name).any (·.owner == .compiled) },
+        let registry := shippedRegistry
+        let ownedBy (package : Package) (name : String) : Bool :=
+          registry.sources.any fun entry =>
+            entry.source.name == name && entry.owner == package.owner
+        return [(Ex.package, Ex.historySource.name), (Ex.package, Ex.namesSource.name),
+                  (Buffers.package, Buffers.source.name),
+                  (TabCommands.package, TabCommands.source.name),
+                  (Themes.package, Themes.source.name),
+                  (ExecuteCommand.package, ExecuteCommand.source.name)].all
+              (fun (package, name) => ownedBy package name && (registry.source? name).isSome) &&
+            (registry.find? ExecuteCommand.name).any (·.owner == ExecuteCommand.package.owner) },
     { name :=
-        "the executable's hosts start with the shipped completion styles, fuzzy and orderless, and the shipped completion display, minibuffer, registered for the owner compiled, and with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
+        "the executable's hosts start with the shipped completion styles, fuzzy and orderless, and the shipped completion display, minibuffer, registered by the completion package, and with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
+        let registry := shippedRegistry
         let compiled (name : String) : Bool :=
-          registry.styles.any fun entry => entry.style.name == name && entry.owner == .compiled
+          registry.styles.any fun entry =>
+            entry.style.name == name && entry.owner == Completion.package.owner
         return ["fuzzy", "orderless"].all compiled &&
             Completion.Displays.shipped.all
               (fun display =>
                 registry.displays.any fun entry =>
-                  entry.display.name == display.name && entry.owner == .compiled) &&
+                  entry.display.name == display.name && entry.owner == Completion.package.owner) &&
             registry.displays.any (·.display.name == "minibuffer") &&
             registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
             registry.sourcesIn "buffer" == #[Buffers.source.name] &&
@@ -2145,19 +2181,15 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.sourcesIn "theme" == #[Themes.source.name] &&
             registry.sourcesIn ExecuteCommand.category == #[ExecuteCommand.source.name] },
     { name :=
-        "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation, compilation-output, next-error, previous-error and compile-goto-error, the job compile-run and the mode compilation registered for the owner compiled, and the ex names compile, which takes text, recompile, kill-compilation, next-error and previous-error bound to them"
+        "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation, compilation-output, next-error, previous-error and compile-goto-error, the job compile-run and the mode compilation registered by the compile package, and the ex names compile, which takes text, recompile, kill-compilation, next-error and previous-error bound to them"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
-        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        let registry := shippedRegistry
+        let compiled (name : String) : Bool :=
+          (registry.find? name).any (·.owner == Compile.package.owner)
         return [Compile.compileName, Compile.recompileName, Compile.confirmName, Compile.killName,
                   Compile.outputName, Compile.nextName, Compile.previousName, Compile.gotoName].all
               compiled &&
-            (registry.findJob? Compile.runJob).any (·.owner == .compiled) &&
+            (registry.findJob? Compile.runJob).any (·.owner == Compile.package.owner) &&
             (registry.mode? Compile.modeName).isSome &&
             (registry.mode? Minibuffer.mode.name).isSome &&
             registry.ex? "compile" ==
@@ -2167,58 +2199,46 @@ def shippedChecks (_ : Unit) : List Check :=
             (registry.ex? "next-error").map (·.command) == some Compile.nextName &&
             (registry.ex? "previous-error").map (·.command) == some Compile.previousName },
     { name :=
-        "the executable's hosts start with compile-command registered for the owner compiled, and the ex name compile-command, which takes text, bound to it; no default key binds it"
+        "the executable's hosts start with compile-command registered by the compile package, and the ex name compile-command, which takes text, bound to it; no default key binds it"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
-        return (registry.find? Compile.commandName).any (·.owner == .compiled) &&
+        let registry := shippedRegistry
+        return (registry.find? Compile.commandName).any (·.owner == Compile.package.owner) &&
             registry.ex? "compile-command" ==
               some { name := "compile-command", command := Compile.commandName, takes := .text } &&
             !(registry.bindings.any (·.binding.command == Compile.commandName)) },
     { name :=
-        "the executable's hosts start with the jobs find-mode-markers and compile-list registered for the owner compiled, beside find-workspace, and with cargo-mode, lake-mode and mise-mode as the compiled contributions, in that order"
+        "the executable's hosts start with the job find-mode-markers registered by the workspace package, beside find-workspace, the job compile-list by the compile package, and with cargo-mode, lake-mode and mise-mode as the compile package's contributions, in that order"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
-        return (registry.findJob? Workspace.markerJob).any (·.owner == .compiled) &&
-            (registry.findJob? Workspace.findJob).any (·.owner == .compiled) &&
-            (registry.findJob? Compile.listJob).any (·.owner == .compiled) &&
-            (registry.contributions.filter (·.owner == .compiled)).map (·.contribution.mode) ==
+        let registry := shippedRegistry
+        return (registry.findJob? Workspace.markerJob).any (·.owner == Workspace.package.owner) &&
+            (registry.findJob? Workspace.findJob).any (·.owner == Workspace.package.owner) &&
+            (registry.findJob? Compile.listJob).any (·.owner == Compile.package.owner) &&
+            (registry.contributions.filter (·.owner == Compile.package.owner)).map
+                (·.contribution.mode) ==
               #["cargo-mode", "lake-mode", "mise-mode"] },
     { name :=
-        "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered for the owner compiled"
+        "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered by the themes package"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
-        return (registry.find? Themes.loadName).any (·.owner == .compiled) &&
+        let registry := shippedRegistry
+        return (registry.find? Themes.loadName).any (·.owner == Themes.package.owner) &&
             registry.theme? Theme.defaultName ==
               some { name := "default", theme := Theme.builtin } &&
-            registry.themes.all (·.owner == .compiled) },
+            registry.themes.all (·.owner == Themes.package.owner) },
     { name :=
-        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the owner compiled"
+        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the menu package, the commands the files package's and the evil package's"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let registry := Headless.compiled shipped
+        let registry := shippedRegistry
         let bound (text : String) : Option Invocation :=
           (registry.keymap TestScheme.scheme).find? (keysOf text)
-        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
-        return shipped.menu == some Menu.standard &&
+        let ownedBy (package : Package) (name : String) : Bool :=
+          (registry.find? name).any (·.owner == package.owner)
+        let menuKeys :=
+          (registry.bindings.filter (·.owner == Menu.package.owner)).map (·.binding.command)
+        return registry.menuBar? == some (registry.menuOf Menu.standard) &&
+            registry.menus.all (·.owner == Menu.package.owner) &&
+            menuKeys ==
+              #["open-file", "save-buffer", "undo", "redo", "clipboard-cut", "clipboard-copy",
+                "clipboard-paste", "select-all"] &&
             bound "s-o" == some { command := "open-file" } &&
             bound "s-s" == some { command := "save-buffer" } &&
             bound "s-z" == some { command := "undo" } &&
@@ -2227,46 +2247,9 @@ def shippedChecks (_ : Unit) : List Check :=
             bound "s-c" == some { command := "clipboard-copy" } &&
             bound "s-v" == some { command := "clipboard-paste" } &&
             bound "s-a" == some { command := "select-all" } &&
-            ["open-file", "save-buffer", "undo", "redo", "clipboard-cut", "clipboard-copy",
-                  "clipboard-paste", "select-all"].all
-              compiled },
-    { name :=
-        "transitional: the state the shipped packages make and the registry the bridged host starts with list the same commands, jobs, key bindings, modes, ex bindings, themes, segments, languages, compile contributions, styles, displays, at-point sources and their uses and style defaults, each in the same order, the same sources in every category, and the same menu bar"
-      run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let bridged := Headless.compiled shipped
-        let (state, refused) : Config.State Config.Elaborate.State × Array String :=
-          Config.State.ofPackages PackageSet.shipped
-        let packaged := state.registry
-        let same {α : Type} [BEq α] (read : Config.Registry → α) : Bool :=
-          read packaged == read bridged
-        let categories := (bridged.sources.map (·.source.category)).toList.eraseDups
-        return refused.isEmpty && !bridged.entries.isEmpty &&
-            same (·.entries.map (·.registration.name)) &&
-            same (·.jobs.map (·.registration.name)) &&
-            same (·.bindings.map (·.binding)) &&
-            same (·.modes.map (·.mode.name)) &&
-            same (·.ex.map (·.binding)) &&
-            same (·.themes.map (·.named.name)) &&
-            same (·.segments.map (·.segment.name)) &&
-            same (·.languageTable) &&
-            same (·.contributions.map (·.contribution.mode)) &&
-            same (·.styles.map (·.style.name)) &&
-            same (·.displays.map (·.display.name)) &&
-            same (·.atPoints.map (·.atPoint.name)) &&
-            same (·.atPointUses.map fun use => (use.mode, use.source)) &&
-            same (·.styleDefaults) &&
-            same (·.sources.size) &&
-            same
-              (fun registry =>
-                (registry.sources.map (·.source.category)).toList.eraseDups.length) &&
-            categories.all (fun category => same (·.sourcesIn category)) &&
-            packaged.menuBar? == shipped.menu.map bridged.menuOf &&
-            packaged.menuBar?.isSome }]
+            ["open-file", "save-buffer"].all (ownedBy Files.package) &&
+            ["undo", "redo", "clipboard-cut", "clipboard-copy", "clipboard-paste", "select-all"].all
+              (ownedBy Evil.package) }]
 
 /-- A chunk whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and

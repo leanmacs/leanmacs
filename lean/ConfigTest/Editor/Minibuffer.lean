@@ -15,7 +15,6 @@ import Editor.Completion.Display
 import Editor.Completion.Displays
 import Editor.Completion.Later
 import Editor.Completion.Styles
-import Editor.Config.Elaborate
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Display
@@ -25,19 +24,16 @@ import Editor.Face
 import Editor.Fuzzy
 import Editor.Fuzzy.Real
 import Editor.Headless
-import Editor.InputScheme.Vim.Default
 import Editor.Invocation
 import Editor.Job
 import Editor.Job.Fake
-import Editor.Job.Real
-import Editor.Job.Runner
 import Editor.Loop
 import Editor.Minibuffer.Compiled
 import Editor.Program
 import Editor.Scene
 import Editor.State
 import Editor.Text
-import Editor.Text.Real
+import Editor.Themes.Compiled
 
 /-!
 # Config tests: `Editor/Minibuffer.lean`
@@ -439,14 +435,9 @@ def promptChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
     { name :=
-        "config asks for a source the executable's hosts ship by name: on a host handed the shipped themes and sources (`Headless.shippedOver`), a prompt asking for `themes` lists the first shipped theme's name once it is committed; with config's own source of that name it lists config's candidate instead, and reloaded with a config that defines none, the shipped source's again"
+        "config asks for a source the executable's hosts ship by name: on a host handed the `themes` package, which the executable's hosts are, a prompt asking for `themes` lists the first shipped theme's name once it is committed; with config's own source of that name it lists config's candidate instead, and reloaded with a config that defines none, the shipped source's again"
       run := do
-        let completions ← Job.Completions.new
-        let clock ← Job.FakeClock.new completions
-        let shipped :=
-          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
-            (← Snapshots.new) (← Job.HeldSnapshots.new)
-        let some theme := shipped.themes[0]? | return false
+        let some theme := Themes.shipped[0]? | return false
         -- Each prompt opens a minibuffer view of its own, so the lines are
         -- compared from their fields on, whichever view they are of.
         let lists (asking : Array String) (candidate : String) : Bool :=
@@ -469,8 +460,7 @@ def promptChecks (context : Context) : List Check :=
               return lists shippedFirst theme.name && lists overridden "mine" &&
                   lists restored theme.name &&
                   !(← session.output.get).any (·.startsWith "loop: refused"))
-            { minibufferCompiled with
-              themes := shipped.themes, sources := shipped.sources } },
+            { minibufferCompiled with packages := #[Themes.package] } },
     { name :=
         "criterion 3: a config that chooses orderless for the category pick lists a pick prompt by it and every other by the default: after `w` is committed the pick prompt lists `wq`, `rewrite` and `w`, the candidates' own order, and a prompt of another category lists the same three with `w` first, the library's matcher's; reloaded with a config that chooses no style, the pick prompt lists `w` first too"
       run :=

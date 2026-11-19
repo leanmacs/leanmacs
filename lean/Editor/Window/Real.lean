@@ -218,7 +218,8 @@ def closeOnceEnded (platform : Ffi.Platform) (loop : Task (Except IO.Error Unit)
 
 /-- Runs the editor in a window of `platform`, on `options.file` when one
 was given, drawn from `display` and with `clipboard` as its clipboard, and
-returns once the window has closed: the host is started, and what
+returns once the window has closed: the host is started with `packages` as
+the packages it registers (`Headless.shipped`), and what
 `options.starts` gives is posted before the first event (the file opened
 when one was given, each of `said` said in the echo area, and config
 reloaded when `plan` says so); when config is loaded, its reload is waited
@@ -235,13 +236,13 @@ on stderr, and in the echo area while the loop still runs), or when the loop
 ended with an error. The editor's working directory is `workingDirectory`
 (`Headless.Collaborators.workingDirectory`): the process's, which `main`
 read at the edge. -/
-def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (display : Ffi.Display)
-    (clipboard : ClipboardHandler) (said : Array String) (shutdown : IO Unit)
-    (processes : Process.Host) (patience : Option Nat := some configPatience)
+def host (packages : Array Package) (platform : Ffi.Platform) (options : Options)
+    (plan : ConfigPlan) (display : Ffi.Display) (clipboard : ClipboardHandler) (said : Array String)
+    (shutdown : IO Unit) (processes : Process.Host) (patience : Option Nat := some configPatience)
     (workingDirectory : System.FilePath := "/") : IO UInt32 := do
   let shipped ←
-    Headless.shipped (options.sysroot.getD "") options.oleans (options.config.getD "") IO.eprintln
-        processes
+    Headless.shipped packages (options.sysroot.getD "") options.oleans (options.config.getD "")
+        IO.eprintln processes
   let collaborators :=
     { shipped with
       display := hostDisplay display platform
@@ -310,14 +311,15 @@ def shutdown : IO Unit := do
   Ffi.watchesShutdown
   Ffi.quit
 
-/-- `editor [<file>]`, with the command line's `arguments`: reads the world at
+/-- `editor [<file>]`, with the packages its host registers and the command
+line's `arguments`: reads the world at
 the edge, opens the system's display and clipboard, and runs `host` on the
 real window, with `shutdown`. A command line it does not take is the reason
 and the usage on stderr, and status 2. It exits explicitly, with the status
 `host` gave. When the system's quit was let go ahead, the platform may have
 ended the process with status 0 inside the run instead (the window port's
 rule; AppKit's terminate on macOS), once `shutdown` had run. -/
-def main (arguments : List String) : IO UInt32 := do
+def main (packages : Array Package) (arguments : List String) : IO UInt32 := do
   let environment : Environment :=
     { workingDirectory := (← IO.currentDir).toString, xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME"
       home := ← IO.getEnv "HOME", appPath := (← IO.appPath).toString }
@@ -352,8 +354,8 @@ def main (arguments : List String) : IO UInt32 := do
   -- `auto` takes mise under the home directory first, when `HOME` names one.
   let home := environment.home.filter (!·.isEmpty) |>.map System.FilePath.mk
   let status ←
-    host .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown (.window home)
-        (workingDirectory := environment.workingDirectory)
+    host packages .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
+        (.window home) (workingDirectory := environment.workingDirectory)
   IO.Process.exit status.toUInt8
 
 end Editor.Window
