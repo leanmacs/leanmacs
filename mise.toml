@@ -399,6 +399,12 @@ run = [
   # (`dispatch/expected`). A command that is not stopped loops for longer
   # than the time limit.
   "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/dispatch/expected -",
+  # The old form (tests/config-migrate): a config directory of files in byte
+  # order with no header is refused, with a diagnostic that names the files
+  # and `mise run config-migrate`; a copy that tools/config-migrate.sh
+  # converted loads; and what that script refuses it leaves as it was
+  # (tools/config-migrate-check.sh).
+  "sh ../tools/config-migrate-check.sh ../packages/.lake/build/bin/editor \"$(lean --print-prefix)\" .lake/build/lib/lean",
   # The finder-session config fixture (tests/headless/finder-session): it
   # loads, and its command, run by its key `C-c h`
   # and by its ex name `finder-hello`, says `finder-session: config loaded`
@@ -1029,6 +1035,19 @@ run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -
 [tasks.nightly-check]
 description = "Opt-in, never part of ci; macOS only: prepare a nightly from a tiny stamped image in a temporary directory, with real hdiutil, plutil and shasum (crates/editor-release-std/tests/nightly_mount.rs)"
 run = "cargo test --locked -p editor-release-std --test nightly_mount -- --ignored --nocapture"
+
+# Opt-in, by hand: converts a config directory from the old form, `.lean`
+# files in byte order with no header, to the form the editor loads, a root
+# `init.lean` and modules under `Config/` (tools/config-migrate.sh, whose
+# header says what it moves and what it refuses). With no argument it
+# converts `${XDG_CONFIG_HOME:-$HOME/.config}/leanmacs`; `mise run
+# config-migrate -- <dir>` converts another. The converted config loads
+# when its `setup` was defined in its last file: the editor runs the `setup`
+# that `init.lean` defines. The gate runs the script on a copy of a fixture
+# (`ffi-test`, tools/config-migrate-check.sh), never on a real config.
+[tasks.config-migrate]
+description = "Opt-in, never part of ci: convert a config directory of .lean files in byte order with no header to init.lean and Config/<Name>.lean (tools/config-migrate.sh); `mise run config-migrate -- [<config dir>]`, default ~/.config/leanmacs. The converted config loads when its setup was defined in its last file"
+run = "sh tools/config-migrate.sh"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl: it writes outside the checkout. After `app-check`,

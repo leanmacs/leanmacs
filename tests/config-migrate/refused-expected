@@ -1,0 +1,3 @@
+reload 1: rejected
+diagnostic: config:0:0: error: the config directory holds 05-leader.lean, 90-setup.lean and no init.lean: config is a root, init.lean, and the modules under Config/ it imports, each with its own header, and files in byte order with no header are no longer loaded; run `mise run config-migrate` to convert the directory
+run greet: no such command
