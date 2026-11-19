@@ -3022,9 +3022,9 @@ builds one sets `jumps` on its entry.
   the step before left (`BufferId.followMarks`, run by each undo and redo
   step). Global marks are not put back, as in Vim.
 
-**Not built**: `:marks`, `:jumps`, `:delmarks` and `:keepjumps`;
-`jumpoptions=stack`; `g;` and `g,`, the change list; keeping marks across
-restarts (viminfo, shada); and `m` in the visual states.
+**Not built**, outside `m`, `` ` `` and `'`: `:jumps` and `:keepjumps`;
+`jumpoptions=stack`; and `g;` and `g,`, the change list. What `m`, `` ` ``
+and `'` do in Vim 9.1 and do not do here is a recorded departure (below).
 
 **Recorded departures**, where the editor differs from Vim on purpose for
 now. Each is pinned by a check of what the editor does today, named
@@ -3085,6 +3085,22 @@ matches Vim changes that check deliberately:
 - **The mark `` `" `` is not built**: it says E78, where Vim's goes to
   the cursor's place when the buffer was last left. Task
   `marks-last-exit-mark`.
+- **The sentence and paragraph marks `` `( ``, `` `) ``, `` `{ `` and
+  `` `} `` are not built**: they and their `'` forms say E78, where Vim's
+  go to the start and end of the current sentence and paragraph. Task
+  `marks-sentence-and-paragraph-marks`.
+- **`m` is not bound in the visual states**: `v m a`, `<Escape>` and
+  `` `a `` says E20, and so does the same from `V`, where Vim's `nv_mark`
+  sets the mark at the cursor there too. Task `marks-set-in-visual-state`.
+- **`:marks` and `:delmarks` are not built**: no ex name of either ships,
+  so the ex line says `marks: not an ex command` and `delmarks: not an ex
+  command` (`Ex.unknown`), where Vim's list the marks and delete those
+  named. Task `marks-ex-commands`.
+- **Marks are not kept across restarts**: global marks live in the
+  session's state alone (`EditorState.Remembered.globalMarks`), which the
+  editor starts empty and never writes out, where Vim keeps the uppercase
+  and numbered marks in viminfo or shada. Task
+  `marks-persist-across-restarts`.
 
 ### Tab commands as built
 

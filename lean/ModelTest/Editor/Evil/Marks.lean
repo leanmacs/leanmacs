@@ -1,4 +1,6 @@
 import Editor.Buffers.Compiled
+import Editor.Ex
+import Editor.Ex.Compiled
 import Editor.Files.Compiled
 import ModelTest.Check
 import ModelTest.Support.Driver
@@ -180,6 +182,25 @@ def markInOtherWindow (mark : String) : Option (Nat × Nat) :=
     return (← head ⟨0⟩, ← head ⟨1⟩)
   (dispatchedFrom program start).map (·.1)
 
+/-- What a step of the mark checks that type an ex line is handed: evil's
+commands and the ex line's (`evilHanded`), told of the ex names that ship
+(`Ex.bindings`), so `:` asks for a line and the accept key runs it. -/
+def markExHanded : Loop.Keys Vim.Default.scheme :=
+  { evilHanded Ex.commands with
+    registered :=
+      { ex := fun name => Ex.bindings.findRev? (·.name == name)
+        exNames := exNamesOf Ex.bindings } }
+
+/-- What the echo area says once the ex line `line` was typed after `:` in
+the one window of a state holding `ab`, and the ex line accepted, with
+what the window then shows. -/
+def markExSaid (line : String) : Option (String × String) :=
+  (evilDriver "a|b" markExHanded).map fun driver =>
+    let typed :=
+      " ".intercalate (line.toList.map fun char => if char == ' ' then "SPC" else char.toString)
+    let ran := evilFed driver s!": {typed} RET"
+    (evilShown ran, ran.loop.state.echo)
+
 /-- The checks of `m`, `` ` `` and `'` under the Vim scheme that ships, on
 the text model, and across buffers on the file model. -/
 def evilMarkChecks : List Check :=
@@ -233,6 +254,37 @@ def evilMarkChecks : List Check :=
     { name :=
         "recorded departure (task marks-last-exit-mark): the mark of the cursor's place when the buffer was last left is not built, so ` \" says E78, where Vim's goes there, or to the first line when the buffer was never left"
       run := evilRows [("` \"", "a|b", Evil.unknownMark)] },
+    { name :=
+        "recorded departure (task marks-sentence-and-paragraph-marks): the sentence and paragraph marks are not built, so ` (, ` ), ` {, ` } and their ' forms say E78, where Vim's go to the start and end of the current sentence and paragraph"
+      run :=
+        evilRows
+          [("` (", "ab. c|d.\n\nef", Evil.unknownMark), ("` )", "ab. c|d.\n\nef", Evil.unknownMark),
+            ("` {", "ab. c|d.\n\nef", Evil.unknownMark),
+            ("` }", "ab. c|d.\n\nef", Evil.unknownMark),
+            ("' (", "ab. c|d.\n\nef", Evil.unknownMark),
+            ("' )", "ab. c|d.\n\nef", Evil.unknownMark),
+            ("' {", "ab. c|d.\n\nef", Evil.unknownMark),
+            ("' }", "ab. c|d.\n\nef", Evil.unknownMark)] },
+    { name :=
+        "recorded departure (task marks-set-in-visual-state): m is not bound in the visual states, so v m a, <Escape> and ` a say E20, and so does the same from V, where Vim's nv_mark sets the mark at the cursor"
+      run :=
+        evilRows
+          [("v m a <Escape> ` a", "a|bc", Evil.markNotSet),
+            ("V m a <Escape> ` a", "a|bc", Evil.markNotSet)] },
+    { name :=
+        "recorded departure (task marks-ex-commands): :marks and :delmarks are not built, so the ex line says neither is an ex command and leaves the text and cursor as they were, where Vim's list the marks and delete those named"
+      run :=
+        pure <|
+          markExSaid "marks" == some ("a|b", Ex.unknown "marks") &&
+            markExSaid "delmarks a" == some ("a|b", Ex.unknown "delmarks") },
+    { name :=
+        "recorded departure (task marks-persist-across-restarts): global marks live in the session's state alone, which the editor starts with none of, where Vim reads the uppercase and numbered marks back from viminfo or shada"
+      run :=
+        pure <|
+          ((Loop.Driver.over evilHanded (fun _ => none) (EditorState.initial ⟨640, 480⟩)
+                  editorModel).toOption.map
+              (·.loop.state.remembered.globalMarks.isEmpty)) ==
+            some true },
     { name :=
         "under an operator a mark that is not set gives the operator up, saying so, with the text as it was"
       run :=

@@ -874,7 +874,9 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   marks erased by the edit's shape, text typed at a mark, a
   global mark's column on a deleted line, the numbered marks, the change
   marks, the visual marks, the marks of the last change and insert, the
-  mark of the last exit, a lowercase mark with its buffer closed, and
+  mark of the last exit, the sentence and paragraph marks, `m` in the
+  visual states, `:marks` and `:delmarks` on the ex line, global marks
+  kept in the session alone, a lowercase mark with its buffer closed, and
   `` ` ` `` after a jump into another buffer;
 - `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
   All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
