@@ -504,10 +504,12 @@ def cycleProblem (nodes : Array Node) (cycle : Array String) : Diagnostic :=
 /-- Does about the config directory's generated files what
 `LakePackage.actions` says, reading what the directory holds through
 `package` and writing through `generator`, and returns what there is to
-say: its warnings, a file that could not be written as a warning, and,
-when `first` holds, its information. -/
-def generate (package : PackageFiles) (generator : Generator) (first : Bool) :
-    IO (Array Diagnostic) := do
+say: its warnings, a file that could not be written as a warning, and its
+information. The information, that no lakefile is generated, is said by
+every reload that gets here and finds the directory without one: nothing
+remembers that it was said, so a reload rejected before this step cannot
+swallow it. -/
+def generate (package : PackageFiles) (generator : Generator) : IO (Array Diagnostic) := do
   let said (severity : Severity) (message : String) : Diagnostic :=
     { source := "config", severity, message }
   try
@@ -529,8 +531,7 @@ def generate (package : PackageFiles) (generator : Generator) (first : Bool) :
       | .warn message =>
         diagnostics := diagnostics.push (said .warning message)
       | .inform message =>
-        if first then
-          diagnostics := diagnostics.push (said .information message)
+        diagnostics := diagnostics.push (said .information message)
     return diagnostics
   catch error =>
     return #[said .warning
@@ -546,7 +547,6 @@ files of the config that is installed. -/
 def build {β σ : Type} (scheme : InputScheme) (elaborator : Elaborator β σ) (source : Source)
     (package : PackageFiles) (generator : Option Generator) (base : Option β)
     (loaded : Array (LoadedFile σ)) : IO (Outcome β σ) := do
-  let first := base.isNone
   let base ←
     match base with
     | some base =>
@@ -586,7 +586,7 @@ def build {β σ : Type} (scheme : InputScheme) (elaborator : Elaborator β σ) 
   let mut diagnostics ←
     match generator with
     | some generator =>
-      generate package generator first
+      generate package generator
     | none =>
       pure #[]
   let grown ←

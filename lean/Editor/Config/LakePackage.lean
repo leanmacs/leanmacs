@@ -23,7 +23,8 @@ package ports").
   package set by its directory, and an editor that knows no such directory
   writes none: Lake rejects a lakefile whose `require` names a path that
   does not exist, and the editor never rewrites a file. That is said as
-  information.
+  information, by every reload that finds the directory without a
+  lakefile.
 
 ## The generated lakefile
 

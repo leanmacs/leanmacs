@@ -400,11 +400,11 @@ def moduleSessionChecks : List Check :=
             outcome.built.isSome &&
             said outcome == #[("config", .warning)] },
     { name :=
-        "an editor that knows no set directory creates the toolchain file alone, and says so as information in the first reload of the process and not in a later one"
+        "an editor that knows no set directory creates the toolchain file alone, and says as information that no lakefile is generated, in every reload that finds the directory without one"
       run := do
         let (outcome, calls, files) ← firstBuild (configOf [plainRoot]) (generate := true)
         let later ← IO.mkRef #[]
-        let held ← IO.mkRef #[]
+        let held ← IO.mkRef files
         let second ←
           build TestScheme.scheme (recording later) (configOf [plainRoot]) (fakePackage later held)
               (some (fakeGenerator later held none)) outcome.base #[]
@@ -413,7 +413,27 @@ def moduleSessionChecks : List Check :=
             outcome.built.isSome &&
             said outcome == #[("config", .information)] &&
             second.built.isSome &&
-            second.diagnostics.isEmpty },
+            ((← later.get).filter (· matches .create _)).isEmpty &&
+            second.diagnostics == outcome.diagnostics },
+    { name :=
+        "a first reload rejected at the headers says nothing of the lakefile, and the reload after it, which installs on the base the first made, with a generator that knows no set directory, says that none is generated"
+      run := do
+        let calls ← IO.mkRef #[]
+        let files ← IO.mkRef #[]
+        let elaborator := recording calls
+        let generator := some (fakeGenerator calls files none)
+        let first ←
+          build TestScheme.scheme elaborator (configOf [("init", ["import Nope", "define setup"])])
+              (fakePackage calls files) generator none #[]
+        let second ←
+          build TestScheme.scheme elaborator (configOf [plainRoot]) (fakePackage calls files)
+              generator first.base #[]
+        let message := ((second.diagnostics.map (·.message))[0]?).getD ""
+        return first.built.isNone && said first == #[("init.lean", .error)] && first.base.isSome &&
+            second.built.isSome &&
+            said second == #[("config", .information)] &&
+            (message.splitOn "no lakefile.toml is generated").length == 2 &&
+            (← files.get).map (·.1) == #["lean-toolchain"] },
     { name :=
         "a generated file that cannot be written is a warning tagged config, and the config is still built"
       run := do

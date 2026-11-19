@@ -699,9 +699,14 @@ lean-toolchain       generated when absent
   - **An editor run from a checkout writes both.** It finds its set's
     directory in `<executable>.set`, which the build writes beside it
     ("Start-up and shutdown").
-  - **The app writes `lean-toolchain` alone**, and says as information, in
-    the first reload of a process, that no lakefile is generated: a bundle
-    holds no package set to name until the packages roadmap's phase 9. An
+  - **The app writes `lean-toolchain` alone**, and says as information that
+    no lakefile is generated, in the report of every reload that finds the
+    directory without one: a bundle holds no package set to name until the
+    packages roadmap's phase 9. It is said each time, not once: nothing
+    then has to remember that it was said, and a first reload that is
+    rejected before the files are generated cannot swallow it. An
+    installed reload's information is in its report and not in the echo
+    area. An
     editor writes a lakefile only when it knows a set directory that is
     there, since Lake rejects a lakefile whose `require` names a path that
     does not exist, and the editor would never rewrite it.
