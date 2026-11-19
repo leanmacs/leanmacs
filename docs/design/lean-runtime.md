@@ -117,10 +117,14 @@ mise run user-link-check
 (`tools/user-link-check.sh`;
 [on-demand-checks.md](../dev-practices/on-demand-checks.md)). The check
 stages the pieces below in a temporary directory, by copy; builds the
-trivial package `tests/user-link/package` (one module, one command,
-`user-link-hello`) and links an `editor` from it with the staged `lake`,
-inside a sandbox where the tools cannot be reached; signs the result with
-`codesign --force -s -`; and runs it. It asserts: the relinked editor
+trivial package `tests/user-link/package` and links an `editor` from it
+with the staged `lake`, inside a sandbox where the tools cannot be reached;
+signs the result with `codesign --force -s -`; and runs it. The package
+brings two modules of its own: its one module, `UserLinkFixture`, with its
+one command, `user-link-hello`; and a hand-written root, `Main`, 78 lines
+that copy the body of the shipped headless host, standing in for the root
+the package-set build is to generate (the packages roadmap's phase 4). The
+check asserts: the relinked editor
 prints exactly `tests/headless/expected` for the standing headless fixture,
 and for `tests/user-link` the package's command runs and its message is in
 the echo area (`run user-link-hello: ok`, then `echo "hello from a package
@@ -174,7 +178,11 @@ minimal: what `lake`, `lean` and `clang` read of it was not measured, only
 what the linker opened.
 
 Times are medians of five runs, in seconds of wall clock, the first column
-inside the sandbox:
+inside the sandbox. The package build elaborates the one module,
+`UserLinkFixture`. The whole build and link elaborates that and the
+hand-written root `Main`, compiles the C of both to objects, and links; so
+it includes compiling a root that a generated one is to replace, which
+matters when a later measurement is set beside this one:
 
 | | Bundled `clang` and `ld64.lld` | `/usr/bin/cc`, with the SDK (`--linker system`) |
 |---|---|---|
