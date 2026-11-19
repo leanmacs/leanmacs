@@ -316,7 +316,16 @@ that owns each search is tested on the fake behind a gate the test holds
 in front of every read: a delivery's bound and a file cut across
 deliveries, the end delivered last, a search held back while its reader
 takes nothing, cancelling mid-file and before the start is answered, an
-id in use, and shutdown. Nothing sleeps; every wait is bounded.
+id in use, and shutdown. Nothing sleeps; every wait is bounded. The
+port's real adapter, over ripgrep's `ignore` and `grep-searcher`
+(`crates/editor-grep-ripgrep`), is held to the same contract on real files
+in a temporary directory its test makes and removes, and to its own cases
+there: every match under a root with a `.gitignore` at the root and below
+it, a `.ignore`, `.git/info/exclude`, hidden files, a binary file, CRLF
+rows and a row that is not UTF-8, against a naive scan of the files no
+ignore rule leaves out; the walk's order by name; `holds` asked once a row
+across the reader's blocks; and a NUL past the first block. `mise run
+deny` holds that only the adapter depends on the libraries.
 
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:

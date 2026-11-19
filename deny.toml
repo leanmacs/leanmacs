@@ -257,7 +257,32 @@
 # 0.1.0' is explicitly banned"). When it came to depend on `editor-search`,
 # for the rule of which matches a row holds, it joined that entry's
 # wrappers: with the wrapper not yet there, it fails on that edge ("crate
-# 'editor-search = 0.1.0' is explicitly banned").
+# 'editor-search = 0.1.0' is explicitly banned"). The entries for the
+# real adapter's libraries came in the commit that added it,
+# `editor-grep-ripgrep`, seen to bite on 2026-11-19. `ignore`,
+# `grep-searcher` and `grep-matcher`: with each added to `editor-grep`'s
+# dependencies, it fails ("crate 'ignore =
+# 0.4.34' is explicitly banned", and the same for the other two).
+# `grep-matcher`'s wrappers beside the adapter are the third-party crates
+# that depend on it (`cargo tree --target all -i grep-matcher -e
+# normal,build,dev --depth 1`: grep-searcher). `globset`, ignore's own
+# crate of globs, with ignore its one wrapper, as `notify-types`'s is
+# notify: with it added to `editor-grep`'s dependencies, it fails. ignore and
+# globset compile an ignore file's globs to regexes, so they joined the
+# wrappers of `regex-automata`'s and `regex-syntax`'s entries: with either
+# taken out, it fails on that edge. Still no crate of the workspace makes
+# a pattern string in the library's syntax. `editor-grep`: with the entry's
+# wrapper naming another crate, it fails on the adapter's edge. The
+# adapter's dev-dependency on `editor-search`, for the engine's fake in
+# its ignore test, and on `tempfile` made it a wrapper of both entries:
+# with it taken out of either, it fails on that edge. `walkdir`, `bstr`,
+# `same-file`, `encoding_rs`, `encoding_rs_io`, `memmap2` and the
+# `crossbeam` crates have none: they are reached only through the
+# libraries, as wgpu's internals are. The adapter itself had no entry while
+# nothing depended on it. Licences: `ignore` and the `grep-*` crates are
+# Unlicense OR MIT, and `encoding_rs` adds BSD-3-Clause for its data; the
+# gate checks no licence, so whether they are acceptable is the owner's to
+# confirm.
 #
 # For the diff of a reload (2026-11-16, the daily-driver floor's phase 5),
 # whose entries came in the commit that added the line diff port's adapter,
@@ -405,7 +430,7 @@ deny = [
   { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },
   { crate = "fontique", wrappers = ["editor-shape-parley", "parley", "parley_engine"], reason = "fontique is Parley's font library and stays behind the Shaper port with it: beside Parley's own crates, only the adapter may name its types" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
-  { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi", "editor-process-std", "editor-watch-notify", "editor-release-std"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test, the process adapter's contract test, whose children run and write there, the watch adapter's contract test, which watches and writes there, editor-ffi's wiring tests, and release tooling's wiring tests, a git repository made for the resolvers and the mount point of the .dmg's check; editor-text's, editor-process's, editor-watch's and editor-release's tests run on their fakes and make no file" },
+  { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi", "editor-process-std", "editor-watch-notify", "editor-release-std", "editor-grep-ripgrep"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test, the process adapter's contract test, whose children run and write there, the watch adapter's contract test, which watches and writes there, the project search adapter's contract and ignore tests, which write files and ignore files there, editor-ffi's wiring tests, and release tooling's wiring tests, a git repository made for the resolvers and the mount point of the .dmg's check; editor-text's, editor-process's, editor-watch's, editor-grep's and editor-release's tests run on their fakes and make no file" },
   { crate = "editor-process", wrappers = ["editor-process-std", "editor-ffi"], reason = "the Processes port and the process service have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-process-std", wrappers = ["editor-ffi"], reason = "the process adapter is linked only by the crate that wires the library together, for the process's process service; everything else reaches a process through the port, and editor-process's tests through its fake" },
   { crate = "editor-watch", wrappers = ["editor-watch-notify", "editor-ffi"], reason = "the Watch port and the watch service have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
@@ -429,10 +454,15 @@ deny = [
   { crate = "wasmtime", reason = "grammars are compiled in (crates/editor-syntax-treesitter, \"How grammars are loaded\"): tree-sitter's `wasm` feature, which loads grammars built as WebAssembly, stays off" },
   { crate = "tree-sitter-loader", reason = "grammars are compiled in (crates/editor-syntax-treesitter, \"How grammars are loaded\"): nothing finds, builds or loads a grammar at run time" },
   { crate = "regex-cursor", wrappers = ["editor-search-regex"], reason = "the regex library stays behind the search engine port: only its adapter crate may name its types" },
-  { crate = "regex-automata", wrappers = ["regex-cursor", "regex"], reason = "regex-cursor's engines are built on it, and so are regex's, tree-sitter's for a query's `#match?` predicates; it stays behind the search engine port and the Syntax port with them: no crate of the workspace may name it" },
-  { crate = "regex-syntax", wrappers = ["editor-search-regex", "regex-cursor", "regex-automata", "regex", "proptest"], reason = "the regex syntax's tree is built by the search engine port's adapter alone, from the pattern tree of editor-search, so no pattern string in the library's syntax is ever made; the other wrappers are the third-party crates that depend on it: regex-cursor and regex-automata, regex, tree-sitter's, and proptest, for its generated strings" },
-  { crate = "editor-search", wrappers = ["editor-search-regex", "editor-ffi", "editor-grep"], reason = "the search engine port, the pattern syntax and the rule of which match have three users: the port's adapter, which implements it and runs its contract; the crate that wires the library together, whose two C functions ask the rule over the adapter; and project search's core, which compiles a pattern once and asks it of every row and open buffer under a root, so a match on disk is one `/` finds in the buffer; a fourth is a decision, so it is made here" },
+  { crate = "regex-automata", wrappers = ["regex-cursor", "regex", "globset", "ignore"], reason = "regex-cursor's engines are built on it, and so are regex's, tree-sitter's for a query's `#match?` predicates, and ignore's and globset's, which compile an ignore file's globs to regexes inside the library; it stays behind the search engine port, the Syntax port and the files port with them: no crate of the workspace may name it" },
+  { crate = "regex-syntax", wrappers = ["editor-search-regex", "regex-cursor", "regex-automata", "regex", "proptest", "globset"], reason = "the regex syntax's tree is built by the search engine port's adapter alone, from the pattern tree of editor-search, so no pattern string in the library's syntax is ever made by a crate of the workspace; the other wrappers are the third-party crates that depend on it: regex-cursor and regex-automata, regex, tree-sitter's, proptest, for its generated strings, and globset, ignore's, which compiles an ignore file's globs to regexes inside the library" },
+  { crate = "editor-search", wrappers = ["editor-search-regex", "editor-ffi", "editor-grep", "editor-grep-ripgrep"], reason = "the search engine port, the pattern syntax and the rule of which match have three users: the port's adapter, which implements it and runs its contract; the crate that wires the library together, whose two C functions ask the rule over the adapter; and project search's core, which compiles a pattern once and asks it of every row and open buffer under a root, so a match on disk is one `/` finds in the buffer; the files port's adapter takes the engine's fake, `Literal`, for its tests alone, by a dev-dependency; another is a decision, so it is made here" },
   { crate = "editor-search-regex", wrappers = ["editor-ffi"], reason = "the search engine's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
+  { crate = "editor-grep", wrappers = ["editor-grep-ripgrep"], reason = "the files port, the rule of a search and the search service have one user so far: the port's adapter, which implements it and runs its contract and the rule over real files; another is a decision, so it is made here" },
+  { crate = "ignore", wrappers = ["editor-grep-ripgrep"], reason = "ripgrep's walk stays behind the files port: only its adapter crate may name its types" },
+  { crate = "globset", wrappers = ["ignore"], reason = "ripgrep's globs are ignore's, behind the files port with it: no crate of the workspace may name them" },
+  { crate = "grep-searcher", wrappers = ["editor-grep-ripgrep"], reason = "ripgrep's reader stays behind the files port: only its adapter crate may name its types" },
+  { crate = "grep-matcher", wrappers = ["editor-grep-ripgrep", "grep-searcher"], reason = "the matcher interface ripgrep's reader asks is implemented by the files port's adapter alone, which asks the port's predicate; grep-searcher, which it is the interface of, depends on it" },
   { crate = "imara-diff", wrappers = ["editor-diff-imara"], reason = "the diff library stays behind the line diff port: only its adapter crate may name its types" },
   { crate = "editor-diff", wrappers = ["editor-diff-imara", "editor-ffi"], reason = "the line diff port and the core that makes a script have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose diff service makes a script over the adapter and whose text binding applies one; a third is a decision, so it is made here" },
   { crate = "editor-release", wrappers = ["editor-release-std"], reason = "release tooling: the build ID, the commit and the .dmg's plan are reached only by their adapters' crate and its `leanmacs-release` binary; the editor never links it" },

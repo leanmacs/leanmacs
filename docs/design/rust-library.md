@@ -1503,6 +1503,40 @@ and a slow reader slows its search. `cancel` makes its `stopped` true and
 completes nothing more; an id in use is refused; `shutdown` cancels every
 search and waits for every thread.
 
+**The adapter** is `crates/editor-grep-ripgrep`: `RipgrepFiles`, over
+ripgrep's libraries, each pinned exactly to the newest release on
+2026-11-19 (Unlicense OR MIT): `ignore =0.4.34` walks, with
+`standard_filters` (hidden entries, `.gitignore` and `.ignore` in the root
+and above it, `.git/info/exclude`, the global excludes),
+`require_git(false)` (a `.gitignore` is honoured outside a repository),
+`follow_links(false)`, entries sorted by the bytes of their names, on the
+calling thread; `grep-searcher =0.1.17` reads, with line numbers, binary
+detection that quits at a NUL, BOM transcoding, and no memory map; and
+`grep-matcher =0.1.9` is the interface of a private matcher that declares
+no line terminator, so the reader takes its row-by-row path and hands each
+row, without its line feed, to the port's `holds` once. Rows held are kept
+and visited when the read ends, so a NUL found in a later block makes the
+whole file binary. No type of the three is public, and `deny.toml` lets no
+other crate depend on them. `ignore` brings `globset`, which compiles an
+ignore file's globs to regexes inside the library; no crate of the
+workspace makes a pattern string. Set aside, departing from the phase's
+text:
+
+- `grep-regex`: it compiles only a pattern string in Rust's regex syntax,
+  so a Vim pattern would have to be printed back from `regex-syntax`'s
+  tree, which never happens here; and its `\b` is Unicode's word class,
+  not the text's, so `\<foo\>` would find different matches on disk than
+  `/` finds in the buffer.
+- Running `rg` as a child: a program the app bundle does not ship, and
+  output to parse.
+- `git ls-files` with the reading in Lean: git workspaces only, and Lean
+  has no regex engine.
+- `walkdir` alone: no ignore files.
+
+`ignore` reimplements git's rules, where the workspace finder's lister
+asks git (`git ls-files`): a file force-added though an ignore file names
+it is listed by the finder and left out of a search.
+
 `crates/editor-grep/clippy.toml` holds the crate's tests, the rule's and
 the service's among them, to the fake: no `std::fs`, no `Path` method that
 asks the disk, no clock of the machine's, and not the adapter's
