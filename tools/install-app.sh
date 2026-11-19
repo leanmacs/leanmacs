@@ -20,7 +20,8 @@
 # It keeps no backups: the app is rebuilt from any commit with `mise run app`.
 # It uses no `sudo`, and opens, registers or runs nothing.
 #
-# `$1` is the Lean package's directory.
+# `$1` is the default package set's directory, `packages/`, whose build
+# directory holds the bundle.
 set -euo pipefail
 
 if [ "$(uname -s)" != Darwin ] || [ "$(uname -m)" != arm64 ]; then
@@ -28,9 +29,9 @@ if [ "$(uname -s)" != Darwin ] || [ "$(uname -m)" != arm64 ]; then
   exit 2
 fi
 
-lean_dir=$(cd "$1" && pwd)
-repo=$(cd "$lean_dir/.." && pwd)
-built="$lean_dir/.lake/build/Leanmacs.app"
+set_dir=$(cd "$1" && pwd)
+repo=$(cd "$set_dir/.." && pwd)
+built="$set_dir/.lake/build/Leanmacs.app"
 apps=${LEANMACS_APPLICATIONS:-/Applications}
 app="$apps/Leanmacs.app"
 cfg="$HOME/.config/leanmacs"

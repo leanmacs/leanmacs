@@ -2,8 +2,10 @@
 # The built app bundle, checked: `mise run app-check`
 # (docs/dev-practices/on-demand-checks.md, "The app bundle, on demand").
 #
-# `mise run app` builds `lean/.lake/build/Leanmacs.app` first (`editorApp`
-# in lean/lakefile.lean), stamped with the build ID and the commit. This
+# `mise run app` builds `packages/.lake/build/Leanmacs.app` first, from the
+# default package set (the facet `editorApp` of lean/lakefile.lean, built as
+# `lake -d ../packages build :editorApp` in `lean/`), stamped with the build
+# ID and the commit. This
 # script first works out the stamp it expects with the same tool, `cargo
 # run -p editor-release-std --bin leanmacs-release -- build-id` and
 # `-- commit`, which take LEANMACS_BUILD_ID and LEANMACS_COMMIT when they
@@ -55,9 +57,11 @@
 # 6. builds `editorApp` again and checks that it copied and signed
 #    nothing: the bundle's executable, its `CodeResources` and the build's
 #    trace file keep their modification times and inodes. Lake's output is
-#    printed, and holds no `Built editorApp` line;
-# 7. in a clone of the Lean package (`cp -c`: the files share their blocks,
-#    so it is quick and takes no space), with the stage script beside it and
+#    printed, and holds no `Built «default-set»:editorApp` line;
+# 7. in a clone of the core and of the default set, `lean/` and `packages/`
+#    side by side as they are in the checkout (`cp -c`: the files share
+#    their blocks, so it is quick and takes no space), with the stage script
+#    beside them and
 #    a `cargo` that does nothing first on the PATH, so nothing but
 #    `editorApp` builds: replaces the stage script with one that stages and
 #    then fails, as a failed or interrupted rebuild would, builds
@@ -101,7 +105,8 @@
 # which is shown to write nothing. It opens no window and needs no person.
 # It is macOS on arm64 only, as the bundle is.
 #
-# `$1` is the Lean package's directory.
+# `$1` is the core's directory, `lean/`, and `$2` the default package
+# set's, `packages/`, whose build directory holds the bundle.
 set -euo pipefail
 
 if [ "$(uname -s)" != Darwin ] || [ "$(uname -m)" != arm64 ]; then
@@ -110,9 +115,10 @@ if [ "$(uname -s)" != Darwin ] || [ "$(uname -m)" != arm64 ]; then
 fi
 
 lean_dir=$(cd "$1" && pwd)
+set_dir=$(cd "$2" && pwd)
 fixtures=$(cd "$lean_dir/../tests/headless/bundle" && pwd)
-built="$lean_dir/.lake/build/Leanmacs.app"
-trace="$lean_dir/.lake/build/Leanmacs.app.trace"
+built="$set_dir/.lake/build/Leanmacs.app"
+trace="$set_dir/.lake/build/Leanmacs.app.trace"
 
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
@@ -431,7 +437,7 @@ marks() {
   stat -f '%m %i' "$built/Contents/MacOS/editor" "$built/Contents/_CodeSignature/CodeResources" "$trace"
 }
 before=$(marks)
-(cd "$lean_dir" && LEAN_CC=/usr/bin/cc lake build --wfail editorApp)
+(cd "$lean_dir" && LEAN_CC=/usr/bin/cc lake -d "$set_dir" build --wfail :editorApp)
 after=$(marks)
 [ "$before" = "$after" ] || fail "building editorApp again changed the bundle or its trace"
 step "building editorApp again copied and signed nothing"
@@ -440,17 +446,18 @@ step "building editorApp again copied and signed nothing"
 clone="$dir/clone"
 mkdir -p "$clone/tools" "$clone/target/release" "$clone/bin"
 cp -Rpc "$lean_dir" "$clone/lean"
+cp -Rpc "$set_dir" "$clone/packages"
 cp -p "$lean_dir/../tools/stage-bundle.sh" "$clone/tools/stage-bundle.real"
 cp -pc "$lean_dir/../target/release/libeditor_ffi.a" "$clone/target/release/libeditor_ffi.a"
 printf '#!/bin/sh\nexit 0\n' >"$clone/bin/cargo"
 printf '#!/usr/bin/env bash\n"$(dirname "$0")/stage-bundle.real" "$@"\nexit 1\n' >"$clone/tools/stage-bundle.sh"
 chmod +x "$clone/bin/cargo" "$clone/tools/stage-bundle.sh"
-cloned="$clone/lean/.lake/build/Leanmacs.app"
+cloned="$clone/packages/.lake/build/Leanmacs.app"
 clone_marks() {
   stat -f '%m %i' "$cloned/Contents/MacOS/editor" "$cloned/Contents/_CodeSignature/CodeResources"
 }
 build_clone() {
-  (cd "$clone/lean" && PATH="$clone/bin:$PATH" LEAN_CC=/usr/bin/cc lake build --wfail editorApp)
+  (cd "$clone/lean" && PATH="$clone/bin:$PATH" LEAN_CC=/usr/bin/cc lake -d ../packages build --wfail :editorApp)
 }
 before=$(clone_marks)
 if build_clone >"$dir/failed.log" 2>&1; then
@@ -556,7 +563,7 @@ step "artwork that is not a 1024x1024 PNG failed the build on the artwork and le
 # rebuild the bundle with them.
 # Builds the clone with the environment changed by `env` arguments $@.
 build_clone_env() {
-  (cd "$clone/lean" && env "$@" PATH="$clone/bin:$PATH" LEAN_CC=/usr/bin/cc lake build --wfail editorApp)
+  (cd "$clone/lean" && env "$@" PATH="$clone/bin:$PATH" LEAN_CC=/usr/bin/cc lake -d ../packages build --wfail :editorApp)
 }
 # The fake stamp, or the next one when this check was given the fake stamp
 # itself (the by-hand run in docs/dev-practices/on-demand-checks.md), so

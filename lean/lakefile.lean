@@ -431,12 +431,12 @@ checks once that the nightly opens its window on a macOS 26 Mac
 def appMinimumSystemVersion : String :=
   "26.0"
 
-/-- The app's version file, relative to the package's directory: one line,
+/-- The app's version file, relative to the core's directory: one line,
 the version, which `editorApp` writes into `Info.plist`. -/
 def appVersionFile : FilePath :=
   "app" / "version"
 
-/-- The icon's artwork, relative to the package's directory: a 1024×1024
+/-- The icon's artwork, relative to the core's directory: a 1024×1024
 PNG, from which `editorApp` makes `Contents/Resources/Leanmacs.icns`. -/
 def appIconFile : FilePath :=
   "app" / "Leanmacs.png"
@@ -627,17 +627,24 @@ def appIconSizes : List (String × Nat) :=
     ("icon_256x256.png", 256), ("icon_256x256@2x.png", 512), ("icon_512x512.png", 512),
     ("icon_512x512@2x.png", 1024)]
 
-/-- `Leanmacs.app`, the editor as a macOS app bundle, at
-`.lake/build/Leanmacs.app` (`mise run app`; `docs/dev-practices/building.md`,
-"The app bundle"). It is not a default target: the gate never builds it, and
-it is refused with the reason anywhere but macOS on arm64
-(`requireArm64Mac`).
+/-- `Leanmacs.app`, the editor of a package set as a macOS app bundle, at
+`<set>/.lake/build/Leanmacs.app`: `lake -d <set dir> build :editorApp`
+(`mise run app`, on the default set; `docs/dev-practices/building.md`, "The
+app bundle"). It is a facet of the set, as `editor` is, and nothing builds
+it by default: the gate never does, and it is refused with the reason
+anywhere but macOS on arm64 (`requireArm64Mac`).
 
-It holds `Contents/MacOS/editor`, a copy of the `editor` executable; under
+`pkg` is the set, which holds the bundle, its trace, its staging directory
+and its closure file in its build directory. Everything else it reads is
+the core's, this package's, found in the workspace by name: the stage
+script, this lakefile, the version file, the artwork and the `.olean`
+directory.
+
+It holds `Contents/MacOS/editor`, a copy of the set's `editor`; under
 `Contents/Resources/lean`, the `.olean`, `.olean.server` and
 `.olean.private` files of the modules `Editor` imports (the closure
 `config-test bench-modules` lists), from the toolchain Lake runs on, which
-is the pinned one, and from this package, laid out by
+is the pinned one, and from the core, laid out by
 `tools/stage-bundle.sh` as `bundle-test` lays them out; `Contents/Info.plist`
 (`appInfoPlist`), with the version from `app/version` (`appVersionFile`,
 `parseAppVersion`, which fails the build on a malformed line) and the build
@@ -667,16 +674,18 @@ bundle in `Leanmacs.app.staging` and only then renames it into place, since
 Lake keeps the old trace when a build fails: a rebuild that fails or is
 interrupted leaves the old bundle, never a half-built one the old trace
 would take as up to date (`mise run app-check`, step 7). -/
-target editorApp pkg : FilePath := do
+package_facet editorApp pkg : FilePath := do
   requireArm64Mac
-  let exe ← editor.fetch
+  let some core := (← getWorkspace).findPackageByKey? __name__
+    | error "the core's package is not in the workspace"
+  let exe ← fetch <| pkg.facet `editor
   let lister ← «config-test».fetch
   let library ← Editor.fetch
-  let stager ← inputTextFile <| pkg.dir / ".." / "tools" / "stage-bundle.sh"
+  let stager ← inputTextFile <| core.dir / ".." / "tools" / "stage-bundle.sh"
   -- This file is the recipe, so a change to it rebuilds the bundle too.
-  let recipe ← inputTextFile <| pkg.dir / "lakefile.lean"
-  let versionJob ← inputTextFile <| pkg.dir / appVersionFile
-  let artJob ← inputBinFile <| pkg.dir / appIconFile
+  let recipe ← inputTextFile <| core.dir / "lakefile.lean"
+  let versionJob ← inputTextFile <| core.dir / appVersionFile
+  let artJob ← inputBinFile <| core.dir / appIconFile
   let inputs :=
     ((((((exe.zipWith Prod.mk lister).zipWith Prod.mk stager).zipWith (fun paths _ => paths)
                   library).zipWith
@@ -730,13 +739,13 @@ target editorApp pkg : FilePath := do
           let modules ←
             captureProc
                 { cmd := lister.toString
-                  args := #["bench-modules", sysroot.toString, pkg.leanLibDir.toString, "Editor"] }
+                  args := #["bench-modules", sysroot.toString, core.leanLibDir.toString, "Editor"] }
           IO.FS.writeFile closure (modules ++ "\n")
           proc (quiet := true)
               { cmd := stager.toString
                 args :=
                   #["--closure", closure.toString, staged.toString, exe.toString, sysroot.toString,
-                    pkg.leanLibDir.toString, "olean", "olean.server", "olean.private"] }
+                    core.leanLibDir.toString, "olean", "olean.server", "olean.private"] }
           IO.FS.writeFile (staged / "Contents" / "Info.plist") plist
           -- The system's tools, by absolute path: mise's PATH may hold others of
           -- the same name (a Python package installs an `xattr` with no `-r`).

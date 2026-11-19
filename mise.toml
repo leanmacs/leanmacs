@@ -718,8 +718,9 @@ run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -
 # hk.pkl. The bundle is about 600 MB and signing hashes all of it, and the
 # gate runs on Linux too, where the target is refused with the reason.
 #
-# It builds `lean/.lake/build/Leanmacs.app` with Lake (`editorApp` in
-# lean/lakefile.lean): the editor executable, the `.olean` files of the
+# It builds `packages/.lake/build/Leanmacs.app` with Lake, from the default
+# package set (the facet `editorApp` of lean/lakefile.lean, on
+# packages/lakefile.toml): the set's editor executable, the `.olean` files of the
 # modules `Editor` imports, Info.plist with the version from
 # lean/app/version, the build ID as CFBundleVersion and the commit as
 # LeanmacsCommit, and the icon made from lean/app/Leanmacs.png with sips
@@ -729,16 +730,16 @@ run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -
 # pass through checked, and HEAD otherwise; `editorApp` refuses a build
 # without them. Lake rebuilds it only when an input changed, a new commit
 # among them, so a second run with nothing changed copies and signs
-# nothing, and prints no `Built editorApp` line. It waits for `lean` so
+# nothing, and prints no `Built «default-set»:editorApp` line. It waits for `lean` so
 # that the Lake builds in lean/ run in one chain, and sets LEAN_CC as
 # `lean` does, since the executables it fetches must be linked by the
 # system compiler.
 [tasks.app]
-description = "Opt-in, never part of ci; macOS on arm64 only: build lean/.lake/build/Leanmacs.app with Lake (`editorApp` in lean/lakefile.lean), stamped with the build ID and the commit, ad-hoc signed"
+description = "Opt-in, never part of ci; macOS on arm64 only: build packages/.lake/build/Leanmacs.app with Lake from the default package set (`editorApp` in lean/lakefile.lean), stamped with the build ID and the commit, ad-hoc signed"
 depends = ["lean"]
 dir = "lean"
 env = { LEAN_CC = "/usr/bin/cc" }
-run = "id=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-release-std --bin leanmacs-release -- build-id) && commit=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-release-std --bin leanmacs-release -- commit) && LEANMACS_BUILD_ID=$id LEANMACS_COMMIT=$commit lake build --wfail editorApp"
+run = "id=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-release-std --bin leanmacs-release -- build-id) && commit=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-release-std --bin leanmacs-release -- commit) && LEANMACS_BUILD_ID=$id LEANMACS_COMMIT=$commit lake -d ../packages build --wfail :editorApp"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl: the gate does not build the bundle, and runs on Linux too. It is
@@ -753,7 +754,7 @@ run = "id=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-r
 # runs its headless mode on tests/headless/bundle with no directory
 # argument, an empty environment and / as the working directory, which must
 # print exactly `expected`, and builds `editorApp` again to show that copies
-# and signs nothing. In a clone of lean/ it shows that a failed rebuild
+# and signs nothing. In a clone of lean/ and packages/ it shows that a failed rebuild
 # leaves the old bundle, that changing the version or the artwork rebuilds
 # it, that a malformed version or artwork other than a 1024x1024 PNG fails
 # the build, and that the build and the check both take a version file
@@ -763,7 +764,7 @@ run = "id=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-r
 description = "Opt-in, never part of ci; macOS on arm64 only: verify the built Leanmacs.app's signature and run its headless mode from a copy in a temporary directory, with no directory argument, an empty environment and / as the working directory (tools/app-check.sh, tests/headless/bundle)"
 depends = ["app"]
 timeout = "300s"
-run = "tools/app-check.sh lean"
+run = "tools/app-check.sh lean packages"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl: the gate does not build the bundle, and runs on Linux too. CI's
@@ -777,7 +778,7 @@ run = "tools/app-check.sh lean"
 [tasks.dmg]
 description = "Opt-in, never part of ci; macOS on arm64 only: pack the built Leanmacs.app, a link to /Applications, LICENSE and the README into dist/Leanmacs-<build-id>.dmg (crates/editor-release)"
 depends = ["app"]
-run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- dmg lean/.lake/build/Leanmacs.app dist"
+run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- dmg packages/.lake/build/Leanmacs.app dist"
 
 # Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl:
 # it mounts a disk image. It does not depend on `dmg`, so CI's build job
@@ -849,7 +850,7 @@ run = "cargo test --locked -p editor-release-std --test nightly_mount -- --ignor
 [tasks.install]
 description = "Opt-in, never part of ci; macOS on arm64 only: build and check Leanmacs.app and install it to /Applications, replacing the old one and deleting leftover backups (tools/install-app.sh)"
 depends = ["app-check"]
-run = "tools/install-app.sh lean"
+run = "tools/install-app.sh packages"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It ends in
 # an abort, and on macOS every abort makes the system write a crash report
