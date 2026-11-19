@@ -28,7 +28,9 @@ checks compare the echo area with that function, never with a sentence.
   another style for `buffer`. Nothing matching is said (`noMatch`), and
   the window keeps its buffer. A window
   that is the minibuffer's shows the buffer in the window the prompt was
-  asked from (`Files.shownIn`), as the open command does.
+  asked from (`Files.shownIn`), as the open command does. Switching is a
+  jump, as opening a file is: the window records one before it shows the
+  buffer (`Jumps.record`).
 - **With anything else first** it asks, with a prompt labelled
   `switchPrompt` whose continuation is the command itself, as `open-file`
   and `ex` ask. A key bound to it under the Vim scheme hands it a count and
@@ -85,6 +87,10 @@ checks compare the echo area with that function, never with a sentence.
 
 ## Close
 
+- **The places held in a closed buffer's text outlive it**: before the
+  windows show another buffer, every jump list entry and global mark held
+  in it is detached into its file's path, row and column, or dropped when
+  it has no file (`Jumps.detach`); its own marks go with it.
 - **The buffer closed** (`closeCommand`) is the one a string first argument
   names, exactly, and otherwise the buffer of the window the command was
   called with. A name no buffer has is said (`noBuffer`). The minibuffer's
@@ -243,6 +249,8 @@ def switchTo (view : ViewId) (text : String) : EditorM Unit := do
   let some target := state.target? (Files.shownIn state view) | message (noMatch text)
   let some id ← resolve state target.window.buffer text | message (noMatch text)
   let name := ((state.buffer? id).map (·.name)).getD text
+  -- Switching buffers is a jump, as opening a file is.
+  Jumps.record (Files.shownIn state view)
   if let .error _← (Files.shownIn state view).show id then
     message (notShown name)
 
@@ -318,10 +326,13 @@ def unrefused {ε : Type} (what : String) : Except ε Unit → EditorM Unit
   | .ok () => pure ()
   | .error _ => giveUp s!"{what} was refused"
 
-/-- Closes the buffer `id` ("Close", in the module docs): every window of
-every tab that shows it, tiled, docked or floating (`Frame.everyWindow`),
-shows `fallback`, and then it is removed. -/
+/-- Closes the buffer `id` ("Close", in the module docs): the places held in
+its text are detached into its file first (`Jumps.detach`), then every
+window of every tab that shows it, tiled, docked or floating
+(`Frame.everyWindow`), shows `fallback`, and then it is removed. -/
 def closeInto (id fallback : BufferId) : EditorM Unit := do
+  -- The places held in its text outlive it, in its file.
+  Jumps.detach id
   let state ← editorState
   for view in state.frame.everyWindow do
     if (state.window? view).any (·.buffer == id) then

@@ -88,6 +88,8 @@ import ModelTest.Editor.Job.Runner
 import ModelTest.Editor.Job.Table
 import ModelTest.Editor.Json
 import ModelTest.Editor.JumpList
+import ModelTest.Editor.Jumps
+import ModelTest.Editor.Jumps.Go
 import ModelTest.Editor.Key.Notation
 import ModelTest.Editor.Keymap
 import ModelTest.Editor.Language
@@ -503,6 +505,17 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   command says when it starts nothing; and the commands and jobs as
   compiled code registers them (`Editor/Files/Compiled.lean`). They touch
   no file;
+- `jumpChecks`: a window's jump list held by markers (`Editor/Jumps.lean`)
+  on that driver, over the model of files: a record, an entry following
+  edits before it on the text model, entries edits brought onto one line
+  being one at the next move, a move past either end, a closed buffer's
+  places detached into its file or dropped, attached again when the file
+  is loaded, opening a file, a visit and switching buffers each recording
+  a jump, and a visit at a row's first non-blank or that records none;
+- `jumpGoChecks`: going through the list to another buffer or a closed
+  file (`Editor/Jumps/Go.lean`) on that driver: the index moving at once,
+  the cursor at the entry once the load lands, and no entry recorded by
+  the visit of a `C-o` or of a jump to a place;
 - `openFilesChecks`: the loop's handling of the files a window asks to open
   (`Event.openFiles`, `Editor/Loop.lean`) on that driver: it runs
   `open-file` with the paths, so two paths leave two buffers and the last
@@ -1141,6 +1154,8 @@ def checks : List Check :=
     atPointAskChecks ++
     atPointByItselfChecks ++
     fileCommandChecks ++
+    jumpChecks ++
+    jumpGoChecks ++
     openFilesChecks ++
     languageOpenChecks ++
     dispatchQuitChecks ++
