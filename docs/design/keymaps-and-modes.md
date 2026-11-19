@@ -3016,7 +3016,11 @@ builds one sets `jumps` on its entry.
 `jumpoptions=stack`; `g;` and `g,`, the change list; keeping marks across
 restarts (viminfo, shada); and `m` in the visual states.
 
-**Recorded departures**, not pinned against Vim:
+**Recorded departures**, where the editor differs from Vim on purpose for
+now. Each is pinned by a check of what the editor does today, named
+`recorded departure (task <slug>)` (`ModelTest.evilMarkChecks`, and
+`ModelTest.dispatchRollbackChecks` for the rollback), so a fix that
+matches Vim changes that check deliberately:
 
 - **Outside the linewise delete and change, a line's marks are erased by
   the edit alone**, where Vim asks which command made it. An edit that
@@ -3026,26 +3030,33 @@ restarts (viminfo, shada); and `m` in the visual states.
   and so does a charwise delete from a line's start through its line
   break (`v j $ d`); Vim keeps both on the joined line. And a redo erases
   by the edit it redoes, so redoing `3cc` keeps a mark of its last line on
-  the line left, where Vim's `u_undoredo` erases it.
+  the line left, where Vim's `u_undoredo` erases it. Task
+  `marks-erase-by-command-not-edit-shape`.
 - **Text typed right at a place is typed before it**: the bias `after`
   that carries a place down with a line broken at it also moves it past a
-  character typed at it, where Vim leaves a mark's column as it was.
+  character typed at it, where Vim leaves a mark's column as it was. Task
+  `marks-typed-text-at-mark-keeps-column`.
 - **A buffer's lowercase marks go when the buffer is closed**, where Vim
-  keeps them, since `:bd` does not wipe the buffer.
+  keeps them, since `:bd` does not wipe the buffer: `m a`, the buffer
+  closed and its file opened again leave `` `a `` saying E20. Task
+  `marks-lowercase-survive-buffer-close`.
 - **The previous-context mark is a place with its buffer**: `''` after a
   jump into another buffer goes back to that buffer, as a global mark
-  does. Vim's `w_pcmark` is a position of the current buffer.
-- **A place inside a range a command deleted keeps its collapsed
-  position** when the command is rolled back: the loop restores the
-  windows' selection and scroll markers alone
-  ([concurrency.md](concurrency.md), "Rollback").
+  does. Vim's `w_pcmark` is a position of the current buffer. Task
+  `pcmark-is-current-buffer-position`.
+- **A place inside a range a command deleted is not put back** when the
+  command is rolled back: the deletion collapses it to the range's start,
+  and the text the rollback puts back there is inserted before it, so it
+  ends at the end of that text. The loop restores the windows' selection
+  and scroll markers alone ([concurrency.md](concurrency.md), "Rollback").
+  Task `places-restore-on-rollback`.
 - **A counted undo or redo puts back no lowercase mark**: `2u` and
   `3 C-r` move across more than one step of the undo tree in one publish,
   and only a move across one step puts its marks back
   (`Marks.History.follow`), so `m a`, `dd`, `x` on another line and `2u`
   leave `` `a `` saying E20, where Vim's `u_undoredo` puts back the marks
-  of each step it undoes. Undoing one step at a time puts them back. The
-  fix is task `marks-counted-undo-redo-restore`.
+  of each step it undoes. Undoing one step at a time puts them back. Task
+  `marks-counted-undo-redo-restore`.
 
 ### Tab commands as built
 

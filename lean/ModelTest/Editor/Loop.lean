@@ -1358,6 +1358,27 @@ def dispatchRollbackChecks : List Check :=
           | .ok (texts, before, after) => texts == #["", "other"] && before == after
           | .error _ => false },
     { name :=
+        "recorded departure (task places-restore-on-rollback): a command that deletes the text a mark and a jump entry are inside and is then refused has the text put back, but the mark and the entry, collapsed by the deletion to its start, are carried past the text the rollback puts back, to its end, and not where they were: the loop restores only the windows' selection and scroll markers"
+      run :=
+        pure <|
+          let collapse : Dispatched := failingAfter fun call => call.target.buffer.text.delete 1 4
+          let keys := dispatchKeys [("C-c x", invoke "collapse")] [("collapse", collapse)]
+          let program : EditorM (String × List Marker × String) := do
+            let state ← holding "abcd" #[⟨0, 0⟩]
+            let text : TextId := ⟨0⟩
+            let mark ← text.mark (.anchor { offset := 3, bias := .after })
+            let entry ← text.mark (.anchor { offset := 3, bias := .after })
+            let (_, state) := state.setLocalMark ⟨0⟩ 'a' (some mark)
+            let (_, state) :=
+              state.setJumps ⟨0⟩ { list := { entries := #[.held ⟨0⟩ entry], index := 1 } }
+            let (loop, _) ← stepsWith keys ({ state } : TestLoop) (presses "C-c x")
+            return (← text.read, [← text.marker mark, ← text.marker entry], loop.state.echo)
+          (program.runModel editorModel).1.toOption ==
+            some
+              ("abcd",
+                [.anchor { offset := 4, bias := .after }, .anchor { offset := 4, bias := .after }],
+                "collapse: refused: bad range") },
+    { name :=
         "a key's command that sets a register and is then refused leaves the register the name had: a register is editor state, and the state is the one from before the command; a command that sets one and runs to its end leaves it set"
       run :=
         pure <|

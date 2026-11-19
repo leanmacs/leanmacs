@@ -384,7 +384,9 @@ registered command:
 - `dispatchRollbackChecks`: a command that fails leaves the texts, the
   windows' markers, the history and the scheme's state as they were, what
   cannot be rolled back is said, a move in the history is not taken back,
-  and a mark of the saved state is;
+  and a mark of the saved state is; and the recorded departure of task
+  `places-restore-on-rollback`, a mark and a jump entry inside the deleted
+  text carried to the end of the text put back;
 - `dispatchInterruptChecks`: on the watch model, an interrupt key that
   arrives while a command runs, before one and between two;
 - `pressedChecks`: the reserved invocation that presses keys
@@ -857,7 +859,11 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   charwise delete across lines, erased by `3dd` on every line, by `dd` on
   a text's only line and by `3cc` on the lines after the first, kept by
   `cc` on the only line and by a redo of its `dd`, put back by undo at its line and column,
-  erased again by redo and put back again by undo (`markUndoRows`);
+  erased again by redo and put back again by undo (`markUndoRows`); and
+  the recorded departures, one check each named for its task: a counted
+  undo, a line's marks erased by the edit's shape, text typed at a mark, a
+  lowercase mark with its buffer closed, and `` ` ` `` after a jump into
+  another buffer;
 - `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
   All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
   item (`clipRan`), in each Vim state, on the clipboard model.

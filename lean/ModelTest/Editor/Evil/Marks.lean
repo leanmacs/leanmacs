@@ -181,6 +181,17 @@ def evilMarkChecks : List Check :=
           [("m a d d j x 2 u ` a", "ab\nc|d\nef\ngh", Evil.markNotSet),
             ("m a d d j x u u G ` a", "ab\nc|d\nef\ngh", "ab\nc|d\nef\ngh")] },
     { name :=
+        "recorded departure (task marks-erase-by-command-not-edit-shape): outside the linewise delete and change a line's marks are erased by the edit's shape, so a backspace or C-w at a line's start that joins away the empty line above erases its mark, and so does v j $ d from a line's start, where Vim keeps both on the joined line; a redo of 3cc keeps its last line's mark on the line left, where Vim erases it"
+      run :=
+        evilRows
+          [("k m a j i <Backspace> <Escape> ` a", "ab\n\n|cd", Evil.markNotSet),
+            ("k m a j i C-w <Escape> ` a", "ab\n\n|cd", Evil.markNotSet),
+            ("m a v j $ d ` a", "|ab\ncd\nef", Evil.markNotSet),
+            ("j j m a g g 3 c c <Escape> u C-r ` a", "|ab\ncd\nef\ngh", "|\ngh")] },
+    { name :=
+        "recorded departure (task marks-typed-text-at-mark-keeps-column): text typed right at a mark is typed before it, so m a, i x and ` a lands after the x, where Vim keeps the mark's column"
+      run := evilRows [("m a i x <Escape> ` a", "a|b", "ax|b")] },
+    { name :=
         "under an operator a mark that is not set gives the operator up, saying so, with the text as it was"
       run :=
         pure <|
@@ -263,6 +274,26 @@ def evilMarkChecks : List Check :=
               let tried := markFed closed "` A"
               (closed.loop.state.globalMark? 'A', markSeen tried, tried.loop.state.echo)) ==
             some
-              (none, (some "jumps.txt", "|zero\n  one\néx two\nthree\nfour\n"), Evil.markNotSet) }]
+              (none, (some "jumps.txt", "|zero\n  one\néx two\nthree\nfour\n"), Evil.markNotSet) },
+    { name :=
+        "recorded departure (task marks-lowercase-survive-buffer-close): m a, then its buffer closed and its file opened again, leaves ` a saying E20, where Vim keeps a buffer's lowercase marks across :bd"
+      run :=
+        pure <|
+          (markDriver.map fun driver =>
+              let marked := markFed (markRan driver openJumps) "j l l m a"
+              let closed :=
+                markRan (markRan marked toScratch)
+                  { command := Buffers.closeName, arguments := [.str "jumps.txt"] }
+              let tried := markFed (markRan closed openJumps) "` a"
+              (markSeen tried, tried.loop.state.echo)) ==
+            some ((some "jumps.txt", "|zero\n  one\néx two\nthree\nfour\n"), Evil.markNotSet) },
+    { name :=
+        "recorded departure (task pcmark-is-current-buffer-position): the previous-context mark is a place with its buffer, so after ` A jumps into another buffer, ` ` goes back to the buffer the jump left, where Vim's goes to a position of the current buffer"
+      run :=
+        pure <|
+          (markDriver.map fun driver =>
+              let other := markFed (markRan (markFed driver "l m A") openJumps) "j"
+              markSeen (markFed other "` A ` `")) ==
+            some (some "jumps.txt", "zero\n|  one\néx two\nthree\nfour\n") }]
 
 end ModelTest
