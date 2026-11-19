@@ -320,7 +320,8 @@ the layout's above the minibuffer's strip, and the layout operations, each refus
 was when it would break an invariant. The places of jump lists and marks
 (`placeChecks`, part of `stateChecks`): the defaults, each set and read and
 refused, a split's copy of the jumps, a removed buffer's places dropped,
-and the place markers listed once. The invariants themselves are checked
+the place markers listed once, and those a state after no longer holds
+given up (`givenUpPlaces`). The invariants themselves are checked
 to refuse: states built in code that each break one (`spoilings`) are not
 well formed, so `EditorState.wellFormed` is seen to answer false for every
 one of its clauses. The operations the window commands are made of

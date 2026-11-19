@@ -3709,6 +3709,20 @@ def placeMarkers (state : EditorState) : Array MarkerId :=
       state.remembered.globalMarks.filterMap (·.2.marker?)
   all.foldl (fun once id => if once.contains id then once else once.push id) #[]
 
+/-- Gives up each marker a place of `before` is held by that no place of
+`after` holds (`placeMarkers`): the one rule by which place markers are
+released, at the end of a command (`Loop.gaveUp`) and when a publish erases
+or replaces marks (`EditorState.followMarks`). It is not refused: the first
+refusal is handed back, and the rest are still given up. -/
+def givenUpPlaces (before after : EditorState) : TextM (Option TextError) := do
+  let mut refusal := none
+  let placed := after.placeMarkers
+  for id in before.placeMarkers do
+    unless placed.contains id do
+      if let .error error← observing (id.text.unmark id) then
+        refusal := refusal <|> some error
+  return refusal
+
 /-- `state` with `rows` as its scroll margin, in place of the one it had
 ("The scroll margin", in the module docs). Nothing else changes, and it is
 never refused. -/

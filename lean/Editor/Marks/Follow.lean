@@ -26,7 +26,8 @@ not an excerpt buffer:
    text's revision, for the next publish.
 
 The markers of the marks erased, and of those a mark put back replaced,
-are given up here, since no command is running to give them up. A buffer
+are given up here, since no command is running to give them up, by the
+rule a finished command's are given up by (`EditorState.givenUpPlaces`). A buffer
 whose text refuses is left as it was, and the first refusal is handed
 back.
 
@@ -97,11 +98,7 @@ def EditorState.followMarks (state : EditorState) : TextM (EditorState × Option
       state := followed
     | .error error =>
       refusal := refusal <|> some error
-  let placed := state.placeMarkers
-  for marker in before.placeMarkers do
-    unless placed.contains marker do
-      if let .error error← observing (marker.text.unmark marker) then
-        refusal := refusal <|> some error
-  return (state, refusal)
+  let given ← EditorState.givenUpPlaces before state
+  return (state, refusal <|> given)
 
 end Editor

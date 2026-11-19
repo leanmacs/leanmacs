@@ -754,7 +754,11 @@ comparing the state from before the command with the state it left:
   before is held by (`EditorState.placeMarkers`) that no place of the
   state after holds is given up: an entry trimmed past the list's limit,
   dropped by a clean-up or detached, a mark set again, and the places of a
-  closed window or a closed buffer. They go before the texts.
+  closed window or a closed buffer. They go before the texts. The rule is
+  one function (`EditorState.givenUpPlaces`), and a publish is the second
+  point that runs it: the marks a publish erases or puts back, after no
+  command, give their markers up there (`EditorState.followMarks`, step 1
+  of "After each event", below).
 - **A float's anchor marker.** The anchor marker of each float of every
   tab of the state before (`Floating.Anchor.position`) that no float of any
   tab of the state after holds is given up: the float was closed, its tab
@@ -872,8 +876,10 @@ changed the state or not (`Loop.publish`):
    edits touched one step of its own (`EditorState.closeExcerptGroup`,
    `Editor/State.lean`, "Excerpt buffers"), over their trees just closed.
    Then the marks follow the event (`EditorState.followMarks`,
-   `Editor/Marks/Follow.lean`): a mark whose line it deleted is erased,
-   and an undo or a redo puts the lowercase marks back.
+   `Editor/Marks/Follow.lean`): a lowercase mark whose line it deleted is
+   erased, and an undo or a redo puts the lowercase marks back; the
+   markers of the marks erased or replaced are given up by the rule a
+   finished command's are (`EditorState.givenUpPlaces`).
    Then a quit that cannot go ahead is withdrawn ("Quit", above).
 2. **The scene** (`Loop.views`, `Loop.scene`). Each window the layout
    places, in drawing order, is a view in the rectangle `EditorState.rects`
@@ -2256,11 +2262,7 @@ def gaveUp (before after : EditorState) : TextM (Option TextError) := do
   -- The places of jump lists and marks: a marker dropped from a list, a
   -- mark set again, a closed window's list and a closed buffer's marks.
   -- They go before the texts are released below.
-  let placed := after.placeMarkers
-  for id in before.placeMarkers do
-    unless placed.contains id do
-      if let .error error← observing (id.text.unmark id) then
-        refusal := refusal <|> some error
+  refusal := refusal <|> (← EditorState.givenUpPlaces before after)
   -- The floats of every tab hold their anchors: selecting another tab gives
   -- none up, and closing one gives up its floats'.
   let anchored := (after.frame.tabs.flatMap (·.floats)).filterMap (·.anchor.marker?)

@@ -234,7 +234,25 @@ def placeChecks : List Check :=
             let (_, set) := set.setLocalMark ⟨1⟩ 'a' (some (marker 1 7))
             let (_, set) := set.setGlobalMark 'A' (some (.held ⟨1⟩ (marker 1 8)))
             let (_, set) := set.setGlobalMark 'B' (some (.file path 0 0))
-            set.placeMarkers == #[marker 0 5, marker 0 6, marker 1 7, marker 1 8] }]
+            set.placeMarkers == #[marker 0 5, marker 0 6, marker 1 7, marker 1 8] },
+    { name :=
+        "givenUpPlaces gives up each marker a place of the state before held that no place of the state after holds, and keeps the others"
+      run :=
+        pure <|
+          onTextModel
+              (do
+                let state ← twoBuffers
+                let text : TextId := ⟨0⟩
+                let kept ← text.mark (.anchor { offset := 0, bias := .after })
+                let dropped ← text.mark (.anchor { offset := 0, bias := .after })
+                let (_, before) := state.setLocalMark ⟨0⟩ 'a' (some kept)
+                let (_, before) := before.setGlobalMark 'A' (some (.held ⟨0⟩ dropped))
+                let (_, after) := before.setGlobalMark 'A' none
+                let refusal ← before.givenUpPlaces after
+                let gone ← observing (text.marker dropped)
+                let still ← observing (text.marker kept)
+                return (refusal.isNone, gone.toBool, still.toBool)) ==
+            some (true, false, true) }]
 
 /-- Ways to spoil `threeWindows`, each breaking one layout invariant and
 keeping every other clause of `EditorState.wellFormed`, with what the state
