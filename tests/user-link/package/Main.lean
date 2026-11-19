@@ -1,3 +1,4 @@
+import Editor
 import Editor.Headless
 import Editor.PackageSet
 import UserLinkFixture
@@ -9,6 +10,11 @@ A root written by hand for the user-side link check (`mise run
 user-link-check`; `docs/design/lean-runtime.md`, "A link on the user's
 machine, measured"). It stands in for the root the packages roadmap
 generates (its phase 4) from the package set; that replaces this file.
+
+It imports the config base, `Editor`, as the editor's own root does
+(`lean/Main.lean`): the elaborator adapter imports the base's modules at
+runtime and each must be linked in, and the adapter does not import the
+base itself.
 
 A host registers the packages it is handed (`lean/Editor/Package.lean`), so
 this root names the packages and nothing of the host's body:

@@ -1,4 +1,5 @@
 import ConfigFixture
+import Editor
 import Editor.Config.Elaborate
 import Editor.Config.Session
 import Editor.Job.Real
@@ -12,6 +13,13 @@ is given; `failures`, which runs a list of them; `run`, which imports the base
 once and runs the list it is given; and `usage`, the command line `main` does
 not understand. Every test module that writes a check imports this one (the root
 module `ConfigTest` describes the layout).
+
+It imports the config base, `Editor`, for the link alone: the checks
+elaborate config on that base with the real elaborator
+(`Editor/Config/Elaborate.lean`, "The base"), whose import of the base at
+runtime needs every module of it linked into this executable. The adapter
+does not import the base itself, so the module that builds the base here
+does, and `tools/core-imports-check.sh` checks it.
 -/
 
 namespace ConfigTest

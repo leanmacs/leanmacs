@@ -1,3 +1,4 @@
+import Editor
 import Editor.Clipboard.InProcess
 import Editor.Config.Owner
 import Editor.Config.Packages
@@ -23,6 +24,13 @@ The tests of `Editor/Window/Real.lean`: the `window-host`, `window-host-config`
 and `window-host-undrawn` scenarios (`windowHostScenario`,
 `windowHostConfigScenario`, `windowHostUndrawnScenario`), of `Window.host`. The
 root module `FfiTest` runs them, and each scenario's own doc says what it shows.
+
+It imports the config base, `Editor`, for the link alone: the window host
+elaborates config on that base (`Editor/Config/Elaborate.lean`, "The
+base"), whose import of the base at runtime needs every module of it linked
+into this executable. The adapter does not import the base itself, so this
+module, which runs the host, does, and `tools/core-imports-check.sh` checks
+it.
 -/
 
 namespace FfiTest

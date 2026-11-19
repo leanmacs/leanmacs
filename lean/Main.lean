@@ -1,3 +1,4 @@
+import Editor
 import Editor.Command.Append
 import Editor.Executable
 import Editor.Headless
@@ -33,6 +34,15 @@ line after `headless`, and the headless mode reads that itself.
 `editor window-check [--seconds <n>] [--no-ime]` is the keyboard check
 (`Editor/WindowCheck.lean`): it opens a window and reports what of the
 keyboard reached a Lean loop. A person runs it; nothing in the gate does.
+
+This module imports the config base, `Editor` (`Editor.lean`), for the link
+alone: the elaborator adapter the hosts bring
+(`Editor/Config/Elaborate.lean`, "The base") imports the base's modules
+from their `.olean` files at runtime, and each must already be linked into
+the executable, so that the import runs no initialiser. The adapter names
+no module of the base itself, since the base imports features that are not
+the core's, so each root that links the adapter imports the base beside
+it, and `tools/core-imports-check.sh` checks that every one does.
 
 Both hosts register features only from the packages they are handed
 (`Editor/Package.lean`), and this module is the one place the executable's

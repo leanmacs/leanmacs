@@ -1,4 +1,3 @@
-import Editor
 import Editor.Config.Session
 import Lean
 
@@ -36,11 +35,18 @@ session core calls it once per process.
   compiled code see the same values. The import runs no initialiser of a
   module that is linked into the executable: Lean looks for a module's
   native initialiser first, and that one already ran when the process
-  started. This module imports `Editor`, so every module of the editor's
-  base is linked into any executable that can elaborate config. That matters
-  because the import runs on a job thread while the editor thread is
-  running, and Lean documents running initialisers as unsafe beside other
-  threads.
+  started. So every module of the editor's base must be linked into any
+  executable that can elaborate config. That matters because the import
+  runs on a job thread while the editor thread is running, and Lean
+  documents running initialisers as unsafe beside other threads. This
+  module does not import `Editor` to make it so: it is a core module, and
+  the base imports features that are not the core's
+  (`docs/design/packages.md`). Each root that links this module imports
+  `Editor` beside it (`Main.lean`, `ConfigTest/Check.lean`,
+  `FfiTest/Editor/Window/Real.lean`), and the gate checks on Lake's module
+  graph that every root that reaches this module reaches `Editor`
+  (`tools/core-imports-check.sh`). `Settings.imports` still defaults to the
+  name `Editor`, which is data.
 - **Config cannot name a binding.** `Editor` never imports `Editor.Ffi`
   (`Editor.lean`), so the base does not hold it.
 

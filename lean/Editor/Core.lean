@@ -1,8 +1,10 @@
 import Editor.Api.Cases
+import Editor.Api.Theorems
 import Editor.AtPoint.Compiled
 import Editor.BindingSearch.Compiled
 import Editor.Buffers.Compiled
 import Editor.Clipboard.Contract
+import Editor.Command.Append
 import Editor.Completion.AtPointContract
 import Editor.Completion.Compiled
 import Editor.Completion.Contract
@@ -11,6 +13,7 @@ import Editor.Completion.Fake
 import Editor.Completion.StyleContract
 import Editor.Display.Contract
 import Editor.Evil.Compiled
+import Editor.Evil.Theorems
 import Editor.Ex.Compiled
 import Editor.Executable
 import Editor.ExecuteCommand.Compiled
@@ -18,6 +21,7 @@ import Editor.File.Cases
 import Editor.Files.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Contract
+import Editor.Json
 import Editor.Language.Compiled
 import Editor.Loop.Driver
 import Editor.Menu.Compiled
@@ -62,9 +66,12 @@ imports check (`tools/host-imports-check.sh`) does not meet it.
 
 The core modules no other core module imports: the entry modules of the
 packages still in the core (`….Compiled`), the contracts, fakes, cases and
-theorems, the hosts and the executable's modules, and the driver of the
-loop that tests run it with (`Editor.Loop.Driver`). Everything else comes
-with them.
+theorems, the hosts and the executable's modules, `Editor.Json`,
+`Editor.Command.Append`, and the driver of the loop that tests run it with
+(`Editor.Loop.Driver`). Everything else comes with them. The theorem
+modules and `Editor.Command.Append` are also the config base's imports
+(`Editor.lean`); they are named here because no core module imports the
+base.
 
 ## The check
 
@@ -73,5 +80,7 @@ ffi-test`, that this module and what it imports hold no moving module, and
 that every module named `Editor.…` an executable or a test executable
 reaches is among them, unless it is moving or the list. So a new core
 module that nothing here reaches fails the gate until it is imported here,
-and a core module that comes to import a moving one fails it too.
+and a core module that comes to import a moving one fails it too. It also
+checks that an executable that links the elaborator links the config base
+(`Editor/Config/Elaborate.lean`, "The base").
 -/
