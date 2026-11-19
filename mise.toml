@@ -114,16 +114,21 @@ env = { LEAN_CC = "/usr/bin/cc" }
 # the lakefile does not reach.
 run = "lake build --wfail"
 
-# lean-fmt is a Lake dependency (lean/lakefile.lean), pinned to the tag named
-# after the Lean toolchain. Both tasks wait for `lean`, so two Lake builds
-# never run in lean/ at once.
+# lean-fmt is the Lake dependency of a package of its own, its host
+# (tools/lean-fmt/lakefile.toml), pinned to the tag named after the Lean
+# toolchain: the core requires no git repository, so a package set that
+# requires the core fetches none (docs/design/packages.md, "The package set
+# and its build"). `lake -d ../tools/lean-fmt exe` builds and runs the
+# formatter from the host, which keeps the clone under lean/.lake/packages,
+# and `--root .` names the package it is run over, the core. Both tasks wait
+# for `lean`, so two Lake builds never run in lean/ at once.
 [tasks.lean-fmt]
 description = "Check Lean formatting and lean-fmt's lints; changes nothing"
 depends = ["lean"]
 dir = "lean"
 run = [
-  "lake exe lean-fmt format --check",
-  "lake exe lean-fmt check",
+  "lake -d ../tools/lean-fmt exe lean-fmt format --check --root .",
+  "lake -d ../tools/lean-fmt exe lean-fmt check --root .",
 ]
 
 [tasks.lean-format]
@@ -131,8 +136,8 @@ description = "Rewrite the Lean sources in lean-fmt's style and apply its safe l
 depends = ["lean"]
 dir = "lean"
 run = [
-  "lake exe lean-fmt format",
-  "lake exe lean-fmt check --fix",
+  "lake -d ../tools/lean-fmt exe lean-fmt format --root .",
+  "lake -d ../tools/lean-fmt exe lean-fmt check --fix --root .",
 ]
 
 # Tracked files only, so Lake's fetched packages and build output are never

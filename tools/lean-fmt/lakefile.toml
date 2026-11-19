@@ -1,0 +1,22 @@
+# The host of the Lean formatter (`mise run lean-fmt`, `mise run lean-format`;
+# docs/dev-practices/the-gate.md, "Formatting"). It holds no Lean source: it
+# is a Lake package whose one `require` is `lean-fmt`, so the formatter is
+# built here and run over any package (`lean-fmt … --root <package>`) without
+# that package, or a package set that requires it, depending on a git
+# repository (docs/design/packages.md, "The package set and its build").
+#
+# `packagesDir` keeps the clone and its build output where they were when the
+# core required it, under `lean/.lake/packages`, which CI caches with the rest
+# of `lean/.lake`.
+#
+# lean-fmt's releases are tagged with the Lean toolchain they are built for,
+# so bump `rev` together with `lean/lean-toolchain`, and then run
+# `lake -d ../tools/lean-fmt update --keep-toolchain` in `lean/` to rewrite
+# `lake-manifest.json`.
+name = "lean-fmt-host"
+packagesDir = "../../lean/.lake/packages"
+
+[[require]]
+name = "lean-fmt"
+git = "https://github.com/jcreinhold/lean-fmt"
+rev = "v4.35.0"

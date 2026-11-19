@@ -6,13 +6,14 @@ open Lake DSL System
 
 Every Lean linter is on, and a warning fails the build, so `lake build` is
 also the lint gate (the Lean counterpart of `cargo clippy -- -D warnings`).
-Silence a linter for one declaration with `set_option linter.<name> false in`. -/
-package editor where leanOptions := #[⟨`linter.all, true⟩, ⟨`warningAsError, true⟩]
+Silence a linter for one declaration with `set_option linter.<name> false in`.
 
-/-- The Lean formatter (`mise run lean-fmt`, `mise run lean-format`). Its
-releases are tagged with the Lean toolchain they are built for, so bump
-this together with `lean-toolchain`. -/
-require «lean-fmt» from git "https://github.com/jcreinhold/lean-fmt"@"v4.35.0"
+It requires no other package. A package set requires this one by path, and
+Lake would fetch every git dependency of it into each set's own
+`.lake/packages`, so the Lean formatter is the `require` of a package of
+its own, `tools/lean-fmt/lakefile.toml`, which nothing requires
+(`docs/design/packages.md`, "The package set and its build"). -/
+package editor where leanOptions := #[⟨`linter.all, true⟩, ⟨`warningAsError, true⟩]
 
 /-- The editor's modules. Its root `Editor` is what user config is elaborated
 on at runtime, and the build makes its `.olean` files for that. Its second

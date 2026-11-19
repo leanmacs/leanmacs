@@ -1,9 +1,14 @@
 /target
-/lean/.lake
+# Lake's build output and fetched packages, in any Lake package: the core
+# (lean/), the formatter's host (tools/lean-fmt/), the package sets and the
+# packages (packages/, tests/packages/).
+.lake/
 /research_notes
 /reports
 /.claude/worktrees
-/lean/.lean-fmt-cache
+# lean-fmt's cache, which it writes in the root of each package it is run
+# over.
+.lean-fmt-cache
 /.linux-ci
 # infra/github's OpenTofu working files. The state is encrypted but still
 # never committed; .terraform.lock.hcl is committed.
