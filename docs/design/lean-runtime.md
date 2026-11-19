@@ -23,10 +23,14 @@ Lake builds the executable. The Rust library is a Lake target that runs
   The spike's was 133 lines.
 - **The system compiler compiles the glue and links the executables**, on
   macOS and on Linux (`LEAN_CC=/usr/bin/cc`, set by the `lean` task). The
-  clang bundled with Lean has no `pthread.h` on either, and on macOS its
-  linker cannot link Apple frameworks. With `LEAN_CC` set Lake no longer adds
-  the toolchain's library directory to the link, so the lakefile does.
-  lean-fmt and the model tests are still built by the bundled compiler.
+  clang bundled with Lean has no `pthread.h` on either, and on macOS the
+  toolchain ships no link stub for any Apple framework, so its linker finds
+  none of those the Rust library needs. It links them when it is given
+  stubs it can read, and it cannot read the stubs of the SDK this build
+  uses ("A link on the user's machine, measured", below). With `LEAN_CC`
+  set Lake no longer adds the toolchain's library directory to the link, so
+  the lakefile does. lean-fmt and the model tests are still built by the
+  bundled compiler.
 
 The build runs on macOS and on Linux, and the gate passes on both
 (`mise run linux-ci` runs it in a container;
@@ -91,6 +95,217 @@ There is no hand-written Lean start-up sequence and no scraping of
 generated symbol names, which the first prototype needed. What can break on
 a Lean upgrade is the `@[extern]` calling convention, the Lake build API,
 and the compiler and entry-point workarounds above.
+
+### A link on the user's machine, measured
+
+**The decision is toolchain-only linking** (2026-11-18): an `editor` is
+linked on the user's machine from pieces the app ships, with the `clang`
+and `ld64.lld` the Lean toolchain bundles, and the Xcode command line tools
+are not required. It is the link that compiling a package into a rebuilt
+executable needs on the user's machine ("Third-party packages", under
+"Open questions"), and it was in doubt because the toolchain ships no
+macOS SDK.
+
+It was measured on 2026-11-18, on an Apple M5 Max, macOS 27.2.1, with Lean
+4.35.0 (its clang and lld are 23.1.0), on a machine that has Xcode 27.2 and
+the command line tools, with
+
+```sh
+mise run user-link-check
+```
+
+(`tools/user-link-check.sh`;
+[on-demand-checks.md](../dev-practices/on-demand-checks.md)). The check
+stages the pieces below in a temporary directory, by copy; builds the
+trivial package `tests/user-link/package` (one module, one command,
+`user-link-hello`) and links an `editor` from it with the staged `lake`,
+inside a sandbox where the tools cannot be reached; signs the result with
+`codesign --force -s -`; and runs it. It asserts: the relinked editor
+prints exactly `tests/headless/expected` for the standing headless fixture,
+and for `tests/user-link` the package's command runs and its message is in
+the echo area (`run user-link-hello: ok`, then `echo "hello from a package
+linked on this machine"`). MB are 10⁶ bytes of apparent size.
+
+**`libSystem`: the macOS SDK's stubs are not needed.** The linker's own
+report of the files it opened (`-dependency_info`) names
+`<stage>/toolchain/lib/libc/libSystem.tbd`, the stub the Lean toolchain
+ships, and `<stage>/toolchain/lib/libc/libc++.dylib`, its stand-in for the
+C++ library, and no other file for either. No symbol the editor needs was
+missing from that stub, so none is generated for it.
+
+**The frameworks, `libobjc` and `libiconv` have no stub in the toolchain,
+so stubs are written from the built editor.** The app is to ship them;
+nothing but the check makes them yet. `tools/link-stubs.sh` reads the built
+`editor` (`otool -L`, `nm -m -u`) and writes one text stub (`.tbd`,
+version 4) for each library it loads other than `libSystem` and `libc++`:
+the library's install name and versions, and only the symbols the editor
+imports from it. That is 14 stubs, 8,681 bytes with the file below: the ten
+frameworks the editor's link names; `ColorSync` and `CoreServices`, which
+the built editor loads though its link does not name them, because the
+system linker bound `CGDisplayCreateUUIDFromDisplayID` to the one and the
+`FSEvents` functions to the other; and the two libraries. The relink names
+all 14. No file of the SDK is copied.
+It also writes the minimum macOS and the SDK version the built editor
+records (`platform-version`), which the relink passes on with
+`-platform_version`. With no SDK the linker records the minimum macOS as
+the SDK version, 26.0 where the built editor has 27.2, and AppKit chooses
+behaviour by that version. With them passed on, the relinked editor
+records `minos 26.0, sdk 27.2`, as the built one does.
+
+The staged pieces the relink used:
+
+| Piece | Where it comes from | Files | Size |
+|---|---|---|---|
+| `toolchain/` | The Lean toolchain, whole (`lean --print-prefix`), less `exposed/`, which mise adds | 17,901 | 3,131.0 MB |
+| of it, what the linker opened | Lean's seven static libraries, `libgmp`, `libuv`, `libssl`, `libcrypto`, compiler-rt, `libSystem.tbd`, `libc++.dylib` | 14 | 274.6 MB |
+| `core/lib/` | The `.olean` file of each module the built editor's link names, less its root `Main` (`lean/.lake/build/lib/lean`) | 217 | 163.7 MB |
+| `core/obj/` | The object of each of those modules, `.c.o.export` (`lean/.lake/build/ir`) | 217 | 17.3 MB |
+| `core/glue.o` | The glue object, as `mise run lean` compiled it | 1 | 0.1 MB |
+| `core/libeditor_ffi.a` | The Rust archive (`target/release`) | 1 | 82.0 MB |
+| `core/lakefile.toml`, `core/lake-manifest.json` | `tools/user-link/core`: they make `core/` a Lake package with no target | 2 | 772 bytes |
+| `stubs/` | `tools/link-stubs.sh` on the built `editor`: 14 stubs and `platform-version` | 15 | 8,681 bytes |
+| `package/` | `tests/user-link/package`: `lakefile.lean`, `Main.lean`, `UserLinkFixture.lean` | 3 | 10,028 bytes |
+
+The rule for the editor's modules is the built editor's own link line
+(`lean/.lake/build/bin/editor.rsp`): every object it names, less `Main`'s,
+because the package brings the root and two `main` symbols cannot link.
+The toolchain is staged whole, so the set is sufficient and not shown
+minimal: what `lake`, `lean` and `clang` read of it was not measured, only
+what the linker opened.
+
+Times are medians of five runs, in seconds of wall clock, the first column
+inside the sandbox:
+
+| | Bundled `clang` and `ld64.lld` | `/usr/bin/cc`, with the SDK (`--linker system`) |
+|---|---|---|
+| The package build, from a clean build directory (`lake build UserLinkFixture`) | 0.59 | 0.58 |
+| The whole build and link, from a clean one (`lake build editor`) | 1.88 | 1.56 |
+| The link alone (the link line Lake ran, run again) | 0.50 | 0.25 |
+| The signing (`codesign --force -s -`) | 0.29 | 0.14 |
+| The relinked `editor` | 230.5 MB | 230.8 MB |
+
+The built `editor` was 232.2 MB. The link line, as Lake ran it, with
+`<package>` for `<stage>/package`, the fixture's copy:
+
+```
+<stage>/toolchain/bin/clang -o <package>/.lake/build/bin/editor @<package>/.lake/build/bin/editor.rsp
+```
+
+and its response file, with the 217 objects under `<stage>/core/obj` cut:
+
+```
+<package>/.lake/build/ir/Main.c.o.export <package>/.lake/build/ir/UserLinkFixture.c.o.export
+-rdynamic <stage>/core/obj/**/*.c.o.export <stage>/core/glue.o <stage>/core/libeditor_ffi.a
+-L <stage>/toolchain/lib -Wl,-e,_editor_entry -F <stage>/stubs -L <stage>/stubs
+-framework AppKit -framework ApplicationServices -framework Carbon -framework ColorSync
+-framework CoreFoundation -framework CoreGraphics -framework CoreServices -framework CoreText
+-framework CoreVideo -framework Foundation -framework Metal -framework QuartzCore -liconv -lobjc
+-Wl,-platform_version,macos,26.0,27.2 -Wl,-dependency_info,<package>/.lake/build/link.dependency-info
+-L <stage>/toolchain/lib/lean --sysroot <stage>/toolchain -L <stage>/toolchain/lib
+-L <stage>/toolchain/lib/libc -fuse-ld=lld -lleancpp -lInit -lStd -lLean -lleanrt -lc++ -lLake
+-lLeanExport -lgmp -luv -lssl -lcrypto -Wl,-dead_strip
+```
+
+The first two objects are the package's own modules, and `-rdynamic` is
+from `supportInterpreter`. From the editor's objects to `-dependency_info`
+it is the package's `moreLinkArgs` (`tests/user-link/package/lakefile.lean`),
+and the rest is what Lake adds for the bundled compiler.
+
+**How the tools were made unreachable.** The machine has Xcode and the
+command line tools, so their absence is enforced, in three layers:
+
+- **A sandbox** round the package build and the link
+  (`sandbox-exec -f tools/user-link/sandbox.sb`). It runs no program
+  outside the stage, and lets nothing be read under `/Applications`,
+  `/Library/Developer`, `/opt`, `/usr/local` or `/Users`: Xcode and both
+  SDKs, the real toolchain, Cargo and the repository. The base system
+  stays readable, as on a Mac that never had the tools.
+- **An empty environment** (`env -i`) but for `PATH`, `HOME` and `TMPDIR`
+  inside the temporary directory, and `MACOSX_DEPLOYMENT_TARGET`: no
+  `SDKROOT`, `DEVELOPER_DIR`, `LEAN_CC` or `LEAN_PATH`.
+- **Decoys first on the `PATH`**, named `xcrun`, `xcodebuild`,
+  `xcode-select`, `cc`, `gcc`, `clang++`, `ld`, `ar` and `git`, each of
+  which records that it was run and fails. On a Mac without the tools
+  `/usr/bin/xcrun`, `/usr/bin/clang` and `/usr/bin/git` are shims that open
+  the install prompt, so a build that reaches for one is a defect.
+
+The check probes the sandbox before it builds anything, under the same
+profile and environment. Each of these was refused with `Operation not
+permitted`: running `/usr/bin/xcrun --show-sdk-path`,
+`/usr/bin/clang --version`, `/usr/bin/ld -v`, `/usr/bin/cc --version` and
+`/usr/bin/git --version`; reading the SDK's `usr/lib/libSystem.tbd`; and
+listing the real toolchain's directory and the repository's. The staged
+`clang --version` ran, the probe read a staged file and listed a staged
+directory, and a decoy run by its name was recorded. After the link the
+decoy log was empty; the linker had opened 249 files, all under the stage,
+and 2,170 members of the archives among them; of the 889 files it looked
+for and did not find, none was outside the stage; and the staged pieces
+were as they had been staged, so the build wrote into the package's copy
+alone. When `sandbox-exec` cannot apply the profile, as in a shell that is
+itself sandboxed, the check fails; it never goes on unsandboxed.
+
+**The limit:** this is a sandbox on a machine that has the tools, not a
+run on a Mac that never had them. The app bundle's check on the CI runner,
+once the bundle carries the toolchain, and the owner's own use are the
+later evidence.
+
+What else it showed:
+
+- **Lake gives a module's build no inherited `LEAN_PATH`.** It hands
+  `lean` the library directories of the workspace's packages and nothing
+  else, so with the editor's `.olean` directory on `LEAN_PATH` the
+  package's `import Editor.Api` failed with `unknown module prefix
+  'Editor'`. The stage therefore holds the editor's modules as a Lake
+  package with no target, whose library directory is their `.olean`
+  directory, and the fixture requires it by path. Lake builds nothing of
+  it, fetches nothing, and wrote nothing into it.
+- **Without the stubs the link fails where expected**: in the sandbox,
+  `ld64.lld: error: framework not found for -framework ApplicationServices`
+  and the same for the other nine, `library not found for -liconv` and
+  `-lobjc`, then the undefined symbols.
+- **The bundled linker cannot read this SDK's stubs.** Given
+  `-F <Xcode 27.2 SDK>/System/Library/Frameworks` outside the sandbox,
+  `ld64.lld` 23.1.0 fails on `CoreFoundation.tbd` with `malformed file` and
+  `unknown target` at `arm64e.x1-macos`. So requiring the command line
+  tools would have meant linking with their own `clang` and `ld`, as
+  `--linker system` does, not the bundled linker over their SDK.
+- **The relinked editor loads the libraries the built one does**, the
+  same 16, at the same versions but two: it names the C++ library by the
+  stand-in's install name, `/usr/lib/libc++.dylib`, where the system linker
+  writes `/usr/lib/libc++.1.dylib`, and it records the toolchain stub's
+  `libSystem` version, 1356.0.0 for 1359.40.3.
+- **`/usr/bin/codesign` is the system's own**, not a shim of the tools: it
+  loads no `libxcselect`, which `/usr/bin/clang` does. The check requires
+  that.
+- **A copy of a system program does not run.** A copy of `/bin/cat` or
+  `/bin/ls` in the stage was killed as it started (signal 9), outside the
+  sandbox too. So the check's probe and its decoys are two small C
+  programs (`tools/user-link/probe.c`, `decoy.c`), compiled into the stage
+  by the staged `clang` against the toolchain's `libSystem` stub, with no
+  SDK and no C library headers.
+
+What was not tried:
+
+- A Mac that never had the command line tools, another macOS than 27.2.1,
+  and an Intel Mac.
+- The relinked editor's window. Only its headless mode was run, so nothing
+  here shows AppKit behaves the same in it; passing the SDK version on is
+  the one thing done towards that.
+- A package of more than one module, one with dependencies of its own, and
+  one that calls a system function the built editor does not import: the
+  stubs hold only what that editor imports, so such a link would not find
+  the symbol.
+- Stubs for Objective-C class symbols. The editor imports none (it imports
+  `objc_getClass`, which looks a class up by name at run time), and
+  `tools/link-stubs.sh` refuses one rather than write a form it has not
+  linked.
+- A smaller toolchain than the whole of it.
+- Compiling the glue with the bundled `clang`: the glue object is prebuilt.
+- `--linker system` against the command line tools' own SDK: on this
+  machine `/usr/bin/cc` uses Xcode's.
+- Shipping files copied from Apple's SDK, linking the Rust library as a
+  dynamic library, and loading packages as shared libraries
+  (`precompileModules`, `loadDynlib`). Each is a different design.
 
 ## Start-up and shutdown
 

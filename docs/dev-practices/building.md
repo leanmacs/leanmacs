@@ -51,9 +51,11 @@ that run Lake form one chain.
 Use `mise run lean`, not a bare `lake build`. On both platforms the
 executables have to be compiled and linked by the system compiler, and the
 task sets `LEAN_CC=/usr/bin/cc` to say so: the clang bundled with Lean has no
-`pthread.h` for the glue, on macOS or on Linux, and on macOS its linker
-cannot link the system frameworks the window needs. Do not export `LEAN_CC`
-in your shell. lean-fmt has to build with Lean's bundled compiler, and on
+`pthread.h` for the glue, on macOS or on Linux, and on macOS the toolchain
+ships no link stub for the system frameworks the window needs, so its
+linker does not find them; it links them when it is given stubs
+([`lean-runtime.md`](../design/lean-runtime.md), "A link on the user's
+machine, measured"). Do not export `LEAN_CC` in your shell. lean-fmt has to build with Lean's bundled compiler, and on
 macOS under `/usr/bin/cc` its link fails with `library 'gmp' not found`.
 
 The executables also do not start at Lean's `main`. Lean runs `main` on a

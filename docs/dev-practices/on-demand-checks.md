@@ -72,6 +72,69 @@ temporary disk. The figures, and what they decided, are in
 [`lean-runtime.md`](../design/lean-runtime.md), "What config may import,
 measured". Run it again when the Lean toolchain's pin moves.
 
+## The user-side link, on demand
+
+```sh
+mise run user-link-check
+```
+
+This links an `editor` the way a user's Mac would have to, from pieces the
+app ships and with the `clang` and `ld64.lld` the Lean toolchain bundles,
+in a sandbox where the Xcode command line tools cannot be reached, and runs
+it (`tools/user-link-check.sh`). Unlike the benchmarks it asserts: it exits
+non-zero at the first step that does not hold, naming it. It is macOS on
+arm64 only, so it is not part of the gate, which runs on Linux too.
+
+It stages, by copy, in a temporary directory: the Lean toolchain; the
+`.olean` file and the object of each of the editor's modules, the glue
+object and the Rust archive, as `mise run lean` built them; link stubs for
+the system's frameworks and libraries, which `tools/link-stubs.sh` writes
+from the built editor's import table; and the trivial package
+`tests/user-link/package`, one module with one command. Then it
+
+1. probes the sandbox (`tools/user-link/sandbox.sb`): running
+   `/usr/bin/xcrun`, `/usr/bin/clang`, `/usr/bin/ld`, `/usr/bin/cc` and
+   `/usr/bin/git`, reading the SDK and listing the real toolchain and the
+   repository must each be refused, and the staged `clang` must run;
+2. builds the package and links the `editor` inside the sandbox with the
+   staged `lake`, with an empty environment and decoys for the developer
+   tools first on the `PATH`;
+3. signs the result with `codesign --force -s -` and verifies it;
+4. runs its headless mode with an empty environment: it must print exactly
+   `tests/headless/expected` for the standing fixture, and for
+   `tests/user-link` the package's command must run and say its message in
+   the echo area (`tests/user-link/expected`, which holds the echo area's
+   text alone, cut from the `scene` line);
+5. requires that no decoy ran, that every file the linker opened is under
+   the stage, that the build changed none of the staged pieces, and that
+   the relinked editor records the built editor's minimum macOS and SDK
+   version;
+6. prints the machine, the staged pieces with their sizes, the link line,
+   and the medians of five runs each of the package build, the whole build
+   and link, the link alone and the signing.
+
+```sh
+tools/user-link-check.sh lean --linker system
+```
+
+is the baseline: the same steps outside the sandbox with `/usr/bin/cc` and
+the SDK's frameworks, with the same report, which lists where the linker's
+files came from. `--keep` leaves the temporary directory and prints its
+path.
+
+Run it from a shell that is not itself sandboxed: when `sandbox-exec`
+cannot apply the profile the check fails at its probe, and it never goes on
+unsandboxed. It needs `mise run lean` first, which the task runs; the check
+itself takes about half a minute. The staged copies are made with `cp -c`,
+which clones on APFS; where it cannot clone, the stage is about 3.4 GB. The
+build adds the relinked editor, 230 MB. Every temporary file is under one
+directory, removed by a trap. The decision it stands behind, the
+figures and what was not tried are in
+[`lean-runtime.md`](../design/lean-runtime.md), "A link on the user's
+machine, measured". Run it again when the Lean toolchain's pin moves, when
+the Rust library gains a system dependency, and when macOS or Xcode is
+upgraded.
+
 ## The app bundle, on demand
 
 ```sh
