@@ -41,24 +41,21 @@ commands, going to a place in a closed file, is the upper module's
   in every window's jumps and in the global marks, becomes a place in its
   file, with its row and its column in characters; a buffer with no file
   has its places dropped. Its own marks go with it.
-- **Erase rows** (`eraseRows`, Vim's `del_lines`, which runs
+- **Delete rows** (`deleteRows`, Vim's `del_lines`, which runs
   `mark_adjust` with `MAXLNUM` over the lines it deletes): a command that
-  deletes whole lines erases the buffer's lowercase marks on them, the
-  rows read before the edit. Global marks stay on the line, as Vim's do:
-  their markers go to where the deletion left them, the line's start,
+  deletes whole lines decides about the buffer's lowercase marks on them,
+  the rows read before the edit, and the edit's shape then decides nothing
+  for them (`Editor/Marks.lean`, "A mark's line is erased when its line is
+  deleted"). The marks of the rows it deletes are erased. A command that
+  keeps the first row, emptied, as the linewise change does (Vim's
+  `op_change` truncates it), keeps that row's marks and records their
+  markers as decided (`Marks.History.decided`), so the loop does not erase
+  them though the edit is `dd`'s in shape when the last line is empty
+  (`Editor/Marks/Follow.lean`). Global marks stay on the line, as Vim's
+  do: their markers go to where the deletion left them, the line's start,
   where Vim keeps their column (a recorded departure, task
-  `global-mark-keeps-column-on-line-delete`). The linewise delete and change call
-  it (`Editor/Evil/Operators.lean`), since the edit alone does not say
-  which lines they delete (`Editor/Marks.lean`, "A mark's line is erased
-  when its line is deleted").
-- **Renew a row** (`renewRow`): a command that empties a line it keeps,
-  as the linewise change keeps its first line (Vim's `op_change`
-  truncates it), holds the buffer's lowercase marks on it by new place
-  markers where their markers are, after its edit. The loop erases a mark
-  by the line its marker was read on (`Editor/Marks/Follow.lean`), and a
-  marker set since was read on none, so the edit cannot erase the marks,
-  though it is `dd`'s in shape when the lines after the first end with an
-  empty one. The linewise change calls it (`Editor/Evil/Operators.lean`).
+  `global-mark-keeps-column-on-line-delete`). The linewise delete and
+  change call it (`Editor/Evil/Operators.lean`).
 - **Attach** (`attach`): once a buffer holds a file, the places of that
   file become places held by markers of its text again, at their row and
   column, clamped as a visit clamps (`Marks.offsetAt`).
@@ -69,25 +66,23 @@ file by `ModelTest.jumpGoChecks`.
 
 namespace Editor.Jumps
 
-/-- Erases the lowercase marks of the buffer `id` that are on its rows
-`first` through `last` ("Erase rows", in the module docs). Nothing for a
-buffer that is not there. -/
-def eraseRows (id : BufferId) (first last : Nat) : EditorM Unit := do
+/-- Decides the lowercase marks of the buffer `id` that are on its rows
+`first` through `last`, which a command deletes whole but for the first
+when `keepFirst` ("Delete rows", in the module docs): those of the rows it
+deletes are erased, and those of a first row it keeps are recorded as
+decided. Nothing for a buffer that is not there. -/
+def deleteRows (id : BufferId) (first last : Nat) (keepFirst : Bool := false) : EditorM Unit := do
   let some buffer := (← editorState).buffer? id | return
+  let mut decided := buffer.markHistory.decided
   for (char, marker) in buffer.marks do
     let row := (← buffer.text.pointOf (← Marks.offsetOf marker)).row
     if first ≤ row && row ≤ last then
-      discard <| id.setMark char none
-
-/-- Holds each lowercase mark of the buffer `id` on its row `row` by a new
-place marker where its marker is ("Renew a row", in the module docs).
-Nothing for a buffer that is not there. -/
-def renewRow (id : BufferId) (row : Nat) : EditorM Unit := do
-  let some buffer := (← editorState).buffer? id | return
-  for (char, marker) in buffer.marks do
-    let offset ← Marks.offsetOf marker
-    if (← buffer.text.pointOf offset).row == row then
-      discard <| id.setMark char (some (← Marks.placeMarker buffer.text offset))
+      if keepFirst && row == first then
+        decided := decided.push marker
+      else
+        discard <| id.setMark char none
+  unless decided == buffer.markHistory.decided do
+    discard <| EditorState.ask (.setMarkHistory id { buffer.markHistory with decided })
 
 /-- The place of the cursor of `view`: a marker at the head of the primary
 range of its window's selection. `none` for a view with no window. -/

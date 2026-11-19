@@ -37,15 +37,15 @@ the loop runs them once an event has been handled
     the line break before it, as `dd` on the last line removes it. The
     only row of a text is never removed by an edit, since the same edit
     is `dd`'s and `cc`'s on a text of one line.
-  - Where the edit alone cannot say which lines were deleted, the command
-    that knows erases their marks itself, as Vim's `del_lines` does: the
-    linewise delete those of all its lines (`dd` on a text's only line
-    among them) and the linewise change those of its lines after the
-    first (`Jumps.eraseRows`, called by `Editor/Evil/Operators.lean`).
-    Where the edit would remove a line the command keeps, the command
-    renews its marks: the linewise change its first line's
-    (`Jumps.renewRow`), since its edit is `dd`'s in shape when its last
-    line is empty. A redo runs no command, so it erases by its edit alone.
+  - A command that deletes whole lines decides about their marks itself,
+    as Vim's `del_lines` does, and the edit's shape decides nothing for
+    them (`Jumps.deleteRows`, called by `Editor/Evil/Operators.lean`): the
+    linewise delete erases those of all its lines (`dd` on a text's only
+    line among them), and the linewise change those of its lines after
+    the first, keeping the first's, whose markers it records as decided
+    (`History.decided`), since its edit is `dd`'s in shape when its last
+    line is empty. A redo runs no command, so it erases by its edit
+    alone.
   - A deletion of part of a row keeps the mark, which its marker carries
     to where the deletion left it.
 - **Undo and redo put the lowercase marks back** (Vim's `u_undoredo`,
@@ -187,6 +187,10 @@ structure History where
   nodes : Nat := 1
   /-- The node the text was at when last seen. -/
   current : UndoTree.NodeId := UndoTree.root
+  /-- The markers of the lowercase marks a command kept on a line it
+  deleted the rest of, since the marks were last followed: the command
+  decided about their lines, so the edit's shape does not erase them. -/
+  decided : Array MarkerId := #[]
   /-- The marks each node keeps, for the nodes that keep any. -/
   saved : Array (UndoTree.NodeId × Array At) := #[]
   deriving DecidableEq, Repr

@@ -11,7 +11,11 @@ after each buffer's undo tree was told the revision its text is at
 not an excerpt buffer:
 
 1. **Erase**: each lowercase mark of the buffer whose line, as read at the
-   last publish, an edit since removed (`Marks.Line.removedIn`) is erased.
+   last publish, an edit since removed (`Marks.Line.removedIn`) is erased,
+   unless a command that deleted whole lines decided about it
+   (`Marks.History.decided`, `Jumps.deleteRows`): that command erased the
+   marks of the lines it deleted itself and kept the others, which the
+   edit's shape does not then erase. The decisions are spent here.
    A global mark is not: as Vim's `mark_adjust` moves an uppercase mark
    of a deleted line to the line that takes its place, its marker stays
    where the deletion left it. That matches Vim's line, not its column:
@@ -64,10 +68,13 @@ def Buffer.followedMarks (buffer : Buffer) : TextM (Array (Char × MarkerId) × 
       pure #[]
     else
       let patch ← text.changesSince history.revision
-      pure ((history.lines.filter (·.removedIn patch)).map (·.marker))
+      pure
+          ((history.lines.filter fun line =>
+                line.removedIn patch && !history.decided.contains line.marker).map
+            (·.marker))
   let mut marks := buffer.marks.filter fun (_, marker) => !erased.contains marker
   -- 2. Put back.
-  let (restored, history) := history.follow buffer.history
+  let (restored, history) := { history with decided := #[] }.follow buffer.history
   for mark in restored do
     let offset ← offsetAt text mark.row mark.column
     let marker ← placeMarker text offset

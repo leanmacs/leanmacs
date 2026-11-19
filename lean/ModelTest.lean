@@ -99,6 +99,7 @@ import ModelTest.Editor.Layout
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Marks
+import ModelTest.Editor.Marks.Follow
 import ModelTest.Editor.Menu
 import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
@@ -313,7 +314,10 @@ starts at the start of only when the edit stops at a row's start, the last
 row only with the line break before it; a node made keeps the marks at the
 boundary, an undo and a redo across it put back what it kept and swap in
 the marks before the move, and a move across more than one edge or to
-another tree puts back nothing.
+another tree puts back nothing. The loop's following of the editor
+state's marks (`Editor/Marks/Follow.lean`) is checked on the text model
+(`markFollowChecks`): a mark whose line an edit removed is erased, and one
+a command decided about is not.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that the rectangles of its views are
@@ -530,7 +534,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   places detached into its file or dropped, attached again when the file
   is loaded, opening a file, a visit and switching buffers each recording
   a jump, a visit at a row's first non-blank or that records none,
-  erasing rows' lowercase marks, and renewing a row's;
+  deleting rows erasing their lowercase marks, and keeping the first
+  row's as decided;
 - `jumpGoChecks`: going through the list to another buffer or a closed
   file (`Editor/Jumps/Go.lean`) on that driver: the index moving at once,
   the cursor at the entry once the load lands, and no entry recorded by
@@ -1145,6 +1150,7 @@ def checks : List Check :=
     floatChecks ++
     jumpListChecks ++
     markRuleChecks ++
+    markFollowChecks ++
     stateChecks ++
     tabChecks ++
     displayRuleChecks ++

@@ -19,11 +19,13 @@ def jumpsAfter (keys : String) : Option ((List String × Nat) × String) := do
   let driver ← jumpedFrom keys
   return (← jumpsOf driver, ← cursorOf driver)
 
-/-- The lowercase marks of buffer 0 and whether the global mark `A` is still
-set, after `Jumps.eraseRows` over rows `first` through `last` of a buffer
-over `ab`, `cd` and `ef` whose marks `a`, `b` and `c` are on rows 0, 1 and
-2 and whose global mark `A` is on row 1. -/
-def erasedRows (first last : Nat) : Option (List Char × Bool) :=
+/-- After `Jumps.deleteRows` over rows `first` through `last`, keeping the
+first when `keepFirst`, of a buffer over `ab`, `cd` and `ef` whose marks
+`a`, `b` and `c` are at the offsets 0, 3 and 7 and whose global mark `A` is
+on row 1: the letters of buffer 0's lowercase marks, the offsets of the
+markers its mark history says were decided, and whether `A` is still set. -/
+def deletedRows (first last : Nat) (keepFirst : Bool := false) :
+    Option (List Char × List Nat × Bool) :=
   let start : TextM EditorState := do
     let state ← evilState "ab\ncd\nef" 0
     let text : TextId := ⟨0⟩
@@ -34,31 +36,12 @@ def erasedRows (first last : Nat) : Option (List Char × Bool) :=
     return { state with
         buffers := state.buffers.modify 0 (·.map ({ · with marks }))
         remembered.globalMarks := #[('A', .held ⟨0⟩ global)] }
-  let program : EditorM (List Char × Bool) := do
-    Jumps.eraseRows ⟨0⟩ first last
+  let program : EditorM (List Char × List Nat × Bool) := do
+    Jumps.deleteRows ⟨0⟩ first last keepFirst
     let state ← editorState
-    return (((state.buffer? ⟨0⟩).map (·.marks.toList.map (·.1))).getD [],
-        (state.globalMark? 'A').isSome)
-  (dispatchedFrom program start).map (·.1)
-
-/-- For each lowercase mark of buffer 0, after `Jumps.renewRow` over row
-`row` of a buffer over `ab`, `cd` and `ef` whose marks `a`, `b` and `c` are
-at the offsets 0, 4 and 7: its letter, its offset, and whether it is held by
-the marker it was set with. -/
-def renewedRow (row : Nat) : Option (List (Char × Nat × Bool)) :=
-  let start : TextM EditorState := do
-    let state ← evilState "ab\ncd\nef" 0
-    let text : TextId := ⟨0⟩
-    let marks ←
-      [('a', 0), ('b', 4), ('c', 7)].toArray.mapM fun (char, offset) => do
-          return (char, ← text.mark (.anchor { offset, bias := .after }))
-    return { state with buffers := state.buffers.modify 0 (·.map ({ · with marks })) }
-  let program : EditorM (List (Char × Nat × Bool)) := do
-    let before := ((← editorState).buffer? ⟨0⟩).map (·.marks) |>.getD #[]
-    Jumps.renewRow ⟨0⟩ row
-    let some buffer := (← editorState).buffer? ⟨0⟩ | return []
-    buffer.marks.toList.mapM fun (char, marker) => do
-        return (char, ← Marks.offsetOf marker, before.contains (char, marker))
+    let some buffer := state.buffer? ⟨0⟩ | return ([], [], false)
+    let decided ← buffer.markHistory.decided.toList.mapM fun marker => Marks.offsetOf marker
+    return (buffer.marks.toList.map (·.1), decided, (state.globalMark? 'A').isSome)
   (dispatchedFrom program start).map (·.1)
 
 /-- The checks of recording, cleaning up, detaching and attaching the places
@@ -124,13 +107,14 @@ def jumpChecks : List Check :=
             jumpsAfter "C-j 4 C-j V" == some (([], 0), "1@1:2") &&
             jumpsAfter "C-j 4 C-j V C-j s C-j V" == some (([], 0), "1@1:2") },
     { name :=
-        "erasing rows erases the buffer's lowercase marks on them and keeps its others and the global marks"
+        "deleting rows erases the buffer's lowercase marks on them and keeps its others and the global marks, deciding none"
       run :=
-        return erasedRows 1 2 == some (['a'], true) && erasedRows 0 0 == some (['b', 'c'], true) },
+        return deletedRows 1 2 == some (['a'], [], true) &&
+            deletedRows 0 0 == some (['b', 'c'], [], true) },
     { name :=
-        "renewing a row holds each lowercase mark on it by a new marker where its marker was, and keeps its others' markers"
+        "deleting rows but the first keeps the first's lowercase marks and records them as decided, erasing the others'"
       run :=
-        return renewedRow 1 == some [('a', 0, true), ('b', 4, false), ('c', 7, true)] &&
-            renewedRow 3 == some [('a', 0, true), ('b', 4, true), ('c', 7, true)] }]
+        return deletedRows 1 2 true == some (['a', 'b'], [3], true) &&
+            deletedRows 0 0 true == some (['a', 'b', 'c'], [0], true) }]
 
 end ModelTest
