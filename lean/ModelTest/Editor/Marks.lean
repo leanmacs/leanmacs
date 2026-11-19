@@ -1,5 +1,6 @@
 import Editor.Marks
 import ModelTest.Check
+import ModelTest.Support.Models
 
 /-!
 # Model tests: `Editor/Marks.lean`
@@ -37,7 +38,16 @@ def markBoundary : Array Marks.At :=
 
 /-- The checks of the rules of marks across edits and undo. -/
 def markRuleChecks : List Check :=
-  [{  name := "a deletion of a line with its line break removes the line"
+  [{  name :=
+        "a place's marker is an anchor at its offset with the bias after, so text inserted at it goes before it"
+      run :=
+        return onTextModel
+              (do
+                let text ← createText "ab"
+                let marker ← Marks.placeMarker text 1
+                text.marker marker) ==
+            some (.anchor { offset := 1, bias := .after }) },
+    { name := "a deletion of a line with its line break removes the line"
       run :=
         return (markLine 4 8).removedBy (markEdit 4 8) && (markLine 4 8).removedBy (markEdit 0 12) &&
             (markLine 4 8).removedBy (markEdit 4 8 3) },

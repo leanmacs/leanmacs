@@ -306,7 +306,8 @@ index, a step's plan records first from one past the end and
 fails off either end, and `:help jumplist`'s worked example step by step.
 
 The rules of marks across line deletions and undo (`Editor/Marks.lean`)
-are checked pure (`markRuleChecks`): a deletion of a whole line with its
+are checked pure (`markRuleChecks`): a place's marker is an anchor with
+the bias `after`; a deletion of a whole line with its
 line break removes it and one of part of it does not, the row an edit
 starts at the start of only when the edit stops at a row's start, the last
 row only with the line break before it; a node made keeps the marks at the

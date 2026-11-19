@@ -17,7 +17,8 @@ not an excerpt buffer:
    where the deletion left it.
 2. **Put back**: the lowercase marks the buffer's history puts back for
    the move its undo tree made since (`Marks.History.follow`) are set
-   again, each held by a new marker at its row and column; a node made
+   again, each held by a new place marker (`Marks.placeMarker`) at its
+   row and column; a node made
    since keeps the marks at the last boundary.
 3. **Boundary**: when the tree has no open group, the lowercase marks as
    they are now are the boundary a node made next keeps. Inside an open
@@ -27,9 +28,9 @@ not an excerpt buffer:
 
 The markers of the marks erased, and of those a mark put back replaced,
 are given up here, since no command is running to give them up, by the
-rule a finished command's are given up by (`EditorState.givenUpPlaces`). A buffer
-whose text refuses is left as it was, and the first refusal is handed
-back.
+rule a finished command's are given up by (`EditorState.givenUpPlaces`).
+A buffer whose text refuses is left as it was, and the first refusal is
+handed back.
 
 Pinned by `ModelTest.evilMarkChecks`.
 -/
@@ -56,7 +57,7 @@ private def EditorState.followMarksOf (state : EditorState) (id : BufferId) (buf
   let (restored, history) := history.follow buffer.history
   for mark in restored do
     let offset ← offsetAt text mark.row mark.column
-    let marker ← text.mark (.anchor { offset, bias := .after })
+    let marker ← placeMarker text offset
     marks := (marks.filter (·.1 != mark.char)).push (mark.char, marker)
   -- 3. Boundary.
   let history ←

@@ -57,12 +57,23 @@ the loop runs them once an event has been handled
   command makes) puts back nothing.
 - **A tree with fewer nodes** than the history last saw is another tree,
   and what the history kept is dropped.
+- **A place's marker** (`placeMarker`) is an anchor with the bias `after`,
+  the one every place has, whether `m` sets it, a jump records it, a file
+  loaded again attaches it (`Editor/Jumps.lean`) or undo puts a mark back
+  (`Editor/Marks/Follow.lean`): a line broken at it, or opened above it,
+  carries it down with its line, as Vim's `mark_col_adjust` carries a mark
+  when a line is split before it.
 
 Pinned by `ModelTest.markRuleChecks`; the marks erased and put back in the
 editor by `ModelTest.evilMarkChecks`.
 -/
 
 namespace Editor.Marks
+
+/-- An anchor marker of `text` at `offset`, with the bias every place has
+("A place's marker", in the module docs). -/
+def placeMarker (text : TextId) (offset : Nat) : TextM MarkerId :=
+  text.mark (.anchor { offset, bias := .after })
 
 /-- The offset the marker `marker` is at: an anchor's, or the head of a
 selection's primary range. -/

@@ -17,11 +17,9 @@ file commands (`Editor/Files.lean`) can record a jump; what needs the file
 commands, going to a place in a closed file, is the upper module's
 (`Editor/Jumps/Go.lean`).
 
-- **A place is marked where the cursor is** (`here`): an anchor marker at
-  the head of the primary range of the window's selection, with the bias
-  `after`, so that a line broken at it, or opened above it, carries it
-  down with its line, as Vim's `mark_col_adjust` carries a mark when a
-  line is split before it.
+- **A place is marked where the cursor is** (`here`): a place's marker
+  (`Marks.placeMarker`, an anchor with the bias `after`) at the head of
+  the primary range of the window's selection.
 - **Record** (`record`, Vim's `setpcmark`): the place is the window's
   previous-context mark and the list's last entry (`JumpList.record`).
 - **Move by `n`** (`plan`): the list is cleaned up first (`cleanup`), by
@@ -57,11 +55,6 @@ file by `ModelTest.jumpGoChecks`.
 
 namespace Editor.Jumps
 
-/-- An anchor marker of `text` at `offset`, with the bias every place has
-("A place is marked where the cursor is", in the module docs). -/
-def mark (text : TextId) (offset : Nat) : TextM MarkerId :=
-  text.mark (.anchor { offset, bias := .after })
-
 /-- Erases the lowercase marks of the buffer `id` that are on its rows
 `first` through `last` ("Erase rows", in the module docs). Nothing for a
 buffer that is not there. -/
@@ -78,7 +71,7 @@ def here (view : ViewId) : EditorM (Option Place) := do
   let some target := (← editorState).target? view | return none
   let selection ← target.selection
   let some range := selection.ranges[selection.primary]? | return none
-  return some (.held target.window.buffer (← mark target.buffer.text range.head))
+  return some (.held target.window.buffer (← Marks.placeMarker target.buffer.text range.head))
 
 /-- Records a jump in `view` (Vim's `setpcmark`): the cursor's place is its
 previous-context mark and the last entry of its list, the oldest dropped
@@ -212,7 +205,8 @@ def attach (id : BufferId) (path : System.FilePath) : EditorM Unit := do
     return
   let attached : Array ((Nat × Nat) × MarkerId) ←
     points.mapM fun (row, column) => do
-        return ((row, column), ← mark opened.text (← Marks.offsetAt opened.text row column))
+        return ((row, column),
+            ← Marks.placeMarker opened.text (← Marks.offsetAt opened.text row column))
   let change (place : Place) : Option Place :=
     match inFile place with
     | some point => (attached.find? (·.1 == point)).map fun (_, marker) => .held id marker
