@@ -682,8 +682,9 @@ The config session's decisions are tested here too, with no elaborator:
   (`Editor/ModeLine/Compiled.lean`), and the `code` mode with the shipped
   languages (`Editor/Language/Compiled.lean`);
 - `packageSetChecks`: the packages that ship (`Editor/PackageSet.lean`):
-  the list is the 21 packages, in order, each accepted, and in the state
-  they make every entry's owner is one of them.
+  the list is the 21 packages, in order, each accepted, in the state
+  they make every entry's owner is one of them, and the ex names and the
+  theme names are bound in the order the headless fixtures show.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:

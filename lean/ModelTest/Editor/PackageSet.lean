@@ -52,6 +52,26 @@ def packageSetChecks : List Check :=
             !owners.contains .compiled &&
             state.registry.entries.size > 100 &&
             (state.registry.menuBar?).isSome &&
-            state.cells.cells.all fun cell => shippedPackageNames.contains cell.owner.name) }]
+            state.cells.cells.all fun cell => shippedPackageNames.contains cell.owner.name) },
+    { name :=
+        "the shipped set binds the ex names in this order: the files', the ex line's and the buffers', then the compile mode's six, then version control's twelve"
+      run :=
+        let (state, _) : Config.State Elaborated × Array String :=
+          Config.State.ofPackages PackageSet.shipped
+        pure
+          (state.registry.exNames ==
+            #["w", "w!", "e", "e!", "autoread", "noautoread", "q", "wq", "reload", "b", "ls", "bd",
+              "compile", "compile-command", "recompile", "kill-compilation", "next-error",
+              "previous-error", "vc-status", "vc-show", "vc-stage-hunk", "vc-unstage-hunk",
+              "vc-commit", "vc-worktrees", "vc-commit-accept", "vc-commit-abort", "vc-review",
+              "vc-review-since", "vc-log", "vc-blame"]) },
+    { name :=
+        "the shipped set's theme names are `default`, `solarized-dark`, `solarized-light` and `fairy-floss`, in that order"
+      run :=
+        let (state, _) : Config.State Elaborated × Array String :=
+          Config.State.ofPackages PackageSet.shipped
+        pure
+          (state.registry.themeNames ==
+            #["default", "solarized-dark", "solarized-light", "fairy-floss"]) }]
 
 end ModelTest
