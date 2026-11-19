@@ -863,8 +863,10 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   erased again by redo and put back again by undo (`markUndoRows`); and
   the recorded departures, one check each named for its task: a counted
   undo, a line's marks erased by the edit's shape, text typed at a mark, a
-  global mark's column on a deleted line, a lowercase mark with its buffer
-  closed, and `` ` ` `` after a jump into another buffer;
+  global mark's column on a deleted line, the numbered marks, the change
+  marks, the visual marks, the marks of the last change and insert, the
+  mark of the last exit, a lowercase mark with its buffer closed, and
+  `` ` ` `` after a jump into another buffer;
 - `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
   All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
   item (`clipRan`), in each Vim state, on the clipboard model.

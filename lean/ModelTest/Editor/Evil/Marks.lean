@@ -204,6 +204,33 @@ def evilMarkChecks : List Check :=
           [("m A d d ` A", "ab\nc|d\nef", "ab\n|ef"),
             ("m A d d g g ` A", "ab\ncd\ne|f", "ab\nc|d")] },
     { name :=
+        "recorded departure (task marks-numbered-file-marks): the numbered marks are not built, so ` 0, ` 9 and ' 0 say E78, where Vim's go to the numbered mark's file or say E20 when it is not set"
+      run :=
+        evilRows
+          [("` 0", "a|b", Evil.unknownMark), ("` 9", "a|b", Evil.unknownMark),
+            ("' 0", "a|b", Evil.unknownMark)] },
+    { name :=
+        "recorded departure (task marks-change-and-yank-marks): the change marks are not built, so after y w, ` [ and ` ] say E78 and m [ says E191, where Vim's go to the start and end of the text yanked and m [ sets the mark"
+      run :=
+        evilRows
+          [("y w ` [", "|ab cd", Evil.unknownMark), ("y w ` ]", "|ab cd", Evil.unknownMark),
+            ("m [", "a|b", Evil.badMarkName)] },
+    { name :=
+        "recorded departure (task marks-visual-marks): the visual marks are not built, so after v l <Escape>, ` < and ` > say E78 and m < says E191, where Vim's go to the start and end of the last selection and m < sets the mark"
+      run :=
+        evilRows
+          [("v l <Escape> ` <", "|abc", Evil.unknownMark),
+            ("v l <Escape> ` >", "|abc", Evil.unknownMark), ("m <", "a|b", Evil.badMarkName)] },
+    { name :=
+        "recorded departure (task marks-last-change-and-insert-marks): the marks of the last change and the last insert are not built, so after i x <Escape>, ` . and ` ^ say E78, where Vim's go to where the change was made and where insert state was left"
+      run :=
+        evilRows
+          [("i x <Escape> ` .", "a|b", Evil.unknownMark),
+            ("i x <Escape> ` ^", "a|b", Evil.unknownMark)] },
+    { name :=
+        "recorded departure (task marks-last-exit-mark): the mark of the cursor's place when the buffer was last left is not built, so ` \" says E78, where Vim's goes there, or to the first line when the buffer was never left"
+      run := evilRows [("` \"", "a|b", Evil.unknownMark)] },
+    { name :=
         "under an operator a mark that is not set gives the operator up, saying so, with the text as it was"
       run :=
         pure <|

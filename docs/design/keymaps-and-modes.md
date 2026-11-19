@@ -3016,8 +3016,7 @@ builds one sets `jumps` on its entry.
   `dd`, `u` and `` `a `` lands on the mark's line and column, and `C-r`
   erases it again. Global marks are not put back, as in Vim.
 
-**Not built**: the special marks `[`, `]`, `<`, `>`, `.`, `^`, `"` and
-`0` to `9`; `:marks`, `:jumps`, `:delmarks` and `:keepjumps`;
+**Not built**: `:marks`, `:jumps`, `:delmarks` and `:keepjumps`;
 `jumpoptions=stack`; `g;` and `g,`, the change list; keeping marks across
 restarts (viminfo, shada); and `m` in the visual states.
 
@@ -3069,6 +3068,24 @@ matches Vim changes that check deliberately:
   `one_adjust_nodel` changes only the mark's line number and keeps its
   column (`e|f`). And `dd` on the last line collapses the marker onto the
   end of the line above. Task `global-mark-keeps-column-on-line-delete`.
+- **The numbered marks `'0` to `'9` are not built**: `` `0 `` and `'0`
+  say E78, where Vim's go to the file of the numbered mark that viminfo or
+  shada kept, or say E20 when it is not set. Task
+  `marks-numbered-file-marks`.
+- **The change marks `` `[ `` and `` `] `` are not built**: after `yw`
+  they say E78, where Vim's go to the start and end of the text last
+  changed or yanked, and `m[` says E191, where Vim's sets the mark. Task
+  `marks-change-and-yank-marks`.
+- **The visual marks `` `< `` and `` `> `` are not built**: after a
+  selection is left they say E78, where Vim's go to the start and end of
+  the last selection, and `m<` says E191, where Vim's sets the mark. Task
+  `marks-visual-marks`.
+- **The marks `` `. `` and `` `^ `` are not built**: after an insert they
+  say E78, where Vim's go to where the last change was made and where
+  insert state was last left. Task `marks-last-change-and-insert-marks`.
+- **The mark `` `" `` is not built**: it says E78, where Vim's goes to
+  the cursor's place when the buffer was last left. Task
+  `marks-last-exit-mark`.
 
 ### Tab commands as built
 
