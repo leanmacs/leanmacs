@@ -193,9 +193,33 @@ def entryModule? (pkg : Package) : IO (Option Module) := do
 
 /-- The packages of the set `set`, in the order their entry modules
 register: `set` and every package it requires, directly or through
-another. -/
-def setPackages (ws : Workspace) (_set : Package) : Array Package :=
-  ws.packages
+another, each after the packages it requires, and those in the order its
+lakefile declares them. So a package registers after every package it
+depends on, the core's packages come first, since every package with an
+entry module requires the core, and packages that do not depend on each
+other register in the order the set's lakefile names them.
+
+Lake's own list (`Workspace.packages`) is not in that order: it holds a
+package reached only through another after the package that requires it.
+So this walks the `require`s itself, depth first. `entered` holds the
+packages whose walk has begun, so a package is visited once and a cycle,
+which Lake refuses when it loads the workspace, could not loop here. -/
+partial def setPackages (ws : Workspace) (set : Package) : Array Package :=
+  (visit set (#[], #[])).2
+where
+  /-- Visits `pkg` after its dependencies: `state` is the names of the
+  packages entered so far and the packages in order so far. -/
+  visit (pkg : Package) (state : Array Name × Array Package) : Array Name × Array Package :=
+    if state.1.contains pkg.keyName then state
+    else
+      let state :=
+        pkg.depConfigs.foldl
+          (fun state dep =>
+            match ws.findPackageByName? dep.name with
+            | some dep => visit dep state
+            | none => state)
+          (state.1.push pkg.keyName, state.2)
+      (state.1, state.2.push pkg)
 
 /-- The text of a set's root module, for the entry modules `entries` in the
 order they register. It imports the config base, `Editor`, for the link

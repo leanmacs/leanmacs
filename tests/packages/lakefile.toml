@@ -16,9 +16,14 @@
 # dependency the manifest does not hold.
 name = "fixture-set"
 
+# `greeting-loud` requires `greeting`, which is in the set through it alone
+# and on purpose: Lake lists a package reached only through another after
+# the package that requires it, so that order would register `greeting`
+# last, and the fixture `greeting-loud/tests/headless/reply` shows the
+# build does not.
 [[require]]
-name = "greeting"
-path = "greeting"
+name = "greeting-loud"
+path = "greeting-loud"
 
 [[require]]
 name = "editor-core"

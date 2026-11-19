@@ -1,0 +1,35 @@
+# A second fixture package outside the core (docs/design/packages.md, "The
+# package set and its build"), used by tests alone: it requires the fixture
+# package `greeting` and registers a command of the same name as one of
+# `greeting`'s, so an editor built from a set that holds both shows which
+# registered later. A package registers after every package it requires,
+# whatever order the set's lakefile names them in.
+#
+# Its layout is `greeting`'s (../greeting/lakefile.toml), without a linked
+# test: `GreetingLoud` is its library, with its entry module
+# `GreetingLoud/EditorPackage.lean`; `greeting-loud-test` is its test
+# driver, rooted at `GreetingLoudTest/Model.lean`, and no default target;
+# `tests/headless/` holds its headless fixtures.
+name = "greeting-loud"
+testDriver = "«greeting-loud-test»"
+defaultTargets = ["GreetingLoud", "GreetingLoudTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "greeting"
+path = "../greeting"
+
+[[require]]
+name = "editor-core"
+path = "../../../lean"
+
+[[lean_lib]]
+name = "GreetingLoud"
+
+[[lean_lib]]
+name = "GreetingLoudTest"
+globs = ["GreetingLoudTest.+"]
+
+[[lean_exe]]
+name = "greeting-loud-test"
+root = "GreetingLoudTest.Model"

@@ -1,0 +1,13 @@
+# The script the gate has the fixture set's editor run in its headless mode
+# for the fixture package `greeting-loud` (tools/package-set.sh run). Both
+# `greeting` and `greeting-loud` register `greeting-reply`, and the later
+# registration of a name is the one found. `greeting-loud` requires
+# `greeting`, so it registers after it, although the set's lakefile names it
+# first: the scene's echo area must show `greeting-loud`'s text, exactly
+# `expected`. It touches no file.
+
+reload
+settle
+
+run greeting-reply
+scene
