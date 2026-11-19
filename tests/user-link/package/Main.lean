@@ -1,6 +1,6 @@
 import Editor
 import Editor.Headless
-import PackageSet
+import EditorCore.EditorPackage
 import UserLinkFixture
 
 /-!
@@ -20,7 +20,7 @@ A host registers the packages it is handed (`lean/Editor/Package.lean`), so
 this root names the packages and nothing of the host's body:
 
 - `editor headless …` is the shipped headless host, `Editor.Headless.main`,
-  handed the packages that ship (`PackageSet.shipped`), as the
+  handed the packages that ship (`EditorCore.EditorPackage.packages`), as the
   editor's own root hands them: the standing headless fixture runs on the
   relinked executable.
 - `editor headless-with-package …` is the same host handed those packages
@@ -38,9 +38,9 @@ package's after them. -/
 def main (arguments : List String) : IO UInt32 := do
   match arguments with
   | "headless" :: rest =>
-    Editor.Headless.main PackageSet.shipped rest
+    Editor.Headless.main EditorCore.EditorPackage.packages rest
   | "headless-with-package" :: rest =>
-    Editor.Headless.main (PackageSet.shipped.push UserLinkFixture.package) rest
+    Editor.Headless.main (EditorCore.EditorPackage.packages.push UserLinkFixture.package) rest
   | _ =>
     IO.eprintln "usage: editor headless|headless-with-package <sysroot> <olean dir> <config dir> <script file>"
     return 2

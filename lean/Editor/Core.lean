@@ -51,7 +51,7 @@ packages of their own (the compile mode, `Editor/Compile.lean` and
 `Editor/Compile/`, and the shipped palettes, `Editor/Themes/Solarized.lean`,
 `Editor/Themes/FairyFloss.lean` and `Editor/Themes/Shipped.lean`). The
 hand-written list of the packages that ship is not under `lean/Editor/`
-(`PackageSet.lean`, a library of its own), and this module does not import
+(`EditorCore/EditorPackage.lean`, a library of its own), and this module does not import
 it. `docs/design/packages.md` says which modules those are, what a package may
 import of the core, and what each feature still in the core would have to
 cross to move out.

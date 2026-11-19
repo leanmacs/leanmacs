@@ -185,9 +185,9 @@ run = [
   # The host's modules import no feature module, on Lake's module graph
   # (tools/host-imports-check.sh; docs/dev-practices/the-gate.md, "The host
   # imports check"): the modules `Main` imports, other than the module that
-  # lists the packages (`PackageSet`, lean/PackageSet.lean), reach neither
-  # that module nor a module it imports. Three `lake query` calls, about half
-  # a second each.
+  # lists the packages (`EditorCore.EditorPackage`,
+  # lean/EditorCore/EditorPackage.lean), reach neither that module nor a
+  # module it imports. Three `lake query` calls, about half a second each.
   "sh ../tools/host-imports-check.sh",
   # And the check bites: pointed at the root `ConfigTest`, which imports the
   # packages, it must find them and exit 1. Its output is shown only when it

@@ -12,7 +12,7 @@ import Editor.Headless
 import Editor.InputScheme.Vim.Default
 import Editor.Workspace.FindFile
 import Editor.Workspace.FindInProject
-import PackageSet
+import EditorCore.EditorPackage
 
 /-!
 # Config tests: the default config
@@ -47,13 +47,13 @@ def defaultBuilt (context : Context) : IO Config.Registrations := do
           s!"the default config was rejected: {outcome.diagnostics.toList.map (·.message)}"
 
 /-- The registry a host of the executable starts with, the one the packages
-that ship make (`Config.State.ofPackages` of `PackageSet.shipped`), with the
+that ship make (`Config.State.ofPackages` of `EditorCore.EditorPackage.packages`), with the
 default config's bindings, prefix names
 and leaders installed for the owner `.config`, as a reload installs them
 (`Config.Reload.install`). -/
 def defaultRegistry (registrations : Config.Registrations) : IO Config.Registry := do
   let (state, _) : Config.State Config.Elaborate.State × Array String :=
-    Config.State.ofPackages PackageSet.shipped
+    Config.State.ofPackages EditorCore.EditorPackage.packages
   let registry :=
     (state.registry.replaceBindings .config registrations.bindings).replacePrefixNames .config
       registrations.prefixNames

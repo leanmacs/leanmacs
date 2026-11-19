@@ -5,7 +5,7 @@ import Editor.Headless
 import Editor.Version
 import Editor.Window.Real
 import Editor.WindowCheck.Real
-import PackageSet
+import EditorCore.EditorPackage
 
 /-!
 # The executable
@@ -46,7 +46,7 @@ it, and `tools/core-imports-check.sh` checks that every one does.
 
 Both hosts register features only from the packages they are handed
 (`Editor/Package.lean`), and this module is the one place the executable's
-packages are named: it imports the list (`PackageSet.lean`) and
+packages are named: it imports the list (`EditorCore/EditorPackage.lean`) and
 passes it to the headless mode and to the window mode. No module of a host
 imports that list or a module that defines a package, which
 `tools/host-imports-check.sh` checks on Lake's module graph.
@@ -103,7 +103,7 @@ opened. Any other command line, an empty one too, is the window mode's,
 which opens a window, on a file when one is given, and exits 0 when the
 window ran, 1 when it could not be opened, and 2, with its usage, for a
 command line it does not take. The headless mode and the window mode are
-each handed the packages that ship (`PackageSet.shipped`). -/
+each handed the packages that ship (`EditorCore.EditorPackage.packages`). -/
 def main (args : List String) : IO UInt32 := do
   match Editor.Executable.mode args with
   | .demo =>
@@ -122,8 +122,8 @@ def main (args : List String) : IO UInt32 := do
       IO.eprintln text
     pure status
   | .headless rest =>
-    Editor.Headless.main PackageSet.shipped rest
+    Editor.Headless.main EditorCore.EditorPackage.packages rest
   | .windowCheck options =>
     Editor.WindowCheck.main options
   | .window arguments =>
-    Editor.Window.main PackageSet.shipped arguments
+    Editor.Window.main EditorCore.EditorPackage.packages arguments

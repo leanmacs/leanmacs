@@ -165,7 +165,7 @@ as before, so reload and job completion work as they did.
     repeated name, one whose `setup` is refused, or one that sets what only
     config may choose. The others register and the loop starts.
   - **The executable's hosts are handed the packages that ship**
-    (`PackageSet.shipped`, `PackageSet.lean`, which `Main.lean`
+    (`EditorCore.EditorPackage.packages`, `EditorCore/EditorPackage.lean`, which `Main.lean`
     passes to `main` here and to the window mode's), 21 of them, each in
     its feature's `Compiled.lean`, which says what it registers. Among
     them: the file commands and their jobs, the first commands `show`
@@ -832,7 +832,7 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   source and menu the host has before config is one of theirs. The default
   is none, and a host handed none starts with an empty registry and
   publishes no menu bar; the executable's hosts are handed the packages
-  that ship (`PackageSet.lean`). -/
+  that ship (`EditorCore/EditorPackage.lean`). -/
   packages : Array Package := #[]
   /-- Where a log entry goes: a command that took longer than `slowAfter`,
   and a package the host refused as its loop started (`Running.new`).
@@ -2533,7 +2533,7 @@ display is the recorder and its clipboard its own, as a host's are by
 default.
 
 It names no package: the executable passes the packages that ship
-(`PackageSet.lean`), and what those register is said there and in
+(`EditorCore/EditorPackage.lean`), and what those register is said there and in
 each package's module.
 
 It is apart from `shipped`, which makes what it is over, so that the

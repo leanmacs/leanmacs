@@ -49,7 +49,7 @@ import Editor.Text.Real
 import Editor.Watch
 import Editor.Workspace.Compiled
 import Editor.Workspace.FindFile
-import PackageSet
+import EditorCore.EditorPackage
 
 /-!
 # Config tests: the benchmark
@@ -673,9 +673,9 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
       { completions := waits, timers := clock.timers, fuzzy := Fuzzy.real
         snapshots := Job.realSnapshots published.reader }
     let shippedPackages :=
-      if atPoint then PackageSet.shipped
+      if atPoint then EditorCore.EditorPackage.packages
       else
-        PackageSet.shipped.map fun package =>
+        EditorCore.EditorPackage.packages.map fun package =>
           if package.name == AtPoint.package.name then atPointUnused else package
     let packages :=
       shippedPackages.push

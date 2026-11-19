@@ -96,7 +96,7 @@ import Editor.Workspace.Compiled
 import Editor.Workspace.FindFile
 import Editor.Workspace.FindInProject
 import Editor.Workspace.Modes
-import PackageSet
+import EditorCore.EditorPackage
 
 /-!
 # Config tests: `Editor/Headless.lean`
@@ -1997,11 +1997,11 @@ def reloadEchoChecks (context : Context) : List Check :=
           return before == ("", #[]) && isGreetError made }]
 
 /-- The registry a host of the executable starts with: the one the packages
-that ship make (`Config.State.ofPackages` of `PackageSet.shipped`), which is
+that ship make (`Config.State.ofPackages` of `EditorCore.EditorPackage.packages`), which is
 what `Headless.Running.new` starts from for a host handed them. -/
 def shippedRegistry : Config.Registry :=
   let (state, _) : Config.State Config.Elaborate.State × Array String :=
-    Config.State.ofPackages PackageSet.shipped
+    Config.State.ofPackages EditorCore.EditorPackage.packages
   state.registry
 
 /-- The checks of what the executable's hosts start with: the registry the

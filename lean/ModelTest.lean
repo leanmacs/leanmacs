@@ -161,7 +161,7 @@ import ModelTest.Editor.Workspace.FindInProject
 import ModelTest.Editor.Workspace.Lister
 import ModelTest.Editor.Workspace.Projects
 import ModelTest.Editor.Workspace.Reach
-import ModelTest.PackageSet
+import ModelTest.EditorCore.EditorPackage
 
 /-!
 # The model tests
@@ -701,8 +701,8 @@ The config session's decisions are tested here too, with no elaborator:
   (`Editor/Compile/Compiled.lean`), and the `version-control` package its
   twelve, the gutter's package none
   (`Editor/VersionControl/Compiled.lean`), each to a command it registers;
-- `packageSetChecks`: the packages that ship (`PackageSet.lean`, a module
-  outside `Editor/`, whose test module is `ModelTest/PackageSet.lean`):
+- `packageSetChecks`: the packages that ship (`EditorCore/EditorPackage.lean`, a module
+  outside `Editor/`, whose test module is `ModelTest/EditorCore/EditorPackage.lean`):
   the list is the 22 packages, in order, each accepted, in the state
   they make every entry's owner is one of them, and the ex names and the
   theme names are bound in the order the headless fixtures show.

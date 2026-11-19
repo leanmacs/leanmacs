@@ -3,14 +3,14 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Package
+import EditorCore.EditorPackage
 import ModelTest.Check
 import ModelTest.Support.Elaborator
-import PackageSet
 
 /-!
-# Model tests: `PackageSet.lean`
+# Model tests: `EditorCore/EditorPackage.lean`
 
-The model tests of `PackageSet.lean`: `packageSetChecks`. The root
+The model tests of `EditorCore/EditorPackage.lean`: `packageSetChecks`. The root
 module `ModelTest` runs them; its module doc says what each shows.
 -/
 
@@ -25,7 +25,7 @@ def shippedPackageNames : Array String :=
     "binding-search", "workspace", "shell", "compile", "at-point", "version-control",
     "version-control-gutter", "languages"]
 
-/-- The checks of the packages that ship (`PackageSet.lean`): the
+/-- The checks of the packages that ship (`EditorCore/EditorPackage.lean`): the
 list a host is handed is whole, every package of it is accepted, and what
 it registers is all theirs. -/
 def packageSetChecks : List Check :=
@@ -33,18 +33,20 @@ def packageSetChecks : List Check :=
         "every package of the shipped set is accepted, and their names are the 22 of the package table, each once, in its order"
       run :=
         let (state, refused) : Config.State Elaborated × Array String :=
-          Config.State.ofPackages PackageSet.shipped
+          Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
-          (refused == #[] && PackageSet.shipped.map (·.name) == shippedPackageNames &&
+          (refused == #[] &&
+            EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
             shippedPackageNames.size == 22 &&
             shippedPackageNames.toList.eraseDups.length == 22 &&
             state.packages == shippedPackageNames &&
-            PackageSet.shipped.all fun package => package.collected.toOption.isSome) },
+            EditorCore.EditorPackage.packages.all fun package =>
+              package.collected.toOption.isSome) },
     { name :=
         "in the state the shipped set makes, every entry's owner is a package of the set: of every kind there is an entry, and none is config's or the owner compiled's"
       run :=
         let (state, _) : Config.State Elaborated × Array String :=
-          Config.State.ofPackages PackageSet.shipped
+          Config.State.ofPackages EditorCore.EditorPackage.packages
         let owners := state.registry.ownersByKind.flatten
         pure
           (owners.all (fun owner => shippedPackageNames.contains owner.name) &&
@@ -57,7 +59,7 @@ def packageSetChecks : List Check :=
         "the shipped set binds the ex names in this order: the files', the ex line's and the buffers', then the compile mode's six, then version control's twelve"
       run :=
         let (state, _) : Config.State Elaborated × Array String :=
-          Config.State.ofPackages PackageSet.shipped
+          Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (state.registry.exNames ==
             #["w", "w!", "e", "e!", "autoread", "noautoread", "q", "wq", "reload", "b", "ls", "bd",
@@ -69,7 +71,7 @@ def packageSetChecks : List Check :=
         "the shipped set's theme names are `default`, `solarized-dark`, `solarized-light` and `fairy-floss`, in that order"
       run :=
         let (state, _) : Config.State Elaborated × Array String :=
-          Config.State.ofPackages PackageSet.shipped
+          Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (state.registry.themeNames ==
             #["default", "solarized-dark", "solarized-light", "fairy-floss"]) }]

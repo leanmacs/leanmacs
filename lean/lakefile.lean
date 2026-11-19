@@ -2,7 +2,9 @@ import Lake
 
 open Lake DSL System
 
-/-- The editor's Lean package.
+/-- The editor's core, as a Lake package. Its name is what a package set
+and a package `require`, and what the staged core of the user-side link is
+called (`tools/user-link/core/lakefile.toml`).
 
 Every Lean linter is on, and a warning fails the build, so `lake build` is
 also the lint gate (the Lean counterpart of `cargo clippy -- -D warnings`).
@@ -13,7 +15,7 @@ Lake would fetch every git dependency of it into each set's own
 `.lake/packages`, so the Lean formatter is the `require` of a package of
 its own, `tools/lean-fmt/lakefile.toml`, which nothing requires
 (`docs/design/packages.md`, "The package set and its build"). -/
-package editor where leanOptions := #[⟨`linter.all, true⟩, ⟨`warningAsError, true⟩]
+package «editor-core» where leanOptions := #[⟨`linter.all, true⟩, ⟨`warningAsError, true⟩]
 
 /-- The editor's modules. Its root `Editor` is what user config is elaborated
 on at runtime, and the build makes its `.olean` files for that. Its second
@@ -25,13 +27,16 @@ import among them (the bindings, the real bindings of the ports, the config
 session, the hosts). -/
 @[default_target] lean_lib Editor where roots := #[`Editor, `Editor.Core]
 
-/-- The list of the packages that ship (`PackageSet.lean`): the executable's
-wiring, which names every package and so is no module of the editor
-(`docs/design/packages.md`). It is a library of its own, outside `Editor/`,
-that the executable's root and the tests that need the list import; it is
-built for them, and the packages roadmap's phase 4 replaces it with a
-generated root. -/
-lean_lib PackageSet
+/-- The core's entry module (`EditorCore/EditorPackage.lean`): the list of
+the packages the features still in this Lake package make. A Lake package
+named `p` lists its packages in the module `<P>.EditorPackage`, `<P>` being
+`p` in upper camel case, which is why this package is named `editor-core`:
+`editor` would put the list at `Editor.EditorPackage`, under the namespace
+the core imports check rules (`docs/design/packages.md`, "The package set
+and its build"). The list names every package and so is no module of the
+editor: it is a library of its own, outside `Editor/`, that the generated
+root and the tests that need the list import. -/
+lean_lib EditorCore where roots := #[`EditorCore.EditorPackage]
 
 /-- Code that `ffi-test overflow` has Lean's interpreter run
 (`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
