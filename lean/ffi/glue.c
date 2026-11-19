@@ -1297,6 +1297,8 @@ bool editor_ffi_files_save(uint64_t id, const editor_ffi_snapshot *snapshot,
                            const editor_ffi_raw_expect *expect);
 bool editor_ffi_files_stamp(uint64_t id, const uint8_t *path, size_t path_len);
 bool editor_ffi_files_list(uint64_t id, const uint8_t *path, size_t path_len);
+bool editor_ffi_files_make_directory(uint64_t id, const uint8_t *path,
+                                     size_t path_len);
 bool editor_ffi_files_take(uint64_t id, editor_ffi_raw_file_result *out);
 bool editor_ffi_files_cancel(uint64_t id);
 uint64_t editor_ffi_files_pending(void);
@@ -1318,6 +1320,13 @@ lean_obj_res editor_glue_files_stamp(uint64_t id, b_lean_obj_arg path) {
 lean_obj_res editor_glue_files_list(uint64_t id, b_lean_obj_arg path) {
   return lean_io_result_mk_ok(lean_box(
       editor_ffi_files_list(id, string_bytes(path), string_len(path))));
+}
+
+// `Editor.Ffi.filesMakeDirectory : UInt64 → @& String → IO Bool`
+lean_obj_res editor_glue_files_make_directory(uint64_t id,
+                                              b_lean_obj_arg path) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_files_make_directory(
+      id, string_bytes(path), string_len(path))));
 }
 
 // `Editor.Ffi.filesSaveRaw : UInt64 → @& Snapshot → @& String → UInt64 →

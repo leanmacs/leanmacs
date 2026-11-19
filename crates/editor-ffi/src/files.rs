@@ -1,11 +1,12 @@
-//! The file service: loads, saves, stamps and listings, completed through
-//! the completion queue.
+//! The file service: loads, saves, stamps, listings and directories made,
+//! completed through the completion queue.
 //!
 //! This is the second service behind the completion queue, in the timer
 //! service's shape (the crate docs, "Services and completions"). A job in
-//! Lean asks for a load, a save, a stamp or a listing with an id.
-//! [`Files::start_load`], [`Files::start_save`], [`Files::start_stamp`] and
-//! [`Files::start_list`] return at once; the service's thread does the
+//! Lean asks for a load, a save, a stamp, a listing or a directory made
+//! with an id. [`Files::start_load`], [`Files::start_save`],
+//! [`Files::start_stamp`], [`Files::start_list`] and
+//! [`Files::start_make_directory`] return at once; the service's thread does the
 //! work, keeps the result under the request's id and completes the
 //! request: for the process's instance, by queueing an
 //! [`EventKind::Completion`](crate::events::EventKind::Completion) whose
@@ -72,6 +73,7 @@
 //! | Loaded | 0 | seconds, nanoseconds, size, lone line feeds, CRLF pairs |
 //! | Saved | 0 | seconds, nanoseconds, size |
 //! | Stamped | 0 | present (0 or 1), seconds, nanoseconds, size |
+//! | A directory made | 0 | (none) |
 //! | The path is not absolute | 1 | |
 //! | Not found | 2 | |
 //! | Not a file | 3 | |
@@ -88,7 +90,9 @@
 //! cannot name such a file, and the count covers only the entries kept. A
 //! listing that is refused crosses as a load's refusal does: not absolute
 //! 1, not found 2, denied 4 and anything else 9, with not a directory its
-//! own status.
+//! own status. A directory that is not made crosses the same way: not
+//! absolute 1, not a directory 10 (a file at the path or on the way to
+//! it), denied 4 and anything else 9.
 //!
 //! The seconds of a stamp cross as a 64-bit two's complement word, so an
 //! instant before 1970 is a word above 2^63. A path crosses as its bytes
@@ -102,6 +106,7 @@
 //! | [`editor_ffi_files_save`] | Starts a save of the snapshot behind a handle, which it clones. What it expects on disk is a [`RawExpect`] |
 //! | [`editor_ffi_files_stamp`] | Starts a stamp request: the stamp of the file at a path, or none. False, starting nothing, as for a load |
 //! | [`editor_ffi_files_list`] | Starts a listing of the directory at a path. False, starting nothing, as for a load |
+//! | [`editor_ffi_files_make_directory`] | Starts making the directory at a path, with every directory on the way to it. False, starting nothing, as for a load |
 //! | [`editor_ffi_files_take`] | Fills a [`RawFileResult`] and returns true, or returns false when the service keeps no result for the id |
 //! | [`editor_ffi_files_cancel`] | Cancels, and says whether there was anything to cancel |
 //! | [`editor_ffi_files_pending`] | Requests waiting or being worked, and results not taken |
@@ -116,7 +121,7 @@ use std::{ptr, slice, thread};
 
 use editor_fs_std::StdFs;
 use editor_text::file::{
-    self, Expect, LineEndings, ListError, LoadError, Loaded, SaveError, Stamp,
+    self, Expect, LineEndings, ListError, LoadError, Loaded, MakeDirectoryError, SaveError, Stamp,
 };
 use editor_text::fs::{Entry, Fs, FsError, FsErrorKind, Kind, Modified};
 
@@ -210,6 +215,11 @@ pub enum Request {
         /// Where the directory is.
         path: PathBuf,
     },
+    /// Make the directory at `path`, and every directory on the way to it.
+    MakeDirectory {
+        /// Where the directory is to be.
+        path: PathBuf,
+    },
 }
 
 /// What a request came to.
@@ -235,6 +245,19 @@ pub enum FileResult {
     Listed(Vec<Entry>),
     /// A listing was refused.
     NotListed(ListError),
+    /// A directory was made, or was there.
+    Made,
+    /// A directory was not made.
+    NotMade(MakeDirectoryError),
+}
+
+impl From<Result<(), MakeDirectoryError>> for FileResult {
+    fn from(made: Result<(), MakeDirectoryError>) -> Self {
+        match made {
+            Ok(()) => Self::Made,
+            Err(error) => Self::NotMade(error),
+        }
+    }
 }
 
 impl From<Result<Vec<Entry>, ListError>> for FileResult {
@@ -281,7 +304,8 @@ impl From<Result<Stamp, SaveError>> for FileResult {
 /// module docs have the table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileStatus {
-    /// The file was loaded or saved.
+    /// The file was loaded or saved, its stamp read, or the directory
+    /// made.
     Done = 0,
     /// The path is not absolute.
     Relative = 1,
@@ -340,9 +364,9 @@ impl FileResult {
     /// The result as it crosses the boundary: its status, its words and its
     /// detail, by the table in the module docs.
     ///
-    /// The matches on `editor-text`'s [`LoadError`], [`SaveError`] and [`ListError`] are
-    /// exhaustive on purpose. This crate must act on every variant of
-    /// all three: a refusal with no status and no words of its own would not
+    /// The matches on `editor-text`'s [`LoadError`], [`SaveError`],
+    /// [`ListError`] and [`MakeDirectoryError`] are exhaustive on purpose.
+    /// This crate must act on every variant of all four: a refusal with no status and no words of its own would not
     /// reach Lean as what it is, so a new variant has to be given its row
     /// of the table here before the crate builds.
     pub fn encoded(&self) -> Encoded {
@@ -407,6 +431,12 @@ impl FileResult {
                 ListError::NotFound => Encoded::bare(FileStatus::NotFound),
                 ListError::NotADirectory => Encoded::bare(FileStatus::NotADirectory),
                 ListError::Fs(error) => refused(error),
+            },
+            Self::Made => Encoded::bare(FileStatus::Done),
+            Self::NotMade(error) => match error {
+                MakeDirectoryError::Relative => Encoded::bare(FileStatus::Relative),
+                MakeDirectoryError::NotADirectory => Encoded::bare(FileStatus::NotADirectory),
+                MakeDirectoryError::Fs(error) => refused(error),
             },
         }
     }
@@ -599,6 +629,14 @@ impl<F: Fs> Files<F> {
         self.start(id, Request::List { path })
     }
 
+    /// Asks for the directory at `path` to be made, with every directory on
+    /// the way to it, as the request `id`, and returns whether it was
+    /// accepted. It returns at once and touches no file. An id in use is
+    /// refused.
+    pub fn start_make_directory(&self, id: u64, path: PathBuf) -> bool {
+        self.start(id, Request::MakeDirectory { path })
+    }
+
     /// Adds `request` as `id`, unless the id is in use.
     fn start(&self, id: u64, request: Request) -> bool {
         let mut state = self.state();
@@ -709,6 +747,7 @@ impl<F: Fs> Files<F> {
             .into(),
             Request::Stamp { path } => file::stamp(&self.fs, &path).into(),
             Request::List { path } => file::list(&self.fs, &path).into(),
+            Request::MakeDirectory { path } => file::make_directory(&self.fs, &path).into(),
         }
     }
 
@@ -872,6 +911,30 @@ pub unsafe extern "C" fn editor_ffi_files_list(id: u64, path: *const u8, path_le
     service_started() && FILES.start_list(id, path)
 }
 
+/// Asks the process's file service to make the directory whose path is the
+/// `path_len` bytes at `path`, with every directory on the way to it, as the
+/// request `id`, and returns whether it was accepted. It returns at once and
+/// never blocks.
+///
+/// The completion and the result are as [`editor_ffi_files_load`]'s.
+///
+/// Returns false, starting nothing, if `id` is in use, or if the operating
+/// system refused the service its thread.
+///
+/// # Safety
+///
+/// `path` points to `path_len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_files_make_directory(
+    id: u64,
+    path: *const u8,
+    path_len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let path = unsafe { path_of(path, path_len) };
+    service_started() && FILES.start_make_directory(id, path)
+}
+
 /// The result of a file request as it crosses the boundary: one record,
 /// filled in one call. The module docs have the table of statuses and
 /// words.
@@ -920,7 +983,9 @@ pub unsafe extern "C" fn editor_ffi_files_take(id: u64, out: *mut RawFileResult)
         | FileResult::NotLoaded(_)
         | FileResult::NotSaved(_)
         | FileResult::Listed(_)
-        | FileResult::NotListed(_) => ptr::null_mut(),
+        | FileResult::NotListed(_)
+        | FileResult::Made
+        | FileResult::NotMade(_) => ptr::null_mut(),
     };
     let mut writer = Writer::with_capacity(encoded.words.len());
     for word in encoded.words {
@@ -1542,6 +1607,67 @@ mod tests {
         rig.nothing_else_completed(3);
         assert!(rig.files.take(2).is_none());
         rig.stop();
+    }
+
+    #[test]
+    fn a_directory_made_answers_what_editor_text_answers_for_that_path() {
+        let asked = ["/dir/made/deep", FILE, "relative"];
+        let mut answers = Vec::new();
+        for path in asked {
+            let rig = Rig::over(fake());
+
+            assert!(rig.files.start_make_directory(1, path.into()));
+            assert_eq!(rig.next(), 1);
+            let Some(answer) = rig.files.take(1) else {
+                panic!("no result was kept for {path}");
+            };
+
+            let expected = FileResult::from(file::make_directory(&fake(), Path::new(path)));
+            assert_eq!(said(&answer), said(&expected), "{path}");
+            answers.push(said(&answer));
+            rig.stop();
+        }
+        // The three answers differ, so the path was the one forwarded.
+        for (index, one) in answers.iter().enumerate() {
+            for other in &answers[index + 1..] {
+                assert_ne!(one, other);
+            }
+        }
+    }
+
+    #[test]
+    fn a_directory_made_crosses_as_done_with_no_words_and_a_refused_one_as_its_status() {
+        assert_eq!(FileResult::Made.encoded(), Encoded::bare(FileStatus::Done));
+        let denied = FsError::new(FsErrorKind::Denied, "os error 13");
+        let other = FsError::new(FsErrorKind::Other, "the disk is on fire");
+        let table = [
+            (
+                MakeDirectoryError::Relative,
+                Encoded::bare(FileStatus::Relative),
+            ),
+            (
+                MakeDirectoryError::NotADirectory,
+                Encoded::bare(FileStatus::NotADirectory),
+            ),
+            (
+                MakeDirectoryError::Fs(denied),
+                Encoded {
+                    detail: String::from("os error 13"),
+                    ..Encoded::bare(FileStatus::Denied)
+                },
+            ),
+            (
+                MakeDirectoryError::Fs(other.clone()),
+                Encoded {
+                    detail: other.to_string(),
+                    ..Encoded::bare(FileStatus::Failed)
+                },
+            ),
+        ];
+
+        for (error, expected) in table {
+            assert_eq!(FileResult::NotMade(error).encoded(), expected);
+        }
     }
 
     #[test]

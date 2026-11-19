@@ -242,8 +242,8 @@ for.
 The timer service is the first: `timersNow`, `timersStart`, `timersCancel`,
 and `timersPending`, a readout for tests.
 
-The file service is the second: `filesLoad`, `filesSave`, `filesStamp` and
-`filesList` start a request,
+The file service is the second: `filesLoad`, `filesSave`, `filesStamp`,
+`filesList` and `filesMakeDirectory` start a request,
 `filesTake` hands its result over once its completion has arrived,
 `filesCancel` cancels, and `filesPending` is a readout for tests. A request
 has a result, which a timer's has not, so there is one more step: the
@@ -251,7 +251,8 @@ completion says only that the request `id` is done, and the result is taken
 by that id, once, as one record (`FileResult`): a loaded file's text as a
 `Snapshot` handle with its stamp and its line endings, a saved file's stamp,
 a file's stamp or none, a directory's entries (`listed`, each a name and a
-kind code: 0 a file, 1 a directory, 2 anything else), or a refusal
+kind code: 0 a file, 1 a directory, 2 anything else), a directory made
+(`made`: done with no words), or a refusal
 (`FileRefusal`). A listing's names cross as a list of strings does: the
 count and each entry's kind and byte length as words, and the names end to
 end as the detail; a name that is not UTF-8 is left out by the library,

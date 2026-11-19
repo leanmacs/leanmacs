@@ -41,7 +41,8 @@ use editor_ffi::events::{
 };
 use editor_ffi::files::{
     FileStatus, RawExpect, RawFileResult, SERVICE, editor_ffi_files_cancel, editor_ffi_files_list,
-    editor_ffi_files_load, editor_ffi_files_pending, editor_ffi_files_save, editor_ffi_files_take,
+    editor_ffi_files_load, editor_ffi_files_make_directory, editor_ffi_files_pending,
+    editor_ffi_files_save, editor_ffi_files_take,
 };
 use editor_ffi::snapshot::{Snapshot, editor_ffi_snapshot_free, editor_ffi_snapshot_live};
 use editor_ffi::text::editor_ffi_text_free;
@@ -132,6 +133,14 @@ fn load(id: u64, path: &Path) -> bool {
     // SAFETY: the pointer and length are those of `bytes`, alive for the
     // call.
     unsafe { editor_ffi_files_load(id, bytes.as_ptr(), bytes.len(), NO_LIMIT) }
+}
+
+/// Starts making the directory at `path` as the request `id`.
+fn make_directory(id: u64, path: &Path) -> bool {
+    let bytes = path.as_os_str().as_bytes();
+    // SAFETY: the pointer and length are those of `bytes`, alive for the
+    // call.
+    unsafe { editor_ffi_files_make_directory(id, bytes.as_ptr(), bytes.len()) }
 }
 
 /// Starts a listing of `path` as the request `id`.
@@ -315,6 +324,16 @@ fn files_are_loaded_and_saved_through_c_and_completed_on_the_completion_queue() 
     assert_eq!(entries.words, [2, 0, 5, 1, 3]);
     assert_eq!(entries.detail, "a.txtsub");
     assert!(entries.snapshot.is_null());
+
+    // A directory two levels below one that is there is made, with the one
+    // on the way, and crosses as done with no words.
+    let made = directory.path().join("made").join("deep");
+    let making = next_id();
+    assert!(make_directory(making, &made));
+    let answer = completed(making);
+    assert_eq!(answer.status, FileStatus::Done.code());
+    assert_eq!(answer.words, [0_u64; 0]);
+    assert!(made.is_dir());
 
     // A save that expects nothing a save can expect starts nothing.
     let unknown = RawExpect { tag: 9, ..WHATEVER };

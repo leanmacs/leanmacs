@@ -423,7 +423,7 @@ file with a watch yet: a change is found when a save is asked for.
   environment keeps a directory's entry by the stamps of mise's config
   files.
 - **The service** (`editor-ffi`, `src/files.rs`), in the timer service's
-  shape: a load, a save, a stamp or a listing is started with the caller's id and
+  shape: a load, a save, a stamp, a listing or a directory made is started with the caller's id and
   returns at once; **one thread works the requests in the order they were started**,
   so two saves of one file land in order; one completion is queued; the
   result is then taken once by its id, as a status, a snapshot handle for a
@@ -435,7 +435,10 @@ file with a watch yet: a change is found when a save is asked for.
   present or not, then the stamp. A listing's is listed: the count, then
   each entry's kind (0 file, 1 directory, 2 other) and the byte length of
   its name, the names joined as the detail; a name that is not UTF-8 is
-  left out, since Lean cannot name such a file.
+  left out, since Lean cannot name such a file. A directory made is done
+  with no words, and one refused is not absolute, not a directory, denied
+  or failed (`editor_ffi_files_make_directory`, bound as
+  `Ffi.filesMakeDirectory`).
 - **How the tests are kept off the disk.** `editor-text`'s tests, and the
   service's unit tests, run on the fake. That is held by the gate, not by
   review: a `clippy.toml` beside each of the two crates lists `std::fs`,

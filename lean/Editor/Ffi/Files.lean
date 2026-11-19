@@ -43,7 +43,8 @@ inductive FileRefusal where
   | notFound
   /-- What is at the path is not a file. -/
   | notAFile
-  /-- What is at the path is not a directory: a listing's refusal. -/
+  /-- What is at the path is not a directory: a listing's refusal, and a
+  directory made's when a file is at the path or on the way to it. -/
   | notADirectory
   /-- The file system does not allow it; `detail` is the platform's words. -/
   | denied (detail : String)
@@ -73,6 +74,9 @@ inductive FileResult where
   /-- A directory was listed: each entry's name and kind code (0 a file, 1 a
   directory, 2 anything else), sorted by the bytes of the names. -/
   | listed (entries : Array (String × UInt64))
+  /-- A directory was made, with every directory on the way to it, or was
+  there already. -/
+  | made
   /-- The request was refused. -/
   | refused (refusal : FileRefusal)
 
@@ -121,6 +125,8 @@ def FileResult.decode (status : UInt64) (snapshot : Option Snapshot) (words : By
     (detail : String) : Except String FileResult := do
   let some words := wordsOf? words | throw "its words are not whole words"
   match status, words.size, snapshot with
+  | 0, 0, none =>
+    return .made
   | 0, 5, some snapshot =>
     return .loaded snapshot (stampAt words 0) words[3]! words[4]!
   | 0, 3, none =>
@@ -198,6 +204,17 @@ refusal.
 start its thread. -/
 @[extern "editor_glue_files_list"]
 opaque filesList (id : UInt64) (path : @& String) : IO Bool
+
+/-- Asks the library's file service to make the directory at `path`, with
+every directory on the way to it, as the request `id`, and returns whether it
+was accepted. It returns at once. The completion and the result are as
+`filesLoad`'s: the result is `made`, or a refusal (`notADirectory` when a
+file is at the path or on the way to it).
+
+`false`, with nothing started, if `id` is in use or the service could not
+start its thread. -/
+@[extern "editor_glue_files_make_directory"]
+opaque filesMakeDirectory (id : UInt64) (path : @& String) : IO Bool
 
 /-- `filesSave` as it crosses: what the save expects as a tag (0 whatever, 1
 absent, 2 unchanged) and a stamp's three numbers, its seconds as a two's
