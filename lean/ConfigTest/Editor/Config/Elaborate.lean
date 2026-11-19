@@ -188,6 +188,34 @@ def elaboratorChecks (context : Context) : List Check :=
               | .error reason => (reason.splitOn "ConfigFixture").length > 1
               | .ok _ => false
         finally
+          IO.FS.removeDirAll empty },
+    { name :=
+        "a base that cannot be imported is refused with one line that says what to do: it names the base module that has no .olean file, each directory searched, and that an executable with no <executable>.oleans record must be given every package's .olean directory, joined with a colon"
+      run := do
+        let empty ← IO.FS.createTempDir
+        try
+          let settings : Config.Elaborate.Settings :=
+            { sysroot := context.sysroot, oleanDirs := [empty], imports := #[`ConfigFixture] }
+          let refusal ←
+            try
+              discard <| (Config.Elaborate.elaborator settings).base
+              pure none
+            catch error =>
+              pure (some (toString error))
+          let some reason := refusal | return false
+          let says (part : String) : Bool := (reason.splitOn part).length > 1
+          return (reason.splitOn "\n").length == 1 && says "ConfigFixture" && says empty.toString &&
+              says (System.FilePath.mk context.sysroot / "lib" / "lean").toString &&
+              says "<executable>.oleans" &&
+              says "joined with `:`" &&
+              says "--oleans" &&
+              (← Config.Elaborate.missing settings) == #[`ConfigFixture] &&
+              -- With the module's directory searched too, none is missing.
+              (←
+                  Config.Elaborate.missing
+                      { settings with oleanDirs := empty :: context.oleanDirs }) ==
+                #[]
+        finally
           IO.FS.removeDirAll empty }]
 
 end ConfigTest

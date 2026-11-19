@@ -26,7 +26,16 @@ linked, and config may name a default package's declarations
 (`Compile.cargoMode`, `ShippedThemes.themes`). An editor with no record
 beside it, a copy or a relinked one, is given every directory:
 `<core dir>:<package dir>`. With a directory missing, a reload is rejected
-with `diagnostic: base:0:0: error: unknown module prefix '<Module>'`.
+and the diagnostic says what to give. For a copy of the default set's
+editor handed the core's directory alone:
+
+```
+reload 1: rejected
+diagnostic: base:0:0: error: the base config is elaborated on could not be imported: unknown module prefix 'ShippedThemes'. The base is Editor, ShippedThemes.EditorPackage, Compile.EditorPackage, looked for in .lake/build/lib/lean, <sysroot>/lib/lean: no .olean file of ShippedThemes.EditorPackage, Compile.EditorPackage is there. Each package of the editor's set has an .olean directory of its own; an executable with no record of them beside it (<executable>.oleans) must be given every one, the core's and each package's, joined with `:` (--oleans, or the headless mode's <olean dir>)
+```
+
+The script then runs with no config, and the exit status is still 0: a
+rejected reload is something to print, not a failure.
 
 The executable is the one `mise run lean` links from the default package
 set, `packages/.lake/build/bin/editor`
@@ -51,7 +60,7 @@ of the config base, the default packages' beside the core's, so a bundle
 needs no record. Two directories given on the command line
 are used in place of the bundle's. Outside a bundle there is no toolchain to
 fall back on, so two paths are refused, status 2, with
-`editor: no Lean toolchain: give <sysroot> <olean dir> before the config directory, or run the executable from an app bundle`
+`editor: no Lean toolchain: give <sysroot> <olean dir> before the config directory, or run the executable from an app bundle; <olean dir> is a search path, directories joined with `:`, which must hold the core's and every package's of the editor's set unless the build recorded them beside the executable (<executable>.oleans)`
 before the usage. The resolution is a pure function of the executable's
 path (`lean/Editor/ModuleLookup.lean`, pinned by
 `ModelTest.moduleLookupChecks` and `ModelTest.headlessCommandLineChecks`),

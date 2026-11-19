@@ -50,9 +50,13 @@ structure Arguments where
 def usage : String :=
   "headless [--render] [<sysroot> <olean dir>] <config dir> <script file>"
 
-/-- Why two paths are refused outside a bundle. -/
+/-- Why two paths are refused outside a bundle, and what to give: the
+`.olean` directory is a search path, and config is elaborated on the base of
+the editor's package set, so the path must hold the core's modules and each
+package's, unless the build recorded their directories beside the
+executable. -/
 def noToolchain : String :=
-  "no Lean toolchain: give <sysroot> <olean dir> before the config directory, or run the executable from an app bundle"
+  "no Lean toolchain: give <sysroot> <olean dir> before the config directory, or run the executable from an app bundle; <olean dir> is a search path, directories joined with `:`, which must hold the core's and every package's of the editor's set unless the build recorded them beside the executable (<executable>.oleans)"
 
 /-- What `arguments`, the command line after `headless`, asks for, for an
 executable at `appPath` for which the build recorded the `.olean`

@@ -164,11 +164,14 @@ def noToolchain : String :=
   "config: not loaded: no Lean toolchain given (--sysroot)"
 
 /-- What the echo area says when no config is loaded because a toolchain
-was given and the directory of the editor's `.olean` files is not known:
+was given and the directories of the editor's `.olean` files are not known:
 the executable is outside a bundle, the build recorded none for it, and
-none was given. -/
+none was given. It says what to give: config is elaborated on the base of
+the editor's package set, the core's modules and each package's, and each
+Lake package's `.olean` files are in a directory of its own, so the core's
+directory alone would have the base's import refused. -/
 def noModules : String :=
-  "config: not loaded: the editor's .olean directory is not known; give it with --oleans (lean/.lake/build/lib/lean in a checkout)"
+  "config: not loaded: the editor's .olean directories are not known: no record of them, <executable>.oleans, is beside the executable; give them with --oleans, a search path of directories joined with `:` that holds the core's and every package's of the editor's set (in a checkout, lean/.lake/build/lib/lean and each package's .lake/build/lib/lean)"
 
 /-- The default config directory: `leanmacs` under `$XDG_CONFIG_HOME`, or
 under `$HOME/.config` when that is unset or empty; none when neither is

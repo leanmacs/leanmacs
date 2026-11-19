@@ -63,6 +63,14 @@ def headlessCommandLineChecks : List Check :=
           (refusal outside ["/c", "/t"] == some Headless.noToolchain &&
             refusal outside ["--render", "/c", "/t"] == some Headless.noToolchain &&
             (Headless.read outside ["/c", "/t"] recorded).toOption.isNone) },
+    { name :=
+        "the refusal of two paths outside a bundle says that <olean dir> is a search path, directories joined with a colon, which must cover the core and every package of the editor's set unless the build recorded them beside the executable, <executable>.oleans"
+      run :=
+        let says (part : String) : Bool := (Headless.noToolchain.splitOn part).length > 1
+        pure
+          (says "<sysroot> <olean dir>" && says "joined with `:`" &&
+            says "the core's and every package's" &&
+            says "<executable>.oleans") },
     { name := "--render is read before two paths and before four"
       run :=
         pure

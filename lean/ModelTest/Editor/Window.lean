@@ -161,6 +161,13 @@ def windowOptionChecks : List Check :=
             found ["f"] unrecorded == some ([], .skip (some Window.noToolchain)) &&
             (Window.noModules.splitOn "--oleans").length > 1) },
     { name :=
+        "what is said when the .olean directories are not known names the record that is missing, <executable>.oleans, and says that --oleans takes a search path, directories joined with a colon, which must cover the core and every package of the editor's set"
+      run :=
+        let says (part : String) : Bool := (Window.noModules.splitOn part).length > 1
+        pure
+          (says "<executable>.oleans" && says "--oleans" && says "joined with `:`" &&
+            says "the core's and every package's") },
+    { name :=
         "two files, an option it does not know and an option with no value are each refused with the usage"
       run :=
         pure

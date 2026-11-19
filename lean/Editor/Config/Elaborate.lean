@@ -34,7 +34,12 @@ alone.
   directories it is given, in order, and then `lib/lean` under the
   toolchain's directory: the core's directory, and that of each package
   whose modules the base holds (`Editor/ModuleLookup.lean`). A base module
-  that is in none of them fails the import, naming the module. It is not
+  that is in none of them fails the import, and `base` then says, in one
+  line, which module has no `.olean` file, the directories searched, and
+  that an executable with no record of its set's directories must be given
+  every one, joined with `:` (`notImported`): the first thing that goes
+  wrong for an editor copied away from its record is this, and Lean's own
+  message names a module prefix the user never wrote. It is not
   Lean's `initSearchPath`, which also reads `LEAN_PATH` from the
   environment.
 - **One copy of a module's globals.** `enableInitializersExecution` and
@@ -157,6 +162,40 @@ files. -/
 @[implemented_by importUnsafe]
 opaque importBase (settings : Settings) : IO Lean.Environment
 
+/-- The directories the base's modules are looked for in, in the order they
+are searched: the `.olean` directories given, then `lib/lean` under the
+toolchain's. -/
+def Settings.searched (settings : Settings) : List System.FilePath :=
+  settings.oleanDirs ++ [settings.sysroot / "lib" / "lean"]
+
+/-- The modules of the base that have no `.olean` file in any directory
+searched (`Settings.searched`), in the base's order. It asks the file
+system, after an import has failed, to say which module the caller left a
+directory out for. -/
+def missing (settings : Settings) : IO (Array Lean.Name) :=
+  settings.imports.filterM fun module =>
+    return !(← settings.searched.anyM fun directory =>
+        (Lean.modToFilePath directory module "olean").pathExists)
+
+/-- What `base` says when the import of the base fails with `reason`, in one
+line, so that a host that shows a diagnostic's first line shows all of it:
+Lean's reason, its first line; the base; which of its modules have no
+`.olean` file in the directories searched (`missing`), or that all have
+one; those directories; and what to do. A base module is missing when the
+directory of its Lake package was not given: each package of an editor's
+set has an `.olean` directory of its own, the build records them beside
+the editor it links, and an executable with no record must be given every
+one. -/
+def notImported (settings : Settings) (missing : Array Lean.Name) (reason : String) : String :=
+  let first := ((reason.splitOn "\n").headD reason).trimAscii.toString
+  let names (modules : Array Lean.Name) : String := ", ".intercalate (modules.map toString).toList
+  let found :=
+    if missing.isEmpty then
+      "each of them has an .olean file there, so a module one of them imports is what is not found"
+    else s!"no .olean file of {names missing} is there"
+  let directories := ", ".intercalate (settings.searched.map toString)
+  s!"the base config is elaborated on could not be imported: {first}. The base is {names settings.imports}, looked for in {directories}: {found}. Each package of the editor's set has an .olean directory of its own; an executable with no record of them beside it (<executable>.oleans) must be given every one, the core's and each package's, joined with `:` (--oleans, or the headless mode's <olean dir>)"
+
 /-- The name of the constant the trailer defines. Config cannot define it by
 accident: it is not an identifier one writes without the quotes. -/
 def trailerName : Lean.Name :=
@@ -182,7 +221,11 @@ opaque evalSetup (environment : Lean.Environment) : Except String (SetupM Unit)
 def elaborator (settings : Settings) : Elaborator State :=
   {
     base := do
-      let environment ← importBase settings
+      let environment ←
+        try
+          importBase settings
+        catch error =>
+          throw (IO.userError (notImported settings (← missing settings) (toString error)))
       let state ← elaborate (Lean.Elab.Command.mkState environment {} options) "base" "open Editor"
       if state.messages.hasErrors then
         let problems ← diagnostics "base" state.messages

@@ -458,8 +458,18 @@ queues and exits.
   one, which holds every module of the base. An executable with no record
   has no default: with a
   toolchain and no `--oleans` no config is loaded, and the echo area says
-  `config: not loaded: the editor's .olean directory is not known; give it
-  with --oleans (lean/.lake/build/lib/lean in a checkout)`. Before the
+  so and what to give (`Window.noModules`): `--oleans` with a search path,
+  directories joined with `:`, that holds the core's `.olean` directory
+  and every package's of the editor's set; in a checkout,
+  `lean/.lake/build/lib/lean` and each package's `.lake/build/lib/lean`.
+  The core's directory alone is not enough for such an executable: the
+  base holds each package's entry module, so the import of the base is
+  refused. The elaborator adapter then says, in one line, which base
+  module has no `.olean` file, the directories searched, and that an
+  executable with no record must be given every package's directory,
+  joined with `:` (`Config.Elaborate.notImported`,
+  `ConfigTest.elaboratorChecks`); Lean's own message names only a module
+  prefix the user never wrote. Before the
   editor came from a package set the default outside a bundle was
   `<directory of the executable>/../lib/lean`, where Lake put the modules
   beside the executable; for a set's editor that directory holds only the
