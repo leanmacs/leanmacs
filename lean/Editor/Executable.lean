@@ -3,7 +3,7 @@
 
 Which mode the editor executable runs, given its command line (`mode`). It
 is pure, so `model-test` pins it (`ModelTest.executableModeChecks`), and
-`Main` acts on what it selects.
+`Editor.Main.run` (`Editor/Main.lean`) acts on what it selects.
 
 - `editor demo` alone is the demonstration: it calls the Rust library and
   prints what comes back.

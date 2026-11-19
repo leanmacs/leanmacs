@@ -60,9 +60,9 @@ base=Editor
 # The module that links Lean's elaborator in and elaborates config on the
 # base.
 elaborator=Editor.Config.Elaborate
-# The roots of the build that are modules of the core: the executable's and
-# the test executables'.
-built="Main ModelTest ConfigTest FfiTest ContractTest"
+# The roots of the build that are modules of the core: the test
+# executables'. The editor's own root is generated (`built_set`).
+built="ModelTest ConfigTest FfiTest ContractTest"
 # The package set whose generated root is a root of the build too: the
 # default set's directory, from `lean/`.
 built_set=../packages

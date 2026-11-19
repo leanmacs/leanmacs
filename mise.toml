@@ -79,7 +79,8 @@ run = "cargo test --workspace --locked"
 # `cargo` on every build that reaches it. So this passes only if nothing the
 # test driver needs reaches `rustlib`, on a tree where the archive is already
 # built as well as on a clean one. Seen to bite once by hand: with the same
-# PATH, `LEAN_CC=/usr/bin/cc lake build editor` fails at `editor/rustlib`.
+# PATH, `LEAN_CC=/usr/bin/cc lake -d ../packages build :editor` fails at
+# `editor-core/rustlib`.
 #
 # No LEAN_CC: the test driver links no C glue, so Lean's bundled compiler
 # builds it.

@@ -47,7 +47,8 @@ def defaultBuilt (context : Context) : IO Config.Registrations := do
           s!"the default config was rejected: {outcome.diagnostics.toList.map (·.message)}"
 
 /-- The registry a host of the executable starts with, the one the packages
-that ship make (`Config.State.ofPackages` of `EditorCore.EditorPackage.packages`), with the
+of the core's Lake package make (`Config.State.ofPackages` of
+`EditorCore.EditorPackage.packages`), with the
 default config's bindings, prefix names
 and leaders installed for the owner `.config`, as a reload installs them
 (`Config.Reload.install`). -/

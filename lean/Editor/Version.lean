@@ -3,7 +3,7 @@ import Editor.ModuleLookup
 /-!
 # What build the running editor is
 
-`editor --version` (`Editor/Executable.lean`, `Main.lean`) says the app's
+`editor --version` (`Editor/Executable.lean`, `Editor/Main.lean`) says the app's
 version, its build ID and the commit it was built from. All three are in
 the bundle's `Contents/Info.plist`, where `editorApp` (lean/lakefile.lean,
 `appInfoPlist`) writes them: `CFBundleShortVersionString`, the line of
@@ -11,7 +11,7 @@ the bundle's `Contents/Info.plist`, where `editorApp` (lean/lakefile.lean,
 the commit (`plistKeys`).
 
 This module is pure. It reads the plist through a reader function, the
-port (`read`): `Main` passes the real file read, and the model tests
+port (`read`): `Editor.Main.run` passes the real file read, and the model tests
 (`ModelTest.versionChecks`) a fake. An executable outside a bundle, as in
 the build tree, is a development build and reads nothing. Its plist
 reader (`stringOf?`) is narrow: it reads the XML text `editorApp` writes,

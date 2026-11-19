@@ -42,8 +42,9 @@ session core calls it once per process.
   module does not import `Editor` to make it so: it is a core module, and
   the base imports features that are not the core's
   (`docs/design/packages.md`). Each root that links this module imports
-  `Editor` beside it (`Main.lean`, `ConfigTest/Check.lean`,
-  `FfiTest/Editor/Window/Real.lean`), and the gate checks on Lake's module
+  `Editor` beside it (the root the package-set build generates for the
+  editor, `ConfigTest/Check.lean`, `FfiTest/Editor/Window/Real.lean`), and
+  the gate checks on Lake's module
   graph that every root that reaches this module reaches `Editor`
   (`tools/core-imports-check.sh`). `Settings.imports` still defaults to the
   name `Editor`, which is data.

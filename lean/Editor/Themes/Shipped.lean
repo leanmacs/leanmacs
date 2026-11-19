@@ -16,9 +16,10 @@ It is apart from the `themes` package (`Editor/Themes/Compiled.lean`), which
 is the core's and registers the command that loads a theme, the theme
 `default` and the theme source: this module and the two palettes are not
 core modules, and no core module imports them
-(`docs/design/packages.md`; `tools/core-imports-check.sh`). The list of the
-packages that ship names this package directly after `themes`
-(`EditorCore/EditorPackage.lean`), so the theme names read `default`, then these.
+(`docs/design/packages.md`; `tools/core-imports-check.sh`). The core's
+list of packages names this package directly after `themes`
+(`EditorCore/EditorPackage.lean`), so the theme names read `default`, then
+these.
 
 A new shipped theme is a palette's theme (`Palette.theme`,
 `Editor/Face.lean`), plus that theme's own definitions after it, appended to

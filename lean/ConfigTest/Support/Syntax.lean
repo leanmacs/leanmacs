@@ -95,7 +95,8 @@ def rustObjectsText : String :=
 
 /-- Runs `check` against a host of the Vim scheme that ships, made over the
 collaborators the executable's hosts are made of (`Headless.shippedOver`),
-handed the packages that ship (`EditorCore.EditorPackage.packages`),
+handed the packages of the core's Lake package
+(`EditorCore.EditorPackage.packages`),
 with the real elaborator, a config directory of `files` and the services of
 a stage of its own; its syntax tree is the real binding over the library's
 syntax service, which after an attach, and before a question of a text's

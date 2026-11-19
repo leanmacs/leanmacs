@@ -298,7 +298,11 @@ each in its own package's build directory, and links it as the editor is
 linked (`linkAsEditor`). It is defined here because the link's objects and
 arguments are the core's knowledge, and a lakefile cannot import another's
 definitions; a facet reaches every package of a workspace that holds this
-one. -/
+one.
+
+It is the only way an editor is built: this package declares no `editor`
+executable, and no root module is written by hand. The executable imports
+the config session, so Lean's elaborator is linked in. -/
 package_facet editor pkg : FilePath := do
   linkAsEditor (← setRoot pkg) (pkg.binDir / "editor")
 
@@ -374,17 +378,11 @@ package_facet editorPackages pkg : Array String := do
     lines := lines.push s!"{dep.baseName.toString (escape := false)}\t{dep.dir}\t{linked}"
   return Job.pure lines
 
-/-- The editor. `supportInterpreter` exports the executable's symbols, so
-interpreted config can find compiled definitions and `@[extern]` symbols. It
-imports the config session, so Lean's elaborator is linked in. -/
-@[default_target] lean_exe editor where
-  root := `Main
-  supportInterpreter := true
-  moreLinkObjs := #[glue.o, rustlib]
-  moreLinkArgs := linkArgs
-
 /-- The checks of the boundary with the Rust library (`FfiTest.lean`), linked
-exactly like `editor`. `mise run ffi-test` runs it. -/
+exactly like the editor (`linkAsEditor`): `supportInterpreter` exports the
+executable's symbols, so interpreted config can find compiled definitions
+and `@[extern]` symbols, and the glue, the Rust archive and `linkArgs` are
+the same. `mise run ffi-test` runs it. -/
 @[default_target] lean_exe «ffi-test» where
   root := `FfiTest
   supportInterpreter := true
@@ -392,8 +390,8 @@ exactly like `editor`. `mise run ffi-test` runs it. -/
   moreLinkArgs := linkArgs
 
 /-- The checks of the config session against the real elaborator
-(`ConfigTest.lean`), linked exactly like `editor`. `mise run ffi-test` runs
-it. It also holds the benchmark `mise run config-bench` runs. -/
+(`ConfigTest.lean`), linked exactly like the editor, as `ffi-test` is.
+`mise run ffi-test` runs it. It also holds the benchmark `mise run config-bench` runs. -/
 @[default_target] lean_exe «config-test» where
   root := `ConfigTest
   supportInterpreter := true
@@ -835,7 +833,7 @@ root belongs to no library. -/
 lean_lib ConfigTests where globs := #[.submodules `ConfigTest]
 
 /-- The contract checks of the text port and of the job port against their
-real bindings (`ContractTest.lean`), linked like `editor` with the glue and
+real bindings (`ContractTest.lean`), linked like the editor with the glue and
 the Rust archive. `mise run ffi-test` runs it. It interprets nothing, so it
 does not export its symbols. -/
 @[default_target] lean_exe «contract-test» where

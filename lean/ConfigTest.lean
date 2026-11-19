@@ -70,8 +70,9 @@ show:
   config's jobs and a rejected one does not, and how each ending of a job is
   reported;
 - `shippedChecks`: what the executable's hosts start with, the registry the
-  packages that ship make (`EditorCore.EditorPackage.packages`), each entry for the owner
-  named after its package: it binds `C-s-f` to
+  packages of the core's Lake package make
+  (`EditorCore.EditorPackage.packages`), each entry for the owner named
+  after its package: it binds `C-s-f` to
   `toggle-fullscreen`, `s-m` to `minimise-window` and `s-q` to `quit`, the
   `frame-commands` package's, binds `C-x C-d` to `find-file-in-another-workspace` in the
   prompt category `workspace-file` alone, and registers the buffer

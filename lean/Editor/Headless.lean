@@ -164,9 +164,13 @@ as before, so reload and job completion work as they did.
     the line prefixed with `package: `): one with an empty, reserved or
     repeated name, one whose `setup` is refused, or one that sets what only
     config may choose. The others register and the loop starts.
-  - **The executable's hosts are handed the packages that ship**
-    (`EditorCore.EditorPackage.packages`, `EditorCore/EditorPackage.lean`, which `Main.lean`
-    passes to `main` here and to the window mode's), 21 of them, each in
+  - **The executable's hosts are handed the packages of its package set**:
+    those of the core's Lake package (`EditorCore.EditorPackage.packages`,
+    `EditorCore/EditorPackage.lean`), then those of each package of the
+    set, which the executable's generated root passes through
+    `Editor.Main.run` to `main` here and to the window mode's
+    (`docs/design/packages.md`, "The package set and its build"). The
+    core's are 22, each in
     its feature's `Compiled.lean`, which says what it registers. Among
     them: the file commands and their jobs, the first commands `show`
     lists (`files`); the minibuffer's commands and its mode, which the Vim
@@ -832,7 +836,8 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   source and menu the host has before config is one of theirs. The default
   is none, and a host handed none starts with an empty registry and
   publishes no menu bar; the executable's hosts are handed the packages
-  that ship (`EditorCore/EditorPackage.lean`). -/
+  of its package set, the core's first
+  (`EditorCore/EditorPackage.lean`). -/
   packages : Array Package := #[]
   /-- Where a log entry goes: a command that took longer than `slowAfter`,
   and a package the host refused as its loop started (`Running.new`).
@@ -2532,9 +2537,9 @@ as the log. Its input scheme is the Vim scheme's default
 display is the recorder and its clipboard its own, as a host's are by
 default.
 
-It names no package: the executable passes the packages that ship
-(`EditorCore/EditorPackage.lean`), and what those register is said there and in
-each package's module.
+It names no package: the executable passes the packages of its package
+set, the core's first (`EditorCore/EditorPackage.lean`), and what those
+register is said there and in each package's module.
 
 It is apart from `shipped`, which makes what it is over, so that the
 collaborators can be made with no pump started. -/

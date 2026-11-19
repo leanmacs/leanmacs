@@ -46,11 +46,11 @@ through another, and declares nothing. The core is every module under
 packages of their own (the compile mode, `Editor/Compile.lean` and
 `Editor/Compile/`, and the shipped palettes, `Editor/Themes/Solarized.lean`,
 `Editor/Themes/FairyFloss.lean` and `Editor/Themes/Shipped.lean`). The
-hand-written list of the packages that ship is not under `lean/Editor/`
-(`EditorCore/EditorPackage.lean`, a library of its own), and this module does not import
-it. `docs/design/packages.md` says which modules those are, what a package may
-import of the core, and what each feature still in the core would have to
-cross to move out.
+list of the packages of the core's Lake package, its entry module, is not
+under `lean/Editor/` (`EditorCore/EditorPackage.lean`, a library of its
+own), and this module does not import it. `docs/design/packages.md` says
+which modules those are, what a package may import of the core, and what
+each feature still in the core would have to cross to move out.
 
 It is a root of the `Editor` library beside `Editor` (`lakefile.lean`), so
 the build makes it and with it every core module. It is not the config

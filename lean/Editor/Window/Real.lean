@@ -85,7 +85,8 @@ bound, and `window-host-undrawn` on the scripted platform whose
 renderer cannot be made): nothing in the gate opens a window, reads the
 machine's fonts or touches the desktop's clipboard.
 
-It is imported by `Main` and `FfiTest` only: it links the Rust library.
+It is imported by `Editor.Main` and `FfiTest` only: it links the Rust
+library.
 -/
 
 namespace Editor.Window

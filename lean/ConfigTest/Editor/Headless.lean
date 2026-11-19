@@ -1997,8 +1997,9 @@ def reloadEchoChecks (context : Context) : List Check :=
           return before == ("", #[]) && isGreetError made }]
 
 /-- The registry a host of the executable starts with: the one the packages
-that ship make (`Config.State.ofPackages` of `EditorCore.EditorPackage.packages`), which is
-what `Headless.Running.new` starts from for a host handed them. -/
+of the core's Lake package make (`Config.State.ofPackages` of
+`EditorCore.EditorPackage.packages`), which is what `Headless.Running.new`
+starts from for a host handed them. -/
 def shippedRegistry : Config.Registry :=
   let (state, _) : Config.State Config.Elaborate.State × Array String :=
     Config.State.ofPackages EditorCore.EditorPackage.packages

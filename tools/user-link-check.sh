@@ -9,17 +9,22 @@
 # the `clang` and `ld64.lld` the Lean toolchain bundles and no Xcode command
 # line tools? This links one, from the trivial package `tests/user-link/package`
 # (one module, one command) and the editor's pieces as `mise run lean` built
-# them, with the tools made unreachable, and runs it. Its steps, in order;
+# them, with the tools made unreachable, and runs it. The built editor is
+# the default package set's (`packages/.lake/build/bin/editor`, beside the
+# Lean package's directory), linked by the package-set build. Its steps, in order;
 # it exits non-zero at the first that fails, naming it:
 #
 # 1. Stage, by copy and never by link, into `<tmp>/stage`:
 #    - `toolchain/`: the whole Lean toolchain (`lean --print-prefix`);
-#    - `core/lib/`: the `.olean` file of each of the editor's modules the
-#      link of the built `editor` names (`lean/.lake/build/bin/editor.rsp`),
-#      less its root `Main`;
+#    - `core/lib/`: the `.olean` file of each of the core's modules the
+#      link of the built `editor` names
+#      (`packages/.lake/build/bin/editor.rsp`). Its root is not among
+#      them: the package-set build generates it in the set's build
+#      directory, not the core's;
 #    - `core/obj/`: the object of each of those modules (`.c.o.export`).
-#      `Main`'s is left out because the package brings the root, and two
-#      `main` symbols cannot link;
+#      The generated root's, the one object the link names outside the
+#      core's build directory, is left out because the package brings the
+#      root, and two `main` symbols cannot link;
 #    - `core/glue.o` and `core/libeditor_ffi.a`: the glue object and the
 #      Rust archive, prebuilt;
 #    - `core/lakefile.toml` and `core/lake-manifest.json`
@@ -157,8 +162,11 @@ fixture=$repo/tests/user-link
 headless=$repo/tests/headless
 profile=$tools/user-link/sandbox.sb
 built=$lean_dir/.lake/build
-dev_editor=$built/bin/editor
-dev_link=$built/bin/editor.rsp
+# The default package set's build directory: the editor is linked there, and
+# its generated root is built there.
+set_built=$repo/packages/.lake/build
+dev_editor=$set_built/bin/editor
+dev_link=$set_built/bin/editor.rsp
 sysroot=$(cd "$lean_dir" && lean --print-prefix)
 
 [ -x "$dev_editor" ] || fail "no built editor at $dev_editor; run \`mise run lean\` first"
@@ -284,16 +292,20 @@ dev_link_names() {
 }
 
 # The objects the built editor's link names, less its root's, each with its
-# module's `.olean`.
+# module's `.olean`. The root is the one the package-set build generated for
+# the default set, the only object under the set's build directory.
 ir=$built/ir
+set_root=$set_built/ir/EditorSetRoot.c.o.export
 dev_link_names '\.c\.o\.export' >"$work/dev-objects"
+grep -qxF "$set_root" "$work/dev-objects" ||
+  fail "the built editor's link does not name the generated root's object, $set_root"
 while IFS= read -r object; do
+  [ "$object" != "$set_root" ] || continue
   case "$object" in
     "$ir/"*) relative=${object#"$ir/"} ;;
     *) fail "the built editor's link names an object outside $ir: $object" ;;
   esac
   module=${relative%.c.o.export}
-  [ "$module" != Main ] || continue
   mkdir -p "$stage/core/obj/$(dirname "$relative")" "$stage/core/lib/$(dirname "$relative")"
   cp -c "$object" "$stage/core/obj/$relative"
   cp -c "$built/lib/lean/$module.olean" "$stage/core/lib/$module.olean"
