@@ -320,7 +320,7 @@ def reloadCommands : List (String × Dispatched) :=
         return none)]
 
 /-- A driver of the reload checks: the commands of `reloadCommands`, every job
-compiled code registers for files (`Files.package.registered.jobs`), the ex names that ship, and
+compiled code registers for files (`Files.package.registered.jobs`), the `ex` package's ex names, and
 the files of the file command checks. `C-o n` opens `note.txt`, `C-o r` runs
 the reload command, `C-o R` the forced reload, `C-o u` undoes and `C-o U`
 redoes; `C-e e` opens the ex line and `C-e y` accepts it. -/

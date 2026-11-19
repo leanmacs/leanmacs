@@ -26,6 +26,7 @@ import ModelTest.Editor.Command.Control
 import ModelTest.Editor.Command.Dispatch
 import ModelTest.Editor.Command.Registry
 import ModelTest.Editor.Compile
+import ModelTest.Editor.Compile.Compiled
 import ModelTest.Editor.Compile.Errors
 import ModelTest.Editor.Compile.Listing
 import ModelTest.Editor.Compile.Shipped
@@ -59,6 +60,7 @@ import ModelTest.Editor.Evil.Repeat
 import ModelTest.Editor.Evil.TreeObjects
 import ModelTest.Editor.Evil.Undo
 import ModelTest.Editor.Ex
+import ModelTest.Editor.Ex.Compiled
 import ModelTest.Editor.Ex.Line
 import ModelTest.Editor.ExcerptView
 import ModelTest.Editor.Executable
@@ -127,6 +129,7 @@ import ModelTest.Editor.UndoTree
 import ModelTest.Editor.Version
 import ModelTest.Editor.VersionControl.Blame
 import ModelTest.Editor.VersionControl.Commit
+import ModelTest.Editor.VersionControl.Compiled
 import ModelTest.Editor.VersionControl.Contract
 import ModelTest.Editor.VersionControl.Git
 import ModelTest.Editor.VersionControl.Gutter
@@ -688,6 +691,13 @@ The config session's decisions are tested here too, with no elaborator:
   (`Editor/Completion/Compiled.lean`), the shipped segments
   (`Editor/ModeLine/Compiled.lean`), and the `code` mode with the shipped
   languages (`Editor/Language/Compiled.lean`);
+- `exPackageChecks`, `compilePackageChecks` and
+  `versionControlPackageChecks`: each package binds its own ex names, in
+  order: the `ex` package the files', its own and the buffers' and no other
+  (`Editor/Ex/Compiled.lean`), the `compile` package its six
+  (`Editor/Compile/Compiled.lean`), and the `version-control` package its
+  twelve, the gutter's package none
+  (`Editor/VersionControl/Compiled.lean`), each to a command it registers;
 - `packageSetChecks`: the packages that ship (`Editor/PackageSet.lean`):
   the list is the 22 packages, in order, each accepted, in the state
   they make every entry's owner is one of them, and the ex names and the
@@ -1068,6 +1078,9 @@ def checks : List Check :=
     completionPackageChecks ++
     modeLinePackageChecks ++
     languagePackageChecks ++
+    exPackageChecks ++
+    compilePackageChecks ++
+    versionControlPackageChecks ++
     packageSetChecks ++
     windowTallyChecks ++
     windowLoopChecks ++

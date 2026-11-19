@@ -56,8 +56,8 @@ open Editor
 /-- What a step of the buffer command checks is handed. The commands are the
 ones compiled code registers for files, the minibuffer, the buffers and the
 ex line (`Files.package.registered.commands`, `Minibuffer.package.registered.commands`, `Buffers.package.registered.commands`,
-`Ex.package.registered.commands`), each under the name it is registered under, told of the ex
-names that ship (`Ex.package.registered.ex`), and five written here: `split`, which
+`Ex.package.registered.commands`), each under the name it is registered under, told of the `ex`
+package's ex names (`Ex.package.registered.ex`), and five written here: `split`, which
 splits the window it is called with and leaves the focus,
 `edit-then-close`, which inserts `x` at its window's cursors and then runs
 `close-buffer` inside itself, so the edit and the close are one command,

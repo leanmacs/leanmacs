@@ -1,23 +1,15 @@
 import Editor.Buffers
-import Editor.Compile
 import Editor.Ex
 import Editor.Files
 import Editor.Package
-import Editor.VersionControl.Blame
-import Editor.VersionControl.Commit
-import Editor.VersionControl.Log
-import Editor.VersionControl.Review
-import Editor.VersionControl.Show
-import Editor.VersionControl.Stage
-import Editor.VersionControl.Status
 
 /-!
-# The `ex` package: the ex line's commands and the ex names that ship
+# The `ex` package: the ex line's commands and the core's ex names
 
 What a host registers so that it has the ex command line (`Editor/Ex.lean`):
 the package `ex` (`Ex.package`, `Editor/Package.lean`), whose `setup`
-registers the ex line's commands, the ex names that ship and its completion
-sources. A host registers it for the owner `ex` when its loop starts,
+registers the ex line's commands, the files', its own and the buffers' ex
+names and its completion sources. A host registers it for the owner `ex` when its loop starts,
 before any config (`Editor/Config/Packages.lean`;
 `Editor/Config/Registry.lean`, "Ex bindings"), so they hold when config
 fails to load, a reload does not replace them, and config's binding of a
@@ -37,8 +29,9 @@ shipped ex name runs in its place until a reload drops it.
     host must be handed the save job too (`Editor/Files/Compiled.lean`).
   - `reload-config` asks for the config to be reloaded
     (`Ex.reloadCommand`).
-- **The ex names** that ship (`exCommand`). Each is bound to a command by
-  its name, so a host must be handed that command's package too.
+- **The ex names** of the files, of the ex line itself and of the buffers
+  (`exCommand`). Each is bound to a command by its name, so a host must be
+  handed that command's package too.
   - `w` runs `save-buffer` (`Editor/Files.lean`) and takes nothing: it
     saves the buffer of the window the line was asked from. `w` with an
     argument is refused by the ex line (`Ex.noArgument`): saving under
@@ -72,51 +65,17 @@ shipped ex name runs in its place until a reload drops it.
   - `bd` runs `close-buffer` and takes text: the rest of the line is the
     name of the buffer to close, and with none it closes the buffer of the
     window the line was asked from.
-  - `compile` runs `compile` (`Editor/Compile.lean`) and takes text: the
-    rest of the line is the command line, run in the buffer's workspace;
-    with none it asks for one. A host must be handed the compile mode's
-    commands and job (`Editor/Compile/Compiled.lean`).
-  - `compile-command` runs `compile-command` and takes text: the rest of
-    the line chooses one of the buffer's on-modes' named commands, by its
-    candidate or its bare name, and with none it asks for one.
-  - `recompile` runs `recompile` and takes nothing: it reruns the
-    workspace's last line.
-  - `kill-compilation` runs `kill-compilation` and takes nothing.
-  - `next-error` and `previous-error` run `next-error` and
-    `previous-error` and take nothing: they step through the locations of
-    the focused buffer's workspace's compilation. No global key binds
-    them.
-  - `vc-status` runs `vc-status` (`Editor/VersionControl/Status.lean`)
-    and takes nothing: it opens the status buffer of the workspace of the
-    buffer the line was asked from. A host must be handed the status
-    buffer's commands, jobs and mode
-    (`Editor/VersionControl/Compiled.lean`).
-  - `vc-show` runs `vc-show` (`Editor/VersionControl/Show.lean`) and takes
-    text, a revision and a path: it opens that file at that revision as a
-    read-only buffer.
-  - `vc-stage-hunk` and `vc-unstage-hunk` run the commands of those names
-    (`Editor/VersionControl/Stage.lean`) and take nothing: they stage, or
-    unstage, the hunk on the cursor's line of the focused file buffer. No
-    key binds them; binding one is config's.
-  - `vc-commit`, `vc-commit-accept` and `vc-commit-abort` run the commands
-    of those names (`Editor/VersionControl/Commit.lean`) and take nothing:
-    they open the message buffer, commit with its text, and give it up.
-  - `vc-worktrees` runs `vc-worktrees`
-    (`Editor/VersionControl/Worktrees.lean`) and takes nothing: it opens
-    the worktree list of the focused buffer's workspace's repository.
-  - `vc-review` runs `vc-review` (`Editor/VersionControl/Review.lean`) and
-    takes text, a branch, or nothing for the main worktree's: it opens the
-    review buffer of `HEAD`'s change against that branch.
-  - `vc-review-since` runs `vc-review-since`
-    (`Editor/VersionControl/Review.lean`) and takes nothing: it opens the
-    change since the commit the last review recorded.
-  - `vc-log` runs `vc-log` (`Editor/VersionControl/Log.lean`) and takes
-    text, a revision, or nothing for `HEAD`: it opens the log buffer of
-    that revision's commits.
-  - `vc-blame` runs `vc-blame` (`Editor/VersionControl/Blame.lean`) and
-    takes text, a revision, or nothing for `HEAD`: it opens the blame of the
-    focused buffer's file at that revision.
 
+  A feature with ex names of its own binds them in its own package, and
+  this package names no such feature: the compile mode's `compile`,
+  `compile-command`, `recompile`, `kill-compilation`, `next-error` and
+  `previous-error` (`Editor/Compile/Compiled.lean`), and version control's
+  twelve `vc-…` names (`Editor/VersionControl/Compiled.lean`). The files'
+  and the buffers' names are bound here because both features are the
+  core's, as this one is (`docs/design/packages.md`). The shipped set
+  registers this package before those two (`Editor/PackageSet.lean`), so
+  the names are bound in the order they were when this package bound them
+  all, which is the order the ex names' completion source lists them in.
 - **The sources**: the `:!` history, then the ex names, so config can ask
   for them by name.
 
@@ -124,7 +83,8 @@ This module is apart from `Editor/Ex.lean` because it is what a host is
 handed, not what config calls: `Editor.lean` imports the commands, so that
 config can call them, and not this.
 
-Pinned by `ModelTest.exChecks`, on the models; by `ConfigTest.exChecks` and
+Pinned by `ModelTest.exPackageChecks` and `ModelTest.exChecks`, on the
+models; by `ConfigTest.exChecks` and
 `ConfigTest.exScriptChecks`, through the headless host; and on the
 executable by the fixture `tests/headless/ex` and the two process checks
 of the `ffi-test` task.
@@ -153,24 +113,6 @@ def package : Package :=
       Editor.exCommand "b" Buffers.switchName (takes := .text)
       Editor.exCommand "ls" Buffers.listName
       Editor.exCommand "bd" Buffers.closeName (takes := .text)
-      Editor.exCommand "compile" Compile.compileName (takes := .text)
-      Editor.exCommand "compile-command" Compile.commandName (takes := .text)
-      Editor.exCommand "recompile" Compile.recompileName
-      Editor.exCommand "kill-compilation" Compile.killName
-      Editor.exCommand "next-error" Compile.nextName
-      Editor.exCommand "previous-error" Compile.previousName
-      Editor.exCommand "vc-status" VersionControl.statusName
-      Editor.exCommand "vc-show" VersionControl.showName (takes := .text)
-      Editor.exCommand "vc-stage-hunk" VersionControl.stageHunkName
-      Editor.exCommand "vc-unstage-hunk" VersionControl.unstageHunkName
-      Editor.exCommand "vc-commit" VersionControl.commitName
-      Editor.exCommand "vc-worktrees" VersionControl.worktreesName
-      Editor.exCommand "vc-commit-accept" VersionControl.acceptName
-      Editor.exCommand "vc-commit-abort" VersionControl.abortName
-      Editor.exCommand "vc-review" VersionControl.reviewName (takes := .text)
-      Editor.exCommand "vc-review-since" VersionControl.reviewSinceName
-      Editor.exCommand "vc-log" VersionControl.logName (takes := .text)
-      Editor.exCommand "vc-blame" VersionControl.blameName (takes := .text)
       defineSource historySource
       defineSource namesSource }
 

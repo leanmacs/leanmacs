@@ -1815,7 +1815,7 @@ def scriptOf (directives : List Headless.Directive) : Array Headless.Line :=
 /-- Runs `directives` as a script (`Headless.run`) against a host of its own
 over the library's file service (`Stage.overFiles`), with an empty config
 directory, that is handed what the executable is handed for the ex line:
-the ex line's commands and the ex names that ship, the minibuffer's
+the ex line's commands and the `ex` package's ex names, the minibuffer's
 commands and its mode, and the file commands with their jobs. What `run`
 answered, and every line the host printed. -/
 def ranScript (context : Context) (directives : List Headless.Directive) :

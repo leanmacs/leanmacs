@@ -135,8 +135,14 @@ def compileCommands : List (String × Dispatched) :=
     [("insert-x", insertX), ("to-start", toStart), ("focus-compilation", focusCompilation),
       ("squat-clone", squat), ("to-point", toPoint), ("zero-base", zeroBase)]
 
+/-- The ex bindings of the compile checks: the `ex` package's, then the
+`compile` package's, which binds its own names, as a host handed both
+registers them. -/
+def compileExBindings : Array Ex.Binding :=
+  Ex.package.registered.ex ++ Compile.package.registered.ex
+
 /-- The keys of the compile checks over `bindings`, with the compile mode
-and the ex names that ship registered: the active keymaps of a registry
+and the ex names of the `ex` and `compile` packages registered: the active keymaps of a registry
 holding the compile mode's modes, so the mode's roles are on their keys in
 a compilation buffer as a host's registry puts them, then the keymap of
 `bindings`. -/
@@ -149,8 +155,8 @@ def compileKeysOf (bindings : List (String × Invocation)) : Loop.Keys TestSchem
     registered :=
       { keys.registered with
         entering := fun name => (Compile.package.registered.modes.find? (·.name == name)).map ([·])
-        ex := fun name => Ex.package.registered.ex.find? (·.name == name)
-        exNames := Ex.package.registered.ex.map (·.name) } }
+        ex := fun name => compileExBindings.find? (·.name == name)
+        exNames := compileExBindings.map (·.name) } }
 
 /-- `driver` once every post is delivered and every pending job finished,
 oldest first, a post before a job's end; bounded. -/

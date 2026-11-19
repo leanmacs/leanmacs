@@ -17,9 +17,7 @@ What a host registers so that `vc-status` runs
 (`VersionControl.package`, `Editor/Package.lean`), and, for the gutter, the
 package `version-control-gutter` (`VersionControl.gutterPackage`). A host
 registers each for the owner of its name when its loop starts, before any
-config (`Editor/Config/Packages.lean`), beside the `ex` package
-(`Editor/Ex/Compiled.lean`), which binds the ex name `vc-status` to the
-command of that name.
+config (`Editor/Config/Packages.lean`).
 
 The `version-control` package:
 
@@ -73,6 +71,26 @@ The `version-control` package:
 - **The segment**: the mode line's `review`, a review
   buffer's counts (`VersionControl.reviewSegment`), which the default
   order lists (`ModeLine.Order.standard`).
+- **The ex names** (`exCommand`), each bound to the command of its name,
+  in this order, which the ex names' completion source keeps. `vc-status`
+  takes nothing: it opens the status buffer of the workspace of the buffer
+  the line was asked from. `vc-show` takes text, a revision and a path: it
+  opens that file at that revision as a read-only buffer. `vc-stage-hunk`
+  and `vc-unstage-hunk` take nothing: they stage, or unstage, the hunk on
+  the cursor's line of the focused file buffer. No key binds them; binding
+  one is config's. `vc-commit` takes nothing: it opens the message buffer.
+  `vc-worktrees` takes nothing: it opens the worktree list of the focused
+  buffer's workspace's repository. `vc-commit-accept` and `vc-commit-abort`
+  take nothing: they commit with the message buffer's text, and give it up.
+  `vc-review` takes text, a branch, or nothing for the main worktree's: it
+  opens the review buffer of `HEAD`'s change against that branch.
+  `vc-review-since` takes nothing: it opens the change since the commit the
+  last review recorded. `vc-log` takes text, a revision, or nothing for
+  `HEAD`: it opens the log buffer of that revision's commits. `vc-blame`
+  takes text, a revision, or nothing for `HEAD`: it opens the blame of the
+  focused buffer's file at that revision. A host must be handed the `ex`
+  package (`Editor/Ex/Compiled.lean`) for a line to run them; neither
+  package names the other.
 
 The `version-control-gutter` package: the gutter's command,
 `vc-gutter-moved`, which its watch job posts
@@ -83,15 +101,16 @@ no buffer, and its windows have no gutter.
 This module is apart from `Editor/VersionControl/Status.lean` because it is
 what a host is handed, not what config calls.
 
-Pinned by `ModelTest.statusBufferChecks`, on the models, and
+Pinned by `ModelTest.versionControlPackageChecks` and
+`ModelTest.statusBufferChecks`, on the models, and
 `ContractTest.statusBufferChecks`, over real git.
 -/
 
 namespace Editor.VersionControl
 
 /-- The package `version-control`: the status buffer's commands and those
-of the buffers it opens, their jobs, their modes, and the mode line's
-segment `review`. -/
+of the buffers it opens, their jobs, their modes, the mode line's segment
+`review`, and the `vc-…` ex names. -/
 def package : Package :=
   { name := "version-control"
     setup := do
@@ -135,7 +154,19 @@ def package : Package :=
       workJob blameReadJob blameReadWork
       for mode in [mode, commitMode, worktreesMode, reviewMode, logMode, blameMode] do
         defineMode mode
-      defineSegment reviewSegment.name reviewSegment.fields }
+      defineSegment reviewSegment.name reviewSegment.fields
+      exCommand "vc-status" statusName
+      exCommand "vc-show" showName (takes := .text)
+      exCommand "vc-stage-hunk" stageHunkName
+      exCommand "vc-unstage-hunk" unstageHunkName
+      exCommand "vc-commit" commitName
+      exCommand "vc-worktrees" worktreesName
+      exCommand "vc-commit-accept" acceptName
+      exCommand "vc-commit-abort" abortName
+      exCommand "vc-review" reviewName (takes := .text)
+      exCommand "vc-review-since" reviewSinceName
+      exCommand "vc-log" logName (takes := .text)
+      exCommand "vc-blame" blameName (takes := .text) }
 
 /-- The package `version-control-gutter`: the gutter's command,
 `vc-gutter-moved`, which its watch job posts

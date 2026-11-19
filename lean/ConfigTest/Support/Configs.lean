@@ -156,7 +156,7 @@ def nappingCompiled : Compiled :=
               discard <| (⟨0⟩ : ViewId).insertAtSelections "napped" }] }
 
 /-- What compiled code hands every host of the ex checks: the ex line's
-commands and the ex names that ship (`Ex.package.registered.commands`, `Ex.package.registered.ex`,
+commands and the `ex` package's ex names (`Ex.package.registered.commands`, `Ex.package.registered.ex`,
 `Editor/Ex/Compiled.lean`), the minibuffer's commands and its mode, the
 file commands, which two of the shipped names run, and `other`, written
 here, which says `other`, on `C-c o`. It is handed no job: no check here

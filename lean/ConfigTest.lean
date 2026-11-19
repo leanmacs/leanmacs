@@ -123,7 +123,7 @@ show:
   reload drops the choice. The accept key and the cancel key are the test scheme's
   for the roles the minibuffer's mode fills;
 - `exChecks`: the ex command line through the host, with the test scheme
-  and the ex line's commands and the ex names that ship as compiled code
+  and the ex line's commands and the `ex` package's ex names as compiled code
   hands them (`Ex.package.registered.commands`, `Ex.package.registered.ex`): the ex line `reload` reloads
   the config with no restart, so a key config rebound runs the other
   command; an ex name config binds runs config's command, and is unknown

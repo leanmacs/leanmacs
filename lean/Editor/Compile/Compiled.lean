@@ -3,14 +3,12 @@ import Editor.Compile.Shipped
 import Editor.Package
 
 /-!
-# The `compile` package: the compile mode's commands, its jobs, its mode and the contributions that ship
+# The `compile` package: the compile mode's commands, its jobs, its mode, the contributions that ship and its ex names
 
 What a host registers so that `compile` runs (`Editor/Compile.lean`): the
 package `compile` (`Compile.package`, `Editor/Package.lean`). A host
 registers it for the owner `compile` when its loop starts, before any
-config (`Editor/Config/Packages.lean`), beside the `ex` package
-(`Editor/Ex/Compiled.lean`), which binds the ex names `compile`,
-`compile-command`, `recompile` and `kill-compilation` to its commands.
+config (`Editor/Config/Packages.lean`).
 
 - **The commands**: `compile`, which starts a run in the focused
   buffer's scope (`Compile.compileCommand`); `compile-command`, which runs
@@ -37,18 +35,33 @@ config (`Editor/Config/Packages.lean`), beside the `ex` package
 - **The contributions** that ship (`Compile.shipped`,
   `Editor/Compile/Shipped.lean`): `cargo-mode`, `lake-mode` and `mise-mode`,
   each registered with `compileContribution`.
+- **The ex names** (`exCommand`), in this order, which the ex names'
+  completion source keeps: `compile` runs `compile` and takes text: the
+  rest of the line is the command line, run in the buffer's workspace; with
+  none it asks for one. `compile-command` runs `compile-command` and takes
+  text: the rest of the line chooses one of the buffer's on-modes' named
+  commands, by its candidate or its bare name, and with none it asks for
+  one. `recompile` runs `recompile` and takes nothing: it reruns the
+  workspace's last line. `kill-compilation` runs `kill-compilation` and
+  takes nothing. `next-error` and `previous-error` run the commands of
+  those names and take nothing: they step through the locations of the
+  focused buffer's workspace's compilation. No global key binds them. A
+  host must be handed the `ex` package (`Editor/Ex/Compiled.lean`) for a
+  line to run them; this package names it nowhere, and the `ex` package
+  does not name this one.
 
 This module is apart from `Editor/Compile.lean` because it is what a host is
 handed, not what config calls.
 
-Pinned by `ModelTest.compileChecks`, `ModelTest.compileLocationChecks` and
-`ModelTest.compileHookChecks`, on the models.
+Pinned by `ModelTest.compilePackageChecks`, `ModelTest.compileChecks`,
+`ModelTest.compileLocationChecks` and `ModelTest.compileHookChecks`, on the
+models, and by `ConfigTest.shippedChecks`, in the shipped set.
 -/
 
 namespace Editor.Compile
 
-/-- The package `compile`: the compile mode's commands, its jobs, its mode
-and the contributions that ship (`shipped`). -/
+/-- The package `compile`: the compile mode's commands, its jobs, its mode,
+the contributions that ship (`shipped`) and its ex names. -/
 def package : Package :=
   { name := "compile"
     setup := do
@@ -65,6 +78,12 @@ def package : Package :=
       workJob listJob listWork
       defineMode mode
       for contribution in shipped do
-        compileContribution contribution }
+        compileContribution contribution
+      exCommand "compile" compileName (takes := .text)
+      exCommand "compile-command" commandName (takes := .text)
+      exCommand "recompile" recompileName
+      exCommand "kill-compilation" killName
+      exCommand "next-error" nextName
+      exCommand "previous-error" previousName }
 
 end Editor.Compile
