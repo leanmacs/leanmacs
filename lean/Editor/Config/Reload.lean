@@ -401,29 +401,8 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
       { state with
         chunks := built.chunks,
         registry :=
-          {
-            ((((((((((((((state.registry.replace .config built.registrations.commands).replaceJobs
-                                                                  .config
-                                                                  built.registrations.jobs).replaceBindings
-                                                              .config
-                                                              built.registrations.bindings).replaceModes
-                                                          .config
-                                                          built.registrations.modes).replaceEx
-                                                      .config built.registrations.ex).replaceFaces
-                                                  .config built.registrations.faces).replaceThemes
-                                              .config built.registrations.themes).replaceSegments
-                                          .config built.registrations.segments).replaceLanguages
-                                      .config built.registrations.languages).replaceContributions
-                                  .config built.registrations.contributions).replaceSources
-                              .config built.registrations.sources).replaceStyles
-                          .config built.registrations.styles).replaceDisplays
-                      .config built.registrations.displays).replaceAtPoints
-                  .config built.registrations.atPoints).replaceAtPointUses
-              .config
-              built.registrations.atPointUses with
-            prefixNames :=
-              (state.registry.replacePrefixNames .config
-                  built.registrations.prefixNames).prefixNames
+          { state.registry.replaceOwned .config
+              built.registrations with
             styleChoices := built.registrations.styleChoices
             displayChoices := built.registrations.displayChoices
             environment := built.registrations.environment

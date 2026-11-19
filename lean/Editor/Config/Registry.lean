@@ -361,6 +361,22 @@ a chain no at-point source is registered under is reported at install
 A `setup` that defines an at-point source name twice is refused
 (`Registrations.atPointTwice`).
 
+## Menus
+
+A menu of the menu bar (`Submenu`, `Editor/Menu.lean`) is held by owner
+like a theme, in a `MenuEntry`, and replaced as a set (`replaceMenus`);
+`setup` registers one with `defineMenu` (`Editor/Setup.lean`). The menu bar
+(`menuBar?`) is each title once, at the place it was first registered, as
+its latest entry: a later owner's menu of a title replaces the earlier
+owner's where that one is, until it is dropped, and a menu of a new title
+comes after the others. So config changes one menu without restating the
+bar. Each command item's key is filled from the key bindings (`menuOf`,
+`keyEquivalent?`; "Key bindings", above). A registry no menu is registered
+in has no menu bar (`none`), and a host then publishes none.
+
+A `setup` that defines a menu title twice is refused
+(`Registrations.menuTwice`).
+
 ## Compiled commands
 
 Compiled code is an owner too (`Owner.compiled`). A host registers its
@@ -570,6 +586,15 @@ structure AtPointUse where
   source : String
   deriving DecidableEq, Repr
 
+/-- A menu entry of the registry: one menu of the menu bar and who
+registered it. -/
+structure MenuEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The menu. -/
+  menu : Submenu
+  deriving DecidableEq, Repr
+
 /-- A face entry of the registry: a definition of a face and who made it. -/
 structure FaceEntry where
   /-- Who set it. -/
@@ -671,6 +696,8 @@ it did not, which a host reads as `auto`. -/
   /-- The uses of at-point sources, by mode or for every buffer ("At-point
   sources", in the module docs). -/
   atPointUses : Array AtPointUse := #[]
+  /-- The menu entries ("Menus", in the module docs). -/
+  menus : Array MenuEntry := #[]
 
 namespace Registry
 
@@ -1042,6 +1069,31 @@ def keyEquivalent? (registry : Registry) (command : String) (taken : List KeyEqu
       | _, _ => none
     | _ => none
 
+/-- `menu` with each command item's key equivalent the one `registry`'s
+bindings give its command (`keyEquivalent?`), never a key one of `menu`'s
+system items shows (`Menu.systemKeys`). -/
+def menuOf (registry : Registry) (menu : Menu) : Menu :=
+  menu.withKeys (registry.keyEquivalent? (taken := menu.systemKeys))
+
+/-- `registry` with every menu entry of `owner` removed and `menus` added as
+its menu entries, in their order. -/
+def replaceMenus (registry : Registry) (owner : Owner) (menus : Array Submenu) : Registry :=
+  { registry with
+    menus := registry.menus.filter (·.owner != owner) ++ menus.map fun menu => { owner, menu } }
+
+/-- The menu bar ("Menus", in the module docs): `none` when no menu is
+registered; otherwise each title once, at the place it was first
+registered, as its latest entry, with every command item's key filled from
+the bindings (`menuOf`). So a later owner's menu of a title replaces an
+earlier owner's where that one is, and one of a new title comes after. -/
+def menuBar? (registry : Registry) : Option Menu :=
+  if registry.menus.isEmpty then none
+  else
+    let titles := (registry.menus.map (·.menu.title)).toList.eraseDups.toArray
+    let menus :=
+      titles.filterMap fun title => (registry.menus.findRev? (·.menu.title == title)).map (·.menu)
+    some (registry.menuOf { menus })
+
 /-- `registry` with every mode entry of `owner` removed and `modes` added as
 its mode entries. -/
 def replaceModes (registry : Registry) (owner : Owner) (modes : Array Mode) : Registry :=
@@ -1298,6 +1350,9 @@ they were made: one at most, in a `setup` that is not refused. -/
   /-- The uses of at-point sources (`useAtPoint`, `useAtPointIn`), each a
   mode or `none` for every buffer and a source's name, in order. -/
   atPointUses : Array (Option String × String) := #[]
+  /-- The menus of the menu bar (`defineMenu`), in the order they were
+  defined. -/
+  menus : Array Submenu := #[]
 
 namespace Registrations
 
@@ -1453,6 +1508,7 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with atPoints := collected.atPoints.push atPoint })
   | .useAtPoint mode name, collected =>
     ((), { collected with atPointUses := collected.atPointUses.push (mode, name) })
+  | .menu menu, collected => ((), { collected with menus := collected.menus.push menu })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
@@ -1525,6 +1581,11 @@ with. -/
 def atPointTwice (name : String) : String :=
   s!"the at-point completion source `{name}` is registered twice"
 
+/-- What a `setup` that defines the menu titled `title` twice is refused
+with. -/
+def menuTwice (title : String) : String :=
+  s!"the menu `{title}` is defined twice"
+
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
   for index in [0:items.size] do
@@ -1553,7 +1614,8 @@ style defined twice (`styleTwice`), the style of a category, or the
 default style, chosen twice (`styleChosenTwice`), a completion display
 defined twice (`displayTwice`), or the display of a category, or the
 default display, chosen twice (`displayChosenTwice`), or an at-point source
-defined twice (`atPointTwice`).
+defined twice (`atPointTwice`), or a menu title defined twice
+(`menuTwice`).
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
@@ -1661,6 +1723,8 @@ def problem? (collected : Registrations) : Option String := do
     return displayChosenTwice category
   if let some name := repeated? (collected.atPoints.map (·.name)) then
     return atPointTwice name
+  if let some title := repeated? (collected.menus.map (·.title)) then
+    return menuTwice title
   none
 
 /-- What `setup` registers, or the message it is refused with: the one it
@@ -1732,5 +1796,35 @@ def problemUnder? (collected : Registrations) (scheme : InputScheme) : Option St
   none
 
 end Registrations
+
+/-- `registry` with what `owner` registered replaced by what `registrations`
+holds of the kinds an owner holds: its commands, jobs, key bindings, prefix
+names, modes, ex bindings, faces, themes, segments, languages, compile
+contributions, completion sources, styles and displays, at-point sources
+and their uses, and menus. Every other owner's entries are left, and so is
+what no owner holds: config's own settings, which an install sets
+(`Editor/Config/Reload.lean`), and the style defaults. It is the one
+definition of what an owner's registrations are: an install calls it for
+`config`, and a package's registration for the package's owner
+(`Editor/Config/Packages.lean`). -/
+def Registry.replaceOwned (registry : Registry) (owner : Owner) (registrations : Registrations) :
+    Registry :=
+  registry.replace owner registrations.commands |>.replaceJobs owner
+                                  registrations.jobs |>.replaceBindings
+                                owner registrations.bindings |>.replacePrefixNames
+                              owner registrations.prefixNames |>.replaceModes
+                            owner registrations.modes |>.replaceEx
+                          owner registrations.ex |>.replaceFaces
+                        owner registrations.faces |>.replaceThemes
+                      owner registrations.themes |>.replaceSegments
+                    owner registrations.segments |>.replaceLanguages
+                  owner registrations.languages |>.replaceContributions
+                owner registrations.contributions |>.replaceSources
+              owner registrations.sources |>.replaceStyles
+            owner registrations.styles |>.replaceDisplays
+          owner registrations.displays |>.replaceAtPoints
+        owner registrations.atPoints |>.replaceAtPointUses
+      owner registrations.atPointUses |>.replaceMenus
+    owner registrations.menus
 
 end Editor.Config

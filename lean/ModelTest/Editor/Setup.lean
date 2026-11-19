@@ -989,7 +989,76 @@ def setupChecks : List Check :=
             refusal projectTwice ==
               some
                 (Config.Registrations.workspaceListerTwice (.project (.remote "github.com/o/r"))) &&
-            refusal both == none) }]
+            refusal both == none) },
+    { name :=
+        "a setup that registers a job as its work collects it under its name beside the others, and the job is the work it was given, applied to the arguments it is started with"
+      run :=
+        let work (arguments : List Argument) : Work :=
+          Work.of (fun _ => pure (arguments.map argumentText)) fun texts =>
+            makes (" ".intercalate texts)
+        let setup : SetupM Unit := do
+          job "fixed" (fun _ => pure "x") makes
+          workJob "said" work
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          let started (arguments : List Argument) :=
+            (collected.jobs.find? (·.name == "said")).map fun job => worked (job.work arguments)
+          pure
+            (collected.jobs.map (·.name) == #["fixed", "said"] && collected.commands.isEmpty &&
+              started [.str "a", .nat 2] == some (.finished #["a 2"]) &&
+              started [] == some (.finished #[""])) },
+    { name :=
+        "a setup that binds an ex name with fixed arguments collects the binding with them, none unless it says, and `w!` is taken"
+      run :=
+        let setup : SetupM Unit := do
+          exCommand "w" "write"
+          exCommand "w!" "write" (arguments := [.bool true])
+          exCommand "e!" "edit" (takes := .text) (arguments := [.bool true])
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.ex ==
+              #[{ name := "w", command := "write" },
+                { name := "w!", command := "write", arguments := [.bool true] },
+                { name := "e!", command := "edit", takes := .text, arguments := [.bool true] }]) },
+    { name :=
+        "a setup that binds keys given as values collects the binding the same keys written as a key string make, with its states, description and category, and one that binds no keys is refused"
+      run :=
+        let written : SetupM Unit := do
+          bindKey "C-x C-d" "escape" (states := [⟨"insert"⟩]) (desc := "Step out") (category :=
+              some "workspace-file")
+          bindKey "s-q" "quit"
+        let valued : SetupM Unit := do
+          bindKeys (keys "C-x C-d") "escape" (states := [⟨"insert"⟩]) (desc := "Step out")
+              (category := some "workspace-file")
+          bindKeys [charKey "q" { superKey := true }] "quit"
+        match Config.Registrations.ofSetup written, Config.Registrations.ofSetup valued with
+        | .ok written, .ok valued =>
+          pure
+            (valued.bindings == written.bindings && valued.bindings.size == 2 &&
+              valued.commands.isEmpty &&
+              refusal (bindKeys [] "save") == some (boundToNoKeys "save"))
+        | _, _ => pure false },
+    { name :=
+        "a setup that defines menus collects each submenu, in order, and registers no command; one that defines a title twice is refused with a message that names it"
+      run :=
+        let file : Submenu := { title := "File", items := #[.item "Open…" none (.command "open")] }
+        let window : Submenu := { title := "Window", role := some .window }
+        let setup : SetupM Unit := do
+          defineMenu file
+          defineMenu window
+        let twice : SetupM Unit := do
+          defineMenu file
+          defineMenu window
+          defineMenu { title := "File" }
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.menus == #[file, window] && collected.commands.isEmpty &&
+              refusal twice == some (Config.Registrations.menuTwice "File")) }]
 
 /-- The checks of what a `setup` says for the key hints: a binding's
 description (`bindKey`'s `desc`) and a prefix's name (`prefixName`). -/

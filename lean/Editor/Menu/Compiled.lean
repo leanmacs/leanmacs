@@ -97,10 +97,4 @@ def bindings : Array Config.KeyBinding :=
 
 end Menu
 
-/-- `menu` with each command item's key equivalent the one `registry`'s
-bindings give its command (`keyEquivalent?`), never a key one of `menu`'s
-system items shows (`Menu.systemKeys`). -/
-def Config.Registry.menuOf (registry : Config.Registry) (menu : Menu) : Menu :=
-  menu.withKeys (registry.keyEquivalent? (taken := menu.systemKeys))
-
 end Editor

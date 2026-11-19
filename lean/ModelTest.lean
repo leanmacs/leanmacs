@@ -623,8 +623,9 @@ service.
 The config session's decisions are tested here too, with no elaborator:
 
 - `setupChecks`: what a `setup` registers, commands, stores, jobs, key
-  bindings (in a prompt category too), the leader and the localleader, modes, ex bindings and faces,
-  and when it is refused;
+  bindings (in a prompt category too, and of keys given as values), the leader and the localleader, modes, ex bindings and faces,
+  a job given as its work, an ex name's fixed arguments and menus, and when
+  it is refused;
 - `setupHintChecks`: a binding's description (`bindKey`'s `desc`) and a
   prefix's name (`prefixName`), as a `setup` collects them, and the names
   it refuses;
@@ -635,7 +636,8 @@ The config session's decisions are tested here too, with no elaborator:
   make one sequence, which are refused; a prompt category's keymap, first
   among the open prompt's minibuffer view's active keymaps and out of the
   global keymap and the menu bar's, and a sequence bound twice in one
-  category, which is refused;
+  category, which is refused; and its menus, replaced by owner, and the
+  menu bar they make (`menuBar?`);
 - `registryHintChecks`: a binding's description on the registry's keymap,
   and its prefix names, by owner, expanded against the leaders in force,
   and two names a scheme's leaders make one prefix, which are refused;
@@ -652,7 +654,8 @@ The config session's decisions are tested here too, with no elaborator:
   installs, and only then; and what the theme is: the built-in one then the
   installed config's faces, replaced as a set by an install and kept by a
   rejected reload. An install replaces config's key bindings, modes and ex
-  bindings and keeps the compiled ones;
+  bindings and keeps the compiled ones, and replaces config's menus and
+  keeps another owner's;
 - `reloadHintChecks`: an install replaces config's descriptions and prefix
   names with its bindings, so a later config without them clears them.
 

@@ -13,6 +13,7 @@ import Editor.Job
 import Editor.Key.Notation
 import Editor.Language
 import Editor.Layout
+import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
@@ -65,6 +66,13 @@ def setup : SetupM Unit := do
 A job registered with `job` takes none, and is the same job whatever it is
 started with.
 
+A job whose finishing command is built from the arguments it was started
+with is registered as its work (`workJob`): a function from the arguments
+to a `Work` (`Editor/Job.lean`), the job with its handler. `job` and
+`jobWith` cannot say it, since their handler is given the result alone. It
+is how the file commands' load job hands its command the window it was
+asked from.
+
 A command may be given what it was called with (`commandWith`, named as
 `jobWith` is beside `job`): the `Call` (`Editor/Command/Call.lean`), which
 holds the window it acts on, the invocation's arguments and the keys that
@@ -96,7 +104,9 @@ are typed, so a binding may name a compiled command, or a command that is
 not registered, which then says so in the echo area. A binding is not a
 command and is not counted as one. It is called `bindKey` and not `bind`,
 which would shadow the monad's inside `namespace Editor` and for config,
-which opens it.
+which opens it. Keys that are a value, shared by another module or built as
+chords, are bound with `bindKeys`, which makes the binding `bindKey` makes
+of the same keys written out and refuses no keys as it does.
 
 A key string may be written with `<leader>` and `<localleader>`
 (`Editor/Key/Notation.lean`, "The placeholders"), and config may set the
@@ -167,7 +177,10 @@ command line whose first word is the name runs that command
 (`docs/design/keymaps-and-modes.md`, "The ex command line"). By default the
 name takes nothing after it; with `takes := .text` the rest of the line is
 the command's first argument, a string, which is where a prompt's answer
-goes, so the continuation above is an ex command as it stands:
+goes, so the continuation above is an ex command as it stands; and with
+`arguments` the command is always handed them first, which is how `w!` is
+`save-buffer` with its force (`exCommand "w!" "save-buffer" (arguments :=
+[.bool true])`):
 
 ```lean
 def setup : SetupM Unit := do
@@ -208,7 +221,7 @@ twice or named twice, a segment defined twice, the mode line listed twice,
 a completion source defined twice, a completion style defined twice, the
 style of one category or the default style chosen twice, a completion
 display defined twice, the display of one category or the default display
-chosen twice,
+chosen twice, a menu title defined twice,
 a command over a store the `setup`
 does not declare, a mode name defined twice, or a mode that cannot be meant
 under any scheme (`Mode.problems`: a role that is not registered, a suffix
@@ -499,6 +512,21 @@ whole. A contribution with no marker is refused, and so is one registered
 twice or naming a command twice, and project commands given twice for one
 project and mode, or naming a command twice.
 
+A menu of the menu bar (`Editor/Menu.lean`) is defined with `defineMenu`,
+one menu at a time, by its title:
+
+```lean
+def setup : SetupM Unit := do
+  defineMenu { title := "Notes", items := #[.item "New Note" none (.command "new-note")] }
+```
+
+The bar shows each title once, at the place it was first defined, as its
+latest definition (`Config.Registry.menuBar?`): config's menu of a title a
+package defines replaces that one where it is, and one of a new title
+comes after the others. A command item names no key: the bar shows the one
+the key bindings give its command. A `setup` that defines a title twice is
+refused (`Config.Registrations.menuTwice`).
+
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
 over, so the type does not refer to itself. A job's handler is carried the
@@ -640,6 +668,9 @@ inductive SetupRequest where
   /-- Have the buffers of the mode `mode`, or with `none` every buffer, ask
   the at-point source registered under `name`. -/
   | useAtPoint (mode : Option String) (name : String)
+  /-- Define `menu`, one menu of the menu bar, by its title
+  (`Editor/Menu.lean`). -/
+  | menu (menu : Submenu)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -681,6 +712,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .useDisplay .. => Unit
   | .atPoint _ => Unit
   | .useAtPoint .. => Unit
+  | .menu _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -737,6 +769,15 @@ def jobWith {α : Type} (name : String) (run : List Argument → JobM α) (handl
     (Program.request (port := setupPort)
       (.job name fun arguments => Work.of (fun _ => run arguments) handler))
 
+/-- Registers `work` as the job called `name`: given the arguments the job
+is started with, the job with the handler that makes the command its result
+is taken to the editor with (`Work`, `Editor/Job.lean`). It is for a job
+whose finishing command is built from the arguments, which `job` and
+`jobWith`, whose handler sees the result alone, cannot say. Registering
+starts nothing, as for `job`. -/
+def workJob (name : String) (work : List Argument → Work) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.job name work))
+
 /-- Registers the job called `name` that answers a completion source that
 answers later (`Editor/Completion/Later.lean`): `answer` is given the query
 and a way to deliver a batch of candidates, which it may call as often as it
@@ -780,6 +821,21 @@ def bindKey (keys : String) (command : String) (states : List SchemeState := [])
     ExceptT.lift
         (Program.request (port := setupPort)
           (.bind strokes command (states.map (·.name)) desc category))
+
+/-- Binds the key sequence `keys`, given as values, to the command called
+`command`, as `bindKey` binds a key string: the binding is the one `bindKey`
+makes of the same keys written out, with the same `states`, `desc` and
+`category`. It is for keys another module shares as a value, or builds as
+chords, which have no placeholder to expand.
+
+Refuses the `setup` for no keys, as `bindKey` does. -/
+def bindKeys (keys : List Key) (command : String) (states : List SchemeState := [])
+    (desc : Option String := none) (category : Option String := none) : SetupM Unit := do
+  if keys.isEmpty then
+    throw (boundToNoKeys command)
+  ExceptT.lift
+      (Program.request (port := setupPort)
+        (.bind (keys.map .key) command (states.map (·.name)) desc category))
 
 /-- The message the prefix name `name` given to no keys is refused with. -/
 def prefixNamedNoKeys (name : String) : String :=
@@ -871,17 +927,20 @@ def unusableExName (name command : String) : String :=
 ex command line whose first word is `name` runs that command. With
 `takes := .text` the rest of the line is the command's first argument, a
 string; by default the name takes nothing, and a line with more is refused
-when it is run. The command's name is looked up when the line is run, so
-the command need not be one this `setup` registers.
+when it is run. With `arguments`, the command is always handed them, before
+the line's own: how `w!` hands the save command its force
+(`Ex.Binding.arguments`). The command's name is looked up when the line is
+run, so the command need not be one this `setup` registers.
 
 Refuses the `setup` for a name the ex line cannot read back as itself
 (`Ex.reachable`): one that is empty, holds white space, or starts with `!`,
 `%`, `.`, `$`, `,` or a digit, which the line reads as a range or as the
 bang form. -/
-def exCommand (name command : String) (takes : Ex.Takes := .nothing) : SetupM Unit := do
+def exCommand (name command : String) (takes : Ex.Takes := .nothing)
+    (arguments : List Argument := []) : SetupM Unit := do
   if !Ex.reachable name then
     throw (unusableExName name command)
-  ExceptT.lift (Program.request (port := setupPort) (.ex { name, command, takes }))
+  ExceptT.lift (Program.request (port := setupPort) (.ex { name, command, takes, arguments }))
 
 /-- Defines the mode `mode`: its roles and suffixes name commands, looked
 up when the keys are typed, so they need not be ones this `setup`
@@ -983,6 +1042,16 @@ ask the at-point source registered under `name`, before the mode's own list
 (`Mode.atPoint`). The name is looked up when a key asks. -/
 def useAtPointIn (mode name : String) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.useAtPoint (some mode) name))
+
+/-- Defines `menu`, one menu of the menu bar, under its title
+(`Editor/Menu.lean`): the bar shows each title once, at the place it was
+first defined, as its latest definition, so a menu of a title that is
+already defined replaces that one where it is, and one of a new title comes
+after the others (`Config.Registry.menuBar?`). A command item's key is
+filled from the key bindings, so the menu names none. The editor refuses the
+`setup` for a title defined twice. -/
+def defineMenu (menu : Submenu) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.menu menu))
 
 /-- Names the theme called `name` as the one in force once the config is
 installed: the compiled theme of that name, or one this `setup` defines.

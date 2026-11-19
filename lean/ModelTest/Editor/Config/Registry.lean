@@ -27,6 +27,7 @@ import Editor.Invocation
 import Editor.Job
 import Editor.Keymap
 import Editor.Layout
+import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
@@ -814,7 +815,64 @@ def registryChecks : List Check :=
               #[theirs, defined "keyword" (coloured 2), defined "comment" (coloured 3)] &&
             replaced.definitions == #[theirs, defined "string" (coloured 4)] &&
             (replaced.replaceFaces .config #[]).definitions == #[theirs] &&
-            replaced.names == #["greet"]) }]
+            replaced.names == #["greet"]) },
+    { name :=
+        "a registry no menu is registered in has no menu bar, whatever else it holds; one with a menu has a bar of it"
+      run :=
+        let bound : Config.Registry :=
+          ({} : Config.Registry).replaceBindings other #[.ofKeys (keys "s-o") "open"]
+        let file : Submenu := { title := "File" }
+        pure
+          (({} : Config.Registry).menuBar? == none && bound.menuBar? == none &&
+            (bound.replaceMenus other #[file]).menuBar? == some { menus := #[file] }) },
+    { name :=
+        "the menu bar is each title once, at the place it was first registered, as its latest entry: a later owner's menu of a title is shown at the first one's place, one of a new title comes after, and replacing the later owner's menus with none brings the first's back"
+      run :=
+        let titled (title item : String) : Submenu :=
+          { title, items := #[.item item none (.system .about)] }
+        let registry : Config.Registry :=
+          ({} : Config.Registry).replaceMenus other #[titled "File" "theirs", titled "Edit" "edit"]
+        let replaced :=
+          registry.replaceMenus .config #[titled "Help" "help", titled "File" "config's"]
+        pure
+          (registry.menuBar? == some { menus := #[titled "File" "theirs", titled "Edit" "edit"] } &&
+            replaced.menuBar? ==
+              some
+                {
+                  menus :=
+                    #[titled "File" "config's", titled "Edit" "edit", titled "Help" "help"] } &&
+            (replaced.replaceMenus .config #[]).menuBar? == registry.menuBar? &&
+            (replaced.replaceMenus other #[]).menuBar? ==
+              some { menus := #[titled "Help" "help", titled "File" "config's"] }) },
+    { name :=
+        "the menu bar's command items show the keys the bindings give their commands, as menuOf fills a menu: a system item keeps its own key, and a chord a system item shows is no command item's"
+      run :=
+        let quit : KeyEquivalent := { character := 'q', modifiers := { superKey := true } }
+        let app : Submenu :=
+          { title := "App", role := some .app,
+            items := #[.item "Quit" (some quit) (.system .quit)] }
+        let file : Submenu :=
+          { title := "File"
+            items :=
+              #[.item "Open…" none (.command "open"), .separator,
+                .item "Save" none (.command "save"), .item "Close" none (.command "close")] }
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceMenus other #[app, file]).replaceBindings other
+            #[.ofKeys (keys "s-o") "open", .ofKeys (keys "s-q") "save",
+              .ofKeys (keys "C-x k") "close"]
+        let opened : KeyEquivalent := { character := 'o', modifiers := { superKey := true } }
+        pure
+          (registry.menuBar? == some (registry.menuOf { menus := #[app, file] }) &&
+            registry.menuBar? ==
+              some
+                {
+                  menus :=
+                    #[app,
+                      { file with
+                        items :=
+                          #[.item "Open…" (some opened) (.command "open"), .separator,
+                            .item "Save" none (.command "save"),
+                            .item "Close" none (.command "close")] }] }) }]
 
 /-- The invocation of the command `filling name` fills `role` with. -/
 def filled (name : String) (role : Role) : Invocation :=

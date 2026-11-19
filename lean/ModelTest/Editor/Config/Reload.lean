@@ -30,6 +30,7 @@ import Editor.Key.Notation
 import Editor.Language
 import Editor.Layout
 import Editor.Loop
+import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
@@ -1052,7 +1053,32 @@ def reloadChecks : List Check :=
           (one.echo == some "reload: 30-broken.lean:1:20: error: type mismatch" &&
             three.echo == some "reload: b.lean:3:4: error: unknown identifier 'x' (and 2 more)" &&
             (report true #[warning]).echo == none &&
-            (report true #[]).echo == none) }]
+            (report true #[]).echo == none) },
+    { name :=
+        "an install replaces config's menus and leaves another owner's: config's menu of a title is shown at the other's place and its new one after, a later install that defines none brings the other's back, and a rejected one changes nothing"
+      run :=
+        let titled (title item : String) : Submenu :=
+          { title, items := #[.item item none (.system .about)] }
+        let theirs : Config.State Elaborated :=
+          {
+            registry :=
+              ({} : Config.Registry).replaceMenus other
+                #[titled "File" "theirs", titled "Edit" "edit"] }
+        let defines : SetupM Unit := do
+          defineMenu (titled "Help" "help")
+          defineMenu (titled "File" "config's")
+        let (state, _) := reduceFrom theirs [.requested, .finished (accepted ["a"] defines)]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a.lean")]
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        pure
+          (state.registry.menuBar? ==
+              some
+                {
+                  menus :=
+                    #[titled "File" "config's", titled "Edit" "edit", titled "Help" "help"] } &&
+            kept.registry.menuBar? == state.registry.menuBar? &&
+            dropped.registry.menuBar? == theirs.registry.menuBar? &&
+            dropped.registry.menus.map (·.owner) == #[other, other]) }]
 
 /-- The checks that an install replaces config's descriptions and prefix
 names along with its bindings. -/
