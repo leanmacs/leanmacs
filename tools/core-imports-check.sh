@@ -20,9 +20,9 @@
 # 1. The root and the modules it imports, directly or through another, hold
 #    no moving module. Otherwise it prints each one found, one a line, and
 #    exits 1.
-# 2. Every module named `Editor.…` that a root of the build reaches (`built`,
-#    below) is the root or one of the modules it imports, unless it is a
-#    moving module. Otherwise it prints each one outside, one a line, and
+# 2. Every module named `Editor.…` that a root of the build reaches (`built`
+#    and `built_set`, below) is the root or one of the modules it imports,
+#    unless it is a moving module. Otherwise it prints each one outside, one a line, and
 #    exits 3. This is what makes the first a statement about every core
 #    module: a core module the root does not import would be checked by
 #    nothing. No module is exempt by name: the list of the core's
@@ -45,6 +45,14 @@
 # line, from the build graph Lake resolves. It builds nothing. So the check
 # follows a module that is renamed or moved, and an import written in any
 # form. It makes one query for the root and one for each root of the build.
+#
+# One root of the build is no module of a library: the root the package-set
+# build generates for the default package set, which `main` of the editor
+# is in (docs/design/packages.md, "The package set and its build"). Its
+# transitive imports are asked of the set (`lake -d <set dir> query
+# :editorRootTransImports`, a facet the core defines), and the rules hold of
+# it as of the others: it is the one root that links the elaborator into
+# the editor itself.
 set -eu
 
 # The config base: the module user config is elaborated on.
@@ -52,8 +60,12 @@ base=Editor
 # The module that links Lean's elaborator in and elaborates config on the
 # base.
 elaborator=Editor.Config.Elaborate
-# The roots of the build: the executable's and the test executables'.
+# The roots of the build that are modules of the core: the executable's and
+# the test executables'.
 built="Main ModelTest ConfigTest FfiTest ContractTest"
+# The package set whose generated root is a root of the build too: the
+# default set's directory, from `lean/`.
+built_set=../packages
 # The moving names when none is given.
 moving="Editor.Compile Editor.Themes.Solarized Editor.Themes.FairyFloss Editor.Themes.Shipped"
 
@@ -100,15 +112,27 @@ asked() {
 }
 
 # The module `$1` and its transitive imports, sorted, each once. Nothing for
-# a module Lake names no import of.
+# a module Lake names no import of. `$1` may be `set_root`, the generated
+# root of the set in `built_set`, which is asked of the set.
 closure() {
-  imports=$(asked "+$1:transImports") || exit 2
+  if [ "$1" = "$set_root" ]; then
+    imports=$(lake -d "$built_set" query :editorRootTransImports) || {
+      echo "core-imports-check: lake -d $built_set query :editorRootTransImports failed" >&2
+      exit 2
+    }
+  else
+    imports=$(asked "+$1:transImports") || exit 2
+  fi
   if [ -z "$imports" ]; then
     echo "core-imports-check: Lake names no import of $1, so there is nothing to check" >&2
     exit 2
   fi
   printf '%s\n%s\n' "$1" "$imports" | sort -u
 }
+
+# What the generated root of the set in `built_set` is called here and in
+# what is printed. It holds a colon, so it is no module's name.
+set_root=set:$built_set
 
 # Whether the module `$1` is a moving name or under one.
 is_moving() {
@@ -129,7 +153,7 @@ core=$(closure "$root") || exit 2
 outside=
 elaborating=
 unbased=
-for target in $built; do
+for target in $built "$set_root"; do
   reached=$(closure "$target") || exit 2
   missing=$(
     printf '%s\n' "$reached" | while IFS= read -r module; do
@@ -160,7 +184,7 @@ done
 
 # The third rule must be about some root, or it holds of nothing.
 if [ -z "$elaborating" ]; then
-  echo "core-imports-check: no root of the build ($built) reaches $elaborator, so no root is checked for the config base" >&2
+  echo "core-imports-check: no root of the build ($built $set_root) reaches $elaborator, so no root is checked for the config base" >&2
   exit 2
 fi
 

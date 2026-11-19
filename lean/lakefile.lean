@@ -302,6 +302,26 @@ one. -/
 package_facet editor pkg : FilePath := do
   linkAsEditor (← setRoot pkg) (pkg.binDir / "editor")
 
+/-- The direct imports of a set's root module, one module a line
+(`lake -d <set dir> query :editorRootImports`): the config base, the
+executable's entry and the set's entry modules, as the workspace resolves
+them. No library declares the root, so `lake query +<module>:imports` does
+not find it; the host imports check asks this instead
+(`tools/host-imports-check.sh`). It writes the root when its text would
+change and builds nothing. -/
+package_facet editorRootImports pkg : Array String := do
+  let root ← setRoot pkg
+  (← root.imports.fetch).mapM fun modules => return modules.map (·.name.toString)
+
+/-- The transitive imports of a set's root module, one module a line
+(`lake -d <set dir> query :editorRootTransImports`): every module of the
+workspace linked into the set's editor, but the root. The core imports
+check asks this for the default set (`tools/core-imports-check.sh`). It
+writes the root when its text would change and builds nothing. -/
+package_facet editorRootTransImports pkg : Array String := do
+  let root ← setRoot pkg
+  (← root.transImports.fetch).mapM fun modules => return modules.map (·.name.toString)
+
 /-- The file of the executable `editorLinked` links for the module `mod`:
 in the `bin/` of the module's package, named as the module is with a dash
 for each dot (`GreetingTest.Linked` gives `GreetingTest-Linked`). -/
