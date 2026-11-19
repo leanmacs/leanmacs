@@ -802,7 +802,7 @@ def append (id : BufferId) (lines : Array String) : EditorM (Option (Nat × Nat)
       text.insert length (String.join (lines.map (· ++ "\n")).toList)
   let last ← text.offsetOf { row := (← text.lineCount) - 1, column := 0 }
   for view in followers do
-    Files.placeCursor view last
+    Jumps.placeCursor view last
   -- The text always ends in a line feed, so its lines before the insert are
   -- the row the first appended line starts.
   return some (count, length)
@@ -831,7 +831,7 @@ def prepare (scope : Scope) (record : Record) (content : String) :
     discard <| id.setSpans #[]
     -- Every view of it starts the new run on the header line, so it follows.
     for view in viewsOf state id do
-      Files.placeCursor view 0
+      Jumps.placeCursor view 0
     return some (id, false)
   | none =>
     let .ok id ← createBuffer (freeBufferName state scope) content | return none
@@ -1143,7 +1143,7 @@ def visitLocation (asking : ViewId) (place : Place) (record : Record) (index : N
     if let .ok text← id.text then
       let offset ← text.offsetOf ⟨site.first, 0⟩
       for view in viewsOf state id do
-        Files.placeCursor view offset
+        Jumps.placeCursor view offset
   let visiting ← visitingView asking compilation
   Files.visit visiting site.file
       { row := site.line - 1, column := (site.column.map (· - site.columnBase)).getD 0 } focus

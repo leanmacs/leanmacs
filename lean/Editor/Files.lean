@@ -492,30 +492,18 @@ def openAll (view : ViewId) : List System.FilePath → EditorM Unit
     else if let .error refusal← startJob loadJob (LoadOrder.arguments { path, view, next }) then
       message (notOpening path refusal)
 
-/-- Puts the cursor of `view` at `offset`, one bar with its shape kept. -/
-def placeCursor (view : ViewId) (offset : Nat) : EditorM Unit := do
-  if let .ok selection← view.selection then
-    discard <|
-        view.select
-          { selection with
-            ranges := #[⟨offset, offset⟩], primary := 0 }
-
 /-- The byte offset of `point` in `text` ("Open", in the module docs): the
 start of its row, clamped to the last line, and the bytes of the row's first
 `point.column` characters, clamped to its content (`Marks.offsetAt`); or,
-when the point says so, the row's first non-blank. -/
+when the point says so, the row's first non-blank (`Jumps.offsetOn`). -/
 def offsetAt (text : TextId) (point : At) : TextM Nat := do
-  let offset ← Marks.offsetAt text point.row point.column
-  if point.firstNonBlank then
-    text.motion .lineFirstNonBlank offset
-  else
-    pure offset
+  Jumps.offsetOn text (← Marks.offsetAt text point.row point.column) point.firstNonBlank
 
 /-- Puts the cursor of `view`, which shows `buffer`, at `point`, and focuses
 the view with `focus` ("Open", in the module docs). -/
 def placeAt (view : ViewId) (buffer : BufferId) (point : At) (focus : Bool) : EditorM Unit := do
   let some shown := (← editorState).buffer? buffer | return
-  placeCursor view (← offsetAt shown.text point)
+  Jumps.placeCursor view (← offsetAt shown.text point)
   if focus then
     discard <| view.focus
 

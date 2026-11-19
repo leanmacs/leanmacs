@@ -33,6 +33,10 @@ commands, going to a place in a closed file, is the upper module's
   cursor is put on the place; in another, the window shows that buffer
   first. With `line`, the cursor goes to the first non-blank of the place's
   line.
+- **Placing the cursor** (`placeCursor`, `offsetOn`): one bar at an
+  offset, with the selection's shape kept, or at the first non-blank of
+  the offset's line. Going to a held place places it so, and so does a
+  visit of a file (`Files.placeAt`, `Editor/Files.lean`), at its point.
 - **Detach** (`detach`): before a buffer is closed, every place held in it,
   in every window's jumps and in the global marks, becomes a place in its
   file, with its row and its column in characters; a buffer with no file
@@ -149,6 +153,20 @@ def plan (view : ViewId) (n : Int) : EditorM (Option Place) := do
   discard <| view.setJumps { list, previous }
   return list.entries[step.index]?
 
+/-- Puts the cursor of `view` at `offset`, one bar with its shape kept
+("Placing the cursor", in the module docs). -/
+def placeCursor (view : ViewId) (offset : Nat) : EditorM Unit := do
+  if let .ok selection← view.selection then
+    discard <|
+        view.select
+          { selection with
+            ranges := #[⟨offset, offset⟩], primary := 0 }
+
+/-- The offset `offset` of `text`, or, with `line`, the first non-blank of
+its line ("Placing the cursor", in the module docs). -/
+def offsetOn (text : TextId) (offset : Nat) (line : Bool) : TextM Nat :=
+  if line then text.motion .lineFirstNonBlank offset else pure offset
+
 /-- Puts the cursor of `view` on the place held by `marker` in `buffer`,
 showing `buffer` in the window first when it shows another; with `line`, on
 the first non-blank of the place's line. Nothing when the window cannot
@@ -158,17 +176,7 @@ def goHeld (view : ViewId) (buffer : BufferId) (marker : MarkerId) (line : Bool)
   let some window := (← editorState).window? view | return
   if window.buffer != buffer then
     let .ok () ← view.show buffer | return
-  let offset ← Marks.offsetOf marker
-  let offset ←
-    if line then
-      marker.text.motion .lineFirstNonBlank offset
-    else
-      pure offset
-  if let .ok selection← view.selection then
-    discard <|
-        view.select
-          { selection with
-            ranges := #[⟨offset, offset⟩], primary := 0 }
+  placeCursor view (← offsetOn marker.text (← Marks.offsetOf marker) line)
 
 /-- Detaches the places held in the buffer `id` ("Detach", in the module
 docs): in every window's jumps and in the global marks, each becomes a

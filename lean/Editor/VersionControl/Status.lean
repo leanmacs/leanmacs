@@ -497,7 +497,7 @@ def replace (id : BufferId) (content : String) : EditorM Unit := do
       text.replaceRange 0 (← text.byteLength) content
   let count ← text.lineCount
   for (view, row) in rows do
-    Files.placeCursor view (← text.offsetOf ⟨min row (count - 1), 0⟩)
+    Jumps.placeCursor view (← text.offsetOf ⟨min row (count - 1), 0⟩)
 
 /-- The command a finished read hands the loop ("What the read comes to", in
 the module docs). -/
