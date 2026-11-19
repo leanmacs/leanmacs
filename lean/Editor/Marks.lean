@@ -33,7 +33,13 @@ the loop runs them once an event has been handled
   - The last row has no line break of its own, so it is removed only with
     the line break before it, as `dd` on the last line removes it. The
     only row of a text is never removed by an edit, since the same edit
-    is `dd`'s and `0D`'s on a text of one line.
+    is `dd`'s and `cc`'s on a text of one line.
+  - Where the edit alone cannot say which lines were deleted, the command
+    that knows erases their marks itself, as Vim's `del_lines` does: the
+    linewise delete those of all its lines (`dd` on a text's only line
+    among them) and the linewise change those of its lines after the
+    first (`Jumps.eraseRows`, called by `Editor/Evil/Operators.lean`). A
+    redo runs no command, so it erases by its edit alone.
   - A deletion of part of a row keeps the mark, which its marker carries
     to where the deletion left it.
 - **Undo and redo put the lowercase marks back** (Vim's `u_undoredo`,

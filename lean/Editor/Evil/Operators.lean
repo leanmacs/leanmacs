@@ -3,6 +3,7 @@ import Editor.Evil.Motions
 import Editor.Evil.Objects
 import Editor.Evil.Registers
 import Editor.Indent
+import Editor.Jumps
 
 /-!
 # Evil's operators
@@ -151,9 +152,9 @@ order:
 
 | | Cells that are not empty | No cell | Lines |
 |---|---|---|---|
-| `delete` | The register is the cells' text. They are deleted. The cursor goes to their start, rested | Nothing is done, and the register is as it was | The register is the lines, line-wise. They are deleted. The cursor goes to the first non-blank of the line now where the first was |
+| `delete` | The register is the cells' text. They are deleted. The cursor goes to their start, rested | Nothing is done, and the register is as it was | The register is the lines, line-wise. They are deleted, and the buffer's lowercase marks on them erased (`Jumps.eraseRows`). The cursor goes to the first non-blank of the line now where the first was |
 | `yank` | The register is the cells' text. The cursor goes to their start, rested | The register is the empty text. The cursor stays | The register is the lines, line-wise. The cursor goes to the operand's `rest`, rested |
-| `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive` and the text is not empty, when it is the empty text. The selection is a bar where the cells would start | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays. The selection is a bar at that line's start |
+| `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive` and the text is not empty, when it is the empty text. The selection is a bar where the cells would start | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays, and the buffer's lowercase marks on the lines after the first are erased (`Jumps.eraseRows`). The selection is a bar at that line's start |
 | `replace` | The text of the register the call names (`fetch`) goes in place of the cells, as it is, line breaks included. The cursor goes on the last cell put, or on the first when the text holds a line break, as a character-wise `P` leaves it. The unnamed register is the cells' text | The text is put where the cells would start, as for cells | The text goes in place of the lines, with the buffer's line ending added to a character-wise one; below a last line with no line break its last line break is left out, so the text ends the way it ended. The cursor goes to the first non-blank of the first line put. The unnamed register is the lines, line-wise |
 | `indent` | The rows from the first cell's through the last cell's | The row the cells would start on | The lines |
 
@@ -354,6 +355,7 @@ def delete : Vocabulary.Operator :=
             text.motion .lineFirstNonBlank (← text.offsetOf ⟨first - 1, 0⟩)
           else
             pure 0
+        Jumps.eraseRows call.target.window.buffer first last
         call.target.replaceCarrying ⟨lines.cut, lines.stop⟩ "" operand.before (cursorAt call after)
         settle call after
         store operand.register { text := lines.taken, linewise := true } }
@@ -385,6 +387,10 @@ def change : Vocabulary.Operator :=
           settle call 0
           return
         let lines ← linesOf call.target first last
+        -- The lines after the first are deleted, as Vim's `op_change`
+        -- deletes them, and the first is emptied, keeping its marks.
+        if first < last then
+          Jumps.eraseRows call.target.window.buffer (first + 1) last
         -- One line break stays: the lines' content goes, and not the last
         -- line's line break.
         unless lines.start == lines.content do

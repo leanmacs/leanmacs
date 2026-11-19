@@ -2993,8 +2993,12 @@ builds one sets `jumps` on its entry.
   last line does. So the first line of `3cc`, and of a charwise delete
   from a line's start into a later line, keeps its marks, as Vim's
   `op_change` and `op_delete` truncate that line and delete only the lines
-  after it. A deletion of part of the line keeps the mark at the column
-  the deletion left. The loop reads each mark's line once an event has been
+  after it. The linewise delete and change also erase the marks of the
+  lines they delete themselves, which the edit alone cannot tell apart
+  from a change (`Jumps.eraseRows`): so `dd` on a buffer's only line
+  erases its mark, as Vim's does, and `cc` there keeps it, and `3cc`
+  erases the marks of its lines after the first. A deletion of part of
+  the line keeps the mark at the column the deletion left. The loop reads each mark's line once an event has been
   handled and compares it with what the next event changed
   (`Editor/Marks.lean`, `Editor/Marks/Follow.lean`).
 - **Undo and redo put the lowercase marks back** (`u_undoredo`): each step
@@ -3011,15 +3015,15 @@ restarts (viminfo, shada); and `m` in the visual states.
 
 **Recorded departures**, not pinned against Vim:
 
-- **`dd` on a buffer's only line keeps its mark**, at the start of the
-  empty line left, where Vim erases it: a line is deleted only with a line
-  break, and the only line has none, so it is not told from a deletion of
-  its content. And the rule is read from the text alone: a line whose
-  content is removed with its line break by any edit is erased, where Vim
-  asks which command made the edit. So a mark on an empty line that `J`
-  or a backspace at the start of the next line joins away is erased, and
-  so is one whose line a charwise delete takes from its start to the start
-  of the next line; Vim keeps both on the joined line.
+- **Outside the linewise delete and change, a line's marks are erased by
+  the edit alone**, where Vim asks which command made it. An edit that
+  takes a line from its start to the start of a later line is `dd`'s, so
+  it erases the line's marks: a backspace or `C-w` at the start of a line
+  that joins away the empty line above it erases that empty line's mark,
+  and so does a charwise delete from a line's start through its line
+  break (`v j $ d`); Vim keeps both on the joined line. And a redo erases
+  by the edit it redoes, so redoing `3cc` keeps a mark of its last line on
+  the line left, where Vim's `u_undoredo` erases it.
 - **Text typed right at a place is typed before it**: the bias `after`
   that carries a place down with a line broken at it also moves it past a
   character typed at it, where Vim leaves a mark's column as it was.

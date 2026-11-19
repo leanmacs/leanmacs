@@ -59,6 +59,13 @@ def markUndoRows : List (String × String × String) :=
     ("m a j m b j m c g g 3 d d ` a", "|ab\ncd\nef\ngh", Evil.markNotSet),
     ("m a j m b j m c g g 3 d d ` b", "|ab\ncd\nef\ngh", Evil.markNotSet),
     ("m a j m b j m c g g 3 d d ` c", "|ab\ncd\nef\ngh", Evil.markNotSet),
+    -- The linewise delete erases the marks of the lines it deletes, the
+    -- only line of a text too, which an undo puts back; the linewise change
+    -- those of its lines after the first. A change of the only line, and a
+    -- redo of its delete, keep its mark, as Vim's do.
+    ("m a d d ` a", "a|b", Evil.markNotSet), ("m a d d u ` a", "a|b", "a|b"),
+    ("m a d d u C-r ` a", "a|b", "|"), ("m a c c <Escape> ` a", "a|b", "|"),
+    ("j j m a g g 3 c c <Escape> ` a", "|ab\ncd\nef\ngh", Evil.markNotSet),
     -- Undo puts a lowercase mark back on its line and column; redo erases
     -- it again, and undo puts it back again.
     ("m a d d u G ` a", "ab\nc|d\nef", "ab\nc|d\nef"),

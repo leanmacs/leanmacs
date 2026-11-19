@@ -39,6 +39,14 @@ commands, going to a place in a closed file, is the upper module's
   in every window's jumps and in the global marks, becomes a place in its
   file, with its row and its column in characters; a buffer with no file
   has its places dropped. Its own marks go with it.
+- **Erase rows** (`eraseRows`, Vim's `del_lines`, which runs
+  `mark_adjust` with `MAXLNUM` over the lines it deletes): a command that
+  deletes whole lines erases the buffer's lowercase marks on them, the
+  rows read before the edit. Global marks stay, as Vim's do: their markers
+  go to where the deletion left them. The linewise delete and change call
+  it (`Editor/Evil/Operators.lean`), since the edit alone does not say
+  which lines they delete (`Editor/Marks.lean`, "A mark's line is erased
+  when its line is deleted").
 - **Attach** (`attach`): once a buffer holds a file, the places of that
   file become places held by markers of its text again, at their row and
   column, clamped as a visit clamps (`Marks.offsetAt`).
@@ -53,6 +61,16 @@ namespace Editor.Jumps
 ("A place is marked where the cursor is", in the module docs). -/
 def mark (text : TextId) (offset : Nat) : TextM MarkerId :=
   text.mark (.anchor { offset, bias := .after })
+
+/-- Erases the lowercase marks of the buffer `id` that are on its rows
+`first` through `last` ("Erase rows", in the module docs). Nothing for a
+buffer that is not there. -/
+def eraseRows (id : BufferId) (first last : Nat) : EditorM Unit := do
+  let some buffer := (← editorState).buffer? id | return
+  for (char, marker) in buffer.marks do
+    let row := (← buffer.text.pointOf (← Marks.offsetOf marker)).row
+    if first ≤ row && row ≤ last then
+      discard <| id.setMark char none
 
 /-- The place of the cursor of `view`: a marker at the head of the primary
 range of its window's selection. `none` for a view with no window. -/

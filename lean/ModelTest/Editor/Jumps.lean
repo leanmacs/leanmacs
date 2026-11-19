@@ -1,4 +1,5 @@
 import ModelTest.Check
+import ModelTest.Support.Evil
 import ModelTest.Support.Jumps
 
 /-!
@@ -17,6 +18,28 @@ of the jump checks (`jumpedFrom`). -/
 def jumpsAfter (keys : String) : Option ((List String × Nat) × String) := do
   let driver ← jumpedFrom keys
   return (← jumpsOf driver, ← cursorOf driver)
+
+/-- The lowercase marks of buffer 0 and whether the global mark `A` is still
+set, after `Jumps.eraseRows` over rows `first` through `last` of a buffer
+over `ab`, `cd` and `ef` whose marks `a`, `b` and `c` are on rows 0, 1 and
+2 and whose global mark `A` is on row 1. -/
+def erasedRows (first last : Nat) : Option (List Char × Bool) :=
+  let start : TextM EditorState := do
+    let state ← evilState "ab\ncd\nef" 0
+    let text : TextId := ⟨0⟩
+    let marks ←
+      [('a', 0), ('b', 3), ('c', 7)].toArray.mapM fun (char, offset) => do
+          return (char, ← text.mark (.anchor { offset, bias := .after }))
+    let global ← text.mark (.anchor { offset := 4, bias := .after })
+    return { state with
+        buffers := state.buffers.modify 0 (·.map ({ · with marks }))
+        remembered.globalMarks := #[('A', .held ⟨0⟩ global)] }
+  let program : EditorM (List Char × Bool) := do
+    Jumps.eraseRows ⟨0⟩ first last
+    let state ← editorState
+    return (((state.buffer? ⟨0⟩).map (·.marks.toList.map (·.1))).getD [],
+        (state.globalMark? 'A').isSome)
+  (dispatchedFrom program start).map (·.1)
 
 /-- The checks of recording, cleaning up, detaching and attaching the places
 of a window's jump list, on the loop's driver over the editor's models and
@@ -79,6 +102,10 @@ def jumpChecks : List Check :=
         return (jumpsAfter "C-j 4 C-j v").map (·.1) == some (["0@4:0"], 1) &&
             (jumpsAfter "C-j 4 C-j v C-j s C-j v").map (·.1) == some (["0@4:0", "0@0:0"], 2) &&
             jumpsAfter "C-j 4 C-j V" == some (([], 0), "1@1:2") &&
-            jumpsAfter "C-j 4 C-j V C-j s C-j V" == some (([], 0), "1@1:2") }]
+            jumpsAfter "C-j 4 C-j V C-j s C-j V" == some (([], 0), "1@1:2") },
+    { name :=
+        "erasing rows erases the buffer's lowercase marks on them and keeps its others and the global marks"
+      run :=
+        return erasedRows 1 2 == some (['a'], true) && erasedRows 0 0 == some (['b', 'c'], true) }]
 
 end ModelTest

@@ -307,8 +307,9 @@ fails off either end, and `:help jumplist`'s worked example step by step.
 
 The rules of marks across line deletions and undo (`Editor/Marks.lean`)
 are checked pure (`markRuleChecks`): a deletion of a whole line with its
-line break removes it and one of part of it does not, the last row only
-with the line break before it; a node made keeps the marks at the
+line break removes it and one of part of it does not, the row an edit
+starts at the start of only when the edit stops at a row's start, the last
+row only with the line break before it; a node made keeps the marks at the
 boundary, an undo and a redo across it put back what it kept and swap in
 the marks before the move, and a move across more than one edge or to
 another tree puts back nothing.
@@ -523,7 +524,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   being one at the next move, a move past either end, a closed buffer's
   places detached into its file or dropped, attached again when the file
   is loaded, opening a file, a visit and switching buffers each recording
-  a jump, and a visit at a row's first non-blank or that records none;
+  a jump, a visit at a row's first non-blank or that records none, and
+  erasing rows' lowercase marks;
 - `jumpGoChecks`: going through the list to another buffer or a closed
   file (`Editor/Jumps/Go.lean`) on that driver: the index moving at once,
   the cursor at the entry once the load lands, and no entry recorded by
@@ -848,7 +850,10 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   the reopened buffer's text so that an edit above it carries it, and
   dropped with a closed buffer that held no file; a mark erased when its
   line is deleted, on the last line too and for a global mark, kept by a
-  deletion of part of its line, put back by undo at its line and column,
+  deletion of part of its line, kept on the first line of `3cc` and of a
+  charwise delete across lines, erased by `3dd` on every line, by `dd` on
+  a text's only line and by `3cc` on the lines after the first, kept by
+  `cc` on the only line and by a redo of its `dd`, put back by undo at its line and column,
   erased again by redo and put back again by undo (`markUndoRows`);
 - `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
   All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
