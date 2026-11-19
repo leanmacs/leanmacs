@@ -27,10 +27,9 @@ binding, and exits 0 when the text read back is the package's greeting with
 the mark appended, 1 when it is not, and 2 for a command line that is not
 the two directories. -/
 def main (arguments : List String) : IO UInt32 := do
-  let [_sysroot, _oleans] := arguments
-    | do
-      IO.eprintln "usage: GreetingTest-Linked <sysroot> <core olean dir>"
-      return 2
+  if arguments.length != 2 then
+    IO.eprintln "usage: GreetingTest-Linked <sysroot> <core olean dir>"
+    return 2
   match (← greet.runReal (← Editor.RealTexts.new)).1 with
   | .ok text =>
     if text == Greeting.helloText ++ "!" then

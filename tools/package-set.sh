@@ -2,8 +2,8 @@
 # Runs one step of the gate over every package of a package set
 # (docs/design/packages.md, "The package set and its build";
 # docs/dev-practices/the-gate.md, "The package steps"): the core's tests,
-# lint and headless fixtures each have a step here that does the same for a
-# package outside the core.
+# lint, format check and headless fixtures each have a step here that does
+# the same for a package outside the core.
 #
 # A package's tests, by convention: its Lake test driver holds the tests
 # that need no Rust library; the module `<Name>Test.Linked`, when it has
@@ -13,6 +13,8 @@
 #
 #   tools/package-set.sh test <set dir>
 #   tools/package-set.sh build <set dir>
+#   tools/package-set.sh fmt <set dir>
+#   tools/package-set.sh format <set dir>
 #   tools/package-set.sh run <set dir> <sysroot> <core olean dir>
 #
 # Run it in `lean/`. The set's directory holds the set's lakefile. The
@@ -31,6 +33,12 @@
 #   and, for a package with a linked test, its executable
 #   (`lake -d <package> build --wfail +<Name>Test.Linked:editorLinked`, a
 #   facet the core defines).
+# - `fmt`: `lean-fmt format --check` and `lean-fmt check` over each package
+#   (`--root <package>`), run from the formatter's host
+#   (`lake -d ../tools/lean-fmt exe lean-fmt`); it changes nothing. The
+#   formatter requires a `lean-toolchain` in the root it is given, so each
+#   package holds a copy of the pin. `format` rewrites instead: `lean-fmt
+#   format` and `lean-fmt check --fix`.
 # - `run`: for each package, its linked test, when it has one, run in the
 #   package's directory with the toolchain's directory and the core's
 #   `.olean` directory as its arguments; then each of its headless fixtures,
@@ -47,7 +55,7 @@
 set -eu
 
 usage() {
-  echo "usage: tools/package-set.sh test|build <set dir>" >&2
+  echo "usage: tools/package-set.sh test|build|fmt|format <set dir>" >&2
   echo "       tools/package-set.sh run <set dir> <sysroot> <core olean dir>" >&2
   exit 2
 }
@@ -57,7 +65,7 @@ step=$1
 set_dir=$2
 shift 2
 case $step in
-  test | build) [ "$#" -eq 0 ] || usage ;;
+  test | build | fmt | format) [ "$#" -eq 0 ] || usage ;;
   run) [ "$#" -eq 2 ] || usage ;;
   *) usage ;;
 esac
@@ -79,6 +87,8 @@ if [ -z "$packages" ]; then
 fi
 
 tab=$(printf '\t')
+# The formatter's host, from `lean/`.
+host=../tools/lean-fmt
 
 case $step in
   build)
@@ -107,6 +117,14 @@ while IFS=$tab read -r name dir linked linked_exe <&3; do
       if [ "$linked" != - ]; then
         lake -d "$dir" build --wfail "+$linked:editorLinked"
       fi
+      ;;
+    fmt)
+      lake -d "$host" exe lean-fmt format --check --root "$dir"
+      lake -d "$host" exe lean-fmt check --root "$dir"
+      ;;
+    format)
+      lake -d "$host" exe lean-fmt format --root "$dir"
+      lake -d "$host" exe lean-fmt check --fix --root "$dir"
       ;;
     run)
       if [ "$linked" != - ]; then

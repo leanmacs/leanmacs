@@ -1,0 +1,7 @@
+# lean-fmt's config for this package (`mise run lean-fmt`, through
+# tools/package-set.sh fmt). The files under `tests/` are the headless
+# fixtures' config chunks: Lean the editor elaborates on its config base at
+# runtime, with no import line, so they are no modules of this package and
+# do not compile on their own. Everything else is checked with the defaults,
+# as the core is.
+exclude = ["tests/**"]

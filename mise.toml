@@ -146,7 +146,9 @@ run = [
 # requires the core fetches none (docs/design/packages.md, "The package set
 # and its build"). `lake -d ../tools/lean-fmt exe` builds and runs the
 # formatter from the host, which keeps the clone under lean/.lake/packages,
-# and `--root .` names the package it is run over, the core. Both tasks wait
+# and `--root .` names the package it is run over, the core; the last line
+# of each task runs it over each package of the fixture set, each of which
+# holds the copy of the pin the formatter requires of a root. Both tasks wait
 # for `lean`, so two Lake builds never run in lean/ at once.
 [tasks.lean-fmt]
 description = "Check Lean formatting and lean-fmt's lints; changes nothing"
@@ -155,6 +157,9 @@ dir = "lean"
 run = [
   "lake -d ../tools/lean-fmt exe lean-fmt format --check --root .",
   "lake -d ../tools/lean-fmt exe lean-fmt check --root .",
+  # The same two over each package of the fixture set (tools/package-set.sh;
+  # docs/dev-practices/the-gate.md, "The package steps").
+  "sh ../tools/package-set.sh fmt ../tests/packages",
 ]
 
 [tasks.lean-format]
@@ -164,6 +169,7 @@ dir = "lean"
 run = [
   "lake -d ../tools/lean-fmt exe lean-fmt format --root .",
   "lake -d ../tools/lean-fmt exe lean-fmt check --fix --root .",
+  "sh ../tools/package-set.sh format ../tests/packages",
 ]
 
 # Tracked files only, so Lake's fetched packages and build output are never
