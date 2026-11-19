@@ -3039,6 +3039,13 @@ restarts (viminfo, shada); and `m` in the visual states.
   position** when the command is rolled back: the loop restores the
   windows' selection and scroll markers alone
   ([concurrency.md](concurrency.md), "Rollback").
+- **A counted undo or redo puts back no lowercase mark**: `2u` and
+  `3 C-r` move across more than one step of the undo tree in one publish,
+  and only a move across one step puts its marks back
+  (`Marks.History.follow`), so `m a`, `dd`, `x` on another line and `2u`
+  leave `` `a `` saying E20, where Vim's `u_undoredo` puts back the marks
+  of each step it undoes. Undoing one step at a time puts them back. The
+  fix is task `marks-counted-undo-redo-restore`.
 
 ### Tab commands as built
 

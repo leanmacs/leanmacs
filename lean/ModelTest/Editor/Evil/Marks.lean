@@ -175,6 +175,12 @@ def evilMarkChecks : List Check :=
         "a lowercase mark whose line is deleted is erased and a global mark stays, and one of a line deleted in part keeps the column the deletion left; undo puts a lowercase mark back where it was before the step, and redo erases it again; the step an insert session makes keeps the marks from before the session"
       run := evilRows markUndoRows },
     { name :=
+        "recorded departure (task marks-counted-undo-redo-restore): a counted undo crosses more than one edge of the undo tree and puts back no lowercase mark, so m a, dd, x elsewhere and 2u leave ` a saying E20, where Vim puts the mark back; undoing one step at a time puts it back"
+      run :=
+        evilRows
+          [("m a d d j x 2 u ` a", "ab\nc|d\nef\ngh", Evil.markNotSet),
+            ("m a d d j x u u G ` a", "ab\nc|d\nef\ngh", "ab\nc|d\nef\ngh")] },
+    { name :=
         "under an operator a mark that is not set gives the operator up, saying so, with the text as it was"
       run :=
         pure <|
