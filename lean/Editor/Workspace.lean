@@ -42,7 +42,7 @@ It imports only the plain trees and the pure part of a child's environment
   `name@<the root's last component>` when it is detached or has no branch,
   so two workspaces of one project are told apart. The rule is
   `Workspace.labelOf`, which a worktree the table does not know yet is
-  labelled by too.
+  labelled by too (`Editor/Workspace/Projects.lean`).
 - **The finder's shared rules** are here too, pure, so the model and the
   real finder (`Editor/Workspace/Model.lean`, `Editor/Workspace/Finder.lean`)
   take them from one place: the config adapter (`fromConfig?`, the deepest

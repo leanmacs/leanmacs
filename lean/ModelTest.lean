@@ -147,6 +147,7 @@ import ModelTest.Editor.Workspace.Attach
 import ModelTest.Editor.Workspace.Contract
 import ModelTest.Editor.Workspace.FindFile
 import ModelTest.Editor.Workspace.Lister
+import ModelTest.Editor.Workspace.Projects
 
 /-!
 # The model tests
@@ -957,7 +958,14 @@ Listing a workspace's files is checked in Lean alone too:
   an absolute typed answer opened as it is, a refused prompt said,
   the label, the working directory of a buffer with no workspace, the
   refusals, that no step runs a process, and a fallback that exits 1
-  still listing what it printed.
+  still listing what it printed;
+- `projectWorkspaceChecks`: the project's workspaces
+  (`Editor/Workspace/Projects.lean`), pure: the worktrees in the reply's
+  order, those not found labelled by `Workspace.labelOf`, then the table's
+  others, one per location, the current one last; the table's label for a
+  worktree it knows, a detached worktree by its directory, two entries of
+  one label told apart by their annotation, and what is asked through its
+  arguments' round trip.
 -/
 
 namespace ModelTest
@@ -1139,6 +1147,7 @@ def checks : List Check :=
     workspaceChecks ++
     workspaceListerChecks ++
     findFileChecks ++
+    projectWorkspaceChecks ++
     modeMarkerChecks ++
     shellChecks ++
     readOnlyChecks ++
