@@ -1351,8 +1351,64 @@ stops at the first that fails:
   roadmap. A feature that is still the core's (the ex line, files,
   version control and the rest) is imported by core modules, and the
   module map records by which. And it says nothing of what a package
-  imports: the check that a package imports only the core's API comes
-  with the first package that is built outside the core.
+  imports: that is the package imports check, below.
+
+## The package imports check
+
+```sh
+cd lean && sh ../tools/package-imports-check.sh ../tests/packages
+```
+
+Part of `mise run ffi-test`, after the core imports check. A package
+outside the core may name, in an `import` line, only what the rule of
+[packages.md](../design/packages.md), "What a package may import", allows
+it. The check applies that rule to the packages of a set, on Lake's module
+graph.
+
+| Importing module | May import, of the core's Lake package |
+|---|---|
+| A module of the package's library | The core's API: any module named `Editor.…` that is neither internal nor a test double |
+| A test module (under `<P>Test`) | The API and the test doubles |
+| The root of the linked test (`<P>Test.Linked`) | The API, the test doubles, the real bindings of the ports (`….Real`), the headless host, the config base and the core's entry module |
+
+- **It asks Lake and reads no source text.** `lake -d <set dir> query
+  :editorPackageImports`, a facet the core's lakefile defines, prints one
+  line for each direct import of a module of the core's Lake package by a
+  module of a package the gate's steps run over: the package, the
+  importing module, its kind (`library`, `test`, `linked`) and the module
+  imported. Lake reads the modules' headers and builds nothing.
+- **The lists are in the script**, as names and patterns: the test
+  doubles, the internal modules, each with the reason printed for it, and
+  what the linked test may import beyond the doubles. They are named,
+  never derived, as the core imports check's moving names are.
+- **It is about direct imports.** A module an importable module imports is
+  visible to a package's code; the rule limits what a package depends on
+  by name.
+- **Exit 0** when every import is allowed, printing nothing. **Exit 1**
+  after printing each refused import, one a line: `package-imports-check:
+  <package>: <module> (<kind>) imports <import>: <reason>`.
+- **The gate holds the rule itself to a fixture.** With `--lines <file>`
+  the script reads the lines from a file instead of asking Lake. `ffi-test`
+  hands it `tests/package-imports/lines`, written by hand with a line for
+  each branch of the rule, and requires exit 1 and exactly
+  `tests/package-imports/expected`: every refused import with its reason,
+  and none of the allowed ones (a library importing an API module; a test
+  importing a model, a contract, the loop's driver beside the loop, and
+  `Editor.Config.Packages` beside another module of the config session; a
+  linked test importing a real binding, the headless host, the base and
+  the entry module). So a change to a list that lets an internal module
+  through, or refuses an allowed one, fails the gate.
+- **The sets it is run over**: the fixture set, `tests/packages/`, which
+  requires the default set and so reaches every default package, and the
+  user-side link's set, `tests/user-link/`.
+- **It refuses to pass over nothing.** A command line it does not take, a
+  query Lake fails, a line that is not four fields with a kind it knows,
+  and no line at all are exit 2. `ffi-test` shows the last: the set
+  `tests/empty-set` holds no package, and the check must exit 2 and say
+  there is nothing to check.
+- **What it does not claim.** It checks imports of the core's modules. A
+  package's imports of another package's modules are Lake's to resolve
+  from the `require`s, and no rule limits them yet.
 
 ## The package steps
 

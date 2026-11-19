@@ -111,6 +111,7 @@ built from one:
 | `editorRoot` | a package, the set | For `lake query`: writes the set's root module and prints its path; links and builds nothing |
 | `editorRootImports`, `editorRootTransImports` | a package, the set | For `lake query`: the generated root's direct and transitive imports, one module a line |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
+| `editorPackageImports` | a package, the set | For `lake query`: each direct import of a core module by a module of those packages, one a line, with the module's kind (`library`, `test`, `linked`); what the package imports check reads |
 
 `linkAsEditor` is the one link: a root module's object and those of every
 module it imports, with their symbols exported (`-rdynamic`), then the glue
@@ -303,16 +304,14 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   `lean-fmt.toml` in the package (`exclude = ["tests/**"]`): a config chunk
   is Lean with no import line, elaborated on the config base at runtime,
   and does not compile as a module of the package.
-- **The fixture packages' tests import internal modules.** Their model
-  tests read what a package registers through `Config.State.ofPackages`
-  (`Editor.Config.Packages`, `Editor.Config.Reload`), and the linked test
-  runs a command on the real text binding (`Editor.Text.Real`), starts the
-  headless host (`Editor.Headless`), shuts the library down with the
-  bindings that come with it, and names the core's entry module for the
-  set's packages. The import
-  rule ("What a package may import", below) does not allow a package's
-  tests those. Nothing checks the rule yet; phase 5, which adds the check,
-  settles what a package's tests may import.
+- **The fixture packages' tests pass the package imports check** ("What
+  a package may import", below). Their model tests read what a package
+  registers through `Config.State.ofPackages` (`Editor.Config.Packages`,
+  a test double), and the linked test runs a command on the real text
+  binding (`Editor.Text.Real`), starts the headless host
+  (`Editor.Headless`), links the config base and names the core's entry
+  module for the set's packages, each of which the root of a linked test
+  may import and no other module of a package may.
 
 ### The fixture set
 
@@ -402,8 +401,22 @@ says which side of the rule its modules are on.
 - **A package's tests may also import the core's test doubles**: the pure
   models of the ports (`….Model`), the contracts and cases (`….Contract`,
   `….Cases`), the fakes (`Editor.Completion.Fake`, `Editor.Job.Fake`), the
-  test scheme (`Editor.InputScheme.Test`) and the loop's driver
-  (`Editor.Loop.Driver`).
+  test scheme (`Editor.InputScheme.Test`), the loop's driver
+  (`Editor.Loop.Driver`), the reading of what a package registers
+  (`Editor.Config.Packages`: `Package.registered`,
+  `Config.State.ofPackages`) and the theme picture check
+  (`Editor.Themes.Picture`). A package's tests are the modules under
+  `<P>Test`.
+- **The root of a package's linked test may import a little more, and
+  only it**: the real bindings of the ports (`….Real`), the headless host
+  (`Editor.Headless`), the config base (`Editor`) and the core's entry
+  module (`EditorCore.EditorPackage`). The module `<P>Test.Linked` is an
+  executable's root, linked as the editor is, and running a port against
+  the library or a host over a set's packages is what it is for. The raw
+  bindings (`Editor.Ffi…`), the loop and the rest of the config session
+  stay refused to it, as do the window hosts' real modules. A harness that
+  hid the host from the linked test would be a new mechanism; none is
+  built.
 - **Internal modules** are those that exist to run the editor and not to be
   written against:
   - the hosts and the executable's modules (`Editor.Main`,
@@ -412,7 +425,8 @@ says which side of the rule its modules are on.
     `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup`);
   - the loop and its dispatch (`Editor.Loop`, `Editor.Command.Dispatch`,
     `Editor.Event.Queue`, `Editor.State.Outbox`);
-  - the config session (`Editor.Config.*`);
+  - the config session (`Editor.Config.*`, but for `Editor.Config.Packages`,
+    a test double);
   - the raw bindings (`Editor.Ffi`, `Editor.Ffi.*`);
   - the real bindings of the ports and what runs them (`….Real`,
     `Editor.Clipboard.InProcess`, `Editor.Display.Recorder`,
@@ -430,16 +444,26 @@ says which side of the rule its modules are on.
 - **`Editor`, the config base, is not part of the API.** A package imports
   the modules it uses, not the base. Nor is `EditorCore.EditorPackage`,
   which is no module of the core: it imports the packages, and no package
-  imports it.
+  imports it. Nor is any other module of the core's Lake package that is
+  not named `Editor.…`, such as the core's own test modules. The root of a
+  linked test alone names the base and the entry module, above.
 - **A feature still in the core is importable where its row says so.** The
   compile mode imports `Editor.Shell` and `Editor.Workspace.Modes`, which
   are features' modules; until those features move they are core modules a
   package may import.
-- **No module lists the API and no check enforces it yet.** This document
-  is the authority, written as a rule a check on Lake's module graph can
-  apply. The check that a package imports only API modules comes with the
-  first package built outside the core (phase 5), which extends the API
-  here if it needs to.
+- **The package imports check enforces the rule**
+  (`tools/package-imports-check.sh`, in `mise run ffi-test`;
+  [the-gate.md](../dev-practices/the-gate.md), "The package imports
+  check"). It asks Lake for each direct import of a core module by a
+  module of a set's packages, with whether the importing module is the
+  package's library's, a test's or the linked test's root
+  (`lake -d <set dir> query :editorPackageImports`), and refuses the ones
+  the rule does not allow, each with its reason. **The lists are in the
+  script**: the test doubles, the internal modules, and what the linked
+  test may import beyond them, as names and patterns. No module lists the
+  API: a core module that is neither internal nor a test double is part
+  of it. A change to the rule changes the script, this section and the
+  lines the gate holds the script to (`tests/package-imports/`).
 
 Checked against the graph at `6ba99de5`: every core module the moving
 modules import directly is importable. The compile mode's modules import
@@ -453,9 +477,7 @@ tests run, is importable.
 **The moving features' tests import internal modules today**, which the
 rule does not allow a package's tests. They are recorded here, not allowed
 by widening the rule; phases 5 and 6 extend the API, or change the tests,
-when they move them. The fixture packages' tests do the same ("A
-package's tests and the gate's steps over them", above), so the question
-is already open for a package outside the core:
+when they move them:
 
 - the compile mode's tests (`ModelTest.Editor.Compile` and the modules
   under it, `ConfigTest.Editor.Compile`, `ContractTest.Editor.Compile` and
@@ -598,7 +620,8 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Core` | 1 | core | no |
 | The hosts and the executable's modules: `Editor.Main`, `Editor.Headless`, `.Headless.CommandLine`, `Editor.Window`, `.Window.Real`, `Editor.WindowCheck`, `.WindowCheck.Real`, `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup` | 10 | core | no |
 | The loop and its dispatch: `Editor.Loop`, `Editor.Command.Dispatch`, `Editor.Event.Queue`, `Editor.State.Outbox` | 4 | core | no |
-| The config session: `Editor.Config.Diagnostic`, `.Directory`, `.Display`, `.Elaborate`, `.Owner`, `.Packages`, `.Registry`, `.Reload`, `.Session`, `.Stores` | 10 | core | no |
+| The config session: `Editor.Config.Diagnostic`, `.Directory`, `.Display`, `.Elaborate`, `.Owner`, `.Registry`, `.Reload`, `.Session`, `.Stores` | 9 | core | no |
+| What a package registers, read by a test: `Editor.Config.Packages` | 1 | core | in tests |
 | The raw bindings: `Editor.Ffi` and the 26 modules under it | 27 | core | no |
 | The real bindings of ports and what runs them: `Editor.Clipboard.Real`, `.Clipboard.InProcess`, `Editor.Command.Real`, `Editor.Display.Real`, `.Display.Recorder`, `Editor.Fuzzy.Real`, `Editor.Job.Real`, `.Job.Runner`, `.Job.Jobs`, `.Job.Table`, `.Job.Pool`, `Editor.SyntaxTree.Real`, `Editor.Text.Real`, `Editor.Watch.Real` | 14 | core | no |
 | The models: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `.Model.Json`, `.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 14 | core | in tests |

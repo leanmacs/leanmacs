@@ -1,0 +1,16 @@
+package-imports-check: demo: Demo (library) imports Editor.Loop: internal: the loop or its dispatch
+package-imports-check: demo: Demo (library) imports Editor.Text.Model: a test double, which only a package's tests may import
+package-imports-check: demo: Demo (library) imports EditorCore.EditorPackage: the core's entry module, which no package imports
+package-imports-check: demo: Demo.Commands (library) imports Editor.Shell.Compiled: internal: it defines a package still in the core
+package-imports-check: demo: DemoTest.Demo (test) imports Editor.Loop: internal: the loop or its dispatch
+package-imports-check: demo: DemoTest.Demo (test) imports Editor.Config.Reload: internal: the config session
+package-imports-check: demo: DemoTest.Demo (test) imports Editor.Text.Real: internal: a real binding of a port, or what runs one
+package-imports-check: demo: DemoTest.Demo (test) imports Editor: the config base, which is not part of the API
+package-imports-check: demo: DemoTest.Demo (test) imports Editor.Internal.Thing: internal: it is under Editor.Internal
+package-imports-check: demo: DemoTest.Demo (test) imports ModelTest.Check: no module of the editor: the core's Lake package holds it outside Editor
+package-imports-check: demo: DemoTest.Demo (test) imports Editor.Core: internal: the core's root
+package-imports-check: demo: DemoTest.Linked (linked) imports Editor.Ffi.Display: internal: a raw binding
+package-imports-check: demo: DemoTest.Linked (linked) imports Editor.Loop: internal: the loop or its dispatch
+package-imports-check: demo: DemoTest.Linked (linked) imports Editor.Config.Session: internal: the config session
+package-imports-check: demo: DemoTest.Linked (linked) imports Editor.Window.Real: internal: a host or a module of the executable
+package-imports-check: other: Other (library) imports Editor.Ffi: internal: a raw binding

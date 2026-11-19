@@ -424,6 +424,47 @@ package_facet editorPackages pkg : Array String := do
     lines := lines.push s!"{dep.baseName.toString (escape := false)}\t{dep.dir}\t{linked}"
   return Job.pure lines
 
+/-- The direct imports of the core's modules by the packages of a set, for
+the package imports check (`tools/package-imports-check.sh`;
+`lake -d <set dir> query :editorPackageImports`;
+`docs/design/packages.md`, "What a package may import"). For each package
+a gate step runs over (`editorPackages`), each module of its libraries and
+each module it imports directly that is a module of this Lake package, the
+core's, one line, its fields separated by tabs: the package's name, the
+importing module, that module's kind and the module imported. The kind is
+`linked` for the root of the package's linked test (`linkedTestModule?`),
+`test` for any other module under `<P>Test`, and `library` for the rest.
+It reads each module's header, as Lake does to resolve imports, and builds
+nothing. -/
+package_facet editorPackageImports pkg : Array String := do
+  let ws ← getWorkspace
+  let mut jobs : Array (Job (Array String)) := #[]
+  for dep in setPackages ws pkg do
+    if dep.keyName == __name__ || !dep.remoteUrl.isEmpty || dep.leanLibs.isEmpty then
+      continue
+    let name := dep.baseName.toString (escape := false)
+    let testRoot : Name :=
+      match toUpperCamelCase dep.baseName with
+      | .str namespace_ base => .str namespace_ (base ++ "Test")
+      | other => other
+    let kindOf (mod : Module) : String :=
+      if mod.name == .str testRoot "Linked" then "linked"
+      else if testRoot.isPrefixOf mod.name then "test"
+      else "library"
+    for lib in dep.leanLibs do
+      let job ←
+        (← lib.modules.fetch).bindM fun mods => do
+          let lines ←
+            mods.mapM fun mod => do
+              (← mod.imports.fetch).mapM fun imports =>
+                return imports.filterMap fun imported =>
+                    if imported.pkg.keyName == __name__ then
+                      some s!"{name}\t{mod.name}\t{kindOf mod}\t{imported.name}"
+                    else none
+          return (Job.collectArray lines).map (·.flatten)
+      jobs := jobs.push job
+  return (Job.collectArray jobs).map (·.flatten)
+
 /-- The checks of the boundary with the Rust library (`FfiTest.lean`), linked
 exactly like the editor (`linkAsEditor`): `supportInterpreter` exports the
 executable's symbols, so interpreted config can find compiled definitions

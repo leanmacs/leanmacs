@@ -212,7 +212,7 @@ run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xa
 # temporary repositories, takes about 15 s on a developer's Mac and 50 to
 # 60 s on the macOS runner while the gate's other tasks run beside it.
 [tasks.ffi-test]
-description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh) and that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, and each fixture package's linked test and headless fixtures (tools/package-set.sh)"
+description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh) and that a package imports only the core's API (tools/package-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, and each fixture package's linked test and headless fixtures (tools/package-set.sh)"
 depends = ["lean"]
 dir = "lean"
 timeout = "180s"
@@ -268,6 +268,27 @@ run = [
   "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Setup 2>&1) || status=$?; test \"$status\" -eq 3 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --base Editor.Core 2>&1) || status=$?; test \"$status\" -eq 4 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --elaborator Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 2 && test \"${out#core-imports-check: no root of the build}\" != \"$out\"; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # A package imports only what a package may import of the core, on Lake's
+  # module graph (tools/package-imports-check.sh;
+  # docs/dev-practices/the-gate.md, "The package imports check"): a
+  # package's library names modules of the core's API alone, its tests may
+  # also name the core's test doubles, and the root of its linked test what
+  # an executable linked as the editor is needs. First the rule itself, on
+  # lines written by hand (tests/package-imports/lines), one for each
+  # branch of it: it must exit 1 and print exactly
+  # tests/package-imports/expected, each refused import with its reason
+  # and no allowed one.
+  "status=0; out=$(sh ../tools/package-imports-check.sh --lines ../tests/package-imports/lines 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/package-imports/expected -; } || { echo \"ffi-test: the package imports check exited $status on tests/package-imports/lines\"; exit 1; }",
+  # Then the packages: those of the fixture set (tests/packages/), which
+  # requires the default set and so reaches the default packages, and the
+  # package of the user-side link's set (tests/user-link/). One `lake
+  # query` each, which builds nothing.
+  "sh ../tools/package-imports-check.sh ../tests/packages",
+  "sh ../tools/package-imports-check.sh ../tests/user-link",
+  # And it refuses to pass over nothing: the set tests/empty-set holds no
+  # package, so there is no line to check and it must exit 2, saying so.
+  # Its output is shown only when it does not.
+  "status=0; out=$(sh ../tools/package-imports-check.sh ../tests/empty-set 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -q 'so there is nothing to check'; } || { printf '%s\\n' \"$out\"; exit 1; }",
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
   # developer's shell must not reach it.
