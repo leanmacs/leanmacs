@@ -155,6 +155,7 @@ import ModelTest.Editor.WindowCommands
 import ModelTest.Editor.WorkingSet
 import ModelTest.Editor.WorkingSet.Places
 import ModelTest.Editor.WorkingSet.Refind
+import ModelTest.Editor.WorkingSet.Run
 import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
 import ModelTest.Editor.Workspace.Contract
@@ -1070,7 +1071,15 @@ alone too:
   markers, closing its buffer detaches it as edited, opening the file
   again holds it again, or leaves it drifted when another program removed
   its text, and nothing is attached while the workspace's sets are not
-  read.
+  read;
+- `workingSetRunChecks`: `working-set-add` and `working-set-open`
+  (`Editor/WorkingSet/Run.lean`) on that driver, the first acceptance
+  criterion of navigation-and-windows phase 5: a linewise selection added
+  and opened as the set's buffer, edited through it, visited and returned
+  from; a row of project search's results pinned as its file's range; a
+  selection across two files refused; a cursor's row; a range added twice;
+  overlapping ranges in one excerpt; the prompt; and a set there is none
+  of.
 
 Listing a workspace's files is checked in Lean alone too:
 
@@ -1243,6 +1252,7 @@ def checks : List Check :=
     workingSetChecks ++
     workingSetRefindChecks ++
     workingSetPlaceChecks ++
+    workingSetRunChecks ++
     driverChecks ++
     promptChecks ++
     candidateChecks ++

@@ -82,6 +82,7 @@ import Editor.Themes
 import Editor.Watch
 import Editor.Window
 import Editor.WindowCommands.Compiled
+import Editor.WorkingSet.Run
 import Editor.Workspace
 import Editor.Workspace.Attach
 import Editor.Workspace.FindFile
@@ -2014,6 +2015,21 @@ def shippedChecks (_ : Unit) : List Check :=
               (fun name => (registry.find? name).any (·.owner == .compiled)) &&
             shipped.modes.any (·.name == ProjectSearch.modeName) &&
             [ProjectSearch.job, ProjectSearch.loadJob].all fun name =>
+              registry.jobs.any fun entry =>
+                entry.registration.name == name && entry.owner == .compiled },
+    { name :=
+        "the executable's hosts start with working-set-add, working-set-open and working-set-visit registered compiled, the mode working-set, and the job working-set-files"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return [WorkingSet.addName, WorkingSet.openName, WorkingSet.visitName].all
+              (fun name => (registry.find? name).any (·.owner == .compiled)) &&
+            shipped.modes.any (·.name == WorkingSet.modeName) &&
+            [WorkingSet.filesJob].all fun name =>
               registry.jobs.any fun entry =>
                 entry.registration.name == name && entry.owner == .compiled },
     { name :=

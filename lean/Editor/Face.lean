@@ -375,6 +375,7 @@ def Palette.theme (palette : Palette) : Theme :=
       on "search-match" palette.paper palette.yellow,
       defined "review-unexamined"
         { underline := some { style := .single, color := some palette.orange } },
+      defined "working-set-drifted" { foreground := some palette.faint, slant := some .italic },
       defined "block-header"
         { foreground := some palette.strong, background := some palette.raised,
           weight := some 700 }]

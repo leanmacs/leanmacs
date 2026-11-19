@@ -98,6 +98,7 @@ dark names, and `+` marks a definition appended after the shared ones
 | `gutter` | base01 on base02 | base01 on base02 | Vim `LineNr`; Emacs `fringe` |
 | `search-match` | base03 on yellow | base03 on yellow | Vim `Search` and Emacs `isearch`: yellow reversed |
 | `review-unexamined` | orange single underline | orange single underline | Neither theme has one. The shared mapping is kept |
+| `working-set-drifted` | base01 italic | base01 italic | Neither theme has one. The shared mapping is kept |
 | `block-header` | base1 on base02, bold | base1 on base02, bold | The specification's highlighted pair `base02:base1`, its own example being Vim's folded text |
 
 **The badges follow lualine.nvim**, since neither of Schoonover's themes

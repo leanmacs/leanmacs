@@ -35,6 +35,7 @@ import Editor.VersionControl.Compiled
 import Editor.Watch.Real
 import Editor.Window
 import Editor.WindowCommands.Compiled
+import Editor.WorkingSet.Compiled
 import Editor.Workspace.Compiled
 
 /-!
@@ -228,7 +229,11 @@ as before, so reload and job completion work as they did.
   `project-search-found` its job posts each delivery as,
   `project-search-symbol` and `project-search-visit`, the mode
   `project-search` of its results buffer, and the jobs `project-search` and
-  `project-search-load`. And it is handed the
+  `project-search-load`. And it is handed the working sets
+  (`WorkingSet.commands`, `WorkingSet.modes`, `WorkingSet.jobs`,
+  `Editor/WorkingSet/Compiled.lean`): `working-set-add`,
+  `working-set-open` and `working-set-visit`, the mode `working-set` of a
+  set's buffer, and the job `working-set-files`. And it is handed the
   status buffer's commands, jobs and mode (`VersionControl.commands`,
   `VersionControl.jobs`, `VersionControl.modes`,
   `Editor/VersionControl/Compiled.lean`): `vc-status` and the commands of
@@ -2691,6 +2696,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         BindingSearch.commands ++
         Workspace.commands ++
         ProjectSearch.commands ++
+        WorkingSet.commands ++
         Shell.commands ++
         Compile.commands ++
         AtPoint.commands ++
@@ -2699,12 +2705,14 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     bindings := FrameCommands.bindings ++ Menu.bindings ++ Workspace.bindings
     menu := some Menu.standard
     compiledJobs :=
-      Files.jobs ++ Workspace.jobs ++ ProjectSearch.jobs ++ Shell.jobs ++ Compile.jobs ++
+      Files.jobs ++ Workspace.jobs ++ ProjectSearch.jobs ++ WorkingSet.jobs ++ Shell.jobs ++
+        Compile.jobs ++
         Completion.Words.jobs ++
         VersionControl.jobs ++
         VersionControl.gutterJobs
     modes :=
       Minibuffer.modes ++ Compile.modes ++ VersionControl.modes ++ ProjectSearch.modes ++
+        WorkingSet.modes ++
         Language.modes
     ex := Ex.bindings
     themes := Themes.shipped, languages := Language.shipped

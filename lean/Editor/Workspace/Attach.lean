@@ -254,3 +254,18 @@ def currentCommand (call : Call) : EditorM Unit := do
   message (current (← editorState) call.target.window.buffer).text
 
 end Editor.Workspace
+
+namespace Editor
+
+/-- A read-only buffer holding `content`, under the first free name of
+`name`, given the workspace at `location`; none when it cannot be made. The
+version-control buffers of generated text make theirs with it
+(`Editor/VersionControl/Views.lean`), and so do the working sets' drifted
+quotes (`Editor/WorkingSet/Run.lean`). -/
+def readOnlyBufferOf (name content : String) (location : Location) : EditorM (Option BufferId) := do
+  let .ok id ← createBuffer ((← editorState).freeName name) content | return none
+  discard <| id.setReadOnly true
+  Workspace.setBufferWorkspace id location
+  return some id
+
+end Editor

@@ -42,6 +42,10 @@ file commands (`Editor/Files.lean`) and the buffer commands
   drifted. With `retry` the drifted ranges of the file are tried again too,
   as an open of the set does. A workspace whose sets are not read is left
   alone.
+- **A set's buffer** keeps which set it shows and the buffers of the
+  drifted quotes it shows (`Shown`, its local value `working-set`); they are
+  removed when it is filled again, and when it is closed
+  (`freeDrifted`, called by `Buffers.closeInto`).
 - **Adding** (`addRange`): a new range held in a buffer, captured from its
   text, at the end of the set of its name, which is made when there is
   none; or nothing, when the set has that file's range at that span
@@ -386,5 +390,50 @@ def addRange (kept : Kept) (name : String) (id : BufferId) (relative : String) (
   return ({ kept with
         sets, last := some name },
       .added (set.ranges.size - 1))
+
+/-! ## A set's buffer -/
+
+/-- What a set's buffer keeps as its local value `localName`: the root of
+the workspace, the set's name and the drifted buffers it shows. -/
+structure Shown where
+  /-- The workspace's root. -/
+  root : String
+  /-- The set's name. -/
+  name : String
+  /-- The indices of the drifted quotes' buffers. -/
+  drifted : Array Nat := #[]
+  deriving DecidableEq, Repr
+
+/-- The name of the local value a set's buffer keeps (`Shown`). -/
+def localName : String :=
+  "working-set"
+
+/-- What a set's buffer keeps, as a tree. -/
+def Shown.encode (shown : Shown) : Value :=
+  .record
+    [("root", .str shown.root), ("name", .str shown.name),
+      ("drifted", .list (shown.drifted.toList.map Value.nat))]
+
+/-- What a set's buffer keeps, from a tree. -/
+def Shown.decode? : Value → Option Shown
+  | .record [("root", .str root), ("name", .str name), ("drifted", .list drifted)] => do
+    let drifted ←
+      drifted.toArray.mapM fun
+          | .nat index => some index
+          | _ => none
+    return { root, name, drifted }
+  | _ => none
+
+/-- What the buffer `id` keeps as a set's buffer, if it is one. -/
+def shownOf (state : EditorState) (id : BufferId) : Option Shown :=
+  (state.value? id localName).bind Shown.decode?
+
+/-- Removes the drifted quotes' buffers the set's buffer `id` shows, and
+forgets them. -/
+def freeDrifted (id : BufferId) : EditorM Unit := do
+  let some shown := shownOf (← editorState) id | return
+  for index in shown.drifted do
+    discard <| (⟨index⟩ : BufferId).remove
+  discard <| id.setValue localName { shown with drifted := #[] }.encode
 
 end Editor.WorkingSet

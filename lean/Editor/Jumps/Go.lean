@@ -19,6 +19,11 @@ them. It decides nothing of its own.
   as Vim's does.
 - **Going to a place as a jump** (`goTo`, a mark in another buffer): the
   jump is recorded once, then the place is gone to.
+- **Visiting the source of an excerpt buffer's place** (`visitLocated`, the
+  activate key of project search's results and of a working set's
+  buffer): the place of an excerpt text is located in its source
+  (`TextId.locate`), the jump is recorded, the source's buffer is shown
+  and the cursor put at the place; what was not located is said.
 
 Pinned by `ModelTest.jumpGoChecks`.
 -/
@@ -46,5 +51,17 @@ the module docs): the jump is recorded, then the place is gone to, with
 def goTo (view : ViewId) (place : Place) (line : Bool) : EditorM Unit := do
   record view
   go view place line
+
+/-- Visits the place in its source of the offset `head` of the excerpt text
+`text` in `view` ("Visiting the source of an excerpt buffer's place", in
+the module docs): says `nothing` when it is in no excerpt, or no buffer
+holds its source. -/
+def visitLocated (view : ViewId) (text : TextId) (head : Nat) (nothing : String) : EditorM Unit :=
+  do
+  let some located ← (text.locate head : TextM (Option Located)) | message nothing
+  let some source := (← editorState).bufferOver? located.source | message nothing
+  record view
+  let .ok () ← view.show source | message nothing
+  placeCursor view located.offset
 
 end Editor.Jumps

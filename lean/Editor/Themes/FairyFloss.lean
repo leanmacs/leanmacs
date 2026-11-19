@@ -135,6 +135,7 @@ a later definition's set attributes are over an earlier one's
 | `gutter` | lavender on lineHighlight | + foreground on background | syntax-variables gutter colours; base.less l.8–11 |
 | `search-match` | background on lemon | the same | Atom marks it with a border: shared mapping kept |
 | `review-unexamined` | peach single underline | the same | Not covered: shared mapping kept |
+| `working-set-drifted` | lavender italic | the same | Not covered: shared mapping kept |
 | `block-header` | foreground on lineHighlight, bold | the same | Not covered: shared mapping kept |
 
 Pinned by `ModelTest.fairyFlossChecks`: the nineteen values, the commit,

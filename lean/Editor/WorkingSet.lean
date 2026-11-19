@@ -432,6 +432,18 @@ def spansTwoFiles : String :=
 def noFile (buffer : String) : String :=
   s!"working-set-add: {buffer} has no file"
 
+/-- What is said when a range is added to a set. -/
+def addedSentence (name path : String) (line : Nat) : String :=
+  s!"{name}: added {path}:{line}"
+
+/-- What `command` says when the buffer `buffer` is in no workspace. -/
+def noWorkspace (command buffer : String) : String :=
+  s!"{command}: {buffer} has no workspace"
+
+/-- What is said when the workspace labelled `label` has no set `name`. -/
+def noSuchSet (name label : String) : String :=
+  s!"working-set-open: no working set {name} in {label}"
+
 /-- What is said when a set opens. -/
 def openedSentence (name : String) (count drifted : Nat) : String :=
   s!"{name}: {count} ranges, {drifted} drifted"

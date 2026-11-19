@@ -4,7 +4,7 @@ import Editor.Evil.Motions
 import Editor.Files
 import Editor.Grep
 import Editor.Job
-import Editor.Jumps
+import Editor.Jumps.Go
 import Editor.ProjectSearch
 import Editor.Workspace.FindFile
 
@@ -479,15 +479,9 @@ def noMatchHere : String :=
 and shows the file's buffer at the place under the cursor in the window it
 was called from, so `C-o` returns to the results. -/
 def visitCommand (call : Call) : EditorM Unit := do
-  let view := call.target.window.id
   let selection ← call.target.selection
   let some range := selection.ranges[selection.primary]? | message noMatchHere
-  let some located ←
-    (call.target.buffer.text.locate range.head : TextM (Option Located)) | message noMatchHere
-  let some source := (← editorState).bufferOver? located.source | message noMatchHere
-  Jumps.record view
-  let .ok () ← view.show source | message noMatchHere
-  Jumps.placeCursor view located.offset
+  Jumps.visitLocated call.target.window.id call.target.buffer.text range.head noMatchHere
 
 /-- `project-search-symbol` ("The command", in the module docs): searches
 the word under the cursor as a whole word, the pattern `*` builds

@@ -338,6 +338,8 @@ def closeInto (id fallback : BufferId) : EditorM Unit := do
   -- The places held in its text outlive it, in its file.
   Jumps.detach id
   discard <| WorkingSet.detach id
+  -- A working set's buffer takes its drifted quotes with it.
+  WorkingSet.freeDrifted id
   let state ← editorState
   for view in state.frame.everyWindow do
     if (state.window? view).any (·.buffer == id) then
