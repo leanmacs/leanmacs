@@ -1160,16 +1160,29 @@ run = '''status=0; out=$( (ulimit -c 0; exec env -u LEAN_STACK_SIZE_KB .lake/bui
 # so none of them is a pass or a fail. The gate still builds the subcommands,
 # under every linter (`lean`).
 #
-# Each line is a fresh process under `/usr/bin/time -l`, which prints the
+# Each run is a fresh process under `/usr/bin/time -l`, which prints the
 # process's real time and its maximum resident set size (in bytes) on stderr
 # after the subcommand's own line on stdout:
 #
 # - `bench-start` with each import set: how long the base takes to import and
 #   the first config to load, and what the process then weighs;
 # - `bench-reload`: the median and the maximum of 20 reloads of a one-line
-#   chunk, of a 20-line config, and of 50 definitions with a `simp` proof;
-# - `bench-soak` with 100 and with 500 reloads: the mean time of a reload,
-#   and, from the two resident set sizes, whether replaced configs are freed.
+#   root, of a 20-line config, of 50 definitions with a `simp` proof, and of
+#   a config of two files, the 50 definitions in an imported file that
+#   changes, on a base with `Lean`;
+# - `bench-soak` with 100 and with 500 reloads of a config that is its root
+#   alone, which imports `Lean` and uses it: the mean time of a reload, and,
+#   from the two resident set sizes, whether replaced configs are freed;
+# - `bench-soak-modules` with 100 and with 500 reloads of a config of two
+#   files, a root that imports `Lean` and a config file that changes each
+#   round: the same, for a reload that writes a module file and makes an
+#   environment that imports it. 500 of them take about two minutes.
+#
+#
+# Each soak is run by tools/soak-ratio.sh, which prints the soak's own line
+# for each count and then its two maximum resident set sizes and what the
+# second is of the first: a config whose replaced versions are freed stays
+# within a few percent. Memory is reported, never gating.
 #
 # The config is held in memory, so nothing is read but the `.olean` files,
 # whose directories are passed in. LEAN_STACK_SIZE_KB is removed from the
@@ -1183,8 +1196,8 @@ run = [
   "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-start \"$(lean --print-prefix)\" .lake/build/lib/lean Editor Std",
   "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-start \"$(lean --print-prefix)\" .lake/build/lib/lean Editor Lean",
   "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-reload \"$(lean --print-prefix)\" .lake/build/lib/lean",
-  "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-soak \"$(lean --print-prefix)\" .lake/build/lib/lean 100",
-  "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-soak \"$(lean --print-prefix)\" .lake/build/lib/lean 500",
+  "sh ../tools/soak-ratio.sh .lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean bench-soak",
+  "sh ../tools/soak-ratio.sh .lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean bench-soak-modules",
 ]
 
 # Opt-in: run it by hand on a quiet machine, on macOS, and do not add it to
