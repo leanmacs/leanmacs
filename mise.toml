@@ -88,10 +88,23 @@ run = "cargo test --workspace --locked"
 # Lean's task pool, and the checks that warm the pool and count the threads
 # jobs wait from pin no size: they pass under a bare `lake test` whatever the
 # variable says.
+#
+# First, the toolchain check (tools/toolchain-check.sh;
+# docs/dev-practices/the-gate.md, "The toolchain check"): every Lake package
+# outside lean/ holds a copy of the pin, `lean-toolchain`, and each tracked
+# copy must equal lean/lean-toolchain. It is here because this is the first
+# task of the Lake chain, so a copy that fell behind fails before anything
+# is built. Its second line shows it bite: told the pin is another file
+# (the core's Lake manifest), it must name the formatter host's copy and
+# exit 1. Its output is shown only when it does not.
 [tasks.lean-test]
-description = "Run the Lean model tests with `lake test`, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/)"
+description = "Check that every copy of the Lean pin equals lean/lean-toolchain (tools/toolchain-check.sh), then run the Lean model tests with `lake test`, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/)"
 dir = "lean"
-run = 'PATH="$PWD/no-cargo:$PATH" lake test --wfail'
+run = [
+  "sh ../tools/toolchain-check.sh",
+  "status=0; out=$(sh ../tools/toolchain-check.sh lake-manifest.json 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF tools/lean-fmt/lean-toolchain; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  'PATH="$PWD/no-cargo:$PATH" lake test --wfail',
+]
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
 #
