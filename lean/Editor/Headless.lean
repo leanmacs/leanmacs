@@ -225,8 +225,10 @@ as before, so reload and job completion work as they did.
   search (`ProjectSearch.commands`, `ProjectSearch.jobs`,
   `Editor/ProjectSearch/Compiled.lean`): `project-search`, which searches
   the workspace's files into an editable excerpt buffer, the command
-  `project-search-found` its job posts each delivery as, and the job
-  `project-search`. And it is handed the
+  `project-search-found` its job posts each delivery as,
+  `project-search-symbol` and `project-search-visit`, the mode
+  `project-search` of its results buffer, and the jobs `project-search` and
+  `project-search-load`. And it is handed the
   status buffer's commands, jobs and mode (`VersionControl.commands`,
   `VersionControl.jobs`, `VersionControl.modes`,
   `Editor/VersionControl/Compiled.lean`): `vc-status` and the commands of
@@ -2701,7 +2703,9 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         Completion.Words.jobs ++
         VersionControl.jobs ++
         VersionControl.gutterJobs
-    modes := Minibuffer.modes ++ Compile.modes ++ VersionControl.modes ++ Language.modes
+    modes :=
+      Minibuffer.modes ++ Compile.modes ++ VersionControl.modes ++ ProjectSearch.modes ++
+        Language.modes
     ex := Ex.bindings
     themes := Themes.shipped, languages := Language.shipped
     segments := ModeLine.shipped ++ VersionControl.segments, contributions := Compile.shipped

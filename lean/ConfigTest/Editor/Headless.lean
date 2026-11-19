@@ -2001,7 +2001,7 @@ def shippedChecks (_ : Unit) : List Check :=
               registry.jobs.any
                 (fun entry => entry.registration.name == name && entry.owner == .compiled) },
     { name :=
-        "the executable's hosts start with project-search and project-search-found registered compiled, and the jobs project-search and project-search-load"
+        "the executable's hosts start with project-search, project-search-found, project-search-symbol and project-search-visit registered compiled, the mode project-search, and the jobs project-search and project-search-load"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -2009,8 +2009,10 @@ def shippedChecks (_ : Unit) : List Check :=
           Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
             (← Snapshots.new) (← Job.HeldSnapshots.new)
         let registry := Headless.compiled shipped
-        return [ProjectSearch.name, ProjectSearch.foundName].all
+        return [ProjectSearch.name, ProjectSearch.foundName, ProjectSearch.symbolName,
+                  ProjectSearch.visitName].all
               (fun name => (registry.find? name).any (·.owner == .compiled)) &&
+            shipped.modes.any (·.name == ProjectSearch.modeName) &&
             [ProjectSearch.job, ProjectSearch.loadJob].all fun name =>
               registry.jobs.any fun entry =>
                 entry.registration.name == name && entry.owner == .compiled },

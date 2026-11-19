@@ -14,7 +14,12 @@ searched it reads.
 - **`ProjectSearch.commands`**: `project-search`, and
   `project-search-found`, which the search's job posts with each delivery:
   it is registered because a post must name a registered command, and is
-  not meant to be run by hand.
+  not meant to be run by hand; `project-search-symbol`, which searches the
+  word under the cursor; and `project-search-visit`, which shows the file's
+  buffer at the match under the cursor.
+- **`ProjectSearch.modes`**: `project-search`, the results buffer's mode,
+  whose activate key (`RET` in the Vim scheme's normal state) runs
+  `project-search-visit`.
 - **`ProjectSearch.jobs`**: `project-search`, the search, keyed by its
   results buffer's name; and `project-search-load`, which loads the files a
   delivery found that no buffer holds.
@@ -28,7 +33,14 @@ namespace Editor.ProjectSearch
 /-- Project search's commands, as a host registers them for the owner
 `compiled`. -/
 def commands : Array Config.Registration :=
-  #[{ name, action := .call command }, { name := foundName, action := .call foundCommand }]
+  #[{ name, action := .call command }, { name := foundName, action := .call foundCommand },
+    { name := symbolName, action := .call symbolCommand },
+    { name := visitName, action := .call visitCommand }]
+
+/-- Project search's mode, as a host registers it for the owner `compiled`:
+the results buffer's, whose activate key visits a match. -/
+def modes : Array Mode :=
+  #[mode]
 
 /-- Project search's jobs, as a host registers them for the owner
 `compiled`. -/

@@ -6,7 +6,9 @@
 -- name, and `SPC ?` the binding search, which lists every binding the view
 -- can reach and runs the one chosen as its key would. `SPC SPC` and
 -- `SPC p f` find a file in the buffer's workspace, and `SPC p p` picks
--- another workspace of the project and finds a file in it.
+-- another workspace of the project and finds a file in it. `SPC s p` and
+-- `SPC /` search the workspace's files for a pattern, and `SPC *` for the
+-- word under the cursor, into an excerpt buffer whose `RET` visits a match.
 --
 -- The map is `leaderMap`, apart from `setup` (in `90-setup.lean`), so it can
 -- be dropped into a config of your own: copy this file in and call
@@ -24,15 +26,20 @@ def leaderMap : SetupM Unit := do
   prefixName "<leader> TAB" "tab"
   prefixName "<leader> h" "help"
   prefixName "<leader> p" "project"
+  prefixName "<leader> s" "search"
   -- Top level.
   bindKey "<leader> ." "open-file" (desc := "Find file")
   bindKey "<leader> ," "switch-buffer" (desc := "Switch buffer")
   bindKey "<leader> :" "execute-command" (desc := "Execute command")
   bindKey "<leader> ?" "search-bindings" (desc := "Search bindings")
   bindKey "<leader> SPC" "find-file-in-workspace" (desc := "Find file in workspace")
+  bindKey "<leader> /" "project-search" (desc := "Search workspace")
+  bindKey "<leader> *" "project-search-symbol" (desc := "Search symbol in workspace")
   -- project
   bindKey "<leader> p f" "find-file-in-workspace" (desc := "Find file in workspace")
   bindKey "<leader> p p" "find-file-in-project" (desc := "Switch workspace")
+  -- search
+  bindKey "<leader> s p" "project-search" (desc := "Search workspace")
   -- file
   bindKey "<leader> f f" "open-file" (desc := "Find file")
   bindKey "<leader> f s" "save-buffer" (desc := "Save file")

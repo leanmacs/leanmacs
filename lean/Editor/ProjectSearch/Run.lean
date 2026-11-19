@@ -1,5 +1,6 @@
 import Editor.Api
 import Editor.Command.Call
+import Editor.Evil.Motions
 import Editor.Files
 import Editor.Grep
 import Editor.Job
@@ -58,6 +59,18 @@ recorded pending, and the delivery's pending files are loaded by one job,
 `project-search-load`. When the results buffer is gone, the delivery cancels
 the job by its key and does nothing else.
 
+## Visiting
+
+The results buffer has the mode `project-search`, whose activate key (`RET`
+in the Vim scheme's normal state) runs `project-search-visit`: it records a
+jump and shows the file's buffer, in the window it was called from, at the
+place in the file of the cursor's place in the results (`TextId.locate`).
+So `C-o` returns to the results, and after `C-w v` two visits leave the two
+windows on two matches.
+
+`project-search-symbol` searches the word under the cursor as a whole word,
+`\<word\>`, the pattern `*` builds, where `project-search` would search.
+
 ## Loading
 
 The load job loads its files in order (`File.load`, under `Files.limit`).
@@ -91,6 +104,18 @@ def name : String :=
 /-- The name of the command a delivery is posted as. -/
 def foundName : String :=
   "project-search-found"
+
+/-- The name of the command that visits the match under the cursor. -/
+def visitName : String :=
+  "project-search-visit"
+
+/-- The name of the command that searches the word under the cursor. -/
+def symbolName : String :=
+  "project-search-symbol"
+
+/-- The name of the results buffer's mode. -/
+def modeName : String :=
+  "project-search"
 
 /-- The name of the search's job. -/
 def job : String :=
@@ -204,6 +229,9 @@ def run (call : Call) (root label pattern : String) : EditorM Unit := do
   let key := bufferName pattern label
   let some results ← emptied key | message s!"{name}: cannot make the buffer {key}"
   discard <| view.show results
+  -- `project-search` is compiled, and the view shows the buffer: neither
+  -- refusal of `setMajorMode` can happen here.
+  discard <| view.setMajorMode modeName
   let overlays ← overlaysUnder root
   let record : Record := { root, label, pattern, snapshots := overlays.map (·.2) }
   discard <| results.setValue Record.localName record.encode
@@ -441,5 +469,39 @@ def searchWork (arguments : List Argument) : Work := fun _ => do
         if let some ending := delivery.ended then
           return ended order (endedSentence order.pattern order.label ending)
     return ended order (refused (.failed "the search never ended"))
+
+/-- What `project-search-visit` says when the cursor is on no excerpt's
+text. -/
+def noMatchHere : String :=
+  s!"{visitName}: no file's text here"
+
+/-- `project-search-visit` ("Visiting", in the module docs): records a jump
+and shows the file's buffer at the place under the cursor in the window it
+was called from, so `C-o` returns to the results. -/
+def visitCommand (call : Call) : EditorM Unit := do
+  let view := call.target.window.id
+  let selection ← call.target.selection
+  let some range := selection.ranges[selection.primary]? | message noMatchHere
+  let some located ←
+    (call.target.buffer.text.locate range.head : TextM (Option Located)) | message noMatchHere
+  let some source := (← editorState).bufferOver? located.source | message noMatchHere
+  Jumps.record view
+  let .ok () ← view.show source | message noMatchHere
+  Jumps.placeCursor view located.offset
+
+/-- `project-search-symbol` ("The command", in the module docs): searches
+the word under the cursor as a whole word, the pattern `*` builds
+(`Evil.starPattern`), where `project-search` would search. -/
+def symbolCommand (call : Call) : EditorM Unit := do
+  let selection ← call.target.selection
+  let some range := selection.ranges[selection.primary]? | message Evil.noStringUnderCursor
+  let cells ← (Evil.lineCells call.target.buffer.text range.head : TextM (Array (Nat × String)))
+  let some (_, word) := Evil.starWord cells range.head | message Evil.noStringUnderCursor
+  command { call with arguments := [.str (Evil.starPattern word)] }
+
+/-- The results buffer's mode: the scheme's activate key (`RET` in the Vim
+scheme's normal state) visits the match under the cursor. -/
+def mode : Mode :=
+  { name := modeName, roles := [(Role.activate, visitName)] }
 
 end Editor.ProjectSearch

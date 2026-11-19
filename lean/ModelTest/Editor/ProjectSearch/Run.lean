@@ -12,6 +12,7 @@ import Editor.ProjectSearch.Compiled
 import Editor.ProjectSearch.Run
 import Editor.Scene
 import Editor.State
+import Editor.WindowCommands.Compiled
 import ModelTest.Check
 import ModelTest.Support.Evil
 import ModelTest.Support.Excerpt
@@ -33,10 +34,10 @@ namespace ProjectSearchTest
 
 /-- The files of the checks, on the job model's disk: `a.txt` holds no match
 on disk (its buffer's unsaved text holds one), `b.txt` two matches six rows
-apart, `c.txt` none. -/
+apart, `c.txt` none, `sym.txt` the word `foo_bar` twice and `foo_barx`. -/
 def disk : FileModel :=
   [("/w/a.txt", "nothing\n"), ("/w/b.txt", "needle one\nb\nc\nd\ne\nf\nneedle two\n"),
-        ("/w/c.txt", "no\n")].foldl
+        ("/w/c.txt", "no\n"), ("/w/sym.txt", "foo_bar x\nfoo_barx foo_bar\n")].foldl
     (fun (files : FileModel) (path, text) => files.withFile path text.toUTF8)
     (({} : FileModel).withDirectory "/w")
 
@@ -50,18 +51,32 @@ def opening (name text : String) : Config.Registration :=
         discard <| id.attachFile s!"/w/{name}" ⟨0, 0, text.utf8ByteSize⟩ .lf
         discard <| call.target.window.id.show id }
 
-/-- The commands of the checks: project search's, opening `a.txt` with
+/-- The commands of the checks: project search's, the window commands,
+opening `a.txt` with
 unsaved text, `b.txt` as on disk and `d.txt` as on disk in the load checks'
 world, and closing the results buffer. -/
 def registrations : Array Config.Registration :=
-  ProjectSearch.commands ++
+  ProjectSearch.commands ++ WindowCommands.commands ++
     #[opening "a.txt" "x needle\nyy\n", opening "b.txt" "needle one\nb\nc\nd\ne\nf\nneedle two\n",
-      opening "d.txt" "needle d\n",
+      opening "d.txt" "needle d\n", opening "sym.txt" "foo_bar x\nfoo_barx foo_bar\n",
       { name := "close-results"
         action :=
           .call fun _ => do
             let some id ← findBuffer "*search: needle in /w*" | return
             discard <| id.remove }]
+
+/-- Evil's keys with the commands of the checks, and project search's mode
+registered, as a host's registry holds it: its roles on their keys in the
+results buffer, and its name known to the loop that sets it. -/
+def searchKeys : Loop.Keys Vim.Default.scheme :=
+  let handed := evilHanded registrations
+  let registry := ({} : Config.Registry).replaceModes .compiled ProjectSearch.modes
+  { handed with
+    maps := fun state view =>
+      registry.activeMaps Vim.Default.scheme state view ++ handed.maps state view
+    registered :=
+      { handed.registered with
+        entering := fun name => (ProjectSearch.modes.find? (·.name == name)).map ([·]) } }
 
 /-- The jobs of the checks: project search's. -/
 def jobs (name : String) : Option (List Argument → Work) :=
@@ -70,7 +85,7 @@ def jobs (name : String) : Option (List Argument → Work) :=
 /-- A driver over `files` whose window shows `b.txt` and then `a.txt`, both
 open, `a.txt`'s text unsaved. -/
 def driverOver (files : FileModel := disk) : Option EvilDriver :=
-  (evilDriver "|" (evilHanded registrations)).map fun driver =>
+  (evilDriver "|" searchKeys).map fun driver =>
     let driver :=
       { driver with
         registered := jobs, jobs := { files } }
@@ -84,7 +99,7 @@ def loadDisk : FileModel :=
 /-- A driver over `loadDisk` whose window shows `d.txt` and then `a.txt`,
 both open, `a.txt`'s text unsaved; `b.txt` is open in no buffer. -/
 def loadDriver : Option EvilDriver :=
-  (evilDriver "|" (evilHanded registrations)).map fun driver =>
+  (evilDriver "|" searchKeys).map fun driver =>
     let driver :=
       { driver with
         registered := jobs, jobs := { files := loadDisk } }
@@ -303,6 +318,43 @@ def projectSearchRunChecks : List Check :=
             let done := searched driver
             let changed := evilFed (excerptFed (evilFed done "3 j c w") [.commit "pin"]) "<Escape>"
             excerptRead changed "b.txt" == some "pin one\nb\nc\nd\ne\nf\nneedle two\n" &&
-              (excerptBufferNamed changed "b.txt").any (·.isModified) }]
+              (excerptBufferNamed changed "b.txt").any (·.isModified) },
+    { name :=
+        "RET on a match in the results shows the file's buffer with the cursor on the match, and C-o returns to the results"
+      run :=
+        pure <|
+          match driverOver with
+          | none => false
+          | some driver =>
+            let visited := evilFed (searched driver) "w RET"
+            let back := evilFed visited "C-o"
+            shownName visited == some "a.txt" &&
+              (evilSelection visited).map (·.ranges.map (·.head)) == some #[2] &&
+              shownName back == some results },
+    { name := "after C-w v, a visit in each window leaves the two windows on two matches"
+      run :=
+        pure <|
+          match driverOver with
+          | none => false
+          | some driver =>
+            let split := evilFed (searched driver) "C-w v"
+            let first := evilFed split "w RET"
+            let second := evilFed (evilFed first "C-w C-w") "3 j RET"
+            let names :=
+              second.loop.state.windows.filterMap fun window =>
+                (second.loop.state.buffer? window.buffer).map (·.name)
+            names.size == 2 && names.contains "a.txt" && names.contains "b.txt" },
+    { name := "project-search-symbol on foo_bar searches \\<foo_bar\\>, as * builds it"
+      run :=
+        pure <|
+          match driverOver with
+          | none => false
+          | some driver =>
+            let done :=
+              drained (invoked (excerptInvoked driver "open-sym.txt") ProjectSearch.symbolName)
+            done.loop.state.lastSearch == some { pattern := "\\<foo_bar\\>", forward := true } &&
+              shownName done == some "*search: \\<foo_bar\\> in /w*" &&
+              excerptRead done "*search: \\<foo_bar\\> in /w*" ==
+                some "foo_bar x\nfoo_barx foo_bar\n" }]
 
 end ModelTest

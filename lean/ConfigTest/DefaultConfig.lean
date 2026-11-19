@@ -9,6 +9,7 @@ import Editor.Config.Registry
 import Editor.Headless
 import Editor.InputScheme.Vim.Default
 import Editor.Job.Fake
+import Editor.ProjectSearch.Run
 import Editor.Workspace.FindFile
 import Editor.Workspace.FindInProject
 
@@ -141,7 +142,7 @@ def defaultConfigChecks (context : Context) : List Check :=
                 !promptOf label recancelled &&
                 switching.any fun line => (line.splitOn said).length == 2 },
     { name :=
-        "the default config: every binding names a command registered compiled or by the config, <leader> f f is bound to open-file, <leader> : to execute-command, described Execute command, and <leader> ? to search-bindings, described Search bindings, <leader> p f and <leader> SPC to find-file-in-workspace, described Find file in workspace, and <leader> p p to find-file-in-project, described Switch workspace"
+        "the default config: every binding names a command registered compiled or by the config, <leader> f f is bound to open-file, <leader> : to execute-command, described Execute command, and <leader> ? to search-bindings, described Search bindings, <leader> p f and <leader> SPC to find-file-in-workspace, described Find file in workspace, <leader> p p to find-file-in-project, described Switch workspace, <leader> s p and <leader> / to project-search, described Search workspace, and <leader> * to project-search-symbol, described Search symbol in workspace"
       run := do
         let registrations ← defaultBuilt context
         let registry ← defaultRegistry registrations
@@ -176,12 +177,23 @@ def defaultConfigChecks (context : Context) : List Check :=
                 Key.strokeNotations binding.keys == "<leader> SPC" &&
                   binding.command == Workspace.FindFile.name &&
                   binding.desc == some "Find file in workspace") &&
+            registrations.bindings.any
+              (fun binding =>
+                Key.strokeNotations binding.keys == "<leader> p p" &&
+                  binding.command == Workspace.FindInProject.name &&
+                  binding.desc == some "Switch workspace") &&
+            ["<leader> s p", "<leader> /"].all
+              (fun keys =>
+                registrations.bindings.any fun binding =>
+                  Key.strokeNotations binding.keys == keys &&
+                    binding.command == ProjectSearch.name &&
+                    binding.desc == some "Search workspace") &&
             registrations.bindings.any fun binding =>
-              Key.strokeNotations binding.keys == "<leader> p p" &&
-                binding.command == Workspace.FindInProject.name &&
-                binding.desc == some "Switch workspace" },
+              Key.strokeNotations binding.keys == "<leader> *" &&
+                binding.command == ProjectSearch.symbolName &&
+                binding.desc == some "Search symbol in workspace" },
     { name :=
-        "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are SPC f, SPC b, SPC w, SPC TAB, SPC h and SPC p, the last named project"
+        "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are SPC f, SPC b, SPC w, SPC TAB, SPC h, SPC p and SPC s, named project and search"
       run := do
         let registrations ← defaultBuilt context
         let registry ← defaultRegistry registrations
@@ -201,10 +213,12 @@ def defaultConfigChecks (context : Context) : List Check :=
         unless unnamed.isEmpty do
           throw <| IO.userError s!"unnamed prefixes: {unnamed.toList.map Key.notations}"
         let expected :=
-          ["SPC f", "SPC b", "SPC w", "SPC TAB", "SPC h", "SPC p"].map fun text =>
+          ["SPC f", "SPC b", "SPC w", "SPC TAB", "SPC h", "SPC p", "SPC s"].map fun text =>
             (keysOf text).map Key.chord
         return prefixes.size == expected.length && expected.all prefixes.contains &&
             registry.prefixName? Vim.Default.scheme ((keysOf "SPC p").map Key.chord) ==
-              some "project" }]
+              some "project" &&
+            registry.prefixName? Vim.Default.scheme ((keysOf "SPC s").map Key.chord) ==
+              some "search" }]
 
 end ConfigTest
