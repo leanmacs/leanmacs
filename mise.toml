@@ -1101,7 +1101,7 @@ run = [
 # figures are in docs/design/lean-runtime.md, "What config may import,
 # measured". It takes a minute or two and needs a few GB of temporary disk.
 [tasks.module-bench]
-description = "Opt-in, never part of ci; macOS only: measure what each import set config may use needs to ship (file kinds, bytes) and costs at start-up (time, memory), from a staged bundle (tools/module-bench.sh). It asserts nothing"
+description = "Opt-in, never part of ci; macOS only: measure what each import set config may use needs to ship (file kinds, bytes) and costs at start-up (time, memory), from a staged bundle, and what the bundle of the default set's config base holds and costs (tools/module-bench.sh). It asserts only that the headless runs it times installed their config"
 depends = ["lean"]
 run = "tools/module-bench.sh lean"
 

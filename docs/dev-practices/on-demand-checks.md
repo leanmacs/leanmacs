@@ -56,8 +56,10 @@ mise run module-bench
 ```
 
 This measures, on macOS, what each import set config may use costs an app
-bundle (`tools/module-bench.sh`), and asserts nothing, so it is not part of
-the gate. For `Editor` and for `Editor Lean` it prints the modules the
+bundle (`tools/module-bench.sh`). It is a measurement, not a check, so it
+is not part of the gate; the one thing it asserts is that each headless run
+it times installed its config, since a rejected reload exits 0 and would be
+timed as if it were a start-up. For `Editor` and for `Editor Lean` it prints the modules the
 import reads (`config-test bench-modules <sysroot> <olean dir> <module>…`)
 and the bytes of each file kind, of whole top-level directories and of those
 modules alone; which file kinds the import needs, by staging the whole
@@ -65,8 +67,13 @@ directories in a temporary directory with `tools/stage-bundle.sh` with
 `olean`, then `olean olean.server`, then `olean olean.server
 olean.private`, then that with `ir ir.sig`, and importing from each; and,
 with the closure staged with the kinds it needs, five runs of `bench-start`
-under `/usr/bin/time -l` and, for `Editor`, five runs of the staged
-bundle's headless mode with an empty environment. Every temporary
+under `/usr/bin/time -l`. Then, once, the bundle as it is shipped: the
+editor is the default package set's, which elaborates config on the set's
+base (`Editor`, then the entry module of each default package), so the
+script stages that base's closure from the directories the build recorded
+beside the editor, as `bundle-test` does, prints its modules and bytes,
+and times five runs of that bundle's headless mode with an empty
+environment. Every temporary
 directory is removed by a trap. It takes about two minutes and a few GB of
 temporary disk. The figures, and what they decided, are in
 [`lean-runtime.md`](../design/lean-runtime.md), "What config may import,

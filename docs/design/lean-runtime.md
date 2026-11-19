@@ -2010,8 +2010,16 @@ into the bundle's one directory (`tools/stage-bundle.sh`, which takes the
 package directories joined with `:` and copies a module from the first
 that holds it). On 2026-11-19 that closure was 919 modules, 792 of the
 toolchain's and 127 of the editor's, ten of those the two packages'
-(`ShippedThemes` and its three, `Compile` and its five). The table above
-was not measured again: its 700 modules are the base of 2026-11-15.
+(`ShippedThemes` and its three, `Compile` and its five). `mise run
+module-bench` stages that bundle too, for the headless measurement, and
+on that date printed for it 616.0 MB in the three kinds, a median real
+time of 0.22 s for the headless mode on `tests/headless/bundle` with
+`env -i`, and a largest maximum resident set of 566.0 MB. The table above
+was not measured again: its 700 modules, 396.4 MB and 406 MB are the base
+of 2026-11-15, and the same run printed 907 modules (139 of them `Std`'s)
+and 609.1 MB for `Editor` alone, so the table and the sentences under it
+are behind the tree on their own account (the task
+`module-bench-figures-stale`).
 
 Config imports what its set's base imports, and the bundle ships that
 set's closure, in those three kinds, about 396 MB beside the executable

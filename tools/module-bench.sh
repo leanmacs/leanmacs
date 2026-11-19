@@ -17,14 +17,26 @@
 #    needs; each failure's first line on stderr is printed;
 # 3. with that kind set, the closure staged, five runs of `bench-start`
 #    under `/usr/bin/time -l`: the median real time, import time and first
-#    load, and the largest maximum resident set size; and, for `Editor`
-#    alone, five runs of the staged bundle's headless mode on
-#    `tests/headless/bundle`, as `bundle-test` runs it, with `env -i`: the
-#    median real time and the largest maximum resident set size.
+#    load, and the largest maximum resident set size.
+#
+# And once, after the set `Editor`, the bundle as it is shipped: five runs
+# of a staged bundle's headless mode on `tests/headless/bundle`, as
+# `bundle-test` runs it, with `env -i`: the median real time and the largest
+# maximum resident set size. The editor it runs is the default package
+# set's, whose config base is the set's and not `Editor` alone: `Editor`,
+# then the entry module of each default package
+# (docs/design/packages.md, "The config base of a set"). So that bundle is
+# staged as `bundle-test` and the `editorApp` facet stage theirs: the
+# closure of the set's base (`lake -d ../packages query :editorBase`), each
+# module copied from the first of the directories the build recorded beside
+# the editor that holds it (`editor.oleans`), with the kinds the set
+# `Editor` was found to need. Its modules and bytes are printed too.
 #
 # Bytes are apparent sizes, summed from `stat -f %z`; MB are 10^6 bytes. It
-# asserts nothing. Every temporary directory is removed by a trap. It is
-# macOS only, as the app bundle is.
+# asserts one thing: each headless run it times installed its config (a
+# rejected reload exits 0, and would be timed as if it were a start-up).
+# Every temporary directory is removed by a trap. It is macOS only, as the
+# app bundle is.
 #
 # `$1` is the Lean package's directory, where the built executables are.
 set -euo pipefail
@@ -181,6 +193,23 @@ for set in "Editor" "Editor Lean"; do
   echo "$label: bench-start, closure, kinds $needed, 5 runs: median real $(median <"$work/real") s, import $(median <"$work/import") ms, first load $(median <"$work/first") ms; largest maximum resident set $(mb "$rss") MB"
 
   if [ "$set" = Editor ]; then
+    # The bundle as shipped: the default set's editor elaborates config on
+    # the set's base, so its bundle holds that base's closure, taken from
+    # every directory the build recorded for the editor.
+    record=$editor.oleans
+    if [ ! -f "$record" ]; then
+      echo "module-bench: no record of the editor's .olean directories at $record; run \`mise run lean\` first" >&2
+      exit 1
+    fi
+    searched=$(paste -s -d : "$record")
+    read -r -a base <<<"$(cd "$lean_dir" && lake -d ../packages query :editorBase | tr '\n' ' ')"
+    base_closure=$work/base-closure
+    "$config_test" bench-modules "$sysroot" "$searched" "${base[@]}" >"$base_closure"
+    counts=$(cut -d. -f1 "$base_closure" | sort | uniq -c | awk '{ printf "%s%s %s", sep, $2, $1; sep = ", " }')
+    rm -rf "$stage"
+    "$tools/stage-bundle.sh" --closure "$base_closure" "$stage/Leanmacs.app" "$editor" "$sysroot" "$searched" "${kind_list[@]}"
+    staged_bytes=$(cd "$stage/Leanmacs.app/Contents/Resources/lean" && find . -type f | sum_listed .)
+    echo "the default set's base (${base[*]}): closure: $(wc -l <"$base_closure" | tr -d ' ') modules ($counts); shipped with kinds $needed: $(mb "$staged_bytes") MB"
     cp -R "$fixtures/config" "$work/config"
     cp "$fixtures/script" "$work/script"
     mkdir -p "$work/elsewhere"
@@ -188,11 +217,19 @@ for set in "Editor" "Editor Lean"; do
     : >"$work/rss"
     for _ in 1 2 3 4 5; do
       lines=$(cd "$work/elsewhere" && timed env -i "$stage/Leanmacs.app/Contents/MacOS/editor" headless "$work/config" "$work/script")
+      # The one thing this script asserts: the run it times loaded its
+      # config. A rejected reload exits 0, and its time and memory are those
+      # of an editor that imported no base, which is no measurement.
+      if ! printf '%s\n' "$lines" | grep -q '^reload 1: installed'; then
+        echo "module-bench: the bundle's headless run did not install its config, so its figures would measure nothing; it printed:" >&2
+        printf '%s\n' "$lines" | sed 's/^/  /' >&2
+        exit 1
+      fi
       printf '%s\n' "$lines" | awk '/^time / { print $2 }' >>"$work/real"
       printf '%s\n' "$lines" | awk '/^time / { print $3 }' >>"$work/rss"
     done
     rss=$(largest <"$work/rss")
-    echo "$label: the bundle's headless mode on tests/headless/bundle, closure, kinds $needed, env -i, 5 runs: median real $(median <"$work/real") s; largest maximum resident set $(mb "$rss") MB"
+    echo "the default set's base: the bundle's headless mode on tests/headless/bundle, closure, kinds $needed, env -i, 5 runs: median real $(median <"$work/real") s; largest maximum resident set $(mb "$rss") MB"
   fi
   rm -rf "$stage"
 done
