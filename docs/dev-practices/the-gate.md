@@ -685,8 +685,10 @@ fixture after them, and the trees the shipped modes are checked in, which
 the checks copy into a temporary directory, so no real tool runs), `tests/syntax`
 (the syntax fixtures, whose Rust fixtures the indent and text-object checks
 read) and `tests/completion` (the fixture that stands in for fzf in the
-checks of a source a command filters, so they pass where fzf is not
-installed); each fixture must stay executable. Then `config-test`, handed
+checks of a source a command filters, and in the checks of git's lister and
+the fallback that list a workspace's files, which run real git, isolated
+from the user's config, and real `find` in temporary directories, so they
+pass where fzf is not installed); each fixture must stay executable. Then `config-test`, handed
 `tests/syntax` too, whose Rust indent fixture its indent checks mangle and
 re-indent through a headless host, and
 then the editor: once as `editor demo`, the demonstration, ten times in its headless
