@@ -1,0 +1,12 @@
+# The script `mise run ffi-test` has the default set's editor run against
+# the config in `config/`, whose root imports a module that is not linked
+# into the editor. What it prints must be exactly `expected`. It touches no
+# file.
+
+# The reload is rejected, and its one diagnostic is at the import and names
+# the module.
+reload
+settle
+
+# Nothing of the config was installed.
+run greet

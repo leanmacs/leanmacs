@@ -1,0 +1,3 @@
+reload 1: rejected
+diagnostic: init.lean:7:0: error: module `Greeting` is not linked into this editor: it is a module of the package `greeting`, which the config's lakefile requires, so the editor's package set needs a rebuild with that package in it
+run greeting-hello: no such command

@@ -1,0 +1,19 @@
+# The lakefile of a config directory whose user has added a package to it:
+# it requires the fixture package `greeting` beside the default set. The
+# editor reads the `[[require]]` names from this text and never runs Lake
+# on it: when a config file imports a module of a package named here that
+# is not linked into the editor, the diagnostic says the package set needs
+# a rebuild (tests/headless/needs-rebuild/script).
+name = "config"
+
+[[require]]
+name = "default-set"
+path = "../../../../packages"
+
+[[require]]
+name = "greeting"
+path = "../../../packages/greeting"
+
+[[lean_lib]]
+name = "Config"
+globs = ["Config.+"]

@@ -1,0 +1,23 @@
+# The script `mise run ffi-test` has the default set's editor run against
+# the config in `config/`, a root and two config files under `Config/`. What
+# it prints must be exactly `expected`. It touches no file.
+
+# The root imports `Lean`, the compile package's `Compile` and the two
+# config files, and every file elaborates: three files, and the two
+# commands the root's `setup` registers.
+reload
+settle
+
+# The command `Config.Keys.bindings` registers runs: a program a config
+# file exports takes effect when the root's `setup` calls it.
+run keys-hello
+scene
+
+# The root's own command names a declaration of `Lean`, of the compile
+# package and of `Config.Keys`.
+run facts
+scene
+
+# `Config.Unused.setup` registers `unused`, and it is not the root's: the
+# editor did not run it.
+run unused

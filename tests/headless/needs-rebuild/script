@@ -1,0 +1,16 @@
+# The script `mise run ffi-test` has two editors run against the config in
+# `config/`, whose root imports `Greeting`, a module of the package
+# `greeting`, which the config's `lakefile.toml` requires. It touches no
+# file: the headless mode reads the lakefile and writes nothing.
+#
+# On the default set's editor, which does not link that package, what it
+# prints must be exactly `expected`: the reload is rejected, and the
+# diagnostic at the import names the package and says the package set needs
+# a rebuild. On the fixture set's editor, which links it, what it prints
+# must be exactly `installed-expected`: the config loads.
+reload
+settle
+
+# The package's command, compiled into an editor whose set holds the
+# package and into no other.
+run greeting-hello

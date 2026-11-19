@@ -1,0 +1,3 @@
+reload 1: rejected
+diagnostic: init.lean:6:0: error: module `Lake` is not linked into this editor: config may import a config file (`Config.<Name>`), a module of the editor's package set, or a module of `Init`, `Std` or `Lean`
+run greet: no such command

@@ -399,6 +399,33 @@ run = [
   # (`dispatch/expected`). A command that is not stopped loops for longer
   # than the time limit.
   "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/dispatch/expected -",
+  # Config as modules (tests/headless/modules): a root that imports `Lean`,
+  # a module of a default package (`Compile`) and two config files under
+  # `Config/`, and names a declaration of each. Every file elaborates; the
+  # command a program of `Config/Keys.lean` registers runs, since the root's
+  # `setup` calls that program; and the command the `setup` of
+  # `Config/Unused.lean` registers is no command, since the editor runs the
+  # root's `setup` and no other (`modules/expected`).
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/modules/config ../tests/headless/modules/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/modules/expected -",
+  # A module that is not linked (tests/headless/not-linked): the root
+  # imports `Lake`, which is in the toolchain and in no editor. The reload
+  # is rejected with one diagnostic, at the import, that names the module
+  # (`not-linked/expected`).
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/not-linked/config ../tests/headless/not-linked/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/not-linked/expected -",
+  # A module of a package the config's lakefile names
+  # (tests/headless/needs-rebuild): the root imports `Greeting`, and the
+  # directory's `lakefile.toml` requires the fixture package `greeting`. On
+  # the default set's editor, which does not link that package, the reload
+  # is rejected and the diagnostic names the package and says the package
+  # set needs a rebuild (`needs-rebuild/expected`); on the fixture set's
+  # editor, which links it, the config loads and the package's command runs
+  # (`needs-rebuild/installed-expected`). The headless mode is run with no
+  # `--generate`, so it reads the fixture's lakefile and writes nothing: the
+  # third line fails if the fixture's config directory holds anything but
+  # its two tracked files.
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/needs-rebuild/config ../tests/headless/needs-rebuild/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/needs-rebuild/expected -",
+  "out=$(../tests/packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/needs-rebuild/config ../tests/headless/needs-rebuild/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/needs-rebuild/installed-expected -",
+  "test \"$(ls -A ../tests/headless/needs-rebuild/config | tr '\\n' ' ')\" = 'init.lean lakefile.toml '",
   # The old form (tests/config-migrate): a config directory of files in byte
   # order with no header is refused, with a diagnostic that names the files
   # and `mise run config-migrate`; a copy that tools/config-migrate.sh
