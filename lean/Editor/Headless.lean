@@ -215,7 +215,12 @@ as before, so reload and job completion work as they did.
   `find-file-in-workspace`, its source `workspace-files` in the category
   `workspace-file` (`Workspace.sources`) and the source's job
   `workspace-files`, which lists the workspace's files with its lister and
-  filters them with fzf (`Editor/Workspace/FindFile.lean`). And it is handed the
+  filters them with fzf (`Editor/Workspace/FindFile.lean`); and
+  `find-file-in-project`, its source `project-workspaces` in the category
+  `project-workspace` and the jobs `project-workspaces`,
+  `project-workspace-choose` and `project-workspace-find`, which list the
+  project's worktrees and find the one chosen
+  (`Editor/Workspace/FindInProject.lean`). And it is handed the
   status buffer's commands, jobs and mode (`VersionControl.commands`,
   `VersionControl.jobs`, `VersionControl.modes`,
   `Editor/VersionControl/Compiled.lean`): `vc-status` and the commands of

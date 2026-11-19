@@ -146,6 +146,7 @@ import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
 import ModelTest.Editor.Workspace.Contract
 import ModelTest.Editor.Workspace.FindFile
+import ModelTest.Editor.Workspace.FindInProject
 import ModelTest.Editor.Workspace.Lister
 import ModelTest.Editor.Workspace.Projects
 
@@ -965,7 +966,17 @@ Listing a workspace's files is checked in Lean alone too:
   others, one per location, the current one last; the table's label for a
   worktree it knows, a detached worktree by its directory, two entries of
   one label told apart by their annotation, and what is asked through its
-  arguments' round trip.
+  arguments' round trip;
+- `findInProjectChecks`: `find-file-in-project`
+  (`Editor/Workspace/FindInProject.lean`) on the finder checks' driver,
+  with `/r`'s repository model and a third worktree `/u`: the five
+  criteria of project navigation's phase 3, the three worktrees listed by
+  `name@branch` with no file opened in two of them, the choice reaching
+  `find-file-in-workspace` rooted there, by a choice or by a typed text,
+  a worktree first reached added with the finder's identity and branch
+  and found once, a gone worktree said, a registered workspace listed and
+  refused, two of one label told apart, no project said, a project with
+  no git, and a failing worktree list said.
 -/
 
 namespace ModelTest
@@ -1148,6 +1159,7 @@ def checks : List Check :=
     workspaceListerChecks ++
     findFileChecks ++
     projectWorkspaceChecks ++
+    findInProjectChecks ++
     modeMarkerChecks ++
     shellChecks ++
     readOnlyChecks ++

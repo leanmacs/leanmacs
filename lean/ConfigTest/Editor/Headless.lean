@@ -84,6 +84,7 @@ import Editor.WindowCommands.Compiled
 import Editor.Workspace
 import Editor.Workspace.Attach
 import Editor.Workspace.FindFile
+import Editor.Workspace.FindInProject
 import Editor.Workspace.Modes
 
 /-!
@@ -1975,6 +1976,29 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.jobs.any
               (fun entry =>
                 entry.registration.name == Workspace.FindFile.job && entry.owner == .compiled) },
+    { name :=
+        "the executable's hosts start with find-file-in-project registered compiled, the source project-workspaces registered compiled in the category project-workspace, which it alone is in, answered later by its job project-workspaces, and that job, project-workspace-choose and project-workspace-find registered compiled"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        let jobs :=
+          [Workspace.FindInProject.job, Workspace.FindInProject.chooseJob,
+            Workspace.FindInProject.findJob]
+        return (registry.find? Workspace.FindInProject.name).any (·.owner == .compiled) &&
+            registry.sources.any
+              (fun entry =>
+                entry.source.name == Workspace.FindInProject.sourceName &&
+                  entry.owner == .compiled &&
+                  entry.source.later.map (·.job) == some Workspace.FindInProject.job) &&
+            registry.sourcesIn Workspace.FindInProject.category ==
+              #[Workspace.FindInProject.sourceName] &&
+            jobs.all fun name =>
+              registry.jobs.any
+                (fun entry => entry.registration.name == name && entry.owner == .compiled) },
     { name :=
         "the executable's hosts start with the source words registered compiled in the category word, its job words registered compiled, the at-point source words registered compiled, and a modeless buffer's at-point chain is words"
       run := do
