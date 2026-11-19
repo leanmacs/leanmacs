@@ -18,7 +18,9 @@ the project's name, the current workspace's location, and the table's
 workspaces of the project (`Known`), in table order, each with its label.
 It travels as plain arguments (`Asked.toArguments`, `Asked.ofArguments?`):
 the repository as `false`, or `true` and the root; each location as
-`Location.arguments`, the known workspaces after their count.
+`Location.arguments`, the known workspaces after their count. `Asked.split?`
+reads it and keeps what follows, such as the text typed in the file finder
+the picker was stepped into from.
 
 ## The entries
 
@@ -47,7 +49,7 @@ an answer exactly.
 
 | Addition | Where |
 |---|---|
-| The typed text phase 4 hands | A trailing field of the choose order (`Editor/Workspace/FindInProject.lean`), appended after `Location.arguments` when `find-file-in-workspace` is run |
+| Another value the picker hands on | An argument after what is asked, read by `Asked.split?`, as the typed text of the finder stepped out of is (`Editor/Workspace/FindInProject.lean`) |
 | A jj workspace list | A second list `entries` takes, beside `worktrees` |
 
 Pinned by `ModelTest.projectWorkspaceChecks`, pure, and through the picker
@@ -116,9 +118,9 @@ def knownOf? : Nat → List Argument → Option (List Known × List Argument)
     | _ =>
       none
 
-/-- What `arguments` ask (`Asked.toArguments`), if they are that; anything
-after them is ignored. -/
-def Asked.ofArguments? (arguments : List Argument) : Option Asked := do
+/-- What `arguments` ask (`Asked.toArguments`), if they begin with that, and
+the arguments after it. -/
+def Asked.split? (arguments : List Argument) : Option (Asked × List Argument) := do
   let (git, arguments) ←
     match arguments with
     | .str git :: rest =>
@@ -140,13 +142,18 @@ def Asked.ofArguments? (arguments : List Argument) : Option Asked := do
     | _ =>
       none
   let (current, arguments) ← Location.of? arguments
-  let (known, _) ←
+  let (known, rest) ←
     match arguments with
     | .nat count :: rest =>
       knownOf? count rest
     | _ =>
       none
-  return { git, repository, name, current, known := known.toArray }
+  return ({ git, repository, name, current, known := known.toArray }, rest)
+
+/-- What `arguments` ask (`Asked.toArguments`), if they are that; anything
+after them is ignored. -/
+def Asked.ofArguments? (arguments : List Argument) : Option Asked :=
+  (Asked.split? arguments).map (·.1)
 
 /-- What is checked out in a worktree, as a workspace's branch. -/
 def Head.branch : VersionControl.Head → Branch

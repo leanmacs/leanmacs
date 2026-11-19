@@ -2654,8 +2654,8 @@ the buffer commands, the frame's commands with their bindings, the window
 commands, the command that loads a theme
 with the themes that ship, the command prompt, `execute-command`, which
 lists every registered command, the binding search, `search-bindings`, which
-lists every binding the scheme reaches, the workspace command with the job that finds a
-file's workspace, the shell's command with the job that runs `:!`, the
+lists every binding the scheme reaches, the workspace commands with the job that finds a
+file's workspace and the workspace finder's escape key (`Workspace.bindings`), the shell's command with the job that runs `:!`, the
 compile mode's commands, its jobs, its mode and the contributions that ship,
 `cargo-mode`, `lake-mode` and `mise-mode` (`Editor/Compile.lean`,
 `Editor/Compile/Shipped.lean`), the status buffer's commands, its jobs and
@@ -2687,7 +2687,8 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         AtPoint.commands ++
         VersionControl.commands ++
         VersionControl.gutterCommands
-    bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard
+    bindings := FrameCommands.bindings ++ Menu.bindings ++ Workspace.bindings
+    menu := some Menu.standard
     compiledJobs :=
       Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs ++ Completion.Words.jobs ++
         VersionControl.jobs ++

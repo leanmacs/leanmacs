@@ -69,8 +69,10 @@ show:
 - `shippedChecks`: what the executable's hosts are handed as compiled code
   (`Headless.shippedOver`): the registry they start with binds `C-s-f` to
   `toggle-fullscreen`, `s-m` to `minimise-window` and `s-q` to `quit`, all
-  compiled, and registers the buffer commands with the ex names `b`, `ls`
-  and `bd` bound to them, and the completion sources that ship;
+  compiled, binds `C-x C-d` to `find-file-in-another-workspace` in the
+  prompt category `workspace-file` alone, and registers the buffer
+  commands with the ex names `b`, `ls` and `bd` bound to them, and the
+  completion sources that ship;
 - `scriptChecks`: the headless mode's script and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
   library, a scene published after a reload's install and a job's command

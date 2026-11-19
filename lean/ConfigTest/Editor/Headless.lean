@@ -2000,6 +2000,27 @@ def shippedChecks (_ : Unit) : List Check :=
               registry.jobs.any
                 (fun entry => entry.registration.name == name && entry.owner == .compiled) },
     { name :=
+        "the executable's hosts start with find-file-in-another-workspace registered compiled and one compiled binding of it, C-x C-d in the prompt category workspace-file, described Find in another workspace; the global keymap does not bind C-x"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        let escapes :=
+          registry.bindings.filter (·.binding.command == Workspace.FindInProject.escapeName)
+        let global : Keymap Invocation := registry.keymap TestScheme.scheme
+        return (registry.find? Workspace.FindInProject.escapeName).any (·.owner == .compiled) &&
+            escapes.map (fun entry => (entry.owner, entry.binding)) ==
+              #[(.compiled,
+                  { keys := (keysOf "C-x C-d").map .key
+                    command := Workspace.FindInProject.escapeName
+                    category := some Workspace.FindFile.category
+                    desc := some "Find in another workspace" })] &&
+            global.find? (keysOf "C-x") == none &&
+            !global.continues (keysOf "C-x") },
+    { name :=
         "the executable's hosts start with the source words registered compiled in the category word, its job words registered compiled, the at-point source words registered compiled, and a modeless buffer's at-point chain is words"
       run := do
         let completions ← Job.Completions.new

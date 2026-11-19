@@ -1,8 +1,13 @@
 import Editor.Completion.Later
+import Editor.Config.Registry
+import Editor.InputScheme.Vim
+import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
+import Editor.Setup
 import Editor.VersionControl.Contract
 import Editor.VersionControl.Git
 import Editor.VersionControl.Model
+import Editor.Workspace.Compiled
 import Editor.Workspace.FindInProject
 import ModelTest.Check
 import ModelTest.Support.FindFile
@@ -86,9 +91,11 @@ def idle (name : String) : Option (List Argument → Work) :=
 worktrees' directories. -/
 def projectDriver (linked : Array VersionControl.Model.Linked := threeLinked)
     (found : Array System.FilePath := #["/u", "/w"]) (over : Workspace.World := projectWorld)
-    (registered : String → Option (List Argument → Work) := projectJobs) : Option TestDriver :=
-  (FindFileTest.driver (world := over) (registered := registered) (commands := projectCommands)
-        (bindings := projectBindings)).map
+    (registered : String → Option (List Argument → Work) := projectJobs)
+    (commands : List (String × Dispatched) := projectCommands)
+    (bindings : List (String × Invocation) := projectBindings) : Option TestDriver :=
+  (FindFileTest.driver (world := over) (registered := registered) (commands := commands)
+        (bindings := bindings)).map
     fun driver =>
     let extra :=
       ((repository linked).jobModel "git" "/r").processes.scripts ++
@@ -134,6 +141,70 @@ def refused (driver : TestDriver) (keys : String) : String × Bool × Nat × Boo
   let after := FindFileTest.drainedAfter driver keys
   (after.loop.state.echo, after.loop.state.prompt.isSome, after.pending.size + after.posting.size,
     after.jobs.processes.started.size == before)
+
+/-- The commands of the escape checks: the picker checks', and the escape. -/
+def escapeCommands : List (String × Dispatched) :=
+  projectCommands ++
+    [(Workspace.FindInProject.escapeName, fun call => do
+        Workspace.FindInProject.escapeCommand call
+        return none)]
+
+/-- The keys of the escape checks: the picker checks', `C-o 1` asks a prompt
+with no source, `C-o 2` one of the category `pick`, and `C-o 3` runs the
+escape by name, from any prompt or none. -/
+def escapeBindings : List (String × Invocation) :=
+  projectBindings ++
+    [("C-o 1", invoke "ask-plain"), ("C-o 2", invoke "ask-category"),
+      ("C-o 3", invoke Workspace.FindInProject.escapeName)]
+
+/-- The driver of the escape checks: the picker checks', with the escape among
+its commands, the active keymaps `registry` makes from the loop's state
+ahead of its own, as a host's are, and fzf in `/r` scripted to match
+nothing for `b`. -/
+def escapeDriver (registry : Config.Registry) : Option TestDriver :=
+  (projectDriver (commands := escapeCommands) (bindings := escapeBindings)).map fun driver =>
+    let filter : Process.Script :=
+      { command := (Workspace.FindFile.filtering FindFileTest.git "/r").filterFor "b"
+        reply := FindFileTest.ran [] }
+    { driver with
+      keys :=
+        { driver.keys with
+          maps := fun state view =>
+            registry.activeMaps TestScheme.scheme state view ++ driver.keys.maps state view }
+      jobs :=
+        { driver.jobs with
+          processes :=
+            { driver.jobs.processes with scripts := driver.jobs.processes.scripts.push filter } } }
+
+/-- The registry of compiled code's bindings, the escape's key among them. -/
+def shipped : Config.Registry :=
+  ({} : Config.Registry).replaceBindings .compiled Workspace.bindings
+
+/-- A registry with no bindings. -/
+def bare : Config.Registry :=
+  {}
+
+/-- The bindings a config collects that binds `C-o e` to the escape in the
+workspace finder's category. -/
+def configBindings : Array Config.KeyBinding :=
+  match
+    Config.Registrations.ofSetup
+      (bindKey "C-o e" Workspace.FindInProject.escapeName (category :=
+        some Workspace.FindFile.category)) with
+  | .ok collected => collected.bindings
+  | .error _ => #[]
+
+/-- `driver` in `/r/src/a.lean`, its workspace settled, with the workspace's
+finder asked, `b` typed, and drained. -/
+def findingB (driver : TestDriver) : TestDriver :=
+  FindFileTest.drainedAfter (FindFileTest.drainedAfter (settledAfter driver "C-o a") "C-o f") "b"
+
+/-- What `driver` shows once `keys` are pressed: the open prompt's label,
+the minibuffer's text, the echo area and whether a prompt is open. -/
+def shown (driver : TestDriver) (keys : String) : Option String × Option String × String × Bool :=
+  let after := FindFileTest.drainedAfter driver keys
+  (FindFileTest.labelOf after, minibufferText after, after.loop.state.echo,
+    after.loop.state.prompt.isSome)
 
 end FindInProjectTest
 
@@ -348,6 +419,111 @@ def findInProjectChecks : List Check :=
           let choose : Workspace.FindInProject.ChooseOrder :=
             { answer := "r@fix", view := ⟨2⟩, asked }
           failed == some Workspace.FindInProject.noProjectAsked &&
-            Workspace.FindInProject.ChooseOrder.ofArguments? choose.arguments == some choose }]
+            Workspace.FindInProject.ChooseOrder.ofArguments? choose.arguments == some choose &&
+            Workspace.FindInProject.ChooseOrder.ofArguments?
+                { choose with typed := "b" }.arguments ==
+              some { choose with typed := "b" } },
+    { name :=
+        "phase 4 criterion 1 on the models: the escape key in the workspace finder closes it and opens the project's workspace picker, its input empty, listing r@fix, r@feature and r@main; git's worktree list runs once"
+      run :=
+        pure <|
+          match escapeDriver shipped with
+          | none => false
+          | some driver =>
+            let finding := findingB driver
+            let escaped := drainedAfter finding "C-x C-d"
+            labelOf finding == some "Find file in r@main: " && minibufferText finding == some "b" &&
+              labelOf escaped == some "Find file in a workspace of r: " &&
+              minibufferText escaped == some "" &&
+              listedTexts escaped == some #["r@fix", "r@feature", "r@main"] &&
+              (escaped.loop.state.prompt.map (·.candidates.category)) ==
+                some (some Workspace.FindInProject.category) &&
+              runs escaped listRun == 1 },
+    { name :=
+        "the escape from the finder in a buffer with no project closes the finder and says there is no project; run with no prompt open it says so and opens nothing; run in a prompt of another category it says so and leaves that prompt open; cancelling the picker after the escape leaves no prompt and starts no finder"
+      run :=
+        pure <|
+          match escapeDriver shipped with
+          | none => false
+          | some driver =>
+            let noProject :=
+              drainedAfter (drainedAfter (settledAfter driver "C-o x") "C-o f") "C-x C-d"
+            let unopened := drainedAfter (settledAfter driver "C-o a") "C-o 3"
+            let other := drainedAfter (drainedAfter (settledAfter driver "C-o a") "C-o 2") "C-o 3"
+            let escaped := drainedAfter (findingB driver) "C-x C-d"
+            let cancelled := drainedAfter escaped "C-o q"
+            noProject.loop.state.echo == Workspace.FindInProject.noProject "a.txt" &&
+              noProject.loop.state.prompt.isNone &&
+              unopened.loop.state.echo ==
+                s!"{Workspace.FindInProject.escapeName}: {PromptRefusal.notOpen.describe}" &&
+              unopened.loop.state.prompt.isNone &&
+              other.loop.state.echo == Workspace.FindInProject.notFinder &&
+              labelOf other == some pickLabel &&
+              cancelled.loop.state.prompt.isNone &&
+              cancelled.pending.size + cancelled.posting.size == 0 &&
+              cancelled.jobs.processes.started == escaped.jobs.processes.started },
+    { name :=
+        "phase 4 criterion 2 on the models: after the escape, choosing r@feature, which the table does not have, opens its finder with b typed and the list matched against it; choosing r@main, which it has, does the same there"
+      run :=
+        pure <|
+          match escapeDriver shipped with
+          | none => false
+          | some driver =>
+            let escaped := drainedAfter (findingB driver) "C-x C-d"
+            let feature := drainedAfter escaped "C-o j C-o j C-o y"
+            let main := drainedAfter escaped "C-o j C-o j C-o j C-o y"
+            let filtered (driver : TestDriver) (root : System.FilePath) : Bool :=
+              driver.jobs.processes.started.contains
+                ((Workspace.FindFile.filtering git root).filterFor "b")
+            labelOf feature == some "Find file in r@feature: " &&
+              minibufferText feature == some "b" &&
+              listedTexts feature == some #["src/b.lean"] &&
+              runs feature (Workspace.Git.revParseCommand "git" "/w") == 1 &&
+              filtered feature "/w" &&
+              labelOf main == some "Find file in r@main: " &&
+              minibufferText main == some "b" &&
+              listedTexts main == some #[] },
+    { name :=
+        "phase 4 criterion 3 on the models: the escape key in the picker, in a prompt with no category, in a prompt of another category and with no prompt open does what it does with no binding of it"
+      run :=
+        pure <|
+          match escapeDriver shipped, escapeDriver bare with
+          | some withKey, some without =>
+            [("C-o a C-o p", "C-x C-d"), ("C-o 1", "C-x C-d"), ("C-o 2", "C-x C-d"),
+                  ("C-o a", "C-x C-d")].all
+              fun (before, keys) =>
+              shown (drainedAfter (settledAfter withKey "C-o a") before) keys ==
+                shown (drainedAfter (settledAfter without "C-o a") before) keys
+          | _, _ => false },
+    { name :=
+        "phase 4 criterion 3 under the Vim scheme: C-x is unbound in the minibuffer state's own table; C-x C-d in the minibuffer state yields the escape with the workspace finder's keymap active, and with another category's what it yields with no keymap"
+      run :=
+        let scheme := Vim.Default.scheme
+        let opened : Vim.State := scheme.openMinibuffer ⟨5⟩ scheme.init
+        let fed (maps : List (Keymap Vim.Bound)) : List (Option String) :=
+          ((scheme.feed (fun _ => maps) ⟨5⟩ opened (keys "C-x C-d")).2).map (·.map (·.command))
+        let own := Vim.Default.keymap Vim.Default.minibufferCommands
+        pure
+          (own.find? (keys "C-x") == none && !own.continues (keys "C-x") &&
+            fed [shipped.categoryKeymap scheme Workspace.FindFile.category] ==
+              [none, some Workspace.FindInProject.escapeName] &&
+            fed [shipped.categoryKeymap scheme Workspace.FindInProject.category] == fed []) },
+    { name :=
+        "phase 4 criterion 4 on the models: config's binding of C-o e in the workspace finder's keymap steps out as the compiled key does, with no compiled binding, and beside it both keys step out"
+      run :=
+        pure <|
+          let configured := bare.replaceBindings .config configBindings
+          let both := shipped.replaceBindings .config configBindings
+          let stepsOut (registry : Config.Registry) (key : String) : Bool :=
+            match escapeDriver registry with
+            | none => false
+            | some driver =>
+              let escaped := drainedAfter (findingB driver) key
+              let feature := drainedAfter escaped "C-o j C-o j C-o y"
+              labelOf escaped == some "Find file in a workspace of r: " &&
+                labelOf feature == some "Find file in r@feature: " &&
+                minibufferText feature == some "b"
+          !configBindings.isEmpty && stepsOut configured "C-o e" && stepsOut both "C-o e" &&
+            stepsOut both "C-x C-d" }]
 
 end ModelTest

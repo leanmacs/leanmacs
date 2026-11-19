@@ -971,7 +971,7 @@ Listing a workspace's files is checked in Lean alone too:
   others, one per location, the current one last; the table's label for a
   worktree it knows, a detached worktree by its directory, two entries of
   one label told apart by their annotation, and what is asked through its
-  arguments' round trip;
+  arguments' round trip, and split from what follows it;
 - `findInProjectChecks`: `find-file-in-project`
   (`Editor/Workspace/FindInProject.lean`) on the finder checks' driver,
   with `/r`'s repository model and a third worktree `/u`: the five
@@ -982,7 +982,11 @@ Listing a workspace's files is checked in Lean alone too:
   and found once, a gone worktree said, a registered workspace listed and
   refused, two of one label told apart, no project said, a project with
   no git, a failing worktree list said, and one that fails only when the
-  accept lists again said by the command, with no prompt and no find;
+  accept lists again said by the command, with no prompt and no find; and
+  the four criteria of phase 4: the escape key in the finder opening the
+  picker, the choice opening the finder with the typed text, through a
+  reach or the table, the key doing nothing new in any other prompt, under
+  the Vim scheme too, and config's key in the category stepping out;
 - `reachChecks`: reaching the workspace at a path the table has no
   answer for (`Editor/Workspace/Reach.lean`), with a probe continuation,
   on the workspace driver: the find job started and its answer recorded

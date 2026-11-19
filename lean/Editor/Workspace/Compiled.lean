@@ -23,7 +23,13 @@ commands and their jobs (`Editor/Files/Compiled.lean`).
   a prompt over the files of that workspace (`FindFile.command`); and
   `find-file-in-project`, which opens a prompt over the project's
   workspaces and then `find-file-in-workspace` in the one chosen
-  (`FindInProject.command`).
+  (`FindInProject.command`); and `find-file-in-another-workspace`, which
+  closes the open workspace finder and opens that picker, carrying the
+  text typed in the finder to the finder the choice opens
+  (`FindInProject.escapeCommand`).
+- **`Workspace.bindings`**: `C-x C-d` runs `find-file-in-another-workspace`,
+  in the prompt category `workspace-file` alone (`KeyBinding.category`), so
+  it holds only while the workspace finder is open.
 - **`Workspace.jobs`**: `find-workspace`, which a file's open starts for its
   directory when no answer is cached under the config generation
   (`Workspace.findWork`). A host that is not handed it finds no workspace,
@@ -57,7 +63,15 @@ namespace Editor.Workspace
 def commands : Array Config.Registration :=
   #[{ name := currentName, action := .call currentCommand },
     { name := FindFile.name, action := .call FindFile.command },
-    { name := FindInProject.name, action := .call FindInProject.command }]
+    { name := FindInProject.name, action := .call FindInProject.command },
+    { name := FindInProject.escapeName, action := .call FindInProject.escapeCommand }]
+
+/-- The workspace bindings, as a host registers them for the owner
+`compiled`: the escape's key, `C-x C-d`, in the workspace finder's prompt
+category alone. -/
+def bindings : Array Config.KeyBinding :=
+  #[{ keys := FindInProject.escapeKeys.map .key, command := FindInProject.escapeName
+      category := some FindFile.category, desc := some FindInProject.escapeDesc }]
 
 /-- The jobs a file's open starts to find its directory's workspace and its
 buffer's modes on markers, the finder's source's job and the picker's

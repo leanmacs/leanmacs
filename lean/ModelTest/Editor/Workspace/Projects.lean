@@ -116,6 +116,15 @@ def projectWorkspaceChecks : List Check :=
                 some asked &&
               Workspace.Projects.Asked.ofArguments? (asked.toArguments.take 3) == none },
     { name :=
+        "what is asked splits from the arguments that follow it, which are kept, and arguments that ask nothing split to none"
+      run :=
+        pure <|
+          let asked := askedFromR #[{ location := remote, label := "r@agent" }]
+          Workspace.Projects.Asked.split? (asked.toArguments ++ [.str "b"]) ==
+              some (asked, [.str "b"]) &&
+            Workspace.Projects.Asked.split? asked.toArguments == some (asked, []) &&
+            Workspace.Projects.Asked.split? (asked.toArguments.take 3) == none },
+    { name :=
         "a worktree's head is a workspace's branch: a branch by its name, detached as detached"
       run :=
         pure <|
