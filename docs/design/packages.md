@@ -7,22 +7,26 @@ cross to move out. Written by the packages roadmap: its phase 3 built the
 core's root module, cut every import from the core into the two features
 that move in that roadmap (the compile mode and the shipped palettes), and
 put a check of that in the gate; its phase 4 built the package set and its
-build, which links the editor. What a package is and how a host registers
-one are in [lean-runtime.md](lean-runtime.md), "Packages".
+build, which links the editor; its phase 5 moved the shipped palettes out
+of the core into the first default package, `shipped-themes`, and built
+the check of what a package imports. What a package is and how a host
+registers one are in [lean-runtime.md](lean-runtime.md), "Packages".
 
-Every feature is still in the core's Lake package (`lean/lakefile.lean`,
-the package `editor-core`), and the default package set
-(`packages/lakefile.toml`) requires the core alone. This document draws the
-lines the later phases cut along: phase 5 moves the shipped palettes out
-into the first default package and phase 6 the compile mode.
+Every feature but the shipped palettes is still in the core's Lake package
+(`lean/lakefile.lean`, the package `editor-core`). The default package set
+(`packages/lakefile.toml`) requires the core and one default package,
+`shipped-themes` (`packages/shipped-themes/`). This document draws the
+lines the later phases cut along: phase 6 moves the compile mode out.
 
 ## The core and its root
 
 **The core** is every module under `lean/Editor/` except the modules of
-the two features that move out in this roadmap, called **the moving
+the feature that still moves out in this roadmap, called **the moving
 modules** here: the compile mode (`Editor.Compile` and every module under
-it, phase 6) and the shipped palettes (`Editor.Themes.Solarized`,
-`Editor.Themes.FairyFloss` and `Editor.Themes.Shipped`, phase 5).
+it, phase 6). The shipped palettes were the other moving feature until
+phase 5 moved them: they are the Lake package `shipped-themes` now, their
+modules are named `ShippedThemes.…`, and no module under `lean/Editor/` is
+theirs.
 
 So the ex line, files, workspaces, version control and every other feature
 that does not move yet are core modules, and "core" in the gate's check
@@ -37,16 +41,17 @@ could move later.
   core module. No host module, no package and no executable's root imports
   it.
 - **`Editor` is the config base, not the core's root** (`lean/Editor.lean`).
-  User config is elaborated on it, and it imports both moving features
+  User config is elaborated on it, and it imports the moving feature
   (`Editor.Compile`, `Editor.Compile.Shipped`) so that config can call
-  them. It keeps its imports until the base changes (phase 7). It is not
+  it. It imports no palette, and never did: config names a shipped theme
+  by its name. It keeps its imports until the base changes (phase 7). It is not
   under `lean/Editor/` and is not a core module: after phase 6 it imports a
   package.
 - **The list of the core's packages is not a module of the editor.**
   `EditorCore.EditorPackage` (`lean/EditorCore/EditorPackage.lean`) is the
   entry module of the core's Lake package ("A package's entry module",
   below): its `packages` names every package still in that Lake package,
-  the moving ones among them, in the one order the headless fixtures show
+  the moving one among them, in the one order the headless fixtures show
   ("Registration order is visible", below). It is a module outside
   `lean/Editor/` and outside the namespace `Editor`, in a library of its
   own (`lean_lib EditorCore`), which the generated root and the tests that
@@ -85,9 +90,10 @@ built from one:
 
 - **The default set is `packages/lakefile.toml`** (the Lake package
   `default-set`). It requires the core (`editor-core`, from `../lean`) and
-  nothing else yet; each default package gets a directory under `packages/`
-  and a `require` there (phase 5 adds the first). It is the lakefile a
-  user's set starts from.
+  the default packages, each of which has a directory under `packages/`
+  and a `require` there. There is one so far, `shipped-themes`
+  (`packages/shipped-themes/`, "The first default package", below). It is
+  the lakefile a user's set starts from.
 - **The core defines the build**, as Lake facets in `lean/lakefile.lean`.
   Run in `lean/`, `lake -d ../packages build :editor` writes a root module
   from the set's packages, builds it and links
@@ -145,7 +151,7 @@ end Greeting.EditorPackage
 - **The module declares `packages : Array Editor.Package`** in the
   namespace of its own name. A Lake package may hold several `Package`
   values, which register in the order the array lists them; the core's
-  holds 22.
+  holds 21, and `shipped-themes`' one.
 - **A Lake package with no such module contributes nothing.** The build
   asks Lake whether a library of the package holds a module of that name
   (`Package.findModule?`) and whether its source file exists. It reads no
@@ -196,15 +202,18 @@ and only when its text would change. For the default set it is:
 import Editor
 import Editor.Main
 import EditorCore.EditorPackage
+import ShippedThemes.EditorPackage
 
 def main (args : List String) : IO UInt32 :=
-  Editor.Main.run (EditorCore.EditorPackage.packages) args
+  Editor.Main.run (EditorCore.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages) args
 ```
 
 with a module doc and a doc string, since it is built with the core's Lean
-options and a warning in it fails the build. For a set with more packages
-it imports each entry module in order and appends their `packages` in that
-order.
+options and a warning in it fails the build. It imports each entry module
+of the set in order and appends their `packages` in that order; a set of
+the core alone (`tests/empty-set`) passes the core's array as it is. The
+gate requires the default set's root to import exactly these four modules
+(`lake -d ../packages query :editorRootImports`, in `ffi-test`).
 
 - **It imports the config base, `Editor`**, for the link alone, as every
   root that links the elaborator does ("The core and its root", above).
@@ -231,15 +240,20 @@ order.
   `lean/Editor/ModuleLookup.lean`). One is enough while the config base's
   modules are all the core's; the list is what the elaborator's search
   path grows to when the base holds a package's modules (phase 6 moves
-  the compile mode, which the base imports, out of the core). The gate
-  starts the window mode's wiring for both sets' editors with that default
-  and requires config to load (`ffi-test window-host-direct`), and checks
-  the fixture set's record names its three directories in order.
+  the compile mode, which the base imports, out of the core). The shipped
+  themes did not need it: config names a theme by its name, and the
+  registry is filled by linked code, so the package's fixtures run with
+  the core's directory alone. The gate starts the window mode's wiring for
+  both sets' editors with that default and requires config to load
+  (`ffi-test window-host-direct`), and checks each record: the default
+  set's names two directories, the core's and then `shipped-themes`', and
+  the fixture set's four, the core's, `greeting`'s, `greeting-loud`'s and
+  `shipped-themes`', each holding its package's modules.
 - **What "no hand-written list of packages" means.** No module names the
   Lake packages of a set: the set's lakefile is the one place, and the
   root is generated from it. Each Lake package's entry module still lists
   its own `Package` values, which is what the root reads. The core's lists
-  22 until features move out.
+  21, and fewer as features move out.
 - **No root is written by hand, the user-side link's included.** That
   check ([lean-runtime.md](lean-runtime.md), "A link on the user's
   machine, measured") links an editor against a staged core of prebuilt
@@ -289,7 +303,7 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 | `test` | `lake -d <package> test --wfail`; a package with no test driver fails the step | `lean-test`, with the `cargo` that fails first on the `PATH` |
 | `build` | Once, the set's `editor`; then `lake -d <package> build --wfail`, the package's default targets under its own linter options; and its linked test's executable | `lean` |
 | `fmt` (`format` rewrites) | `lean-fmt format --check` and `lean-fmt check`, with `--root <package>`, from the formatter's host | `lean-fmt` (`lean-format`) |
-| `run` | The linked test, in the package's directory; then each headless fixture on the set's `editor`, compared with its `expected`. It prints what it ran, and the gate requires the fixture packages' linked test and fixtures among it | `ffi-test` |
+| `run` | The linked test, in the package's directory; then each headless fixture on the set's `editor`, compared with its `expected`. It prints what it ran, and the gate requires the fixture packages' and the default package's linked tests and fixtures among it | `ffi-test`, over the fixture set and over the default set |
 
 - **The packages a step runs over** are those of the set that are path
   dependencies and hold a Lean library, other than the core, which the
@@ -297,9 +311,20 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   pass by running over nothing, and `lean-test` shows that on a set kept
   for it, `tests/empty-set`, which requires the core alone.
 - **The gate gives the steps the fixture set**, which requires the default
-  set. So the default packages are run over through it from phase 5 on,
-  and the default set's own `editor` is built beside it, for the standing
-  fixtures under `tests/headless/`.
+  set. So the default packages are tested, built, formatted and run through
+  it, `shipped-themes` among them, and `lean-test` requires the line the
+  `test` step prints as it reaches that package. The default set's own
+  `editor` is built beside it, for the standing fixtures under
+  `tests/headless/`, and **`run` is also given the default set**, so the
+  default packages' linked tests and fixtures hold of the editor that is
+  shipped, not only of the fixture set's.
+- **A package's linked-only test modules are under `<P>Test/Linked/`**,
+  each mirroring the module it tests
+  (`ShippedThemesTest/Linked/ShippedThemes.lean`), and `<P>Test/Linked.lean`
+  only imports them and runs them. A package has one test namespace where
+  the core has four test roots, so its model tests keep `<P>Test/<path>`,
+  which the test driver's root imports, and the ones that link the Rust
+  library need a place the driver does not import.
 - **A package's headless fixtures are excluded from the formatter** by a
   `lean-fmt.toml` in the package (`exclude = ["tests/**"]`): a config chunk
   is Lean with no import line, elaborated on the config base at runtime,
@@ -313,15 +338,81 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   module for the set's packages, each of which the root of a linked test
   may import and no other module of a package may.
 
-### The fixture set
+### The first default package: `shipped-themes`
 
-Two packages and a set under `tests/packages/`, used by tests alone. They
-show the path a default package and a user's package take before any
-feature moves.
+`packages/shipped-themes/` is the Lake package `shipped-themes`: Solarized
+(dark and light) and Fairy Floss, which were modules of the core until
+the packages roadmap's phase 5. The default set requires it, so every
+editor built from the default set, or from a set that requires the default
+set, holds its three themes.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then the default set |
+| `lakefile.toml` | The package: it requires the core by path, declares the library `ShippedThemes`, the test library `ShippedThemesTest` and the test driver `shipped-themes-test`, and turns every linter on, as a fixture package does |
+| `ShippedThemes.lean` | The library's root: `ShippedThemes.themes` and the `Package` value `ShippedThemes.package`, still named `shipped-themes`, whose `setup` defines the three themes and nothing else |
+| `ShippedThemes/Solarized.lean`, `ShippedThemes/FairyFloss.lean` | The palettes, each with its licence notice beside it (`Solarized-LICENSE.txt`, `FairyFloss-LICENSE.txt`) |
+| `ShippedThemes/EditorPackage.lean` | The entry module: `packages := #[ShippedThemes.package]` |
+| `ShippedThemesTest/Model.lean` | The test driver's root, which runs `ShippedThemesTest.shippedThemesChecks`, `.solarizedChecks` and `.fairyFlossChecks`, in the test modules that mirror the three library modules |
+| `ShippedThemesTest/Linked.lean` | The linked test's root, which runs `ShippedThemesTest/Linked/ShippedThemes.lean`: each theme's picture against its reference image |
+| `tests/headless/themes`, `shipped-themes`, `load-theme` | Its headless fixtures |
+| `tests/render/` | The three reference images, with the text they show, the one font they are laid out in and that font's licence |
+
+- **It imports the core's API alone**: `Editor.Face` and `Editor.Package`.
+  Its model tests also import `Editor.Appearance`, `Editor.Scene`,
+  `Editor.TabBar` and `Editor.Themes.Check`, which are API, and the test
+  double `Editor.Config.Packages`; its linked test module imports the test
+  double `Editor.Themes.Picture`. The package imports check holds that
+  ("What a package may import", below).
+- **Its declarations are in the namespace `ShippedThemes`**
+  (`ShippedThemes.themes`, `ShippedThemes.Solarized.dark`), where they
+  were `Editor.Themes.Shipped.…` in the core. No config could name a
+  palette's declaration before the move, since the config base never
+  imported one, so nothing depended on the old names. Config names a theme
+  by its name (`useTheme "solarized-light"`, `load-theme`), which did not
+  change.
+- **Its own tests run the core's completeness check on each theme**
+  (`Themes.problems`, in `ShippedThemesTest.shippedThemesChecks`), as the
+  core runs it on the theme `default`, and **the core's theme picture
+  check on each theme** (`Themes.Picture.themePicturesScenario`, from the
+  linked test), as the core runs it on `default`. The picture check draws
+  through the raw bindings, which no package may import, so it is a test
+  double of the core that takes the themes as an argument.
+- **It carries its own copies of what its tests read**: the picture's
+  text, a byte-for-byte copy of the core's `tests/render/themes/source.lean`,
+  so the three reference images are the bytes they were; and the fixture
+  font with its licence. A linked test runs in its package's directory,
+  and a package that read `../../tests/fonts` could not be fetched from
+  anywhere else later.
+- **The fixture `load-theme` pins what the default editor offers.** On a
+  config that defines no theme, the theme prompt's candidates are
+  `default`, `solarized-dark`, `solarized-light` and `fairy-floss`, in
+  that order, as before the move. The gate runs it on the default set's
+  editor and on the fixture set's.
+- **Dropping the package leaves the core's themes.** The set
+  `tests/empty-set` is the default set with this package dropped: it
+  requires the core alone. `mise run lean` links an editor from it and
+  `ffi-test` runs the core's fixture `tests/headless/core-themes` on that
+  editor: it starts in the theme `default`, `load-theme` offers `default`
+  and the theme config defines and no palette, and a palette's name is
+  answered with `load-theme: no theme is registered as …`.
+- **The app bundle needs nothing more for it.** The bundle ships the
+  module files of the config base's closure, which holds no module of this
+  package, and `bundle-test` runs the package's `shipped-themes` fixture
+  from a staged bundle with an empty environment: the themes are in the
+  executable.
+
+### The fixture set
+
+Two packages and a set under `tests/packages/`, used by tests alone. They
+showed the path a default package and a user's package take before any
+feature moved, and they still show what the default package does not: a
+package that requires another package, and a linked test that starts a
+host. The set requires the default set, so its editor holds the default
+packages too.
+
+| Path | What |
+|---|---|
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then the default set, and through it `shipped-themes` |
 | `tests/packages/greeting/` | The Lake package `greeting`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean`), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting` and registers `greeting-reply` again with another text; its test driver and the fixture `tests/headless/reply` |
 
@@ -350,8 +441,9 @@ feature moves.
 ### Manifests: a set's build fetches nothing
 
 **Every Lake root has its `lake-manifest.json` committed**: the core, the
-default set, the fixture set, each fixture package, the empty set, the
-user-side link's set and its package, and the formatter's host.
+default set, each default package, the fixture set, each fixture package,
+the empty set, the user-side link's set and its package, and the
+formatter's host.
 
 - **A set's manifest holds path entries only.** With it present, a
   dependency the manifest does not hold fails the build (`dependency … not
@@ -379,9 +471,9 @@ user-side link's set and its package, and the formatter's host.
 
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
-`lean/` holds a copy of it** (the default set, the fixture set and its two
-packages, the empty set, the user-side link's set and its package, and the
-formatter's host): `lean-fmt` refuses a root with no
+`lean/` holds a copy of it** (the default set and its package
+`shipped-themes`, the fixture set and its two packages, the empty set, the
+user-side link's set and its package, and the formatter's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file when Lake is run in that
 directory. `tools/toolchain-check.sh`, first in `lean-test`, fails when a
 tracked copy differs from the pin, naming it. A bump of the pin
@@ -465,19 +557,20 @@ says which side of the rule its modules are on.
   of it. A change to the rule changes the script, this section and the
   lines the gate holds the script to (`tests/package-imports/`).
 
-Checked against the graph at `6ba99de5`: every core module the moving
-modules import directly is importable. The compile mode's modules import
+Checked against the graph at `6ba99de5`, before either feature moved:
+every core module the moving modules import directly is importable. The compile mode's modules import
 `Editor.Api`, `Editor.Command.Call`, `Editor.File`, `Editor.Json`,
 `Editor.Mode`, `Editor.Package`, `Editor.ProjectMode`,
 `Editor.ProjectMode.Format`, `Editor.ProjectMode.Listing`, `Editor.Shell`
 and `Editor.Workspace.Modes`; the shipped palettes' import `Editor.Face` and
-`Editor.Package`. `Editor.Themes.Check`, the completeness check phase 5's
-tests run, is importable.
+`Editor.Package`. `Editor.Themes.Check`, the completeness check the
+palettes' tests run, is importable.
 
-**The moving features' tests import internal modules today**, which the
+**The compile mode's tests import internal modules today**, which the
 rule does not allow a package's tests. They are recorded here, not allowed
-by widening the rule; phases 5 and 6 extend the API, or change the tests,
-when they move them:
+by widening the rule; phase 6 extends the API, or changes the tests, when
+it moves them, as phase 5 did for the palettes' ("What moving the shipped
+themes added to the core's API", below):
 
 - the compile mode's tests (`ModelTest.Editor.Compile` and the modules
   under it, `ConfigTest.Editor.Compile`, `ContractTest.Editor.Compile` and
@@ -486,13 +579,8 @@ when they move them:
   `Editor.Config.Registry`, `Editor.Config.Session`,
   `Editor.Config.Stores`, `Editor.Display.Recorder`,
   `Editor.Ffi.Processes`, `Editor.Ffi.Snapshot`, `Editor.Job.Runner`,
-  `Editor.Loop` and `Editor.Text.Real`;
-- the shipped palettes' tests (`ModelTest.Editor.Themes.Shipped`,
-  `.Solarized`, `.FairyFloss`, `FfiTest.Editor.Themes.Shipped`):
-  `Editor.Config.Packages`, `Editor.Config.Registry`,
-  `Editor.Display.Real`, `Editor.Ffi.Display`, `Editor.Ffi.Document`,
-  `Editor.Ffi.Marker`, `Editor.Ffi.Snapshot`, `Editor.Ffi.Window`,
-  `Editor.Loop` and `Editor.Text.Real`.
+  `Editor.Loop` and `Editor.Text.Real`. Of these `Editor.Config.Packages`
+  is a test double since phase 5.
 
 **The core's tests do not name the compile mode.** A test module that
 mirrors a core module imports no module of the compile mode, so that
@@ -515,10 +603,50 @@ names every package by design; the `compile` entry of the map lists them:
   Three version-control contract checks build on that rig and reach the
   compile package through it; phase 6 splits the rig or moves it.
 
-The shipped palettes are not yet cut out of the core's tests in the same
-way: five test modules of core modules use a palette as their fixture
-theme (the `shipped-themes` entry of the map lists them), which is phase
-5's to settle when it moves the palettes.
+**The core's tests do not name a shipped palette either.** Five test
+modules of core modules used a palette as their fixture theme
+(`ModelTest.Editor.Appearance`, `ConfigTest.Editor.ExecuteCommand`,
+`.Themes`, `.Themes.Check` and `FfiTest.Editor.ExcerptView`). Phase 5 gave
+each a theme of the core's own before it moved the palettes: the excerpt
+picture is drawn in the built-in theme, the three config tests share
+fixture themes made with `Palette.theme` from palettes written in
+`lean/ConfigTest/Support/Themes.lean`, and the appearance checks define
+theirs. No copy of a palette's values is kept in the core, so no licence
+notice is either. `ConfigTest.shippedChecks` and
+`ModelTest.packageSetChecks` state the core's list alone: 21 packages and
+the one theme `default`.
+
+## What moving the shipped themes added to the core's API
+
+The packages roadmap's phase 5 moved the palettes into a package that
+imports only what the rule above allows. The rule and the core changed in
+three places for it, and each is in the lists of
+`tools/package-imports-check.sh`. Read against the import lines Lake
+prints for the package (`lake -d ../packages query :editorPackageImports`,
+in `lean/`):
+
+| Addition | What it is | Who may import it | Why the move needed it |
+|---|---|---|---|
+| `Editor.Config.Packages` | An existing module, reclassified from internal to a test double: `Package.registered` and `Config.State.ofPackages`, which read what a package registers | A package's tests | `ShippedThemesTest.shippedThemesChecks` checks that the package alone is accepted and registers its three themes and nothing else. `lean/Editor/Package.lean` already named it as how a test reads a package; the fixture packages' tests use it the same way |
+| `Editor.Themes.Picture` | A new core module, a test double: the theme picture check, with the helpers it reads pictures with | A package's tests | The palettes' reference pictures moved with them. Drawing one goes through the raw bindings (`Editor.Ffi.…`), which no package may import, so the scenario became a core module that takes the themes as an argument. The core runs it on `default` |
+| The linked test's allowance | Not a module: the root of a linked test, `<P>Test.Linked`, may import the real bindings of the ports, the headless host, the config base and the core's entry module | The linked test's root alone | The check arrived with this phase and had to say what an executable linked as the editor is may name. `shipped-themes`' own linked test uses none of the allowance; the fixture package `greeting`'s uses all of it |
+
+- **Nothing was added to what a package's library may import.** The
+  palettes import `Editor.Face` and `Editor.Package`, which were API
+  already.
+- **`Editor.Themes.Check` was importable already**: the completeness
+  check, `Themes.problems`, which the package's tests run on each theme,
+  is a module of the feature `themes` that a package may import, and the
+  move changed nothing about it.
+- **`Editor.Appearance`, `Editor.Scene` and `Editor.TabBar`**, which the
+  package's tests import, were API already.
+- **What the tests stopped importing.** As core tests they imported
+  `Editor.Config.Registry`, `Editor.Display.Real`, `Editor.Ffi.Display`,
+  `Editor.Ffi.Document`, `Editor.Ffi.Marker`, `Editor.Ffi.Snapshot`,
+  `Editor.Ffi.Window`, `Editor.Loop` and `Editor.Text.Real`, all internal.
+  The model tests reach the registry through `Editor.Config.Packages`
+  alone, and every other one was the picture scenario's, which is in
+  `Editor.Themes.Picture` now.
 
 ## The interfaces the core owns for the two moving features
 
@@ -531,7 +659,7 @@ none. What replaced each edge is an interface the core owns.
 | `Editor.Setup` → `Editor.Compile.Contribution`; `Editor.Command.Registry` → `Editor.Compile.Contribution` | The contribution vocabulary, as data |
 | `Editor.Workspace.Modes` → `Editor.Compile.Listing` | The listing of computed commands |
 | `Editor.Ex.Compiled` → `Editor.Compile` | Ex names bound by the package that owns the commands |
-| `Editor.Themes.Compiled` → `Editor.Themes.Solarized`, `Editor.Themes.FairyFloss` | The `themes` package, with the palettes in a package of their own |
+| `Editor.Themes.Compiled` → `Editor.Themes.Solarized`, `Editor.Themes.FairyFloss` | The `themes` package, with the palettes in a package of their own, which phase 5 moved out as `ShippedThemes.…` |
 | `Editor.Config.Elaborate` → `Editor` | The base imported at the executables' roots ("The core and its root", above) |
 
 - **The contribution vocabulary** (`lean/Editor/ProjectMode.lean`,
@@ -576,10 +704,13 @@ none. What replaced each edge is an interface the core owns.
 - **The `themes` package and `shipped-themes`.** The `themes` package
   (`lean/Editor/Themes/Compiled.lean`) keeps `load-theme`, the theme
   `default` (`Theme.builtin`) and the theme source, and imports no
-  palette. The package `shipped-themes` (`lean/Editor/Themes/Shipped.lean`)
-  defines `solarized-dark`, `solarized-light` and `fairy-floss` and
-  registers nothing else; the list names it directly after `themes`. Phase
-  5 may rename it when it becomes a Lake package.
+  palette. The package `shipped-themes` defines `solarized-dark`,
+  `solarized-light` and `fairy-floss` and registers nothing else. Phase 3
+  made it a package of the core's list, directly after `themes`; phase 5
+  moved it out, under the same `Package` name, into the Lake package
+  `shipped-themes` (`packages/shipped-themes/ShippedThemes.lean`; "The
+  first default package", above), so it registers after all of the
+  core's.
 - **The `compilation.*` faces.** The face vocabulary
   (`lean/Editor/Face/Vocabulary.lean`) lists `compilation.error`,
   `compilation.warning` and `compilation.note`, and every palette defines
@@ -590,11 +721,12 @@ none. What replaced each edge is an interface the core owns.
 
 ## The module map
 
-Every module under `lean/Editor/`, 256 of them
+Every module under `lean/Editor/`, 253 of them
 (`find lean/Editor -name '*.lean' | wc -l`; 254 at `6ba99de5`, phase 4
-added `Editor.Main` and phase 5 `Editor.Themes.Picture`), is **core** or part of a **feature that could become
-a package**. The counts below add up to 256: 169 core and 87 in 21
-features.
+added `Editor.Main`, and phase 5 added `Editor.Themes.Picture` and moved
+the three modules of the shipped palettes out), is **core** or part of a
+**feature that could become a package**. The counts below add up to 253:
+169 core and 84 in 20 features.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -602,17 +734,18 @@ features.
   any module a core module imports for a type it carries (`Editor.Ex.Line`,
   `Editor.Menu`, `Editor.ModeLine`, `Editor.Language`, `Editor.Workspace`,
   the three `Editor.ProjectMode` modules).
-- **A feature** is code reached through a package's registrations: the 22
-  packages of the core's list, as 21 features (the two version-control packages are
+- **A feature** is code reached through a package's registrations: the 21
+  packages of the core's list, as 20 features (the two version-control packages are
   one), with the Vim scheme counted with evil.
-- **Every feature but `compile` and `shipped-themes` still lives in the
-  core's Lake package**, and is a core module in the sense of the section
-  above and of the gate's check. The map guides later moves; it does not
-  commit to them.
+- **Every feature here but `compile` stays in the core's Lake package**,
+  and is a core module in the sense of the section above and of the gate's
+  check. The map guides later moves; it does not commit to them. The
+  shipped palettes are no longer in the map: they are the Lake package
+  `shipped-themes` ("The first default package", above).
 
 One row covers modules that share a class and a side of the import rule.
 "A package may import it" is `yes`, `in tests` (a test double), `no`
-(internal) or, for the two moving features, the phase that moves it.
+(internal) or, for the moving feature, the phase that moves it.
 "Under it" counts the modules below a name, not the module of that name.
 
 | Modules | Count | Class | A package may import it |
@@ -664,7 +797,6 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.ModeLine.Compiled` | 1 | feature: mode-line | no |
 | `Editor.Shell` | 1 | feature: shell | yes |
 | `Editor.Shell.Compiled` | 1 | feature: shell | no |
-| `Editor.Themes.Shipped`, `.Solarized`, `.FairyFloss` | 3 | feature: shipped-themes | moving (phase 5) |
 | `Editor.TabCommands` | 1 | feature: tab-commands | yes |
 | `Editor.TabCommands.Compiled` | 1 | feature: tab-commands | no |
 | `Editor.Themes`, `Editor.Themes.Check` | 2 | feature: themes | yes |
@@ -757,9 +889,9 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (14): `Evil`, `Evil.Clipboard`, `Evil.Compiled`, `Evil.Motions`, `Evil.Objects`, `Evil.Operators`, `Evil.Registers`, `Evil.Repeat`, `Evil.Scroll`, `Evil.Theorems`, `Evil.TreeObjects`, `Evil.Undo`, `InputScheme.Vim`, `InputScheme.Vim.Default`.
 - **Core modules that import it**: `Headless` (`InputScheme.Vim.Default`).
-- **Other features' modules that import it**: menu: `Menu.Compiled` (`Evil.Clipboard`); themes: `Themes.Check` (`InputScheme.Vim.Default`).
+- **Other features' modules that import it**: menu: `Menu.Compiled` (`Evil.Clipboard`); themes: `Themes.Check` (`InputScheme.Vim.Default`), `Themes.Picture` (`InputScheme.Vim`).
 - **Other features it imports**: none.
-- **Test modules outside its own tests that import it** (29): `ModelTest`: `Api`, `AtPoint`, `ExcerptView`, `Face.Vocabulary`, `InputScheme.Contract`, `Loop`, `Menu`, `Minibuffer`, `State`, `TabBar`, `TabCommands`, `WindowCommands`, `Workspace.FindInProject`, `Support.AtPoint`, `Support.Config`, `Support.Evil`, `Support.Excerpt`, `Support.OperatorRows`, `Support.Views`, `Support.Vim`, `Support.Windows`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `Indent`, `Support.Syntax`; `FfiTest`: `ExcerptView`, `Themes.Shipped`; `ContractTest`: `SyntaxTree.Real`.
+- **Test modules outside its own tests that import it** (28): `ModelTest`: `Api`, `AtPoint`, `ExcerptView`, `Face.Vocabulary`, `InputScheme.Contract`, `Loop`, `Menu`, `Minibuffer`, `State`, `TabBar`, `TabCommands`, `WindowCommands`, `Workspace.FindInProject`, `Support.AtPoint`, `Support.Config`, `Support.Evil`, `Support.Excerpt`, `Support.OperatorRows`, `Support.Views`, `Support.Vim`, `Support.Windows`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `Indent`, `Support.Syntax`; `FfiTest`: `ExcerptView`; `ContractTest`: `SyntaxTree.Real`.
 - **The config base imports**: `Evil.Clipboard`, `Evil.Operators`, `Evil.Repeat`, `Evil.Scroll`, `Evil.Theorems`, `Evil.TreeObjects`, `Evil.Undo`, `InputScheme.Vim.Default`.
 - **Reaches by name** (not exhaustive): every command the Vim scheme's default tables name is looked up when its key is pressed, evil's own and other features'; the `menu` package names `undo` and `redo` as strings; the face vocabulary and the completeness check name the cursor face of each Vim state (`Themes/Check.lean`); the headless and window hosts are typed by `Vim.Default.scheme` (the section on input schemes, below).
 
@@ -855,13 +987,13 @@ For each feature, from Lake's direct imports (`lake query
 
 #### `shipped-themes`
 
-- **Modules** (3): `Themes.FairyFloss`, `Themes.Shipped`, `Themes.Solarized`.
-- **Core modules that import it**: none.
-- **Other features' modules that import it**: none.
-- **Other features it imports**: none.
-- **Test modules outside its own tests that import it** (5): `ModelTest`: `Appearance`; `ConfigTest`: `ExecuteCommand`, `Themes`, `Themes.Check`; `FfiTest`: `ExcerptView`.
-- **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): config names a palette (`useTheme` with `solarized-light`, as the fixture `tests/headless/shipped-themes` does); the reference pictures of `tests/render/themes` are of its themes.
+Moved out of the core by phase 5: the Lake package `shipped-themes`
+(`packages/shipped-themes/`; "The first default package", above). It has
+nothing left to cross. No core module and no test of a core module
+imports it, and Lake would refuse the import: the core requires no
+package. What reaches it by name: config names a palette (`useTheme` with
+`solarized-light`, as the package's fixture `shipped-themes` does), and
+the user asks `load-theme` for one.
 
 #### `tab-commands`
 
@@ -878,10 +1010,10 @@ For each feature, from Lake's direct imports (`lake query
 - **Modules** (4): `Themes`, `Themes.Check`, `Themes.Compiled`, `Themes.Picture`.
 - **Core modules that import it**: none.
 - **Other features' modules that import it**: none.
-- **Other features it imports**: evil (`InputScheme.Vim.Default`).
-- **Test modules outside its own tests that import it** (8): `ModelTest`: `Appearance`, `Completion.Contract`, `ExecuteCommand`, `Face.Vocabulary`, `Themes.Shipped`; `ConfigTest`: `ExecuteCommand`, `Headless`, `Minibuffer`.
+- **Other features it imports**: evil (`InputScheme.Vim.Default`, `InputScheme.Vim`).
+- **Test modules outside its own tests that import it** (9): `ModelTest`: `Appearance`, `Completion.Contract`, `ExecuteCommand`, `Face.Vocabulary`; `ConfigTest`: `ExecuteCommand`, `Headless`, `Minibuffer`; `FfiTest`: `ExcerptView`, `Support.Scenes`.
 - **The config base imports**: `Themes`.
-- **Reaches by name** (not exhaustive): the default config binds `load-theme`; the theme `default` is the one in force when config names none (`Theme.defaultName`).
+- **Reaches by name** (not exhaustive): the default config binds `load-theme`; the theme `default` is the one in force when config names none (`Theme.defaultName`); the package `shipped-themes`, outside the core, imports `Themes.Check` and `Themes.Picture` in its tests.
 
 #### `version-control`
 
@@ -944,8 +1076,8 @@ the root generated for the default set, whose transitive imports it asks
 of the set (`lake -d ../packages query :editorRootTransImports`):
 
 1. **The root and what it imports hold no moving module.** A core module
-   that comes to import the compile mode or a shipped palette fails the
-   gate, naming the module reached.
+   that comes to import the compile mode fails the gate, naming the module
+   reached.
 2. **Every `Editor.…` module the build reaches is in the root's closure**,
    unless it is a moving module. This is what makes
    the first rule a statement about every core module: a new core module
@@ -963,8 +1095,17 @@ imports (`--base Editor.Core`, exit 4). A run in which no root of the build
 reaches the elaborator adapter is refused (exit 2), since the third rule
 would then hold of nothing; the gate sees that too. The generated root is
 the only root that links the elaborator into the editor itself, so it is
-among the roots the script checks for the base. When a feature moves out
-of the core, its modules' names are added to the check's moving names.
+among the roots the script checks for the base.
+
+**The moving names are the compile mode's alone** (`Editor.Compile` and
+what is under it). They name modules that are still under `lean/Editor/`
+and are not the core's. The shipped palettes were among them until phase 5
+moved them; a feature that has moved needs no name here, because the
+direction is then Lake's to hold: its modules are in another Lake package,
+which the core does not require, so a core module that imported one would
+not build. The first rule is for the time between cutting a feature's
+edges and moving it, and for a feature whose modules keep the name
+`Editor.…` after they move.
 
 ## Registration order is visible
 
@@ -984,21 +1125,33 @@ so it is part of what the fixtures pin:
   `compile`, then `version-control`, the sixth, eighteenth and twentieth
   packages of the core's list.
 
-`ModelTest.packageSetChecks` pins both orders the fixtures depend on that a
-model test can see: the ex names in bound order, and the theme names. It
-is the test of the core's entry module
+`ModelTest.packageSetChecks` pins what a model test can see of the core's
+list: its 21 names in order, with no package of the palettes among them;
+the ex names in bound order; and that the one theme it registers is
+`default`. It is the test of the core's entry module
 (`lean/ModelTest/EditorCore/EditorPackage.lean`), over
 `EditorCore.EditorPackage.packages`.
 
-The default set holds the core alone, so the generated root registers
-exactly the core's list and no fixture line changed when the root became
-generated.
-
 **Packages register by dependency, which puts a default package after the
-core's.** The compile package would then register after version control
-and at-point, and both fixture lines would change, unless phase 6 keeps
-the compile package's place in the order. That is phase 6's choice to make
-with the fixtures in view.
+core's.** The default set holds one, `shipped-themes`, so the generated
+root registers the core's 21 and then it.
+
+- **No fixture line changed when the palettes moved.** The package was
+  thirteenth of the core's 22, directly after `themes`, and now registers
+  last. It registers themes alone, and no core package after `themes`
+  defines a theme, so the theme names read `default`, `solarized-dark`,
+  `solarized-light`, `fairy-floss`, as they did, and a package that
+  registers no command and no ex name changes neither the `commands:`
+  lines nor the ex candidates. Checked on the built editor: every
+  `expected` under `tests/headless/` is unchanged.
+- **The theme order is pinned by a fixture of the package**,
+  `packages/shipped-themes/tests/headless/load-theme`, which prints the
+  theme prompt's candidates on a config that defines no theme. The other
+  two fixtures that name a theme print the theme in force, not the order.
+- **The compile package would register after version control and
+  at-point**, and both fixture lines above would change, unless phase 6
+  keeps the compile package's place in the order. That is phase 6's choice
+  to make with the fixtures in view.
 
 ## Build times
 
@@ -1037,6 +1190,18 @@ medians were 68.5, 12.8 and 33.2.)
 - **Not separated**: how much of each difference is the default set alone.
   With nothing to do it is the 0.5 s above; a clean build of the default
   set's root and editor alone was 2.4 s when the build was prototyped.
-- **CI** caches `lean/.lake` only, so each run there also builds both
-  roots, links both editors and builds the fixture packages
-  ([ci.md](../dev-practices/ci.md), "Caches").
+- **CI** caches `lean/.lake` only, so each run there also builds the
+  generated roots, links the editors and builds the packages outside the
+  core ([ci.md](../dev-practices/ci.md), "Caches").
+- **Measured again with the first default package in place** (2026-11-19,
+  the same machine, the tree of the packages roadmap's phase 5, three runs
+  each). Nothing changed: 14.04, 14.06, 14.09, median **14.1** s, 1.4 s
+  more than the 12.7 above. Clean, with the build directories of the
+  default package and of `tests/empty-set` emptied too: 69.1, 70.8, 71.3,
+  median **70.8** s, 1.0 s more than the 69.8 above. The incremental case
+  was not measured again. What the task gained: the default package's
+  test driver, its build and its linked test's link among the package
+  steps, and one more editor, linked from `tests/empty-set`; with nothing
+  to do that is three more Lake runs. The same modules are compiled as
+  before, three of them in the package's build directory and not the
+  core's, so the clean case moved by the extra links alone.

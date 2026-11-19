@@ -349,10 +349,12 @@ does not hold them, and may relink), and saves nothing. A change of `lean/lean-t
   step clones it there at the revision the host's manifest pins and builds
   it (20 s on a developer's Mac).
 - **Not the sets' or the packages' build output**: `packages/.lake`,
-  `tests/packages/.lake` and each fixture package's `.lake` are in no
-  cache. So every run writes and compiles the two generated roots, links
-  the default set's editor and the fixture set's, builds the fixture
-  packages and links the linked test: seconds on a developer's Mac
+  `packages/shipped-themes/.lake`, `tests/packages/.lake`, each fixture
+  package's `.lake` and `tests/empty-set/.lake` are in no cache. So every
+  run writes and compiles the three generated roots, links the default
+  set's editor, the fixture set's and the one built from the core alone,
+  builds the default package `shipped-themes` and the fixture packages,
+  and links the two linked tests: seconds on a developer's Mac
   ([packages.md](../design/packages.md), "Build times"), not measured on
   a runner.
 - **The key no longer hashes the formatter's pin**, which moved from

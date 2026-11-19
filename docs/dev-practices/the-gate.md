@@ -10,10 +10,11 @@ every copy of the Lean pin equals the pin and the Lean model
 tests (`mise run lean-test`); the Lean build, which links the editor from
 the default package set, lean-fmt's format and lint
 checks; the same tests, lint, format check and headless fixtures over
-every package of the fixture set ("The package steps", below); the check
+every package of the fixture set, the default packages among them ("The
+package steps", below); the check
 that the host's modules import no feature module, the
 check that the core imports no module of a feature that moves out of it,
-the checks of the Lean/Rust boundary, the contract checks against
+the check that a package imports only the core's API, the checks of the Lean/Rust boundary, the contract checks against
 the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); the headless mode run from a staged app
 bundle (`mise run bundle-test`); the C format check; and the workflow lint
@@ -335,17 +336,22 @@ needs none. What it checks:
   says what it shows and when to make it again. That test and one other
   (`tests/reuse.rs`) are the only two of that crate that run the real
   shaper, for the wiring alone.
-- **The shipped themes' pictures.** `ffi-test theme-pictures`, in
-  `mise run ffi-test`, publishes a fixture file from Lean through the
-  display's real binding, in `solarized-dark`, `solarized-light` and
-  `fairy-floss`, over a display of one fixture font, and the CPU renderer draws it. No
-  channel of any pixel may be further than 2 of 255 from the reference
-  images under `tests/render/themes`, and the light picture must not
-  match the dark reference. In each picture the paper, the cursor and the
-  text must carry the palette's colours, found by differencing pictures
-  the scenario draws itself, so it names no size layout or the renderer
-  owns. It reads only checked-in files. `tests/render/themes/README.md`
-  says what the images show and when to make them again.
+- **The themes' pictures.** The theme picture check
+  (`lean/Editor/Themes/Picture.lean`), in `mise run ffi-test`, publishes a
+  fixture file from Lean through the display's real binding, in each
+  theme it is handed, over a display of one fixture font, and the CPU
+  renderer draws it. No channel of any pixel may be further than 2 of 255
+  from the theme's reference image. In each picture the paper, the cursor
+  and the text must carry the palette's colours, found by differencing
+  pictures the scenario draws itself, so it names no size layout or the
+  renderer owns. It reads only checked-in files. Each owner of a theme
+  runs it: `ffi-test theme-pictures` on the built-in theme, `default`,
+  against `tests/render/themes/default.png`; and the linked test of the
+  package `shipped-themes`, which the package steps run, on
+  `solarized-dark`, `solarized-light` and `fairy-floss`, against the
+  images under `packages/shipped-themes/tests/render`, where the light
+  picture must also not match the dark reference. The README beside each
+  set of images says what they show and when to make them again.
 - **The wgpu adapter's calls.** It runs on wgpu's no-op back end, which
   validates every call as a real one would and draws nothing: the shader
   compiles in both its forms, the pipeline's vertex layout is the
@@ -1071,7 +1077,12 @@ exit 0 and print exactly `expected`, whose command calls compiled code of
 `Init` and of `Editor`. So the executable found the toolchain and its own
 `.olean` files from its own path, and those three file kinds are enough to
 import and run config: outside a bundle the same command line is refused,
-and the build tree's `.olean` directory is not beside the copy. It has a
+and the build tree's `.olean` directory is not beside the copy. The same
+copy then runs a default package's fixture the same way, `shipped-themes`
+of the package of that name, whose config names `solarized-light`, and
+must print exactly its `expected`: the staged bundle holds no module file
+of the package, so its themes are in the executable, and config that
+names one by its name needs nothing more shipped. It has a
 time limit of its own, 120 seconds, for copying the executable and the
 module files. Then it checks `editor --version` through `IO.appPath` and
 the real file read (`lean/Editor/Version.lean`): `tests/headless/bundle/
@@ -1198,7 +1209,7 @@ need a process each:
 | `ffi-test exit 7` | The entry point passes arguments to Lean's `main` and its result is the exit status. |
 | `ffi-test shutdown` | Quitting the queues wakes every task blocked in a pull, and the process then exits. |
 | `ffi-test exit-while-blocked` | An explicit exit ends the process although a task is still blocked in the library. |
-| `ffi-test theme-pictures <dir> <font>` | The shipped themes' pictures of the fixture file match their reference images in `<dir>`, and carry the palette's colours where the paper, the cursor and the text are ("The shipped themes' pictures", above). |
+| `ffi-test theme-pictures <dir> <font>` | The built-in theme's picture of the fixture file matches its reference image in `<dir>`, and carries the palette's colours where the paper, the cursor and the text are ("The themes' pictures", above). The shipped themes' pictures are their package's linked test's ("The package steps", below). |
 
 The conventions every binding follows, and the test that pins each, are in
 the crate docs of `crates/editor-ffi/src/lib.rs` and the module docs of
@@ -1282,15 +1293,15 @@ cd lean && sh ../tools/core-imports-check.sh
 
 Part of `mise run ffi-test`, after the host imports check. A package may
 depend on the core, and the core depends on no package
-([packages.md](../design/packages.md)). Two features move out of the core
-into packages of their own, the compile mode and the shipped palettes, and
-this check shows on Lake's module graph that no core module imports a
-module of either. It is given a root and the moving names, and both
-default: the root to `Editor.Core`, the core's root module
-(`lean/Editor/Core.lean`), and the moving names to `Editor.Compile`,
-`Editor.Themes.Solarized`, `Editor.Themes.FairyFloss` and
-`Editor.Themes.Shipped`, each meaning that module and every module under
-it. Two options, `--base <module>` and `--elaborator <module>`, name the
+([packages.md](../design/packages.md)). The compile mode moves out of the
+core into a package of its own, and this check shows on Lake's module
+graph that no core module imports a module of it. It is given a root and
+the moving names, and both default: the root to `Editor.Core`, the core's
+root module (`lean/Editor/Core.lean`), and the moving names to
+`Editor.Compile`, meaning that module and every module under it. The
+shipped palettes were moving names until they moved: they are a Lake
+package of their own now (`packages/shipped-themes/`), which the core does
+not require, so Lake itself refuses a core module that imports one. Two options, `--base <module>` and `--elaborator <module>`, name the
 config base and the elaborator adapter in place of the editor's; the gate
 uses them to see the third rule fail. It checks three rules, in order, and
 stops at the first that fails:
@@ -1347,8 +1358,8 @@ stops at the first that fails:
   a list of roots that has fallen behind the build, would look
   like. `ffi-test` sees that too: told with `--elaborator Editor.Core` that
   the adapter is a module no root reaches, it must exit 2 and say why.
-- **What it does not claim.** It names the two features that move in this
-  roadmap. A feature that is still the core's (the ex line, files,
+- **What it does not claim.** It names the feature that still moves in
+  this roadmap. A feature that is still the core's (the ex line, files,
   version control and the rest) is imported by core modules, and the
   module map records by which. And it says nothing of what a package
   imports: that is the package imports check, below.
@@ -1435,8 +1446,10 @@ package's tests are by convention are in
 
 - **The gate gives every step the fixture set**, `tests/packages/`, which
   requires the fixture package `greeting-loud`, through it `greeting`, and
-  the default set. So a default package, once there is one, is run over
-  through it.
+  the default set. So the default package, `shipped-themes`, is tested,
+  built, format-checked and run through it. `run` is also given the
+  default set itself, `packages/`, so that package's linked test and
+  fixtures hold of the default set's editor, the one that is shipped.
 - **The packages a step runs over** are those of the set that are path
   dependencies and hold a Lean library, other than the core. The script
   reads no lakefile.
@@ -1444,8 +1457,15 @@ package's tests are by convention are in
   exits 2, as it does for a query Lake fails and for a command line it
   does not take. `lean-test` shows it: `package-set.sh test
   ../tests/empty-set` must exit 2 and say why. `tests/empty-set` is a set
-  kept for this: it requires the core alone and never gains a package, as
-  the default set will.
+  kept for tests: it requires the core alone and never gains a package, as
+  the default set has.
+- **The default package's tests are required to have run.** `lean-test`
+  keeps the `test` step's output and requires the line the step prints as
+  it reaches the package, `package-set: test shipped-themes (<its
+  directory>)`, matched on what comes before the directory. The step
+  stops at the first driver that fails, so that line and exit 0 say the
+  package's driver ran and passed: its themes hold under the core's
+  completeness check.
 - **A package with no test driver fails `test`**, since Lake refuses to
   test it.
 - **`run` says what it ran, and the gate requires it.** A step's exit
@@ -1453,10 +1473,33 @@ package's tests are by convention are in
   for each linked test and each headless fixture (`package-set: linked test
   <module> of <package>`, `package-set: headless fixture <name> of
   <package>`) and a last line with the counts, and `ffi-test` keeps the
-  output and requires the fixture package's linked test, `hello`, `reply`
-  and `package-set: ran 1 linked test and 2 headless fixtures over 2
-  packages`. A fixture or a linked test that is renamed, moved or no longer
-  found by the naming convention fails that line.
+  output and requires, over the fixture set, the fixture package's linked
+  test, `hello`, `reply`, the linked test of `shipped-themes` with the
+  line its pictures print, its fixtures `load-theme`, `shipped-themes` and
+  `themes`, and `package-set: ran 2 linked tests and 5 headless fixtures
+  over 3 packages`; and over the default set, the same package's linked
+  test and three fixtures and `package-set: ran 1 linked test and 3
+  headless fixtures over 1 package`. A fixture or a linked test that is
+  renamed, moved or no longer found by the naming convention fails that
+  line.
+- **The default package's own checks.** `shipped-themes`: sixteen checks
+  in its driver (`ShippedThemesTest/Model.lean`), the completeness check
+  on each theme among them; a linked test that holds each theme's picture
+  to its reference image; and three fixtures. `themes` switches from a
+  theme of config's to `solarized-dark` and `fairy-floss`;
+  `shipped-themes` starts in the `solarized-light` its config names; and
+  `load-theme`, on a config that defines no theme, prints the theme
+  prompt's candidates: `default`, `solarized-dark`, `solarized-light`,
+  `fairy-floss`, in that order
+  ([headless-mode.md](headless-mode.md)).
+- **An editor without the default package.** `mise run lean` also links an
+  editor from `tests/empty-set`, the default set with `shipped-themes`
+  dropped, and `ffi-test` runs the core's fixture
+  `tests/headless/core-themes` on it: it starts in the theme `default`,
+  its theme prompt lists `default` and the theme config defines and no
+  palette, and `solarized-dark`, answered, is said in the echo area to be
+  no registered theme. The default set's editor prints other lines for the
+  same script.
 - **`run` refuses a directory that is not a whole fixture.** A directory
   under a package's `tests/headless/` with no `config/`, no `script` or no
   `expected` is exit 2, naming what is missing, and so is a set whose

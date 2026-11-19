@@ -11,9 +11,11 @@ into the test, so no test reads or writes a file when it runs.
 
 It is kept small on purpose: at most 256 by 96 pixels and 20 KB, which
 the test checks. It is the renderer's own reference image. Beside it,
-`themes/` holds the shipped themes' pictures, drawn from Lean through the
-display's real binding and compared by `ffi-test theme-pictures`; their
-README (`themes/README.md`) says what they show and how they are made.
+`themes/` holds the built-in theme's picture, drawn from Lean through the
+display's real binding and compared by `ffi-test theme-pictures`; its
+README (`themes/README.md`) says what it shows and how it is made. The
+shipped themes' pictures are in their package,
+`packages/shipped-themes/tests/render/`.
 
 ## What it shows
 

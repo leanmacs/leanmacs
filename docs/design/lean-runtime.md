@@ -217,7 +217,15 @@ The staged pieces the relink used:
 The rule for the editor's modules is the built editor's own link line
 (`packages/.lake/build/bin/editor.rsp`; `lean/.lake/build/bin/editor.rsp`
 when this was measured): every object it names, less its root's, because
-the package brings the root and two `main` symbols cannot link.
+the package brings the root and two `main` symbols cannot link. Since the
+shipped themes became a default package (2026-11-19) that link names
+objects of two Lake packages, the core's and `shipped-themes`', each built
+in its own directory. The check stages each from the package the record
+beside the built editor says built it (`editor.oleans`), all into
+`core/`, which so stands for the prebuilt pieces, the core and the default
+packages together: 228 `.olean` files (165.4 MB) and 228 objects (17.9 MB)
+on that date, where the table above has 217. Shipping the default packages
+as prebuilt pieces of their own is phase 9's.
 The toolchain is staged whole, so the set is sufficient and not shown
 minimal: what `lake`, `lean` and `clang` read of it was not measured, only
 what the linker opened.
@@ -961,19 +969,21 @@ def package : Package :=
   (`EditorCore.EditorPackage.packages`), which is no module of the editor:
   it is outside `lean/Editor/` and the namespace `Editor`, in a library of
   its own (`lean_lib EditorCore`). It
-  lists 22 packages, each
-  defined in its feature's `Compiled.lean` but `shipped-themes`
-  (`lean/Editor/Themes/Shipped.lean`): `completion`, `mode-line`,
+  lists 21 packages, each
+  defined in its feature's `Compiled.lean`: `completion`, `mode-line`,
   `files`, `minibuffer`, `evil`, `ex`, `buffers`, `frame-commands`, `menu`,
-  `window-commands`, `tab-commands`, `themes`, `shipped-themes`,
+  `window-commands`, `tab-commands`, `themes`,
   `execute-command`, `binding-search`, `workspace`, `shell`, `compile`,
   `at-point`, `version-control`, `version-control-gutter` and `languages`,
   in that order, which keeps each kind of entry where the hosts registered
-  it before there were packages. `themes` is split in two: it keeps
+  it before there were packages. `themes` keeps
   `load-theme`, the theme `default` and the theme source, which are the
-  core's, and `shipped-themes`, directly after it, defines
-  `solarized-dark`, `solarized-light` and `fairy-floss`, which move out of
-  the core. Each package binds its own ex names: `ex` the files', its own
+  core's. The palettes that ship, `solarized-dark`, `solarized-light` and
+  `fairy-floss`, are the package `shipped-themes`, which is no package of
+  the core's Lake package: it is a Lake package of its own, a default
+  package (`packages/shipped-themes/`; [packages.md](packages.md), "The
+  first default package"), and registers after the core's 21, so the theme
+  names read `default`, then the three. Each package binds its own ex names: `ex` the files', its own
   and the buffers', `compile` its six and `version-control` its twelve, so
   the order of those three in the list is the order the ex names'
   completion lists them in ([packages.md](packages.md), "Registration
@@ -1746,7 +1756,8 @@ text requests. Config sees it through
 | The package `ex`: the ex line's commands and the files', its own and the buffers' ex names | `lean/Editor/Ex/Compiled.lean` |
 | The command `load-theme`, which switches the theme in force with no reload, with what it says in the echo area | `lean/Editor/Themes.lean` |
 | The package `themes`: the command that loads a theme and the theme `default` | `lean/Editor/Themes/Compiled.lean` |
-| The package `shipped-themes`: the palettes that ship | `lean/Editor/Themes/Shipped.lean` |
+| The package `shipped-themes`: the palettes that ship, a default package outside the core | `packages/shipped-themes/ShippedThemes.lean` |
+| The theme picture check, a test double: a theme drawn, held to its palette's colours and to a reference image | `lean/Editor/Themes/Picture.lean` |
 | The command prompt, `execute-command`, which lists every registered command's name and runs the one accepted, with its completion source `commands` and what it says in the echo area | `lean/Editor/ExecuteCommand.lean` |
 | The package `execute-command`: the command prompt and its source | `lean/Editor/ExecuteCommand/Compiled.lean` |
 | The binding search, `search-bindings`, which lists every key binding the input scheme reaches in the asking view and runs the one accepted as its key would, with its completion source `bindings` and what it says in the echo area | `lean/Editor/BindingSearch.lean` |

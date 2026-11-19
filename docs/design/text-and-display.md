@@ -1536,7 +1536,10 @@ after it**, where the theme gives a face another colour than the shared
 mapping: by the rule that a later definition's set attributes are over an
 earlier one's, each sets only what it changes. `Palette` itself is not
 widened for one theme's choices. The shipped Solarized themes,
-`solarized-dark` and `solarized-light` (`lean/Editor/Themes/Solarized.lean`),
+`solarized-dark` and `solarized-light`
+(`packages/shipped-themes/ShippedThemes/Solarized.lean`, in the default
+package `shipped-themes`; [packages.md](packages.md), "The first default
+package"),
 are written so: one record of Solarized's sixteen published colours, and
 one mapping from it, written in the dark names (base03 the paper, base0 the
 ink, base02 raised and selected, base01 faint, base1 strong, the cursor
@@ -1547,10 +1550,12 @@ as the specification and Schoonover's Vim and Emacs themes do. Where the
 vocabulary needs a role the specification does not name, the choice
 follows those two themes, and the table of each choice and its source is
 in the module docs of `Solarized.lean`, pinned by
-`ModelTest.solarizedChecks`. Solarized's MIT licence notice is beside it,
-`lean/Editor/Themes/Solarized-LICENSE.txt`, verbatim.
+`ShippedThemesTest.solarizedChecks`. Solarized's MIT licence notice is
+beside it, `packages/shipped-themes/ShippedThemes/Solarized-LICENSE.txt`,
+verbatim.
 
-The shipped `fairy-floss` (`lean/Editor/Themes/FairyFloss.lean`) is
+The shipped `fairy-floss`
+(`packages/shipped-themes/ShippedThemes/FairyFloss.lean`) is
 written the same way: one record of the nineteen colours sailorhg's
 repository `sailorhg/fairyfloss` publishes at commit `982e64a`, in its
 tmTheme and Atom styles, and one mapping from it: background the paper,
@@ -1558,11 +1563,12 @@ foreground the ink and strong, the caret the cursor, selection selected,
 lineHighlight raised and lavender faint. Its own definitions after the
 shared ones follow the tmTheme's scopes and the Atom styles, and the table
 of each choice and its source is in the module docs of `FairyFloss.lean`,
-pinned by `ModelTest.fairyFlossChecks`. The repository has no LICENSE
-file; its `package.json` declares MIT, and that notice, with its
-provenance, is beside the module, `lean/Editor/Themes/FairyFloss-LICENSE.txt`.
+pinned by `ShippedThemesTest.fairyFlossChecks`. The repository has no
+LICENSE file; its `package.json` declares MIT, and that notice, with its
+provenance, is beside the module,
+`packages/shipped-themes/ShippedThemes/FairyFloss-LICENSE.txt`.
 
-**A shipped theme reaches the CPU renderer in a test** through three
+**A theme reaches the CPU renderer in a test** through three
 test-facing bindings of `editor-ffi` (`crates/editor-ffi/src/display.rs`):
 a display over the real shaper and one font file it is given, with no
 font of the machine (`Display.newFont`); a picture of a display's latest
@@ -1570,10 +1576,15 @@ frame, drawn synchronously by the CPU renderer with grayscale antialiasing
 and hinting, with no render session, thread or clock (`Display.picture`);
 and a picture read from and written to a PNG file (`Picture.ofPng`,
 `Picture.toPng`, over `Image::from_png` and `Image::to_png` in
-`editor-render-wgpu`, which keeps `png` behind it). `ffi-test
-theme-pictures` publishes a fixture file through the display's real
-binding in each shipped theme and compares the picture with a
-reference image (`tests/render/themes/README.md`). The headless mode's
+`editor-render-wgpu`, which keeps `png` behind it). The theme picture
+check (`lean/Editor/Themes/Picture.lean`, `themePicturesScenario`)
+publishes a fixture file through the display's real binding in each theme
+it is handed and compares the picture with a reference image. It is a
+test double of the core, run by whoever owns a theme: `ffi-test
+theme-pictures` runs it on the built-in theme
+(`tests/render/themes/README.md`), and the linked test of the package
+`shipped-themes` on its three
+(`packages/shipped-themes/tests/render/README.md`). The headless mode's
 `--render` session is not that path: it lays out in cells, whose glyphs
 have no font bytes, so it draws no text.
 
@@ -1585,16 +1596,19 @@ and that `cursor` and each shipped Vim state's cursor face are defined,
 have a background that is not the paper and a foreground that is not that
 background. A cursor's colours are its face over `default`, as layout paints
 it, so one that sets no background has the paper's. It runs on every
-shipped theme in the model tests (the built-in theme in
-`ModelTest.faceVocabularyChecks`, the shipped palettes in
-`ModelTest.shippedThemesChecks`); a theme config defines is not checked.
+theme that ships, in its owner's tests: the built-in theme in the core's
+model tests (`ModelTest.faceVocabularyChecks`), the shipped palettes in
+their package's (`ShippedThemesTest.shippedThemesChecks`, which imports the
+check as a module of the core's API); a theme config defines is not
+checked.
 
 Themes are registered by name, by owner, as commands and modes are
 (`lean/Editor/Config/Registry.lean`, "Themes"): the `themes` package
 registers `Theme.builtin` as the one called `default`
-(`lean/Editor/Themes/Compiled.lean`), the `shipped-themes` package the
-palettes that ship (`Themes.Shipped.themes`,
-`lean/Editor/Themes/Shipped.lean`), and `setup` registers
+(`lean/Editor/Themes/Compiled.lean`), the `shipped-themes` package, a
+default package outside the core, the palettes that ship
+(`ShippedThemes.themes`, `packages/shipped-themes/ShippedThemes.lean`), and
+`setup` registers
 more with `defineTheme` and names the one in force with `useTheme`. The
 theme in force is state of the reload reducer (`Config.State.themeName`,
 `lean/Editor/Config/Reload.lean`), `default` until a config names another:
@@ -3392,10 +3406,12 @@ bound submits nothing.
   machine with no GPU and no driver has no adapter, and the gate runs on
   such machines. So the gate draws with the CPU compositor, and compares
   one frame of real text with the renderer's reference image,
-  `tests/render/frame.png`, within 2 of 255 a channel, and each shipped
-  Solarized theme's picture of a fixture file, published from Lean, with
-  its reference image under `tests/render/themes`, within the same bound
-  ("A shipped theme reaches the CPU renderer in a test", above); and it
+  `tests/render/frame.png`, within 2 of 255 a channel, and the picture of
+  a fixture file in the built-in theme and in each shipped theme,
+  published from Lean, with its reference image
+  (`tests/render/themes`, `packages/shipped-themes/tests/render`), within
+  the same bound ("A theme reaches the CPU renderer in a test", above);
+  and it
   runs the wgpu adapter on
   wgpu's no-op back end, which validates every call (the shader, the
   pipeline, every draw, inside an error scope) and draws nothing. What a

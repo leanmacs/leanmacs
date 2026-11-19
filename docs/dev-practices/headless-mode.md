@@ -801,8 +801,11 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-A tenth, `tests/headless/themes/script`, switches the theme, on the config
-in `tests/headless/themes/config`, which defines two themes, `first` and
+A tenth is a fixture of the default package `shipped-themes`, which the
+package steps run on the editor of each set that holds the package
+(`tools/package-set.sh run`, in `mise run ffi-test`), not a line of the
+task: `packages/shipped-themes/tests/headless/themes/script` switches the
+theme, on the config in `themes/config` beside it, which defines two themes, `first` and
 `second`, and names `first` (`useTheme`). The first scene is drawn in
 `first`. `load-theme` is run, `second` committed into its minibuffer and
 `<Enter>` accepts: the theme is switched with no reload, and the next scene
@@ -812,10 +815,10 @@ goes up by one more. Then `load-theme` is run again, and `solarized-dark`,
 a theme the editor ships, is committed and accepted: the next scene is
 drawn in it. Last, `fairy-floss`, another shipped theme, is loaded the same
 way, and the next scene is drawn in it. Its output must be exactly
-`tests/headless/themes/expected`:
+`themes/expected`:
 
 ```console
-$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/themes/config ../tests/headless/themes/script
+$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../packages/shipped-themes/tests/headless/themes/config ../packages/shipped-themes/tests/headless/themes/script
 reload 1: installed, 1 chunks, 0 commands
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "first"
@@ -838,16 +841,20 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-An eleventh, `tests/headless/shipped-themes/script`, runs on the config in
-`tests/headless/shipped-themes/config`, which names a shipped theme,
-`solarized-light` (`useTheme`): the `themes` package registers the shipped themes
-before any config, so the name is found when the config is installed. The
-first scene is drawn in `solarized-light`. Then `load-theme` is answered
-with `fairy-floss`, and the next scene is drawn in it. Its output must be
-exactly `tests/headless/shipped-themes/expected`:
+An eleventh, the same package's
+`packages/shipped-themes/tests/headless/shipped-themes/script`, runs on the
+config in `shipped-themes/config` beside it, which names a shipped theme,
+`solarized-light` (`useTheme`): the `shipped-themes` package registers its
+themes before any config, so the name is found when the config is
+installed. Config names the theme by its name and imports no module of the
+package, so the `.olean` directory given is the core's alone. The first
+scene is drawn in `solarized-light`. Then `load-theme` is answered with
+`fairy-floss`, and the next scene is drawn in it. Its output must be
+exactly `shipped-themes/expected`. `mise run bundle-test` runs this fixture
+from a staged bundle too:
 
 ```console
-$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/shipped-themes/config ../tests/headless/shipped-themes/script
+$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../packages/shipped-themes/tests/headless/shipped-themes/config ../packages/shipped-themes/tests/headless/shipped-themes/script
 reload 1: installed, 1 chunks, 0 commands
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "solarized-light"
@@ -856,6 +863,77 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 7, theme "fairy-floss"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+```
+
+The package has a third fixture,
+`packages/shipped-themes/tests/headless/load-theme/script`, on a config
+that defines no theme and names none. The first scene is drawn in
+`default`, the core's built-in theme. `load-theme`, run with no name, opens
+its prompt, and the scene printed with it open lists every registered
+theme in the candidate list, the view after the minibuffer's, in the order
+they were registered: the core's `default`, then the package's
+`solarized-dark`, `solarized-light` and `fairy-floss`. Then
+`solarized-light` is committed and accepted, and the next scene is drawn
+in it. This is the fixture that pins which themes the default editor
+offers and in what order. Its output must be exactly `load-theme/expected`:
+
+```console
+$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../packages/shipped-themes/tests/headless/load-theme/config ../packages/shipped-themes/tests/headless/load-theme/script
+reload 1: installed, 1 chunks, 0 commands
+key arrived: <Escape> Escape -
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run load-theme: ok
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 1: minibuffer.prompt "Theme: "
+view 2 0,0 0x0: "default\nsolarized-dark\nsolarized-light\nfairy-floss", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..7 minibuffer.candidate 8..22 minibuffer.candidate 23..38 minibuffer.candidate 39..50
+status 2: -
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "solarized-light"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+```
+
+The core has a themes fixture of its own, `tests/headless/core-themes/script`,
+which `mise run ffi-test` runs on another editor: the one `mise run lean`
+links from the set `tests/empty-set`, which requires the core alone, the
+default set with the package `shipped-themes` dropped. Its config defines
+one theme, `first`, and names none. The first scene is drawn in `default`;
+the theme prompt lists `default` and `first`, and no palette; `first` is
+loaded; and `solarized-dark`, answered, is no theme of this editor, which
+the echo area says, the theme in force staying `first`. Its output must be
+exactly `tests/headless/core-themes/expected`:
+
+```console
+$ ../tests/empty-set/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/core-themes/config ../tests/headless/core-themes/script
+reload 1: installed, 1 chunks, 0 commands
+key arrived: <Escape> Escape -
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run load-theme: ok
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 1: minibuffer.prompt "Theme: "
+view 2 0,0 0x0: "default\nfirst", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..7 minibuffer.candidate 8..13
+status 2: -
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "first"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run load-theme: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "load-theme: no theme is registered as `solarized-dark`", echo padding 8, preedit -, published 13, theme "first"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```

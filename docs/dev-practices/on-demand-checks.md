@@ -86,12 +86,15 @@ non-zero at the first step that does not hold, naming it. It is macOS on
 arm64 only, so it is not part of the gate, which runs on Linux too.
 
 It stages, by copy, in a temporary directory: the Lean toolchain; the
-`.olean` file and the object of each of the core's modules the built
-editor's link names, the glue object and the Rust archive, as `mise run
-lean` built them (the built editor is the default package set's,
-`packages/.lake/build/bin/editor`, and the one object its link names that
-is not staged is its generated root's, since the relinked editor has a
-root of its own); link stubs for
+`.olean` file and the object of each module the built editor's link names,
+the core's and the default packages' (`packages/shipped-themes`), the glue
+object and the Rust archive, as `mise run lean` built them (the built
+editor is the default package set's, `packages/.lake/build/bin/editor`;
+each module is taken from the build directory of the Lake package that
+built it, which the record beside the editor, `editor.oleans`, names, and
+an object under none of them fails the check; the one object its link
+names that is not staged is its generated root's, since the relinked
+editor has a root of its own); link stubs for
 the system's frameworks and libraries, which `tools/link-stubs.sh` writes
 from the built editor's import table; the trivial package
 `tests/user-link/package`, one module with one command and its entry
@@ -1191,12 +1194,16 @@ what the image shows and when to make it again.
 mise run theme-references
 ```
 
-This writes three files, `tests/render/themes/solarized-dark.png`,
-`solarized-light.png` and `fairy-floss.png`, the pictures the gate
-compares the shipped themes' with, by running `ffi-test theme-pictures … --write`.
-It writes files of the repository, so it is never part of the gate.
-`tests/render/themes/README.md` says what the images show and when to make
-them again.
+This writes four files, the pictures the gate compares the themes' with:
+`tests/render/themes/default.png`, the built-in theme's, by running
+`ffi-test theme-pictures … --write`; and
+`packages/shipped-themes/tests/render/solarized-dark.png`,
+`solarized-light.png` and `fairy-floss.png`, the shipped themes', by
+running their package's linked test with `--write` in the package's
+directory. It writes files of the repository, so it is never part of the
+gate. `tests/render/themes/README.md` and
+`packages/shipped-themes/tests/render/README.md` say what the images show
+and when to make them again.
 
 ## The Core Text reference, on demand
 

@@ -18,7 +18,8 @@ fixture set with its packages:
 |---|---|
 | `lake build --wfail` | The core's modules and `ffi-test`, `config-test` and `contract-test`, under `lean/.lake/build` |
 | `lake -d ../packages build --wfail :editor` | The editor, from the default package set (`packages/lakefile.toml`): the package-set build writes its root module, builds it and links `packages/.lake/build/bin/editor` |
-| `sh ../tools/package-set.sh build ../tests/packages` | The fixture set's editor (`tests/packages/.lake/build/bin/editor`), each fixture package's default targets and its linked test |
+| `sh ../tools/package-set.sh build ../tests/packages` | The fixture set's editor (`tests/packages/.lake/build/bin/editor`), and the default targets and the linked test of each package of the set: the fixture packages and, through the default set, `shipped-themes` |
+| `lake -d ../tests/empty-set build --wfail :editor` | An editor from the core alone (`tests/empty-set/.lake/build/bin/editor`), which `ffi-test` runs one fixture on |
 
 The editor is `packages/.lake/build/bin/editor`. It is not a target of the
 core: the core's lakefile defines how an editor is linked from a set, as

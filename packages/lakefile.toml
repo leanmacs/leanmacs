@@ -9,15 +9,16 @@
 # links packages/.lake/build/bin/editor; `:editorApp` makes the app bundle
 # from it (`mise run app`).
 #
-# It requires the core alone for now: every feature is still a package of
-# the core's Lake package (lean/EditorCore/EditorPackage.lean). A default
-# package gets a directory here and a `require` below. This is also the
+# It requires the core and each default package. A default package has a
+# directory here and a `require` below; the first is the shipped themes
+# (shipped-themes/). Every other feature is still a package of the core's
+# Lake package (lean/EditorCore/EditorPackage.lean). This is also the
 # lakefile a user's package set starts from.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages update --keep-toolchain
 # and commit lake-manifest.json, here and in every set that requires this
-# one (tests/packages/): a build fetches nothing and fails on a dependency
+# one (tests/packages/, tests/user-link/): a build fetches nothing and fails on a dependency
 # its manifest does not hold.
 name = "default-set"
 

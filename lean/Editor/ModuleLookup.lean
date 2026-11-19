@@ -42,7 +42,10 @@ config base's modules are all the core's, so the first line is the one
 used here (`resolve`). The others are recorded for when the base holds a
 package's modules and the elaborator searches several (the packages
 roadmap's phase 6 moves the compile mode, which the base imports, out of
-the core).
+the core). The default set's record has a second line already, the
+directory of the shipped themes' package (`packages/shipped-themes/`), which
+is not searched and need not be: config names a theme by its name, and the
+themes are registered by linked code.
 
 The record is no part of a bundle: the bundle's layout is the rule there,
 and the record names directories of the machine that built it.
