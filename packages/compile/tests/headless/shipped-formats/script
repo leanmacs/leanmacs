@@ -1,0 +1,41 @@
+# The shipped error formats reading output, with no process: the config in
+# `config/` hands canned output of cargo, lake and mise, as each tool prints
+# it, to the compile mode's own reader with the formats the shipped modes
+# give, and each command says the locations found in the echo area. What it
+# prints must be exactly `expected`. It starts no process and reads no
+# file, and every path in it is relative, so no line holds a path of the
+# machine.
+#
+# It was written after the compile mode moved into this package, and what
+# it prints was compared, byte for byte, with what an editor built at the
+# commit before the move prints for it (`docs/design/packages.md`, "The
+# default package `compile`").
+
+reload
+settle
+
+# `cargo-mode`: rustc's format reads the location from the ` --> ` line,
+# `src/main.rs` line 4 column 18, resolved against the run's directory,
+# with the severity and the message of the `error[E0308]` line before it,
+# which is its lead. The location covers rows 2 to 8: the lead's row, its
+# own and the five lines of the snippet under it, which continue it. The
+# last line, `error: could not compile`, names no file and is no location.
+run shipped-read-cargo
+scene
+
+# `lake-mode`: Lean's format reads `./Foo/Bar.lean:12:4`, the `./` dropped,
+# with its severity and message from the same line.
+run shipped-read-lake
+scene
+
+# `mise-mode` has no format of its own. With it alone on, rustc's output is
+# read by the general format alone, which finds nothing in it; with
+# `cargo-mode` on beside it, as in a crate inside a mise project, cargo-mode's
+# format reads the location, in the nested crate.
+run shipped-read-mise
+scene
+
+# `mise-mode`'s commands are computed from `mise tasks ls --json`: one named
+# command a task, `mise run <task>`, in the task's directory.
+run shipped-read-mise-tasks
+scene

@@ -4599,9 +4599,10 @@ the models, through the core's test kit; in the core's `model-test`, by
 `formatDataChecks`, `modeMarkerChecks` and `readOnlyChecks`, of what stays
 the core's; by the package's headless fixtures, on the editor built from a
 set that holds it: `ex-names`, each of its six ex names reaching its
-command, and `config`, a real config that overrides a field of a shipped
+command, `config`, a real config that overrides a field of a shipped
 contribution and builds a format of its own (what the hook makes of such a
-config is `compileHookChecks`'); by the mode marker search's contract
+config is `compileHookChecks`'), and `shipped-formats`, the shipped modes'
+formats reading canned output of cargo, lake and mise into locations; by the mode marker search's contract
 (`Workspace.MarkerContract`), on its model and on the job model by
 `model-test` and over the real file service by `contract-test`; and, in
 the package's linked test (`packages/compile/CompileTest/Linked.lean`),

@@ -1533,11 +1533,11 @@ package's tests are by convention are in
   test, `hello`, `reply`, the linked test of `shipped-themes` with the
   line its pictures print, its fixtures `load-theme`, `package-names`,
   `shipped-themes` and `themes`, the linked test of `compile` with its
-  line, `compile linked test: 7 checks passed`, its fixtures `config` and
-  `ex-names`, and `package-set: ran 3 linked tests and 8 headless fixtures
-  over 4 packages`; and over the default set, the two default packages'
-  linked tests and six fixtures and `package-set: ran 2 linked tests and 6
-  headless fixtures over 2 packages`. A fixture or a linked test that is
+  line, `compile linked test: 7 checks passed`, its fixtures `config`,
+  `ex-names` and `shipped-formats`, and `package-set: ran 3 linked tests
+  and 9 headless fixtures over 4 packages`; and over the default set, the
+  two default packages' linked tests and seven fixtures and `package-set:
+  ran 2 linked tests and 7 headless fixtures over 2 packages`. A fixture or a linked test that is
   renamed, moved or no longer found by the naming convention fails that
   line.
 - **The default packages' own checks.** `shipped-themes`: sixteen checks
@@ -1558,11 +1558,17 @@ package's tests are by convention are in
   real process service, on the fixtures under
   `packages/compile/tests/compile`, and a compile in a headless host, in a
   temporary working directory, whose output must hold each line of
-  `packages/compile/tests/linked/run/holds`; and two fixtures, `ex-names`,
-  each of the six ex names reaching its command, and `config`, a config
-  written on the package's declarations. The two fixtures and the host's
-  script were written against the editor with the compile mode still in
-  the core, and moved into the package with no byte changed.
+  `packages/compile/tests/linked/run/holds`; and three fixtures:
+  `ex-names`, each of the six ex names reaching its command; `config`, a
+  config written on the package's declarations; and `shipped-formats`, the
+  shipped modes' formats reading canned output of cargo, lake and mise
+  into locations, and mise's task list into commands, with no process.
+  The first two and the host's script were written against the editor
+  with the compile mode still in the core, and moved into the package
+  with no byte changed; the third was written after the move, and an
+  editor built at the commit before the move prints its `expected` for it,
+  byte for byte ([packages.md](../design/packages.md), "The default
+  package `compile`").
 - **An editor without the default packages.** `mise run lean` also links
   an editor from `tests/empty-set`, the default set with its packages
   dropped, and `ffi-test` runs two of the core's fixtures on it.

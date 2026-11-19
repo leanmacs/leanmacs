@@ -1,0 +1,17 @@
+reload 1: installed, 1 chunks, 4 commands
+run shipped-read-cargo: ok
+scene 0x0, focused 0, echo "cargo-mode reads 1 of #[rustc, general]: rustc error proj/src/main.rs:4:18 rows 2-8 mismatched types", echo padding 8, preedit -, published 1, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run shipped-read-lake: ok
+scene 0x0, focused 0, echo "lake-mode reads 1 of #[lean, general]: lean error proj/Foo/Bar.lean:12:4 rows 2-2 unknown identifier 'x'", echo padding 8, preedit -, published 3, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run shipped-read-mise: ok
+scene 0x0, focused 0, echo "mise-mode alone reads 0 of #[general]: ; with cargo-mode reads 1 of #[rustc, general]: rustc error proj/crate/src/main.rs:4:18 rows 2-8 mismatched types", echo padding 8, preedit -, published 5, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run shipped-read-mise-tasks: ok
+scene 0x0, focused 0, echo "mise-mode lists build: mise run build in proj; test: mise run test in proj", echo padding 8, preedit -, published 7, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

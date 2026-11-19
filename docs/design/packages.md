@@ -532,7 +532,7 @@ over the process service, a major mode, ex names and contributions.
 | `Compile/EditorPackage.lean` | The entry module: `packages := #[Editor.Compile.package]`. It imports `Compile.Compiled`, and so the whole library, which is what config sees of the package |
 | `CompileTest/Model.lean` | The test driver's root, which runs the ten model lists, 98 checks, in the test modules that mirror the library's (`CompileTest/Compile.lean`, `CompileTest/Compile/…`), over the support in `CompileTest/Support/Compile.lean` |
 | `CompileTest/Linked.lean` | The linked test's root: the two lists over the real process service (`CompileTest/Linked/Compile.lean`, `CompileTest/Linked/Compile/Shipped.lean`) and, in the root itself, a compile in a headless host; 7 checks |
-| `tests/headless/ex-names`, `config` | Its headless fixtures |
+| `tests/headless/ex-names`, `config`, `shipped-formats` | Its headless fixtures |
 | `tests/linked/run/` | The script the host check runs, and the lines the host must print |
 | `tests/compile/` | The fixtures of the checks over the real process service: `three-lines`, the programs that stand for cargo, lake, mise and git, and the trees the shipped modes are checked in |
 
@@ -618,6 +618,25 @@ over the process service, a major mode, ex names and contributions.
   check's script and list, which a gate line ran on the default editor in
   a temporary directory before the move. `git log --follow` on each shows
   the one commit that wrote it and the rename.
+- **The shipped formats are shown reading output by a third fixture,
+  `shipped-formats`**, written after the move, in the phase's rework: the
+  first two show each ex name reaching its command and config elaborating
+  on the package's declarations, and neither shows `cargo-mode`'s,
+  `lake-mode`'s or `mise-mode`'s reading. Its config hands canned output,
+  as each tool prints it, to the compile mode's own reader (`Compile.scan`
+  with `Compile.formatsOf Compile.shipped`), with no process, and says the
+  locations found: rustc's format reads cargo's `src/main.rs:4:18` with the
+  severity and message of its lead line; Lean's reads lake's
+  `./Foo/Bar.lean:12:4`; `mise-mode`, which has no format, reads nothing of
+  rustc's output alone and cargo-mode's format reads it with both on; and
+  `Compile.miseTasks` turns a task list into `mise run <task>` commands.
+  Every path in it is relative. **Its baseline is a build of the commit
+  before the move**: the editor built at `c90a8d7f`, with the compile mode
+  in the core, in a clone made for the comparison, printed for this
+  fixture the bytes of its `expected` (1,795 bytes, compared with `cmp`),
+  and for `ex-names` and `config` the bytes of theirs. The editor built
+  from `tests/empty-set` rejects its config, with `Unknown identifier
+  Compile.formatsOf`.
 - **A whole run cannot be a static fixture**: the compilation buffer's
   first line and the echo of a visit hold the working directory's whole
   path. `ex-names` holds only its last name, `lean`, where the gate runs

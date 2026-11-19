@@ -2095,7 +2095,12 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   `Compile command: `, and so on; `lean` is the working directory's last
   name, where the gate runs the editor); and
   `packages/compile/tests/headless/config`, a config written on
-  `Compile.cargoMode`, `Compile.Format` and `Compile.shipped`. A run over a
+  `Compile.cargoMode`, `Compile.Format` and `Compile.shipped`; and
+  `packages/compile/tests/headless/shipped-formats`, whose config hands
+  canned output of cargo, lake and mise to the compile mode's reader with
+  the shipped modes' formats and says the locations found (`cargo-mode
+  reads 1 of #[rustc, general]: rustc error proj/src/main.rs:4:18 rows 2-8
+  mismatched types`), with no process and only relative paths. A run over a
   real process is no static fixture, since its output holds the working
   directory's whole path: the package's linked test runs one in a headless
   host, in a temporary directory
