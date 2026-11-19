@@ -435,9 +435,9 @@ def promptChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           minibufferCompiled },
     { name :=
-        "config asks for a source the executable's hosts ship by name: on a host handed the `themes` package, which the executable's hosts are, a prompt asking for `themes` lists the first shipped theme's name once it is committed; with config's own source of that name it lists config's candidate instead, and reloaded with a config that defines none, the shipped source's again"
+        "config asks for a source the executable's hosts ship by name: on a host handed the `themes` package, which the executable's hosts are, a prompt asking for `themes` lists the theme default's name once it is committed; with config's own source of that name it lists config's candidate instead, and reloaded with a config that defines none, the shipped source's again"
       run := do
-        let some theme := Themes.shipped[0]? | return false
+        let theme := Themes.defaultTheme
         -- Each prompt opens a minibuffer view of its own, so the lines are
         -- compared from their fields on, whichever view they are of.
         let lists (asking : Array String) (candidate : String) : Bool :=

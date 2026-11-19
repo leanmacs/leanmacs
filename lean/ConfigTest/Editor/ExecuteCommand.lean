@@ -8,6 +8,7 @@ import Editor.Config.Packages
 import Editor.Event
 import Editor.ExecuteCommand.Compiled
 import Editor.Themes.Compiled
+import Editor.Themes.Shipped
 
 /-!
 # Config tests: `Editor/ExecuteCommand.lean`
@@ -32,7 +33,7 @@ def commandCompiled : Compiled :=
       Minibuffer.package.registered.commands ++ ExecuteCommand.package.registered.commands ++
         BindingSearch.package.registered.commands ++
         Themes.package.registered.commands
-    themes := Themes.shipped }
+    themes := #[Themes.defaultTheme] ++ Themes.Shipped.themes }
 
 /-- A chunk whose `setup` defines the style `starts`, which keeps the
 candidates a text starts, in their order, chooses it for the categories

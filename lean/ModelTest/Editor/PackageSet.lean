@@ -21,23 +21,23 @@ open Editor
 /-- The names of the packages that ship, in the order they register. -/
 def shippedPackageNames : Array String :=
   #["completion", "mode-line", "files", "minibuffer", "evil", "ex", "buffers", "frame-commands",
-    "menu", "window-commands", "tab-commands", "themes", "execute-command", "binding-search",
-    "workspace", "shell", "compile", "at-point", "version-control", "version-control-gutter",
-    "languages"]
+    "menu", "window-commands", "tab-commands", "themes", "shipped-themes", "execute-command",
+    "binding-search", "workspace", "shell", "compile", "at-point", "version-control",
+    "version-control-gutter", "languages"]
 
 /-- The checks of the packages that ship (`Editor/PackageSet.lean`): the
 list a host is handed is whole, every package of it is accepted, and what
 it registers is all theirs. -/
 def packageSetChecks : List Check :=
   [{  name :=
-        "every package of the shipped set is accepted, and their names are the 21 of the package table, each once, in its order"
+        "every package of the shipped set is accepted, and their names are the 22 of the package table, each once, in its order"
       run :=
         let (state, refused) : Config.State Elaborated × Array String :=
           Config.State.ofPackages PackageSet.shipped
         pure
           (refused == #[] && PackageSet.shipped.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 21 &&
-            shippedPackageNames.toList.eraseDups.length == 21 &&
+            shippedPackageNames.size == 22 &&
+            shippedPackageNames.toList.eraseDups.length == 22 &&
             state.packages == shippedPackageNames &&
             PackageSet.shipped.all fun package => package.collected.toOption.isSome) },
     { name :=

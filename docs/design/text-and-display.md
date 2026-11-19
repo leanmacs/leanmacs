@@ -1585,13 +1585,16 @@ and that `cursor` and each shipped Vim state's cursor face are defined,
 have a background that is not the paper and a foreground that is not that
 background. A cursor's colours are its face over `default`, as layout paints
 it, so one that sets no background has the paper's. It runs on every
-shipped theme in the model tests (`ModelTest.faceVocabularyChecks`); a
-theme config defines is not checked.
+shipped theme in the model tests (the built-in theme in
+`ModelTest.faceVocabularyChecks`, the shipped palettes in
+`ModelTest.shippedThemesChecks`); a theme config defines is not checked.
 
 Themes are registered by name, by owner, as commands and modes are
-(`lean/Editor/Config/Registry.lean`, "Themes"): compiled code registers
-the themes that ship (`Themes.shipped`, `lean/Editor/Themes/Compiled.lean`),
-of which `Theme.builtin` is the one called `default`, and `setup` registers
+(`lean/Editor/Config/Registry.lean`, "Themes"): the `themes` package
+registers `Theme.builtin` as the one called `default`
+(`lean/Editor/Themes/Compiled.lean`), the `shipped-themes` package the
+palettes that ship (`Themes.Shipped.themes`,
+`lean/Editor/Themes/Shipped.lean`), and `setup` registers
 more with `defineTheme` and names the one in force with `useTheme`. The
 theme in force is state of the reload reducer (`Config.State.themeName`,
 `lean/Editor/Config/Reload.lean`), `default` until a config names another:

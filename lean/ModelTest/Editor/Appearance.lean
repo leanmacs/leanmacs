@@ -15,6 +15,7 @@ import Editor.Setup
 import Editor.TabBar
 import Editor.Themes.Compiled
 import Editor.Themes.FairyFloss
+import Editor.Themes.Shipped
 import Editor.Themes.Solarized
 import Editor.Window
 import Editor.Workspace
@@ -35,7 +36,10 @@ open Editor
 /-- The reload reducer's state with the shipped themes registered, the
 built-in theme in force, and nothing loaded. -/
 def shippedThemes : Config.State Elaborated :=
-  { registry := ({} : Config.Registry).replaceThemes .compiled Themes.shipped }
+  {
+    registry :=
+      ({} : Config.Registry).replaceThemes .compiled
+        (#[Themes.defaultTheme] ++ Themes.Shipped.themes) }
 
 /-- The effects of each of `events` from `state`, one array an event, and the
 state reached. -/

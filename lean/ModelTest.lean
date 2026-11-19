@@ -120,6 +120,7 @@ import ModelTest.Editor.Text.Contract
 import ModelTest.Editor.Text.Model
 import ModelTest.Editor.Themes
 import ModelTest.Editor.Themes.FairyFloss
+import ModelTest.Editor.Themes.Shipped
 import ModelTest.Editor.Themes.Solarized
 import ModelTest.Editor.TypedPath
 import ModelTest.Editor.UndoTree
@@ -555,8 +556,14 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   ahead; the completeness check (`Editor/Themes/Check.lean`) finds each
   problem in a theme spoiled from the built-in one, a cursor colour that
   falls through to the default face's among them; one palette mapping over
-  two palettes gives two complete themes; and every shipped theme is
-  complete;
+  two palettes gives two complete themes; and the built-in theme is
+  complete, pads the mode line and the echo area and defines the tab bar's
+  faces;
+- `shippedThemesChecks`: the `shipped-themes` package
+  (`Editor/Themes/Shipped.lean`): alone it is accepted and registers its
+  three themes, in order, and nothing of any other kind; and each of them
+  is complete, pads the mode line and the echo area and defines the tab
+  bar's faces;
 - `solarizedChecks`: the Solarized themes (`Editor/Themes/Solarized.lean`):
   each of the sixteen colours is its published value, the light colours
   swap the four base pairs, each variant's faces are the choices the
@@ -682,7 +689,7 @@ The config session's decisions are tested here too, with no elaborator:
   (`Editor/ModeLine/Compiled.lean`), and the `code` mode with the shipped
   languages (`Editor/Language/Compiled.lean`);
 - `packageSetChecks`: the packages that ship (`Editor/PackageSet.lean`):
-  the list is the 21 packages, in order, each accepted, in the state
+  the list is the 22 packages, in order, each accepted, in the state
   they make every entry's owner is one of them, and the ex names and the
   theme names are bound in the order the headless fixtures show.
 
@@ -1178,6 +1185,7 @@ def checks : List Check :=
     bindingSearchChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++
+    shippedThemesChecks ++
     solarizedChecks ++
     fairyFlossChecks ++
     evilRestChecks ++

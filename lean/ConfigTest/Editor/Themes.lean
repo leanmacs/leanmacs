@@ -24,6 +24,7 @@ import Editor.Scene
 import Editor.Text.Real
 import Editor.Themes
 import Editor.Themes.Compiled
+import Editor.Themes.Shipped
 
 /-!
 # Config tests: `Editor/Themes.lean`
@@ -42,7 +43,7 @@ the minibuffer's commands and its mode, which its prompt is answered with. -/
 def themeCompiled : Compiled :=
   { commands := Themes.package.registered.commands ++ Minibuffer.package.registered.commands,
     modes := Minibuffer.package.registered.modes
-    themes := Themes.shipped }
+    themes := #[Themes.defaultTheme] ++ Themes.Shipped.themes }
 
 /-- The face `default` of the theme `second` the theme checks' config
 defines: a background of its own. -/

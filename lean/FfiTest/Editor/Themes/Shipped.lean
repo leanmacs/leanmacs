@@ -15,8 +15,8 @@ import Editor.Scene
 import Editor.State
 import Editor.Text
 import Editor.Text.Real
-import Editor.Themes.Compiled
 import Editor.Themes.FairyFloss
+import Editor.Themes.Shipped
 import Editor.Themes.Solarized
 import Editor.UndoTree
 import Editor.Value
@@ -26,10 +26,11 @@ import FfiTest.Support.Pictures
 import FfiTest.Support.Scenes
 
 /-!
-# FFI tests: `Editor/Themes/Compiled.lean`
+# FFI tests: `Editor/Themes/Shipped.lean`
 
-The tests of `Editor/Themes/Compiled.lean`: the `theme-pictures` scenario
-(`themePicturesScenario`), which draws the shipped themes (`Themes.shipped`),
+The tests of `Editor/Themes/Shipped.lean`: the `theme-pictures` scenario
+(`themePicturesScenario`), which draws the shipped palettes
+(`Themes.Shipped.themes`),
 and `themePicturesChecks`, of its own reporting. The root module `FfiTest` runs
 them, and each list's own doc says what it checks.
 -/
@@ -207,7 +208,7 @@ def roleChecks (roles : ThemeRoles) (pictures : ThemePictures) : List String :=
 
 /-- The theme-pictures scenario over the reference images in `dir`, its
 fixture `dir/source.lean`, and the font file `font`. For each theme of
-`variants`, looked up by name in `Themes.shipped`, it draws the four pictures (`themePictures`) and, with
+`variants`, looked up by name in `Themes.Shipped.themes`, it draws the four pictures (`themePictures`) and, with
 `write`, writes the scene's picture to `dir/<name>.png` (`mise run
 theme-references`); without, it compares the scene's picture with that
 file within `pictureTolerance`, runs `roleChecks`, and guards that each
@@ -224,7 +225,7 @@ def themePicturesScenario (dir font : String) (write : Bool)
   let mut scenes : List (String × Editor.Ffi.Picture) := []
   let mut references : List (String × Editor.Ffi.Picture) := []
   for roles in variants do
-    let some named := Editor.Themes.shipped.find? (·.name == roles.name)
+    let some named := Editor.Themes.Shipped.themes.find? (·.name == roles.name)
       | failed := failed ++ [s!"no shipped theme is named {roles.name}"]
     let pictures ← themePictures fontBytes named.theme source
     let path := System.FilePath.mk dir / s!"{roles.name}.png"

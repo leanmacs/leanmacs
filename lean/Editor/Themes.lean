@@ -10,7 +10,8 @@ reload reducer's state (`Editor/Config/Reload.lean`). `load-theme` is the
 command that switches it, with no reload, written over the editor API
 (`themeNames`, `loadTheme`, `Editor/Api.lean`). `Editor.lean` imports this
 module, so config calls it. The command as compiled code registers it, and
-the themes that ship, are in `Editor/Themes/Compiled.lean`.
+the theme `default`, are in `Editor/Themes/Compiled.lean`; the palettes
+that ship are in `Editor/Themes/Shipped.lean`.
 
 - **It asks for a name when it is given none** (`loadThemeCommand`), as the
   ex command asks for its line (`Editor/Ex.lean`). With a string as its

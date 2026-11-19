@@ -10,7 +10,7 @@ mapping from them to the face vocabulary (`Editor/Face/Vocabulary.lean`),
 written in the dark names; `dark` applies it to the published colours and
 `light` to them with the base pairs swapped (`Colours.light`), as the
 specification and Schoonover's own themes do. Both are shipped
-(`Themes.shipped`, `Editor/Themes/Compiled.lean`).
+(`Themes.Shipped.themes`, `Editor/Themes/Shipped.lean`).
 
 ## The source, and the licence
 

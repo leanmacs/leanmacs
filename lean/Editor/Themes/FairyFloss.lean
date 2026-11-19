@@ -8,7 +8,8 @@ sailorhg's Fairy Floss: "pink, mint, lavender and lemon" on a purple paper.
 `Colours.theme` is the one mapping from them to the face vocabulary
 (`Editor/Face/Vocabulary.lean`): the shared palette's theme, then Fairy
 Floss's own definitions after it. `fairyFloss` applies it to the published
-colours, and is shipped (`Themes.shipped`, `Editor/Themes/Compiled.lean`).
+colours, and is shipped (`Themes.Shipped.themes`,
+`Editor/Themes/Shipped.lean`).
 
 ## The source, and the licence
 

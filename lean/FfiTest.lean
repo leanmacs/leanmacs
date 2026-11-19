@@ -24,7 +24,7 @@ import FfiTest.Editor.Ffi.Transaction
 import FfiTest.Editor.Ffi.Watches
 import FfiTest.Editor.Ffi.Window
 import FfiTest.Editor.State
-import FfiTest.Editor.Themes.Compiled
+import FfiTest.Editor.Themes.Shipped
 import FfiTest.Editor.Window.Real
 import FfiTest.Editor.WindowCheck.Real
 

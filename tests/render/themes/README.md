@@ -4,10 +4,10 @@ Each file here is one shipped theme's picture of the fixture file
 `source.lean`, as the headless CPU renderer draws it. The gate draws the
 same picture again and compares it with the file: `ffi-test
 theme-pictures` in `mise run ffi-test`
-(`lean/FfiTest/Editor/Themes/Compiled.lean`, `themePicturesScenario`).
+(`lean/FfiTest/Editor/Themes/Shipped.lean`, `themePicturesScenario`).
 The scene is built in Lean and published through the display's real
-binding, in the theme as `Themes.shipped` holds it
-(`lean/Editor/Themes/Compiled.lean`), so what is compared is what the
+binding, in the theme as `Themes.Shipped.themes` holds it
+(`lean/Editor/Themes/Shipped.lean`), so what is compared is what the
 editor sends, not a theme written again in Rust.
 
 | File | Size | Bytes | sha256 |

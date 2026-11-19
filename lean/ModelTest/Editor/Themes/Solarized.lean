@@ -1,6 +1,6 @@
 import Editor.Face
 import Editor.Scene
-import Editor.Themes.Compiled
+import Editor.Themes.Shipped
 import Editor.Themes.Solarized
 import ModelTest.Check
 import ModelTest.Support.Themes
@@ -117,7 +117,7 @@ def solarizedChecks : List Check :=
     { name := "solarized-dark and solarized-light are shipped"
       run :=
         pure
-          ([Themes.Solarized.dark, Themes.Solarized.light].all Themes.shipped.contains &&
+          ([Themes.Solarized.dark, Themes.Solarized.light].all Themes.Shipped.themes.contains &&
             Themes.Solarized.dark.name == "solarized-dark" &&
             Themes.Solarized.light.name == "solarized-light") }]
 

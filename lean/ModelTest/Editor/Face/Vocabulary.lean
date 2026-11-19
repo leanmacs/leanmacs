@@ -15,7 +15,6 @@ import Editor.State
 import Editor.TabBar
 import Editor.Text
 import Editor.Themes.Check
-import Editor.Themes.Compiled
 import ModelTest.Check
 import ModelTest.Support.Completion
 import ModelTest.Support.Config
@@ -104,22 +103,21 @@ def faceVocabularyChecks : List Check :=
             ["status.state", "status.name", "status.modified"].all fun name =>
               !Face.vocabularyNames.contains ⟨name⟩) },
     { name :=
-        "every shipped theme pads the mode line and the echo area 3 points above and below, and its default face sets no padding"
+        "the built-in theme pads the mode line and the echo area 3 points above and below, and its default face sets no padding"
       run :=
         let padded (theme : Theme) :=
           (theme.merged ⟨"mode-line"⟩).verticalPadding == some 3 &&
             (theme.merged ⟨"echo-area"⟩).verticalPadding == some 3 &&
             (theme.merged ⟨"default"⟩).verticalPadding == some 0
-        pure (padded Theme.builtin && Themes.shipped.all (padded ·.theme)) },
+        pure (padded Theme.builtin) },
     { name :=
-        "the vocabulary lists the tab bar's faces, the chips' and the selected chip's, and every shipped theme defines them"
+        "the vocabulary lists the tab bar's faces, the chips' and the selected chip's, and the built-in theme defines them"
       run :=
         pure
           ([TabBar.face, TabBar.selectedFace].all Face.vocabularyNames.contains &&
             TabBar.face != TabBar.selectedFace &&
-            Themes.shipped.all fun shipped =>
-              [TabBar.face, TabBar.selectedFace].all fun name =>
-                shipped.theme.any (·.name == name)) },
+            [TabBar.face, TabBar.selectedFace].all fun name =>
+              Theme.builtin.any (·.name == name)) },
     { name := "the vocabulary lists the four names layout reads by itself"
       run :=
         pure
@@ -280,8 +278,7 @@ def faceVocabularyChecks : List Check :=
         pure
           (dark != pale && dark.map (·.name) == pale.map (·.name) && Themes.problems dark == #[] &&
             Themes.problems pale == #[]) },
-    { name := "every shipped theme has no problem the check finds"
-      run :=
-        pure (!Themes.shipped.isEmpty && Themes.shipped.all (Themes.problems ·.theme == #[])) }]
+    { name := "the built-in theme has no problem the check finds"
+      run := pure (Themes.problems Theme.builtin == #[]) }]
 
 end ModelTest

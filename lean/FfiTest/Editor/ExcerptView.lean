@@ -15,7 +15,7 @@ import Editor.Scene
 import Editor.State
 import Editor.Text
 import Editor.Text.Real
-import Editor.Themes.Compiled
+import Editor.Themes.Shipped
 import Editor.Themes.Solarized
 import FfiTest.Support.Pictures
 import FfiTest.Support.Scenes
@@ -105,7 +105,7 @@ scene with no blocks. Exits 0 after a line naming what held, or 1 after
 `FAILED:` lines. -/
 def excerptPictureScenario (dir font : String) (write : Bool) : IO UInt8 := do
   let fontBytes ← IO.FS.readBinFile font
-  let some named := Editor.Themes.shipped.find? (·.name == "solarized-dark")
+  let some named := Editor.Themes.Shipped.themes.find? (·.name == "solarized-dark")
     |
     IO.eprintln "FAILED: no shipped theme is named solarized-dark"
     return 1

@@ -9,8 +9,8 @@ scene is built in Lean and published through the display's real binding,
 its blocks placed by the list the
 excerpt document's snapshot carries (`Ffi.Snapshot.excerpts`) and made by
 the editor's own rule (`ExcerptView.headers`,
-`lean/Editor/ExcerptView.lean`), in `solarized-dark` as `Themes.shipped`
-holds it, so what is compared is what the editor sends.
+`lean/Editor/ExcerptView.lean`), in `solarized-dark` as
+`Themes.Shipped.themes` holds it, so what is compared is what the editor sends.
 
 | File | Size | Bytes | sha256 |
 |---|---|---|---|

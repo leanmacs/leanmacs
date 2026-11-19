@@ -15,6 +15,7 @@ import Editor.ModeLine.Compiled
 import Editor.Shell.Compiled
 import Editor.TabCommands.Compiled
 import Editor.Themes.Compiled
+import Editor.Themes.Shipped
 import Editor.VersionControl.Compiled
 import Editor.WindowCommands.Compiled
 import Editor.Workspace.Compiled
@@ -55,6 +56,8 @@ language table read as they did:
   and the shipped segments before version control's `review`;
 - `menu` comes after `frame-commands` and before `workspace`: the key
   bindings are the frame's, then the menu's, then the workspace finder's;
+- `shipped-themes` comes directly after `themes`: the theme `default`,
+  then the palettes, as the theme prompt lists them;
 - `languages` comes last: the `code` mode after version control's modes.
 
 Nothing is ordered by what a package depends on: a command's name is looked
@@ -68,8 +71,8 @@ order", in the module docs). -/
 def shipped : Array Package :=
   #[Completion.package, ModeLine.package, Files.package, Minibuffer.package, Evil.package,
     Ex.package, Buffers.package, FrameCommands.package, Menu.package, WindowCommands.package,
-    TabCommands.package, Themes.package, ExecuteCommand.package, BindingSearch.package,
-    Workspace.package, Shell.package, Compile.package, AtPoint.package, VersionControl.package,
-    VersionControl.gutterPackage, Language.package]
+    TabCommands.package, Themes.package, Themes.Shipped.package, ExecuteCommand.package,
+    BindingSearch.package, Workspace.package, Shell.package, Compile.package, AtPoint.package,
+    VersionControl.package, VersionControl.gutterPackage, Language.package]
 
 end Editor.PackageSet

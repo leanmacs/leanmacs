@@ -44,7 +44,8 @@ Problems are listed `noPaper` and `noInk` first, then the undefined faces in
 the vocabulary's order, then each cursor face's in `cursorFaces`' order,
 then `modeLinesAlike` and `dividerOnPaper`.
 
-The check is applied to a theme as it ships (`Themes.shipped`), not to the
+The check is applied to a theme as it ships (`Theme.builtin`, and each of
+`Themes.Shipped.themes`, `Editor/Themes/Shipped.lean`), not to the
 theme with config's definitions after it: those are the user's. A theme
 config defines is not checked.
 

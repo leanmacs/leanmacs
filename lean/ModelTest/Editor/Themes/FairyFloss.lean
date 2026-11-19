@@ -1,7 +1,7 @@
 import Editor.Face
 import Editor.Scene
-import Editor.Themes.Compiled
 import Editor.Themes.FairyFloss
+import Editor.Themes.Shipped
 import ModelTest.Check
 import ModelTest.Support.Themes
 
@@ -97,7 +97,7 @@ def fairyFlossChecks : List Check :=
     { name := "fairy-floss is shipped"
       run :=
         pure
-          (Themes.shipped.contains Themes.FairyFloss.fairyFloss &&
+          (Themes.Shipped.themes.contains Themes.FairyFloss.fairyFloss &&
             Themes.FairyFloss.fairyFloss.name == "fairy-floss") }]
 
 end ModelTest
