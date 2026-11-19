@@ -152,6 +152,7 @@ import ModelTest.Editor.Watch.Model
 import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.WindowCommands
+import ModelTest.Editor.WorkingSet
 import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
 import ModelTest.Editor.Workspace.Contract
@@ -1047,6 +1048,14 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   entries; the loop's marking and the face of what was not examined are
   among `excerptDisplayChecks`, on the loop's driver.
 
+Working sets (`Editor/WorkingSet.lean` and its modules) are checked in Lean
+alone too:
+
+- `workingSetChecks`: the stored form, pure: the document's JSON round trip
+  and the refusals of one it cannot read, a newer version first; a
+  workspace's key; a range captured from a text and its points found
+  again; the headers; and the excerpts' grouping by file and merging.
+
 Listing a workspace's files is checked in Lean alone too:
 
 - `workspaceListerChecks`: which command lists a workspace's files
@@ -1215,6 +1224,7 @@ def checks : List Check :=
     insertExcerptChecks ++
     projectSearchChecks ++
     projectSearchRunChecks ++
+    workingSetChecks ++
     driverChecks ++
     promptChecks ++
     candidateChecks ++

@@ -39,6 +39,27 @@ def jsonChecks : List Check :=
             parsed "[]" == some (.array #[]) &&
             parsed "\"é\"" == some (.string "é")) },
     { name :=
+        "a JSON value written and read again is the value: quotes, backslashes, control characters, characters that are not ASCII and an escape of a byte, in strings and names, nested in arrays and objects"
+      run :=
+        let table : List Json.Value :=
+          [.null, .bool true, .bool false, .number "-2.5e+3", .string "",
+            .string "say \"hi\" \\ there",
+            .string "tab\tline\nreturn\rbell\x07escape\x1bend\x08\x0c", .string "é漢🙂",
+            .string (String.singleton (Char.ofNat 0x10DCFF)), .array #[],
+            .object
+              #[("a\"b", .array #[.number "1", .object #[("\n", .null)]]), ("é", .string "x")]]
+        pure
+          (table.all fun value => (Json.parse (Json.render value).toUTF8).toOption == some value) },
+    { name :=
+        "a JSON value is written compactly, members in order, with JSON's short escapes and \\u00XX for another control character"
+      run :=
+        pure
+          (Json.render
+              (.object
+                #[("version", .number "1"), ("s", .string "a\"\\\n\x01é"),
+                  ("list", .array #[.bool true, .null])]) ==
+            "{\"version\":1,\"s\":\"a\\\"\\\\\\n\\u0001é\",\"list\":[true,null]}") },
+    { name :=
         "the JSON reader refuses trailing text, an unclosed array, an unclosed object, a bare word, a number with no digits, an empty document and what is not UTF-8, saying why"
       run :=
         pure
