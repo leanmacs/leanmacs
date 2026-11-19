@@ -30,7 +30,10 @@
 # What it does not claim: the core loop still imports feature code that
 # defines no package, such as `Editor.Files` and `Editor.Ex`
 # (`lean/Editor/Loop.lean`). This check is of the modules that define
-# packages.
+# packages. That the core imports no module of a feature that moves out of
+# it is `tools/core-imports-check.sh`'s, and what each feature still in the
+# core would have to cross to move out is the module map of
+# docs/design/packages.md.
 set -eu
 
 if [ "$#" -gt 2 ]; then

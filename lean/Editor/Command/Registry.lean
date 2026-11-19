@@ -64,7 +64,8 @@ request of the editor's port (`EditorRequest.registry`,
   a path (`Language.forPath`), and `indentUnitOf` the unit of the table's
   first entry of a name.
 - `compileHook` is answered the registered compile contributions in
-  registration order and config's project commands (`Compile.Hook`).
+  registration order and config's project commands (`Compile.Hook`,
+  `Editor/ProjectMode.lean`).
 - `hasJob` is answered whether a job is registered under a name, as a
   start is checked.
 - `categorySources` is answered the names of the completion sources

@@ -57,7 +57,7 @@ registers, undo and dot repeat, on the editor API:
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
 | Ex bindings by owner, and binding one from `setup` | `lean/Editor/Config/Registry.lean` (`replaceEx`, `ex?`), `lean/Editor/Setup.lean` (`exCommand`) |
 | The ex command, and the commands `quit`, `save-and-quit` and `reload-config` | `lean/Editor/Ex.lean` |
-| The ex line's commands and the ex names that ship, as compiled code registers them | `lean/Editor/Ex/Compiled.lean` |
+| The ex line's commands and the files', the ex line's own and the buffers' ex names, as the `ex` package registers them; the compile mode's and version control's ex names are bound by their own packages | `lean/Editor/Ex/Compiled.lean`, `lean/Editor/Compile/Compiled.lean`, `lean/Editor/VersionControl/Compiled.lean` |
 
 The command loop steps every key press through its one scheme and runs the
 invocation it yields, as a command looked up by name in the registry. The
@@ -3327,7 +3327,7 @@ contributes nothing.
   ("Languages and the code mode").
 - **Adding a minor mode runs no action** yet (left open).
 - **Minor modes turned on by markers.** A compile contribution
-  (`lean/Editor/Compile/Contribution.lean`; "The compile mode, as built")
+  (`lean/Editor/ProjectMode.lean`; "The compile mode, as built")
   names marker files. When a buffer's file opens and its workspace is
   known, the job `find-mode-markers` looks for every registered
   contribution's markers from the file's directory up to and including the
@@ -4370,10 +4370,19 @@ Doom Emacs's corfu module (owner decisions, 2026-11-17).
 
 Status: built by `shell-and-compile` phases 3 to 6
 (`lean/Editor/Compile.lean`, `lean/Editor/Compile/Errors.lean`,
-`lean/Editor/Compile/Contribution.lean`, `lean/Editor/Compile/Listing.lean`,
-`lean/Editor/Compile/Shipped.lean`, `lean/Editor/Compile/Compiled.lean`,
-`lean/Editor/Json.lean`, `lean/Editor/Workspace/Modes.lean`; the module
-docs have the detail).
+`lean/Editor/Compile/Contribution.lean`, `lean/Editor/Compile/Shipped.lean`,
+`lean/Editor/Compile/Compiled.lean`, `lean/Editor/Json.lean`,
+`lean/Editor/Workspace/Modes.lean`; the module docs have the detail). What
+a minor mode contributes is the core's vocabulary, in three core modules
+the packages roadmap's phase 3 split off, every name unchanged
+([packages.md](packages.md), "The interfaces the core owns for the two
+moving features"): the contribution, its named commands, config's project
+commands and the hook the loop is told (`lean/Editor/ProjectMode.lean`);
+an error format as data (`lean/Editor/ProjectMode/Format.lean`), which the
+compile mode's matcher reads output with (`lean/Editor/Compile/Errors.lean`);
+and the listing of computed commands
+(`lean/Editor/ProjectMode/Listing.lean`). The compile mode's ex names are
+bound by its own package (`lean/Editor/Compile/Compiled.lean`).
 Emacs's `M-x compile`, one per workspace: a build or test command runs as
 `/bin/sh -c <line>` and its output arrives in the workspace's compilation
 buffer while editing goes on.
@@ -4515,7 +4524,8 @@ buffer while editing goes on.
     through `cargo-mode`.
 - **Computed commands.** A contribution's listing is a program run in its
   mode's root, whose output it reads into named commands. It runs as a job
-  (`compile-list`) when the mode turns on in a buffer, and at each use,
+  (`compile-list`, `lean/Editor/ProjectMode/Listing.lean`, registered by
+  the `workspace` package) when the mode turns on in a buffer, and at each use,
   `compile`'s prompt and `compile-command`, but only when its markers'
   stamps in the root differ from those read before it last ran, or after a
   reload. A use offers what was last listed: the list a changed marker
@@ -4589,8 +4599,11 @@ and `ContractTest.projectModeChecks`, with the programs in
 Status: decided 2026-11-14 and built, by the command loop's phase 12
 (`lean/Editor/Ex/Line.lean` for a line and a binding as data,
 `lean/Editor/Ex.lean` for the commands, `lean/Editor/Ex/Compiled.lean` for
-their registrations and the names that ship; the module docs have the
-detail). How quitting and reloading reach the host is in
+their registrations and the files', the ex line's and the buffers' names;
+the module docs have the detail). A feature with ex names of its own binds
+them in its own package: the compile mode's
+(`lean/Editor/Compile/Compiled.lean`) and version control's
+(`lean/Editor/VersionControl/Compiled.lean`). How quitting and reloading reach the host is in
 [concurrency.md](concurrency.md), "Quit" and "Reload".
 
 The ex line is a prompt whose answer is run as a named ex command. The

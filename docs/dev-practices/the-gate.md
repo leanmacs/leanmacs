@@ -8,7 +8,8 @@ This is everything that must pass before review and before landing: Rust
 formatting, clippy, cargo-deny, rustdoc and the Rust tests; the Lean model
 tests (`mise run lean-test`); the Lean build, lean-fmt's format and lint
 checks; the check that the host's modules import no feature module, the
-checks of the Lean/Rust boundary, the contract checks against
+check that the core imports no module of a feature that moves out of it,
+the checks of the Lean/Rust boundary, the contract checks against
 the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); the headless mode run from a staged app
 bundle (`mise run bundle-test`); the C format check; and the workflow lint
@@ -671,7 +672,7 @@ driver does not need it. The tests of the pool pin no size, so they pass
 whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` first runs the host imports check ("The host imports
-check", below), then `lean/.lake/build/bin/ffi-test`, the test executable
+check", below) and the core imports check ("The core imports check"), then `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, handed six
 directories: `tests/process-environment` (the fixtures that stand in for
 mise in the checks of a child's environment), `tests/workspaces` (the
@@ -1219,13 +1220,72 @@ each one the host reaches and exits 1.
   since its direct imports are what the check forbids a host.
 - **What it does not claim.** The core loop still imports feature code
   that defines no package, such as `Editor.Files` and `Editor.Ex`
-  (`lean/Editor/Loop.lean`). Cutting those imports is later work of the
-  packages roadmap, and this check says nothing of them.
+  (`lean/Editor/Loop.lean`). Those features are still the core's, and
+  this check says nothing of them; the module map of
+  [packages.md](../design/packages.md) lists what each would have to cross
+  to move out. That the core imports no module of a feature that does
+  move out is the next check's.
 
 What a host registers from the list is checked by behaviour, not imports:
 a host handed no packages starts with an empty registry and no menu bar
 (`ConfigTest.hostChecks`), and in the state the shipped packages make every
 entry's owner is one of them (`ModelTest.packageSetChecks`).
+
+## The core imports check
+
+```sh
+cd lean && sh ../tools/core-imports-check.sh
+```
+
+Part of `mise run ffi-test`, after the host imports check. A package may
+depend on the core, and the core depends on no package
+([packages.md](../design/packages.md)). Two features move out of the core
+into packages of their own, the compile mode and the shipped palettes, and
+this check shows on Lake's module graph that no core module imports a
+module of either. It is given a root and the moving names, and both
+default: the root to `Editor.Core`, the core's root module
+(`lean/Editor/Core.lean`), and the moving names to `Editor.Compile`,
+`Editor.Themes.Solarized`, `Editor.Themes.FairyFloss` and
+`Editor.Themes.Shipped`, each meaning that module and every module under
+it. It checks three rules, in order, and stops at the first that fails:
+
+| Rule | Exit when it fails |
+|---|---|
+| The root and the modules it imports, directly or through another, hold no moving module | 1, after printing each one found |
+| Every module named `Editor.…` that a root of the build reaches (`Main`, `ModelTest`, `ConfigTest`, `FfiTest`, `ContractTest`) is the root or one of the modules it imports, unless it is a moving module or the list of packages (`Editor.PackageSet`) | 3, after printing each one outside |
+| A root of the build that reaches the elaborator adapter (`Editor.Config.Elaborate`) reaches the config base (`Editor`) | 4, after printing each root that does not |
+
+- **The second rule is what makes the first a statement about every core
+  module.** A core module that `Editor.Core` did not import would be
+  checked by nothing. With the rule, a new core module that no module of
+  the core imports fails the gate until `lean/Editor/Core.lean` imports
+  it.
+- **The third rule keeps what an import used to give.** The elaborator
+  adapter imported `Editor`, so every module config may import was linked
+  into any executable that elaborates config
+  ([lean-runtime.md](../design/lean-runtime.md), "One shared state").
+  Through that import the adapter and both hosts reached the compile
+  mode. Now each root that links the adapter imports `Editor` itself, and
+  this rule fails when one does not.
+- **The moving names are named, never derived.** "Every module the root
+  does not reach" would pass whatever the core imported.
+- **It asks Lake and reads no source text** (`lake query
+  +<module>:transImports`, one module a line), as the host imports check
+  does, so it follows a module that is renamed or moved, and an import
+  written in any form. It makes six queries, one for the root and one for
+  each root of the build, builds nothing and writes nothing under `lean/`.
+- **The gate sees it bite, twice.** `ffi-test` runs it pointed at the root
+  `Editor`, the config base, which imports the compile mode, and requires
+  exit 1; and pointed at the root `Editor.Setup`, which imports no moving
+  module and is not the whole core, and requires exit 3. A command line it
+  does not take, a query Lake fails and an empty answer are exit 2, so
+  none can stand in for a finding.
+- **What it does not claim.** It names the two features that move in this
+  roadmap. A feature that is still the core's (the ex line, files,
+  version control and the rest) is imported by core modules, and the
+  module map records by which. And it says nothing of what a package
+  imports: the check that a package imports only the core's API comes
+  with the first package that is built outside the core.
 
 ## Formatting
 

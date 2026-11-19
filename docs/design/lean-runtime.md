@@ -820,7 +820,9 @@ host registers features only from the packages it is handed. Built by the
 packages roadmap's phase 2; everything is still inside the one Lake
 package, and how the executable finds its packages without anyone listing
 them (a generated root, an entry-module convention, dependency order) is
-that roadmap's phase 4.
+that roadmap's phase 4. What the core is, what a package may import of it
+and what each feature would have to cross to move out are in
+[packages.md](packages.md), from that roadmap's phase 3.
 
 ```lean
 def package : Package :=
@@ -889,14 +891,23 @@ def package : Package :=
   (`Headless.Collaborators σ scheme`), an `InputScheme` is in `Type 1`, and
   a setup request is plain data in `Type`.
 - **The packages that ship are listed by hand in one module**,
-  `lean/Editor/PackageSet.lean` (`PackageSet.shipped`), 21 of them, each
-  defined in its feature's `Compiled.lean`: `completion`, `mode-line`,
+  `lean/Editor/PackageSet.lean` (`PackageSet.shipped`), 22 of them, each
+  defined in its feature's `Compiled.lean` but `shipped-themes`
+  (`lean/Editor/Themes/Shipped.lean`): `completion`, `mode-line`,
   `files`, `minibuffer`, `evil`, `ex`, `buffers`, `frame-commands`, `menu`,
-  `window-commands`, `tab-commands`, `themes`, `execute-command`,
-  `binding-search`, `workspace`, `shell`, `compile`, `at-point`,
-  `version-control`, `version-control-gutter` and `languages`, in that
-  order, which keeps each kind of entry where the hosts registered it
-  before there were packages. `lean/Main.lean` imports that module and
+  `window-commands`, `tab-commands`, `themes`, `shipped-themes`,
+  `execute-command`, `binding-search`, `workspace`, `shell`, `compile`,
+  `at-point`, `version-control`, `version-control-gutter` and `languages`,
+  in that order, which keeps each kind of entry where the hosts registered
+  it before there were packages. `themes` is split in two: it keeps
+  `load-theme`, the theme `default` and the theme source, which are the
+  core's, and `shipped-themes`, directly after it, defines
+  `solarized-dark`, `solarized-light` and `fairy-floss`, which move out of
+  the core. Each package binds its own ex names: `ex` the files', its own
+  and the buffers', `compile` its six and `version-control` its twelve, so
+  the order of those three in the list is the order the ex names'
+  completion lists them in ([packages.md](packages.md), "Registration
+  order is visible"). `lean/Main.lean` imports that module and
   passes the array to the headless mode and to the window mode
   (`Headless.main`, `Window.main`).
 - **The list is outside the host.** No module of a host imports the list
@@ -907,8 +918,13 @@ def package : Package :=
   in `mise run ffi-test`; [the-gate.md](../dev-practices/the-gate.md),
   "The host imports check"). The check is of the modules that define
   packages: the core loop still imports feature code that defines none,
-  such as `Editor.Files` and `Editor.Ex`, which is the packages roadmap's
-  phase 3 and later work.
+  such as `Editor.Files` and `Editor.Ex`. Which features those are, and
+  what each would have to cross to move out of the core, is the module map
+  of [packages.md](packages.md); the core's own imports of the two
+  features that do move, the compile mode and the shipped palettes, are
+  cut, and a second check holds that
+  (`tools/core-imports-check.sh`; [packages.md](packages.md), "The core
+  imports check").
 - **The owner `compiled` registers nothing in a host.** It remains as the
   owner of what the core falls back to when no package registered it: the
   fuzzy style and the minibuffer display of a registry that holds none.
@@ -935,10 +951,16 @@ As built (`lean/Editor/Config/Elaborate.lean`):
   about doubled its resident memory in a prototype.
 - **The import runs no initialiser of a linked module.** Lean looks for a
   module's native initialiser first, and interprets a module's `initialize`
-  declarations only when there is none. The adapter imports `Editor` at
-  compile time, so every module of the base is linked into any executable
-  that can elaborate config, and its initialiser ran once, when the process
-  started. This matters twice: Lean documents initialiser execution as
+  declarations only when there is none. Each root that links the adapter
+  imports `Editor` at compile time beside it (`lean/Main.lean`,
+  `lean/ConfigTest/Check.lean`, `lean/FfiTest/Editor/Window/Real.lean`),
+  so every module of the base is linked into any executable that can
+  elaborate config, and its initialiser ran once, when the process
+  started. The adapter itself does not import `Editor`: it is a core
+  module, and the base imports features that are not the core's. The gate
+  checks on Lake's module graph that every root that reaches the adapter
+  reaches `Editor` (`tools/core-imports-check.sh`;
+  [packages.md](packages.md), "The core imports check"). This matters twice: Lean documents initialiser execution as
   unsafe beside other threads, and the editor thread is running during the
   import. A third-party package loaded as interpreted modules would run its
   `initialize` code at import, on a job thread; that is part of the open
@@ -1591,9 +1613,9 @@ text requests. Config sees it through
   ([concurrency.md](concurrency.md), "Quit"). None adds a request to
   another port, so there is no new model and no new contract; `quit` asks
   the text port for revisions, and has a case in
-  `lean/Editor/Api/Cases.lean`. The registrations and the ex names that
-  ship (`lean/Editor/Ex/Compiled.lean`) name the registry and are not
-  imported by `Editor.lean`.
+  `lean/Editor/Api/Cases.lean`. The registrations and the ex names the
+  `ex` package binds (`lean/Editor/Ex/Compiled.lean`) name the registry and
+  are not imported by `Editor.lean`.
 - **A command asks layout a question through its view's area** (built by
   the command loop's phase 15;
   [text-and-display.md](text-and-display.md), "Views as built";
@@ -1648,9 +1670,10 @@ text requests. Config sees it through
 | The package `evil`: evil's commands | `lean/Editor/Evil/Compiled.lean` |
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
 | The ex command, and the commands `quit`, `save-and-quit` and `reload-config`, with what they say in the echo area | `lean/Editor/Ex.lean` |
-| The package `ex`: the ex line's commands and the ex names that ship | `lean/Editor/Ex/Compiled.lean` |
+| The package `ex`: the ex line's commands and the files', its own and the buffers' ex names | `lean/Editor/Ex/Compiled.lean` |
 | The command `load-theme`, which switches the theme in force with no reload, with what it says in the echo area | `lean/Editor/Themes.lean` |
-| The package `themes`: the command that loads a theme and the themes that ship, `default` among them | `lean/Editor/Themes/Compiled.lean` |
+| The package `themes`: the command that loads a theme and the theme `default` | `lean/Editor/Themes/Compiled.lean` |
+| The package `shipped-themes`: the palettes that ship | `lean/Editor/Themes/Shipped.lean` |
 | The command prompt, `execute-command`, which lists every registered command's name and runs the one accepted, with its completion source `commands` and what it says in the echo area | `lean/Editor/ExecuteCommand.lean` |
 | The package `execute-command`: the command prompt and its source | `lean/Editor/ExecuteCommand/Compiled.lean` |
 | The binding search, `search-bindings`, which lists every key binding the input scheme reaches in the asking view and runs the one accepted as its key would, with its completion source `bindings` and what it says in the echo area | `lean/Editor/BindingSearch.lean` |

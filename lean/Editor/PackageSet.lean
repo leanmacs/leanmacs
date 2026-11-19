@@ -44,6 +44,15 @@ to live in a package's module, or the check would forbid the host that
 helper too. Tests import it for the list (`ModelTest.packageSetChecks`,
 `ConfigTest.shippedChecks`).
 
+## This module is outside the core too
+
+It names every package, the two that move out of the core among them (the
+compile mode's, `Editor/Compile/Compiled.lean`, and the shipped palettes',
+`Editor/Themes/Shipped.lean`), so it is neither a core module nor a
+feature's: the core's root (`Editor/Core.lean`) does not import it, and
+the core imports check exempts it by name
+(`tools/core-imports-check.sh`; `docs/design/packages.md`).
+
 ## The order
 
 A host registers the packages in the order of the array, and of two
@@ -58,6 +67,11 @@ language table read as they did:
   bindings are the frame's, then the menu's, then the workspace finder's;
 - `shipped-themes` comes directly after `themes`: the theme `default`,
   then the palettes, as the theme prompt lists them;
+- `ex` comes before `compile`, and `compile` before `version-control`:
+  each binds its own ex names, and the ex names' completion lists them in
+  the order they were bound, the `ex` package's first;
+- `compile` comes between `shell` and `at-point`: the command prompt lists
+  commands in registration order;
 - `languages` comes last: the `code` mode after version control's modes.
 
 Nothing is ordered by what a package depends on: a command's name is looked
