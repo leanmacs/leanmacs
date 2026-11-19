@@ -834,8 +834,10 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   jump, under an operator, after an insert above it, the marks not set or
   not named, `''` back and forth and `m '`, a mark motion run in a window
   that is not focused, and across buffers on the file model: a buffer's
-  own marks, a global mark in another buffer, under an operator, and in a
-  closed buffer's file, reopened with one jump recorded;
+  own marks, a global mark in another buffer, under an operator, in a
+  closed buffer's file, reopened with one jump recorded, attached again to
+  the reopened buffer's text so that an edit above it carries it, and
+  dropped with a closed buffer that held no file;
 - `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
   All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
   item (`clipRan`), in each Vim state, on the clipboard model.

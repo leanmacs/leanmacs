@@ -182,6 +182,34 @@ def evilMarkChecks : List Check :=
                 markSeen (markFed back "C-o"))) ==
             some
               ((some "jumps.txt", "zero\n  |one\néx two\nthree\nfour\n"), true,
-                (some "scratch", "|s0\ns1\n  s2\n")) }]
+                (some "scratch", "|s0\ns1\n  s2\n")) },
+    { name :=
+        "m A, then its buffer closed and its file opened again, attaches the mark to the new buffer's text: a line inserted above it carries it down, and ` A lands on the shifted row"
+      run :=
+        pure <|
+          (markDriver.map fun driver =>
+              let marked := markFed (markRan driver openJumps) "j l l m A"
+              let closed :=
+                markRan (markRan marked toScratch)
+                  { command := Buffers.closeName, arguments := [.str "jumps.txt"] }
+              let shifted := markFed (markRan closed openJumps) "g g O x <Escape>"
+              let back := markFed shifted "G ` A"
+              (match shifted.loop.state.globalMark? 'A' with
+                | some (.held ..) => true
+                | _ => false,
+                markSeen back)) ==
+            some (true, (some "jumps.txt", "x\nzero\n  |one\néx two\nthree\nfour\n")) },
+    { name := "m A in a buffer with no file, then that buffer closed, drops the mark: ` A says E20"
+      run :=
+        pure <|
+          (markDriver.map fun driver =>
+              let other := markRan (markFed driver "m A") openJumps
+              let closed :=
+                markRan other
+                  { command := Buffers.closeName, arguments := [.str EditorState.scratchName] }
+              let tried := markFed closed "` A"
+              (closed.loop.state.globalMark? 'A', markSeen tried, tried.loop.state.echo)) ==
+            some
+              (none, (some "jumps.txt", "|zero\n  one\néx two\nthree\nfour\n"), Evil.markNotSet) }]
 
 end ModelTest
