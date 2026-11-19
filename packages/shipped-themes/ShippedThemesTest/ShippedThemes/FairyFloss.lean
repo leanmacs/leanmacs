@@ -1,25 +1,26 @@
 import Editor.Face
 import Editor.Scene
-import Editor.Themes.FairyFloss
-import Editor.Themes.Shipped
-import ModelTest.Check
-import ModelTest.Support.Themes
+import ShippedThemes
+import ShippedThemes.FairyFloss
+import ShippedThemesTest.Check
+import ShippedThemesTest.Support.Themes
 
 /-!
-# Model tests: `Editor/Themes/FairyFloss.lean`
+# The tests of `ShippedThemes/FairyFloss.lean`
 
-The model tests of `Editor/Themes/FairyFloss.lean`: `fairyFlossChecks`. The root
-module `ModelTest` runs them; its module doc says what each shows.
+The tests of `ShippedThemes/FairyFloss.lean`: `fairyFlossChecks`. The test
+driver's root, `ShippedThemesTest/Model.lean`, runs them; its module doc says
+what each shows.
 -/
 
-namespace ModelTest
+namespace ShippedThemesTest
 
 open Editor
 
 /-- The faces whose colours the Fairy Floss module's table of choices
-records (`Editor/Themes/FairyFloss.lean`): each face's foreground and
+records (`ShippedThemes/FairyFloss.lean`): each face's foreground and
 background as the table gives them, read from `c`. -/
-def fairyFlossChoices (c : Themes.FairyFloss.Colours) :
+def fairyFlossChoices (c : ShippedThemes.FairyFloss.Colours) :
     List (String × Option Color × Option Color) :=
   let cursors :=
     ["cursor", "cursor.normal", "cursor.insert", "cursor.visual", "cursor.visual-line",
@@ -56,7 +57,7 @@ def fairyFlossChoices (c : Themes.FairyFloss.Colours) :
 
 /-- Whether `theme` gives each face of `fairyFlossChoices c` the colours
 listed, and the weight, slant and underline the table records. -/
-def fairyFlossChosen (theme : Theme) (c : Themes.FairyFloss.Colours) : Bool :=
+def fairyFlossChosen (theme : Theme) (c : ShippedThemes.FairyFloss.Colours) : Bool :=
   let face (name : String) : Face := theme.merged ⟨name⟩
   (fairyFlossChoices c).all
       (fun (name, foreground, background) =>
@@ -69,13 +70,13 @@ def fairyFlossChosen (theme : Theme) (c : Themes.FairyFloss.Colours) : Bool :=
     (face "syntax.type").slant == some .italic &&
     (face "review-unexamined").underline == some { style := .single, color := some c.peach }
 
-/-- The checks of the Fairy Floss theme (`Editor/Themes/FairyFloss.lean`):
+/-- The checks of the Fairy Floss theme (`ShippedThemes/FairyFloss.lean`):
 the nineteen colours are sailorhg's published values, the source's commit
 is recorded, the faces are the choices the module's table records, and the
 theme is shipped. That it passes the completeness check is
-`faceVocabularyChecks`'s last check, over every shipped theme. -/
+`shippedThemesChecks`', over every shipped theme. -/
 def fairyFlossChecks : List Check :=
-  let c := Themes.FairyFloss.published
+  let c := ShippedThemes.FairyFloss.published
   [{  name := "each of Fairy Floss's nineteen colours is its published value"
       run :=
         pure
@@ -87,17 +88,17 @@ def fairyFlossChecks : List Check :=
               0xffea00ff, 0xc5a3ffff, 0xffb8d1ff, 0xc2ffdfff, 0xfff352ff, 0xff857fff, 0xf92672ff,
               0xae81ffff, 0x96cbfeff, 0xa8ff60ff, 0xe9c062ff, 0xcc6666ff]) },
     { name := "the source's commit is recorded"
-      run := pure (Themes.FairyFloss.commit == "982e64a9e36160350125c0a82a7981dca6200150") },
+      run := pure (ShippedThemes.FairyFloss.commit == "982e64a9e36160350125c0a82a7981dca6200150") },
     { name := "the faces are the choices recorded in the module's table"
-      run := pure (fairyFlossChosen Themes.FairyFloss.fairyFloss.theme c) },
+      run := pure (fairyFlossChosen ShippedThemes.FairyFloss.fairyFloss.theme c) },
     { name := "the default is foreground on background"
       run :=
-        let face := Themes.FairyFloss.fairyFloss.theme.merged ⟨"default"⟩
+        let face := ShippedThemes.FairyFloss.fairyFloss.theme.merged ⟨"default"⟩
         pure (face.foreground == some c.foreground && face.background == some c.background) },
     { name := "fairy-floss is shipped"
       run :=
         pure
-          (Themes.Shipped.themes.contains Themes.FairyFloss.fairyFloss &&
-            Themes.FairyFloss.fairyFloss.name == "fairy-floss") }]
+          (ShippedThemes.themes.contains ShippedThemes.FairyFloss.fairyFloss &&
+            ShippedThemes.FairyFloss.fairyFloss.name == "fairy-floss") }]
 
-end ModelTest
+end ShippedThemesTest

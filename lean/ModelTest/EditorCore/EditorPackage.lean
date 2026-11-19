@@ -23,24 +23,25 @@ open Editor
 register. -/
 def shippedPackageNames : Array String :=
   #["completion", "mode-line", "files", "minibuffer", "evil", "ex", "buffers", "frame-commands",
-    "menu", "window-commands", "tab-commands", "themes", "shipped-themes", "execute-command",
-    "binding-search", "workspace", "shell", "compile", "at-point", "version-control",
-    "version-control-gutter", "languages"]
+    "menu", "window-commands", "tab-commands", "themes", "execute-command", "binding-search",
+    "workspace", "shell", "compile", "at-point", "version-control", "version-control-gutter",
+    "languages"]
 
 /-- The checks of the packages of the core's Lake package
 (`EditorCore/EditorPackage.lean`): the list a host is handed is whole,
 every package of it is accepted, and what it registers is all theirs. -/
 def packageSetChecks : List Check :=
   [{  name :=
-        "every package of the shipped set is accepted, and their names are the 22 of the package table, each once, in its order"
+        "every package of the shipped set is accepted, and their names are the 21 of the package table, each once, in its order, with no package of the shipped palettes among them"
       run :=
         let (state, refused) : Config.State Elaborated × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
             EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 22 &&
-            shippedPackageNames.toList.eraseDups.length == 22 &&
+            shippedPackageNames.size == 21 &&
+            shippedPackageNames.toList.eraseDups.length == 21 &&
+            !shippedPackageNames.contains "shipped-themes" &&
             state.packages == shippedPackageNames &&
             EditorCore.EditorPackage.packages.all fun package =>
               package.collected.toOption.isSome) },
@@ -70,12 +71,10 @@ def packageSetChecks : List Check :=
               "vc-commit", "vc-worktrees", "vc-commit-accept", "vc-commit-abort", "vc-review",
               "vc-review-since", "vc-log", "vc-blame"]) },
     { name :=
-        "the shipped set's theme names are `default`, `solarized-dark`, `solarized-light` and `fairy-floss`, in that order"
+        "the shipped set registers one theme, `default`: the palettes that ship are a package outside the core's Lake package"
       run :=
         let (state, _) : Config.State Elaborated × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
-        pure
-          (state.registry.themeNames ==
-            #["default", "solarized-dark", "solarized-light", "fairy-floss"]) }]
+        pure (state.registry.themeNames == #["default"]) }]
 
 end ModelTest

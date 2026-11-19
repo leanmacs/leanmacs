@@ -8,8 +8,8 @@ sailorhg's Fairy Floss: "pink, mint, lavender and lemon" on a purple paper.
 `Colours.theme` is the one mapping from them to the face vocabulary
 (`Editor/Face/Vocabulary.lean`): the shared palette's theme, then Fairy
 Floss's own definitions after it. `fairyFloss` applies it to the published
-colours, and is shipped (`Themes.Shipped.themes`,
-`Editor/Themes/Shipped.lean`).
+colours, and is shipped (`ShippedThemes.themes`, `ShippedThemes.lean`). A
+path that starts `Editor/` is a module of the core, under `lean/`.
 
 ## The source, and the licence
 
@@ -138,13 +138,16 @@ a later definition's set attributes are over an earlier one's
 | `review-unexamined` | peach single underline | the same | Not covered: shared mapping kept |
 | `block-header` | foreground on lineHighlight, bold | the same | Not covered: shared mapping kept |
 
-Pinned by `ModelTest.fairyFlossChecks`: the nineteen values, the commit,
-and this table, read through `Theme.merged`. How the theme looks is left to
-the owner's day-to-day use; what the CPU renderer draws of it is pinned by
-`ffi-test theme-pictures` (`tests/render/themes`).
+Pinned by `ShippedThemesTest.fairyFlossChecks`: the nineteen values, the
+commit, and this table, read through `Theme.merged`. How the theme looks is
+left to the owner's day-to-day use; what the CPU renderer draws of it is
+pinned by the package's linked test
+(`ShippedThemesTest/Linked/ShippedThemes.lean`, `tests/render`).
 -/
 
-namespace Editor.Themes.FairyFloss
+namespace ShippedThemes.FairyFloss
+
+open Editor
 
 /-- Fairy Floss's nineteen colours, each named for its colour in sailorhg's
 description or for its tmTheme key (the module docs, "The published
@@ -255,4 +258,4 @@ def Colours.theme (c : Colours) : Theme :=
 def fairyFloss : NamedTheme :=
   { name := "fairy-floss", theme := published.theme }
 
-end Editor.Themes.FairyFloss
+end ShippedThemes.FairyFloss

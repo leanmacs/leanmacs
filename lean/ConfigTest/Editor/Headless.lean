@@ -2219,15 +2219,14 @@ def shippedChecks (_ : Unit) : List Check :=
                 (·.contribution.mode) ==
               #["cargo-mode", "lake-mode", "mise-mode"] },
     { name :=
-        "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered by the themes package, and with solarized-dark, solarized-light and fairy-floss registered by the shipped-themes package, and no other theme"
+        "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered by the themes package, and no other theme: the packages of the core's Lake package ship no palette"
       run := do
         let registry := shippedRegistry
         return (registry.find? Themes.loadName).any (·.owner == Themes.package.owner) &&
             registry.theme? Theme.defaultName ==
               some { name := "default", theme := Theme.builtin } &&
             registry.themes.map (fun entry => (entry.named.name, entry.owner.name)) ==
-              #[("default", "themes"), ("solarized-dark", "shipped-themes"),
-                ("solarized-light", "shipped-themes"), ("fairy-floss", "shipped-themes")] },
+              #[("default", "themes")] },
     { name :=
         "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the menu package, the commands the files package's and the evil package's"
       run := do

@@ -8,8 +8,11 @@
 #
 # Run it in `lean/`. The root module defaults to `Editor.Core`, the core's
 # root. A moving name is a module that is not the core's, with every module
-# under it; they default to the compile mode and the shipped palettes
-# (`moving`, below). They are named, never derived: "what the root does not
+# under it; they default to the compile mode (`moving`, below). The shipped
+# palettes moved out already: they are a Lake package of their own
+# (packages/shipped-themes/), their modules are not named `Editor.…`, and
+# the core cannot import them, since Lake resolves a package's imports from
+# its `require`s and the core requires nothing. They are named, never derived: "what the root does not
 # reach" would pass whatever the core imported. `--base` names the config
 # base and `--elaborator` the elaborator adapter, in place of the editor's
 # (`base` and `elaborator`, below): the gate uses them to see the third
@@ -67,7 +70,7 @@ built="ModelTest ConfigTest FfiTest ContractTest"
 # default set's directory, from `lean/`.
 built_set=../packages
 # The moving names when none is given.
-moving="Editor.Compile Editor.Themes.Solarized Editor.Themes.FairyFloss Editor.Themes.Shipped"
+moving="Editor.Compile"
 
 usage() {
   echo "usage: tools/core-imports-check.sh [--base <module>] [--elaborator <module>] [<root module> [<moving name>...]]" >&2

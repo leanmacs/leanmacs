@@ -1,0 +1,47 @@
+# The shipped themes, Solarized (dark and light) and Fairy Floss: the first
+# default package, a Lake package outside the core that the default package
+# set requires (../lakefile.toml; docs/design/packages.md, "The package set
+# and its build"). The gate's package steps build, test, lint, format-check
+# and run it headless through the fixture set, which requires the default
+# set (tools/package-set.sh), and the package imports check holds what it
+# imports of the core (tools/package-imports-check.sh).
+#
+# - `ShippedThemes` is the package's library: `ShippedThemes.lean`, the two
+#   palettes under `ShippedThemes/` with their licence notices, and its
+#   entry module `ShippedThemes/EditorPackage.lean`, which the package-set
+#   build reads.
+# - `shipped-themes-test` is its test driver (`lake test`): the tests that
+#   need no Rust library, rooted at `ShippedThemesTest/Model.lean`. It is no
+#   default target, as the core's `model-test` is not: `mise run lean` links
+#   with the system compiler, which this executable has no flags for.
+# - `ShippedThemesTest` holds the test modules, `ShippedThemesTest/Linked.lean`
+#   among them: the root of the executable the core's `editorLinked` facet
+#   links as the editor is linked, with the Rust library. It draws each
+#   theme and compares it with its reference image in `tests/render/`.
+# - `tests/headless/` holds its headless fixtures.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/shipped-themes update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages,
+# tests/user-link), and commit each lake-manifest.json.
+name = "shipped-themes"
+testDriver = "«shipped-themes-test»"
+defaultTargets = ["ShippedThemes", "ShippedThemesTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "ShippedThemes"
+
+[[lean_lib]]
+name = "ShippedThemesTest"
+globs = ["ShippedThemesTest.+"]
+
+[[lean_exe]]
+name = "shipped-themes-test"
+root = "ShippedThemesTest.Model"

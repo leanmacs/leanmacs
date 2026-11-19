@@ -121,8 +121,9 @@ registrations (`Editor/TabCommands/Compiled.lean`) are not imported. The command
 with `Themes.loadThemeCommand`, over `themeNames` and `loadTheme`
 (`Editor/Api.lean`); `setup` registers a theme with `defineTheme` and names
 the one in force with `useTheme` (`Editor/Setup.lean`). Its registration
-with the theme `default` (`Editor/Themes/Compiled.lean`) and the palettes
-that ship (`Editor/Themes/Shipped.lean`) are not imported. So is
+with the theme `default` (`Editor/Themes/Compiled.lean`) is not imported,
+and the palettes that ship are a package outside the core
+(`packages/shipped-themes/`), which config names by a theme's name alone. So is
 the command prompt (`Editor/ExecuteCommand.lean`): `execute-command`, which
 a command of config's calls with `ExecuteCommand.executeCommand`, over
 `commandNames`; its registration (`Editor/ExecuteCommand/Compiled.lean`) is

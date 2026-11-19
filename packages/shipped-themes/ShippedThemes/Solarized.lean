@@ -10,7 +10,8 @@ mapping from them to the face vocabulary (`Editor/Face/Vocabulary.lean`),
 written in the dark names; `dark` applies it to the published colours and
 `light` to them with the base pairs swapped (`Colours.light`), as the
 specification and Schoonover's own themes do. Both are shipped
-(`Themes.Shipped.themes`, `Editor/Themes/Shipped.lean`).
+(`ShippedThemes.themes`, `ShippedThemes.lean`). A path that starts
+`Editor/` is a module of the core, under `lean/`.
 
 ## The source, and the licence
 
@@ -123,13 +124,16 @@ The appended definitions rely on the rule that a later definition's set
 attributes are over an earlier one's (`Editor/Face.lean`): each sets only
 the colours it changes, so `minibuffer.prompt` stays bold.
 
-Pinned by `ModelTest.solarizedChecks`: the sixteen values, the swap, and
-this table, read through `Theme.merged` for each variant. How the themes
-look is left to the owner's day-to-day use; what the CPU renderer draws of
-each is pinned by `ffi-test theme-pictures` (`tests/render/themes`).
+Pinned by `ShippedThemesTest.solarizedChecks`: the sixteen values, the swap,
+and this table, read through `Theme.merged` for each variant. How the
+themes look is left to the owner's day-to-day use; what the CPU renderer
+draws of each is pinned by the package's linked test
+(`ShippedThemesTest/Linked/ShippedThemes.lean`, `tests/render`).
 -/
 
-namespace Editor.Themes.Solarized
+namespace ShippedThemes.Solarized
+
+open Editor
 
 /-- Solarized's sixteen colours: the eight base tones, darkest first, and
 the eight accents. Read as the dark variant's; `Colours.light` swaps the
@@ -237,4 +241,4 @@ pairs swapped. -/
 def light : NamedTheme :=
   { name := "solarized-light", theme := published.light.theme }
 
-end Editor.Themes.Solarized
+end ShippedThemes.Solarized

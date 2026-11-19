@@ -44,12 +44,13 @@ Problems are listed `noPaper` and `noInk` first, then the undefined faces in
 the vocabulary's order, then each cursor face's in `cursorFaces`' order,
 then `modeLinesAlike` and `dividerOnPaper`.
 
-The check is applied to a theme as it ships (`Theme.builtin`, and each of
-`Themes.Shipped.themes`, `Editor/Themes/Shipped.lean`), not to the
+The check is applied to a theme as it ships (`Theme.builtin` here, and each
+of `ShippedThemes.themes` in the tests of the package that ships them,
+`packages/shipped-themes/`), not to the
 theme with config's definitions after it: those are the user's. A theme
 config defines is not checked.
 
-Pinned by `ModelTest.faceVocabularyChecks`, which runs it on every shipped
+Pinned by `ModelTest.faceVocabularyChecks`, which runs it on the built-in
 theme.
 -/
 

@@ -96,9 +96,10 @@ it sizes a status row. A new face a feature
 draws is an entry of the vocabulary and a definition in `Palette.theme`.
 A new shipped theme is a `Palette`, its theme plus the theme's own
 definitions after it where it differs from the shared mapping, and a
-`NamedTheme` of that in `Themes.Shipped.themes` (`Editor/Themes/Shipped.lean`),
-which the completeness check holds; Solarized is written so
-(`Editor/Themes/Solarized.lean`). A face naming another as its base is not built.
+`NamedTheme` of that in `ShippedThemes.themes`, in the package of the
+shipped palettes (`packages/shipped-themes/ShippedThemes.lean`), which the
+completeness check holds; Solarized is written so
+(`packages/shipped-themes/ShippedThemes/Solarized.lean`). A face naming another as its base is not built.
 -/
 
 namespace Editor

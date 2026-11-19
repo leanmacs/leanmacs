@@ -1,0 +1,28 @@
+# The script the gate has an editor's headless mode run for the package
+# `shipped-themes` (tools/package-set.sh run), against the config in
+# `config/`, which defines no theme: the themes `load-theme` offers are the
+# ones the set's packages register, and they are the core's `default`, then
+# `solarized-dark`, `solarized-light` and `fairy-floss`, in that order. What
+# it prints must be exactly `expected`. It touches no file.
+
+reload
+settle
+
+# A key makes the frame. No config names a theme, so its scene is drawn in
+# `default`, the core's built-in theme: the scene line ends with the
+# theme's name.
+key <Escape> Escape -
+scene
+
+# `load-theme`, called with no name, asks for one, with the registered
+# themes as its candidates. With nothing typed the candidate list, the
+# view after the minibuffer's, holds every theme, one a line, in the order
+# they were registered: the core's theme first, then this package's.
+run load-theme
+scene
+
+# `solarized-light` is typed and accepted: the theme is switched with no
+# reload, and the scene after it is drawn in `solarized-light`.
+commit solarized-light
+key <Enter> Enter -
+scene

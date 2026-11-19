@@ -1,5 +1,6 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
-# the config in `config/`, which names the shipped theme `solarized-light`,
+# The script the gate has an editor's headless mode run for the package
+# `shipped-themes` (tools/package-set.sh run), against the config in
+# `config/`, which names the shipped theme `solarized-light`,
 # then switches to the shipped `fairy-floss`. What it prints must be exactly
 # `expected`.
 

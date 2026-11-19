@@ -24,3 +24,8 @@ name = "default-set"
 [[require]]
 name = "editor-core"
 path = "../lean"
+
+# The shipped themes, Solarized and Fairy Floss: the first default package.
+[[require]]
+name = "shipped-themes"
+path = "shipped-themes"

@@ -191,8 +191,9 @@ a `ThemeEntry`, and replaced as a set (`replaceThemes`). The latest entry of
 a name is the one found (`theme?`), so config's theme of a package's theme's
 name is used in its place until a reload drops it. The `themes` package
 registers the theme `default` (`Themes.defaultTheme`,
-`Editor/Themes/Compiled.lean`) and the `shipped-themes` package the palettes
-that ship (`Themes.Shipped.themes`, `Editor/Themes/Shipped.lean`); `setup`
+`Editor/Themes/Compiled.lean`) and the `shipped-themes` package, outside
+the core, the palettes that ship (`ShippedThemes.themes`,
+`packages/shipped-themes/ShippedThemes.lean`); `setup`
 registers more with `defineTheme` (`Editor/Setup.lean`). `themeNames` lists each name once, in the order it
 was first registered, and is what the loop is told for the command that
 loads a theme (`registered`). Which theme is in force is not the registry's

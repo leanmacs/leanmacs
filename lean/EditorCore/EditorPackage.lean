@@ -15,7 +15,6 @@ import Editor.ModeLine.Compiled
 import Editor.Shell.Compiled
 import Editor.TabCommands.Compiled
 import Editor.Themes.Compiled
-import Editor.Themes.Shipped
 import Editor.VersionControl.Compiled
 import Editor.WindowCommands.Compiled
 import Editor.Workspace.Compiled
@@ -45,10 +44,9 @@ for that package's entry module.
 It is not a module of the editor: it is under neither `Editor/` nor the
 namespace `Editor`, and it is a library of its own (`lean_lib EditorCore`,
 `lakefile.lean`), which the generated root and the tests that need the
-list import. It names every package of the core's Lake package, the two
-that move out of the core among them (the compile mode's,
-`Editor/Compile/Compiled.lean`, and the shipped palettes',
-`Editor/Themes/Shipped.lean`), so it can be neither a core module nor a
+list import. It names every package of the core's Lake package, the one
+that moves out of the core among them (the compile mode's,
+`Editor/Compile/Compiled.lean`), so it can be neither a core module nor a
 feature's (`docs/design/packages.md`): the core's root (`Editor/Core.lean`)
 does not import it, and the core imports check, which is of the modules
 named `Editor.…`, does not meet it (`tools/core-imports-check.sh`).
@@ -80,8 +78,10 @@ language table read as they did:
   and the shipped segments before version control's `review`;
 - `menu` comes after `frame-commands` and before `workspace`: the key
   bindings are the frame's, then the menu's, then the workspace finder's;
-- `shipped-themes` comes directly after `themes`: the theme `default`,
-  then the palettes, as the theme prompt lists them;
+- `themes` defines the theme `default` and no package after it defines a
+  theme, so the themes of a Lake package that requires the core (the
+  palettes of `shipped-themes`, `packages/shipped-themes/`) follow
+  `default`, as the theme prompt lists them;
 - `ex` comes before `compile`, and `compile` before `version-control`:
   each binds its own ex names, and the ex names' completion lists them in
   the order they were bound, the `ex` package's first;
@@ -105,8 +105,8 @@ them ("The order", in the module docs). -/
 def packages : Array Package :=
   #[Completion.package, ModeLine.package, Files.package, Minibuffer.package, Evil.package,
     Ex.package, Buffers.package, FrameCommands.package, Menu.package, WindowCommands.package,
-    TabCommands.package, Themes.package, Themes.Shipped.package, ExecuteCommand.package,
-    BindingSearch.package, Workspace.package, Shell.package, Compile.package, AtPoint.package,
-    VersionControl.package, VersionControl.gutterPackage, Language.package]
+    TabCommands.package, Themes.package, ExecuteCommand.package, BindingSearch.package,
+    Workspace.package, Shell.package, Compile.package, AtPoint.package, VersionControl.package,
+    VersionControl.gutterPackage, Language.package]
 
 end EditorCore.EditorPackage

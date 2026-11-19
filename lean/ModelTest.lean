@@ -123,9 +123,6 @@ import ModelTest.Editor.Text
 import ModelTest.Editor.Text.Contract
 import ModelTest.Editor.Text.Model
 import ModelTest.Editor.Themes
-import ModelTest.Editor.Themes.FairyFloss
-import ModelTest.Editor.Themes.Shipped
-import ModelTest.Editor.Themes.Solarized
 import ModelTest.Editor.TypedPath
 import ModelTest.Editor.UndoTree
 import ModelTest.Editor.Version
@@ -564,20 +561,12 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   falls through to the default face's among them; one palette mapping over
   two palettes gives two complete themes; and the built-in theme is
   complete, pads the mode line and the echo area and defines the tab bar's
-  faces;
-- `shippedThemesChecks`: the `shipped-themes` package
-  (`Editor/Themes/Shipped.lean`): alone it is accepted and registers its
-  three themes, in order, and nothing of any other kind; and each of them
-  is complete, pads the mode line and the echo area and defines the tab
-  bar's faces;
-- `solarizedChecks`: the Solarized themes (`Editor/Themes/Solarized.lean`):
-  each of the sixteen colours is its published value, the light colours
-  swap the four base pairs, each variant's faces are the choices the
-  module's table records, and both variants are shipped.
-- `fairyFlossChecks`: the Fairy Floss theme (`Editor/Themes/FairyFloss.lean`):
-  each of the nineteen colours is its published value, the source's commit
-  is recorded, its faces are the choices the module's table records, and it
-  is shipped.
+  faces.
+
+The palettes that ship are a package outside the core
+(`packages/shipped-themes/`), and their checks are its own
+(`ShippedThemesTest.shippedThemesChecks`, `.solarizedChecks`,
+`.fairyFlossChecks`).
 
 The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
 its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and
@@ -704,9 +693,9 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is the 22 packages, in order, each accepted, in the state
-  they make every entry's owner is one of them, and the ex names and the
-  theme names are bound in the order the headless fixtures show.
+  list is the 21 packages, in order, each accepted, in the state
+  they make every entry's owner is one of them, the ex names are bound in
+  the order the headless fixtures show, and the one theme is `default`.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -1228,9 +1217,6 @@ def checks : List Check :=
     bindingSearchChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++
-    shippedThemesChecks ++
-    solarizedChecks ++
-    fairyFlossChecks ++
     evilRestChecks ++
     evilMotionChecks ++
     evilStateChecks ++

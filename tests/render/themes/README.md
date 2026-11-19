@@ -1,29 +1,28 @@
-# The themes' reference images
+# The built-in theme's reference image
 
-Each file here is one theme's picture of the fixture file
-`source.lean`, as the headless CPU renderer draws it. The gate draws the
-same picture again and compares it with the file: `ffi-test
-theme-pictures` in `mise run ffi-test`
-(`FfiTest.themePictures`, `lean/FfiTest.lean`), which runs the core's theme
-picture check (`lean/Editor/Themes/Picture.lean`,
-`themePicturesScenario`) on the built-in theme, `default`
-(`Theme.builtin`, `lean/Editor/Face.lean`), and on each shipped palette as
-`Themes.Shipped.themes` holds it (`lean/Editor/Themes/Shipped.lean`). The
-scene is built in Lean and published through the display's real binding,
-so what is compared is what the editor sends, not a theme written again in
-Rust.
+`default.png` is the picture of the fixture file `source.lean` in the
+built-in theme, `default` (`Theme.builtin`, `lean/Editor/Face.lean`), as
+the headless CPU renderer draws it. The gate draws the same picture again
+and compares it with the file: `ffi-test theme-pictures` in `mise run
+ffi-test` (`FfiTest.themePictures`, `lean/FfiTest.lean`), which runs the
+core's theme picture check (`lean/Editor/Themes/Picture.lean`,
+`themePicturesScenario`) on that theme. The scene is built in Lean and
+published through the display's real binding, so what is compared is what
+the editor sends, not a theme written again in Rust.
+
+The check is a test double of the core, and a package that ships themes
+runs it on its own: the shipped palettes' pictures and their README are in
+`packages/shipped-themes/tests/render/`, with a copy of `source.lean` and
+of the font, so that package reads nothing here.
 
 | File | Size | Bytes | sha256 |
 |---|---|---|---|
 | `default.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15549 | `3344637de4787fddcf636603b3650b983ed153599ede4e2a985be06ce8b4d836` |
-| `solarized-dark.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15495 | `efa5fb8bb590520c13310a3182c840534328c0dae8f5ddf10d247bfd31cfe715` |
-| `solarized-light.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 15464 | `fe37d976ac452e208cd19eed0ac85696e066f76731f61c23e00f6cf40840abea` |
-| `fairy-floss.png` | 320 by 160 pixels, 8 bits a channel, no alpha | 16054 | `6048381627cfee308b70a1eb3ff54167343f5d48e9755d75353a683d448fcd6f` |
 
-Each is kept small on purpose: the scene's size, 320 by 160, and at most
+It is kept small on purpose: the scene's size, 320 by 160, and at most
 20 KB, which the scenario checks.
 
-## What they show
+## What it shows
 
 The fixture file `source.lean`, four lines of ASCII, in one view 320 by
 160 that covers the picture, taller than the text, so rows of bare paper
@@ -58,28 +57,15 @@ not in the set and falls through to it. It is drawn at 16 points, the
 theme's default size, at scale 1, with grayscale antialiasing and hinting,
 at the linear weight.
 
-The three files were made again for the window padding and looked at,
-enlarged four times, when they were (2026-11-16), by the agent that
-implemented it, and not yet by a person: in each, the text, the selection
-and the block cursor on the `h` are as before but 8 pixels right and 8
-down, the text's first ink at x 8; the badge is a box of its accent
-(Solarized's magenta, Fairy Floss's lavender) 74 pixels across from x 8,
-its text 8 pixels further in; the buffer's name follows in bold; line:col
-and the position end 8 short of the row's right edge, their last ink at x
-305 and their box at 312; the mode line's background reaches x 0 and x
-319; and the status row is 28 pixels tall, from row 132, as before.
-Measured too, by decoding the files' pixels. They were made again when the
-selected window's row took the face `mode-line.active` (2026-11-17), by the
-agent that implemented it: Solarized's two came out the same bytes, since
-Solarized's selection colour is its `mode-line`'s, base02; Fairy Floss's
-changed in the status row alone, rows 132 to 159, whose background went
-from the theme's line highlight, 62, 61, 50, to its selection, 73, 72, 62,
-found by decoding the old and the new file. `default.png` was made when the picture check became the core's
-(2026-11-19) and looked at, enlarged four times, by the agent that made
-it: the same scene in the placeholder palette, the badge the palette's
-magenta. Looking at them
-checks that they show text, a selection and a cursor; it does not judge
-how the theme looks, which is left to the owner's day-to-day use.
+The file was made when the picture check became the core's (2026-11-19)
+and looked at, enlarged four times, by the agent that made it, and not yet
+by a person: the text in the placeholder palette's ink on its paper, the
+selection from `area` to the `h`, the block cursor on that `h`, the
+`VISUAL` badge a box of the palette's magenta from x 8, `source.lean` in
+bold after it, and `2:13 50%` ending 8 short of the right edge, on a status
+row 28 pixels tall whose background reaches both edges. Looking at it
+checks that it shows text, a selection and a cursor; it does not judge how
+the theme looks, which is left to the owner's day-to-day use.
 
 ## The tolerance, and what else is checked
 
@@ -89,9 +75,9 @@ reference image (`../README.md`, "The tolerance"). The drawing is
 deterministic on one machine; the 2 is for another processor's floating
 point.
 
-The scenario also checks, in each variant's picture, that the colours of
-the palette's roles are where they belong, with the expected colours
-written from each theme's published record and not read from the theme. It
+The scenario also checks that the colours of the palette's roles are where
+they belong in the picture, with the expected colours written from the
+placeholder palette (`Palette.placeholder`) and not read from the theme. It
 finds each region by differencing pictures it draws itself, and names no
 cell size, line height or other value layout or the renderer owns:
 
@@ -108,26 +94,24 @@ cell size, line height or other value layout or the renderer owns:
   written that held: hinting snaps the strokes of `-`, `=`, `_` and `|`
   to whole pixels, so some glyph pixels are fully inked.
 
-And it guards that the comparison discriminates: the light picture does
-not match the dark reference.
-
-## Making them again
+## Making it again
 
 ```sh
 mise run theme-references
 ```
 
 which runs `ffi-test theme-pictures ../tests/render/themes
-../tests/fonts/NotoSansMono-Regular.subset.ttf --write` in `lean/`. It is
-run by hand and never by the gate.
+../tests/fonts/NotoSansMono-Regular.subset.ttf --write` in `lean/`, and
+then the shipped themes' package's linked test with `--write`, which makes
+that package's three again. It is run by hand and never by the gate.
 
-Make them again when a shipped theme's definition, the fixture, the
+Make it again when the built-in theme's definition, the fixture, the
 font, the painter, the blend or the rasteriser's pins change, in the
 commit that changes it. Then:
 
-1. Open the new files, enlarged, and check them against "What they show".
-2. Update the table above: their bytes and their sha256.
-3. Commit the files with the change that caused it.
+1. Open the new file, enlarged, and check it against "What it shows".
+2. Update the table above: its bytes and its sha256.
+3. Commit the file with the change that caused it.
 
 If the comparison fails and nothing was meant to change, the picture
-changed by accident: find out why before making the files again.
+changed by accident: find out why before making the file again.

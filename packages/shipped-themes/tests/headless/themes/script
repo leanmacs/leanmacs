@@ -1,5 +1,6 @@
-# The script `mise run ffi-test` has the editor's headless mode run against
-# the config in `config/`, which defines two themes, `first` and `second`,
+# The script the gate has an editor's headless mode run for the package
+# `shipped-themes` (tools/package-set.sh run), against the config in
+# `config/`, which defines two themes, `first` and `second`,
 # and names `first`, then switches to `second` and to two shipped themes.
 # What it prints must be exactly `expected`.
 
@@ -20,8 +21,9 @@ commit second
 key <Enter> Enter -
 scene
 
-# A shipped theme is loaded the same way: `solarized-dark`, which compiled
-# code registers (`Themes.shipped`), and the scene after it is drawn in it.
+# A shipped theme is loaded the same way: `solarized-dark`, which this
+# package registers (`ShippedThemes.package`), and the scene after it is
+# drawn in it.
 run load-theme
 commit solarized-dark
 key <Enter> Enter -

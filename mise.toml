@@ -99,7 +99,7 @@ run = "cargo test --workspace --locked"
 # (the core's Lake manifest), it must name the formatter host's copy and
 # exit 1. Its output is shown only when it does not.
 [tasks.lean-test]
-description = "Check that every copy of the Lean pin equals lean/lean-toolchain (tools/toolchain-check.sh), then run the Lean model tests with `lake test`, and each fixture package's, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
+description = "Check that every copy of the Lean pin equals lean/lean-toolchain (tools/toolchain-check.sh), then run the Lean model tests with `lake test`, and those of each package of the fixture set, the default packages among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
 dir = "lean"
 run = [
   "sh ../tools/toolchain-check.sh",
@@ -108,8 +108,16 @@ run = [
   # The same for each package of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps"): its Lake test
   # driver, with the same `cargo` that fails, so a package's model tests
-  # reach no `rustlib` either.
-  'PATH="$PWD/no-cargo:$PATH" sh ../tools/package-set.sh test ../tests/packages',
+  # reach no `rustlib` either. The fixture set requires the default set, so
+  # the default packages are among them, and the step's output is kept to
+  # require that: it must hold the line the step prints as it reaches the
+  # package of the shipped themes, `package-set: test shipped-themes
+  # (<its directory>)`, matched on what comes before the directory. The
+  # step stops at the first package whose driver fails, so that line and
+  # exit 0 say the package's tests ran and passed: its themes hold under
+  # the core's completeness check
+  # (packages/shipped-themes/ShippedThemesTest/ShippedThemes.lean).
+  "out=$(PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh test ../tests/packages 2>&1) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; printf '%s\\n' \"$out\" | grep -qF 'package-set: test shipped-themes (' || { echo 'lean-test: the package steps did not test shipped-themes'; exit 1; }",
   # And a step refuses a set it would run over nothing of: the fixture set
   # tests/empty-set requires the core alone, so it holds no package and the
   # step must exit 2, saying so. Its output is shown only when it does not.
@@ -222,7 +230,7 @@ run = [
   # imports check"), checked on the root the package-set build generates for
   # the default set (packages/): the modules that root imports, other than
   # the entry modules that list the packages (`EditorCore.EditorPackage`
-  # and, once there are default packages, theirs), reach neither an entry
+  # and the default packages', `ShippedThemes.EditorPackage`), reach neither an entry
   # module nor a module one imports. Three `lake query` calls, about half a
   # second each.
   "sh ../tools/host-imports-check.sh",
@@ -231,9 +239,10 @@ run = [
   # shown only when it does not.
   "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
   # The same check on the root generated for the fixture set
-  # (tests/packages/), with `--set`: that root imports three entry modules,
-  # the core's and the two fixture packages', and the host's modules must
-  # reach none of them, nor `Greeting` or `GreetingLoud`, which they import.
+  # (tests/packages/), with `--set`: that root imports four entry modules,
+  # the core's, the two fixture packages' and the shipped themes', and the
+  # host's modules must reach none of them, nor `Greeting`, `GreetingLoud`
+  # or `ShippedThemes`, which they import.
   "sh ../tools/host-imports-check.sh --set ../tests/packages",
   # The root of the user-side link's fixture set (tests/user-link/): the
   # check that links an editor as a user's Mac would (`mise run
@@ -241,14 +250,25 @@ run = [
   # generates for that set, written by the facet `editorRoot`, which writes
   # a set's root and links nothing. Here the facet must give a file, and
   # the root's imports, as Lake resolves them, must be the config base, the
-  # executable's entry, the core's entry module and then the fixture
-  # package's: the root the check compiles is generated, lists the fixture
-  # package after the core, and its modules are found.
-  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage UserLink.EditorPackage '",
+  # executable's entry, the core's entry module, the default package's and
+  # then the fixture package's: the root the check compiles is generated,
+  # lists the fixture package after the core and the default set's package,
+  # and its modules are found.
+  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage UserLink.EditorPackage '",
+  # The shipped themes are a Lake package in the default set, and no
+  # package of the core: the root generated for the default set (packages/)
+  # imports the config base, the executable's entry, the core's entry
+  # module and then `ShippedThemes.EditorPackage`, and nothing else; and
+  # the record beside the default set's editor names two `.olean`
+  # directories and no more, the core's and then the package's, which is
+  # under packages/ and holds the package's entry module. That the core's
+  # own list holds no palette is `ModelTest.packageSetChecks`'.
+  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage '",
+  "{ IFS= read -r core && IFS= read -r themes && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$themes/ShippedThemes/EditorPackage.olean\" && test \"$themes\" = \"$(cd ../packages/shipped-themes && pwd)/.lake/build/lib/lean\"",
   # The core imports no module of a feature that moves out of it, on Lake's
   # module graph (tools/core-imports-check.sh; docs/dev-practices/the-gate.md,
   # "The core imports check"): the core's root, `Editor.Core`, and what it
-  # imports hold neither the compile mode nor a shipped palette; every
+  # imports hold no module of the compile mode; every
   # `Editor.…` module the build reaches is among them, unless it is one of
   # those; and every root that links the elaborator
   # links the config base. The roots of the build are the core's
@@ -386,20 +406,6 @@ run = [
   # in the input, the prompt still open (`candidates/expected`). It touches
   # no file.
   "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/candidates/expected -",
-  # Named themes, on a config of its own (tests/headless/themes) that
-  # defines two themes and names the first: the scene line names the theme
-  # each scene was drawn in, the first after the reload, the second after
-  # the compiled command `load-theme` is answered with its name, with no
-  # reload between, and the shipped `solarized-dark` and `fairy-floss`
-  # after it as each is answered with its name (`themes/expected`). It
-  # touches no file.
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/themes/config ../tests/headless/themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/themes/expected -",
-  # A shipped theme named by config, on a config of its own
-  # (tests/headless/shipped-themes) that names `solarized-light`: the scene
-  # after the reload is drawn in it, and the one after `load-theme` is
-  # answered with `fairy-floss` in that (`shipped-themes/expected`). It
-  # touches no file.
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/shipped-themes/config ../tests/headless/shipped-themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/shipped-themes/expected -",
   # The segmented mode line, on a config of its own (tests/headless/
   # mode-line) that defines a segment and lists the mode line for each side,
   # one name nobody registered among them: the reload says that name, on a
@@ -620,17 +626,17 @@ run = [
   # tests/display/frame.expected; the scene must come back as sent; and a
   # move asked through the binding must land on the frame's next row.
   ".lake/build/bin/ffi-test display ../tests/display/frame.expected",
-  # The themes' pictures (the core's theme picture check,
+  # The picture of the theme `default` (the core's theme picture check,
   # lean/Editor/Themes/Picture.lean): the fixture file tests/render/themes/
   # source.lean, published from Lean through the display's real binding in
-  # `default`, `solarized-dark`, `solarized-light` and `fairy-floss`, over a display
-  # of the one fixture font given here, and drawn by the CPU renderer, must
-  # match
-  # `tests/render/themes/<name>.png` within 2 of 255 a channel; in each,
-  # the paper, the cursor and the text must carry the palette's colours;
-  # and the light picture must not match the dark reference
+  # the built-in theme, over a display of the one fixture font given here,
+  # and drawn by the CPU renderer, must match
+  # `tests/render/themes/default.png` within 2 of 255 a channel, and its
+  # paper, cursor and text must carry the placeholder palette's colours
   # (tests/render/themes/README.md). It reads only checked-in files and
-  # writes nothing. `mise run theme-references` makes the images again.
+  # writes nothing. `mise run theme-references` makes the image again. The
+  # shipped themes' pictures are their package's linked test's, which the
+  # package steps run below.
   ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/fonts/NotoSansMono-Regular.subset.ttf",
   # The excerpt picture (lean/FfiTest/Editor/ExcerptView.lean,
   # `excerptPictureScenario`): an
@@ -676,9 +682,10 @@ run = [
   ".lake/build/bin/ffi-test window-host-direct ../tests/packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
   # And the record of the fixture set's editor names the `.olean` directory
   # of each of the set's Lake packages that holds a library, one a line,
-  # the core's first and each package after the ones it requires: three
-  # directories and no more, each holding its package's modules.
-  "{ IFS= read -r core && IFS= read -r first && IFS= read -r second && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$first/Greeting/EditorPackage.olean\" && test -f \"$second/GreetingLoud/EditorPackage.olean\"",
+  # the core's first and each package after the ones it requires: four
+  # directories and no more, each holding its package's modules, the last
+  # the shipped themes', which the set reaches through the default set.
+  "{ IFS= read -r core && IFS= read -r first && IFS= read -r second && IFS= read -r third && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$first/Greeting/EditorPackage.olean\" && test -f \"$second/GreetingLoud/EditorPackage.olean\" && test -f \"$third/ShippedThemes/EditorPackage.olean\"",
   # The same wiring on the library's scripted platform whose renderer cannot
   # be made, as a machine with no usable GPU gives: the window runs with
   # nothing drawing in it. The scenario must exit 0, which it does only when
@@ -716,13 +723,17 @@ run = [
   # The step's exit status says nothing failed, not that anything ran, so
   # its output is kept and must hold the line of each thing it is here to
   # run: the fixture package's linked test, its fixture `hello`, the
-  # fixture `reply` of the package that requires it, and the count of all
-  # three. A fixture or a linked test that is renamed, moved or no longer
-  # found fails this line. The linked test's own two lines are required
-  # too: its check against the Rust library, as `ffi-test` is the core's,
-  # and its check of a config session on the real elaborator, as
-  # `config-test` is the core's.
-  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: ran 1 linked test and 2 headless fixtures over 2 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
+  # fixture `reply` of the package that requires it, the linked test of
+  # the shipped themes' package, which the set reaches through the default
+  # set, its three fixtures `load-theme`, `shipped-themes` and `themes`,
+  # and the count of all. A fixture or a linked test that is renamed, moved
+  # or no longer found fails this line. The linked tests' own lines are
+  # required too: the fixture package's check against the Rust library, as
+  # `ffi-test` is the core's, and its check of a config session on the real
+  # elaborator, as `config-test` is the core's; and the shipped themes'
+  # pictures against their reference images
+  # (packages/shipped-themes/tests/render/README.md).
+  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: ran 2 linked tests and 5 headless fixtures over 3 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
   # And the editor of the default set, which does not hold the fixture
   # package, has no such command: on the same config and script its
   # headless mode must print `run greeting-hello: no such command`. So the
@@ -1278,19 +1289,27 @@ run = "cargo run --locked --package editor-render-wgpu --example reference -- te
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It
 # writes files of the repository, which no gate may do.
 #
-# It draws the shipped themes' pictures of the fixture file
-# `tests/render/themes/source.lean`, as `ffi-test theme-pictures` in the
-# `ffi-test` task does, and writes them to
-# `tests/render/themes/default.png`, `solarized-dark.png`, `solarized-light.png` and
-# `fairy-floss.png`. Run it when a shipped theme's definition, the fixture, the font, the
-# painter, the blend or the rasteriser's pins change. Then look at the
-# files enlarged before committing them, and update the table in
-# `tests/render/themes/README.md`.
+# It draws the themes' pictures of their fixture file, as the gate does, and
+# writes them over their reference images: the core's theme `default`, as
+# `ffi-test theme-pictures` in the `ffi-test` task draws it, to
+# `tests/render/themes/default.png`; and the shipped themes', through the
+# linked test of their package with `--write`
+# (packages/shipped-themes/ShippedThemesTest/Linked.lean), run in the
+# package's directory as the package steps run it, to
+# `packages/shipped-themes/tests/render/solarized-dark.png`,
+# `solarized-light.png` and `fairy-floss.png`. Run it when a theme's
+# definition, a fixture, the font, the painter, the blend or the
+# rasteriser's pins change. Then look at the files enlarged before
+# committing them, and update the table in `tests/render/themes/README.md`
+# or in `packages/shipped-themes/tests/render/README.md`.
 [tasks.theme-references]
-description = "Opt-in, never part of ci: draw the pictures of the theme default and of the shipped themes (Solarized dark and light, Fairy Floss) of the fixture file and write them to tests/render/themes, their reference images. Look at the files before committing them"
+description = "Opt-in, never part of ci: draw the picture of the theme default and write it to tests/render/themes, and the shipped themes' pictures (Solarized dark and light, Fairy Floss) and write them to packages/shipped-themes/tests/render, their reference images. Look at the files before committing them"
 depends = ["lean"]
 dir = "lean"
-run = ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/fonts/NotoSansMono-Regular.subset.ttf --write"
+run = [
+  ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/fonts/NotoSansMono-Regular.subset.ttf --write",
+  "sysroot=$(lean --print-prefix) && oleans=$PWD/.lake/build/lib/lean && cd ../packages/shipped-themes && .lake/build/bin/ShippedThemesTest-Linked \"$sysroot\" \"$oleans\" --write",
+]
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It
 # writes a file of the repository, which no gate may do.

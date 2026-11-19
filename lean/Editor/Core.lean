@@ -43,10 +43,10 @@ import Editor.Workspace.Contract
 
 The root module of the core: it imports every core module, directly or
 through another, and declares nothing. The core is every module under
-`lean/Editor/` except the modules of the features that move out of it into
-packages of their own (the compile mode, `Editor/Compile.lean` and
-`Editor/Compile/`, and the shipped palettes, `Editor/Themes/Solarized.lean`,
-`Editor/Themes/FairyFloss.lean` and `Editor/Themes/Shipped.lean`). The
+`lean/Editor/` except the modules of the feature that moves out of it into
+a package of its own (the compile mode, `Editor/Compile.lean` and
+`Editor/Compile/`). The shipped palettes moved out already
+(`packages/shipped-themes/`). The
 list of the packages of the core's Lake package, its entry module, is not
 under `lean/Editor/` (`EditorCore/EditorPackage.lean`, a library of its
 own), and this module does not import it. `docs/design/packages.md` says

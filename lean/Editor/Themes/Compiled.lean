@@ -26,11 +26,12 @@ load, a reload does not replace them, and config's theme of the name
   name.
 
 The palettes that ship, `solarized-dark`, `solarized-light` and
-`fairy-floss`, are a package of their own, `shipped-themes`
-(`Editor/Themes/Shipped.lean`), which the list of packages names directly
-after this one. This module is a core module and imports no palette: the
-palettes move out of the core (`docs/design/packages.md`), and a set
-without them still has `load-theme` and `default`.
+`fairy-floss`, are a package of their own outside the core,
+`shipped-themes` (`packages/shipped-themes/`, a Lake package the default
+package set requires), which registers after every package of the core.
+This module is a core module and imports no palette
+(`docs/design/packages.md`), and a set without that package still has
+`load-theme` and `default`.
 
 The mode line's shipped segments are a package of their own, `mode-line`
 (`Editor/ModeLine/Compiled.lean`).

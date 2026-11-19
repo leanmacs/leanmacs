@@ -3,7 +3,7 @@
 -- built-in theme followed by a `default` of its own background, which is
 -- over the built-in `default`; the rest of the built-in faces stay. The
 -- script switches between these two, then to the shipped themes
--- `solarized-dark` and `fairy-floss`, which compiled code registers.
+-- `solarized-dark` and `fairy-floss`, which this package registers.
 def first : Theme :=
   Theme.builtin ++
     #[{ name := ⟨"default"⟩, face := { background := some (Color.rgb 20 20 60) } }]
