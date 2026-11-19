@@ -3215,6 +3215,7 @@ Which names have something behind them:
 | `search-bindings`, which no table names | Built and registered (`BindingSearch.commands`; "Searching the bindings"). The scheme binds no key to it, as for `execute-command`; the default config binds `SPC ?` |
 | `find-file-in-workspace` and `find-file-in-project`, which no table names | Built and registered (`Workspace.commands`). The scheme binds no key to them, as for `execute-command`; the default config binds `SPC p f` and `SPC SPC` to `find-file-in-workspace` and `SPC p p` to `find-file-in-project` |
 | `project-search`, `project-search-symbol` and `project-search-visit`, which no table names | Built and registered (`ProjectSearch.commands`, `lean/Editor/ProjectSearch/Run.lean`). The scheme binds no key to the first two; the default config binds `SPC s p` and `SPC /` to `project-search` and `SPC *` to `project-search-symbol`. The results buffer's mode, `project-search`, binds its activate role (`RET` in normal state) to `project-search-visit` |
+| `working-set-add`, `working-set-open`, `working-set-visit`, `working-set-remove`, `working-set-note` and `working-set-refresh`, which no table names | Built and registered (`WorkingSet.commands`, `lean/Editor/WorkingSet/Run.lean`). The scheme binds no key to them; the default config binds `SPC k a` to `working-set-add` and `SPC k o` and `SPC RET` to `working-set-open`. A set's buffer's mode, `working-set`, binds its activate role (`RET` in normal state) to `working-set-visit`, its refresh role to `working-set-refresh`, and its locals `d` and `n` (after the localleader, `SPC m`) to `working-set-remove` and `working-set-note` |
 | `find-file-in-another-workspace`, which no table names | Built and registered (`Workspace.commands`). Compiled code binds `C-x C-d` to it in the prompt category `workspace-file` (`Workspace.bindings`), not in a state's table, so it holds in the `minibuffer` state while the workspace finder is open and nowhere else ("The minibuffer", under Modes) |
 | `keyboard-quit` | Built and registered (`Shell.commands`): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
@@ -5349,6 +5350,10 @@ runs its command, through a host) and `ConfigTest.defaultConfigChecks`
     editable excerpt buffer (`project-search`, `project-search-symbol`;
     [text-and-display.md](text-and-display.md), "As built: the search
     results buffer");
+    `SPC k` working set (`k a` adds the selection to a named set, `k o`
+    opens one, as `SPC RET` does, as an excerpt buffer of its ranges;
+    [review-and-navigation.md](review-and-navigation.md), "Working
+    sets");
     `SPC f` file (`f f` open, `f s` save); `SPC b` buffer (`b`, `i`, `k`,
     `d`, `s`, `r`); `SPC w` window, Vim's `C-w` keys with `n`, `p`, `c`
     and `w` given back their window meanings; `SPC TAB` tab, Doom's
@@ -5365,7 +5370,12 @@ runs its command, through a host) and `ConfigTest.defaultConfigChecks`
     "Find file in workspace" and "Switch workspace"; for the same reason
     Doom's `SPC s p`, `SPC /` and `SPC *` ("Search project", "Search
     symbol in project") read "Search workspace" and "Search symbol in
-    workspace".
+    workspace". `SPC k` (working set: `k a` adds the selection to a
+    named set, `k o` opens one) is a prefix Doom leaves free, its letter
+    for "keep"; Doom's `SPC RET` is "Jump to bookmark" (`bookmark-jump`),
+    the nearest thing it has to a named, kept collection of places, so it
+    opens a working set here (checked against Doom's
+    `modules/config/default/+evil-bindings.el`, which binds no `SPC k`).
   - **Pinned** by `ConfigTest.defaultConfigChecks`: a reload installs it
     with no diagnostic, `SPC f f` asks for a path to open and, once that
     is cancelled, `SPC :` opens the command prompt and, once that is
@@ -5374,8 +5384,10 @@ runs its command, through a host) and `ConfigTest.defaultConfigChecks`
     cancelled, `SPC p p` runs `find-file-in-project`; every binding names a
     registered command, `<leader> :`, `<leader> ?`, `<leader> SPC`,
     `<leader> p f`, `<leader> p p`, `<leader> s p`, `<leader> /` and
-    `<leader> *` among them with their descriptions; and every prefix under
-    the leader has a name, `SPC p` named `project` and `SPC s` `search`.
+    `<leader> *`, `<leader> k a`, `<leader> k o` and `<leader> RET` among
+    them with their descriptions; `SPC k o` runs `working-set-open`; and
+    every prefix under the leader has a name, `SPC p` named `project`,
+    `SPC s` `search` and `SPC k` `working set`.
 - Built: completion at point from config ("Completion at point").
   `defineAtPoint` registers an at-point source by its name, and config's of
   a shipped name replaces it, so `defineAtPoint (Completion.AtPoint.words
