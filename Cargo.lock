@@ -454,6 +454,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-grep"
+version = "0.1.0"
+
+[[package]]
 name = "editor-layout"
 version = "0.1.0"
 dependencies = [

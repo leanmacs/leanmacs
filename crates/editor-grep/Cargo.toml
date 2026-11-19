@@ -1,0 +1,12 @@
+[package]
+name = "editor-grep"
+version = "0.1.0"
+description = "Project search: the Files port with its fake and its contract, the rule of which matches a search of a tree answers, and the service that owns each search"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No dependency and no dev-dependency yet: the port names no walking or
+# reading library, and it is tested on its published fake. The real adapter,
+# over ripgrep's libraries, is `editor-grep-ripgrep`.
+[dependencies]

@@ -301,6 +301,14 @@ a test binary of its own, shuts the process-wide service down.
 `mise run deny` holds that only the adapter depends on `notify`, and that
 only `editor-ffi` depends on the adapter.
 
+Project search is tested there too. The port of the files under a root
+(`crates/editor-grep`) is tested on its published fake, a tree in memory,
+which `mise run lint` holds the crate's tests to
+(`crates/editor-grep/clippy.toml`: no `std::fs`, no `Path` method that
+asks the disk, no clock of the machine's, and not the adapter's
+constructor). The port's contract is tested there on the fake and on
+implementations written to break each rule.
+
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:
 

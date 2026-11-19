@@ -1428,6 +1428,44 @@ regex shows, a sweep that how a text is cut changes no answer, the
 library's bug, and the port's contract on the adapter, in
 `editor-search-regex`.
 
+### Project search, as built
+
+Built by navigation-and-windows phase 4, for `project-search`: every
+match of a pattern under a workspace's root, honouring ignore files, with
+open buffers searched in their buffer's text.
+
+**The port is the files under a root** (`crates/editor-grep`, `Files`, no
+dependencies). `walk(root, visit)` visits each file under the root by its
+path relative to it, depth first, each directory's entries by the bytes of
+their names (so `a/b` before `a-c`), leaving out an entry whose name
+starts with `.` and one an ignore file excludes, with everything under
+each. A root that is not there, not a directory or not readable is a
+refusal of its own kind; an entry below it that cannot be read is left
+out. `rows(path, holds, visit)` reads a file a row at a time: a row ends
+at a line feed, which is not in its text (a `\r` is); the last row is a
+row with no line feed, and an empty file has none; rows are numbered from
+0 with the byte offset of each start; a row that is not UTF-8 is decoded
+lossily. `holds` is asked of each row once, in order, and only the rows it
+holds for are visited. A file with a NUL byte is binary, and no row of it
+is visited. A visit's `Stop` ends a walk or a read.
+
+**The fake and the contract.** `fake::FakeFiles` is a tree in memory,
+built with `.file(path, bytes)` and `.excluded(path)`, the stand-in for an
+ignore file; it applies the hidden rule itself. `contract::check` names
+each property an implementation breaks, each in a fresh subdirectory made
+through a `Ground` the caller supplies (the fake's tree, or `std::fs` in a
+temporary directory): the walk's order, hidden entries, excluded entries,
+files alone, an empty file, row numbers and offsets, the last row, a
+carriage return, lossy rows, `holds` once a row, `Stop`, a binary file, and
+the root's refusals. It is seen to bite on implementations written in its
+tests. What each ignore file means is not in it, since the fake has none:
+the adapter's own tests pin it.
+
+`crates/editor-grep/clippy.toml` holds the crate's tests, the rule's and
+the service's among them, to the fake: no `std::fs`, no `Path` method that
+asks the disk, no clock of the machine's, and not the adapter's
+constructor.
+
 ## Terminal
 
 Decision: libghostty. Its current API, stability, build requirements and
