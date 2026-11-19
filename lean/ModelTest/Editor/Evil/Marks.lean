@@ -34,11 +34,12 @@ def markRows : List (String × String × String) :=
     ("` b", "a|b", Evil.markNotSet), ("' b", "a|b", Evil.markNotSet),
     ("` !", "a|b", Evil.unknownMark), ("m 1", "a|b", Evil.badMarkName),
     ("` `", "a|b", Evil.markNotSet),
-    -- '' and `` go back and forth; m ' sets the previous-context mark and
-    -- records a jump.
+    -- '' and `` go back and forth; m ' and m ` set the previous-context
+    -- mark and record a jump.
     ("G ` `", "a|b\nc\nd", "a|b\nc\nd"), ("G ` ` ` `", "a|b\nc\nd", "ab\nc\n|d"),
     ("G ' '", "  a|b\nc\nd", "  |ab\nc\nd"), ("m ' j ` `", "a|b\nc\nd", "a|b\nc\nd"),
-    ("m ' j C-o", "a|b\nc", "a|b\nc")]
+    ("m ' j C-o", "a|b\nc", "a|b\nc"), ("m ` j ` `", "a|b\nc\nd", "a|b\nc\nd"),
+    ("m ` j C-o", "a|b\nc", "a|b\nc")]
 
 /-- The rows of the checks of marks across line deletions and undo, as
 `evilRows` reads them. -/
@@ -205,7 +206,7 @@ def markExSaid (line : String) : Option (String × String) :=
 the text model, and across buffers on the file model. -/
 def evilMarkChecks : List Check :=
   [{  name :=
-        "m sets a mark and ` and ' go to it, exactly and at its line's first non-blank, as jumps, exclusive and line-wise under an operator; a mark follows a line inserted above it; a mark not set, a character that names none and m with one are said; '' and `` go back and forth, and m ' sets the previous-context mark"
+        "m sets a mark and ` and ' go to it, exactly and at its line's first non-blank, as jumps, exclusive and line-wise under an operator; a mark follows a line inserted above it; a mark not set, a character that names none and m with one are said; '' and `` go back and forth, and m ' and m ` set the previous-context mark"
       run := evilRows markRows },
     { name :=
         "a lowercase mark whose line is deleted is erased and a global mark stays, and one of a line deleted in part keeps the column the deletion left; undo puts a lowercase mark back where it was before the step, and redo erases it again; the step an insert session makes keeps the marks from before the session"

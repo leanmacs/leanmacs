@@ -860,7 +860,7 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
 - `evilMarkChecks`: `m`, `` ` `` and `'` (`Editor/Evil/Marks.lean`): a
   mark set and gone to, exactly and at its line's first non-blank, as a
   jump, under an operator, after an insert above it, the marks not set or
-  not named, `''` back and forth and `m '`, a mark motion run in a window
+  not named, `''` back and forth, `m '` and ``m` ``, a mark motion run in a window
   that is not focused, and across buffers on the file model: a buffer's
   own marks, a global mark in another buffer, under an operator, in a
   closed buffer's file, reopened with one jump recorded, attached again to
