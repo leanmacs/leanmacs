@@ -278,6 +278,32 @@ def evilMarkChecks : List Check :=
           markExSaid "marks" == some ("a|b", Ex.unknown "marks") &&
             markExSaid "delmarks a" == some ("a|b", Ex.unknown "delmarks") },
     { name :=
+        "recorded departure (task marks-go-without-jump): g ' and g ` are not bound, so after m a and G, g ' a and g ` a go nowhere and the a appends, where Vim's go to the mark as ' and ` do without recording a jump"
+      run :=
+        evilRows
+          [("m a G g ' a x <Escape>", "a|b\nc\nd", "ab\nc\nd|x"),
+            ("m a G g ` a x <Escape>", "a|b\nc\nd", "ab\nc\nd|x")] },
+    { name :=
+        "recorded departure (task marks-next-previous-lowercase): ] ', [ ', ] ` and [ ` are not bound, so with marks a and b set on the lines around the cursor each leaves the cursor where it was, where Vim's go to the next or previous lowercase mark's line or position"
+      run :=
+        evilRows
+          [("m a j j m b k ] '", "|a\nb\nc\nd", "a\n|b\nc\nd"),
+            ("m a j j m b k [ '", "|a\nb\nc\nd", "a\n|b\nc\nd"),
+            ("m a j j m b k ] `", "|a\nb\nc\nd", "a\n|b\nc\nd"),
+            ("m a j j m b k [ `", "|a\nb\nc\nd", "a\n|b\nc\nd")] },
+    { name :=
+        "recorded departure (task marks-ex-set-mark): :mark and :k are not built, so the ex line says neither is an ex command and leaves the text and cursor as they were, where Vim's set the mark named at the cursor's line"
+      run :=
+        pure <|
+          markExSaid "mark a" == some ("a|b", Ex.unknown "mark") &&
+            markExSaid "k a" == some ("a|b", Ex.unknown "k") },
+    { name :=
+        "recorded departure (task marks-lockmarks-keepmarks): :lockmarks and :keepmarks are not built, so the ex line says neither is an ex command and runs none of the command that follows, where Vim's run it keeping the marks as they were or where they are"
+      run :=
+        pure <|
+          markExSaid "lockmarks ls" == some ("a|b", Ex.unknown "lockmarks") &&
+            markExSaid "keepmarks ls" == some ("a|b", Ex.unknown "keepmarks") },
+    { name :=
         "recorded departure (task marks-persist-across-restarts): global marks live in the session's state alone, which the editor starts with none of, where Vim reads the uppercase and numbered marks back from viminfo or shada"
       run :=
         pure <|

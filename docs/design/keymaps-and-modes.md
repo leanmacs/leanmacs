@@ -3096,6 +3096,21 @@ matches Vim changes that check deliberately:
   so the ex line says `marks: not an ex command` and `delmarks: not an ex
   command` (`Ex.unknown`), where Vim's list the marks and delete those
   named. Task `marks-ex-commands`.
+- **`g'` and ``g` `` are not bound**: after `m a` and `G`, `g'a` goes
+  nowhere and the `a` appends, where Vim's go to the mark as `'` and
+  `` ` `` do but record no jump. Task `marks-go-without-jump`.
+- **`]'`, `['`, ``]` `` and ``[` `` are not bound**: with marks set on
+  the lines around the cursor each leaves the cursor where it was, where
+  Vim's go to the next or previous lowercase mark, at its line's first
+  non-blank or its exact position. Task `marks-next-previous-lowercase`.
+- **`:mark` and `:k` are not built**: the ex line says `mark: not an ex
+  command` and `k: not an ex command` (`Ex.unknown`), where Vim's set the
+  mark named at the cursor's line. Task `marks-ex-set-mark`.
+- **`:lockmarks` and `:keepmarks` are not built**: the ex line says
+  `lockmarks: not an ex command` and `keepmarks: not an ex command`, and
+  the command after it is not run, where Vim's run it with the marks left
+  where they were (`:lockmarks`) or kept on their lines when lines are
+  filtered (`:keepmarks`). Task `marks-lockmarks-keepmarks`.
 - **Marks are not kept across restarts**: global marks live in the
   session's state alone (`EditorState.Remembered.globalMarks`), which the
   editor starts empty and never writes out, where Vim keeps the uppercase
