@@ -23,10 +23,20 @@
 #    tools/config-migrate.sh, must hold `init.lean` and `Config/Leader.lean`
 #    and no other file, and on it the editor must print exactly
 #    `migrated-expected`: the config loads and its command runs.
-# 3. The script refuses, with status 1 and the directory left as it was, a
-#    directory that already holds an `init.lean`, and one where two files
-#    give one module name; and it converts nothing, with status 0, in a
-#    directory with no `.lean` file.
+# 3. More shapes of the old form, each written in the temporary directory,
+#    converted, and loaded by the editor, which must install it and run a
+#    command of it:
+#    - three files, the second with a name of two parts and the last using
+#      a declaration of the first: `Config/Greet.lean`,
+#      `Config/EvilKeys.lean` and `init.lean`, each file seeing every file
+#      before it through the one import it is given;
+#    - one file: `init.lean` alone.
+# 4. The script refuses, with status 1 and the directory left as it was: a
+#    directory that already holds an `init.lean`; one where two files give
+#    one module name; a file whose name gives no module name, having no
+#    letter after its digits; and a `Config/<Name>.lean` that is already
+#    there. It converts nothing, with status 0, in a directory with no
+#    `.lean` file.
 #
 # It exits 0 and prints one line when all of that holds, and otherwise says
 # what does not and exits 1. Everything it writes is in a temporary
@@ -68,7 +78,53 @@ out=$("$editor" headless "$sysroot" "$oleans" "$work/config" "$fixture/script")
 printf '%s\n' "$out" | diff "$fixture/migrated-expected" - ||
   fail "the converted config did not load as migrated-expected says"
 
-# 3. What the script refuses is left as it was.
+# 3. More shapes, each converted and loaded.
+# Writes the file `$1` from stdin, making its directory.
+write() {
+  mkdir -p "$(dirname "$1")"
+  cat >"$1"
+}
+# Converts the directory `$1`, which must then hold exactly the files `$2`
+# (as `find` prints them, in byte order, each followed by a space), and
+# has the editor load it and run the command `$3`: it must print the
+# report line `$4` and then `run $3: ok`. `$5` says which shape it is.
+converted() {
+  sh "$migrate" "$1" >"$work/moves" || fail "$5: the script refused it"
+  held=$(cd "$1" && find . -type f | LC_ALL=C sort | tr '\n' ' ')
+  [ "$held" = "$2" ] || fail "$5: the converted directory holds $held, not $2"
+  printf 'reload\nsettle\nrun %s\n' "$3" >"$work/run-script"
+  out=$("$editor" headless "$sysroot" "$oleans" "$1" "$work/run-script")
+  printf '%s\n%s\n' "$4" "run $3: ok" >"$work/wanted"
+  printf '%s\n' "$out" | diff "$work/wanted" - ||
+    fail "$5: the converted config did not load and run $3"
+}
+
+write "$work/three/10-greet.lean" <<'LEAN'
+def greet : EditorM Unit :=
+  message "three"
+LEAN
+write "$work/three/20-evil-keys.lean" <<'LEAN'
+def evilKeys : SetupM Unit :=
+  command "greet" greet
+LEAN
+write "$work/three/90-setup.lean" <<'LEAN'
+def again : EditorM Unit :=
+  greet
+
+def setup : SetupM Unit := do
+  evilKeys
+  command "again" again
+LEAN
+converted "$work/three" "./Config/EvilKeys.lean ./Config/Greet.lean ./init.lean " again \
+  "reload 1: installed, 3 files, 2 commands" "three files, the last using a declaration of the first"
+
+write "$work/one/10-keys.lean" <<'LEAN'
+def setup : SetupM Unit :=
+  command "only" (message "one")
+LEAN
+converted "$work/one" "./init.lean " only "reload 1: installed, 1 files, 1 commands" "one file"
+
+# 4. What the script refuses is left as it was.
 refused() {
   before=$(cd "$1" && find . -type f -exec cksum {} + | LC_ALL=C sort)
   status=0
@@ -89,6 +145,17 @@ printf 'def b : Nat := 2\n' >"$work/twice/20-keys.lean"
 printf 'def setup : SetupM Unit := pure ()\n' >"$work/twice/90-setup.lean"
 refused "$work/twice" "two files that give one module name"
 
+mkdir "$work/nameless"
+printf 'def a : Nat := 1\n' >"$work/nameless/10.lean"
+printf 'def setup : SetupM Unit := pure ()\n' >"$work/nameless/90-setup.lean"
+refused "$work/nameless" "a file whose name has no letter after its digits"
+
+mkdir -p "$work/taken/Config"
+printf 'def a : Nat := 1\n' >"$work/taken/10-keys.lean"
+printf 'def setup : SetupM Unit := pure ()\n' >"$work/taken/90-setup.lean"
+printf 'mine\n' >"$work/taken/Config/Keys.lean"
+refused "$work/taken" "a Config/<Name>.lean that is already there"
+
 mkdir "$work/empty"
 printf 'notes\n' >"$work/empty/notes.txt"
 sh "$migrate" "$work/empty" >/dev/null ||
@@ -96,4 +163,4 @@ sh "$migrate" "$work/empty" >/dev/null ||
 [ "$(cd "$work/empty" && find . -type f)" = "./notes.txt" ] ||
   fail "a directory with no .lean file: the script changed it"
 
-echo "config-migrate: the old form was refused, a converted copy loaded, and what the script refuses was left as it was"
+echo "config-migrate: the old form was refused, converted copies of it loaded, and what the script refuses was left as it was"
