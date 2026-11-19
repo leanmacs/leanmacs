@@ -533,6 +533,27 @@ over, so the type does not refer to itself. A job's handler is carried the
 same way, inside the job: a `Work` finishes with an `EditorM Unit`, so the
 type of a job's result never reaches the registry.
 
+## A package's `setup`
+
+A package (`Editor/Package.lean`) registers with the same program: its
+`setup` is a `SetupM Unit`, run by the same collecting handler and refused
+for the same reasons. Two things differ, both said in
+`Editor/Config/Packages.lean`:
+
+- **A package may not set what only config chooses**: `useTheme`,
+  `modeLine`, `framePadding`, `keyHintDelay`, `layout`, `tabBar`,
+  `titleBar`, `processEnvironment`, `autoReload`, `workspace`,
+  `workspaceLister`, `projectLister`, `displayRule`, `shellTimeLimit`,
+  `syntaxRefreshDelay`, `leaderKey`, `localLeaderKey`, `projectCommands`,
+  `useStyle`, `useDisplay` and `useDisplayFor`. A package that calls one is
+  refused whole, with a message that names it and the setting.
+- **A package's `useStyleFor` is a default**, not a choice: the style of
+  the category unless config's `useStyleFor` chooses another.
+
+What a package registers belongs to the owner named after it, so the
+sentences here that say "for this config" read "for this package", and a
+reload never replaces it.
+
 ## Adding to the port
 
 A new kind of registration (a subscription, an option) is a

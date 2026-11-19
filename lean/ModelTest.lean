@@ -40,6 +40,7 @@ import ModelTest.Editor.Completion.Paths
 import ModelTest.Editor.Completion.Style
 import ModelTest.Editor.Completion.StyleContract
 import ModelTest.Editor.Completion.Words
+import ModelTest.Editor.Config.Packages
 import ModelTest.Editor.Config.Registry
 import ModelTest.Editor.Config.Reload
 import ModelTest.Editor.Config.Session
@@ -657,7 +658,17 @@ The config session's decisions are tested here too, with no elaborator:
   bindings and keeps the compiled ones, and replaces config's menus and
   keeps another owner's;
 - `reloadHintChecks`: an install replaces config's descriptions and prefix
-  names with its bindings, so a later config without them clears them.
+  names with its bindings, so a later config without them clears them;
+- `packageChecks`: packages (`Editor/Package.lean`) and registering them
+  (`Editor/Config/Packages.lean`): a package's registrations of every kind
+  belong to the owner named after it; packages register in the order of
+  the array, and of one name the later package's is found; a package with
+  a reserved, empty or repeated name, one whose `setup` is refused and one
+  that sets what only config may choose register nothing and are reported
+  by name, and the others register; a reload leaves a package's entries,
+  its style default and its store's cell; config's command and binding
+  replace a package's until a reload drops them; and a package's
+  `useStyleFor` is a default config's `useStyleFor` overrides.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -1030,6 +1041,7 @@ def checks : List Check :=
     sessionChecks ++
     reloadChecks ++
     reloadHintChecks ++
+    packageChecks ++
     windowTallyChecks ++
     windowLoopChecks ++
     windowArgumentChecks ++

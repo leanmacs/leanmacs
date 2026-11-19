@@ -270,6 +270,10 @@ structure State (σ : Type) where
   registry : Registry := {}
   /-- The cells of the stores. -/
   cells : Cells := {}
+  /-- The names of the packages registered, in the order they were
+  (`State.register`, `Editor/Config/Packages.lean`): set when a host starts,
+  and never by an install. -/
+  packages : Array String := #[]
   /-- Whether a reload job is running. -/
   running : Bool := false
   /-- Whether a reload was asked for while one was running. -/

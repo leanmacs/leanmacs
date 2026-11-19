@@ -740,7 +740,7 @@ def styleEntry (registry : Registry) (category : Option String) : StyleEntry :=
   let chosen (category : Option String) : Option StyleEntry :=
     (registry.styleChoices.find? (·.1 == category)).bind fun (_, name) => named name
   let defaulted (category : String) : Option StyleEntry :=
-    (registry.styleDefaults.find? (·.1 == category)).bind fun (_, name) => named name
+    (registry.styleDefaults.findRev? (·.1 == category)).bind fun (_, name) => named name
   ((category.bind fun category => chosen (some category)) <|>
         category.bind defaulted <|> chosen none <|> named Completion.Styles.fuzzy.name).getD
     { owner := .compiled, style := Completion.Styles.fuzzy }
@@ -1208,6 +1208,21 @@ def unknownAtPoints (registry : Registry) : Array String :=
   let named :=
     registry.atPointUses.map (·.source) ++ registry.modes.flatMap (·.mode.atPoint.toArray)
   (named.filter fun name => (registry.atPoint? name).isNone).toList.eraseDups.toArray
+
+/-- Who registered each entry, kind by kind: the owners of the commands, of
+the jobs, of the key bindings, of the prefix names, of the modes, of the ex
+bindings, of the faces, of the themes, of the segments, of the languages,
+of the compile contributions, of the completion sources, styles and
+displays, of the at-point sources, of their uses and of the menus, each in
+the entries' order. A registry nothing is registered in has none. -/
+def ownersByKind (registry : Registry) : Array (Array Owner) :=
+  #[registry.entries.map (·.owner), registry.jobs.map (·.owner), registry.bindings.map (·.owner),
+    registry.prefixNames.map (·.owner), registry.modes.map (·.owner), registry.ex.map (·.owner),
+    registry.faces.map (·.owner), registry.themes.map (·.owner), registry.segments.map (·.owner),
+    registry.languages.map (·.owner), registry.contributions.map (·.owner),
+    registry.sources.map (·.owner), registry.styles.map (·.owner), registry.displays.map (·.owner),
+    registry.atPoints.map (·.owner), registry.atPointUses.map (·.owner),
+    registry.menus.map (·.owner)]
 
 /-- What the loop is told of the registry for a command's state requests,
 its questions to the registry and its control requests
