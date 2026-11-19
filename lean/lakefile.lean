@@ -14,12 +14,15 @@ releases are tagged with the Lean toolchain they are built for, so bump
 this together with `lean-toolchain`. -/
 require «lean-fmt» from git "https://github.com/jcreinhold/lean-fmt"@"v4.35.0"
 
-/-- The editor's modules. Its root, `Editor`, is what user config is elaborated
-on at runtime, and the build makes its `.olean` files for that. The modules
-under `Editor/` that `Editor` does not import (the bindings, the real
-bindings of the ports, the config session, the headless mode) are built for
-the executables that import them. -/
-@[default_target] lean_lib Editor where roots := #[`Editor]
+/-- The editor's modules. Its root `Editor` is what user config is elaborated
+on at runtime, and the build makes its `.olean` files for that. Its second
+root, `Editor.Core`, is the core's (`Editor/Core.lean`,
+`docs/design/packages.md`): it imports every module under `Editor/` but the
+features that move out into packages and the list of the packages that
+ship, so the build makes every core module, the ones `Editor` does not
+import among them (the bindings, the real bindings of the ports, the config
+session, the hosts). -/
+@[default_target] lean_lib Editor where roots := #[`Editor, `Editor.Core]
 
 /-- Code that `ffi-test overflow` has Lean's interpreter run
 (`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
