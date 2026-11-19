@@ -2532,6 +2532,21 @@ def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β 
   let stopped ← host.halt patience
   return unsettled <|> (if stopped then none else some (.unanswered none))
 
+/-- Runs `script` against a host of its own, as `run` does, and then, the
+host's loop having ended, removes what the collaborators left outside the
+process (`Collaborators.dispose`): once, whether the run returned or threw.
+A dispose that throws is ignored, so it neither hides the run's failure nor
+replaces it. What the headless mode runs (`main`). -/
+def runAndDispose {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
+    (script : Array Line) (patience : Nat) : IO (Option Failure) := do
+  try
+    run collaborators script patience
+  finally
+    try
+      collaborators.dispose
+    catch _ =>
+      pure ()
+
 /-- How long the headless mode waits at each `settle` and each `join`, and
 for the loop to stop, in milliseconds. -/
 def settlePatience : Nat :=
@@ -2757,8 +2772,11 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
       some <$> generatorAt origin appPath configDir
     else
       pure none
+  -- The loop has ended when `runAndDispose` returns, so no reload is
+  -- elaborating: the directory of the config files' module data goes with
+  -- it, if one was made.
   let failure ←
-    run
+    runAndDispose
         { shipped with
           generator, workingDirectory
           display :=
@@ -2770,12 +2788,6 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
     IO.eprintln s!"editor: {failure.describe settlePatience}"
   if drawn then
     discard Ffi.renderStop
-  -- The loop has ended, so no reload is elaborating: the directory of the
-  -- config files' module data goes, if one was made.
-  try
-    shipped.dispose
-  catch _ =>
-    pure ()
   -- Every child the library started is killed and reaped before the queues
   -- are quit: `run` has returned, so the loop has cancelled every job.
   Ffi.processesShutdown

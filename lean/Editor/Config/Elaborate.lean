@@ -325,13 +325,14 @@ def ModuleFiles.over (make : IO System.FilePath)
         if let some directory← made.modifyGet fun made => (made, none) then
           removeMade directory }
 
-/-- Module files in a temporary directory of the system's, made when the
-first file is written and removed, with what is in it, by `remove`: what
-an executable's host uses. A process that ends without `remove`, one that
-crashed, leaves the directory to the system's cleaning of its temporary
-files. -/
-def ModuleFiles.temporary : IO ModuleFiles :=
-  ModuleFiles.over IO.FS.createTempDir IO.FS.removeDirAll
+/-- Module files in a temporary directory, made by `make` when the first
+file is written and removed, with what is in it, by `remove`: what an
+executable's host uses, with the default `make`, which makes a directory of
+the system's. A test hands a `make` that makes one under a directory of its
+own. A process that ends without `remove`, one that crashed, leaves the
+directory to the system's cleaning of its temporary files. -/
+def ModuleFiles.temporary (make : IO System.FilePath := IO.FS.createTempDir) : IO ModuleFiles :=
+  ModuleFiles.over make IO.FS.removeDirAll
 
 /-- The first components of the modules of the Lean toolchain that are
 linked into every executable that links this adapter: it imports `Lean` and

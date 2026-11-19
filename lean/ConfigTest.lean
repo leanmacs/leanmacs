@@ -65,6 +65,11 @@ show:
   config file has module data of its own; compiled code and config share
   state; and the base's modules are looked for in every directory it is
   given, in order;
+- `moduleFilesChecks`: where the real elaborator writes the module data of
+  config files (`ModuleFiles`): the directory is made once, when it is
+  first asked for, removed once, and only when it was made, and the
+  temporary one is really removed with what is in it, in a temporary
+  directory the check owns;
 - `elaboratorContractChecks`: the elaborator port's contract
   (`Editor/Config/Elaborator/Contract.lean`) held of that real elaborator,
   as `model-test` holds it of the port's model;
@@ -111,7 +116,10 @@ show:
   once the frame exists, the scene whose echo is the refusal once a command
   has released the focused buffer's text, the line the host prints for a
   program of the loop that is refused, and a window's close request with
-  nothing unsaved ending the loop;
+  nothing unsaved ending the loop; and the headless mode's run disposing of
+  its collaborators once its loop has ended, whether it failed or not, and
+  the executable's hosts' dispose removing the directory of the config
+  files' module data once it was made;
 - `dispatchChecks`: keys through the host, with the test scheme and
   compiled commands and bindings written here: a compiled binding runs its
   command, a command that fails is rolled back and says so, the interrupt
@@ -293,7 +301,8 @@ open Editor
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
-  lakefileChecks () ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
+  lakefileChecks () ++ directoryChecks () ++ moduleFilesChecks () ++ hostChecks context ++
+    threadChecks context ++
     jobChecks context ++
     treeObjectChecks context ++
     indentChecks context ++

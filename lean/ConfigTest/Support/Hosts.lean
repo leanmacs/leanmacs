@@ -169,6 +169,10 @@ structure Stage (β σ : Type) where
   watches : Job.FakeFileWatches
   /-- Every entry the host has logged, oldest first. -/
   log : IO.Ref (Array String)
+  /-- One entry for each time the host's collaborators were disposed of
+  (`Headless.Collaborators.dispose`): how many lines the host had emitted
+  by then. -/
+  disposed : IO.Ref (Array Nat)
 
 /-- What a check hands a host to register before any config: packages, and
 registrations written as arrays, its commands, its jobs, its key
@@ -265,6 +269,7 @@ def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator
   let output ← IO.mkRef #[]
   let threads ← IO.mkRef #[]
   let log ← IO.mkRef #[]
+  let disposed ← IO.mkRef #[]
   let completions ←
     match waits with
     | some completions =>
@@ -290,6 +295,9 @@ def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator
           packages :=
             #[Completion.package, ModeLine.package] ++ compiled.packages ++ #[compiled.package]
           log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter
+          dispose := do
+            let emitted := (← output.get).size
+            disposed.modify (·.push emitted)
           clock := some clock,
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
@@ -298,7 +306,7 @@ def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator
               return { loop with state := (loop.state.setMajorMode ⟨0⟩ name).2 }
             | none =>
               return loop },
-      output, threads, clock, watches, log }
+      output, threads, clock, watches, log, disposed }
 
 /-- A host running for one check: the headless loop on the real queue and the
 real text binding, over a config directory the check owns. -/

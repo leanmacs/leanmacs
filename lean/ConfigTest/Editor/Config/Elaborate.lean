@@ -22,7 +22,8 @@ import Editor.Watch
 /-!
 # Config tests: `Editor/Config/Elaborate.lean`
 
-The tests of `Editor/Config/Elaborate.lean`: `elaboratorChecks`, with
+The tests of `Editor/Config/Elaborate.lean`: `elaboratorChecks` and
+`moduleFilesChecks`, with
 `evalProbe`, `setupRefused` and `greeting`. The root module `ConfigTest` runs
 them; its module doc says what each shows.
 -/
@@ -355,5 +356,64 @@ def elaboratorChecks (context : Context) : List Check :=
                 #[]
         finally
           IO.FS.removeDirAll empty }]
+
+/-- What a check of `ModuleFiles.over` hands it: a `make` that records each
+call in `calls` as `make` and gives the directory `directory`, and a
+`removeMade` that records each call as `remove` and the directory it is
+given. -/
+def recordingModuleFiles (calls : IO.Ref (Array String)) (directory : System.FilePath) :
+    IO Config.Elaborate.ModuleFiles :=
+  Config.Elaborate.ModuleFiles.over
+    (do
+      calls.modify (·.push "make")
+      return directory)
+    fun made => calls.modify (·.push s!"remove {made}")
+
+/-- The checks of where the module data of config files is written
+(`Config.Elaborate.ModuleFiles`): its directory is made once, when it is
+first asked for, and removed once, by `remove`, and only when it was
+made. -/
+def moduleFilesChecks (_ : Unit) : List Check :=
+  [{  name := "module files with no file written make no directory, and removing them calls nothing"
+      run := do
+        let calls ← IO.mkRef #[]
+        let files ← recordingModuleFiles calls "/made"
+        files.remove
+        return (← calls.get).isEmpty },
+    { name :=
+        "the directory of module files is made once, when it is first asked for: a second ask gives the same directory and makes none"
+      run := do
+        let calls ← IO.mkRef #[]
+        let files ← recordingModuleFiles calls "/made"
+        let first ← files.directory
+        let second ← files.directory
+        return first == "/made" && second == "/made" && (← calls.get) == #["make"] },
+    { name :=
+        "removing module files whose directory was made removes that directory once, and removing them again calls nothing"
+      run := do
+        let calls ← IO.mkRef #[]
+        let files ← recordingModuleFiles calls "/made"
+        discard <| files.directory
+        files.remove
+        let once ← calls.get
+        files.remove
+        return once == #["make", "remove /made"] && (← calls.get) == once },
+    { name :=
+        "temporary module files make their directory when it is first asked for and remove it, with what was written in it, when they are removed"
+      run :=
+        IO.FS.withTempDir fun parent => do
+          let made := parent / "modules"
+          let files ←
+            Config.Elaborate.ModuleFiles.temporary do
+                IO.FS.createDir made
+                return made
+          let before ← made.pathExists
+          let directory ← files.directory
+          IO.FS.createDirAll (directory / "Config")
+          IO.FS.writeFile (directory / "Config" / "Keys.olean") "data"
+          let written ← (directory / "Config" / "Keys.olean").pathExists
+          files.remove
+          return !before && directory == made && written && !(← made.pathExists) &&
+              (← parent.pathExists) }]
 
 end ConfigTest

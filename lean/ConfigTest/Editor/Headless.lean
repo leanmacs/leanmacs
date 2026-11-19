@@ -1204,9 +1204,10 @@ def agreementChecks (_ : Unit) : List Check :=
             "agree view 2: the frame has no such view") }]
 
 /-- The checks of the headless mode's script and its driver
-(`Headless.script`, `Headless.run`). The command line itself is covered by
-one run of the real executable on the fixture under `tests/headless`, in the
-`ffi-test` task. -/
+(`Headless.script`, `Headless.run`, `Headless.runAndDispose`), and of what
+the executable's hosts dispose of when they end (`Headless.shippedOver`).
+The command line itself is covered by one run of the real executable on the
+fixture under `tests/headless`, in the `ffi-test` task. -/
 def scriptChecks (context : Context) : List Check :=
   [{  name :=
         "an advance directive is a number of milliseconds, with its line's number; one with no number, two or a part that is no number is refused with its line, and the error message of a line that is no directive lists it"
@@ -1641,7 +1642,51 @@ def scriptChecks (context : Context) : List Check :=
           ([reloading, atEnd, unanswered, unstopped].eraseDups.length == 4 &&
             (reloading.splitOn "line 12").length == 2 &&
             (unanswered.splitOn "line 12").length == 2 &&
-            (atEnd.splitOn "line").length == 1) }]
+            (atEnd.splitOn "line").length == 1) },
+    { name :=
+        "the headless mode's run disposes of its collaborators once its loop has ended: dispose is called once, after every line the script had the host print"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let failure ←
+            Headless.runAndDispose stage.collaborators
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
+                  ⟨4, .advance 10⟩, ⟨5, .join⟩]
+                patience
+          let output ← stage.output.get
+          return failure.isNone && output.contains "job 1 count: ok" &&
+              (← stage.disposed.get) == #[output.size] },
+    { name := "a run that fails disposes of its collaborators too, once, when its loop has ended"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- The clock is never moved, so the join runs out.
+          let failure ←
+            Headless.runAndDispose stage.collaborators
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩, ⟨4, .join⟩]
+                200
+          return failure == some (.working (some 4)) &&
+              (← stage.disposed.get) == #[(← stage.output.get).size] },
+    { name :=
+        "the executable's hosts dispose of the directory of the config files' module data: their dispose removes it once it was made, through the module files, and removes nothing before"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let removed ← IO.mkRef #[]
+          let files ←
+            Config.Elaborate.ModuleFiles.over (pure (directory / "modules")) fun made =>
+                removed.modify (·.push made)
+          let staged := stage.collaborators
+          let shipped :=
+            Headless.shippedOver #[] #[`Editor] "" [] directory.toString staged.emit staged.services
+              staged.published staged.held files
+          shipped.dispose
+          let before ← removed.get
+          discard <| files.directory
+          shipped.dispose
+          return before.isEmpty && (← removed.get) == #[directory / "modules"] }]
 
 /-- The compiled command `split`: it splits the window it is called on. -/
 def splitCommand : Config.Registration :=
