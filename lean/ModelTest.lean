@@ -302,7 +302,10 @@ fails off either end, and `:help jumplist`'s worked example step by step.
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that the rectangles of its views are
 the layout's above the minibuffer's strip, and the layout operations, each refused with the state as it
-was when it would break an invariant. The invariants themselves are checked
+was when it would break an invariant. The places of jump lists and marks
+(`placeChecks`, part of `stateChecks`): the defaults, each set and read and
+refused, a split's copy of the jumps, a removed buffer's places dropped,
+and the place markers listed once. The invariants themselves are checked
 to refuse: states built in code that each break one (`spoilings`) are not
 well formed, so `EditorState.wellFormed` is seen to answer false for every
 one of its clauses. The operations the window commands are made of
@@ -377,8 +380,9 @@ registered command:
 - `dispatchSlowChecks`: on the watch model's clock, which a command's
   requests move, a command slower than the threshold is logged once;
 - `dispatchGiveUpChecks`: what the loop gives up once a command has run to
-  its end, and not before: a closed window's markers, a removed buffer's
-  text, the snapshot of a save that is no longer in flight, and the
+  its end, and not before: a closed window's markers, the markers of a
+  jump list's entries and marks no place holds any more, before a removed
+  buffer's text, a removed buffer's text, the snapshot of a save that is no longer in flight, and the
   minibuffer of a prompt that was accepted or cancelled;
 - `dispatchMinibufferNoticeChecks`: the loop tells its scheme when a
   command that ran to its end opened the minibuffer's view, in both states

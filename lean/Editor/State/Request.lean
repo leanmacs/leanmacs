@@ -136,6 +136,17 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   is kept at, or with none (`Editor/State.lean`, "The wanted column"). The
   handler stores the column as it is given. It is refused with a
   `LayoutRefusal`, `noSuchWindow`, for a view with no window.
+- **A window's jump list and the marks are set by three requests**
+  (`Editor/State.lean`, "The jump list and marks"): `setJumps` replaces a
+  window's jump list and previous-context mark whole, refused
+  `noSuchWindow`, and `noSuchBuffer` or `markersOfAnotherText` for a place
+  held where no buffer holds it; `setLocalMark` sets or unsets a buffer's
+  mark, refused `noSuchBuffer` and `markerOfAnotherText`; and
+  `setGlobalMark` sets or unsets a global mark, refused `noSuchBuffer` and
+  `markerOfAnotherText` for a held place. Each keeps what it is given: the
+  rules of recording and moving are `Editor/Jumps.lean`'s, and the markers
+  a request drops are the loop's to give up (`Editor/Loop.lean`, "What a
+  finished command gave up").
 - **A file is attached by one request, and a save is two.** `attachFile`
   has a buffer hold a file a load answered. `beginSave` records a save in
   flight, with the snapshot it writes, which the command took first, and
@@ -329,6 +340,14 @@ inductive StateRequest where
   | retype (view : ViewId) (text : String)
   /-- Have the window `view` keep `wanted` as its wanted column, or none. -/
   | setWanted (view : ViewId) (wanted : Option Window.Wanted)
+  /-- Have the window `view` keep `jumps` as its jump list and
+  previous-context mark. -/
+  | setJumps (view : ViewId) (jumps : Jumps)
+  /-- Have the buffer `id` hold its mark `char` by `marker`, or no longer
+  hold it for none. -/
+  | setLocalMark (id : BufferId) (char : Char) (marker : Option MarkerId)
+  /-- Set the global mark `char` at `place`, or unset it for none. -/
+  | setGlobalMark (char : Char) (place : Option Place)
   /-- Have the theme called `name` loaded once this command has run to its
   end. -/
   | loadTheme (name : String)
@@ -419,6 +438,9 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .retakeAtPoint _ => Except AtPointRefusal Unit
   | .retype .. => Unit
   | .setWanted .. => Except LayoutRefusal Unit
+  | .setJumps .. => Except LayoutRefusal Unit
+  | .setLocalMark .. => Except BufferRefusal Unit
+  | .setGlobalMark .. => Except BufferRefusal Unit
   | .loadTheme _ => Except ThemeRefusal Unit
   | .invoke _ => Unit
   | .quit => Unit
@@ -526,6 +548,9 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .retakeAtPoint text, state => state.retakeAtPoint text
   | .retype view text, state => ((), state.retype view text)
   | .setWanted view wanted, state => state.setWanted view wanted
+  | .setJumps view jumps, state => state.setJumps view jumps
+  | .setLocalMark id char marker, state => state.setLocalMark id char marker
+  | .setGlobalMark char place, state => state.setGlobalMark char place
   | .loadTheme name, state => (.ok (), { state with outbox.theme := some name })
   | .invoke invocation, state =>
     ((), { state with outbox.answered := state.outbox.answered.push invocation })

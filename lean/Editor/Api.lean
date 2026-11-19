@@ -885,6 +885,29 @@ request of the library. -/
 def setLastSearch (search : Search) : EditorM Unit :=
   EditorState.ask (.setLastSearch search)
 
+/-- Has the window of `view` keep `jumps` as its jump list and
+previous-context mark (`Editor/State.lean`, "The jump list and marks"). It
+makes one request of the editor state and none of the library. Refused
+with `noSuchWindow` for a view with no window, and with `noSuchBuffer` or
+`markersOfAnotherText` for a place held where no buffer holds it. -/
+def ViewId.setJumps (view : ViewId) (jumps : Jumps) : EditorM (Except LayoutRefusal Unit) :=
+  EditorState.ask (.setJumps view jumps)
+
+/-- Has the buffer `id` hold its mark `char` by `marker`, or no longer hold
+it for none (`Editor/State.lean`, "The jump list and marks"). It makes one
+request of the editor state and none of the library. Refused with
+`noSuchBuffer` and `markerOfAnotherText`. -/
+def BufferId.setMark (id : BufferId) (char : Char) (marker : Option MarkerId) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setLocalMark id char marker)
+
+/-- Sets the global mark `char` at `place`, or unsets it for none
+(`Editor/State.lean`, "The jump list and marks"). It makes one request of
+the editor state and none of the library. Refused with `noSuchBuffer` and
+`markerOfAnotherText` for a held place. -/
+def setGlobalMark (char : Char) (place : Option Place) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setGlobalMark char place)
+
 /-- Keeps `rows` rows between every view's cursor's row and the first and
 the last row it shows, from the next scene on ("Scrolling", in the module
 docs). It is never refused, and makes no request of the library. -/

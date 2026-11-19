@@ -748,6 +748,12 @@ comparing the state from before the command with the state it left:
 - **A window's markers.** Each marker of a window of the state before that
   no window of the state after uses is given up (`TextId.unmark`): the
   window was closed, by itself or with its tab, or shown another buffer.
+- **A place's marker.** Each marker a jump list's entry, a
+  previous-context mark, a buffer's mark or a global mark of the state
+  before is held by (`EditorState.placeMarkers`) that no place of the
+  state after holds is given up: an entry trimmed past the list's limit,
+  dropped by a clean-up or detached, a mark set again, and the places of a
+  closed window or a closed buffer. They go before the texts.
 - **A float's anchor marker.** The anchor marker of each float of every
   tab of the state before (`Floating.Anchor.position`) that no float of any
   tab of the state after holds is given up: the float was closed, its tab
@@ -2229,7 +2235,8 @@ def savesInFlight (state : EditorState) : Array SnapshotId :=
 /-- Gives up what a command that ran to its end dropped ("What a finished
 command gave up", in the module docs), `before` being the state from before
 it and `after` the state it left: each marker of a window of `before` that
-no window of `after` uses, then the snapshot of each save in flight in
+no window of `after` uses, each marker a place of `before` is held by that
+no place of `after` is (`EditorState.placeMarkers`), then the snapshot of each save in flight in
 `before` that is not in flight in `after`, and then the text of each buffer
 of `before` whose slot is empty in `after`, unless a buffer of `after` is
 over it. It is not refused: the first thing the store refuses is handed
@@ -2242,6 +2249,14 @@ def gaveUp (before after : EditorState) : TextM (Option TextError) := do
       unless held.contains id do
         if let .error error← observing (id.text.unmark id) then
           refusal := refusal <|> some error
+  -- The places of jump lists and marks: a marker dropped from a list, a
+  -- mark set again, a closed window's list and a closed buffer's marks.
+  -- They go before the texts are released below.
+  let placed := after.placeMarkers
+  for id in before.placeMarkers do
+    unless placed.contains id do
+      if let .error error← observing (id.text.unmark id) then
+        refusal := refusal <|> some error
   -- The floats of every tab hold their anchors: selecting another tab gives
   -- none up, and closing one gives up its floats'.
   let anchored := (after.frame.tabs.flatMap (·.floats)).filterMap (·.anchor.marker?)
