@@ -16,6 +16,7 @@ import Editor.Evil.Undo
 import Editor.ExecuteCommand
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
+import Editor.JumpList
 import Editor.Minibuffer
 import Editor.Setup
 import Editor.TabCommands

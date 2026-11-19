@@ -87,6 +87,7 @@ import ModelTest.Editor.Job.Pool
 import ModelTest.Editor.Job.Runner
 import ModelTest.Editor.Job.Table
 import ModelTest.Editor.Json
+import ModelTest.Editor.JumpList
 import ModelTest.Editor.Key.Notation
 import ModelTest.Editor.Keymap
 import ModelTest.Editor.Language
@@ -291,6 +292,12 @@ refuses as unsupported, the contract biting on a model written here
 that answers a range with the whole text's captures, and a model whose
 trees a test says are not delivered refusing questions of captures with
 `notParsed`.
+
+A window's jump list as plain data (`Editor/JumpList.lean`) is checked
+pure, over line numbers (`jumpListChecks`): a record appends and drops the
+oldest past the limit, a clean-up keeps the latest entry of a line and
+carries the index, a step's plan records first from one past the end and
+fails off either end, and `:help jumplist`'s worked example step by step.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that the rectangles of its views are
@@ -1065,6 +1072,7 @@ def checks : List Check :=
     heightChecks ++
     layoutChecks ++
     floatChecks ++
+    jumpListChecks ++
     stateChecks ++
     tabChecks ++
     displayRuleChecks ++
