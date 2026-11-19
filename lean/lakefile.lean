@@ -1,6 +1,7 @@
 import Lake
 
 open Lake DSL System
+open Lean (Name)
 
 /-- The editor's core, as a Lake package. Its name is what a package set
 and a package `require`, and what the staged core of the user-side link is
@@ -16,6 +17,12 @@ Lake would fetch every git dependency of it into each set's own
 its own, `tools/lean-fmt/lakefile.toml`, which nothing requires
 (`docs/design/packages.md`, "The package set and its build"). -/
 package «editor-core» where leanOptions := #[⟨`linter.all, true⟩, ⟨`warningAsError, true⟩]
+
+/-- The Lean options of this package, for a module the package-set build
+generates in another package (`setRoot`). They must equal the package's
+`leanOptions` above. -/
+def coreLeanOptions : Array LeanOption :=
+  #[⟨`linter.all, true⟩, ⟨`warningAsError, true⟩]
 
 /-- The editor's modules. Its root `Editor` is what user config is elaborated
 on at runtime, and the build makes its `.olean` files for that. Its second
@@ -144,6 +151,146 @@ def linkArgs : Array String :=
         "-framework", "AppKit", "-framework", "Foundation", "-framework", "Metal", "-framework",
         "QuartzCore", "-framework", "CoreText", "-liconv", "-lobjc"]
     else #["-Wl,--wrap=main"]
+
+/-- Links an executable at `file`, rooted at the module `root`, as the
+editor is linked: `root`'s object and those of every module it imports,
+with their symbols exported, so interpreted config can find compiled
+definitions and `@[extern]` symbols (`-rdynamic`, what `supportInterpreter`
+gives a `lean_exe`); then the glue and the Rust archive; then `linkArgs`.
+`root` may be a module of any package of the workspace: the glue and the
+archive are this package's targets, built in its build directory. -/
+def linkAsEditor (root : Module) (file : FilePath) : FetchM (Job FilePath) := do
+  let infoJob ← root.linkInfoExport.fetch
+  let glueJob ← glue.o.fetch
+  let rustJob ← rustlib.fetch
+  ((infoJob.zipWith Prod.mk glueJob).zipWith Prod.mk rustJob).mapM fun ((info, glue), rust) => do
+      addPureTrace linkArgs "linkArgs"
+      buildLeanExeSync file ((info.objs.push glue).push rust) info.libs
+          (#["-rdynamic"] ++ info.args ++ linkArgs)
+
+/-- The name of the entry module of the Lake package `pkg`: `<P>.EditorPackage`,
+`<P>` being the package's name in upper camel case, the name `lake new`
+gives its library (`shipped-themes` gives `ShippedThemes.EditorPackage`).
+The module declares `packages : Array Editor.Package` in the namespace of
+its own name (`docs/design/packages.md`, "The package set and its
+build"). -/
+def entryModuleName (pkg : Package) : Name :=
+  toUpperCamelCase pkg.baseName ++ `EditorPackage
+
+/-- The entry module of `pkg`, when it has one: a library of `pkg` holds a
+module of that name (`entryModuleName`) and its source file exists. A
+package with none contributes nothing to a set's root. Lake is asked, and no
+source is read. -/
+def entryModule? (pkg : Package) : IO (Option Module) := do
+  match pkg.findModule? (entryModuleName pkg) with
+  | some mod =>
+    if ← mod.leanFile.pathExists then
+      return some mod
+    else
+      return none
+  | none =>
+    return none
+
+/-- The packages of the set `set`, in the order their entry modules
+register: `set` and every package it requires, directly or through
+another. -/
+def setPackages (ws : Workspace) (_set : Package) : Array Package :=
+  ws.packages
+
+/-- The text of a set's root module, for the entry modules `entries` in the
+order they register. It imports the config base, `Editor`, for the link
+alone (`Editor/Main.lean`, "This module names no package, and not the
+config base"), then the executable's entry, then each entry module; and its
+`main` is one call of `Editor.Main.run` with the entry modules' `packages`
+appended in that order. -/
+def rootSource (entries : Array Name) : String :=
+  let imports := entries.foldl (fun text name => text ++ s!"import {name}\n") ""
+  let lists :=
+    if entries.isEmpty then "#[]"
+    else " ++ ".intercalate (entries.map fun name => s!"{name}.packages").toList
+  s!"import Editor
+import Editor.Main
+{imports}
+/-!
+# The executable's root, generated
+
+Written by the package-set build (the facet `editor` of `lean/lakefile.lean`)
+from the Lake packages of a package set, each after the packages it
+requires. Do not edit it: the build writes it again.
+-/
+
+/-- The editor, with the packages of the set's Lake packages. -/
+def main (args : List String) : IO UInt32 :=
+  Editor.Main.run ({lists}) args
+"
+
+/-- The name of the root module the package-set build generates. No library
+declares it. -/
+def setRootName : Name :=
+  `EditorSetRoot
+
+/-- The root module of the set `pkg`, written from the entry modules of the
+set's packages (`setPackages`, `entryModule?`, `rootSource`) to
+`<set>/.lake/build/root/EditorSetRoot.lean`, and only when its text would
+change, so a build with nothing to do writes nothing.
+
+No library of the set declares the module: it is a module of a library
+value made here, in the set's package, whose source directory is that
+directory, so its `.olean` and its object are in the set's build directory.
+That library takes this package's Lean options, so a warning in the root
+fails the build. Lake builds an executable's root the same way
+(`LeanExe.root`). -/
+def setRoot (pkg : Package) : FetchM Module := do
+  let ws ← getWorkspace
+  let mut entries : Array Name := #[]
+  for dep in setPackages ws pkg do
+    if let some mod← entryModule? dep then
+      entries := entries.push mod.name
+  let lib : LeanLib :=
+    ⟨pkg, `EditorSet,
+      { srcDir := pkg.config.buildDir / "root", roots := #[], leanOptions := coreLeanOptions }⟩
+  let root : Module := { lib, name := setRootName }
+  let file := root.leanFile
+  let text := rootSource entries
+  let old ←
+    if ← file.pathExists then
+      some <$> IO.FS.readFile file
+    else
+      pure none
+  unless old == some text do
+    if let some dir := file.parent then
+      IO.FS.createDirAll dir
+    IO.FS.writeFile file text
+  return root
+
+/-- The editor of a package set: `lake -d <set dir> build :editor` gives
+`<set>/.lake/build/bin/editor`.
+
+A package set is a Lake package whose `require`s are the set; its lakefile
+declares no target. This facet is the package-set build
+(`docs/design/packages.md`, "The package set and its build"): it writes
+the set's root module (`setRoot`), builds it with every module it imports,
+each in its own package's build directory, and links it as the editor is
+linked (`linkAsEditor`). It is defined here because the link's objects and
+arguments are the core's knowledge, and a lakefile cannot import another's
+definitions; a facet reaches every package of a workspace that holds this
+one. -/
+package_facet editor pkg : FilePath := do
+  linkAsEditor (← setRoot pkg) (pkg.binDir / "editor")
+
+/-- The packages of a set that a step of the gate runs over
+(`tools/package-set.sh`; `lake -d <set dir> query :editorPackages`): the
+packages of the set (`setPackages`) that are path dependencies and hold a
+Lean library, other than this one, the core, which the gate's own tasks
+cover. One line a package: its name and its directory, separated by a
+tab. -/
+package_facet editorPackages pkg : Array String := do
+  let ws ← getWorkspace
+  let lines :=
+    (setPackages ws pkg).filterMap fun dep =>
+      if dep.keyName == __name__ || !dep.remoteUrl.isEmpty || dep.leanLibs.isEmpty then none
+      else some s!"{dep.baseName.toString (escape := false)}\t{dep.dir}"
+  return Job.pure lines
 
 /-- The editor. `supportInterpreter` exports the executable's symbols, so
 interpreted config can find compiled definitions and `@[extern]` symbols. It

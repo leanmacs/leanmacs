@@ -1,0 +1,13 @@
+# The script the gate has an editor's headless mode run for the fixture
+# package `greeting` (tools/package-set.sh run): on the editor built from
+# the fixture set, which holds the package, its command runs and the scene's
+# echo area shows its text, exactly `expected`. `mise run ffi-test` also
+# runs it on the editor built from the default set, which does not hold the
+# package and must answer `run greeting-hello: no such command`. It touches
+# no file.
+
+reload
+settle
+
+run greeting-hello
+scene

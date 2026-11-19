@@ -1,0 +1,37 @@
+# A fixture package outside the core (docs/design/packages.md, "The package
+# set and its build"), used by tests alone: it shows a package that requires
+# the core being built, tested, linted and run headless by the gate's
+# package steps (tools/package-set.sh), through the fixture set
+# (../lakefile.toml).
+#
+# - `Greeting` is the package's library: `Greeting.lean`, and its entry
+#   module `Greeting/EditorPackage.lean`, which the package-set build reads.
+# - `greeting-test` is its test driver (`lake test`): the tests that need no
+#   Rust library, rooted at `GreetingTest/Model.lean`. It is no default
+#   target, as the core's `model-test` is not: `mise run lean` links with
+#   the system compiler, which this executable has no flags for.
+# - `GreetingTest` holds the test modules, `GreetingTest/Linked.lean` among
+#   them: the root of the executable the core's `editorLinked` facet links
+#   as the editor is linked, with the Rust library.
+# - `tests/headless/` holds its headless fixtures.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+name = "greeting"
+testDriver = "«greeting-test»"
+defaultTargets = ["Greeting", "GreetingTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../../lean"
+
+[[lean_lib]]
+name = "Greeting"
+
+[[lean_lib]]
+name = "GreetingTest"
+globs = ["GreetingTest.+"]
+
+[[lean_exe]]
+name = "greeting-test"
+root = "GreetingTest.Model"
