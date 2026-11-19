@@ -9,6 +9,7 @@ import Editor.Command
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Compiled
+import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -108,6 +109,9 @@ structure Rig where
   host : Headless.Host
   /-- The config the host's source holds. -/
   files : IO.Ref Files
+  /-- The config directory the host's source reads, when it reads one and
+  not `files`. -/
+  directory : Option System.FilePath := none
   /-- The last reload's report line, and the monotonic time, in nanoseconds,
   at which it was printed. -/
   reported : IO.Ref (Option (String × Nat))
@@ -117,9 +121,11 @@ structure Rig where
 
 namespace Rig
 
-/-- Starts a host over `elaborator` and a source in memory. -/
-def start (elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) : IO Rig :=
-  do
+/-- Starts a host over `elaborator` and a source in memory, or, with
+`directory`, over that config directory, which each reload then writes its
+config into and reads it back from. -/
+def start (elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle)
+    (directory : Option System.FilePath := none) : IO Rig := do
   let files ← IO.mkRef ([] : Files)
   let reported ← IO.mkRef none
   let others ← IO.mkRef #[]
@@ -132,20 +138,28 @@ def start (elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate
   let completions ← Job.Completions.new
   let clock ← Job.FakeClock.new completions
   let source :=
-    sourceOver do
-      return (← files.get).map fun (module, text) => (module, headed text)
+    match directory with
+    | some directory => Config.Directory.source directory
+    | none =>
+      sourceOver do
+        return (← files.get).map fun (module, text) => (module, headed text)
   let host ←
     Headless.start (scheme := TestScheme.scheme)
         { elaborator, source, emit, services := { completions, timers := clock.timers },
           published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests := 1,
           wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6 }
-  return { host, files, reported, others }
+  return { host, files, directory, reported, others }
 
 /-- Makes `config` the source's files, asks for a reload, and returns the
 nanoseconds from the request to the report. Throws unless the reload was
 installed. -/
 def reload (rig : Rig) (config : Files) : IO Nat := do
   rig.files.set config
+  -- Written before the clock is read: the time is the reload's.
+  if let some directory := rig.directory then
+    writeConfig directory
+        (config.map fun (module, text) =>
+          (if module == Config.rootModule then Config.rootPath else Config.pathOf module, text))
   rig.reported.set none
   rig.others.set #[]
   let asked ← IO.monoNanosNow
@@ -277,6 +291,29 @@ def reload (sysroot oleanDir : String) : IO UInt8 := do
     IO.println s!"bench-reload: {name}: {medianAndMaximum times}"
   files.remove
   return 0
+
+/-- `bench-reload-directory`: twenty reloads each of the one-line root, of
+the fifty-definition config and of the config of two files, read from a
+config directory, a
+temporary one of its own, and not from memory: what a reload costs with
+the directory's lookups in it. It prints the median and the maximum of
+each. -/
+def reloadDirectory (sysroot oleanDir : String) : IO UInt8 :=
+  IO.FS.withTempDir fun directory => do
+    let (real, files) ← measured sysroot oleanDir
+    let rig ← Rig.start real (some directory)
+    let configs :=
+      [("one-line root", oneLine), ("50 definitions and a simp proof", fiftyDefinitions),
+        ("50 definitions in an imported file, on a base with Lean", fiftyInAModule)]
+    for (name, config) in configs do
+      -- The first load makes or grows the base; it is not one of the twenty.
+      discard <| rig.reload (config 0)
+      let mut times := #[]
+      for round in [1:21] do
+        times := times.push (← rig.reload (config round))
+      IO.println s!"bench-reload-directory: {name}: {medianAndMaximum times}"
+    files.remove
+    return 0
 
 /-- `bench-modules`: makes the base of `modules` and prints the name of
 every module the import read, one a line and unescaped, so that

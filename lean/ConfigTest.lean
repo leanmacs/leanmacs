@@ -343,8 +343,8 @@ of the default config (`config/default`), which `defaultConfigChecks` read.
 directory and requires the root's one error where the command line says,
 and `mise run ffi-test` runs it through `tools/config-package-check.sh`.
 
-`bench-start`, `bench-reload`, `bench-soak` and `bench-soak-modules` are the
-benchmark (`ConfigTest.Bench`; `mise run config-bench`), which the gate
+`bench-start`, `bench-reload`, `bench-reload-directory`, `bench-soak` and
+`bench-soak-modules` are the benchmark (`ConfigTest.Bench`; `mise run config-bench`), which the gate
 never runs.
 `bench-modules` lists the modules an import set reads, for
 `mise run module-bench` and the gate's `bundle-test`.
@@ -368,6 +368,8 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit (← ConfigTest.Bench.modules sysroot oleanDir (module :: modules))
   | ["bench-reload", sysroot, oleanDir] =>
     IO.Process.exit (← ConfigTest.Bench.reload sysroot oleanDir)
+  | ["bench-reload-directory", sysroot, oleanDir] =>
+    IO.Process.exit (← ConfigTest.Bench.reloadDirectory sysroot oleanDir)
   | ["bench-soak", sysroot, oleanDir, count] =>
     match count.toNat? with
     | some count =>

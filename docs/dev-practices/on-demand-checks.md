@@ -44,6 +44,7 @@ which adds the process's real time and its maximum resident set size:
 |---|---|
 | `bench-start <sysroot> <olean dir> <module>…` | How long importing the base with those modules takes, and the first load of a 20-line config. Run for `Editor`, for `Editor Std` and for `Editor Lean`. |
 | `bench-reload <sysroot> <olean dir>` | The median and the maximum of 20 reloads each of a one-line root, a 20-line config, 50 definitions with a `simp` proof, and a config of two files, the 50 definitions in a config file the root imports, on a base that holds `Lean`. |
+| `bench-reload-directory <sysroot> <olean dir>` | The one-line root and the last two of those again, with the config written to and read from a config directory, a temporary one, and not held in memory: the directory's lookups are in the time. |
 | `bench-soak <sysroot> <olean dir> <count>` | The mean time of a reload over that many reloads of a config that is its root alone: the 50 definitions in a root that imports `Lean` and uses it. |
 | `bench-soak-modules <sysroot> <olean dir> <count>` | The same for a config of two files: a root that imports `Lean` and a config file that changes each round, so each reload writes a module file and makes an environment that imports it. |
 

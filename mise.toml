@@ -1174,6 +1174,9 @@ run = '''status=0; out=$( (ulimit -c 0; exec env -u LEAN_STACK_SIZE_KB .lake/bui
 #   root, of a 20-line config, of 50 definitions with a `simp` proof, and of
 #   a config of two files, the 50 definitions in an imported file that
 #   changes, on a base with `Lean`;
+# - `bench-reload-directory`: the first and the last two of those again, with the config
+#   read from a config directory, a temporary one, and not from memory, so
+#   the directory's lookups are in the time;
 # - `bench-soak` with 100 and with 500 reloads of a config that is its root
 #   alone, which imports `Lean` and uses it: the mean time of a reload, and,
 #   from the two resident set sizes, whether replaced configs are freed;
@@ -1188,8 +1191,8 @@ run = '''status=0; out=$( (ulimit -c 0; exec env -u LEAN_STACK_SIZE_KB .lake/bui
 # second is of the first: a config whose replaced versions are freed stays
 # within a few percent. Memory is reported, never gating.
 #
-# The config is held in memory, so nothing is read but the `.olean` files,
-# whose directories are passed in. LEAN_STACK_SIZE_KB is removed from the
+# The config is held in memory but for `bench-reload-directory`, so nothing
+# else is read but the `.olean` files, whose directories are passed in. LEAN_STACK_SIZE_KB is removed from the
 # environment, so the threads have the stack the editor gives them.
 [tasks.config-bench]
 description = "Opt-in, never part of ci: measure start-up, reload time and memory across reloads of the config session (lean/ConfigTest/Bench.lean). It asserts nothing"
@@ -1200,6 +1203,7 @@ run = [
   "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-start \"$(lean --print-prefix)\" .lake/build/lib/lean Editor Std",
   "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-start \"$(lean --print-prefix)\" .lake/build/lib/lean Editor Lean",
   "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-reload \"$(lean --print-prefix)\" .lake/build/lib/lean",
+  "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-reload-directory \"$(lean --print-prefix)\" .lake/build/lib/lean",
   "sh ../tools/soak-ratio.sh .lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean bench-soak",
   "sh ../tools/soak-ratio.sh .lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean bench-soak-modules",
 ]
