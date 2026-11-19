@@ -105,7 +105,7 @@ changes. No key waits on git: it runs only in the jobs.
 
 | Addition | Where |
 |---|---|
-| A key that runs it | A binding of `find-file-in-project`, in the input scheme's table |
+| A key that runs it | A binding in the default config, under the leader (`config/default/05-leader.lean`, pinned by `ConfigTest.defaultConfigChecks`); the scheme binds none, as for `execute-command` |
 | A key that steps out of the finder | A binding of `find-file-in-another-workspace` in the prompt category `workspace-file` |
 | Another value carried from the finder | A trailing field of `ChooseOrder`, after the typed text, and an argument the reach carries |
 | Another kind of workspace list, jj's | A list `Projects.entries` takes, read beside `worktreesOf` |

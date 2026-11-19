@@ -4,7 +4,9 @@
 -- Each binding has a description and each prefix a name, for the key hints.
 -- `SPC :` opens the command prompt, which runs any registered command by
 -- name, and `SPC ?` the binding search, which lists every binding the view
--- can reach and runs the one chosen as its key would.
+-- can reach and runs the one chosen as its key would. `SPC SPC` and
+-- `SPC p f` find a file in the buffer's workspace, and `SPC p p` picks
+-- another workspace of the project and finds a file in it.
 --
 -- The map is `leaderMap`, apart from `setup` (in `90-setup.lean`), so it can
 -- be dropped into a config of your own: copy this file in and call
@@ -21,11 +23,16 @@ def leaderMap : SetupM Unit := do
   prefixName "<leader> w" "window"
   prefixName "<leader> TAB" "tab"
   prefixName "<leader> h" "help"
+  prefixName "<leader> p" "project"
   -- Top level.
   bindKey "<leader> ." "open-file" (desc := "Find file")
   bindKey "<leader> ," "switch-buffer" (desc := "Switch buffer")
   bindKey "<leader> :" "execute-command" (desc := "Execute command")
   bindKey "<leader> ?" "search-bindings" (desc := "Search bindings")
+  bindKey "<leader> SPC" "find-file-in-workspace" (desc := "Find file in workspace")
+  -- project
+  bindKey "<leader> p f" "find-file-in-workspace" (desc := "Find file in workspace")
+  bindKey "<leader> p p" "find-file-in-project" (desc := "Switch workspace")
   -- file
   bindKey "<leader> f f" "open-file" (desc := "Find file")
   bindKey "<leader> f s" "save-buffer" (desc := "Save file")

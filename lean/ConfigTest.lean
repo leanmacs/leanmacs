@@ -164,7 +164,8 @@ show:
 - `defaultConfigChecks`: the default config `mise run install` ships, read
   from the directory the fourth argument names: a reload of it through a
   host of the Vim scheme that ships installs with no diagnostic and
-  `SPC f f` then asks for a path to open; each of its bindings names a
+  `SPC f f` then asks for a path to open, `SPC p f` and `SPC SPC` open the
+  workspace finder and `SPC p p` the project's workspace picker; each of its bindings names a
   registered command; and each prefix it binds under the leader has a
   prefix name (`Registry.prefixName?`);
 - `indentChecks`: `=` and the indented new lines through a host of the Vim

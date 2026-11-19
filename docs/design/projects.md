@@ -222,7 +222,7 @@ root.
   [concurrency.md](concurrency.md), "A key in the workspace finder,
   measured".
 
-Keys come with project navigation's phase 5; until then it runs by name.
+The default config binds `SPC p f` and `SPC SPC` to it (`config/default/05-leader.lean`); the scheme binds no key.
 
 ## The project's workspaces and `find-file-in-project`
 
@@ -273,7 +273,7 @@ the one chosen.
 - **A buffer with no workspace** has no project: the command says
   `find-file-in-project: <buffer> is in no project` and opens nothing.
 
-Keys come with project navigation's phase 5. Stepping out of the file
+The default config binds `SPC p p` to it (`config/default/05-leader.lean`); the scheme binds no key. Stepping out of the file
 finder into this picker with the typed text is phase 4's (below).
 
 ### Reaching a workspace not yet found

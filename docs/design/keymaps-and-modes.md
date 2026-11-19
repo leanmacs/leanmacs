@@ -2979,6 +2979,7 @@ Which names have something behind them:
 | `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
 | `execute-command`, which no table names | Built and registered (`ExecuteCommand.commands`; "Running a command by name"). The scheme binds no key to it (the owner, 2026-11-17); the default config binds `SPC :` |
 | `search-bindings`, which no table names | Built and registered (`BindingSearch.commands`; "Searching the bindings"). The scheme binds no key to it, as for `execute-command`; the default config binds `SPC ?` |
+| `find-file-in-workspace` and `find-file-in-project`, which no table names | Built and registered (`Workspace.commands`). The scheme binds no key to them, as for `execute-command`; the default config binds `SPC p f` and `SPC SPC` to `find-file-in-workspace` and `SPC p p` to `find-file-in-project` |
 | `find-file-in-another-workspace`, which no table names | Built and registered (`Workspace.commands`). Compiled code binds `C-x C-d` to it in the prompt category `workspace-file` (`Workspace.bindings`), not in a state's table, so it holds in the `minibuffer` state while the workspace finder is open and nowhere else ("The minibuffer", under Modes) |
 | `keyboard-quit` | Built and registered (`Shell.commands`): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
@@ -5104,6 +5105,9 @@ runs its command, through a host) and `ConfigTest.defaultConfigChecks`
     prefix named: `SPC .` and `SPC ,` find a file and switch buffer;
     `SPC :` executes a command by name ("Running a command by name");
     `SPC ?` searches the bindings ("Searching the bindings");
+    `SPC SPC` finds a file in the buffer's workspace; `SPC p` project
+    (`p f` find a file in the workspace, `p p` switch workspace: pick
+    another workspace of the project and find a file in it);
     `SPC f` file (`f f` open, `f s` save); `SPC b` buffer (`b`, `i`, `k`,
     `d`, `s`, `r`); `SPC w` window, Vim's `C-w` keys with `n`, `p`, `c`
     and `w` given back their window meanings; `SPC TAB` tab, Doom's
@@ -5113,13 +5117,20 @@ runs its command, through a host) and `ConfigTest.defaultConfigChecks`
     editor's layout commands (`z`, `m`, `M`, `,`, `.`, `H J K L`, `F`) sit
     on the letters `C-w` gives them. Keys with no registered command are
     left out. `05-leader.lean` holds the full list. Doom labels `SPC :` `M-x`; here it is
-    `Execute command`, since a Vim-first editor has no `M-x`.
+    `Execute command`, since a Vim-first editor has no `M-x`. Doom's
+    "project" is the repository and its `SPC SPC`, `SPC p f` and
+    `SPC p p` read "Find file in project" and "Switch project"; here the
+    finder searches one workspace (worktree) of the project, so they read
+    "Find file in workspace" and "Switch workspace".
   - **Pinned** by `ConfigTest.defaultConfigChecks`: a reload installs it
     with no diagnostic, `SPC f f` asks for a path to open and, once that
     is cancelled, `SPC :` opens the command prompt and, once that is
-    cancelled, `SPC ?` opens the binding search; every binding names a
-    registered command, `<leader> :` and `<leader> ?` among them with
-    their descriptions; and every prefix under the leader has a name.
+    cancelled, `SPC ?` opens the binding search; `SPC p f` and, once that
+    is cancelled, `SPC SPC` open the workspace finder and, once that is
+    cancelled, `SPC p p` runs `find-file-in-project`; every binding names a
+    registered command, `<leader> :`, `<leader> ?`, `<leader> SPC`,
+    `<leader> p f` and `<leader> p p` among them with their descriptions;
+    and every prefix under the leader has a name, `SPC p` named `project`.
 - Built: completion at point from config ("Completion at point").
   `defineAtPoint` registers an at-point source by its name, and config's of
   a shipped name replaces it, so `defineAtPoint (Completion.AtPoint.words
