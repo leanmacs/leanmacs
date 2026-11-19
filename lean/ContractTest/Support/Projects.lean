@@ -106,8 +106,9 @@ def ProjectRig.over (services : Job.Services) : IO ProjectRig := do
       services :=
         { services with
           files := Job.realFiles services.completions published.reader held
-          diffs :=
-            Job.realDiffs services.completions published.reader held (← Job.RefusedDiffs.new) } }
+          diffs := Job.realDiffs services.completions published.reader held (← Job.RefusedDiffs.new)
+          greps :=
+            Job.realGreps services.completions published.reader held (← Job.RealGreps.new) } }
 
 /-- A rig over `services`, whose children get `path` as their `PATH`
 (`onFixturePath`), with a file service of its own. -/

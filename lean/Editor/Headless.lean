@@ -2739,6 +2739,7 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (h
   let timed ← Job.TimedRuns.new
   let watches ← Job.RealWatches.new
   let refusedDiffs ← Job.RefusedDiffs.new
+  let greps ← Job.RealGreps.new
   -- The headless mode's clock is fake: a script moves it (`advance`).
   let clock ←
     if fakeClock then
@@ -2754,6 +2755,7 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) (h
         processes := Job.realProcesses completions refused timers timed
         fileWatches := Job.realFileWatches completions watches
         diffs := Job.realDiffs completions published.reader held refusedDiffs
+        greps := Job.realGreps completions published.reader held greps
         environments := reportedEnvironments environments 4, fuzzy := Fuzzy.real
         snapshots := Job.realSnapshots published.reader } published held
   return { collaborators with clock }
@@ -2832,8 +2834,9 @@ def main (arguments : List String) : IO UInt32 := do
   -- Every child the library started is killed and reaped before the queues
   -- are quit: `run` has returned, so the loop has cancelled every job.
   Ffi.processesShutdown
-  -- And every watch is ended.
+  -- And every watch is ended, and every search.
   Ffi.watchesShutdown
+  Ffi.grepShutdown
   -- Shutdown: quit lets every task parked in a pull return, the pump among
   -- them, and the exit is explicit, because a task may still be blocked in
   -- the library.

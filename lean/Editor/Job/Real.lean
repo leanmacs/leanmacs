@@ -98,6 +98,18 @@ once.
   run is. Cancelling the child's id kills it; cancelling a read's or a
   write's withdraws that wait alone.
 
+## The searches
+
+`realGreps` is a thin adapter over the bindings of the library's grep
+service, in `realFileWatches`'s shape. A start goes to the library under its
+wait's id, which names the search from then on, with each overlay's source
+resolved to a snapshot handle as a diff's is (`realDiffs`); a `next` goes
+with its own wait's id, and each reply is taken once (`Ffi.grepTake`). A
+start whose overlay names no snapshot, and a request the library does not
+take, are refused here at once and the refusal kept until it is taken
+(`RealGreps`). The walk's refusal of the root, which the library delivers as
+the end of the first read, is that read's refusal.
+
 ## The file watches
 
 `realFileWatches` is a thin adapter over the bindings of the library's watch
@@ -922,6 +934,137 @@ def realFileWatches (completions : Completions) (state : RealWatches) : FileWatc
       state.refused.modify (·.erase id)
       state.roots.modify (·.erase id)
       (discard <| Ffi.watchesCancel id : IO Unit).catchExceptions fun _ => pure () }
+
+/-- What the grep service's adapter keeps of its own: the refusals of the
+requests that never reached the library, by the id of their wait, until
+they are taken or withdrawn. Every change is one atomic step. -/
+structure RealGreps where private mk ::
+  /-- The refusals, by the id of their wait. -/
+  private refused : IO.Ref (Std.HashMap UInt64 GrepError)
+
+/-- A table that holds nothing. -/
+def RealGreps.new : BaseIO RealGreps :=
+  return ⟨← IO.mkRef {}⟩
+
+/-- The port's refusal for the library's. A refusal as shut down is `failed`
+with its words: a job sees it only if it searches while the editor quits. -/
+def grepErrorOf : Ffi.GrepRefusal → String → GrepError
+  | .notAbsolute, detail => .notAbsolute detail
+  | .notFound, detail => .notFound detail
+  | .notADirectory, detail => .notADirectory detail
+  | .denied, detail => .denied detail
+  | .invalid, detail => .invalid detail
+  | .shutDown, detail => .failed detail
+  | .failed, detail => .failed detail
+
+/-- What a search request is refused with when the library kept no reply for
+it, though its wait completed, or sent one of another request's kind. -/
+def grepNoReply : GrepError :=
+  .failed "the grep service kept no reply for the request"
+
+/-- The port's file for the library's: a path that is not UTF-8 is spelled a
+character a byte, as no buffer can be named by it. -/
+def foundOf (file : Ffi.GrepFile) : Grep.Found :=
+  { path :=
+      (String.fromUTF8? file.path).getD (String.ofList (file.path.toList.map (Char.ofNat ·.toNat)))
+    origin := if file.buffer then .buffer else .disk
+    found :=
+      file.found.map fun (row, start, stop) =>
+        { row := row.toNat, start := start.toNat, stop := stop.toNat } }
+
+/-- The grep port answered by the library's grep service. An overlay's
+source is found as a diff's is: in `held` for one the job loaded, and
+through the read half of the text store's table (`published`) for one a
+command took; the library keeps its own hold on each text. A start whose
+overlay names no snapshot, and a request the library's service does not
+take, never reach the library: they are completed here, at once, with their
+refusal kept in `state` until it is taken. A search is named by its start's
+wait, and each `next` of it goes to the library with its own wait's id.
+Numbers no word holds are sent as the largest. -/
+def realGreps (completions : Completions) (published : SnapshotReader) (held : HeldSnapshots)
+    (state : RealGreps) : Greps :=
+  { start := fun id request => do
+      match request with
+      | .start root pattern overlays limits bound =>
+        let mut resolved := #[]
+        for (path, source) in overlays do
+          let found ←
+            match source with
+            | .snapshot taken =>
+              published.find? taken
+            | .held loaded =>
+              held.find? loaded
+          match found with
+          | some snapshot =>
+            resolved := resolved.push (path.toString, snapshot)
+          | none =>
+            return ← refuse id .noSuchSnapshot
+        let started ←
+          (Ffi.grepStart id root.toString pattern (word limits.files) (word limits.found)
+                  (word bound) resolved).catchExceptions
+              fun _ => pure false
+        unless started do
+          refuse id (.failed "the grep service did not take the request")
+      | .next search =>
+        let started ← (Ffi.grepNext (word search.number) id).catchExceptions fun _ => pure false
+        unless started do
+          refuse id (.failed "the grep service did not take the request")
+    take := fun id request =>
+      match request with
+      | .start .. => do
+        match ← taken id with
+        | .ok .started =>
+          return .ok ⟨id.toNat⟩
+        | .ok (.refused refusal detail) =>
+          return .error (grepErrorOf refusal detail)
+        | .ok (.found ..) =>
+          return .error grepNoReply
+        | .error refusal =>
+          return .error refusal
+      | .next _ => do
+        match ← taken id with
+        | .ok (.found files ending) =>
+          let found := files.map foundOf
+          match ending with
+          | .more =>
+            return .ok { found, ended := none }
+          | .complete fileCount matchCount =>
+            return .ok { found, ended := some (.complete fileCount.toNat matchCount.toNat) }
+          | .truncated fileCount matchCount =>
+            return .ok { found, ended := some (.truncated fileCount.toNat matchCount.toNat) }
+          | .refused refusal detail =>
+            return .error (grepErrorOf refusal detail)
+        | .ok _ =>
+          return .error grepNoReply
+        | .error refusal =>
+          return .error refusal
+    cancel := fun id => do
+      state.refused.modify (·.erase id)
+      (discard <| Ffi.grepCancel id : IO Unit).catchExceptions fun _ => pure () }
+where
+  /-- Completes the wait `id` at once, with `refusal` kept as what its take
+  answers. -/
+  refuse (id : UInt64) (refusal : GrepError) : BaseIO Unit := do
+    state.refused.modify (·.insert id refusal)
+    completions.finish id .completed
+  /-- The library's reply to the wait `id`, which has completed: the refusal
+  kept for a request that never reached the library, or else what the
+  library hands over, once. -/
+  taken (id : UInt64) : BaseIO (Except GrepError Ffi.GrepReply) := do
+    let refusal? ← state.refused.modifyGet fun refused => (refused[id]?, refused.erase id)
+    if let some refusal := refusal? then
+      return .error refusal
+    let reply ←
+      (return .ok (← Ffi.grepTake id) :
+              IO (Except GrepError (Option Ffi.GrepReply))).catchExceptions
+          fun error => pure (.error (.failed (toString error)))
+    match reply with
+    | .error refusal =>
+      return .error refusal
+    | .ok (some reply) =>
+      return .ok reply
+    | .ok none =>
+      return .error grepNoReply
 
 /-- Runs `command`, the command a finished job ended with or a program that
 runs it, against the Rust library on the editor thread, with `display`

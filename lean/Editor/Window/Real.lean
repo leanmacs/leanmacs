@@ -303,11 +303,12 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
 
 /-- The window mode's shutdown, which `host` runs once the loop has ended
 and before it closes the window: every child the library started is killed
-and reaped, every watch is ended, and then the queues are quit, as the
-headless mode does. -/
+and reaped, every watch and every search is ended, and then the queues are
+quit, as the headless mode does. -/
 def shutdown : IO Unit := do
   Ffi.processesShutdown
   Ffi.watchesShutdown
+  Ffi.grepShutdown
   Ffi.quit
 
 /-- `editor [<file>]`, with the command line's `arguments`: reads the world at

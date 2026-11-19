@@ -32,7 +32,8 @@ def filesOf (directory : System.FilePath) : IO (Array (String × ByteArray)) := 
 
 /-- What a check of the runner over the library's file service works with: a
 text store whose table of snapshots is published, the file service over its
-read half, and a fake clock a check parks a job on. The file waits are
+read half, the grep service over the same table, and a fake clock a check
+parks a job on. The file waits are
 completed by the process's pump, through `completions`; the clock's by the
 check. Each check has its own, over the process's one table of waits. -/
 structure FileRig where
@@ -42,7 +43,8 @@ structure FileRig where
   held : Job.HeldSnapshots
   /-- The clock a job of the rig sleeps on, which only the check moves. -/
   clock : Job.FakeClock
-  /-- The table of waits, the clock and the library's file service. -/
+  /-- The table of waits, the clock, and the library's file and grep
+  services. -/
   services : Job.Services
 
 /-- A rig over the table of waits `completions`, which the pump serves. -/
@@ -54,6 +56,7 @@ def FileRig.new (completions : Job.Completions) : BaseIO FileRig := do
       published, held, clock
       services :=
         { completions, timers := clock.timers
-          files := Job.realFiles completions published.reader held } }
+          files := Job.realFiles completions published.reader held
+          greps := Job.realGreps completions published.reader held (← Job.RealGreps.new) } }
 
 end ContractTest

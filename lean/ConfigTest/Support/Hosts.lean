@@ -292,6 +292,7 @@ def Stage.overFiles (context : Context) (source : Config.Source) (compiled : Com
   let stage ← Stage.new context context.elaborator source compiled (some completions)
   let collaborators := stage.collaborators
   let refusedDiffs ← Job.RefusedDiffs.new
+  let greps ← Job.RealGreps.new
   let watches ← Job.RealWatches.new
   return { stage with
       collaborators :=
@@ -302,7 +303,10 @@ def Stage.overFiles (context : Context) (source : Config.Source) (compiled : Com
               files := Job.realFiles completions collaborators.published.reader collaborators.held
               diffs :=
                 Job.realDiffs completions collaborators.published.reader collaborators.held
-                  refusedDiffs } } }
+                  refusedDiffs
+              greps :=
+                Job.realGreps completions collaborators.published.reader collaborators.held
+                  greps } } }
 
 namespace Session
 
