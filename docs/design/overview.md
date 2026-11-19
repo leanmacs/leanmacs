@@ -130,7 +130,10 @@ what not to add.
   elaborator.
 - **Only modules of the package go under `lean/`.** lean-fmt compiles every
   `.lean` file there. Config fixtures live under `tests/`, and tests write
-  their chunks from strings.
+  their chunks from strings. A package outside the core keeps its headless
+  fixtures under its own `tests/` and excludes them from the formatter
+  ([packages.md](packages.md), "A package's tests and the gate's steps over
+  them").
 
 ## Component map
 
@@ -188,8 +191,15 @@ Rust crates:
 | `editor-syntax-treesitter` | The `Syntax` port's real adapter, over tree-sitter, pinned exactly, with the Rust, JSON, Markdown (block and inline), TOML and Lean grammars compiled in from their crates.io crates, or for Lean from upstream's crate vendored under `vendor/`, each pinned exactly, the queries each crate ships (highlights; Rust's and Markdown's injections), and Rust's indents and text objects queries, written here (`queries/rust/`). No tree-sitter type is public. Its tests hold it to the port's contract for each grammar, over fixtures checked in under `tests/syntax/`. |
 | `editor-term-ghostty` | Added after the first milestone. |
 
-The Lean package in `lean/` builds the executable with Lake, which runs
-Cargo for the static library:
+The Lean package in `lean/` is the core. Lake builds it and runs Cargo for
+the static library, and links the executable from the core and a package
+set: `packages/` is the default set, a Lake package whose `require`s are
+the core and, as features move out of the core, the default packages,
+each a Lake package in a directory of its own under `packages/`. The
+fixture set and its two fixture packages, used by tests alone, are under
+`tests/packages/`, and the Lean formatter's host package is
+`tools/lean-fmt/` ([packages.md](packages.md), "The package set and its
+build"). The core's parts:
 
 | Part | Contents |
 |---|---|
@@ -215,8 +225,8 @@ Cargo for the static library:
 | `Editor.Evil.TreeObjects` | The syntax tree's text objects, entries of evil's vocabulary (`a-function`, `inner-function`, `a-class`, `inner-class`, `an-argument`, `inner-argument`), and the rule that chooses a node from the text objects query's captures as plain rows (`TreeObjects.choose`). |
 | `Editor.Ex` | The ex command line: a prompt whose answer is run as a named ex command. `ex` asks for a line and has the command the line's first word is bound to run after it, as a step of its own, with the rest of the line as its argument; and the commands `quit`, `save-and-quit` and `reload-config`. A command cannot end the process or reload the config: it asks, and the loop hands the request to its host. `Editor.Ex.Line` is a line and an ex binding as data, with the parser; an ex name is bound to a command's name in the registry, by owner, from compiled code and from `setup`. `Editor.Ex.Compiled` registers the commands and the ex names `w`, `e`, `q`, `wq` and `reload` as compiled code, which the executable ships. The ex line's prompt has the bound ex names as its candidates, so a name is completed; an argument is not. Ranges and `!` are not built. |
 | Standard library | evil's operators; completion in the minibuffer and its display, and completion at point (built); later agents, review, version control, the rdm client. |
-| `Editor.Version` | What build the running editor is, for `editor --version`: the version, the build ID and the commit read from its bundle's `Info.plist` through a reader function, the port, which `Main` fills with the real file read and the model tests with a fake; a development build outside a bundle. Pure; `Editor` does not import it. |
-| `Main` | Dispatches the command line: `--version` alone to the version (`Editor.Version`), `headless` to the headless mode, `window-check` to the keyboard check, and anything else to the window mode (`Editor/Window/Real.lean`), which wires the real bindings together, the display on the system's fonts and the system clipboard among them, and runs the headless host's editor loop on a file in a window. |
+| `Editor.Version` | What build the running editor is, for `editor --version`: the version, the build ID and the commit read from its bundle's `Info.plist` through a reader function, the port, which `Editor.Main` fills with the real file read and the model tests with a fake; a development build outside a bundle. Pure; `Editor` does not import it. |
+| `Editor.Main` | The executable's entry, called by the root the package-set build generates with the set's packages ([packages.md](packages.md), "The package set and its build"). Dispatches the command line: `--version` alone to the version (`Editor.Version`), `headless` to the headless mode, `window-check` to the keyboard check, and anything else to the window mode (`Editor/Window/Real.lean`), which wires the real bindings together, the display on the system's fonts and the system clipboard among them, and runs the headless host's editor loop on a file in a window. |
 
 ## Milestones
 

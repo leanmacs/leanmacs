@@ -14,9 +14,20 @@ linking a Rust static library. The design below is the second arrangement.
 Lake builds the executable. The Rust library is a Lake target that runs
 `cargo build`, and Lake relinks only when the archive's contents change.
 
-- **`supportInterpreter := true`** on the executable. It exports the
-  program's symbols so that interpreted config can call compiled code.
-  Without it the interpreter aborts on the first missing symbol.
+- **The editor is built from a package set**, not as a target of the
+  core: a Lake package whose `require`s are the core and the packages. The
+  core's lakefile defines the build as a facet, and in `lean/`
+  `lake -d ../packages build :editor` writes the executable's root module
+  from the default set's packages, builds it and links
+  `packages/.lake/build/bin/editor`
+  ([packages.md](packages.md), "The package set and its build"). The test
+  executables (`ffi-test`, `config-test`, `contract-test`, `model-test`)
+  are still targets of the core, under `lean/.lake/build/bin`.
+- **The executable's symbols are exported** (`-rdynamic`, which is what
+  `supportInterpreter := true` gives a `lean_exe`, and what the test
+  executables that interpret config set), so that interpreted config can
+  call compiled code. Without it the interpreter aborts on the first
+  missing symbol.
 - **A small glue file** in C holds what neither language can express:
   one-line wrappers where a Lean `@[extern]` signature needs `lean.h`
   (which is mostly inline functions Rust cannot call), and the entry point.
@@ -73,8 +84,9 @@ initialise (big-number constants, three mutexes, regions read from `.olean`
 files), nothing allocated by the glue or the Rust library, and the same
 count for a script a hundred times as long.
 
-**The app bundle is a Lake target too** (`editorApp`, not a default
-target; `mise run app`). It copies the executable and the `.olean` files of
+**The app bundle is a facet of the set too** (`editorApp`, which nothing
+builds by default; `mise run app` builds it from the default set, at
+`packages/.lake/build/Leanmacs.app`). It copies the set's executable and the `.olean` files of
 the closure of `Editor` into `Leanmacs.app`, laid out as module lookup
 expects (`lean/Editor/ModuleLookup.lean`), writes `Info.plist`, with
 the version from `lean/app/version` as `CFBundleShortVersionString`, the
@@ -94,7 +106,14 @@ in [building.md](../dev-practices/building.md), "The app bundle".
 There is no hand-written Lean start-up sequence and no scraping of
 generated symbol names, which the first prototype needed. What can break on
 a Lean upgrade is the `@[extern]` calling convention, the Lake build API,
-and the compiler and entry-point workarounds above.
+and the compiler and entry-point workarounds above. The package-set build
+leans on more of that API than a `lean_exe` did: package and module facets
+defined in a required package's lakefile and run on a TOML root, a library
+value and a module made in a facet for a root no lakefile declares, a
+module's link information (`linkInfoExport`), `buildLeanExeSync`, a
+package's `depConfigs`, and `lake query` over a facet. Symbol names carry
+the Lake package's name, so renaming the core's package changes every
+symbol; nothing outside Lean's generated code names one.
 
 ### A link on the user's machine, measured
 
@@ -123,11 +142,19 @@ signs the result with `codesign --force -s -`; and runs it. The package
 brings two modules of its own: its one module, `UserLinkFixture`, with its
 one command, `user-link-hello`; and a hand-written root, `Main`, 78 lines
 that copy the body of the shipped headless host, standing in for the root
-the package-set build is to generate (the packages roadmap's phase 4). The
+the package-set build generates. The
 root has since been reduced: the fixture's module exports a `Package` and
-the root passes it to the shipped host after the packages that ship
+the root passes it to the shipped host after the packages of the core
 ("Packages", under "Config and reload"), so it copies no body; the figures
-below are of the root as measured. The
+below are of the root as measured. **The stand-in root remains**, although
+the editor's own root is now generated ([packages.md](packages.md), "The
+generated root"): the build that generates it is a facet of the core's
+lakefile, and the staged core here is prebuilt pieces behind a lakefile
+with no target, which cannot carry it. A prebuilt core that supplies the
+facet is the packages roadmap's phase 9, and replaces the stand-in. The
+check now reads the pieces from the default set's editor
+(`packages/.lake/build/bin/editor` and its `editor.rsp`), and the object it
+leaves out is the generated root's, where it was `Main`'s. The
 check asserts: the relinked editor
 prints exactly `tests/headless/expected` for the standing headless fixture,
 and for `tests/user-link` the package's command runs and its message is in
@@ -166,7 +193,7 @@ The staged pieces the relink used:
 |---|---|---|---|
 | `toolchain/` | The Lean toolchain, whole (`lean --print-prefix`), less `exposed/`, which mise adds | 17,901 | 3,131.0 MB |
 | of it, what the linker opened | Lean's seven static libraries, `libgmp`, `libuv`, `libssl`, `libcrypto`, compiler-rt, `libSystem.tbd`, `libc++.dylib` | 14 | 274.6 MB |
-| `core/lib/` | The `.olean` file of each module the built editor's link names, less its root `Main` (`lean/.lake/build/lib/lean`) | 217 | 163.7 MB |
+| `core/lib/` | The `.olean` file of each module the built editor's link names, less its root (`lean/.lake/build/lib/lean`) | 217 | 163.7 MB |
 | `core/obj/` | The object of each of those modules, `.c.o.export` (`lean/.lake/build/ir`) | 217 | 17.3 MB |
 | `core/glue.o` | The glue object, as `mise run lean` compiled it | 1 | 0.1 MB |
 | `core/libeditor_ffi.a` | The Rust archive (`target/release`) | 1 | 82.0 MB |
@@ -175,8 +202,9 @@ The staged pieces the relink used:
 | `package/` | `tests/user-link/package`: `lakefile.lean`, `Main.lean`, `UserLinkFixture.lean` | 3 | 10,028 bytes |
 
 The rule for the editor's modules is the built editor's own link line
-(`lean/.lake/build/bin/editor.rsp`): every object it names, less `Main`'s,
-because the package brings the root and two `main` symbols cannot link.
+(`packages/.lake/build/bin/editor.rsp`; `lean/.lake/build/bin/editor.rsp`
+when this was measured): every object it names, less its root's, because
+the package brings the root and two `main` symbols cannot link.
 The toolchain is staged whole, so the set is sufficient and not shown
 minimal: what `lake`, `lean` and `clang` read of it was not measured, only
 what the linker opened.
@@ -553,7 +581,8 @@ elaborator.
 | Owners: who registered or started something | `lean/Editor/Config/Owner.lean` |
 | A package: a name and a `setup`, how a feature registers | `lean/Editor/Package.lean` |
 | Registering packages: a package's owner, what its `setup` means and what is refused, and the config state a host starts from | `lean/Editor/Config/Packages.lean` |
-| The packages that ship: the one hand-written list, which `Main.lean` passes to the hosts | `lean/PackageSet.lean` |
+| The packages of the core's Lake package: its entry module, whose list the generated root passes to the hosts | `lean/EditorCore/EditorPackage.lean` |
+| The executable's entry: the dispatch on the command line's mode, handed the packages | `lean/Editor/Main.lean` |
 | Faces: what a face looks like, as data, the built-in theme and a theme with its name | `lean/Editor/Face.lean` |
 | The registry of commands, of jobs, of key bindings, of modes, of ex bindings, of faces, of themes, of mode-line segments and of menus, replaced by owner, the keymap of the bindings, a mode line resolved from a listing, the menu bar, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
 | The mode line: segments, from what a window shows to status fields; the shipped ones and their default order; a listing resolved into a mode line; and the fields of a window, selected or not | `lean/Editor/ModeLine.lean` |
@@ -817,12 +846,12 @@ A feature registers through one value, a **package**
 (`lean/Editor/Package.lean`): a name and a `setup : SetupM Unit`, the
 program config's `setup` is, written with the operations config uses. A
 host registers features only from the packages it is handed. Built by the
-packages roadmap's phase 2; everything is still inside the one Lake
-package, and how the executable finds its packages without anyone listing
-them (a generated root, an entry-module convention, dependency order) is
-that roadmap's phase 4. What the core is, what a package may import of it
-and what each feature would have to cross to move out are in
-[packages.md](packages.md), from that roadmap's phase 3.
+packages roadmap's phase 2. How the executable finds its packages without
+anyone listing the Lake packages (a package set, a generated root, an
+entry-module convention, dependency order), what the core is, what a
+package may import of it and what each feature would have to cross to move
+out are in [packages.md](packages.md), from that roadmap's phases 3 and
+4.
 
 ```lean
 def package : Package :=
@@ -845,8 +874,12 @@ def package : Package :=
   starts, registers each in the array's order
   (`Config.State.ofPackages`, in `Headless.Running.new`), before any
   config's `setup` runs. Of two packages that register one name, the
-  later is the one a lookup finds. Nothing is ordered by what a package
-  depends on: a command's name is looked up when it is run.
+  later is the one a lookup finds. The array is the executable's generated
+  root's: the packages of each Lake package of the set, each Lake package
+  after the ones it requires, the core's first
+  ([packages.md](packages.md), "The order packages register in"). Inside
+  one Lake package nothing is ordered by what a package depends on: a
+  command's name is looked up when it is run.
 - **A reload leaves every package's registrations in place.** An install
   replaces the entries of the owner `config` alone
   (`Config.Registry.replaceOwned`), and cancels config's jobs alone, so a
@@ -890,10 +923,11 @@ def package : Package :=
   scheme is not registered: it is the host's type parameter
   (`Headless.Collaborators σ scheme`), an `InputScheme` is in `Type 1`, and
   a setup request is plain data in `Type`.
-- **The packages that ship are listed by hand in one module**,
-  `lean/PackageSet.lean` (`PackageSet.shipped`), which is the executable's
-  wiring and no module of the editor: it is outside `lean/Editor/` and the
-  namespace `Editor`, in a library of its own (`lean_lib PackageSet`). It
+- **The packages still in the core's Lake package are listed in its
+  entry module**, `lean/EditorCore/EditorPackage.lean`
+  (`EditorCore.EditorPackage.packages`), which is no module of the editor:
+  it is outside `lean/Editor/` and the namespace `Editor`, in a library of
+  its own (`lean_lib EditorCore`). It
   lists 22 packages, each
   defined in its feature's `Compiled.lean` but `shipped-themes`
   (`lean/Editor/Themes/Shipped.lean`): `completion`, `mode-line`,
@@ -910,14 +944,17 @@ def package : Package :=
   and the buffers', `compile` its six and `version-control` its twelve, so
   the order of those three in the list is the order the ex names'
   completion lists them in ([packages.md](packages.md), "Registration
-  order is visible"). `lean/Main.lean` imports that module and
-  passes the array to the headless mode and to the window mode
-  (`Headless.main`, `Window.main`).
-- **The list is outside the host.** No module of a host imports the list
-  module or a module that defines a package: the host's modules are every
-  module `Main` imports other than the list module, with what they import,
-  and the gate checks on Lake's module graph that none of them is the list
-  module or a module it imports directly (`tools/host-imports-check.sh`,
+  order is visible"). The executable's root, which the package-set build
+  generates, imports that module and each other entry module of the set
+  and passes their arrays, appended, to `Editor.Main.run`
+  (`lean/Editor/Main.lean`), which hands them to the headless mode and to
+  the window mode (`Headless.main`, `Window.main`).
+- **The lists are outside the host.** No module of a host imports an
+  entry module or a module that defines a package: the host's modules are
+  every module the generated root imports other than the entry modules,
+  with what they import, and the gate checks on Lake's module graph, for
+  the default set's root, that none of them is an entry module or a module
+  one imports directly (`tools/host-imports-check.sh`,
   in `mise run ffi-test`; [the-gate.md](../dev-practices/the-gate.md),
   "The host imports check"). The check is of the modules that define
   packages: the core loop still imports feature code that defines none,
@@ -955,7 +992,7 @@ As built (`lean/Editor/Config/Elaborate.lean`):
 - **The import runs no initialiser of a linked module.** Lean looks for a
   module's native initialiser first, and interprets a module's `initialize`
   declarations only when there is none. Each root that links the adapter
-  imports `Editor` at compile time beside it (`lean/Main.lean`,
+  imports `Editor` at compile time beside it (the editor's generated root,
   `lean/ConfigTest/Check.lean`, `lean/FfiTest/Editor/Window/Real.lean`),
   so every module of the base is linked into any executable that can
   elaborate config, and its initialiser ran once, when the process

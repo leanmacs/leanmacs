@@ -1,18 +1,20 @@
 # Packages and the core
 
-What the core is, what a package may import of it, which modules are core
-and which are features that could become packages, and what each feature
-would have to cross to move out. Written by the packages roadmap's phase 3,
-which built the core's root module, cut every import from the core into the
-two features that move in that roadmap (the compile mode and the shipped
-palettes), and put a check of that in the gate. What a package is, how a
-host registers one and the list of the packages that ship are in
-[lean-runtime.md](lean-runtime.md), "Packages".
+What the core is, what a package may import of it, how an editor is built
+from the core and a set of packages, which modules are core and which are
+features that could become packages, and what each feature would have to
+cross to move out. Written by the packages roadmap: its phase 3 built the
+core's root module, cut every import from the core into the two features
+that move in that roadmap (the compile mode and the shipped palettes), and
+put a check of that in the gate; its phase 4 built the package set and its
+build, which links the editor. What a package is and how a host registers
+one are in [lean-runtime.md](lean-runtime.md), "Packages".
 
-Everything is still one Lake package (`lean/lakefile.lean`). This document
-draws the lines the later phases cut along: phase 4 gives the package set a
-directory and a generated root, phase 5 moves the shipped palettes out and
-phase 6 the compile mode.
+Every feature is still in the core's Lake package (`lean/lakefile.lean`,
+the package `editor-core`), and the default package set
+(`packages/lakefile.toml`) requires the core alone. This document draws the
+lines the later phases cut along: phase 5 moves the shipped palettes out
+into the first default package and phase 6 the compile mode.
 
 ## The core and its root
 
@@ -40,16 +42,30 @@ could move later.
   them. It keeps its imports until the base changes (phase 7). It is not
   under `lean/Editor/` and is not a core module: after phase 6 it imports a
   package.
-- **The list of the packages that ship is not a module of the editor.**
-  `PackageSet` (`lean/PackageSet.lean`) names every package, the moving
-  ones among them, in the one order the headless fixtures show
-  ("Registration order is visible", below). It is the executable's wiring:
-  a module outside `lean/Editor/` and outside the namespace `Editor`, in a
-  library of its own (`lean_lib PackageSet`), which the executable's root
-  and the tests that need the list import. So it is no core module and no
-  feature's, the core's root does not import it, and the core imports
-  check, which is of the modules named `Editor.…`, exempts nothing by
-  name. Phase 4 replaces it with a generated root, also outside the core.
+- **The list of the core's packages is not a module of the editor.**
+  `EditorCore.EditorPackage` (`lean/EditorCore/EditorPackage.lean`) is the
+  entry module of the core's Lake package ("A package's entry module",
+  below): its `packages` names every package still in that Lake package,
+  the moving ones among them, in the one order the headless fixtures show
+  ("Registration order is visible", below). It is a module outside
+  `lean/Editor/` and outside the namespace `Editor`, in a library of its
+  own (`lean_lib EditorCore`), which the generated root and the tests that
+  need the list import. So it is no core module and no feature's, the
+  core's root does not import it, and the core imports check, which is of
+  the modules named `Editor.…`, exempts nothing by name. The Lake package
+  is named `editor-core` for this: named `editor`, its entry module would
+  be `Editor.EditorPackage`, under the namespace that check rules.
+- **The executable's body is a core module, `Editor.Main`**
+  (`lean/Editor/Main.lean`). `Editor.Main.run` takes the packages as a
+  value and acts on the mode the command line selects; the demonstration
+  is there too. It is a module of the host, internal, and it imports
+  neither a package nor the config base. `Editor.Core` imports it, and
+  through it the hosts.
+- **The executable's root is generated, not written.** No module under
+  `lean/` defines `main` for the editor. The package-set build writes the
+  root from the set's Lake packages: it imports the config base,
+  `Editor.Main` and each entry module, and its `main` is one call of
+  `Editor.Main.run` ("The package set and its build", below).
 - **A root that links the elaborator imports the config base.** The
   elaborator adapter (`Editor.Config.Elaborate`) imports the base's modules
   from their `.olean` files at runtime, and each must already be linked
@@ -57,11 +73,285 @@ could move later.
   state"). The adapter used to import `Editor` to make that so, and through
   that import it, the headless host and the window host reached the
   compile mode. Now each root that links the adapter imports `Editor`
-  beside it: `lean/Main.lean`, `lean/ConfigTest/Check.lean`,
+  beside it: the generated root, `lean/ConfigTest/Check.lean`,
   `lean/FfiTest/Editor/Window/Real.lean`, and the root of the user-side
-  link fixture (`tests/user-link/package/Main.lean`). **The root phase 4
-  generates must import the base as `Main` does**, and the check below
-  fails a root that does not.
+  link fixture (`tests/user-link/package/Main.lean`). The check below
+  fails a root that does not, the generated root of the default set among
+  them.
+
+## The package set and its build
+
+**A package set is a Lake package whose `require`s are the set.** Its
+lakefile declares no target and it holds no Lean source. The editor is
+built from one:
+
+- **The default set is `packages/lakefile.toml`** (the Lake package
+  `default-set`). It requires the core (`editor-core`, from `../lean`) and
+  nothing else yet; each default package gets a directory under `packages/`
+  and a `require` there (phase 5 adds the first). It is the lakefile a
+  user's set starts from.
+- **The core defines the build**, as Lake facets in `lean/lakefile.lean`.
+  Run in `lean/`, `lake -d ../packages build :editor` writes a root module
+  from the set's packages, builds it and links
+  `packages/.lake/build/bin/editor` with the glue and the Rust archive.
+  `mise run lean`, `mise run edit`, `mise run app` and the gate all use
+  that file. The core declares no `editor` executable, and
+  `lean/.lake/build/bin/editor` does not exist.
+- **A set's lakefile is data.** The link's objects and arguments are the
+  core's knowledge, and a lakefile cannot import another's definitions, so
+  the build is a facet and not a stanza each set repeats. A facet a
+  required package defines works on a root whose lakefile is TOML. The
+  default set's lakefile is the one a later phase generates and edits for a
+  user (phases 7 and 8), and the shipped core will supply the same facets
+  over prebuilt pieces (phase 9).
+
+| Facet | On | Gives |
+|---|---|---|
+| `editor` | a package, the set | `<set>/.lake/build/bin/editor` |
+| `editorApp` | a package, the set | `<set>/.lake/build/Leanmacs.app`, from the set's `editor` ([building.md](../dev-practices/building.md), "The app bundle") |
+| `editorLinked` | a module | An executable rooted at that module, linked as the editor is, in its package's `bin/`, named as the module with a dash for each dot |
+| `editorRootImports`, `editorRootTransImports` | a package, the set | For `lake query`: the generated root's direct and transitive imports, one module a line |
+| `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
+
+`linkAsEditor` is the one link: a root module's object and those of every
+module it imports, with their symbols exported (`-rdynamic`), then the glue
+and the Rust archive, then the link arguments. `editor` and `editorLinked`
+both call it, and the core's test executables are `lean_exe`s configured
+to the same line. The editor built this way has the same size, minimum
+macOS and link line as the `lean_exe` it replaced, but for its root's
+object.
+
+### A package's entry module
+
+**The convention: a Lake package named `p` lists its packages in the
+module `<P>.EditorPackage`, where `<P>` is `p` in upper camel case**, the
+name `lake new` gives the package's library (`Lake.toUpperCamelCase`):
+`shipped-themes` gives `ShippedThemes.EditorPackage`, and `editor-core`
+gives `EditorCore.EditorPackage`.
+
+```lean
+import Greeting
+
+namespace Greeting.EditorPackage
+
+/-- The packages of the Lake package `greeting`, in the order a host
+registers them. -/
+def packages : Array Editor.Package :=
+  #[Greeting.package]
+
+end Greeting.EditorPackage
+```
+
+- **The module declares `packages : Array Editor.Package`** in the
+  namespace of its own name. A Lake package may hold several `Package`
+  values, which register in the order the array lists them; the core's
+  holds 22.
+- **A Lake package with no such module contributes nothing.** The build
+  asks Lake whether a library of the package holds a module of that name
+  (`Package.findModule?`) and whether its source file exists. It reads no
+  source text. The default set itself, which has no library, is such a
+  package.
+- **A module of that name with no `packages` fails the build** of the
+  generated root, with Lean's error naming `<P>.EditorPackage.packages`.
+- **Why a fixed name and not an attribute collected at compile time.** The
+  order of the `Package` values inside one Lake package is visible in
+  fixtures ("Registration order is visible", below), and an attribute
+  collected by import order cannot state it. A fixed name also keeps the
+  generated root plain text, and keeps Lean's elaborator out of what a
+  package must import.
+- **Why `<P>.EditorPackage` and not a shared prefix
+  (`EditorPackage.<P>`).** A library as `lake new` makes it holds
+  `<P>.EditorPackage` with no configuration. A shared prefix needs an
+  explicit root in every package, and a library that claimed the whole
+  prefix would shadow the others'.
+- **The core is not exempt**: its Lake package was renamed `editor-core`
+  so that the convention gives it a module outside `Editor/` ("The core
+  and its root", above). That is also the name the staged core of the
+  user-side link has, so one set lakefile can name the core built here and
+  the core the app ships.
+
+### The order packages register in
+
+The set's packages are visited from the set, **each after the packages it
+`require`s**, and those in the order its lakefile declares them
+(`setPackages` in `lean/lakefile.lean`). So:
+
+- a package registers after every package it depends on;
+- the core's packages come first, since every package with an entry module
+  requires the core;
+- packages that do not depend on each other register in the order the
+  set's lakefile names them.
+
+Lake's own list of a workspace's packages is not in that order: it holds a
+package reached only through another after the package that requires it,
+so the build walks the `require`s itself. The fixture set shows it
+("The fixture set", below).
+
+### The generated root
+
+`EditorSetRoot`, written to `<set>/.lake/build/root/EditorSetRoot.lean`,
+and only when its text would change. For the default set it is:
+
+```lean
+import Editor
+import Editor.Main
+import EditorCore.EditorPackage
+
+def main (args : List String) : IO UInt32 :=
+  Editor.Main.run (EditorCore.EditorPackage.packages) args
+```
+
+with a module doc and a doc string, since it is built with the core's Lean
+options and a warning in it fails the build. For a set with more packages
+it imports each entry module in order and appends their `packages` in that
+order.
+
+- **It imports the config base, `Editor`**, for the link alone, as every
+  root that links the elaborator does ("The core and its root", above).
+- **No library declares it.** The build makes a library value in the set's
+  package whose source directory is that build directory, and a module in
+  it, which is how Lake builds an executable's root. So the set's lakefile
+  needs no stanza, the root's `.olean` and object are in the set's build
+  directory, and `lake query +EditorSetRoot:…` does not find it: the two
+  import facets answer for it.
+- **A package's build output stays in its own directory.** The core's
+  modules are built in `lean/.lake/build` whichever root asks, and
+  building the core as the root, then through a set, then as the root
+  again rebuilds nothing. So `lean/` and the sets are all roots of builds
+  the gate runs.
+- **What "no hand-written list of packages" means.** No module names the
+  Lake packages of a set: the set's lakefile is the one place, and the
+  root is generated from it. Each Lake package's entry module still lists
+  its own `Package` values, which is what the root reads. The core's lists
+  22 until features move out.
+- **One hand-written root remains, outside the editor's build**: the
+  user-side link check's fixture (`tests/user-link/package/Main.lean`),
+  which links against a staged core of prebuilt pieces. Generating that
+  root needs a prebuilt core that carries the facets, which is phase 9. It
+  is an opt-in check's fixture and no part of `mise run lean`.
+
+### A package's tests and the gate's steps over them
+
+A package outside the core is tested, linted, formatted and run headless
+by the same gate tasks as the core, through `tools/package-set.sh <step>
+<set dir>`, which asks Lake for the set's packages
+(`lake -d <set dir> query :editorPackages`) and runs one step over each
+([the-gate.md](../dev-practices/the-gate.md), "The package steps").
+
+**A package's tests, by convention:**
+
+- **its Lake test driver** holds the tests that need no Rust library, as
+  `model-test` is the core's;
+- **the module `<P>Test.Linked`**, when the package has one, is the root of
+  one executable linked as the editor is (`editorLinked`), for the tests
+  that need the Rust library, as `ffi-test` and `config-test` are the
+  core's. It is handed the toolchain's directory and the core's `.olean`
+  directory, so it can start a config session. One executable, not two:
+  the core's two differ in what they check, not in how they are linked. A
+  later phase splits it if a package needs to;
+- **its headless fixtures** are the directories
+  `<package>/tests/headless/<name>/`, each a `config/`, a `script` and an
+  `expected`, run on the editor built from the set.
+
+| Step | Per package | In task |
+|---|---|---|
+| `test` | `lake -d <package> test --wfail`; a package with no test driver fails the step | `lean-test`, with the `cargo` that fails first on the `PATH` |
+| `build` | Once, the set's `editor`; then `lake -d <package> build --wfail`, the package's default targets under its own linter options; and its linked test's executable | `lean` |
+| `fmt` (`format` rewrites) | `lean-fmt format --check` and `lean-fmt check`, with `--root <package>`, from the formatter's host | `lean-fmt` (`lean-format`) |
+| `run` | The linked test, in the package's directory; then each headless fixture on the set's `editor`, compared with its `expected` | `ffi-test` |
+
+- **The packages a step runs over** are those of the set that are path
+  dependencies and hold a Lean library, other than the core, which the
+  gate's own tasks cover. A step exits 2 when there is none, so it cannot
+  pass by running over nothing, and `lean-test` shows that on the default
+  set while it holds no package.
+- **The gate gives the steps the fixture set**, which requires the default
+  set. So the default packages are run over through it from phase 5 on,
+  and the default set's own `editor` is built beside it, for the standing
+  fixtures under `tests/headless/`.
+- **A package's headless fixtures are excluded from the formatter** by a
+  `lean-fmt.toml` in the package (`exclude = ["tests/**"]`): a config chunk
+  is Lean with no import line, elaborated on the config base at runtime,
+  and does not compile as a module of the package.
+- **The fixture packages' tests import internal modules.** Their model
+  tests read what a package registers through `Config.State.ofPackages`
+  (`Editor.Config.Packages`, `Editor.Config.Reload`), and the linked test
+  runs a command on the real text binding (`Editor.Text.Real`). The import
+  rule ("What a package may import", below) does not allow a package's
+  tests those. Nothing checks the rule yet; phase 5, which adds the check,
+  settles what a package's tests may import.
+
+### The fixture set
+
+Two packages and a set under `tests/packages/`, used by tests alone. They
+show the path a default package and a user's package take before any
+feature moves.
+
+| Path | What |
+|---|---|
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then the default set |
+| `tests/packages/greeting/` | The Lake package `greeting`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean`), its linked test (`GreetingTest/Linked.lean`) and the fixture `tests/headless/hello` |
+| `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting` and registers `greeting-reply` again with another text; its test driver and the fixture `tests/headless/reply` |
+
+- **A package outside the core is built by the package-set build and its
+  command runs.** The fixture set's editor prints `run greeting-hello: ok`
+  and the scene with the package's text for `hello`. The default set's
+  editor prints `run greeting-hello: no such command` for the same script,
+  which `ffi-test` also checks, so the command came from the set.
+- **A package registers after the package it requires.** Both packages
+  register `greeting-reply`, and of two registrations of a name the later
+  is the one found. The fixture set requires `greeting-loud`, and
+  `greeting` is in the set through it alone: Lake's own list holds
+  `greeting` after `greeting-loud` there, and with the root's entries in
+  that order the scene of `reply` showed `greeting`'s text. With the
+  build's order it shows `greeting-loud`'s.
+- **Every fixture lakefile is TOML**, turns every Lean linter on with
+  `warningAsError`, as the core does, and names default targets. A
+  package's test driver is not a default target, as the core's
+  `model-test` is not: `mise run lean` links with the system compiler,
+  which a TOML lakefile has no flags for.
+- **The fixtures are hermetic.** They are checked in and build into their
+  own `.lake/` directories, as the core builds into `lean/.lake`. Every
+  dependency is a path, and nothing is written outside those directories.
+  `.gitignore` ignores `.lake/` and `.lean-fmt-cache` in any directory.
+
+### Manifests: a set's build fetches nothing
+
+**Every Lake root has its `lake-manifest.json` committed**: the core, the
+default set, the fixture set, each fixture package and the formatter's
+host.
+
+- **A set's manifest holds path entries only.** With it present, a
+  dependency the manifest does not hold fails the build (`dependency … not
+  in manifest`) and fetches nothing. So a set's build is offline, and a
+  `require` added to a set or to a package of it fails every build of the
+  sets that reach it until their manifests are written again.
+- **After changing a `require`**, run in `lean/`
+  `lake -d <the root's directory> update --keep-toolchain` for the root
+  that changed and for every set that reaches it, and commit the
+  manifests. Without `--keep-toolchain` and outside elan, `lake update`
+  also rewrites `lean-toolchain` and stops.
+- **A root with no manifest gets one written by its first build**, which is
+  why none is left out: a build must not write into the checkout.
+- **The core requires no git repository.** A set that requires the core by
+  path would clone every git dependency of the core into its own
+  `.lake/packages`. So the Lean formatter is not a `require` of the core:
+  it is the one `require` of a package of its own, its host
+  (`tools/lean-fmt/lakefile.toml`), which nothing requires and whose
+  `packagesDir` keeps the clone and its build under `lean/.lake/packages`,
+  where CI caches it. `lake -d ../tools/lean-fmt exe lean-fmt … --root
+  <package>` runs it over any package ([the-gate.md](../dev-practices/the-gate.md),
+  "Formatting").
+
+### The toolchain copies
+
+`lean/lean-toolchain` is the one pin every task reads: every Lake command
+runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
+`lean/` holds a copy of it**: `lean-fmt` refuses a root with no
+`lean-toolchain`, and elan reads the file when Lake is run in that
+directory. `tools/toolchain-check.sh`, first in `lean-test`, fails when a
+tracked copy differs from the pin, naming it. A bump of the pin
+(`AGENTS.md`, "Toolchains") changes every copy in the same commit.
 
 ## What a package may import
 
@@ -81,10 +371,10 @@ says which side of the rule its modules are on.
   (`Editor.Loop.Driver`).
 - **Internal modules** are those that exist to run the editor and not to be
   written against:
-  - the hosts and the executable's modules (`Editor.Headless`,
-    `Editor.Headless.CommandLine`, `Editor.Window`, `Editor.Window.Real`,
-    `Editor.WindowCheck`, `Editor.WindowCheck.Real`, `Editor.Executable`,
-    `Editor.Version`, `Editor.ModuleLookup`);
+  - the hosts and the executable's modules (`Editor.Main`,
+    `Editor.Headless`, `Editor.Headless.CommandLine`, `Editor.Window`,
+    `Editor.Window.Real`, `Editor.WindowCheck`, `Editor.WindowCheck.Real`,
+    `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup`);
   - the loop and its dispatch (`Editor.Loop`, `Editor.Command.Dispatch`,
     `Editor.Event.Queue`, `Editor.State.Outbox`);
   - the config session (`Editor.Config.*`);
@@ -93,7 +383,8 @@ says which side of the rule its modules are on.
     `Editor.Clipboard.InProcess`, `Editor.Display.Recorder`,
     `Editor.Job.Runner`, `Editor.Job.Jobs`, `Editor.Job.Table`,
     `Editor.Job.Pool`);
-  - the entry modules of the packages still in the core (`….Compiled`);
+  - the modules that define the packages still in the core
+    (`….Compiled`);
   - `Editor.Core`.
 - **The internal namespace is `Editor.Internal`.** A core module that no
   package may import is created under it from now on, so that its name
@@ -102,8 +393,9 @@ says which side of the rule its modules are on.
   modules and every path the documents cite, and is filed as a task of its
   own (`internal-namespace-rename`).
 - **`Editor`, the config base, is not part of the API.** A package imports
-  the modules it uses, not the base. Nor is `PackageSet`, which is no
-  module of the core: it imports the packages, and no package imports it.
+  the modules it uses, not the base. Nor is `EditorCore.EditorPackage`,
+  which is no module of the core: it imports the packages, and no package
+  imports it.
 - **A feature still in the core is importable where its row says so.** The
   compile mode imports `Editor.Shell` and `Editor.Workspace.Modes`, which
   are features' modules; until those features move they are core modules a
@@ -126,7 +418,9 @@ tests run, is importable.
 **The moving features' tests import internal modules today**, which the
 rule does not allow a package's tests. They are recorded here, not allowed
 by widening the rule; phases 5 and 6 extend the API, or change the tests,
-when they move them:
+when they move them. The fixture packages' tests do the same ("A
+package's tests and the gate's steps over them", above), so the question
+is already open for a package outside the core:
 
 - the compile mode's tests (`ModelTest.Editor.Compile` and the modules
   under it, `ConfigTest.Editor.Compile`, `ContractTest.Editor.Compile` and
@@ -239,10 +533,11 @@ none. What replaced each edge is an interface the core owns.
 
 ## The module map
 
-Every module under `lean/Editor/`, 254 of them at `6ba99de5`
-(`find lean/Editor -name '*.lean' | wc -l`), is **core** or part of a
-**feature that could become a package**. The counts below add up to
-254: 168 core and 86 in 21 features.
+Every module under `lean/Editor/`, 255 of them
+(`find lean/Editor -name '*.lean' | wc -l`; 254 at `6ba99de5`, and phase 4
+added `Editor.Main`), is **core** or part of a **feature that could become
+a package**. The counts below add up to 255: 169 core and 86 in 21
+features.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -251,7 +546,7 @@ Every module under `lean/Editor/`, 254 of them at `6ba99de5`
   `Editor.Menu`, `Editor.ModeLine`, `Editor.Language`, `Editor.Workspace`,
   the three `Editor.ProjectMode` modules).
 - **A feature** is code reached through a package's registrations: the 22
-  packages of the set, as 21 features (the two version-control packages are
+  packages of the core's list, as 21 features (the two version-control packages are
   one), with the Vim scheme counted with evil.
 - **Every feature but `compile` and `shipped-themes` still lives in the
   core's Lake package**, and is a core module in the sense of the section
@@ -266,7 +561,7 @@ One row covers modules that share a class and a side of the import rule.
 | Modules | Count | Class | A package may import it |
 |---|---|---|---|
 | `Editor.Core` | 1 | core | no |
-| The hosts and the executable's modules: `Editor.Headless`, `.Headless.CommandLine`, `Editor.Window`, `.Window.Real`, `Editor.WindowCheck`, `.WindowCheck.Real`, `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup` | 9 | core | no |
+| The hosts and the executable's modules: `Editor.Main`, `Editor.Headless`, `.Headless.CommandLine`, `Editor.Window`, `.Window.Real`, `Editor.WindowCheck`, `.WindowCheck.Real`, `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup` | 10 | core | no |
 | The loop and its dispatch: `Editor.Loop`, `Editor.Command.Dispatch`, `Editor.Event.Queue`, `Editor.State.Outbox` | 4 | core | no |
 | The config session: `Editor.Config.Diagnostic`, `.Directory`, `.Display`, `.Elaborate`, `.Owner`, `.Packages`, `.Registry`, `.Reload`, `.Session`, `.Stores` | 10 | core | no |
 | The raw bindings: `Editor.Ffi` and the 26 modules under it | 27 | core | no |
@@ -332,9 +627,9 @@ For each feature, from Lake's direct imports (`lake query
 
 - its modules;
 - the core modules that import one of them, each with what it imports (the
-  core's root, `Editor.Core`, imports every feature's entry module and is
-  left out, as is the list of packages, `PackageSet`, which is outside
-  `lean/Editor/`);
+  core's root, `Editor.Core`, imports every feature's `Compiled` module
+  and is left out, as is the list of the core's packages,
+  `EditorCore.EditorPackage`, which is outside `lean/Editor/`);
 - the other features' modules that import one of them;
 - the other features it imports;
 - the test modules that import one of them, other than its own tests, which
@@ -583,7 +878,11 @@ entry above).
 imports check ([the-gate.md](../dev-practices/the-gate.md), "The core
 imports check"). It asks Lake for transitive imports (`lake query
 +<module>:transImports`), reads no source text and builds nothing. Given
-the root `Editor.Core` and the moving names, it holds three rules:
+the root `Editor.Core` and the moving names, it holds three rules. The
+roots of the build it holds the second and third of are the test
+executables' (`ModelTest`, `ConfigTest`, `FfiTest`, `ContractTest`) and
+the root generated for the default set, whose transitive imports it asks
+of the set (`lake -d ../packages query :editorRootTransImports`):
 
 1. **The root and what it imports hold no moving module.** A core module
    that comes to import the compile mode or a shipped palette fails the
@@ -603,15 +902,18 @@ the check again to see each rule bite: pointed at `Editor` (exit 1), at
 `Editor.Setup` (exit 3), and told a config base no executable's root
 imports (`--base Editor.Core`, exit 4). A run in which no root of the build
 reaches the elaborator adapter is refused (exit 2), since the third rule
-would then hold of nothing; the gate sees that too. So **the root phase 4
-generates must be added to the script's list of roots**, or that root is
-not checked for the base. When a feature moves out of the core, its
-modules' names are added to the check's moving names.
+would then hold of nothing; the gate sees that too. The generated root is
+the only root that links the elaborator into the editor itself, so it is
+among the roots the script checks for the base. When a feature moves out
+of the core, its modules' names are added to the check's moving names.
 
 ## Registration order is visible
 
-A host registers the packages in the order of the list, and two headless
-outputs print that order, so it is part of what the fixtures pin:
+A host registers the packages in the order it is handed them: the order
+of the generated root, which is the set's packages by dependency ("The
+order packages register in", above) and, inside one Lake package, the
+order of its entry module's array. Two headless outputs print that order,
+so it is part of what the fixtures pin:
 
 - **The `commands:` lines** of `tests/headless/expected` and
   `tests/headless/bundle/expected` print every command name in
@@ -621,13 +923,59 @@ outputs print that order, so it is part of what the fixtures pin:
   names in the order they were first bound (`Registry.exNames`), which the
   fuzzy rank keeps among equal scores. The names are bound by `ex`, then
   `compile`, then `version-control`, the sixth, eighteenth and twentieth
-  packages of the list.
+  packages of the core's list.
 
 `ModelTest.packageSetChecks` pins both orders the fixtures depend on that a
-model test can see: the ex names in bound order, and the theme names.
+model test can see: the ex names in bound order, and the theme names. It
+is the test of the core's entry module
+(`lean/ModelTest/EditorCore/EditorPackage.lean`), over
+`EditorCore.EditorPackage.packages`.
 
-**Phase 4 orders packages by dependency, which puts a default package
-after the core's.** The compile package would then register after version
-control and at-point, and both fixture lines would change, unless phase 6
-keeps the compile package's place in the order. That is phase 6's choice
-to make with the fixtures in view.
+The default set holds the core alone, so the generated root registers
+exactly the core's list and no fixture line changed when the root became
+generated.
+
+**Packages register by dependency, which puts a default package after the
+core's.** The compile package would then register after version control
+and at-point, and both fixture lines would change, unless phase 6 keeps
+the compile package's place in the order. That is phase 6's choice to make
+with the fixtures in view.
+
+## Build times
+
+What `mise run lean` takes, before and after the editor came from a
+package set (the packages roadmap's phase 4). The task runs `lean-test`
+first, so each figure includes the model tests; after, it also includes
+the fixture set: its packages' tests, its editor and its packages' builds.
+
+Wall clock, in seconds, three runs of each case and their median, on one
+machine (Apple M5 Max, 18 cores, 128 GB, macOS 27.2.1, Lean 4.35.0) on
+2026-11-19. Before is `fcf4e47b`, the commit phase 4 started from; after is
+`28aff3b2`, with the whole of the phase's build in place.
+
+| Case | Before | After | Change |
+|---|---|---|---|
+| Clean: Lake's build directories emptied (`lean/.lake/build`, and after, those of both sets and both fixture packages); Cargo's `target/` kept | 58.8, 60.0, 61.1: **60.0** | 66.4, 68.5, 69.1: **68.5** | +8.5 |
+| Nothing changed | 8.70, 8.73, 8.73: **8.7** | 12.68, 12.76, 12.78: **12.8** | +4.1 |
+| Incremental: one private definition added to `lean/Editor/Shell.lean` | 27.9, 28.2, 28.2: **28.2** | 32.9, 33.2, 33.2: **33.2** | +5.0 |
+
+- **Most of the added time is the fixture set, not the default set.** With
+  nothing changed, the commands of the task take: the model tests 7.7 s;
+  the fixture packages' tests 1.1 s; the refusal of the empty default set
+  0.4 s; the core's build 0.5 s; the default set's editor 0.5 s; and the
+  fixture set's editor, its two packages and the linked test 2.1 s, which
+  is five Lake runs. A Lake run with nothing to do costs 0.4 to 0.5 s, and
+  the task makes about ten where it made two.
+- **The incremental case relinks more.** A changed core module relinks
+  three executables as before (`ffi-test`, `config-test`,
+  `contract-test`) and the editor, and now also the fixture set's editor
+  and the linked test, each a link of about 230 MB against the Rust
+  archive.
+- **The clean case** also elaborates and compiles the two generated roots
+  and the fixture packages' modules, and links the second editor.
+- **Not separated**: how much of each difference is the default set alone.
+  With nothing to do it is the 0.5 s above; a clean build of the default
+  set's root and editor alone was 2.4 s when the build was prototyped.
+- **CI** caches `lean/.lake` only, so each run there also builds both
+  roots, links both editors and builds the fixture packages
+  ([ci.md](../dev-practices/ci.md), "Caches").

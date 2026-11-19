@@ -146,13 +146,14 @@ bundle builds on macOS on arm64 only. Windows has not been attempted.
 
 ```sh
 mise install            # once, in the checkout
-mise run lean           # builds the Lean package, the Rust library and the C glue
+mise run lean           # builds the Lean core, the Rust library, the C glue and the editor
 mise run edit -- [<file>]
 ```
 
 Use `mise run lean` in place of a bare `lake build`
 ([why](docs/dev-practices/building.md)). The editor is then
-`lean/.lake/build/bin/editor`.
+`packages/.lake/build/bin/editor`, linked from the default package set
+(`packages/lakefile.toml`).
 
 `mise run edit` builds first, then opens `<file>`, relative to the
 directory you ran it from, in the editor's window, or an empty buffer when
@@ -167,7 +168,7 @@ loads. Options go before the file:
   present mode for this run, to measure it
   ([on-demand-checks.md](docs/dev-practices/on-demand-checks.md)).
 
-`lean/.lake/build/bin/editor <file>` runs it directly; it then loads no
+`packages/.lake/build/bin/editor <file>` runs it directly; it then loads no
 config unless given `--sysroot <dir>`, the Lean toolchain's directory
 (`lean --print-prefix`).
 
@@ -176,7 +177,7 @@ config unless given `--sysroot <dir>`, the Lean toolchain's directory
 On macOS on arm64:
 
 ```sh
-mise run app          # builds lean/.lake/build/Leanmacs.app, ad-hoc signed
+mise run app          # builds packages/.lake/build/Leanmacs.app, ad-hoc signed
 mise run app-check    # builds it and checks the bundle
 mise run install      # does both, then replaces /Applications/Leanmacs.app
 mise run dmg          # builds it and packs dist/Leanmacs-<build-id>.dmg
