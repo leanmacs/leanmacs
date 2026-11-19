@@ -2985,8 +2985,11 @@ builds one sets `jumps` on its entry.
 - **A mark motion reads the marks of the window it is made in** and of the
   buffer that window shows (`Vocabulary.From.view`, `From.buffer`), which
   need not be the focused window, nor the only buffer over its text.
-- **A mark whose line is deleted is erased** (`mark_adjust`), a buffer's
-  mark or a global mark: `m a`, `dd` and `` `a `` says E20. A line is
+- **A buffer's mark whose line is deleted is erased** (`mark_adjust`):
+  `m a`, `dd` and `` `a `` says E20. A global mark is not: it stays on the
+  line that takes the deleted line's place, as Vim's uppercase marks do
+  (`one_adjust_nodel`; `:help mark-motions`, "The line number of the mark
+  remains correct, even if you insert/delete lines"). A line is
   deleted when one edit takes its row with its line break and either
   started before the row or stops at a row's start, as `dd` does; or, for
   the last row, takes it with the line break before it, as `dd` on the

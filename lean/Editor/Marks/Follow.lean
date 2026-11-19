@@ -10,9 +10,11 @@ after each buffer's undo tree was told the revision its text is at
 (`Loop.publish`, `EditorState.recordHistories`). For each buffer that is
 not an excerpt buffer:
 
-1. **Erase**: each lowercase mark of the buffer, and each global mark held
-   in it, whose line, as read at the last publish, an edit since removed
-   whole (`Marks.Line.removedIn`) is erased.
+1. **Erase**: each lowercase mark of the buffer whose line, as read at the
+   last publish, an edit since removed (`Marks.Line.removedIn`) is erased.
+   A global mark is not: as Vim's `mark_adjust` moves an uppercase mark
+   of a deleted line to the line that takes its place, its marker stays
+   where the deletion left it.
 2. **Put back**: the lowercase marks the buffer's history puts back for
    the move its undo tree made since (`Marks.History.follow`) are set
    again, each held by a new marker at its row and column; a node made
@@ -20,8 +22,8 @@ not an excerpt buffer:
 3. **Boundary**: when the tree has no open group, the lowercase marks as
    they are now are the boundary a node made next keeps. Inside an open
    group (an insert session) the boundary stays the one from before it.
-4. **Lines**: the line of every mark left is read, with the text's
-   revision, for the next publish.
+4. **Lines**: the line of every lowercase mark left is read, with the
+   text's revision, for the next publish.
 
 The markers of the marks erased, and of those a mark put back replaced,
 are given up here, since no command is running to give them up. A buffer
@@ -34,12 +36,6 @@ Pinned by `ModelTest.evilMarkChecks`.
 namespace Editor
 
 open Marks
-
-/-- Whether `place` is held in the buffer `id` by a marker of `markers`. -/
-private def heldBy (id : BufferId) (markers : Array MarkerId) (place : Place) : Bool :=
-  match place with
-  | .held buffer marker => buffer == id && markers.contains marker
-  | .file .. => false
 
 /-- `state` with the marks of the buffer `id`, which is `buffer`, followed
 through the event just handled (steps 1 to 4 of the module docs). -/
@@ -54,7 +50,6 @@ private def EditorState.followMarksOf (state : EditorState) (id : BufferId) (buf
     else
       let patch ← text.changesSince history.revision
       pure ((history.lines.filter (·.removedIn patch)).map (·.marker))
-  let globalMarks := state.remembered.globalMarks.filter fun (_, place) => !heldBy id erased place
   let mut marks := buffer.marks.filter fun (_, marker) => !erased.contains marker
   -- 2. Put back.
   let (restored, history) := history.follow buffer.history
@@ -69,12 +64,7 @@ private def EditorState.followMarksOf (state : EditorState) (id : BufferId) (buf
     else
       pure { history with boundary := ← marks.mapM fun (char, marker) => atOf char marker }
   -- 4. Lines.
-  let globalMarkers :=
-    globalMarks.filterMap fun (_, place) =>
-      match place with
-      | .held buffer marker => if buffer == id then some marker else none
-      | .file .. => none
-  let markers := marks.map (·.2) ++ globalMarkers
+  let markers := marks.map (·.2)
   let history ←
     if markers.isEmpty then
       pure { history with lines := #[] }
@@ -82,14 +72,12 @@ private def EditorState.followMarksOf (state : EditorState) (id : BufferId) (buf
       pure
           { history with
             lines := ← markers.mapM lineOf, revision := ← text.revision }
-  return {
-      state with
+  return { state with
       buffers :=
         state.buffers.set! id.index
           (some
             { buffer with
-              marks, markHistory := history })
-      remembered.globalMarks := globalMarks }
+              marks, markHistory := history }) }
 
 /-- `state` with the marks of every buffer but the excerpt buffers followed
 through the event just handled (the module docs), and the markers of the

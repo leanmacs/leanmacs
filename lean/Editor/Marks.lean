@@ -5,8 +5,8 @@ import Editor.UndoTree
 
 The rules by which Vim 9.1's marks (`:help mark-motions`) follow edits
 beyond what a marker does by itself, as plain data over the text port's
-patches and the undo tree: a mark whose line is deleted is erased, and the
-lowercase marks are put back by undo and redo. Where the marks are kept is
+patches and the undo tree: a lowercase mark whose line is deleted is
+erased, and the lowercase marks are put back by undo and redo. Where the marks are kept is
 the editor state's (`Editor/State.lean`, "The jump list and marks"); each
 buffer keeps what these rules need beside its marks (`Marks.History`), and
 the loop runs them once an event has been handled
@@ -14,7 +14,10 @@ the loop runs them once an event has been handled
 
 - **A mark's line is erased when its line is deleted** (Vim's
   `mark_adjust` with `MAXLNUM`, "If you delete a line that contains a
-  mark, that mark is erased"). The line of each mark's marker is read when
+  mark, that mark is erased"), for the lowercase marks: Vim moves an
+  uppercase mark of a deleted line to the line that takes its place
+  (`one_adjust_nodel`; "The line number of the mark remains correct, even
+  if you insert/delete lines"), as a marker does by itself. The line of each mark's marker is read when
   an event has been handled (`Line`): where its row starts, and where it
   stops, after its line break. At the next, the patch of what changed since
   says whether one edit removed the line (`Line.removedBy`), which Vim 9.1
@@ -158,8 +161,7 @@ keeps. -/
 structure History where
   /-- The revision of the text `lines` were read at. -/
   revision : Nat := 0
-  /-- The line of each mark's marker, the global marks held in the buffer
-  among them, as read at `revision`. -/
+  /-- The line of each lowercase mark's marker, as read at `revision`. -/
   lines : Array Line := #[]
   /-- The lowercase marks at the last boundary of the buffer's undo tree. -/
   boundary : Array At := #[]

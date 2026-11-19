@@ -41,10 +41,12 @@ def markRows : List (String × String × String) :=
 /-- The rows of the checks of marks across line deletions and undo, as
 `evilRows` reads them. -/
 def markUndoRows : List (String × String × String) :=
-  [ -- A mark whose line is deleted is erased, lowercase or global, on the
-    -- last line too.
-    ("m a d d ` a", "ab\nc|d\nef", Evil.markNotSet),
-    ("m A d d ` A", "ab\nc|d\nef", Evil.markNotSet), ("m a d d ` a", "ab\nc|d", Evil.markNotSet),
+  [ -- A lowercase mark whose line is deleted is erased, on the last line
+    -- too. A global mark stays, on the line that takes the deleted one's
+    -- place.
+    ("m a d d ` a", "ab\nc|d\nef", Evil.markNotSet), ("m a d d ` a", "ab\nc|d", Evil.markNotSet),
+    ("m A d d g g ' A", "ab\nc|d\nef", "ab\n|ef"),
+    ("j m A g g 3 d d ' A", "|ab\ncd\nef\ngh", "|gh"),
     ("m a j d k ` a", "ab\nc|d\nef\ngh", Evil.markNotSet),
     -- A deletion of part of its line keeps it, the column where the
     -- deletion left it; a deletion of another line keeps it.
@@ -165,7 +167,7 @@ def evilMarkChecks : List Check :=
         "m sets a mark and ` and ' go to it, exactly and at its line's first non-blank, as jumps, exclusive and line-wise under an operator; a mark follows a line inserted above it; a mark not set, a character that names none and m with one are said; '' and `` go back and forth, and m ' sets the previous-context mark"
       run := evilRows markRows },
     { name :=
-        "a mark whose line is deleted is erased, and one of a line deleted in part keeps the column the deletion left; undo puts a lowercase mark back where it was before the step, and redo erases it again"
+        "a lowercase mark whose line is deleted is erased and a global mark stays, and one of a line deleted in part keeps the column the deletion left; undo puts a lowercase mark back where it was before the step, and redo erases it again"
       run := evilRows markUndoRows },
     { name :=
         "under an operator a mark that is not set gives the operator up, saying so, with the text as it was"

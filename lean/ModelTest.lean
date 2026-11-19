@@ -849,7 +849,8 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   closed buffer's file, reopened with one jump recorded, attached again to
   the reopened buffer's text so that an edit above it carries it, and
   dropped with a closed buffer that held no file; a mark erased when its
-  line is deleted, on the last line too and for a global mark, kept by a
+  line is deleted, on the last line too, a global mark kept on the line
+  that takes its place, kept by a
   deletion of part of its line, kept on the first line of `3cc` and of a
   charwise delete across lines, erased by `3dd` on every line, by `dd` on
   a text's only line and by `3cc` on the lines after the first, kept by
