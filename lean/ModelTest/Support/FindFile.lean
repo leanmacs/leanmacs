@@ -130,7 +130,8 @@ def commands : List (String × Dispatched) :=
 /-- The bindings of the checks: the workspace driver's, `C-o f` the finder,
 `C-o j` the next candidate, `C-o y` accept, `C-o r` and `C-o s` register
 and strand, `C-o g` the finder rooted at `remote`, `C-o u` at a local
-location the table does not know, and `C-o m` opens `/m/src/a.txt`. -/
+location the table does not know, `C-o t` at `/w` with the text `b` after
+the location, and `C-o m` opens `/m/src/a.txt`. -/
 def bindings : List (String × Invocation) :=
   workspaceBindings ++
     [("C-o f", invoke Workspace.FindFile.name), ("C-o j", invoke Minibuffer.nextName),
@@ -138,6 +139,9 @@ def bindings : List (String × Invocation) :=
       ("C-o g", { command := Workspace.FindFile.name, arguments := remote.arguments }),
       ("C-o u",
         { command := Workspace.FindFile.name, arguments := (Location.local "/nowhere").arguments }),
+      ("C-o t",
+        { command := Workspace.FindFile.name
+          arguments := (Location.local "/w").arguments ++ [.str "b"] }),
       ("C-o m", opens "/m/src/a.txt")]
 
 /-- The driver of the checks over `world`, its loop told of config's

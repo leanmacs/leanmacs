@@ -22,8 +22,11 @@ settings and the call:
 
 - **A location as the command's argument** (`Location.arguments`, the
   first arguments): the workspace the table has there, refused with
-  `noSuchWorkspace` when it has none. What follows the location is left
-  for the typed text a later phase hands, and ignored.
+  `noSuchWorkspace` when it has none. A text after the location
+  (`typedArguments`, `typedOf`) is typed into the input when the prompt
+  opens, so its source's first job is asked with it and the list opens
+  matched against it: what the escape from the finder through the
+  project's workspaces (`Editor/Workspace/FindInProject.lean`) hands on.
 - **Otherwise the workspace of the buffer of the window it was called
   with.**
 - **A workspace whose location cannot both read files and run commands**
@@ -75,7 +78,7 @@ job, on the pool.
 | Addition | Where |
 |---|---|
 | A key that runs it | A binding of `find-file-in-workspace`, in the input scheme's table |
-| The typed text as an argument | The arguments after the location in `searched` |
+| A text typed into the input on open | The text after the location (`typedArguments`), read by `searched` into `Searched.typed` |
 | A lister for a remote location | A step of `Workspace.lister`, and `searched` no longer refusing it |
 
 Pinned by `ModelTest.findFileChecks`, on the loop's driver over the
@@ -102,6 +105,17 @@ display and its style as for any category. -/
 def category : String :=
   "workspace-file"
 
+/-- The typed text `typed` as the arguments that follow a location: none for
+an empty text, otherwise the one text. -/
+def typedArguments (typed : String) : List Argument :=
+  if typed.isEmpty then [] else [.str typed]
+
+/-- The typed text the arguments after a location carry (`typedArguments`):
+the first text, or the empty text. -/
+def typedOf : List Argument → String
+  | .str typed :: _ => typed
+  | _ => ""
+
 /-- What is searched: the root the lister runs at, the label naming it, and
 the lister. -/
 structure Searched where
@@ -112,6 +126,9 @@ structure Searched where
   label : String
   /-- The command that lists its files. -/
   lister : Lister
+  /-- The text typed into the input when the prompt opens: the one after a
+  location given as the command's argument, or none. -/
+  typed : String := ""
   deriving DecidableEq, Repr
 
 /-- What the command says when no workspace is known at `location`. -/
@@ -145,9 +162,10 @@ def ofWorkspace (settings : Settings) (workspace : Workspace) : Except String Se
 instead. -/
 def searched (state : EditorState) (settings : Settings) (call : Call) : Except String Searched :=
   match Location.of? call.arguments with
-  | some (location, _) =>
+  | some (location, rest) =>
     match state.workspaces.workspace? location with
-    | some workspace => ofWorkspace settings workspace
+    | some workspace =>
+      (ofWorkspace settings workspace).map fun searched => { searched with typed := typedOf rest }
     | none => .error (noSuchWorkspace location)
   | none =>
     let buffer := call.target.window.buffer
@@ -222,8 +240,8 @@ def command (call : Call) : EditorM Unit := do
     | .ok searched =>
       let opened ←
         prompt (promptLabel searched.label)
-            { command := name, arguments := [.bool true, .str searched.root.toString] } ""
-            [.category category [source]] (place :=
+            { command := name, arguments := [.bool true, .str searched.root.toString] }
+            searched.typed [.category category [source]] (place :=
             some { directory := some searched.root, home := state.home }) (context :=
             searched.lister.toArguments)
       if let .error refusal := opened then

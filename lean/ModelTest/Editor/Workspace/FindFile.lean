@@ -82,6 +82,23 @@ workspace driver's world, its listers and filters scripted by their exact
 command lines. -/
 def findFileChecks : List Check :=
   [{  name :=
+        "the text after the location is typed into the finder's input, and the list opens matched against it"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some driver =>
+            let typed := drainedAfter (settledAfter driver "C-o w") "C-o t"
+            labelOf typed == some "Find file in r@feature: " && minibufferText typed == some "b" &&
+              listedTexts typed == some #["src/b.lean"] },
+    { name := "the typed text travels as one argument after the location, none when it is empty"
+      run :=
+        pure
+          ((["", "b", "src/fin"].all fun text =>
+              Workspace.FindFile.typedOf (Workspace.FindFile.typedArguments text) == text) &&
+            Workspace.FindFile.typedArguments "" == [] &&
+            Workspace.FindFile.typedArguments "b" == [.str "b"]) },
+    { name :=
         "criterion 1 on the models: in a buffer of /w, find-file-in-workspace lists what the filter answers for the typed text fed git ls-files -z --cached --others --exclude-standard run at /w, and nothing of /r, the other workspace of the project the table holds; no lister runs anywhere but /w"
       run :=
         pure <|

@@ -962,8 +962,9 @@ Listing a workspace's files is checked in Lean alone too:
   alone, config's listers, the fallback, the accept through `open-file`,
   an absolute typed answer opened as it is, a refused prompt said,
   the label, the working directory of a buffer with no workspace, the
-  refusals, that no step runs a process, and a fallback that exits 1
-  still listing what it printed;
+  refusals, that no step runs a process, a fallback that exits 1
+  still listing what it printed, and the text after a location typed
+  into the input, the list opened matched against it;
 - `projectWorkspaceChecks`: the project's workspaces
   (`Editor/Workspace/Projects.lean`), pure: the worktrees in the reply's
   order, those not found labelled by `Workspace.labelOf`, then the table's
