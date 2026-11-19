@@ -48,14 +48,14 @@ holding `compiled`, on `C-c s`. -/
 def stampCompiled : Compiled :=
   { commands := #[making "stamp" "compiled"], bindings := #[bound "C-c s" "stamp"] }
 
-/-- A chunk whose `setup` registers a command `stamp` that makes a text
+/-- A config whose `setup` registers a command `stamp` that makes a text
 holding `config`. -/
-def stampChunk : String :=
+def stampText : String :=
   "def setup : SetupM Unit := do\n  command \"stamp\" (discard <| createText \"config\")\n"
 
-/-- A chunk with two commands, `one` and `two`, each of which makes a text
+/-- A config with two commands, `one` and `two`, each of which makes a text
 holding its name, and a `setup` that binds `C-c t` to `command`. -/
-def bindingChunk (command : String) : String :=
+def bindingText (command : String) : String :=
   "def setup : SetupM Unit := do
   command \"one\" (discard <| createText \"one\")
   command \"two\" (discard <| createText \"two\")
@@ -64,9 +64,9 @@ def bindingChunk (command : String) : String :=
     "\"
 "
 
-/-- A chunk with a store of one number, a command `bump` over it that adds
+/-- A config with a store of one number, a command `bump` over it that adds
 one, and a `setup` that binds `C-c u` to it. -/
-def boundCounterChunk : String :=
+def boundCounterText : String :=
   "def counter : Store Nat :=
   { name := \"counter\", version := 1, initial := 0, encode := .nat,
     decode := fun
@@ -157,12 +157,12 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "config registers a command under a compiled command's name: the key bound to the name runs config's command, and after a reload without the registration it runs the compiled one"
       run :=
-        withHost context [("10-stamp.lean", stampChunk)]
+        withHost context [("init.lean", stampText)]
           (fun session => do
             session.ask [.reload]
             session.typed "C-c s"
             let overridden ← session.shown
-            session.write "10-stamp.lean" emptyChunk
+            session.write "init.lean" emptyText
             session.ask [.reload]
             session.typed "C-c s"
             let dropped ← session.shown
@@ -177,10 +177,10 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "a reload binds a key to a different command: the key then runs the new command, and the old one does not run again"
       run :=
-        withHost context [("10-bind.lean", bindingChunk "one")] fun session => do
+        withHost context [("init.lean", bindingText "one")] fun session => do
           session.ask [.reload]
           session.typed "C-c t"
-          session.write "10-bind.lean" (bindingChunk "two")
+          session.write "init.lean" (bindingText "two")
           session.ask [.reload]
           session.typed "C-c t"
           return (← session.shown) ==
@@ -189,13 +189,13 @@ def dispatchChecks (context : Context) : List Check :=
         "config fails to load: the reload is rejected, and the key a compiled binding binds still runs its compiled command; and it runs it with no reload asked at all"
       run := do
         let rejected ←
-          withHost context [("10-bad.lean", "def setup : SetupM Unit := \"not a setup\"\n")]
+          withHost context [("init.lean", "def setup : SetupM Unit := \"not a setup\"\n")]
               (fun session => do
                 session.ask [.reload]
                 session.typed "C-c s"
                 let shown ← session.shown
                 return ((← session.lines).filter (!·.startsWith "key arrived")).extract 0 2 ==
-                      #["reload 1: rejected", "diagnostic: 10-bad.lean: error"] &&
+                      #["reload 1: rejected", "diagnostic: init.lean: error"] &&
                     shown == #["commands: stamp", "text 0: \"\"", "text 1: \"compiled\""])
               stampCompiled
         let unasked ←
@@ -209,7 +209,7 @@ def dispatchChecks (context : Context) : List Check :=
     { name :=
         "a key bound from config to a command over a store runs it, and what it wrote is written back: two presses leave the store at 2"
       run :=
-        withHost context [("10-counter.lean", boundCounterChunk)] fun session => do
+        withHost context [("init.lean", boundCounterText)] fun session => do
           session.ask [.reload]
           session.typed "C-c u C-c u"
           return (← session.shown).contains "store counter v1: 2" },
@@ -284,10 +284,10 @@ def dispatchChecks (context : Context) : List Check :=
               (← stage.output.get).back? == some "loop: refused: no such text" &&
               !(← Ffi.interruptRaised) }]
 
-/-- A chunk with a store of one number and a command `bump` over it that
+/-- A config with a store of one number and a command `bump` over it that
 adds one, and a `setup` that declares both and, when `withMode`, defines the
 mode `listing`, which fills the role `next-item` with `bump`. -/
-def listingChunk (withMode : Bool) : String :=
+def listingText (withMode : Bool) : String :=
   "def counter : Store Nat :=
   { name := \"counter\", version := 1, initial := 0, encode := .nat,
     decode := fun
@@ -327,12 +327,12 @@ def modeChecks (context : Context) : List Check :=
   [{  name :=
         "a role's key runs the command of the mode config defines in a view of a buffer that has the mode, a store command among them; once a reload drops the mode it runs the global binding, and the store is as it was"
       run :=
-        withHost context [("10-listing.lean", listingChunk true)]
+        withHost context [("init.lean", listingText true)]
           (fun session => do
             session.ask [.reload]
             session.pressKeys nextItemKeys
             let first ← session.shown
-            session.write "10-listing.lean" (listingChunk false)
+            session.write "init.lean" (listingText false)
             session.ask [.reload]
             session.pressKeys nextItemKeys
             let second ← session.shown
@@ -344,7 +344,7 @@ def modeChecks (context : Context) : List Check :=
     { name :=
         "a role's key runs the command of a mode compiled code hands the host in a view of a buffer that has the mode, before any reload and after a reload of a config that defines no mode"
       run :=
-        withHost context [("10-listing.lean", listingChunk false)]
+        withHost context [("init.lean", listingText false)]
           (fun session => do
             session.pressKeys nextItemKeys
             let first ← session.shown

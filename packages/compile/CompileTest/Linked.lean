@@ -92,8 +92,8 @@ of the check's own as the editor's working directory, where the child runs
 and where its location's file is looked for, and it must run to its end
 with every line of `hostHoldsFile` part of a line the host printed. What is
 missing is said on stderr. -/
-def hostCheck {σ : Type} {scheme : Editor.InputScheme}
-    (host : Editor.Headless.Collaborators σ scheme) (printed : IO.Ref (Array String)) :
+def hostCheck {β σ : Type} {scheme : Editor.InputScheme}
+    (host : Editor.Headless.Collaborators β σ scheme) (printed : IO.Ref (Array String)) :
     CompileTest.Check :=
   { name :=
       "a compile in the headless host over the core's packages and this package's, in a temporary working directory: the script tests/linked/run/script runs to its end, and what the host prints holds each line of tests/linked/run/holds: the run job started, the child's error line in the compilation buffer, a compilation.error decoration, the visit's echo of a file that is not there, no earlier location, Compilation killed in the echo area and in the buffer, and the run job started again by recompile"

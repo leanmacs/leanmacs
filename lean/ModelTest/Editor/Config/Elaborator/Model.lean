@@ -1,8 +1,8 @@
 import Editor.Config.Elaborator.Contract
 import Editor.Config.Elaborator.Model
-import Editor.Config.Modules
+import Editor.Config.Session
 import ModelTest.Check
-import ModelTest.Support.Modules
+import ModelTest.Support.Elaborator
 
 /-!
 # Model tests: `Editor/Config/Elaborator/Model.lean`
@@ -16,19 +16,19 @@ The model tests of `Editor/Config/Elaborator/Model.lean`:
 namespace ModelTest
 
 open Editor
-open Editor.Config.Modules
+open Editor.Config
 
 /-- The elaborator port's contract (`Editor/Config/Elaborator/Contract.lean`)
 held of the model (`modelSubject`): each property as a check. -/
 def elaboratorContractChecks : List Check :=
-  (Config.Elaborator.Contract.properties modelSubject).map fun property =>
+  (Elaborator.Contract.properties modelSubject).map fun property =>
     { name := s!"the elaborator's model: {property.name}", run := property.holds }
 
 /-- The checks of what only the elaborator's model has
 (`Editor/Config/Elaborator/Model.lean`): the edges of its language, and a
 base that is asked to hold a module that is not linked. -/
 def elaboratorModelChecks : List Check :=
-  let model := Config.Elaborator.Model.elaborator
+  let model := Elaborator.Model.elaborator
   let file (text : String) : SourceFile := { module := "Config.A", path := "Config/A.lean", text }
   [{  name :=
         "an import after another line is no part of the header, and is an error at its line when the file is elaborated"

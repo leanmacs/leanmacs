@@ -1,4 +1,3 @@
-import Editor.Config.Modules
 import Editor.Config.Session
 import Lean
 import Std
@@ -6,32 +5,52 @@ import Std
 /-!
 # The elaborator port, answered by Lean's elaborator
 
-The real adapter of `Config.Elaborator` (`Editor/Config/Session.lean`), and
-the only module of the editor that imports Lean's elaborator. An executable
-that imports it links the elaborator in, and grows by about 170 MB.
+The real adapter of `Config.Elaborator` (`Editor/Config/Session.lean`): it
+turns a config file into a module with Lean's own frontend. It is one of
+the two modules of the editor that link Lean's parser and elaborator; the
+other reads a lakefile's requires with Lake's TOML loader
+(`Editor/Config/Lakefile/Toml.lean`). An executable that imports it links
+the elaborator in, and grows by about 170 MB.
 
-It is thin. What is elaborated, in which order and from which state, and
-what a failure means, are the session core's decisions. Here a state is
-Lean's `Command.State`, and each operation of the port is one run of Lean's
-frontend.
+It is thin. Which files are elaborated, in which order, over which
+handles and on which base, and what a failure means, are the session
+core's decisions. The port's contract
+(`Editor/Config/Elaborator/Contract.lean`) holds this adapter and the
+port's pure model to the same properties.
 
-It imports the whole of `Lean`, on purpose. Lean's built-in elaborators, its
-pretty printer, its linters and the passes that compile a definition for the
-interpreter each register themselves in the initialiser of the module that
-defines them, and only the initialisers of imported modules run when the
-process starts. `Lean.Elab.Frontend` alone builds, but its imports hold
-neither the `do` elaborators nor the tactics; `Lean.Elab` adds those and
-still leaves out the compiler.
+It imports the whole of `Lean`, and `Std`, on purpose, for two reasons.
+Lean's built-in elaborators, its pretty printer, its linters and the
+passes that compile a definition for the interpreter each register
+themselves in the initialiser of the module that defines them, and only
+the initialisers of imported modules run when the process starts:
+`Lean.Elab.Frontend` alone builds, but its imports hold neither the `do`
+elaborators nor the tactics, and `Lean.Elab` adds those and still leaves
+out the compiler. And a config file may import any module of `Init`,
+`Std` or `Lean` (`toolchainRoots`): importing both here links every
+module of them into any executable that can elaborate config, by
+construction, so reading one at runtime runs no initialiser.
 
 ## The base
 
-`base` imports the modules it is given from their `.olean` files and
-elaborates `open Editor`, so config needs no prefix. The session core calls
-it once per process. The editor's base is its package set's: `Editor`, then
-the entry module of each package of the set outside the core
-(`Editor/Main.lean`, "The base"); a host that is handed none uses `Editor`
-alone.
+A base (`Base`) is the linked modules config is elaborated on: Lean's
+import state, which holds every module file read so far, each once, the
+list of modules imported, and the environment made from them.
 
+- **It starts as the settings' modules.** The editor's are its package
+  set's: `Editor`, then the entry module of each package of the set
+  outside the core (`Editor/Main.lean`, "The base"); a host that is handed
+  none uses `Editor` alone.
+- **It grows with what config imports** (`grow`). A reload whose files
+  import linked modules the base does not hold reads them into the import
+  state it kept, and what they import, and makes a new environment over
+  the old imports and the new. A module file is read once in a process:
+  the state remembers it, and a second read would map the file again at
+  another address and about double its memory. The base the reload was
+  handed stays usable, since both are values.
+- **What is linked** (`isLinked`): a module the base holds, or a module
+  of `Init`, `Std` or `Lean` whose `.olean` file is in the toolchain. A
+  module of the editor that the base does not hold, a binding
+  (`Editor.Ffi`) among them, is not: config cannot name a binding.
 - **Paths are arguments.** The search path is exactly the `.olean`
   directories it is given, in order, and then `lib/lean` under the
   toolchain's directory: the core's directory, and that of each package
@@ -45,12 +64,12 @@ alone.
   Lean's `initSearchPath`, which also reads `LEAN_PATH` from the
   environment.
 - **One copy of a module's globals.** `enableInitializersExecution` and
-  `importModules (loadExts := true)` are what make interpreted config and
+  an import that loads the extensions are what make interpreted config and
   compiled code see the same values. The import runs no initialiser of a
   module that is linked into the executable: Lean looks for a module's
   native initialiser first, and that one already ran when the process
-  started. So every module of the editor's base must be linked into any
-  executable that can elaborate config. That matters because the import
+  started. So every module a base may hold must be linked into any
+  executable that can elaborate config. That matters because every import
   runs on a job thread while the editor thread is running, and Lean
   documents running initialisers as unsafe beside other threads. This
   module does not import `Editor` to make it so: it is a core module, and
@@ -61,46 +80,92 @@ alone.
   the gate checks on Lake's module graph that every root that reaches this
   module reaches `Editor` (`tools/core-imports-check.sh`).
   `Settings.imports` still defaults to the name `Editor`, which is data.
-- **Config cannot name a binding.** `Editor` never imports `Editor.Ffi`
-  (`Editor.lean`), so the base does not hold it.
+- **The importing flag.** Lean's import runs with its "importing" flag up
+  (`Lean.withImporting`), and turns the execution of initialisers off when
+  it ends, so each import here turns it on first (`importOnUnsafe`). The
+  flag is up for each environment made, the base's and each file's that
+  imports config files, tens to hundreds of milliseconds each, on the
+  reload's job thread (`docs/design/concurrency.md`).
 
-## A chunk
+## A file
 
-A chunk is elaborated like a file with no `import` line, on the environment
-the chunk before it left. Its scopes start from the base's, so an `open` or a
-`namespace` in one chunk does not reach the next. Lean's messages become
-diagnostics, and a chunk with an error leaves no state.
+A config file is elaborated as a Lean module of its own (`elaborateFile`),
+with its module name as the environment's main module, so its private
+declarations are its own.
 
-A chunk may not declare `initialize`. Such a chunk elaborates, but the
+- **Its header is not elaborated.** The session core reads a header's
+  imports (`headerImports`, each with the line and column it starts at),
+  decides what each names, and hands the file's elaboration the handles of
+  the config files it imports. The parser then starts after the header,
+  and messages carry the file's own lines. A file that starts with
+  `module` is refused: config files are plain modules.
+- **With no config import**, it is elaborated on the base's environment
+  directly. So it sees every module the base holds, imported or not: the
+  editor accepts a file that Lean's language server would reject for a
+  missing `import Lean`, once another file made the base hold it.
+- **With config imports**, it gets an environment of its own
+  (`environmentOver`): the base's import state, plus the module files of
+  the config files it is handed, all of them, the ones it reaches through
+  others too. So it sees only the config files it imports, and an `open`
+  or a `namespace` of one of them does not reach it.
+- Lean's messages become diagnostics tagged with the file's path, and a
+  file with an error leaves no handle.
+
+A file may not declare `initialize`. Such a file elaborates, but the
 interpreter throws a C++ exception the first time a declaration that reads
 the constant is evaluated, and an exception from the interpreter ends the
-process (`Editor/Ffi.lean`). This one can be refused before any code runs, so
-the adapter rejects the chunk with a diagnostic that points at the store,
-which is where config keeps state.
+process (`Editor/Ffi.lean`). This one can be refused before any code runs,
+so the adapter rejects the file with a diagnostic that points at the
+store, which is where config keeps state.
+
+## Module files
+
+A config file other than the root that elaborates has its module data
+written (`Lean.writeModule`) so that the files that import it can import
+it: about 1 ms and tens of kilobytes. Its handle is the module's name and
+that file. Each version of a file is written at a path of its own, in a
+directory the host gives (`ModuleFiles`), and never overwritten: an
+environment that imported an earlier version may still be alive, and its
+file still mapped. The root's handle is its environment: nothing imports
+a root.
+
+A module file is read again for each environment that imports it, and the
+memory it is read into is never freed: freeing it is unsafe while a
+closure of an old config may be alive. That is a small leak for each
+reload that elaborates a file with config imports
+(`docs/design/lean-runtime.md`, "Config and reload").
 
 ## `setup`
 
-After the last chunk the adapter elaborates a trailer,
-`def «editor.setup» : Editor.SetupM Unit := setup`, so the elaborator checks
-that the config defines `setup` at the type the editor runs. It then
-evaluates that one constant at that type: the only unchecked evaluation of a
-reload. A missing `setup` and one of another type are diagnostics from the
-trailer. A `setup` that depends on `sorry` is an error value from the
-evaluation, and nothing runs.
+The `setup` the editor runs is the constant `setup` the root itself
+declares. A root that declares none is refused with a diagnostic that
+says so, also when a config file it imports declares one, which the
+diagnostic names (`noSetup`). After the root the adapter elaborates a
+trailer, `def «editor.setup» : Editor.SetupM Unit := _root_.setup`, so the
+elaborator checks `setup` at the type the editor runs. It then evaluates
+that one constant at that type: the only unchecked evaluation of a
+reload. A `setup` of another type is a diagnostic from the trailer. A
+`setup` that depends on `sorry` is an error value from the evaluation,
+and nothing runs.
 
 Commands are not looked up here. A command is the value `setup` registered.
 
+## Lean internals this rests on
+
+`Lean.importModulesCore` on a retained `Lean.ImportState`,
+`Lean.finalizeImport`, `Lean.ImportArtifacts`, `Lean.writeModule`,
+`Lean.Parser.parseHeader`, `Lean.Elab.IO.processCommands` and
+`Lean.Environment.evalConst`. A toolchain bump can change any of them
+(`docs/design/lean-runtime.md`).
+
 ## Tests
 
-`config-test` runs the checks of this adapter (`ConfigTest.elaboratorChecks`).
-The session core's own tests run on a fake of the port.
+`config-test` runs the checks of this adapter (`ConfigTest.elaboratorChecks`)
+and holds it to the port's contract (`ConfigTest.elaboratorContractChecks`).
+The session core's own tests run on the port's model.
 -/
 
 namespace Editor.Config.Elaborate
-
-/-- The elaborator's state after some chunks: Lean's command state. -/
-abbrev State :=
-  Lean.Elab.Command.State
 
 /-- Where the adapter finds what it imports, and what that is. -/
 structure Settings where
@@ -110,9 +175,9 @@ structure Settings where
   in the order they are searched: the core's, and each package's whose
   modules the base holds. -/
   oleanDirs : List System.FilePath
-  /-- The modules of the base. The core's is `Editor`; the editor's adds
-  the entry module of each package of its set, and tests and the benchmark
-  add to it. -/
+  /-- The modules the base starts as. The core's is `Editor`; the editor's
+  adds the entry module of each package of its set, and tests and the
+  benchmark add to it. -/
   imports : Array Lean.Name := #[`Editor]
 
 /-- The options every elaboration runs with: synchronously, so that every
@@ -122,7 +187,8 @@ def options : Lean.Options :=
 
 /-- Elaborates `text` on `state` and returns the state after it, with only the
 messages of this text. `source` is the file name the messages carry. -/
-def elaborate (state : State) (source text : String) : IO State := do
+def elaborate (state : Lean.Elab.Command.State) (source text : String) :
+    IO Lean.Elab.Command.State := do
   let input := Lean.Parser.mkInputContext text source
   let frontend ← Lean.Elab.IO.processCommands input {} { state with messages := {} }
   return frontend.commandState
@@ -148,21 +214,6 @@ def initialised (environment : Lean.Environment) : Array Lean.Name :=
         names.push name
       else names)
     #[]
-
-/-- Sets the search path, turns on the execution of initialisers and imports
-the base. It is `unsafe` because Lean's `enableInitializersExecution` is: the
-imported modules' initialisers must be safe to run beside the threads that
-are running, and those of the editor's base are not run at all (see the
-module docs). -/
-unsafe def importUnsafe (settings : Settings) : IO Lean.Environment := do
-  Lean.searchPathRef.set (settings.oleanDirs ++ [settings.sysroot / "lib" / "lean"])
-  Lean.enableInitializersExecution
-  Lean.importModules (settings.imports.map fun module => { module }) options (loadExts := true)
-
-/-- The environment after importing the base's modules from their `.olean`
-files. -/
-@[implemented_by importUnsafe]
-opaque importBase (settings : Settings) : IO Lean.Environment
 
 /-- The directories the base's modules are looked for in, in the order they
 are searched: the `.olean` directories given, then `lib/lean` under the
@@ -203,11 +254,6 @@ accident: it is not an identifier one writes without the quotes. -/
 def trailerName : Lean.Name :=
   `«editor.setup»
 
-/-- What is elaborated after the last chunk: `setup`, at the type the editor
-runs. -/
-def trailer : String :=
-  "def «editor.setup» : Editor.SetupM Unit := setup"
-
 /-- Evaluates the trailer's constant. It is `unsafe` because evaluating a
 constant trusts the type it is given; the elaborator has just checked the
 trailer at this type. -/
@@ -218,57 +264,6 @@ unsafe def evalSetupUnsafe (environment : Lean.Environment) : Except String (Set
 evaluated. -/
 @[implemented_by evalSetupUnsafe]
 opaque evalSetup (environment : Lean.Environment) : Except String (SetupM Unit)
-
-/-- The real elaborator. -/
-def elaborator (settings : Settings) : Elaborator State :=
-  {
-    base := do
-      let environment ←
-        try
-          importBase settings
-        catch error =>
-          throw (IO.userError (notImported settings (← missing settings) (toString error)))
-      let state ← elaborate (Lean.Elab.Command.mkState environment {} options) "base" "open Editor"
-      if state.messages.hasErrors then
-        let problems ← diagnostics "base" state.messages
-        throw
-            (IO.userError
-              ("the base did not elaborate: " ++
-                "; ".intercalate (problems.map (·.message)).toList))
-      return { state with messages := {} },
-    chunk := fun before chunk => do
-      let after ← elaborate before chunk.name chunk.text
-      let found ← diagnostics chunk.name after.messages
-      if after.messages.hasErrors then
-        return { diagnostics := found, state := none }
-      let refused :=
-        (initialised after.env).map fun name =>
-          failure chunk.name
-            s!"`{name}` is declared with `initialize`, which config may not use: keep state that must outlive a reload in a store (`Editor.Store`)"
-      unless refused.isEmpty do
-        return { diagnostics := found ++ refused, state := none }
-      -- Like a file: the next chunk starts from the scopes this one started
-      -- from, not from the ones it left open.
-      return { diagnostics := found,
-               state :=
-                 some
-                   { after with
-                     messages := {}, scopes := before.scopes } },
-    setup := fun state => do
-      let after ← elaborate state "setup" trailer
-      if after.messages.hasErrors then
-        return .error (← diagnostics "setup" after.messages)
-      match evalSetup after.env with
-      | .error message =>
-        return .error #[failure "setup" message]
-      | .ok program =>
-        return .ok program }
-
-/-! ## Config as modules
-
-What follows answers the port of the session over modules
-(`Editor/Config/Modules.lean`), which stands beside the chunk session
-until the hosts are switched to it. -/
 
 /-- The base of the adapter: the import state every module read so far is
 kept in, the imports the environment was made from, and the environment a
@@ -301,10 +296,16 @@ structure ModuleFiles where
   directory : IO System.FilePath
   /-- A number no file of the directory has been named with yet. -/
   next : IO Nat
+  /-- Removes the directory and what is in it, if it was made. Only when no
+  environment that read a file of it is in use any more: when the host has
+  ended. -/
+  remove : IO Unit := pure ()
 
 /-- Module files in the directory `make` makes, which is called once, when
-the first file is written. -/
-def ModuleFiles.over (make : IO System.FilePath) : IO ModuleFiles := do
+the first file is written. `remove` removes that directory when it was
+made, with `removeMade`. -/
+def ModuleFiles.over (make : IO System.FilePath)
+    (removeMade : System.FilePath → IO Unit := fun _ => pure ()) : IO ModuleFiles := do
   let made ← IO.mkRef (none : Option System.FilePath)
   let count ← IO.mkRef 0
   return {
@@ -314,7 +315,18 @@ def ModuleFiles.over (make : IO System.FilePath) : IO ModuleFiles := do
         let directory ← make
         made.set (some directory)
         return directory,
-      next := count.modifyGet fun count => (count, count + 1) }
+      next := count.modifyGet fun count => (count, count + 1),
+      remove := do
+        if let some directory← made.modifyGet fun made => (made, none) then
+          removeMade directory }
+
+/-- Module files in a temporary directory of the system's, made when the
+first file is written and removed, with what is in it, by `remove`: what
+an executable's host uses. A process that ends without `remove`, one that
+crashed, leaves the directory to the system's cleaning of its temporary
+files. -/
+def ModuleFiles.temporary : IO ModuleFiles :=
+  ModuleFiles.over IO.FS.createTempDir IO.FS.removeDirAll
 
 /-- The first components of the modules of the Lean toolchain that are
 linked into every executable that links this adapter: it imports `Lean` and
@@ -362,14 +374,16 @@ opaque importOn (state : Lean.ImportState) (held added : Array Lean.Import)
 
 /-- The base that holds the settings' modules and `modules`, grown from
 `earlier` when there is one: only the modules it does not hold are read. The
-search path is set when the first base is made. -/
+search path is set before each import. -/
 def grow (settings : Settings) (earlier : Option Base) (modules : Array Lean.Name) : IO Base := do
+  -- Set for every import, not once: another elaborator of the process, a
+  -- test's, may have set its own since.
+  Lean.searchPathRef.set settings.searched
   let base ←
     match earlier with
     | some base =>
       pure base
     | none =>
-      Lean.searchPathRef.set settings.searched
       let imports : Array Lean.Import := settings.imports.map fun module => { module }
       let (state, environment) ←
         try
@@ -391,7 +405,7 @@ def grow (settings : Settings) (earlier : Option Base) (modules : Array Lean.Nam
 each with the line and column it starts at, or why the header cannot be
 read: Lean's messages, or that the file starts with `module`, which config
 files may not: they are plain modules. -/
-def headerImports (path text : String) : IO (Except (Array Diagnostic) (Array Modules.Import)) := do
+def headerImports (path text : String) : IO (Except (Array Diagnostic) (Array Import)) := do
   let input := Lean.Parser.mkInputContext text path
   let (header, _, messages) ← Lean.Parser.parseHeader input
   if messages.hasErrors then
@@ -442,7 +456,7 @@ diagnostics, and the environment after it unless a diagnostic is an error
 or it declares `initialize`. The parser starts after the header, whose
 imports the session core has already acted on, and messages carry the
 file's own lines. -/
-def elaborateFile (base : Base) (handles : Array Handle) (file : Modules.SourceFile) :
+def elaborateFile (base : Base) (handles : Array Handle) (file : SourceFile) :
     IO (Array Diagnostic × Option Lean.Environment) := do
   let environment ← environmentOver base handles file.module.toName
   let input := Lean.Parser.mkInputContext file.text file.path
@@ -481,11 +495,11 @@ def noSetup (environment : Lean.Environment) : String :=
       | some module => s!" (the `setup` it can see is the one of `{module}`, which is not run)"
       | none => ""
     | none => ""
-  s!"{Modules.rootPath} defines no `setup`: the editor runs the `setup` the root itself defines, at the type `Editor.SetupM Unit`, and no other{elsewhere}; a config file the root imports exports its programs under other names, and the root's `setup` calls them"
+  s!"{rootPath} defines no `setup`: the editor runs the `setup` the root itself defines, at the type `Editor.SetupM Unit`, and no other{elsewhere}; a config file the root imports exports its programs under other names, and the root's `setup` calls them"
 
-/-- The real elaborator of config as modules, over `settings`, which
-writes the module data of config files through `files`. -/
-def moduleElaborator (settings : Settings) (files : ModuleFiles) : Modules.Elaborator Base Handle :=
+/-- The real elaborator, over `settings`, which writes the module data of
+config files through `files`. -/
+def elaborator (settings : Settings) (files : ModuleFiles) : Elaborator Base Handle :=
   { imports := fun file => headerImports file.path file.text,
     base := fun earlier modules => grow settings earlier (modules.map String.toName),
     linked := fun base module => isLinked settings base module.toName,

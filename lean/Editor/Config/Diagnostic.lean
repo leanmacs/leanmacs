@@ -1,7 +1,7 @@
 /-!
 # Diagnostics
 
-What went wrong with a config, as data. Elaborating a chunk, running `setup`,
+What went wrong with a config, as data. Elaborating a file, running `setup`,
 reading the config's source and installing its stores all report this one
 type, and a reload's report carries them. Nothing in the config session
 throws to say a config is bad.
@@ -21,8 +21,9 @@ inductive Severity where
 
 /-- One thing a reload has to say about a config. -/
 structure Diagnostic where
-  /-- What it is about: a chunk's name, `setup`, or another part of the
-  reload. -/
+  /-- What it is about: a config file's path (`init.lean`,
+  `Config/Keys.lean`), `setup`, or another part of the reload (`config`,
+  `base`). -/
   source : String
   /-- The line in the source's text, from 1; 0 when it is about no place in
   particular. -/

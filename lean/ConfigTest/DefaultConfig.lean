@@ -37,7 +37,7 @@ check that fails says why. -/
 def defaultBuilt (context : Context) : IO Config.Registrations := do
   let outcome ←
     Config.build Vim.Default.scheme context.elaborator
-        (Config.Directory.source context.defaultConfig) (some context.base) #[]
+        (Config.Directory.source context.defaultConfig) Config.PackageFiles.none none none #[]
   match outcome.built with
   | some built =>
     return built.registrations
@@ -53,7 +53,7 @@ default config's bindings, prefix names
 and leaders installed for the owner `.config`, as a reload installs them
 (`Config.Reload.install`). -/
 def defaultRegistry (registrations : Config.Registrations) : IO Config.Registry := do
-  let (state, _) : Config.State Config.Elaborate.State × Array String :=
+  let (state, _) : Config.State Config.Elaborate.Base Config.Elaborate.Handle × Array String :=
     Config.State.ofPackages EditorCore.EditorPackage.packages
   let registry :=
     (state.registry.replaceBindings .config registrations.bindings).replacePrefixNames .config
@@ -76,8 +76,8 @@ def defaultConfigChecks (context : Context) : List Check :=
   [{  name :=
         "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, once that is cancelled SPC : opens the command prompt, and once that is cancelled SPC ? opens the binding search, which, once open is typed, lists SPC f f  open-file"
       run := do
-        let files ← chunksOf context.defaultConfig
-        withVimHost context files.toList fun session => do
+        let files ← configFiles context.defaultConfig
+        withVimHost context files fun session => do
             session.ask [.reload]
             let output ← session.output.get
             let installed := output.any (·.startsWith "reload 1: installed")
@@ -113,8 +113,8 @@ def defaultConfigChecks (context : Context) : List Check :=
     { name :=
         "the default config: SPC p f opens the workspace finder, once that is cancelled SPC SPC opens it again, and once that is cancelled SPC p p runs find-file-in-project, which says the scratch buffer is in no project"
       run := do
-        let files ← chunksOf context.defaultConfig
-        withVimHost context files.toList fun session => do
+        let files ← configFiles context.defaultConfig
+        withVimHost context files fun session => do
             session.ask [.reload]
             let output ← session.output.get
             let installed := output.any (·.startsWith "reload 1: installed")

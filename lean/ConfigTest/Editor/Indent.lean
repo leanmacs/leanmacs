@@ -46,7 +46,7 @@ def cursorAt (text needle : String) : Nat :=
   (offsetOf text needle).getD 0
 
 /-- The texts the indent checks load, each with where the cursor goes and
-the language its buffer is set to, if any (`indentChunk`): the mangled Rust
+the language its buffer is set to, if any (`indentText`): the mangled Rust
 fixture `mangled`, and texts written here. -/
 def indentFixtures (mangled : String) : List (String × String × Nat × Option String) :=
   let twoFns :=
@@ -63,13 +63,13 @@ def indentFixtures (mangled : String) : List (String × String × Nat × Option 
     ("method-closing", rustObjectsText, cursorAt rustObjectsText "}\n}\n", some "rust"),
     ("plain", "    ab", 5, none), ("json", "[\n  1\n]", 4, some "json")]
 
-/-- A chunk whose `setup` registers, for each of `indentFixtures mangled`,
+/-- A config whose `setup` registers, for each of `indentFixtures mangled`,
 the command `load-<name>`: it puts the fixture's text in the scratch
 buffer's text, in place of what it held, and the cursor where the fixture
 says, and then, for a fixture with a language, records the language and
 makes `code` the buffer's major mode, so the text is parsed as the language
 says. -/
-def indentChunk (mangled : String) : String :=
+def indentText (mangled : String) : String :=
   let commands :=
     (indentFixtures mangled).map fun (name, text, cursor, language) =>
       let language :=
@@ -92,12 +92,12 @@ def setup : SetupM Unit := do
     "\n"
 
 /-- Runs `check` against a host of the Vim scheme that ships
-(`withVimHost`) over `indentChunk` of the mangled Rust indent fixture, with
+(`withVimHost`) over `indentText` of the mangled Rust indent fixture, with
 the config loaded: handed the fixture's text and the mangled one. -/
 def withIndentHost (context : Context) (check : Session → String → String → IO Bool) : IO Bool := do
   let source ← IO.FS.readFile (context.syntaxFixtures / "rust" / "indent.rs")
   let mangled := mangledRust source indentKept
-  withVimHost context [("10-indent.lean", indentChunk mangled)] fun session => do
+  withVimHost context [("init.lean", indentText mangled)] fun session => do
       session.ask [.reload]
       check session source mangled
 

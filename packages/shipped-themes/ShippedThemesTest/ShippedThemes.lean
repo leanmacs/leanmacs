@@ -31,7 +31,7 @@ def shippedThemesChecks : List Check :=
   [{  name :=
         "the package shipped-themes is accepted alone and registers its three themes, in order, and nothing of any other kind"
       run :=
-        let (state, refused) : Config.State Unit × Array String :=
+        let (state, refused) : Config.State Unit Unit × Array String :=
           Config.State.ofPackages #[ShippedThemes.package]
         pure
           (refused == #[] && ShippedThemes.themes.size == 3 &&

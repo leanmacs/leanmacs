@@ -113,32 +113,38 @@ open Editor
 /-- Runs `check` against a host started over `elaborator` and `source`, with
 its output in a buffer `check` is handed, and stops the host. `false` if the
 check did not hold or the host did not stop. -/
-def hosted {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
+def hosted {β σ : Type} (context : Context) (elaborator : Config.Elaborator β σ)
     (source : Config.Source) (check : Headless.Host → IO.Ref (Array String) → IO Bool) : IO Bool :=
   staged context elaborator source fun host stage => check host stage.output
 
-/-- A chunk whose `setup` registers `greet`. -/
-def setupChunk : String :=
+/-- A config whose `setup` registers `greet`. -/
+def setupText : String :=
   "def setup : SetupM Unit := do\n  command \"greet\" greet\n"
 
-/-- A config of two chunks: `greet`, which makes a text holding "v1", and the
-`setup` that registers it. -/
-def greetConfig : List (String × String) :=
-  [("10-greet.lean", greetChunk "v1"), ("20-setup.lean", setupChunk)]
+/-- The root of a config whose `greet` is in the config file
+`Config/Greet.lean`: it imports that file, and goes on with `body`. -/
+def overGreet (body : String) : String :=
+  importing ["Config.Greet"] body
 
-/-- A chunk that defines the command `greet`, which says `hello` in the echo
+/-- A config of two files: `Config/Greet.lean`, whose `greet` makes a text
+holding "v1", and the root, which imports it and whose `setup` registers
+it. -/
+def greetConfig : List (String × String) :=
+  [("Config/Greet.lean", greetText "v1"), ("init.lean", overGreet setupText)]
+
+/-- A config that defines the command `greet`, which says `hello` in the echo
 area. -/
-def helloChunk : String :=
+def helloText : String :=
   "def greet : EditorM Unit := message \"hello\"\n"
 
-/-- A config of two chunks: `greet`, which says `hello`, and the `setup`
-that registers it. -/
+/-- A config of two files: `Config/Greet.lean`, whose `greet` says `hello`,
+and the root, which imports it and whose `setup` registers it. -/
 def helloConfig : List (String × String) :=
-  [("10-greet.lean", helloChunk), ("20-setup.lean", setupChunk)]
+  [("Config/Greet.lean", helloText), ("init.lean", overGreet setupText)]
 
-/-- A chunk with a store of one number at version 1, and a `setup` that
+/-- A config with a store of one number at version 1, and a `setup` that
 declares it and registers `bump`, which adds `step` to it. -/
-def counterChunk (step : Nat) : String :=
+def counterText (step : Nat) : String :=
   "structure Counter where
   n : Nat
 
@@ -155,16 +161,16 @@ def setup : SetupM Unit := do
     " }
 "
 
-/-- `counterChunk 1` with its store's version raised to 2 and no migration, so
+/-- `counterText 1` with its store's version raised to 2 and no migration, so
 the value written at version 1 is lost, and with a theorem left unproved,
 which Lean warns about. -/
-def unmigratedCounterChunk : String :=
-  (counterChunk 1).replace "version := 1" "version := 2" ++ "\ntheorem unproved : 1 = 1 := sorry\n"
+def unmigratedCounterText : String :=
+  (counterText 1).replace "version := 1" "version := 2" ++ "\ntheorem unproved : 1 = 1 := sorry\n"
 
-/-- A chunk with a store of one number and two commands over it: `bump`, which
+/-- A config with a store of one number and two commands over it: `bump`, which
 adds one, and `broken`, which makes a text, then inserts into a text that
 does not exist, which the library refuses, and would add a hundred. -/
-def refusedChunk : String :=
+def refusedText : String :=
   "def counter : Store Nat :=
   { name := \"counter\", version := 1, initial := 0, encode := .nat,
     decode := fun
@@ -180,11 +186,11 @@ def setup : SetupM Unit := do
     return n + 100
 "
 
-/-- A chunk with three commands: `drop`, which makes three texts and releases
+/-- A config with three commands: `drop`, which makes three texts and releases
 the second; `inside`, which makes a text and asks for the point of an offset
 inside its two-byte character, which the library refuses; and `stale`, which
 reads a snapshot that does not exist, which the library refuses too. -/
-def releasingChunk : String :=
+def releasingText : String :=
   "def drop : EditorM Unit := do
   discard <| createText \"before\"
   let released ← createText \"released\"
@@ -204,11 +210,11 @@ def setup : SetupM Unit := do
   command \"stale\" stale
 "
 
-/-- A chunk with two commands, each of which applies a transaction the
+/-- A config with two commands, each of which applies a transaction the
 library refuses: `short`, whose changes stop one byte short of its text, and
 `astray`, whose selection after the changes has an end inside the text's
 two-byte character. -/
-def transactionChunk : String :=
+def transactionText : String :=
   "def short : EditorM Unit := do
   let text ← createText \"héllo\"
   discard <| text.apply { changes := #[.retain 5] }
@@ -222,11 +228,11 @@ def setup : SetupM Unit := do
   command \"astray\" astray
 "
 
-/-- A chunk with two commands, each of which asks a text's log about a
+/-- A config with two commands, each of which asks a text's log about a
 revision the library refuses: `ahead`, which asks what changed since a
 revision its text has not reached, and `behind`, which forgets its text's
 first edit and then asks what changed since before it. -/
-def logChunk : String :=
+def logText : String :=
   "def ahead : EditorM Unit := do
   let text ← createText \"héllo\"
   discard <| text.changesSince 1
@@ -242,10 +248,10 @@ def setup : SetupM Unit := do
   command \"behind\" behind
 "
 
-/-- A chunk with two commands that mark a text: `kept`, which marks its text
+/-- A config with two commands that mark a text: `kept`, which marks its text
 with an anchor, edits before it and reads it back where it went, and `lost`,
 which gives its marker up and then asks for it. -/
-def markerChunk : String :=
+def markerText : String :=
   "def kept : EditorM Unit := do
   let text ← createText \"héllo\"
   let marker ← text.mark (.anchor { offset := 3, bias := .after })
@@ -264,11 +270,11 @@ def setup : SetupM Unit := do
   command \"lost\" lost
 "
 
-/-- A chunk with three commands that take an edit back: `undone`, which
+/-- A config with three commands that take an edit back: `undone`, which
 applies the inverse of its edit and reads the text as it was made, at one
 more revision; `dropped`, which drops that inverse and then asks for it; and
 `elsewhere`, which asks for the inverse of an edit after it made another. -/
-def inverseChunk : String :=
+def inverseText : String :=
   "def undone : EditorM Unit := do
   let text ← createText \"héllo\"
   text.insert 0 \"x\"
@@ -294,10 +300,10 @@ def setup : SetupM Unit := do
   command \"elsewhere\" elsewhere
 "
 
-/-- The store of `counterChunk` with its type changed and its version raised
+/-- The store of `counterText` with its type changed and its version raised
 to 2: the number gets a label, and a number written at version 1 is migrated
 with the label \"migrated\". -/
-def labelledCounterChunk : String :=
+def labelledCounterText : String :=
   "structure Counter where
   n : Nat
   label : String
@@ -326,7 +332,7 @@ def hostChecks (context : Context) : List Check :=
        withHost context greetConfig fun session => do
          session.ask [.reload]
          session.ask [.run "greet", .show]
-         session.write "10-greet.lean" (greetChunk "v2")
+         session.write "Config/Greet.lean" (greetText "v2")
          session.ask [.reload]
          session.ask [.run "greet", .show]
          return (← session.lines) ==
@@ -365,19 +371,20 @@ def hostChecks (context : Context) : List Check :=
       run :=
         withHost context greetConfig fun session => do
           session.ask [.reload]
-          session.write "10-greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
+          session.write "Config/Greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
           session.ask [.reload]
           session.ask [.run "greet", .show]
           return (← session.lines) ==
               #["reload 1: installed, 2 files, 1 commands", "reload 2: rejected",
-                "diagnostic: 10-greet.lean: error", "run greet: ok", "commands: greet",
+                "diagnostic: Config/Greet.lean: error", "run greet: ok", "commands: greet",
                 "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a throwing setup keeps the old config"
       run :=
         withHost context greetConfig fun session => do
           session.ask [.reload]
-          session.write "20-setup.lean"
-              "def setup : SetupM Unit := do\n  command \"other\" greet\n  throw \"no thanks\"\n"
+          session.write "init.lean"
+              (overGreet
+                "def setup : SetupM Unit := do\n  command \"other\" greet\n  throw \"no thanks\"\n")
           session.ask [.reload]
           session.ask [.run "other", .show]
           -- The message is the one config threw, so the whole line is ours.
@@ -390,8 +397,9 @@ def hostChecks (context : Context) : List Check :=
       run :=
         withHost context greetConfig fun session => do
           session.ask [.reload]
-          session.write "20-setup.lean"
-              "def setup : SetupM Unit := do\n  command \"greet\" greet\n  command \"greet\" greet\n"
+          session.write "init.lean"
+              (overGreet
+                "def setup : SetupM Unit := do\n  command \"greet\" greet\n  command \"greet\" greet\n")
           session.ask [.reload]
           session.ask [.run "greet", .show]
           -- The message is the editor's own, so the whole line is pinned.
@@ -404,7 +412,7 @@ def hostChecks (context : Context) : List Check :=
         withHost context greetConfig fun session => do
           session.ask [.reload]
           session.ask [.reload]
-          session.write "10-greet.lean" (greetChunk "v1" ++ "\n-- changed\n")
+          session.write "Config/Greet.lean" (greetText "v1" ++ "\n-- changed\n")
           session.ask [.reload]
           session.ask [.run "greet", .show]
           return (← session.lines) ==
@@ -414,10 +422,10 @@ def hostChecks (context : Context) : List Check :=
                 "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a store value survives a reload"
       run :=
-        withHost context [("config.lean", counterChunk 1)] fun session => do
+        withHost context [("init.lean", counterText 1)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump", .run "bump", .show]
-          session.write "config.lean" (counterChunk 10)
+          session.write "init.lean" (counterText 10)
           session.ask [.reload]
           session.ask [.show, .run "bump", .show]
           return (← session.lines) ==
@@ -428,10 +436,10 @@ def hostChecks (context : Context) : List Check :=
                 "store counter v1: 12"] },
     { name := "a store migrates when a reload changes its type and raises its version"
       run :=
-        withHost context [("config.lean", counterChunk 1)] fun session => do
+        withHost context [("init.lean", counterText 1)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump", .run "bump"]
-          session.write "config.lean" labelledCounterChunk
+          session.write "init.lean" labelledCounterText
           session.ask [.reload]
           session.ask [.show, .run "bump", .show]
           return (← session.lines) ==
@@ -442,34 +450,35 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a reload that installs prints the config's warnings, then a warning for the store value it lost"
       run :=
-        withHost context [("config.lean", counterChunk 1)] fun session => do
+        withHost context [("init.lean", counterText 1)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump"]
-          session.write "config.lean" unmigratedCounterChunk
+          session.write "init.lean" unmigratedCounterText
           session.ask [.reload]
           session.ask [.show]
           return (← session.lines) ==
               #["reload 1: installed, 1 files, 1 commands", "run bump: ok",
-                "reload 2: installed, 1 files, 1 commands", "diagnostic: config.lean: warning",
+                "reload 2: installed, 1 files, 1 commands", "diagnostic: init.lean: warning",
                 "diagnostic: store counter: warning", "commands: bump", "text 0: \"\"",
                 "store counter v2: 0"] },
-    { name := "a chunk that declares initialize keeps the old config"
+    { name := "a config that declares initialize keeps the old config"
       run :=
         withHost context greetConfig fun session => do
           session.ask [.reload]
           -- No command of this config reads the constant, so a host that
           -- wrongly installed it would fail this check, not abort.
-          session.write "15-state.lean" "initialize table : IO.Ref Nat ← IO.mkRef 0\n"
+          session.write "Config/State.lean" "initialize table : IO.Ref Nat ← IO.mkRef 0\n"
+          session.write "init.lean" (importing ["Config.Greet", "Config.State"] setupText)
           session.ask [.reload]
           session.ask [.run "greet", .show]
           return (← session.lines) ==
               #["reload 1: installed, 2 files, 1 commands", "reload 2: rejected",
-                "diagnostic: 15-state.lean: error", "run greet: ok", "commands: greet",
+                "diagnostic: Config/State.lean: error", "run greet: ok", "commands: greet",
                 "text 0: \"\"", "text 1: \"v1\""] },
     { name :=
         "a store command the library refuses is reported as refused: the store keeps its value, and the text the command made before the refusal stays"
       run :=
-        withHost context [("config.lean", refusedChunk)] fun session => do
+        withHost context [("init.lean", refusedText)] fun session => do
           session.ask [.reload]
           session.ask [.run "bump", .run "broken", .show]
           return (← session.lines) ==
@@ -479,7 +488,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "show lists no text a command released, and the texts made before and after it keep the index they were made with"
       run :=
-        withHost context [("config.lean", releasingChunk)] fun session => do
+        withHost context [("init.lean", releasingText)] fun session => do
           session.ask [.reload]
           session.ask [.run "drop", .show]
           return (← session.lines) ==
@@ -489,7 +498,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command refused for an offset that is no position, and one refused for a snapshot that does not exist, are each reported with that refusal's name"
       run :=
-        withHost context [("config.lean", releasingChunk)] fun session => do
+        withHost context [("init.lean", releasingText)] fun session => do
           session.ask [.reload]
           session.ask [.run "inside", .run "stale"]
           return (← session.lines) ==
@@ -498,7 +507,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command whose transaction's changes do not fit, and one whose transaction's selection does not, are each reported with that refusal's name"
       run :=
-        withHost context [("config.lean", transactionChunk)] fun session => do
+        withHost context [("init.lean", transactionText)] fun session => do
           session.ask [.reload]
           session.ask [.run "short", .run "astray"]
           return (← session.lines) ==
@@ -507,7 +516,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command that asks a text's log about a revision it has not reached, and one that asks about a revision it has forgotten, are each reported with that refusal's name"
       run :=
-        withHost context [("config.lean", logChunk)] fun session => do
+        withHost context [("init.lean", logText)] fun session => do
           session.ask [.reload]
           session.ask [.run "ahead", .run "behind"]
           return (← session.lines) ==
@@ -516,7 +525,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command that marks a text reads its marker back where an edit moved it, and one that asks for a marker it gave up is reported with that refusal's name"
       run :=
-        withHost context [("config.lean", markerChunk)] fun session => do
+        withHost context [("init.lean", markerText)] fun session => do
           session.ask [.reload]
           session.ask [.run "kept", .run "lost"]
           return (← session.lines) ==
@@ -525,7 +534,7 @@ def hostChecks (context : Context) : List Check :=
     { name :=
         "a command that applies the inverse of its edit reads the text as it was, and one that asks for an inverse it dropped, and one whose text is not where the edit left it, are each reported with that refusal's name"
       run :=
-        withHost context [("config.lean", inverseChunk)] fun session => do
+        withHost context [("init.lean", inverseText)] fun session => do
           session.ask [.reload]
           session.ask [.run "undone", .run "dropped", .run "elsewhere"]
           return (← session.lines) ==
@@ -546,33 +555,34 @@ def hostChecks (context : Context) : List Check :=
                   diagnostic.startsWith "diagnostic: config:0:0: error: " &&
                   namesOnOneLine diagnostic absent },
     { name :=
-        "a chunk that is not UTF-8 is a rejected reload whose one diagnostic line names the file, and the old config stays"
+        "a config file that is not UTF-8 is a rejected reload whose one diagnostic line, at the import of it, names the file, and the old config stays"
       run :=
         withHost context greetConfig fun session => do
           session.ask [.reload]
-          IO.FS.writeBinFile (session.directory / "15-bad.lean") notUtf8
+          IO.FS.writeBinFile (session.directory / "Config" / "Bad.lean") notUtf8
+          session.write "init.lean" (importing ["Config.Greet", "Config.Bad"] setupText)
           session.ask [.reload]
           session.ask [.run "greet"]
           let lines ← session.output.get
           let diagnostic := lines.getD 2 ""
           return lines.size == 4 && lines.getD 0 "" == "reload 1: installed, 2 files, 1 commands" &&
               lines.getD 1 "" == "reload 2: rejected" &&
-              diagnostic.startsWith "diagnostic: config:0:0: error: " &&
-              namesOnOneLine diagnostic (session.directory / "15-bad.lean") &&
+              diagnostic.startsWith "diagnostic: init.lean:3:0: error: " &&
+              namesOnOneLine diagnostic (session.directory / "Config" / "Bad.lean") &&
               lines.getD 3 "" == "run greet: ok" }]
 
 /-- How a check controls elaboration: a decorator of the elaborator port that
-holds the chunk called `slow.lean` open until the check lets it go, and
-counts the chunks being elaborated. Nothing here sleeps to let something
+holds the config file `Config/Slow.lean` open until the check lets it go,
+and counts the files being elaborated. Nothing here sleeps to let something
 else happen. -/
 structure Gate where
-  /-- Resolved by the check to let `slow.lean` go, for good. -/
+  /-- Resolved by the check to let `Config/Slow.lean` go, for good. -/
   release : IO.Promise Unit
-  /-- Whether an elaboration of `slow.lean` has arrived and waited. -/
+  /-- Whether an elaboration of `Config/Slow.lean` has arrived and waited. -/
   holding : IO.Ref Bool
-  /-- How many chunks are being elaborated now. -/
+  /-- How many files are being elaborated now. -/
   inProgress : IO.Ref Nat
-  /-- The most chunks that were being elaborated at once. -/
+  /-- The most files that were being elaborated at once. -/
   most : IO.Ref Nat
 
 namespace Gate
@@ -582,66 +592,190 @@ def new : IO Gate :=
   return { release := ← IO.Promise.new, holding := ← IO.mkRef false, inProgress := ← IO.mkRef 0,
            most := ← IO.mkRef 0 }
 
-/-- `elaborator` behind the gate. -/
-def around {σ : Type} (gate : Gate) (elaborator : Config.Elaborator σ) : Config.Elaborator σ :=
-  { elaborator with
-    chunk := fun before chunk => do
-      let now ← gate.inProgress.modifyGet fun count => (count + 1, count + 1)
-      gate.most.modify (max · now)
-      try
-        if chunk.name == "slow.lean" then
-          gate.holding.set true
-          discard <| IO.wait gate.release.result?
-        elaborator.chunk before chunk
-      finally
-        gate.inProgress.modify (· - 1) }
+/-- Runs `elaborate`, the elaboration of `file`, behind the gate. -/
+def through {σ : Type} (gate : Gate) (file : Config.SourceFile)
+    (elaborate : IO (Config.FileResult σ)) : IO (Config.FileResult σ) := do
+  let now ← gate.inProgress.modifyGet fun count => (count + 1, count + 1)
+  gate.most.modify (max · now)
+  try
+    if file.module == "Config.Slow" then
+      gate.holding.set true
+      discard <| IO.wait gate.release.result?
+    elaborate
+  finally
+    gate.inProgress.modify (· - 1)
 
-/-- Lets `slow.lean` go, now and from now on. -/
+/-- `elaborator` behind the gate: every elaboration of a file, the root's
+too. -/
+def around {β σ : Type} (gate : Gate) (elaborator : Config.Elaborator β σ) :
+    Config.Elaborator β σ :=
+  { elaborator with
+    file := fun base handles file => gate.through file (elaborator.file base handles file),
+    root := fun base handles file => gate.through file (elaborator.root base handles file) }
+
+/-- Lets `Config/Slow.lean` go, now and from now on. -/
 def «open» (gate : Gate) : IO Unit :=
   gate.release.resolve ()
 
 end Gate
 
-/-- `source`, counting in `reads` how many times its chunks are read: once
-for each reload job. -/
+/-- `source`, counting in `reads` how many times its root is read: once for
+each reload job. -/
 def counting (reads : IO.Ref Nat) (source : Config.Source) : Config.Source :=
-  {
-    chunks := do
+  { source with
+    root := do
       reads.modify (· + 1)
-      source.chunks }
+      source.root }
 
-/-- A chunk that takes as long to elaborate as the check's gate says. -/
-def slowChunk : String :=
+/-- A config file that takes as long to elaborate as the check's gate says. -/
+def slowText : String :=
   "def slow : Nat := 1\n"
+
+/-- The root of `greetConfig` with `Config/Slow.lean` imported beside
+`Config/Greet.lean`. -/
+def overSlow : String :=
+  importing ["Config.Greet", "Config.Slow"] setupText
+
+/-- `greetConfig` with a third file, `Config/Slow.lean`, which the root
+imports after `Config/Greet.lean`. -/
+def slowConfig : List (String × String) :=
+  [("Config/Greet.lean", greetText "v1"), ("Config/Slow.lean", slowText), ("init.lean", overSlow)]
+
+/-- `elaborator`, noting in `elaborated` the module of each file it
+elaborates, the root's too, in order. -/
+def noting {β σ : Type} (elaborated : IO.Ref (Array String)) (elaborator : Config.Elaborator β σ) :
+    Config.Elaborator β σ :=
+  { elaborator with
+    file := fun base handles file => do
+      elaborated.modify (·.push file.module)
+      elaborator.file base handles file,
+    root := fun base handles file => do
+      elaborated.modify (·.push file.module)
+      elaborator.root base handles file }
+
+/-- The text of a config file that defines the command `name`, which makes
+a text holding `text`, after importing `imports`. -/
+def makingFile (imports : List String) (name text : String) : String :=
+  importing imports s!"def {name} : EditorM Unit := do\n  discard <| createText \"{text}\"\n"
+
+/-- A config of four files in a directory: the root imports `Config.A` and
+`Config.B` and registers a command of each file, and `Config.B` imports
+`Config.C`. `versions` gives the text each of `a`, `b` and `c` makes. -/
+def fourFileConfig (a b c : String) (extra : String := "") : List (String × String) :=
+  [("Config/A.lean", makingFile [] "a" a), ("Config/B.lean", makingFile ["Config.C"] "b" b),
+    ("Config/C.lean", makingFile [] "c" c),
+    ("init.lean",
+      importing ["Config.A", "Config.B"]
+        ("def setup : SetupM Unit := do\n  command \"a\" a\n  command \"b\" b\n  command \"c\" c\n" ++
+          extra))]
+
+/-- The checks of config as modules through the headless host, with the
+real elaborator over files in a temporary directory: which files a reload
+elaborates after a change, a module that is not linked, and a base that
+grows when a file first imports `Lean`. -/
+def moduleHostChecks (context : Context) : List Check :=
+  [{
+      name :=
+        "after a change to one config file, a reload elaborates that file and the files that import it, and no other: a file the root imports, a file another file imports, the root, and nothing changed",
+      run := do
+        let elaborated ← IO.mkRef #[]
+        withHostOver context (fourFileConfig "a1" "b1" "c1") (noting elaborated) id fun session =>
+            do
+            let reloaded (files : List (String × String)) : IO (Array String) := do
+              writeConfig session.directory files
+              elaborated.set #[]
+              session.ask [.reload]
+              elaborated.get
+            let first ← reloaded []
+            let changedA ← reloaded [("Config/A.lean", makingFile [] "a" "a2")]
+            let changedC ← reloaded [("Config/C.lean", makingFile [] "c" "c2")]
+            let changedRoot ← reloaded (fourFileConfig "a2" "b1" "c2" "\n-- changed\n")
+            let unchanged ← reloaded []
+            session.ask [.run "a", .run "b", .run "c", .show]
+            let lines ← session.lines
+            return first == #["Config.A", "Config.C", "Config.B", "init"] &&
+                changedA == #["Config.A", "init"] &&
+                changedC == #["Config.C", "Config.B", "init"] &&
+                changedRoot == #["init"] &&
+                unchanged == #[] &&
+                (lines.filter (·.startsWith "reload ")) ==
+                  (Array.range 5).map
+                    (fun index => s!"reload {index + 1}: installed, 4 files, 3 commands") &&
+                lines.extract (lines.size - 4) lines.size ==
+                  #["text 0: \"\"", "text 1: \"a2\"", "text 2: \"b1\"", "text 3: \"c2\""] },
+    { name :=
+        "a root that imports a module that is not linked is rejected with a diagnostic at the import that names the module, and the old config stays"
+      run :=
+        withHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
+          session.ask [.reload]
+          session.write "init.lean" (importing ["Lake"] (greetText "v2" ++ setupText))
+          session.ask [.reload]
+          session.ask [.run "greet", .show]
+          let output ← session.output.get
+          return output ==
+                #["reload 1: installed, 1 files, 1 commands", "reload 2: rejected",
+                  s!"diagnostic: init.lean:2:0: error: {Config.notLinked "Lake" none}",
+                  "run greet: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\""] &&
+              ((Config.notLinked "Lake" none).splitOn "`Lake`").length == 2 },
+    { name :=
+        "a reload whose root first imports Lean installs: the base grows to hold it, and a command that uses it runs"
+      run :=
+        withHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
+          session.ask [.reload]
+          session.write "init.lean"
+              (importing ["Lean"]
+                  "def greet : EditorM Unit := do\n  discard <| createText (Lean.Json.arr #[Lean.Json.str \"v2\"]).compress\n" ++
+                setupText)
+          session.ask [.reload]
+          session.ask [.run "greet", .show]
+          return (← session.output.get) ==
+              #["reload 1: installed, 1 files, 1 commands",
+                "reload 2: installed, 1 files, 1 commands", "run greet: ok", "commands: greet",
+                "text 0: \"\"", "text 1: \"[\\\"v2\\\"]\""] }]
 
 /-- The lines `event <source> 0` up to `event <source> <count - 1>`: what the
 host prints for a script of `count` events fed from a Rust thread. -/
 def eventLines (source count : Nat) : Array String :=
   (Array.range count).map fun code => s!"event {source} {code}"
 
-/-- A fake of the elaborator port whose every state holds a library handle, a
-counter of its own: how many states are alive is how many counters the
-library holds. -/
-def handleElaborator : Config.Elaborator Ffi.Counter :=
-  { base := Ffi.Counter.new 0,
-    chunk := fun _ _ => return { diagnostics := #[], state := some (← Ffi.Counter.new 0) },
+/-- A fake of the elaborator port whose base and every handle hold a library
+handle, a counter of its own: how many of them are alive is how many
+counters the library holds. A file's imports are its lines that start
+with `import`, and every file elaborates. -/
+def handleElaborator : Config.Elaborator Ffi.Counter Ffi.Counter :=
+  {
+    imports := fun file =>
+      pure
+        (.ok
+          ((file.text.splitOn "\n").filterMap fun line =>
+              if line.startsWith "import " then
+                some { module := (line.drop 7).toString, line := 1, column := 0 }
+              else none).toArray),
+    base := fun earlier _ =>
+      match earlier with
+      | some base => pure base
+      | none => Ffi.Counter.new 0,
+    linked := fun _ _ => pure false,
+    file := fun _ _ _ => return { diagnostics := #[], handle := some (← Ffi.Counter.new 0) },
+    root := fun _ _ _ => return { diagnostics := #[], handle := some (← Ffi.Counter.new 0) },
     setup := fun _ => return .ok (pure ()) }
 
 /-- The checks of the editor thread and the reload job: what happens while a
-chunk elaborates, that reloads are serialised, and that nothing of a
+file elaborates, that reloads are serialised, and that nothing of a
 replaced config is kept. -/
 def threadChecks (context : Context) : List Check :=
   [{
       name :=
-        "the editor answers events while a slow chunk elaborates: 100 events from a Rust thread and a command of the old config",
+        "the editor answers events while a slow file elaborates: 100 events from a Rust thread and a command of the old config",
       run := do
         let gate ← Gate.new
         withHostOver context greetConfig gate.around id fun session => do
             session.ask [.reload]
-            session.write "slow.lean" slowChunk
+            session.write "Config/Slow.lean" slowText
+            session.write "init.lean" overSlow
             session.host.send .reload
             try
-              -- The reload job is now inside the elaboration of `slow.lean`,
+              -- The reload job is now inside the elaboration of `Config/Slow.lean`,
               -- and stays there until the gate opens.
               unless ← eventually gate.holding.get do
                 return false
@@ -649,13 +783,13 @@ def threadChecks (context : Context) : List Check :=
                 return false
               session.host.send (.run "greet")
               -- With the job on the editor thread these lines never come while
-              -- the chunk is held: the wait runs out and the check fails.
+              -- the file is held: the wait runs out and the check fails.
               let answered ←
                 eventually do
                     let lines ← session.output.get
                     return lines.size == 102 && lines.contains "run greet: ok"
               let lines ← session.output.get
-              -- The chunk is still being elaborated: all of that was answered
+              -- The file is still being elaborated: all of that was answered
               -- while it was held.
               let held := (← gate.inProgress.get) == 1
               gate.open
@@ -675,13 +809,12 @@ def threadChecks (context : Context) : List Check :=
         -- request, running or not, fails this.
         let gate ← Gate.new
         let reads ← IO.mkRef 0
-        withHostOver context (greetConfig ++ [("slow.lean", slowChunk)]) gate.around
-            (counting reads) fun session => do
+        withHostOver context (slowConfig) gate.around (counting reads) fun session => do
             session.host.send .reload
             try
               unless ← eventually gate.holding.get do
                 return false
-              session.write "10-greet.lean" (greetChunk "v2")
+              session.write "Config/Greet.lean" (greetText "v2")
               session.host.send .reload
               session.host.send .reload
               -- Both requests are on the queue before the gate opens, so the
@@ -699,23 +832,24 @@ def threadChecks (context : Context) : List Check :=
             finally
               gate.open },
     { name :=
-        "a replaced config is not retained: after 50 reloads the library holds the states of one loaded config, and none once the host has stopped"
+        "a replaced config is not retained: after 50 reloads the library holds the base and the handles of one loaded config, and none once the host has stopped"
       run := do
         -- Seen to bite once by hand: a host that pushes each outcome onto a
         -- list it keeps fails this.
         let before ← Ffi.Counter.live
-        let chunks ← IO.mkRef (#[] : Array Config.SourceChunk)
+        let files ← IO.mkRef ([] : List (String × String))
         let loaded ←
-          hosted context handleElaborator { chunks := chunks.get } fun host _ => do
+          hosted context handleElaborator (sourceOver files.get) fun host _ => do
               for round in [0:50] do
-                -- The first chunk changes, so every chunk is elaborated again.
-                chunks.set
-                    #[{ name := "a", text := toString round }, { name := "b", text := "b" },
-                      { name := "c", text := "c" }]
+                -- A file the root imports changes, so it and the root are
+                -- elaborated again, and the other file is kept.
+                files.set
+                    [("init", "import Config.A\nimport Config.B\n"), ("Config.A", toString round),
+                      ("Config.B", "b")]
                 host.send .reload
                 unless ← host.settle patience do
                   return false
-              -- The base and the states after three chunks. A finished job's
+              -- The base and the handles of three files. A finished job's
               -- task may still be going away, so this is polled.
               eventually do
                   return (← Ffi.Counter.live) == before + 4
@@ -724,11 +858,11 @@ def threadChecks (context : Context) : List Check :=
               return (← Ffi.Counter.live) == before
         return loaded && freed }]
 
-/-- A chunk with three jobs, and the `setup` that registers them beside
+/-- A config with three jobs, and the `setup` that registers them beside
 `greet`: `count` sleeps 10 ms and its result, 42, is made into a text;
 `boom` sleeps 10 ms and throws; and `bad` is `count` with a handler whose
 command the library refuses. -/
-def jobsChunk : String :=
+def jobsText : String :=
   "def count : Unit → JobM Nat := fun _ => do
   sleep 10
   return 42
@@ -744,18 +878,18 @@ def setup : SetupM Unit := do
   job \"bad\" count fun _ => (⟨7⟩ : TextId).insert 0 \"x\"
 "
 
-/-- A config of two chunks: `greet`, which makes a text holding "v1", and a
-`setup` that registers it and the jobs of `jobsChunk`. -/
+/-- A config of two files: `greet`, which makes a text holding "v1", and a
+`setup` that registers it and the jobs of `jobsText`. -/
 def jobsConfig : List (String × String) :=
-  [("10-greet.lean", greetChunk "v1"), ("20-setup.lean", jobsChunk)]
+  [("Config/Greet.lean", greetText "v1"), ("init.lean", overGreet jobsText)]
 
-/-- A chunk whose `setup` registers the mode `json`, whose text is parsed
+/-- A config whose `setup` registers the mode `json`, whose text is parsed
 with the grammar `json` and drawn by the shipped default; the command
 `edit`, which puts `, 2` before the last byte of the scratch buffer's text;
 and the job `highlight`, which sleeps 10 ms and finishes with a command that
 puts `[1, true]` in the scratch buffer's text and makes `json` its major
 mode, through the scratch buffer's window. -/
-def highlightChunk : String :=
+def highlightText : String :=
   "def wait : Unit → JobM Nat := fun _ => do
   sleep 10
   return 1
@@ -773,7 +907,7 @@ def setup : SetupM Unit := do
     discard <| (⟨0⟩ : ViewId).setMajorMode \"json\"
 "
 
-/-- Runs `check` against a host over a config of `highlightChunk`, whose
+/-- Runs `check` against a host over a config of `highlightText`, whose
 syntax tree collaborator is the real binding over the library's syntax
 service with every request recorded (`recordedRequest`) in the array `check`
 is handed, and which after an attach waits, with a bound, for the attached
@@ -784,7 +918,7 @@ did not hold or the host did not stop. The directory is removed. -/
 def withRecordedSyntaxTree (context : Context)
     (check : Session → IO.Ref (Array String) → IO Nat → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    writeFiles directory [("10-setup.lean", highlightChunk)]
+    writeConfig directory [("init.lean", highlightText)]
     let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
     let asked ← IO.mkRef #[]
     let syntaxTree := recordingSyntaxTree asked
@@ -861,7 +995,7 @@ def jobChecks (context : Context) : List Check :=
           session.ask [.spawn "count"]
           unless ← eventually (return (← session.clock.waiting) == 1) do
             return false
-          session.write "10-greet.lean" (greetChunk "v2")
+          session.write "Config/Greet.lean" (greetText "v2")
           session.ask [.reload]
           let withdrawn ← session.clock.withdrawn
           -- Past the job's sleep: a job that was still there would end, and
@@ -881,7 +1015,7 @@ def jobChecks (context : Context) : List Check :=
           session.ask [.spawn "count"]
           unless ← eventually (return (← session.clock.waiting) == 1) do
             return false
-          session.write "10-greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
+          session.write "Config/Greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
           session.ask [.reload]
           let stillWaiting := (← session.clock.waiting) == 1 && (← session.clock.withdrawn).isEmpty
           session.clock.advance 10
@@ -889,7 +1023,8 @@ def jobChecks (context : Context) : List Check :=
           return stillWaiting && joined == .settled &&
               (← session.lines) ==
                 #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1",
-                  "reload 2: rejected", "diagnostic: 10-greet.lean: error", "job 1 count: ok"] },
+                  "reload 2: rejected", "diagnostic: Config/Greet.lean: error",
+                  "job 1 count: ok"] },
     { name :=
         "a job that throws is reported as failed with its message, a handler whose command the library refuses as refused, and a name that is not registered as no such job"
       run :=
@@ -912,7 +1047,7 @@ def jobChecks (context : Context) : List Check :=
         "a join that cannot finish fails, it does not hang: the failure names the join's line, and the loop cancels its jobs when it ends"
       run :=
         IO.FS.withTempDir fun directory => do
-          writeFiles directory jobsConfig
+          writeConfig directory jobsConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           -- The clock is never moved, so the job never ends: the join runs
           -- out, after a fifth of a second, and `run` ends its loop.
@@ -985,11 +1120,11 @@ def jobChecks (context : Context) : List Check :=
           session.host.send (.run "edit")
           eventually (return (← published) > before + 1) }]
 
-/-- A config of one chunk with one command, `forget`, which releases the
+/-- A config of one file with one command, `forget`, which releases the
 text of index 0: the text of the editor loop's scratch buffer, made with the
 loop's frame, before any command runs. -/
 def forgetConfig : List (String × String) :=
-  [("10-forget.lean",
+  [("init.lean",
       "def forget : EditorM Unit := do
   (⟨0⟩ : TextId).release
 
@@ -1077,7 +1212,7 @@ def scriptChecks (context : Context) : List Check :=
         "on a stage host, spawn count, advance by its sleep and join end with the job's line, ok; an advance with nothing due runs out as stalled, with its line and its milliseconds, and an advance on a host with no fake clock fails with its sentence"
       run :=
         IO.FS.withTempDir fun directory => do
-          writeFiles directory jobsConfig
+          writeConfig directory jobsConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           let joined ←
             Headless.run stage.collaborators
@@ -1165,7 +1300,7 @@ def scriptChecks (context : Context) : List Check :=
         "a script that sends a key with modifiers prints that the key arrived with those modifiers, in order with what it asked for"
       run :=
         IO.FS.withTempDir fun directory => do
-          writeFiles directory greetConfig
+          writeConfig directory greetConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           let failure ←
             Headless.run stage.collaborators
@@ -1184,8 +1319,8 @@ def scriptChecks (context : Context) : List Check :=
         "a real config that defines a segment and lists the mode line installs: the reload prints a line for the segment nobody registered, the echo area says it, and each status line is the listing's, in its order and on its sides"
       run :=
         IO.FS.withTempDir fun directory => do
-          writeFiles directory
-              [("10-mode-line.lean",
+          writeConfig directory
+              [("init.lean",
                   "def setup : SetupM Unit := do\n  defineSegment \"greeting\" fun _ =>\n    #[{ text := \"hi\", face := ⟨\"mode-line.secondary\"⟩, padding := 4 }]\n  modeLine [\"buffer\", \"nope\"] [\"greeting\", \"line-column\"]\n")]
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           let failure ←
@@ -1207,7 +1342,7 @@ def scriptChecks (context : Context) : List Check :=
         "a script that runs to its end has no failure, and what it asked for was printed before the loop stopped"
       run :=
         IO.FS.withTempDir fun directory => do
-          writeFiles directory greetConfig
+          writeConfig directory greetConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           let failure ←
             Headless.run stage.collaborators
@@ -1223,7 +1358,7 @@ def scriptChecks (context : Context) : List Check :=
       run := do
         let gate ← Gate.new
         IO.FS.withTempDir fun directory => do
-            writeFiles directory (greetConfig ++ [("slow.lean", slowChunk)])
+            writeConfig directory slowConfig
             let stage ←
               Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
             let output := stage.output
@@ -1248,7 +1383,7 @@ def scriptChecks (context : Context) : List Check :=
       run := do
         let gate ← Gate.new
         IO.FS.withTempDir fun directory => do
-            writeFiles directory (greetConfig ++ [("slow.lean", slowChunk)])
+            writeConfig directory slowConfig
             let stage ←
               Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
             try
@@ -1263,8 +1398,7 @@ def scriptChecks (context : Context) : List Check :=
         -- and the reload is what the wait is for.
         let gate ← Gate.new
         let reloading ←
-          withHostOver context (greetConfig ++ [("slow.lean", slowChunk)]) gate.around id
-              fun session => do
+          withHostOver context slowConfig gate.around id fun session => do
               session.host.send .reload
               try
                 unless ← eventually gate.holding.get do
@@ -1277,7 +1411,7 @@ def scriptChecks (context : Context) : List Check :=
         -- marker.
         let block ← IO.Promise.new
         let entered ← IO.mkRef false
-        let stage ← Stage.new context context.elaborator { chunks := pure #[] }
+        let stage ← Stage.new context context.elaborator (memorySource [])
         let host ←
           Headless.start (scheme := TestScheme.scheme)
               { stage.collaborators with
@@ -1328,7 +1462,7 @@ def scriptChecks (context : Context) : List Check :=
         "a script that resizes the frame and asks for the scene prints the scene in a frame of that size, with its one view in the whole of it above the bottom row, one 16-pixel cell of the recorder; a second resize is the next scene's size"
       run :=
         IO.FS.withTempDir fun directory => do
-          writeFiles directory greetConfig
+          writeConfig directory greetConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           let failure ←
             Headless.run stage.collaborators
@@ -1345,7 +1479,7 @@ def scriptChecks (context : Context) : List Check :=
         "a script that commits text and asks for the scene prints the scene: its frame, and a view whose snapshot holds the text, read from the library, with the cursor after it"
       run :=
         IO.FS.withTempDir fun directory => do
-          writeFiles directory greetConfig
+          writeConfig directory greetConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           let failure ←
             Headless.run stage.collaborators
@@ -1382,7 +1516,7 @@ def scriptChecks (context : Context) : List Check :=
         "the scene prints each view's status line after the view's line, with the fields the loop gives the view: the buffer's name alone before anything is typed, and the modified field after it once text is committed"
       run :=
         IO.FS.withTempDir fun directory => do
-          writeFiles directory greetConfig
+          writeConfig directory greetConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           let failure ←
             Headless.run stage.collaborators
@@ -1451,9 +1585,9 @@ def scriptChecks (context : Context) : List Check :=
     { name :=
         "a program of the editor loop that is refused is printed as refused and hands back nothing, and what it made before the refusal is kept; one that is not refused prints nothing and hands back its result"
       run := do
-        let stage ← Stage.new context context.elaborator { chunks := pure #[] }
+        let stage ← Stage.new context context.elaborator (memorySource [])
         let collaborators := stage.collaborators
-        let running : Headless.Running Config.Elaborate.State TestScheme.scheme :=
+        let running : TestRunning :=
           { texts := RealTexts.over collaborators.published
             display :=
               ← Headless.Host.Display.recorder Headless.cells collaborators.published.reader
@@ -1474,7 +1608,7 @@ def scriptChecks (context : Context) : List Check :=
             (← stage.output.get) == printed },
     { name := "a window's close request with nothing unsaved ends the host's loop"
       run := do
-        let stage ← Stage.new context context.elaborator { chunks := pure #[] }
+        let stage ← Stage.new context context.elaborator (memorySource [])
         let host ← Headless.start stage.collaborators
         try
           unless ← Event.post .closeRequested do
@@ -1503,13 +1637,13 @@ def splitCommand : Config.Registration :=
       .call fun call => do
         discard <| call.target.window.id.split }
 
-/-- A chunk whose `setup` registers two jobs, a command and a key. `double`
+/-- A config whose `setup` registers two jobs, a command and a key. `double`
 takes one number, sleeps 10 ms, and its command inserts the double, in
 brackets, at the cursor of view 0 and messages it. `spinner` sleeps 10 ms,
 and its command inserts `spun` and then asks the scratch buffer's text its
 revision a thousand million times. `ask`, on `C-c a`, starts `double` with
 21. -/
-def startingChunk : String :=
+def startingText : String :=
   "def setup : SetupM Unit := do
   jobWith \"double\"
       (fun arguments => do
@@ -1527,29 +1661,29 @@ def startingChunk : String :=
   bindKey \"C-c a\" \"ask\"
 "
 
-/-- A chunk whose `setup` registers a command `quitter`: it inserts `typed`
+/-- A config whose `setup` registers a command `quitter`: it inserts `typed`
 at the cursor of view 0, and then gives up, with a reason. -/
-def givingUpChunk : String :=
+def givingUpText : String :=
   "def setup : SetupM Unit := do
   command \"quitter\" do
     discard <| (⟨0⟩ : ViewId).insertAtSelections \"typed\"
     giveUp \"no can do\"
 "
 
-/-- A chunk whose `setup` registers a command `stopper`: it inserts `typed`
+/-- A config whose `setup` registers a command `stopper`: it inserts `typed`
 at the cursor of view 0, and then breaks off, with a reason. -/
-def breakingOffChunk : String :=
+def breakingOffText : String :=
   "def setup : SetupM Unit := do
   command \"stopper\" do
     discard <| (⟨0⟩ : ViewId).insertAtSelections \"typed\"
     breakOff \"far enough\"
 "
 
-/-- A chunk whose `setup` registers two commands and a job. `copy` writes a
+/-- A config whose `setup` registers two commands and a job. `copy` writes a
 text to the clipboard. `paste` puts the text the clipboard holds in the
 echo area, or says what it was answered instead. `courier` sleeps 10 ms, and
 its command says the text the clipboard holds after `courier read`. -/
-def clipboardChunk : String :=
+def clipboardText : String :=
   "def held : EditorM String := do
   match ← Clipboard.read with
   | .ok (some text) => return text
@@ -1600,7 +1734,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the driver's run of a command of config's that gives up is rolled back and printed so: the output says it gave up, with its reason, the scene's echo is its name and the reason with no refused, and the view's text is that before the command"
       run :=
-        withHost context [("config.lean", givingUpChunk)] fun session => do
+        withHost context [("init.lean", givingUpText)] fun session => do
           session.ask [.reload]
           unless ← Event.post (.commit "abcd") do
             return false
@@ -1611,7 +1745,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the driver's run of a command of config's that breaks off keeps what the command did and is printed so: the output says it broke off, with its reason, the scene's echo is its name and the reason with no refused, and the view's text holds what the command inserted"
       run :=
-        withHost context [("config.lean", breakingOffChunk)] fun session => do
+        withHost context [("init.lean", breakingOffText)] fun session => do
           session.ask [.reload]
           unless ← Event.post (.commit "abcd") do
             return false
@@ -1623,7 +1757,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "the host keeps a clipboard of its own: before a write a command of config's reads no text, after one command wrote a text the next reads it, and so does a finished job's command"
       run :=
-        withHost context [("config.lean", clipboardChunk)] fun session => do
+        withHost context [("init.lean", clipboardText)] fun session => do
           session.ask [.reload]
           session.ask [.run "paste"]
           let (empty, _) ← session.scene
@@ -1713,7 +1847,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "a key's command starts a job with an argument: the host says it started, keys sent while the job sleeps are handled before its result, and once the clock lets it go its command runs after them, with the value the job computed in the text and in the scene's echo"
       run :=
-        withHost context [("10-starting.lean", startingChunk)]
+        withHost context [("init.lean", startingText)]
           (fun session => do
             session.ask [.reload]
             session.typed "C-c a"
@@ -1735,7 +1869,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "a finished job's command is guarded as a key's is: the interrupt key that arrives as it is delivered stops the command that loops over requests, the output says the job was interrupted, the view's text is that before the delivery, and the flag is down once the loop has taken the key"
       run :=
-        withHost context [("10-starting.lean", startingChunk)] fun session => do
+        withHost context [("init.lean", startingText)] fun session => do
           session.ask [.reload]
           unless ← Event.post (.commit "ab") do
             return false
@@ -1782,7 +1916,7 @@ def hostLoopChecks (context : Context) : List Check :=
     { name :=
         "a host is handed compiled jobs: a compiled command starts one before any config is loaded, a reload that installs does not cancel it, and once the clock lets it go its command runs"
       run :=
-        withHost context [("10-empty.lean", emptyChunk)]
+        withHost context [("init.lean", emptyText)]
           (fun session => do
             session.ask [.run "rest"]
             unless ← eventually (return (← session.clock.waiting) == 1) do
@@ -1903,7 +2037,7 @@ def exScriptChecks (context : Context) : List Check :=
               jobs := Files.package.registered.jobs }
           let started := s!"job 1 {Files.loadJob}: started"
           let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
-            let stage ← Stage.new context context.elaborator { chunks := pure #[] } compiled
+            let stage ← Stage.new context context.elaborator (memorySource []) compiled
             let host ← Headless.start stage.collaborators
             try
               host.send (.run name)
@@ -1924,7 +2058,7 @@ def exScriptChecks (context : Context) : List Check :=
     { name :=
         "a wait on a host whose loop a command ended answers that the loop has ended, a settle and a join alike, which is no failure of a script, and halting the host then answers that it stopped"
       run := do
-        let stage ← Stage.new context context.elaborator { chunks := pure #[] } exCompiled
+        let stage ← Stage.new context context.elaborator (memorySource []) exCompiled
         let host ← Headless.start stage.collaborators
         try
           host.send (.run Ex.quitName)
@@ -1939,16 +2073,17 @@ def exScriptChecks (context : Context) : List Check :=
           discard <| host.halt patience
           throw error }]
 
-/-- A chunk whose `greet` does not elaborate: a number where `message` takes
+/-- A config whose `greet` does not elaborate: a number where `message` takes
 a string, on its first line. -/
-def brokenGreetChunk : String :=
+def brokenGreetText : String :=
   "def greet : EditorM Unit := message 7\n"
 
 /-- Whether `echo`, quoted as a scene line has it, is a rejected reload's
-error about the first line of `10-greet.lean`. The column and the message
-are Lean's, so only their places are checked. -/
+error about the first line of `Config/Greet.lean` after its header, the
+file's third. The column and the message are Lean's, so only their places
+are checked. -/
 def isGreetError (echo : String) : Bool :=
-  echo.startsWith "\"reload: 10-greet.lean:1:" && (echo.splitOn ": error: ").length == 2
+  echo.startsWith "\"reload: Config/Greet.lean:3:" && (echo.splitOn ": error: ").length == 2
 
 /-- The checks of a reload's errors in the echo area (`Config.Report.echo`,
 `Editor/Headless.lean`), through the host with the real elaborator over a
@@ -1961,14 +2096,14 @@ def reloadEchoChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.run "greet"]
           let said ← session.echo
-          session.write "10-greet.lean" brokenGreetChunk
+          session.write "Config/Greet.lean" brokenGreetText
           session.ask [.reload]
           let rejected ← session.echo
           session.ask [.run "greet"]
           let replaced ← session.echo
           session.ask [.reload]
           let again ← session.echo
-          session.write "10-greet.lean" helloChunk
+          session.write "Config/Greet.lean" helloText
           session.ask [.reload]
           let kept ← session.echo
           session.ask [.run "greet"]
@@ -1979,13 +2114,15 @@ def reloadEchoChecks (context : Context) : List Check :=
               kept == rejected &&
               after == "\"hello\"" &&
               lines.contains "reload 2: rejected" &&
-              lines.contains "diagnostic: 10-greet.lean: error" &&
+              lines.contains "diagnostic: Config/Greet.lean: error" &&
               lines.contains "reload 4: installed, 2 files, 1 commands" &&
               (lines.filter (· == "run greet: ok")).size == 3 },
     { name :=
         "a reload rejected before the frame is made is said in the echo area once the frame is made"
       run :=
-        withHost context [("10-greet.lean", brokenGreetChunk)] fun session => do
+        withHost context
+          [("Config/Greet.lean", brokenGreetText), ("init.lean", overGreet setupText)]
+          fun session => do
           session.ask [.reload]
           let before ← session.scene
           session.host.resize 80 64
@@ -1998,7 +2135,7 @@ of the core's Lake package make (`Config.State.ofPackages` of
 `EditorCore.EditorPackage.packages`), which is what `Headless.Running.new`
 starts from for a host handed them. -/
 def shippedRegistry : Config.Registry :=
-  let (state, _) : Config.State Config.Elaborate.State × Array String :=
+  let (state, _) : Config.State Config.Elaborate.Base Config.Elaborate.Handle × Array String :=
     Config.State.ofPackages EditorCore.EditorPackage.packages
   state.registry
 
@@ -2235,10 +2372,10 @@ def shippedChecks (_ : Unit) : List Check :=
             ["undo", "redo", "clipboard-cut", "clipboard-copy", "clipboard-paste", "select-all"].all
               (ownedBy Evil.package) }]
 
-/-- A chunk whose `setup` registers `greet` and the job `follow`, which
+/-- A config whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and
 finishes with a command that makes a text holding `version`, the config's. -/
-def followChunk (version : String) : String :=
+def followText (version : String) : String :=
   "def follow : Unit → JobM String := fun _ => do
   let .ok watch ← FileWatch.start (.file \"/watched/f\") { window := 0, bound := 8 }
     | throw \"the watch was refused\"
@@ -2252,10 +2389,10 @@ def setup : SetupM Unit := do
   job \"follow\" follow fun version => discard <| createText version
 "
 
-/-- A config of two chunks: `greet`, and a `setup` that registers it and the
+/-- A config of two files: `greet`, and a `setup` that registers it and the
 job `follow` of version `v1`. -/
 def followConfig : List (String × String) :=
-  [("10-greet.lean", greetChunk "v1"), ("20-setup.lean", followChunk "v1")]
+  [("Config/Greet.lean", greetText "v1"), ("init.lean", overGreet (followText "v1"))]
 
 /-- The checks of a config's watches across a reload, through the headless
 host over the fake watch service: after a reload installs, only the watches
@@ -2271,7 +2408,7 @@ def watchReloadChecks (context : Context) : List Check :=
           unless ← eventually (return (← session.watches.watching) == 1) do
             return false
           let firstWatch := ((← session.watches.started)[0]?.map (·.1.toNat)).getD 0
-          session.write "20-setup.lean" (followChunk "v2")
+          session.write "init.lean" (overGreet (followText "v2"))
           session.ask [.reload]
           let oldEnded ←
             eventually do
@@ -2301,7 +2438,7 @@ def watchReloadChecks (context : Context) : List Check :=
           session.ask [.spawn "follow"]
           unless ← eventually (return (← session.watches.watching) == 1) do
             return false
-          session.write "10-greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
+          session.write "Config/Greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
           session.ask [.reload]
           let stillWatching :=
             (← session.watches.watching) == 1 && (← session.watches.ended).isEmpty
@@ -2321,7 +2458,7 @@ directory is removed. -/
 def withEnvironments (context : Context) (files : List (String × String))
     (check : Session → IO.Ref Process.Environments → Job.Environments → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    writeFiles directory files
+    writeConfig directory files
     let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
     let state ← IO.mkRef ({} : Process.Environments)
     let environments := Headless.reportedEnvironments state stage.collaborators.environment
@@ -2333,9 +2470,9 @@ def withEnvironments (context : Context) (files : List (String × String))
             watches := stage.watches, log := stage.log }
           state environments
 
-/-- A chunk whose `setup` sets the process environment to `setting`, written
+/-- A config whose `setup` sets the process environment to `setting`, written
 as Lean. -/
-def environmentChunk (setting : String) : String :=
+def environmentText (setting : String) : String :=
   s!"def setup : SetupM Unit := do\n  processEnvironment {setting}\n"
 
 /-- An entry of a lookup that failed, as a host's environments hold one. -/
@@ -2351,13 +2488,13 @@ def environmentHostChecks (context : Context) : List Check :=
   [{  name :=
         "an installed reload whose setup sets the process environment puts that setting in the host's environments and drops every entry; a rejected reload changes neither"
       run :=
-        withEnvironments context [("10-setup.lean", environmentChunk ".inherited")]
+        withEnvironments context [("init.lean", environmentText ".inherited")]
           fun session state _ => do
           state.set { entries := #[("/p/d", failedLookup)] }
           session.ask [.reload]
           let installed ← state.get
           state.modify fun held => { held with entries := #[("/p/d", failedLookup)] }
-          session.write "10-setup.lean" "def setup : SetupM Unit := oops"
+          session.write "init.lean" "def setup : SetupM Unit := oops"
           session.ask [.reload]
           let rejected ← state.get
           return installed.setting == .inherited && installed.entries.isEmpty &&
@@ -2365,7 +2502,7 @@ def environmentHostChecks (context : Context) : List Check :=
               rejected.entries == #[(("/p/d" : System.FilePath), failedLookup)] },
     { name := "a config that does not set the process environment installs auto"
       run :=
-        withEnvironments context [("10-setup.lean", "def setup : SetupM Unit := pure ()")]
+        withEnvironments context [("init.lean", "def setup : SetupM Unit := pure ()")]
           fun session state _ => do
           state.set { setting := .mise none }
           session.ask [.reload]

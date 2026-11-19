@@ -65,8 +65,8 @@ def themeChecks (context : Context) : List Check :=
         "criteria 3 and 4: the theme command switches the theme the display draws in with no reload, to the frame the chosen theme followed by config's own face gives, and the scene line names the theme it was drawn in"
       run :=
         IO.FS.withTempDir fun directory => do
-          writeFiles directory
-              [("10-themes.lean",
+          writeConfig directory
+              [("init.lean",
                   "def setup : SetupM Unit := do\n  defineTheme \"second\" #[{ name := ⟨\"default\"⟩, face := { background := some (Color.rgb 0 90 0) } }]\n  face \"keyword\" { foreground := some (Color.rgb 200 0 0) }\n")]
           let configured : Theme := #[{ name := ⟨"keyword"⟩, face := keywordFace }]
           let stage ←
@@ -136,9 +136,8 @@ def themeChecks (context : Context) : List Check :=
     { name :=
         "criterion 6: a config that names a theme nobody registered says so in the echo area, naming the theme, before the frame is made and after, and its report says so; the theme in force stays"
       run :=
-        withHost context
-          [("10-themes.lean", "def setup : SetupM Unit := do\n  useTheme \"nope\"\n")] (compiled :=
-          themeCompiled) fun session => do
+        withHost context [("init.lean", "def setup : SetupM Unit := do\n  useTheme \"nope\"\n")]
+          (compiled := themeCompiled) fun session => do
           session.ask [.reload]
           session.host.resize 80 64
           session.ask []

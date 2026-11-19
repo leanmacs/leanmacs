@@ -16,7 +16,7 @@ open Editor
 /-- The checks of the package `greeting`, each with what must hold as a
 sentence. -/
 def greetingChecks : List (String × Bool) :=
-  let (state, refused) : Config.State Unit × Array String :=
+  let (state, refused) : Config.State Unit Unit × Array String :=
     Config.State.ofPackages Greeting.EditorPackage.packages
   [("the package `greeting` is accepted, alone", refused == #[] && state.packages == #["greeting"]),
     ("it registers `greeting-hello` and `greeting-reply`, in that order",

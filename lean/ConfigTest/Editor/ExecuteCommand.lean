@@ -36,13 +36,13 @@ def commandCompiled : Compiled :=
         Themes.package.registered.commands
     themes := #[Themes.defaultTheme] ++ fixtureThemes }
 
-/-- A chunk whose `setup` defines the style `starts`, which keeps the
+/-- A config whose `setup` defines the style `starts`, which keeps the
 candidates a text starts, in their order, chooses it for the categories
 `command` and `binding`, registers `zz-other`, which says `other`, bound to
 `SPC f f` with no description, `yy-said`, which says `said`, bound to
 `SPC y y` and described `Say it`, and, when `mine`, `zz-mine`, which says
 `mine`. -/
-def commandChunk (mine : Bool) : String :=
+def commandText (mine : Bool) : String :=
   "def setup : SetupM Unit := do\n" ++
     "  defineStyle (.keeping \"starts\" fun text candidate => candidate.startsWith text)\n" ++
     "  useStyleFor \"command\" \"starts\"\n" ++
@@ -68,7 +68,7 @@ def commandPromptChecks (context : Context) : List Check :=
   [{  name :=
         "criteria 1, 2 and 3: the command prompt lists the commands compiled code registers and config's, config's in the order registered; a reload whose config no longer registers zz-mine drops it from the candidates; from a config that binds neither execute-command nor load-theme, calling execute-command, accepting load-theme and then fixture-dark puts that theme in force, as the scene line names it; a config command bound to SPC f f shows SPC f f as its annotation; the binding search lists SPC y y with its command and description, and accepting it runs yy-said"
       run :=
-        withHost context [("10-commands.lean", commandChunk true)]
+        withHost context [("init.lean", commandText true)]
           (fun session => do
             let asked (typed : String) : IO (Array String) := do
               session.ask [.run ExecuteCommand.name]
@@ -87,7 +87,7 @@ def commandPromptChecks (context : Context) : List Check :=
             session.ask [.reload]
             let configs ← asked "zz-"
             let compiled ← asked "load"
-            session.write "10-commands.lean" (commandChunk false)
+            session.write "init.lean" (commandText false)
             session.ask [.reload]
             let dropped ← asked "zz-"
             let before ← drawnIn

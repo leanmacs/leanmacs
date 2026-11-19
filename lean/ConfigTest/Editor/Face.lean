@@ -37,8 +37,8 @@ namespace ConfigTest
 
 open Editor
 
-/-- A config of one chunk whose `setup` is `body`, a line of Lean. -/
-def faceChunk (body : String) : String :=
+/-- A config of one file whose `setup` is `body`, a line of Lean. -/
+def faceText (body : String) : String :=
   s!"def setup : SetupM Unit := do\n  {body}\n"
 
 /-- The checks that a face set in config reaches the frame: a config
@@ -57,7 +57,7 @@ def faceChecks (context : Context) : List Check :=
       run :=
         IO.FS.withTempDir fun directory => do
           let write (body : String) : IO Unit :=
-            writeFiles directory [("10-faces.lean", faceChunk body)]
+            writeConfig directory [("init.lean", faceText body)]
           let over (attributes : Face) : Theme :=
             Theme.builtin ++ #[{ name := ⟨"default"⟩, face := attributes }]
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
@@ -129,7 +129,7 @@ def faceChecks (context : Context) : List Check :=
               holds
                   [("(d) the frame after a changed size differs", large != green),
                     ("(d) and is the one the size gives", large == largeMirror)]
-              -- (e) A chunk that does not elaborate: rejected, and no face moved.
+              -- (e) A config that does not elaborate: rejected, and no face moved.
               write "face \"default\" { size := some 8 }\n\ndef broken : Nat := \"not a number\""
               reload
               -- Its error is in the echo area now, so the scene is not the one
@@ -157,7 +157,7 @@ def faceChecks (context : Context) : List Check :=
       run :=
         IO.FS.withTempDir fun directory => do
           let write (points : Nat) : IO Unit :=
-            writeFiles directory [("10-padding.lean", faceChunk s!"framePadding {points}")]
+            writeConfig directory [("init.lean", faceText s!"framePadding {points}")]
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           -- The host's display: the real binding over the library's layout in
           -- cells 8 by 16, at scale 1, which the check keeps to read its frame
@@ -236,8 +236,8 @@ def faceChecks (context : Context) : List Check :=
               host.send (.run "top")
               settled
               let before ← agreement
-              writeFiles directory
-                  [("10-faces.lean", faceChunk "face \"mode-line\" { size := some 32 }")]
+              writeConfig directory
+                  [("init.lean", faceText "face \"mode-line\" { size := some 32 }")]
               host.send .reload
               settled
               let after ← agreement

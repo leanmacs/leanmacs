@@ -49,15 +49,14 @@ def appearanceThemes : Array NamedTheme :=
 /-- The reload reducer's state with the built-in theme and the fixture
 themes (`appearanceThemes`) registered, the built-in theme in force, and
 nothing loaded. -/
-def themedState : Config.State Elaborated :=
+def themedState : ModelState :=
   {
     registry :=
       ({} : Config.Registry).replaceThemes .compiled (#[Themes.defaultTheme] ++ appearanceThemes) }
 
 /-- The effects of each of `events` from `state`, one array an event, and the
 state reached. -/
-def effectsOf (state : Config.State Elaborated) (events : List (Config.Event Elaborated)) :
-    Config.State Elaborated × List (Array Seen) :=
+def effectsOf (state : ModelState) (events : List (ModelEvent)) : ModelState × List (Array Seen) :=
   events.foldl
     (fun (state, effects) event =>
       let (state, more) := Config.step state event

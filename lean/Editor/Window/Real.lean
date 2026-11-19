@@ -227,8 +227,9 @@ reloaded when `plan` says so); when config is loaded, its reload is waited
 for, for at most `patience` milliseconds (none for no bound, which a test
 gives so that its result does not race the clock); the window is run, with
 the title bar that config chose (`titleBarAtOpen`); and when the host's loop
-ends, `closeOnceEnded` says why if it failed, runs `shutdown` and closes the
-window. That comes before the close by the window port's rule: a close with
+ends, `closeOnceEnded` says why if it failed, removes the directory of the
+config files' module data if one was made (`Headless.Collaborators.dispose`),
+runs `shutdown` and closes the window. That comes before the close by the window port's rule: a close with
 the system's quit pending may end the process inside the run, so nothing
 after the run is reached then.
 The exit status: 0 when the window ran with something drawing in it; 1 when
@@ -260,7 +261,15 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
   -- The loop ends by itself, once `:q` or a close request can leave (one
   -- refused for unsaved changes leaves the loop running): the window is then
   -- closed, once what was published last is drawn.
-  let closer ← IO.asTask (prio := .dedicated) (closeOnceEnded platform host.thread shutdown)
+  -- With the shutdown goes the directory of the config files' module data, if
+  -- one was made: the close that follows may end the process.
+  let ending : IO Unit := do
+    try
+      shipped.dispose
+    catch _ =>
+      pure ()
+    shutdown
+  let closer ← IO.asTask (prio := .dedicated) (closeOnceEnded platform host.thread ending)
   -- The title bar is chosen as the window opens, so config loaded at start
   -- is waited for first (`awaitConfig`), for at most `patience`.
   let titleBar ←

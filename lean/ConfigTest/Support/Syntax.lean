@@ -88,7 +88,7 @@ def shippedFaces (grammar : String) (captures : List (String × Option FaceName)
   let faces := Highlight.faces captures (← query.captureNames)
   return s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
 
-/-- The Rust text of `rustObjectsChunk`: a method in an `impl`, after a
+/-- The Rust text of `rustObjectsConfig`: a method in an `impl`, after a
 unit struct. -/
 def rustObjectsText : String :=
   "struct S;\n\nimpl S {\n    fn one(&self) -> u8 {\n        let x = 1;\n        x\n    }\n}\n"
@@ -106,7 +106,7 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
     (fileModel : Option FileModel := none) (realFiles : Bool := false)
     (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    writeFiles directory files
+    writeConfig directory files
     let source := Config.Directory.source directory
     -- With `realFiles`, the jobs reach real files through the library's
     -- file service, as a file check's do (`Stage.overFiles`).
@@ -127,7 +127,7 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
         pure staged.services
     let shipped :=
       Headless.shippedOver EditorCore.EditorPackage.packages #[`Editor] "" [] "" staged.emit
-        services staged.published staged.held
+        services staged.published staged.held (← Config.Elaborate.ModuleFiles.temporary)
     let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
       let real ← RealSyntaxTree.new snapshots
       return fun request => do

@@ -1,4 +1,4 @@
-import Editor.Config.Modules
+import Editor.Config.Session
 
 /-!
 # The contract of the elaborator port
@@ -53,7 +53,7 @@ handles it needs, and not all, comes to: the core hands all of them.
 
 namespace Editor.Config.Elaborator.Contract
 
-open Editor.Config.Modules
+open Editor.Config
 
 /-- One line of a file a property writes. -/
 inductive Line where

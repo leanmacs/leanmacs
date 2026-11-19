@@ -46,11 +46,11 @@ namespace ConfigTest
 
 open Editor
 
-/-- A chunk whose `setup` registers two jobs that each load a file and whose
+/-- A config whose `setup` registers two jobs that each load a file and whose
 handler makes a text of what was loaded: `open`, of `note.txt` in
 `directory`, and `missing`, of a file that is not there. A load that is
 refused is thrown, as the refusal's description. -/
-def openChunk (directory : System.FilePath) : String :=
+def openText (directory : System.FilePath) : String :=
   "def openFile (path : String) : Unit → JobM JobSnapshotId := fun _ => do
   match ← File.load path 1000 with
   | .ok file => return file.snapshot
@@ -81,11 +81,11 @@ def noteStatus (path : System.FilePath) (modified : Bool := false) (column : Nat
   statusOf (name := "note.txt") (modified := modified) (cursor := ⟨0, column⟩) (lines := 2) (file :=
     some path) (changed := changed)
 
-/-- A chunk whose `setup` registers `language-report`, which says in the
+/-- A config whose `setup` registers `language-report`, which says in the
 echo area the language and the major mode of the buffer the focused window
 shows, each `none` when it has none (`rust code`, `none none`), and then
 runs `more`, lines of a `do` block indented by two spaces. -/
-def languageReportChunk (more : String := "") : String :=
+def languageReportText (more : String := "") : String :=
   "def report : EditorM Unit := do
   let state ← editorState
   match state.target? state.frame.focused with
@@ -108,7 +108,7 @@ def rustOverride : String :=
 
 /-- Runs `check` against a host over the library's file service
 (`Stage.overFiles`), with a config directory of its own holding
-`languageReportChunk` with `more` lines of its `setup`, that is handed the file commands and
+`languageReportText` with `more` lines of its `setup`, that is handed the file commands and
 their jobs, the minibuffer's commands and its mode, the `code` mode and the
 languages that ship (`Language.modes`, `Language.shipped`), as the
 executable is, and, for each name and path of `opens`, a command of that
@@ -119,7 +119,7 @@ host: `false` if the check did not hold or the host did not stop. -/
 def withLanguageHost (context : Context) (more : String) (opens : List (String × System.FilePath))
     (check : Session → IO.Ref (Array String) → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    writeFiles directory [("10-report.lean", languageReportChunk more)]
+    writeConfig directory [("init.lean", languageReportText more)]
     let asked ← IO.mkRef #[]
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
@@ -308,7 +308,7 @@ def fileChecks (context : Context) : List Check :=
         IO.FS.withTempDir fun files =>
           IO.FS.withTempDir fun config => do
             IO.FS.writeBinFile (files / "note.txt") "héllo\n".toUTF8
-            writeFiles config [("10-open.lean", openChunk files)]
+            writeConfig config [("init.lean", openText files)]
             let stage ← Stage.overFiles context (Config.Directory.source config)
             let snapshots ← Ffi.Snapshot.live
             let host ← Headless.start stage.collaborators
@@ -537,10 +537,10 @@ def reloadChecks (context : Context) : List Check :=
                   echo == "".quote &&
                   lines == #[viewLine new 16, status] }]
 
-/-- A chunk whose `setup` registers `pick`, which asks `Pick: ` over the
+/-- A config whose `setup` registers `pick`, which asks `Pick: ` over the
 fixed candidates `wq`, `edit` and `w`, and `picked`, which says its
 answer in the echo area. -/
-def pickChunk : String :=
+def pickText : String :=
   "def setup : SetupM Unit := do
   command \"pick\" (discard <| prompt \"Pick: \" { command := \"picked\" }
     (sources := [.given (.ofTexts \"picks\" \"pick\" #[\"wq\", \"edit\", \"w\"])]))
@@ -735,7 +735,7 @@ def filePromptChecks (context : Context) : List Check :=
     { name :=
         "AC 5: under the Vim scheme, in a prompt that is not a file prompt, C-n C-n TAB puts the second listed candidate in the minibuffer with the bar at its end, not the first; e TAB puts the first listed for e; the prompt stays open, its status line and the list view still drawn, and nothing is refused"
       run :=
-        withVimHost context [("10-pick.lean", pickChunk)] fun session => do
+        withVimHost context [("init.lean", pickText)] fun session => do
           session.ask [.reload]
           let listed ← realOrder "" #["wq", "edit", "w"]
           let some second := listed[1]? | return false

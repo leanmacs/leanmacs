@@ -1,22 +1,36 @@
-import Editor.Config.Modules
 import Editor.Config.Session
 
 /-!
-# The source port, answered by a directory
+# The source port and the package ports, answered by a directory
 
-The real adapter of `Config.Source` (`Editor/Config/Session.lean`): a config
-is the `.lean` files directly in one directory.
+The real adapter of `Config.Source` (`Editor/Config/Session.lean`), and
+the file reads and writes the package ports are made of: a config is one
+directory.
 
-- A chunk is a file whose name ends in `.lean`, named by its file name. A
-  directory is not a chunk, whatever its name, and nothing below a
-  subdirectory is read.
-- The chunks are in the byte order of their names, so `10-keys.lean` comes
-  before `20-setup.lean` on every machine, whatever order the file system
-  lists them in.
-- An empty directory is a config with no chunks.
-- A directory that does not exist or cannot be read makes `chunks` throw, and
-  so does a file that cannot be read or is not UTF-8. The session core turns
-  that into a rejected reload with a diagnostic.
+```
+init.lean            the root
+Config/Keys.lean     the config file whose module is Config.Keys
+lakefile.toml        the directory as a Lake package
+lean-toolchain
+```
+
+- **The root** is `init.lean`, directly in the directory, and its module
+  is `init`. A directory with none has no root.
+- **A config file** is read by its module name, from the path the name
+  gives under the directory (`Config.pathOf`): `Config/Evil/Keys.lean` for
+  `Config.Evil.Keys`. A name with no file is none. Nothing is listed: a
+  file under `Config/` that no file imports is never read.
+- **The stray files** are the `.lean` files directly in the directory
+  other than the root, in the byte order of their names: what a config in
+  the old form, byte-ordered chunks with no header, is made of. A
+  directory is not one, whatever its name, and nothing below a
+  subdirectory is.
+- **A file of the package** (`read`) is read by its name, and is none when
+  it is not there. **Creating one** (`create`) writes it only when it is
+  not there: a file that is there is the user's, and is never overwritten.
+- A directory that does not exist or cannot be read makes `root` and
+  `stray` throw, and so does a file that cannot be read or is not UTF-8.
+  The session core turns that into a rejected reload with a diagnostic.
 - The error is one line that names the path:
   `cannot read the config directory <path>: <reason>`, or
   `cannot read the config file <path>: <reason>`. The core knows nothing of
@@ -38,8 +52,8 @@ diagnostic is printed as its first. -/
 def unreadable (what : String) (path : System.FilePath) (reason : String) : IO.Error :=
   IO.userError s!"cannot read the config {what} {path}: {(reason.splitOn "\n").headD ""}"
 
-/-- The text of the chunk file at `path`. -/
-def chunkText (path : System.FilePath) : IO String := do
+/-- The text of the file at `path`. -/
+def fileText (path : System.FilePath) : IO String := do
   let bytes ←
     try
       IO.FS.readBinFile path
@@ -47,29 +61,6 @@ def chunkText (path : System.FilePath) : IO String := do
       throw (unreadable "file" path (toString error))
   let some text := String.fromUTF8? bytes | throw (unreadable "file" path "it is not UTF-8")
   return text
-
-/-- The source whose chunks are the `.lean` files directly in `directory`. -/
-def source (directory : System.FilePath) : Source :=
-  {
-    chunks := do
-      let entries ←
-        try
-          directory.readDir
-        catch error =>
-          throw (unreadable "directory" directory (toString error))
-      let files ← entries.filterM fun entry => return !(← entry.path.isDir)
-      let names : Array String := (files.map (·.fileName)).filter (·.endsWith ".lean")
-      -- `<` on strings compares code points, which is the order of their
-      -- UTF-8 bytes.
-      (names.qsort (· < ·)).mapM fun (name : String) => do
-          let text ← chunkText (directory / name)
-          return { name, text } }
-
-/-! ## Config as modules
-
-What follows answers the ports of the session over modules
-(`Editor/Config/Modules.lean`), which stands beside the chunk session
-until the hosts are switched to it. -/
 
 /-- Whether `path` is a file: it is there, and it is not a directory. -/
 def isFile (path : System.FilePath) : IO Bool :=
@@ -87,23 +78,23 @@ def demand (directory : System.FilePath) : IO Unit := do
   unless isDirectory do
     throw (unreadable "directory" directory "it is not a directory")
 
-/-- The source of config as modules whose files are in `directory`: the
+/-- The source whose files are in `directory`: the
 root is `init.lean`, the config file of a module is at the path its name
-gives (`Modules.pathOf`), and the stray files are the `.lean` files
+gives (`Config.pathOf`), and the stray files are the `.lean` files
 directly in the directory other than the root, in the byte order of their
 names. A file that is not there is none; a directory that is not there, and
 a file that cannot be read or is not UTF-8, throw one line that names the
 path. -/
-def modules (directory : System.FilePath) : Modules.Source :=
-  let fileAt (module path : String) : IO (Option Modules.SourceFile) := do
+def source (directory : System.FilePath) : Source :=
+  let fileAt (module path : String) : IO (Option SourceFile) := do
     unless ← isFile (directory / path) do
       return none
-    return some { module, path, text := ← chunkText (directory / path) }
+    return some { module, path, text := ← fileText (directory / path) }
   {
     root := do
       demand directory
-      fileAt Modules.rootModule Modules.rootPath,
-    file := fun module => fileAt module (Modules.pathOf module),
+      fileAt rootModule rootPath,
+    file := fun module => fileAt module (pathOf module),
     stray := do
       let entries ←
         try
@@ -112,23 +103,22 @@ def modules (directory : System.FilePath) : Modules.Source :=
           throw (unreadable "directory" directory (toString error))
       let files ← entries.filterM fun entry => return !(← entry.path.isDir)
       let names : Array String :=
-        (files.map (·.fileName)).filter fun name =>
-          name.endsWith ".lean" && name != Modules.rootPath
+        (files.map (·.fileName)).filter fun name => name.endsWith ".lean" && name != rootPath
       -- `<` on strings compares code points, which is the order of their
       -- UTF-8 bytes.
       return names.qsort (· < ·) }
 
 /-- The text of the file of `directory` called `name`, or none when there
 is no such file: the read half of the directory as a Lake package
-(`Modules.Package.read`). -/
+(`PackageFiles.read`). -/
 def read (directory : System.FilePath) (name : String) : IO (Option String) := do
   unless ← isFile (directory / name) do
     return none
-  return some (← chunkText (directory / name))
+  return some (← fileText (directory / name))
 
 /-- Creates the file of `directory` called `name` holding `text`, unless a
 file of that name is there, which is left as it is: the write half of the
-directory as a Lake package (`Modules.Generator.create`). The file is
+directory as a Lake package (`Generator.create`). The file is
 opened to be created, never to be replaced, so one that appears in between
 is not overwritten either. -/
 def create (directory : System.FilePath) (name text : String) : IO Unit := do

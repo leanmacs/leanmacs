@@ -1,5 +1,8 @@
 import Editor.Appearance
 import Editor.Config.Diagnostic
+import Editor.Config.Elaborator.Contract
+import Editor.Config.Elaborator.Model
+import Editor.Config.LakePackage
 import Editor.Config.Owner
 import Editor.Config.Registry
 import Editor.Config.Reload
@@ -10,93 +13,162 @@ import Editor.Setup
 /-!
 # Model tests: support: Elaborator
 
-A hand-written fake of the config elaborator, and what a check sees of the
-elaborations it answers. Shared by several test modules under
-`ModelTest/Editor/`; it holds no checks of its own.
+The config session on the elaborator's model: the model as the contract's
+subject, a config written as modules and their lines, a call log every
+fake port of a check writes to, an elaborator that records its calls,
+hand-written fakes of the package ports, and what the checks of the reload
+reducer are written with: outcomes built by hand and an effect as a check
+compares it. Shared by several test modules under `ModelTest/Editor/`; it
+holds no checks of its own.
 -/
 
 namespace ModelTest
 
 open Editor
+open Editor.Config
 
-/-- The state of the fake elaborator: the names of the chunks elaborated so
-far, oldest first. Its base is the state with none. -/
-abbrev Elaborated :=
-  Array String
+/-- The elaborator's model as the subject of the port's contract: a file is
+the model's lines, `setup` is a definition of that name, the base holds
+`Editor`, which declares what is under it, and can grow to hold `Lean`. -/
+def modelSubject : Elaborator.Contract.Subject Elaborator.Model.Base Elaborator.Model.Handle :=
+  { elaborator := Elaborator.Model.elaborator,
+    write := fun lines =>
+      "\n".intercalate
+        (lines.map fun line =>
+            match line with
+            | .import module => s!"import {module}"
+            | .define name => s!"define {name}"
+            | .use name => s!"use {name}"
+            | .fail => "fail"
+            | .warn => "warn"
+            | .setup => "define setup").toList,
+    held := ("Editor", "Editor.thing"), grown := ("Lean", "Lean.thing"), unlinked := "Lake" }
 
-/-- A call the fake elaborator received. -/
-inductive ElaboratorCall where
-  /-- The base was imported. -/
-  | base
-  /-- The chunk called `name` was elaborated on the state `before`. -/
-  | chunk (before : Elaborated) (name : String)
-  /-- The `setup` program was asked for, of a config that left `state`. -/
-  | setup (state : Elaborated)
+/-- A call a fake port of a check received. -/
+inductive SessionCall where
+  /-- A base was asked for, to hold `modules`: made, or `grown` from one
+  that was handed in. -/
+  | base (grown : Bool) (modules : Array String)
+  /-- The config file `module` was elaborated over the handles of
+  `handles`. -/
+  | file (module : String) (handles : Array String)
+  /-- The root was elaborated over the handles of `handles`. -/
+  | root (handles : Array String)
+  /-- The `setup` program was asked for. -/
+  | setup
+  /-- The file of the config directory called `name` was read. -/
+  | read (name : String)
+  /-- The file of the config directory called `name` was created. -/
+  | create (name : String)
   deriving DecidableEq, Repr
 
-/-- The diagnostic the fake elaborator gives for the chunk called `name` when
-the chunk's text tells it to. -/
-def told (name : String) (severity : Config.Severity) : Config.Diagnostic :=
-  { source := name, line := 1, severity, message := "the fake was told to" }
+/-- The base of the model. -/
+abbrev ModelBase :=
+  Elaborator.Model.Base
 
-/-- A hand-written fake of the elaborator port. It records every call in
-`calls`. A chunk whose text is "fails" fails with an error; one whose text is
-"warns" elaborates with a warning; one whose text is "throws" makes the port
-itself throw. `setup` is the program it says the config defines, or the
-diagnostics it has instead. With `baseThrows` the port throws when it is
-asked to import the base, and with `setupThrows` when it is asked for the
-`setup` program. -/
-def fakeElaborator (calls : IO.Ref (Array ElaboratorCall))
-    (setup : Except (Array Config.Diagnostic) (SetupM Unit) := .ok (pure ()))
-    (baseThrows setupThrows : Bool := false) : Config.Elaborator Elaborated :=
+/-- The handle of the model. -/
+abbrev ModelHandle :=
+  Elaborator.Model.Handle
+
+/-- `elaborator`, recording each call that makes a base, elaborates or
+asks for `setup` in `calls`. Reading a header and asking whether a module
+is linked are not recorded: they change nothing. -/
+def recording (calls : IO.Ref (Array SessionCall))
+    (elaborator : Elaborator ModelBase ModelHandle := Elaborator.Model.elaborator) :
+    Elaborator ModelBase ModelHandle :=
+  { elaborator with
+    base := fun given modules => do
+      calls.modify (·.push (.base given.isSome modules))
+      elaborator.base given modules,
+    file := fun base handles file => do
+      calls.modify (·.push (.file file.module (handles.map (·.module))))
+      elaborator.file base handles file,
+    root := fun base handles file => do
+      calls.modify (·.push (.root (handles.map (·.module))))
+      elaborator.root base handles file,
+    setup := fun handle => do
+      calls.modify (·.push .setup)
+      elaborator.setup handle }
+
+/-- A source over `files`, each a module name and the lines of its text,
+the root being the module `init`, with `stray` as the `.lean` files beside
+it. -/
+def configOf (files : List (String × List String)) (stray : List String := []) : Source :=
+  let find (module : String) : Option SourceFile :=
+    (files.find? (·.1 == module)).map fun (_, lines) =>
+      { module, path := if module == rootModule then rootPath else pathOf module,
+        text := "\n".intercalate lines }
+  { root := pure (find rootModule), file := fun module => pure (find module),
+    stray := pure stray.toArray }
+
+/-- A hand-written fake of the package port over `files`, the names and
+texts a config directory holds, recording each read in `calls`. A
+lakefile's text is read as lines: `require <name>` is a require, and a
+text that is `broken` cannot be read. -/
+def fakePackage (calls : IO.Ref (Array SessionCall)) (files : IO.Ref (Array (String × String))) :
+    PackageFiles :=
   {
-    base := do
-      calls.modify (·.push .base)
-      if baseThrows then
-        throw (IO.userError "the fake elaborator's base broke")
-      return #[],
-    chunk := fun before chunk => do
-      calls.modify (·.push (.chunk before chunk.name))
-      match chunk.text with
-      | "fails" =>
-        return { diagnostics := #[told chunk.name .error], state := none }
-      | "warns" =>
-        return { diagnostics := #[told chunk.name .warning],
-                 state := some (before.push chunk.name) }
-      | "throws" =>
-        throw (IO.userError "the fake elaborator broke")
-      | _ =>
-        return { diagnostics := #[], state := some (before.push chunk.name) },
-    setup := fun state => do
-      calls.modify (·.push (.setup state))
-      if setupThrows then
-        throw (IO.userError "the fake elaborator's setup broke")
-      return setup }
+    read := fun name => do
+      calls.modify (·.push (.read name))
+      return ((← files.get).find? (·.1 == name)).map (·.2),
+    requires := fun text =>
+      if text == "broken" then pure (.error "the fake lakefile is broken")
+      else
+        pure
+          (.ok
+            ((text.splitOn "\n").filterMap fun line =>
+                match line.splitOn " " with
+                | ["require", name] => some name
+                | _ => none).toArray) }
 
-/-- A hand-written fake of the source port: the chunks called `names`, each
-with its own name as its text unless `texts` gives it another. -/
-def fakeSource (names : List String) (texts : List (String × String) := []) : Config.Source :=
+/-- A hand-written fake of the generator port over `files`, for an editor
+whose pin is `pin` and which was built from `set`: it adds a file that is
+not there to `files` and leaves one that is, recording each call in
+`calls`. With `broken` it throws in place of creating. -/
+def fakeGenerator (calls : IO.Ref (Array SessionCall)) (files : IO.Ref (Array (String × String)))
+    (set : Option LakePackage.Set) (pin : String := "leanprover/lean4:v1\n")
+    (broken : Bool := false) : Generator :=
   {
-    chunks :=
-      pure
-        (names.toArray.map fun name =>
-          { name, text := ((texts.find? (·.1 == name)).map (·.2)).getD name }) }
+    create := fun name text => do
+      calls.modify (·.push (.create name))
+      if broken then
+        throw (IO.userError "the fake directory cannot be written")
+      files.modify fun files => if files.any (·.1 == name) then files else files.push (name, text),
+    pin, set }
 
-/-- The chunks a config of the fake elaborator has once the chunks called
-`names` are loaded, each with its name as its text. -/
-def loaded (names : List String) : Array (Config.Chunk Elaborated) :=
-  (List.range names.length).toArray.map fun index =>
-    { name := names.getD index "", text := names.getD index "",
-      after := (names.take (index + 1)).toArray }
+/-- The config half of the editor's state over the model's base and
+handle: what the checks of the reload reducer reduce. -/
+abbrev ModelState :=
+  Config.State ModelBase ModelHandle
 
-/-- An effect of the reload reducer, as a check compares it: a start with the
-base and the names of the chunks it carries, the cancelling of an owner's
-jobs with the owner's name, or a report with its number, whether it
-installed, the sources of its diagnostics, and its counts of files and
-commands. -/
+/-- An event of the reload reducer over the model's base and handle. -/
+abbrev ModelEvent :=
+  Config.Event ModelBase ModelHandle
+
+/-- What one reload came to, over the model's base and handle. -/
+abbrev ModelOutcome :=
+  Config.Outcome ModelBase ModelHandle
+
+/-- The diagnostic a check says the elaborator gave for `source`. -/
+def told (source : String) (severity : Config.Severity) : Config.Diagnostic :=
+  { source, line := 1, severity, message := "the fake was told to" }
+
+/-- The files a config has loaded once the files called `names` are, each
+with its name as its module, its path and its text, and a handle that
+defines nothing. Built by hand: no elaborator ran. -/
+def loaded (names : List String) : Array (LoadedFile ModelHandle) :=
+  names.toArray.map fun name =>
+    { file := { module := name, path := name, text := name },
+      handle := { module := name, defines := #[] } }
+
+/-- An effect of the reload reducer, as a check compares it: a start with
+the modules of the base and the modules of the files it carries, the
+cancelling of an owner's jobs with the owner's name, or a report with its
+number, whether it installed, the sources of its diagnostics, and its
+counts of files and commands. -/
 inductive Seen where
   /-- A job was started. -/
-  | start (base : Option Elaborated) (chunks : Array String)
+  | start (base : Option (Array String)) (files : Array String)
   /-- The jobs of the owner called `owner` were cancelled. -/
   | cancelJobs (owner : String)
   /-- A reload was reported. -/
@@ -108,8 +180,8 @@ inductive Seen where
   deriving DecidableEq, Repr
 
 /-- `effect` as a check compares it. -/
-def seen : Config.Effect Elaborated → Seen
-  | .start base chunks => .start base (chunks.map (·.name))
+def seen : Config.Effect ModelBase ModelHandle → Seen
+  | .start base files => .start (base.map (·.modules)) (files.map (·.file.module))
   | .cancelJobs owner => .cancelJobs owner.name
   | .report report =>
     .report report.number report.installed (report.diagnostics.map (·.source)) report.files
@@ -117,16 +189,17 @@ def seen : Config.Effect Elaborated → Seen
   | .themed => .themed
   | .appearance appearance => .appearance appearance
 
-/-- The outcome of a reload that built the chunks called `names`, whose
-`setup` is `setup`. Built by hand: no elaborator ran. -/
-def accepted (names : List String) (setup : SetupM Unit) : Config.Outcome Elaborated :=
-  { base := some #[], diagnostics := #[],
+/-- The outcome of a reload that built the files called `names`, whose
+`setup` is `setup`, on a base that holds no module. Built by hand: no
+elaborator ran. -/
+def accepted (names : List String) (setup : SetupM Unit) : ModelOutcome :=
+  { base := some { modules := #[] }, diagnostics := #[],
     built :=
       (Config.Registrations.ofSetup setup).toOption.map fun registrations =>
-        { chunks := loaded names, registrations } }
+        { files := loaded names, registrations } }
 
 /-- The outcome of a reload that was rejected with one error from `source`. -/
-def rejected (source : String) : Config.Outcome Elaborated :=
-  { base := some #[], diagnostics := #[told source .error], built := none }
+def rejected (source : String) : ModelOutcome :=
+  { base := some { modules := #[] }, diagnostics := #[told source .error], built := none }
 
 end ModelTest

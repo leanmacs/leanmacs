@@ -66,8 +66,7 @@ open Editor.Test
 
 /-- The state the reducer reaches from `state` through `events`, and every
 effect on the way. -/
-def reduceFrom (state : Config.State Elaborated) (events : List (Config.Event Elaborated)) :
-    Config.State Elaborated × Array Seen :=
+def reduceFrom (state : ModelState) (events : List (ModelEvent)) : ModelState × Array Seen :=
   events.foldl
     (fun (state, effects) event =>
       let (state, more) := Config.step state event
@@ -76,7 +75,7 @@ def reduceFrom (state : Config.State Elaborated) (events : List (Config.Event El
 
 /-- The state the reducer reaches through `events` from nothing loaded, and
 every effect on the way. -/
-def reduce (events : List (Config.Event Elaborated)) : Config.State Elaborated × Array Seen :=
+def reduce (events : List (ModelEvent)) : ModelState × Array Seen :=
   reduceFrom {} events
 
 /-- A `setup` that registers `greet`, which makes the text `text`. -/
@@ -91,8 +90,7 @@ def counts (text : String) : SetupM Unit := do
 
 /-- The job the editor would start for `name`: its owner's name, and how the
 job ends when it runs against the job model; `none` if there is no such job. -/
-def startable (state : Config.State Elaborated) (name : String) :
-    Option (String × Job.Outcome (Array String)) :=
+def startable (state : ModelState) (name : String) : Option (String × Job.Outcome (Array String)) :=
   (state.work? name).map fun (owner, work) => (owner.name, worked work)
 
 /-- A `setup` that declares `counter` and registers `bump` over it, which
@@ -105,19 +103,19 @@ def bumps (step : Nat) : SetupM Unit := do
 editor's models `model`: the state once what the command wrote is written
 back, and the models after it. `none` if there is no such command or it was
 refused. -/
-def runs (state : Config.State Elaborated) (name : String) (model : EditorModel := editorModel) :
-    Option (Config.State Elaborated × EditorModel) :=
+def runs (state : ModelState) (name : String) (model : EditorModel := editorModel) :
+    Option (ModelState × EditorModel) :=
   (state.program? name).bind fun program =>
     match program.runModel model with
     | (.ok write, model) => some (state.written write, model)
     | (.error _, _) => none
 
 /-- The texts the command called `name` leaves when the editor runs it. -/
-def runTexts (state : Config.State Elaborated) (name : String) : Option (Array String) :=
+def runTexts (state : ModelState) (name : String) : Option (Array String) :=
   (runs state name).map (·.2.texts.contents)
 
 /-- The value of the config's store called `name`. -/
-def stored (state : Config.State Elaborated) (name : String) : Option Value :=
+def stored (state : ModelState) (name : String) : Option Value :=
   (state.cells.find? .config name).map (·.value)
 
 /-- What a command that is given its call was called with, as one line: its
@@ -135,7 +133,7 @@ def callRegistration (name label : String) : Config.Registration :=
 focused window of a new editor state, `arguments` and the keys `typed`: what
 the command asks to write, and the texts after it, the scratch buffer's
 first. `none` if there is no such command or it was refused. -/
-def calls (state : Config.State Elaborated) (name : String) (arguments : List Argument := [])
+def calls (state : ModelState) (name : String) (arguments : List Argument := [])
     (typed : List Key := []) : Option (Option Config.Write × Array String) :=
   (state.command? name).bind fun run =>
     let program : EditorM (Option Config.Write) := do
@@ -148,7 +146,7 @@ def calls (state : Config.State Elaborated) (name : String) (arguments : List Ar
 
 /-- A config state in which compiled code has registered `registrations`,
 before any config. -/
-def compiledWith (registrations : Array Config.Registration) : Config.State Elaborated :=
+def compiledWith (registrations : Array Config.Registration) : ModelState :=
   { registry := ({} : Config.Registry).replace .compiled registrations }
 
 /-- The theme `second` of the reducer's checks: one definition of its own. -/
@@ -157,7 +155,7 @@ def secondTheme : Theme :=
 
 /-- A config state in which compiled code has registered two themes, before
 any config: `default`, the built-in one, and `second` (`secondTheme`). -/
-def themed : Config.State Elaborated :=
+def themed : ModelState :=
   {
     registry :=
       ({} : Config.Registry).replaceThemes .compiled
@@ -165,8 +163,7 @@ def themed : Config.State Elaborated :=
           { name := "second", theme := secondTheme }] }
 
 /-- The report of the reload that finishes with `outcome` from `state`. -/
-def reportFrom (state : Config.State Elaborated) (outcome : Config.Outcome Elaborated) :
-    Config.Report :=
+def reportFrom (state : ModelState) (outcome : ModelOutcome) : Config.Report :=
   (state.install outcome).2
 
 /-- The checks of the reload reducer (`Editor/Config/Reload.lean`), with
@@ -175,7 +172,7 @@ def reloadChecks : List Check :=
   [{  name :=
         "an install replaces config's at-point sources and uses; its report names each at-point source a use names that nobody registered, which the echo area says after the displays' sentences; a later install that makes none clears them"
       run :=
-        let shown : Config.State Elaborated :=
+        let shown : ModelState :=
           { themed with
             registry := themed.registry.replaceAtPoints .compiled Completion.AtPoint.shipped }
         let uses : SetupM Unit := do
@@ -306,7 +303,7 @@ def reloadChecks : List Check :=
         let both : SetupM Unit := do
           useTheme "gone"
           modeLine ["state", "nope", "nope"] ["lost"]
-        let segmented : Config.State Elaborated :=
+        let segmented : ModelState :=
           { themed with registry := themed.registry.replaceSegments .compiled ModeLine.shipped }
         let (state, _) := reduceFrom segmented [.requested, .finished (accepted ["a"] listed)]
         let report := reportFrom segmented (accepted ["a"] listed)
@@ -326,7 +323,7 @@ def reloadChecks : List Check :=
     { name :=
         "an install sets config's style choices and replaces its styles; its report names each chosen style nobody registered, which the echo area says after the segments' sentences; a later install that chooses none clears them, and a rejected one changes nothing"
       run :=
-        let styled : Config.State Elaborated :=
+        let styled : ModelState :=
           { themed with
             registry := themed.registry.replaceStyles .compiled Completion.Styles.shipped }
         let choosing : SetupM Unit := do
@@ -358,7 +355,7 @@ def reloadChecks : List Check :=
     { name :=
         "an install sets config's display choices and replaces its displays; its report names each chosen display nobody registered, which the echo area says after the styles' sentences; a later install that chooses none clears them, and a rejected one changes nothing"
       run :=
-        let shown : Config.State Elaborated :=
+        let shown : ModelState :=
           { themed with
             registry := themed.registry.replaceDisplays .compiled Completion.Displays.shipped }
         let choosing : SetupM Unit := do
@@ -443,7 +440,7 @@ def reloadChecks : List Check :=
         let (state, _) :=
           reduceFrom themed [.requested, .finished (accepted ["a"] (face "keyword" (coloured 1)))]
         pure
-          (({} : Config.State Elaborated).themeName == Theme.defaultName &&
+          (({} : ModelState).themeName == Theme.defaultName &&
             themed.themeName == Theme.defaultName &&
             state.themeName == Theme.defaultName &&
             state.theme == Theme.builtin ++ #[defined "keyword" (coloured 1)]) },
@@ -511,7 +508,7 @@ def reloadChecks : List Check :=
         let handed ← IO.mkRef (#[] : Array (String × Theme))
         let setTheme (name : String) (theme : Theme) : BaseIO Unit :=
           handed.modify (·.push (name, theme))
-        let steps : List (Config.Event Elaborated) :=
+        let steps : List (ModelEvent) :=
           [.requested, .finished (accepted ["a"] (face "keyword" (coloured 1))), .choose "second",
             .requested, .finished (rejected "a"), .choose "nope"]
         let mut state := themed
@@ -526,9 +523,9 @@ def reloadChecks : List Check :=
         "a state whose registry holds no theme of the name in force is drawn in the built-in theme"
       run :=
         pure
-          (({ themeName := "second" } : Config.State Elaborated).theme == Theme.builtin &&
-            ({} : Config.State Elaborated).theme == Theme.builtin) },
-    { name := "a request with no job running starts one, carrying the base and the loaded chunks"
+          (({ themeName := "second" } : ModelState).theme == Theme.builtin &&
+            ({} : ModelState).theme == Theme.builtin) },
+    { name := "a request with no job running starts one, carrying the base and the loaded files"
       run :=
         let first := reduce [.requested]
         let later := reduce [.requested, .finished (accepted ["a", "b"] (greets "1")), .requested]
@@ -548,15 +545,15 @@ def reloadChecks : List Check :=
             more == #[.cancelJobs "config", .report 1 true #[] 1 1, .start (some #[]) #["a"]] &&
             last == #[.cancelJobs "config", .report 2 true #[] 1 1]) },
     { name :=
-        "an accepted outcome installs its chunks and exactly its commands, and the report says installed"
+        "an accepted outcome installs its files and exactly its commands, and the report says installed"
       run :=
         let (state, effects) := reduce [.requested, .finished (accepted ["a", "b"] (greets "1"))]
         pure
-          (state.chunks.map (·.name) == #["a", "b"] && state.registry.names == #["greet"] &&
+          (state.files.map (·.file.module) == #["a", "b"] && state.registry.names == #["greet"] &&
             state.registry.entries.all (·.owner == .config) &&
             effects == #[.start none #[], .cancelJobs "config", .report 1 true #[] 2 1]) },
     { name :=
-        "a rejected outcome leaves the registry, the chunks and the cells as they were, and the report carries its diagnostics"
+        "a rejected outcome leaves the registry, the files and the cells as they were, and the report carries its diagnostics"
       run :=
         let setup : SetupM Unit := do
           greets "1"
@@ -567,7 +564,8 @@ def reloadChecks : List Check :=
           reduceFrom bumped
             [.requested, .finished (rejected "a"), .requested, .finished (rejected "setup")]
         pure
-          (state.chunks.map (·.name) == #["a"] && state.registry.names == #["greet", "bump"] &&
+          (state.files.map (·.file.module) == #["a"] &&
+            state.registry.names == #["greet", "bump"] &&
             runTexts state "greet" == some #["1"] &&
             stored state "counter" == some (.nat 1) &&
             effects ==
@@ -635,7 +633,7 @@ def reloadChecks : List Check :=
           reduce [.requested, .finished (accepted ["a"] (workspace "/r/tools" (some "tools")))]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
         let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
-        let told (state : Config.State Elaborated) : Array Workspace.ConfigRoot × Nat :=
+        let told (state : ModelState) : Array Workspace.ConfigRoot × Nat :=
           let registered := state.registry.registered
           (registered.workspaceRoots, registered.generation)
         pure
@@ -653,7 +651,7 @@ def reloadChecks : List Check :=
         let (loaded, _) := reduce [.requested, .finished (accepted ["a"] declares)]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
         let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
-        let told (state : Config.State Elaborated) : Array Workspace.DeclaredLister :=
+        let told (state : ModelState) : Array Workspace.DeclaredLister :=
           state.registry.registered.workspaceSettings.listers
         pure
           (told (reduce []).1 == #[] && told loaded == listers && told kept == listers &&
@@ -664,8 +662,7 @@ def reloadChecks : List Check :=
         let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (shellTimeLimit 5000))]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
         let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
-        let told (state : Config.State Elaborated) : Option Nat :=
-          state.registry.registered.shellTimeLimit
+        let told (state : ModelState) : Option Nat := state.registry.registered.shellTimeLimit
         pure
           (told (reduce []).1 == none && told loaded == some 5000 && told kept == some 5000 &&
             told bare == none) },
@@ -675,13 +672,13 @@ def reloadChecks : List Check :=
         let mine :=
           { Language.rust with
             syntaxTree := { grammar := "rust", highlights := some "(identifier) @variable" } }
-        let start : Config.State Elaborated :=
+        let start : ModelState :=
           { registry := ({} : Config.Registry).replaceLanguages .compiled Language.shipped }
         let (loaded, _) :=
           reduceFrom start [.requested, .finished (accepted ["a"] (defineLanguage mine))]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
         let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
-        let rustOf (state : Config.State Elaborated) : Option Language :=
+        let rustOf (state : ModelState) : Option Language :=
           state.registry.registered.languages.find? (·.name == "rust")
         pure
           (rustOf start == some Language.rust && rustOf loaded == some mine &&
@@ -695,15 +692,14 @@ def reloadChecks : List Check :=
         let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (syntaxRefreshDelay 250))]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
         let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
-        let told (state : Config.State Elaborated) : Option Nat :=
-          state.registry.registered.syntaxRefreshDelay
+        let told (state : ModelState) : Option Nat := state.registry.registered.syntaxRefreshDelay
         pure
           (told (reduce []).1 == none && told loaded == some 250 && told kept == some 250 &&
             told bare == none) },
     { name :=
         "an installed reload puts config's compile contributions and project commands in the registry, which tells the loop of them; a rejected reload leaves them, and a config that registers none leaves the compiled ones alone"
       run :=
-        let start : Config.State Elaborated :=
+        let start : ModelState :=
           {
             registry :=
               ({} : Config.Registry).replaceContributions .compiled
@@ -714,7 +710,7 @@ def reloadChecks : List Check :=
         let (loaded, _) := reduceFrom start [.requested, .finished (accepted ["a"] setup)]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
         let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
-        let told (state : Config.State Elaborated) : Array String × Array String :=
+        let told (state : ModelState) : Array String × Array String :=
           let hook := state.registry.registered.compile
           (hook.contributions.map (·.mode), hook.projects.map (·.mode))
         pure
@@ -725,7 +721,7 @@ def reloadChecks : List Check :=
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
-        let baseless : Config.Outcome Elaborated :=
+        let baseless : ModelOutcome :=
           { base := none, diagnostics := #[told "base" .error], built := none }
         pure
           ((reduce [.requested, .finished baseless, .requested]).2 ==
@@ -765,10 +761,10 @@ def reloadChecks : List Check :=
           greets "v2"
           greets "v3"
         let (loaded, first) := reduce [.requested, .finished (accepted ["a"] setup)]
-        let calls ← IO.mkRef #[]
         let outcome ←
-          Config.build TestScheme.scheme (fakeElaborator calls (.ok twice)) (fakeSource ["a"])
-              loaded.base loaded.chunks
+          Config.build TestScheme.scheme (Config.Elaborator.Model.elaborator { setup := twice })
+              (configOf [("init", ["define setup"])]) Config.PackageFiles.none none loaded.base
+              loaded.files
         let (state, effects) := reduceFrom loaded [.requested, .finished outcome]
         return first == #[.start none #[], .cancelJobs "config", .report 1 true #[] 1 2] &&
             effects == #[.start (some #[]) #["a"], .report 2 false #["setup"] 1 2] &&
@@ -791,8 +787,8 @@ def reloadChecks : List Check :=
       run :=
         let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (bumps 1))]
         let bumped := ((runs loaded "bump").map (·.1)).getD loaded
-        -- An accepted outcome whose one chunk elaborated with a warning.
-        let warned (setup : SetupM Unit) : Config.Outcome Elaborated :=
+        -- An accepted outcome whose one file elaborated with a warning.
+        let warned (setup : SetupM Unit) : ModelOutcome :=
           { accepted ["a"] setup with diagnostics := #[told "a" .warning] }
         -- The counter at a version its store does not migrate to: the value
         -- is reset. And a config that no longer declares it: the cell goes.
@@ -899,7 +895,7 @@ def reloadChecks : List Check :=
       run :=
         let greets (label : String) : SetupM Unit :=
           commandWith "greet" fun call => Loop.insert call.target (callText label call)
-        let called (state : Config.State Elaborated) : Option (Array String) :=
+        let called (state : ModelState) : Option (Array String) :=
           (calls state "greet" [.nat 3, .str "w"] (keys "C-x i")).map (·.2)
         let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (greets "one"))]
         let (reloaded, _) :=
@@ -938,7 +934,7 @@ def reloadChecks : List Check :=
     { name :=
         "an accepted outcome replaces the config's key bindings and leaves compiled ones: a key the new config binds to another command is bound to that one alone, and one it no longer binds is unbound; a rejected outcome keeps them"
       run :=
-        let compiled : Config.State Elaborated :=
+        let compiled : ModelState :=
           { registry := ({} : Config.Registry).replaceBindings .compiled #[binding "C-c k" "kept"] }
         let first : SetupM Unit := do
           bindKey "C-c t" "one"
@@ -985,7 +981,7 @@ def reloadChecks : List Check :=
     { name :=
         "an accepted outcome replaces the config's modes and leaves compiled ones; a rejected outcome keeps config's"
       run :=
-        let compiled : Config.State Elaborated :=
+        let compiled : ModelState :=
           { registry := ({} : Config.Registry).replaceModes .compiled #[{ name := "kept" }] }
         let first : SetupM Unit := do
           defineMode { name := "listing", parent := some "first" }
@@ -997,9 +993,8 @@ def reloadChecks : List Check :=
               .finished
                 (accepted ["a"] (defineMode { name := "listing", parent := some "second" }))]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
-        let names (state : Config.State Elaborated) : Array String :=
-          state.registry.modes.map (·.mode.name)
-        let parentOf (state : Config.State Elaborated) : Option String :=
+        let names (state : ModelState) : Array String := state.registry.modes.map (·.mode.name)
+        let parentOf (state : ModelState) : Option String :=
           (state.registry.mode? "listing").bind (·.parent)
         pure
           (names loaded == #["kept", "listing", "gone"] && parentOf loaded == some "first" &&
@@ -1010,7 +1005,7 @@ def reloadChecks : List Check :=
     { name :=
         "an accepted outcome replaces the config's ex bindings and leaves compiled ones: a name the new config binds to another command runs that one, one it no longer binds is found no more, and a compiled name it bound is the compiled one again; a rejected outcome keeps them; an ex binding is not counted as a command"
       run :=
-        let compiled : Config.State Elaborated :=
+        let compiled : ModelState :=
           {
             registry :=
               ({} : Config.Registry).replaceEx .compiled
@@ -1023,7 +1018,7 @@ def reloadChecks : List Check :=
         let (reloaded, effects) :=
           reduceFrom loaded [.requested, .finished (accepted ["a"] (exCommand "greet" "two"))]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
-        let runs (state : Config.State Elaborated) (name : String) : Option String :=
+        let runs (state : ModelState) (name : String) : Option String :=
           (state.registry.ex? name).map (·.command)
         pure
           (runs loaded "greet" == some "one" && runs loaded "old" == some "gone" &&
@@ -1045,13 +1040,13 @@ def reloadChecks : List Check :=
           { source := "a.lean", line := 1, severity := .warning, message := "unused" }
         let report (installed : Bool) (diagnostics : Array Config.Diagnostic) : Config.Report :=
           { number := 2, installed, diagnostics, files := 1, commands := 1 }
-        let one := report false #[warning, error "30-broken.lean" 1 20 "type mismatch\n  \"x\""]
+        let one := report false #[warning, error "Config/Broken.lean" 1 20 "type mismatch\n  \"x\""]
         let three :=
           report false
             #[error "b.lean" 3 4 "unknown identifier 'x'", warning, error "b.lean" 5 0 "second",
               error "setup" 0 0 "third"]
         pure
-          (one.echo == some "reload: 30-broken.lean:1:20: error: type mismatch" &&
+          (one.echo == some "reload: Config/Broken.lean:1:20: error: type mismatch" &&
             three.echo == some "reload: b.lean:3:4: error: unknown identifier 'x' (and 2 more)" &&
             (report true #[warning]).echo == none &&
             (report true #[]).echo == none) },
@@ -1060,7 +1055,7 @@ def reloadChecks : List Check :=
       run :=
         let titled (title item : String) : Submenu :=
           { title, items := #[.item item none (.system .about)] }
-        let theirs : Config.State Elaborated :=
+        let theirs : ModelState :=
           {
             registry :=
               ({} : Config.Registry).replaceMenus other

@@ -55,33 +55,37 @@ The model tests (`ModelTest.lean` and `ModelTest/`) pin the decisions of the
 config session on fakes. The checks here pin what only real collaborators can
 show:
 
-- `elaboratorChecks`: the real elaborator behaves as the fake of its port
-  assumes, compiled code and config share state, and the base's modules are
-  looked for in every directory it is given, in order;
-- `moduleElaboratorChecks`: the real elaborator of config as modules,
-  which stands beside the chunk one until the hosts are switched: a file
-  that imports `Lean`, a module of the base and a config file sees each; a
-  program a config file exports takes effect when the root's `setup` calls
-  it, and a `setup` defined outside the root is not run; a diagnostic is at
-  the file's own line; `module` and `initialize` are refused; which modules
-  are linked; and each version of a config file has module data of its own;
+- `elaboratorChecks`: what only Lean's elaborator can show of a config file
+  as a module: a file that imports `Lean`, a module of the base and a
+  config file sees each; a program a config file exports takes effect when
+  the root's `setup` calls it, and a `setup` defined outside the root is
+  not run; a diagnostic is at the file's own line; `module` and
+  `initialize` are refused; which modules are linked; each version of a
+  config file has module data of its own; compiled code and config share
+  state; and the base's modules are looked for in every directory it is
+  given, in order;
 - `elaboratorContractChecks`: the elaborator port's contract
   (`Editor/Config/Elaborator/Contract.lean`) held of that real elaborator,
   as `model-test` holds it of the port's model;
 - `lakefileChecks`: a lakefile's requires read with Lake's TOML loader, the
   generated lakefile read back, and the core's copy of Lake's casing rule
   against Lake's own;
-- `directoryChecks`: the directory source, each check in a temporary
-  directory of its own; `moduleDirectoryChecks`: the directory as a source
-  of modules (the root, a config file by its module name, the stray files)
-  and as a Lake package (a file read by name, and a file created only when
-  it is not there);
+- `directoryChecks`: the directory as a source of config files (the root, a
+  config file by its module name, the stray files) and as a Lake package (a
+  file read by name, and a file created only when it is not there), each
+  check in a temporary directory of its own;
+- `moduleHostChecks`: config as modules through the headless host, with the
+  real elaborator over files in a temporary directory: after a change to
+  one file a reload elaborates that file and the files that import it and
+  no other; a root that imports a module that is not linked is rejected,
+  the diagnostic names the module, and the old config stays; and a reload
+  whose root first imports `Lean` installs, the base growing to hold it;
 - `hostChecks`: the phase's acceptance tests through the headless host, with
   the real elaborator, the real queue and the real text binding, asserted on
   the lines the host prints; and what a host starts from: handed no
   packages, an empty registry and no menu bar, and handed a package it
   refuses, that package logged and skipped and the others registered;
-- `threadChecks`: the editor answers events while a chunk elaborates, reloads
+- `threadChecks`: the editor answers events while a file elaborates, reloads
   are serialised, and a replaced config is not retained;
 - `jobChecks`: jobs from config through the host: a handler receives a job's
   result on the editor thread, a reload that installs cancels the old
@@ -281,12 +285,7 @@ open Editor
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
-  elaboratorChecks context ++ moduleElaboratorChecks context ++ elaboratorContractChecks context ++
-    lakefileChecks () ++
-    directoryChecks () ++
-    moduleDirectoryChecks () ++
-    hostChecks context ++
-    threadChecks context ++
+  lakefileChecks () ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
     jobChecks context ++
     treeObjectChecks context ++
     indentChecks context ++
@@ -317,7 +316,13 @@ def checks (context : Context) : List Check :=
     leaderChecks context ++
     hintChecks context ++
     keyHintChecks context ++
-    defaultConfigChecks context
+    defaultConfigChecks context ++
+    -- Last, the checks whose config imports `Lean`: the base the checks
+    -- share then holds it, and every environment made from that base
+    -- after them costs a few times more.
+    moduleHostChecks context ++
+    elaboratorChecks context ++
+    elaboratorContractChecks context
 
 end ConfigTest
 
@@ -355,6 +360,12 @@ def main (args : List String) : IO UInt32 := do
     match count.toNat? with
     | some count =>
       IO.Process.exit (← ConfigTest.Bench.soak sysroot oleanDir count)
+    | none =>
+      ConfigTest.usage
+  | ["bench-soak-modules", sysroot, oleanDir, count] =>
+    match count.toNat? with
+    | some count =>
+      IO.Process.exit (← ConfigTest.Bench.soakModules sysroot oleanDir count)
     | none =>
       ConfigTest.usage
   | ["bench-jobs", sysroot, oleanDir, samples] =>

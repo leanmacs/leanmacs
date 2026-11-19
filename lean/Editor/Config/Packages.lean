@@ -179,7 +179,7 @@ end Package
 
 namespace Config.State
 
-variable {σ : Type}
+variable {β σ : Type}
 
 /-- `state` with `package` registered: its owned registrations for its owner
 (`Registry.replaceOwned`), its style defaults after the ones there are, the
@@ -187,7 +187,7 @@ cells of its stores, and its name among the packages registered. Or the
 message it is refused with, when its name is one already registered
 (`Package.namedTwice`) or the package is refused by itself
 (`Package.collected`); `state` is then unchanged. -/
-def register (state : State σ) (package : Package) : Except String (State σ) := do
+def register (state : State β σ) (package : Package) : Except String (State β σ) := do
   if let some problem := package.nameProblem? then
     throw problem
   if state.packages.contains package.name then
@@ -204,7 +204,7 @@ def register (state : State σ) (package : Package) : Except String (State σ) :
 in the array's order (`register`), from nothing, before any config; and the
 message of each package that was refused, in order. A refused package is
 skipped and the rest register. -/
-def ofPackages (packages : Array Package) : State σ × Array String :=
+def ofPackages (packages : Array Package) : State β σ × Array String :=
   packages.foldl
     (fun (state, refused) package =>
       match state.register package with

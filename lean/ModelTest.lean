@@ -40,7 +40,6 @@ import ModelTest.Editor.Completion.Words
 import ModelTest.Editor.Config.Elaborator.Model
 import ModelTest.Editor.Config.LakePackage
 import ModelTest.Editor.Config.Lakefile
-import ModelTest.Editor.Config.Modules
 import ModelTest.Editor.Config.Packages
 import ModelTest.Editor.Config.Registry
 import ModelTest.Editor.Config.Reload
@@ -653,8 +652,16 @@ The config session's decisions are tested here too, with no elaborator:
   and two names a scheme's leaders make one prefix, which are refused;
 - `storeChecks`: the rule that meets a new config's stores with the cells
   there are, one check for each case;
-- `sessionChecks`: one reload (`Config.build`), on a fake elaborator that
-  records every call and a fake source, built for the test scheme;
+- `sessionChecks`: one reload (`Config.build`), on the elaborator's model
+  and a source held in memory, built for the test scheme: the order a
+  config's files are elaborated in and what each is handed, which files a
+  reload keeps (after a change to one file, that file and the files that
+  import it are elaborated, and no other), the base grown by a linked
+  module a file imports, what is refused before anything is elaborated (a
+  module that is not linked, with what the config's lakefile says of it, in
+  a host with no package port and in one with no generator too; a config
+  file that is not there; a cycle; a config in the old form), the generated
+  lakefile and toolchain file, and what an outcome carries;
 - `lakePackageChecks`: the config directory as a Lake package
   (`Editor/Config/LakePackage.lean`): the generated lakefile's text, and
   what is done about the lakefile and the toolchain file given what the
@@ -667,13 +674,6 @@ The config session's decisions are tested here too, with no elaborator:
   `config-test` holds of the real adapter; `elaboratorModelChecks`: the
   edges of the model's language, and a base asked to hold a module that is
   not linked;
-- `modulesChecks`: the session over modules (`Editor/Config/Modules.lean`),
-  which stands beside the chunk session until the hosts are switched to
-  it, on the elaborator's model: the order a config's files are elaborated
-  in and what each is handed, which files a reload keeps, what is refused
-  before anything is elaborated (a module that is not linked, with what the
-  config's lakefile says of it, a config file that is not there, a cycle,
-  the old form), the generated files, and what an outcome carries;
 - `reloadChecks`: the reducer that serialises reloads, with outcomes built
   by hand. The phase's acceptance tests are here on fakes (reload replaces a
   command, a rejected reload keeps the old config, a reload does not
@@ -1120,7 +1120,6 @@ def checks : List Check :=
     lakefileChecks ++
     elaboratorContractChecks ++
     elaboratorModelChecks ++
-    modulesChecks ++
     reloadChecks ++
     reloadHintChecks ++
     packageChecks ++

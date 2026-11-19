@@ -36,8 +36,8 @@ import Editor.Value
 /-!
 # Config tests: support: Configs
 
-Chunks and what compiled code hands a host: the chunks the checks elaborate, the
-chunks a config directory holds (`chunksOf`), the compiled commands they
+Config texts and what compiled code hands a host: the texts the checks
+elaborate, the compiled commands they
 dispatch, the minibuffer's commands and mode (`minibufferCompiled`), the
 collaborators of a host of the test scheme, and the note file's text. Shared by
 several test modules; it holds no checks of its own.
@@ -46,12 +46,6 @@ several test modules; it holds no checks of its own.
 namespace ConfigTest
 
 open Editor
-
-/-- The names and texts of the chunks the directory source reads from
-`directory`. -/
-def chunksOf (directory : System.FilePath) : IO (Array (String × String)) := do
-  let chunks ← (Config.Directory.source directory).chunks
-  return chunks.map fun chunk => (chunk.name, chunk.text)
 
 /-- What compiled code hands every host of the prompt checks: the
 minibuffer's commands and its mode, as the executable is handed them
@@ -69,9 +63,9 @@ def namesOnOneLine (message : String) (path : System.FilePath) : Bool :=
 def notUtf8 : ByteArray :=
   ⟨#[0xff, 0xfe, 0xfd]⟩
 
-/-- A chunk that defines the command `greet`, which makes a text holding
+/-- A config that defines the command `greet`, which makes a text holding
 `text`. -/
-def greetChunk (text : String) : String :=
+def greetText (text : String) : String :=
   "def greet : EditorM Unit := do\n  discard <| createText \"" ++ text ++ "\"\n"
 
 /-- A compiled command called `name` that replaces what the focused window's
@@ -109,13 +103,21 @@ def dispatchCompiled : Compiled :=
   { commands := #[inserting "stamp" "!", boomCommand, spinCommand]
     bindings := #[bound "C-c s" "stamp", bound "C-c b" "boom", bound "C-c l" "spin"] }
 
-/-- A chunk whose `setup` registers nothing. -/
-def emptyChunk : String :=
+/-- A config whose `setup` registers nothing. -/
+def emptyText : String :=
   "def setup : SetupM Unit := pure ()\n"
 
 /-- The collaborators of a host of the test scheme over the real elaborator. -/
 abbrev TestCollaborators :=
-  Headless.Collaborators Config.Elaborate.State TestScheme.scheme
+  Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle TestScheme.scheme
+
+/-- A stage over the real elaborator. -/
+abbrev TestStage :=
+  Stage Config.Elaborate.Base Config.Elaborate.Handle
+
+/-- A host's state over the real elaborator and the test scheme. -/
+abbrev TestRunning :=
+  Headless.Running Config.Elaborate.Base Config.Elaborate.Handle TestScheme.scheme
 
 /-- Hands `check` a host's state as its loop starts (`Headless.Running.new`),
 with the collaborators `adjust` makes of those of a stage of its own over an
@@ -125,11 +127,7 @@ host's handlers itself, on its own thread. Afterwards the library has no
 interrupt key and the flag is down, whatever the check did. The directory
 is removed. -/
 def withRunning (context : Context) (adjust : TestCollaborators → TestCollaborators)
-    (check :
-      TestCollaborators →
-        Headless.Running Config.Elaborate.State TestScheme.scheme →
-        Stage Config.Elaborate.State → IO Bool) :
-    IO Bool :=
+    (check : TestCollaborators → TestRunning → TestStage → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
     let collaborators := adjust stage.collaborators

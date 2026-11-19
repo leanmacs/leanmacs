@@ -1,7 +1,6 @@
 import ConfigFixture
 import Editor
 import Editor.Config.Elaborate
-import Editor.Config.Modules
 import Editor.Config.Session
 import Editor.Job.Real
 import Editor.Job.Runner
@@ -36,14 +35,10 @@ structure Check where
 
 /-- What every check is given. -/
 structure Context where
-  /-- The real elaborator, whose `base` hands back the one import the checks
-  share. -/
-  elaborator : Config.Elaborator Config.Elaborate.State
-  /-- The base: the state after importing `Editor` and `ConfigFixture`. -/
-  base : Config.Elaborate.State
-  /-- The real elaborator of config as modules, whose `base` hands back, and
-  grows, the one base the checks share (`sharing`). -/
-  modules : Config.Modules.Elaborator Config.Elaborate.Base Config.Elaborate.Handle
+  /-- The real elaborator, whose `base` hands back, and grows, the one base
+  the checks share (`sharing`): `Editor` and `ConfigFixture` to start
+  with. -/
+  elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle
   /-- What `ConfigFixture.bump` returned to compiled code before the base was
   imported. -/
   bumped : Nat
@@ -101,15 +96,15 @@ then read once in the process, whichever check first imports it: a second
 read of a module file about doubles its memory. A base holds at least what
 was asked for, which is all the port says of it. -/
 def sharing (latest : IO.Ref (Option Config.Elaborate.Base))
-    (real : Config.Modules.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) :
-    Config.Modules.Elaborator Config.Elaborate.Base Config.Elaborate.Handle :=
+    (real : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) :
+    Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle :=
   { real with
     base := fun _ modules => do
       let base ← real.base (← latest.get) modules
       latest.set (some base)
       return base }
 
-/-- Imports the base once and runs every check: names on stderr the ones that
+/-- Makes the base once and runs every check: names on stderr the ones that
 failed, and returns the exit status, 0 when all hold and 1 otherwise.
 
 `sysroot` is the Lean toolchain's directory and `oleanDir` the directory
@@ -117,26 +112,22 @@ holding the package's `.olean` files, or several joined with `:`
 (`oleanDirs`). -/
 def run (checks : Context → List Check) (sysroot oleanDir : String)
     (syntaxFixtures defaultConfig : System.FilePath) : IO UInt8 := do
-  let real :=
-    Config.Elaborate.elaborator
-      { sysroot, oleanDirs := oleanDirs oleanDir, imports := #[`Editor, `ConfigFixture] }
   -- Compiled code writes to the fixture's cell before the base is imported.
   let bumped ← ConfigFixture.bump
-  let base ← real.base
   -- The module data of the config files the checks elaborate is written in
   -- a temporary directory of this run, removed when it ends.
   IO.FS.withTempDir fun scratch => do
       let files ← Config.Elaborate.ModuleFiles.over (pure scratch)
-      let modules :=
+      let elaborator :=
         sharing (← IO.mkRef none)
-          (Config.Elaborate.moduleElaborator
+          (Config.Elaborate.elaborator
             { sysroot, oleanDirs := oleanDirs oleanDir, imports := #[`Editor, `ConfigFixture] }
             files)
+      -- The one import of the base, made before any check runs.
+      discard <| elaborator.base none #[]
       let context : Context :=
-        { elaborator := { real with base := pure base }, base, modules, bumped,
-          ids := ← IO.mkRef 100
-          waits := ← IO.mkRef none, sysroot, oleanDirs := oleanDirs oleanDir, syntaxFixtures
-          defaultConfig }
+        { elaborator, bumped, ids := ← IO.mkRef 100, waits := ← IO.mkRef none, sysroot
+          oleanDirs := oleanDirs oleanDir, syntaxFixtures, defaultConfig }
       let checks := checks context
       let failed ← failures checks
       for name in failed do
@@ -149,7 +140,7 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples> | config-test bench-workspace-files <sysroot> <olean dir> <repository> <samples>"
+      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-soak-modules <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples> | config-test bench-workspace-files <sysroot> <olean dir> <repository> <samples>"
   return 2
 
 end ConfigTest

@@ -77,7 +77,7 @@ job, on the pool.
 
 | Addition | Where |
 |---|---|
-| A key that runs it | A binding in the default config, under the leader (`config/default/05-leader.lean`, pinned by `ConfigTest.defaultConfigChecks`); the scheme binds none, as for `execute-command` |
+| A key that runs it | A binding in the default config, under the leader (`config/default/Config/Leader.lean`, pinned by `ConfigTest.defaultConfigChecks`); the scheme binds none, as for `execute-command` |
 | A text typed into the input on open | The text after the location (`typedArguments`), read by `searched` into `Searched.typed` |
 | A lister for a remote location | A step of `Workspace.lister`, and `searched` no longer refusing it |
 

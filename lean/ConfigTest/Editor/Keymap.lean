@@ -16,12 +16,12 @@ namespace ConfigTest
 
 open Editor
 
-/-- A chunk whose `setup` registers `leader-find`, which says `leader find`
+/-- A config whose `setup` registers `leader-find`, which says `leader find`
 in the echo area, binds `<leader> f f` to it described as `Find file`, and,
 when `named`, names the prefix `<leader> f` `file`. It sets the key hint
 delay to 0, so the hints are in the scene after the prefix with no move of
 the clock: what they list is checked apart from when (`keyHintChecks`). -/
-def hintChunk (named : Bool) : String :=
+def hintText (named : Bool) : String :=
   "def setup : SetupM Unit := do
   command \"leader-find\" (message \"leader find\")
   bindKey \"<leader> f f\" \"leader-find\" (desc := \"Find file\")
@@ -44,7 +44,7 @@ def hintChecks (context : Context) : List Check :=
   [{  name :=
         "criterion 4: after a reload, SPC lists f as the prefix config named, SPC f lists f as the binding config described, and SPC f f runs it and lists nothing"
       run :=
-        withVimHost context [("10-hint.lean", hintChunk true)] fun session => do
+        withVimHost context [("init.lean", hintText true)] fun session => do
           session.ask [.reload]
           session.typed "SPC"
           let afterLeader ← session.hints
@@ -60,12 +60,12 @@ def hintChecks (context : Context) : List Check :=
     { name :=
         "criterion 5: a reload that drops a config's prefix name drops it from the hints, and the prefix is listed unnamed"
       run :=
-        withVimHost context [("10-hint.lean", hintChunk true)] fun session => do
+        withVimHost context [("init.lean", hintText true)] fun session => do
           session.ask [.reload]
           session.typed "SPC"
           let named ← session.hints
           session.typed "<Escape>"
-          session.write "10-hint.lean" (hintChunk false)
+          session.write "init.lean" (hintText false)
           session.ask [.reload]
           session.typed "SPC"
           let unnamed ← session.hints

@@ -33,7 +33,7 @@ def packageSetChecks : List Check :=
   [{  name :=
         "every package of the shipped set is accepted, and their names are the 20 of the package table, each once, in its order, with no package of the shipped palettes and none of the compile mode among them"
       run :=
-        let (state, refused) : Config.State Elaborated × Array String :=
+        let (state, refused) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
@@ -48,7 +48,7 @@ def packageSetChecks : List Check :=
     { name :=
         "in the state the shipped set makes, every entry's owner is a package of the set: of every kind there is an entry, and none is config's or the owner compiled's"
       run :=
-        let (state, _) : Config.State Elaborated × Array String :=
+        let (state, _) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         let owners := state.registry.ownersByKind.flatten
         pure
@@ -61,7 +61,7 @@ def packageSetChecks : List Check :=
     { name :=
         "the shipped set binds the ex names in this order: the files', the ex line's and the buffers', then version control's twelve; the compile mode's six are bound by a package outside the core's Lake package"
       run :=
-        let (state, _) : Config.State Elaborated × Array String :=
+        let (state, _) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (state.registry.exNames ==
@@ -72,7 +72,7 @@ def packageSetChecks : List Check :=
     { name :=
         "the shipped set registers one theme, `default`: the palettes that ship are a package outside the core's Lake package"
       run :=
-        let (state, _) : Config.State Elaborated × Array String :=
+        let (state, _) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure (state.registry.themeNames == #["default"]) }]
 

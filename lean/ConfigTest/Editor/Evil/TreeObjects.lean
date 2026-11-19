@@ -16,13 +16,13 @@ of the Vim scheme that ships over the real syntax tree binding. The root module
 
 namespace ConfigTest
 
-/-- A chunk whose `setup` defines the mode `rust-test`, whose text is
+/-- A config whose `setup` defines the mode `rust-test`, whose text is
 parsed with the grammar `rust` and drawn by the shipped default, and the
 command `rust-buffer`, which puts `rustObjectsText` in the scratch buffer's
 text, places the cursor inside the method's body, at `let`, and only then
 makes `rust-test` its major mode, so the text is attached at its last
 revision. -/
-def rustObjectsChunk : String :=
+def rustObjectsConfig : String :=
   "def rustText : String := " ++ rustObjectsText.quote ++
     "
 
@@ -50,7 +50,7 @@ def treeObjectChecks (context : Context) : List Check :=
       run :=
         -- Seen to bite once by hand: with `a-function` taken out of
         -- `Evil.objects`, `v a f` leaves the cursor's one cell selected.
-        withVimHost context [("10-objects.lean", rustObjectsChunk)] fun session => do
+        withVimHost context [("init.lean", rustObjectsConfig)] fun session => do
           session.ask [.reload]
           session.ask [.run "rust-buffer"]
           let before := lastViewLine (← session.sceneLines)
@@ -70,7 +70,7 @@ def treeObjectChecks (context : Context) : List Check :=
     { name :=
         "in a Rust buffer v i f from a method's fn line, in the function and outside its body, selects inside the body's braces, its lines whole, through the host's loop and the library's syntax tree"
       run :=
-        withVimHost context [("10-objects.lean", rustObjectsChunk)] fun session => do
+        withVimHost context [("init.lean", rustObjectsConfig)] fun session => do
           session.ask [.reload]
           session.ask [.run "rust-buffer"]
           session.typed "k v i f"

@@ -26,14 +26,14 @@ namespace ConfigTest
 
 open Editor
 
-/-- A chunk with a motion of its own, `to-second`, which answers the offset
+/-- A config with a motion of its own, `to-second`, which answers the offset
 1 from anywhere, and a `setup` that registers two commands that are given
 their call. Each runs evil's move command (`Evil.move`) over a vocabulary
-the chunk names: `own` over the one the editor ships (`Evil.motions`) with
+the config names: `own` over the one the editor ships (`Evil.motions`) with
 `to-second` added, by `to-second`'s name, and `first-shipped` over the one
-the editor ships as it is, by the name its first entry has. So the chunk
+the editor ships as it is, by the name its first entry has. So the config
 names no motion of the editor's, and says nothing of where one leads. -/
-def vocabularyChunk : String :=
+def vocabularyText : String :=
   "def toSecond : Vocabulary.Motion :=
   { name := \"to-second\", target := fun _ _ => pure { head := 1 } }
 
@@ -45,8 +45,8 @@ def setup : SetupM Unit := do
       { call with arguments := [.str ((Evil.motions[0]?.map (·.name)).getD \"\")] }
 "
 
-/-- A chunk whose `setup` registers three commands that are given their
-call, over the tables the editor ships, each named by the chunk and none
+/-- A config whose `setup` registers three commands that are given their
+call, over the tables the editor ships, each named by the config and none
 restated: `delete-word` moves to the line's start (`Evil.move`) and runs
 evil's operate command (`Evil.operate Evil.operators Evil.motions Evil.objects`) with
 the arguments the Vim scheme compiles `d w` to; `again` hands evil's repeat
@@ -54,7 +54,7 @@ command (`Evil.repeat`) that same change, as the scheme's repeat key would,
 which the repeat command has the registry's operate command run; and `back`
 is evil's undo (`Evil.undo`). The names of the operator, the motions and
 the command are read off the editor's own entries. -/
-def operatorsChunk : String :=
+def operatorsText : String :=
   "def deleteWord : List Argument :=
   [.str Evil.delete.name, .str \"motion\", .str Evil.wordForward.name, .nat 0, .str \"\"]
 
@@ -69,14 +69,14 @@ def setup : SetupM Unit := do
   commandWith \"back\" Evil.undo
 "
 
-/-- A chunk with an operator of its own, `erase`, which is the editor's
+/-- A config with an operator of its own, `erase`, which is the editor's
 `delete` under another name, and a `setup` that registers evil's operate
 command again, under the name the editor registers it (`Vim.operateCommand`),
 over the operators the editor ships and `erase`. `erase-word` runs the
 operate command over those tables, from the line's start, with the
 arguments the Vim scheme compiles `erase` over `w` to, and `again` hands
 evil's repeat command that same change, as the scheme's repeat key would. -/
-def ownOperatorChunk : String :=
+def ownOperatorText : String :=
   "def erase : Vocabulary.Operator :=
   { Evil.delete with name := \"erase\" }
 
@@ -108,7 +108,7 @@ def evilChecks (context : Context) : List Check :=
   [{  name :=
         "config names the vocabulary the editor ships and hands it to evil's move command: a command of config's that moves by a motion of config's own, added to that vocabulary, puts the cursor where that motion says, and one that moves by the name of the vocabulary's first entry runs to its end and says nothing in the echo area, so the entry was found"
       run :=
-        withHost context [("10-vocabulary.lean", vocabularyChunk)] fun session => do
+        withHost context [("init.lean", vocabularyText)] fun session => do
           session.ask [.reload]
           unless ← Event.post (.commit "hello") do
             return false
@@ -127,7 +127,7 @@ def evilChecks (context : Context) : List Check :=
     { name :=
         "config names the operators the editor ships and hands them, with the motions, to evil's operate command: a command of config's that runs it with the arguments of d w from the line's start deletes a word; one that hands the repeat command the same change deletes the next, with the operate command the host was handed as compiled code; and one that runs evil's undo gives that word back"
       run :=
-        withHost context [("10-operators.lean", operatorsChunk)]
+        withHost context [("init.lean", operatorsText)]
           (fun session => do
             session.ask [.reload]
             unless ← Event.post (.commit "one two three") do
@@ -149,7 +149,7 @@ def evilChecks (context : Context) : List Check :=
     { name :=
         "the repeat command replays a change with the command the registry holds for its name: with config's operate command registered over the operators that ship and one of config's own, in place of the compiled one, a change made with config's operator is replayed with it, and deletes the next word"
       run :=
-        withHost context [("10-operators.lean", ownOperatorChunk)]
+        withHost context [("init.lean", ownOperatorText)]
           (fun session => do
             session.ask [.reload]
             unless ← Event.post (.commit "one two three") do

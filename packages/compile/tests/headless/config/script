@@ -1,5 +1,5 @@
 # A config that is written on the compile mode's declarations
-# (`config/10-compile.lean`): it overrides one field of the shipped
+# (`config/init.lean`): it overrides one field of the shipped
 # `Compile.cargoMode`, registers a contribution with a format of its own
 # and the commands of one project, and defines a command over
 # `Compile.Format.read?` and `Compile.shipped`. What it prints must be

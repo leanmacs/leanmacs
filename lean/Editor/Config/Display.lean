@@ -29,14 +29,14 @@ namespace Editor.Config
 
 /-- Whether `effects`, the effects of one event of the reload reducer,
 report a reload that installed. -/
-def installed {σ : Type} (effects : Array (Effect σ)) : Bool :=
+def installed {β σ : Type} (effects : Array (Effect β σ)) : Bool :=
   effects.any fun
     | .report report => report.installed
     | _ => false
 
 /-- Whether `effects`, the effects of one event of the reload reducer, say
 the theme in force was switched (`Effect.themed`). -/
-def switched {σ : Type} (effects : Array (Effect σ)) : Bool :=
+def switched {β σ : Type} (effects : Array (Effect β σ)) : Bool :=
   effects.any fun
     | .themed => true
     | _ => false
@@ -49,8 +49,8 @@ in the faces of the theme in force and the config that is now installed, and
 sized in them too, since the real binding's heights answer defines a theme
 it has yet to send (`RealDisplay.heights`). Any other event leaves the
 display the theme it has. -/
-def retheme {σ : Type} (setTheme : String → Theme → BaseIO Unit) (state : State σ)
-    (effects : Array (Effect σ)) : BaseIO Unit := do
+def retheme {β σ : Type} (setTheme : String → Theme → BaseIO Unit) (state : State β σ)
+    (effects : Array (Effect β σ)) : BaseIO Unit := do
   if installed effects || switched effects then
     setTheme state.themeName state.theme
 

@@ -1,4 +1,4 @@
-import Editor.Config.Modules
+import Editor.Config.Session
 
 /-!
 # The elaborator port's model
@@ -52,7 +52,7 @@ not the root's.
 
 namespace Editor.Config.Elaborator.Model
 
-open Editor.Config.Modules
+open Editor.Config
 
 /-- The model's base: the linked modules it holds, in the order they were
 asked for. -/

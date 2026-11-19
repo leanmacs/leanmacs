@@ -33,9 +33,9 @@ def Session.exLine (session : Session) (line : String) : IO Bool := do
   session.pressKeys acceptKeys
   return true
 
-/-- A chunk whose `setup` registers two commands, `one` and `two`, each of
+/-- A config whose `setup` registers two commands, `one` and `two`, each of
 which says its name in the echo area, and binds `C-c t` to `command`. -/
-def sayingChunk (command : String) : String :=
+def sayingText (command : String) : String :=
   "def setup : SetupM Unit := do
   command \"one\" (message \"one\")
   command \"two\" (message \"two\")
@@ -44,10 +44,10 @@ def sayingChunk (command : String) : String :=
     "\"
 "
 
-/-- A chunk whose `setup` registers `greet-named`, a command that is given
+/-- A config whose `setup` registers `greet-named`, a command that is given
 its call and says `hello ` and its first argument in the echo area, and,
 when `bound`, binds the ex name `greet` to it, taking text. -/
-def greetExChunk (bound : Bool) : String :=
+def greetExText (bound : Bool) : String :=
   "def setup : SetupM Unit := do
   commandWith \"greet-named\" fun call =>
     match call.arguments with
@@ -56,9 +56,9 @@ def greetExChunk (bound : Bool) : String :=
 " ++
     if bound then "  exCommand \"greet\" \"greet-named\" (takes := .text)\n" else ""
 
-/-- A chunk whose `setup` registers `mine`, which says `mine` in the echo
+/-- A config whose `setup` registers `mine`, which says `mine` in the echo
 area, and binds the ex name `w` to it. -/
-def ownWriteChunk : String :=
+def ownWriteText : String :=
   "def setup : SetupM Unit := do
   command \"mine\" (message \"mine\")
   exCommand \"w\" \"mine\"
@@ -79,12 +79,12 @@ def exChecks (context : Context) : List Check :=
   [{  name :=
         "criterion 3: a config binds a key to a command and the key runs it; the config's file is changed to bind the key to another command and the ex line reload is run: the host reloads, with no restart, and the key then runs the other command"
       run :=
-        withHost context [("10-setup.lean", sayingChunk "one")]
+        withHost context [("init.lean", sayingText "one")]
           (fun session => do
             session.ask [.reload]
             session.typed "C-c t"
             let first ← session.echo
-            session.write "10-setup.lean" (sayingChunk "two")
+            session.write "init.lean" (sayingText "two")
             unless ← session.exLine "reload" do
               return false
             let reloaded := installs (← session.lines)
@@ -99,13 +99,13 @@ def exChecks (context : Context) : List Check :=
     { name :=
         "criterion 4: config binds an ex name to a command of its own, and the name run on the ex line runs that command with the rest of the line; after a reload of a config without the binding the name is not an ex command, by the ex line's message"
       run :=
-        withHost context [("10-setup.lean", greetExChunk true)]
+        withHost context [("init.lean", greetExText true)]
           (fun session => do
             session.ask [.reload]
             unless ← session.exLine "greet Ada" do
               return false
             let greeted ← session.echo
-            session.write "10-setup.lean" (greetExChunk false)
+            session.write "init.lean" (greetExText false)
             unless ← session.exLine "reload" do
               return false
             let reloaded := installs (← session.lines)
@@ -118,7 +118,7 @@ def exChecks (context : Context) : List Check :=
     { name :=
         "config's binding of an ex name a compiled binding has runs config's command in its place, and the compiled binding's command runs again once a reload drops config's"
       run :=
-        withHost context [("10-setup.lean", ownWriteChunk)]
+        withHost context [("init.lean", ownWriteText)]
           (fun session => do
             unless ← session.exLine "w" do
               return false
@@ -127,7 +127,7 @@ def exChecks (context : Context) : List Check :=
             unless ← session.exLine "w" do
               return false
             let own ← session.echo
-            session.write "10-setup.lean" emptyChunk
+            session.write "init.lean" emptyText
             unless ← session.exLine "reload" do
               return false
             unless ← session.exLine "w" do

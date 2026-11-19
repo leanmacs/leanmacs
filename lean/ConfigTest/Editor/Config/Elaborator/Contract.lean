@@ -24,7 +24,7 @@ share holds `Editor` and can grow to hold `Lean`; `Lake` is in the
 toolchain and is not linked. -/
 def realSubject (context : Context) :
     Config.Elaborator.Contract.Subject Config.Elaborate.Base Config.Elaborate.Handle :=
-  { elaborator := context.modules,
+  { elaborator := context.elaborator,
     write := fun lines =>
       "\n".intercalate
         (lines.map fun line =>

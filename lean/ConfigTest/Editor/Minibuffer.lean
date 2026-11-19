@@ -82,11 +82,11 @@ def promptCompiled : Compiled :=
     jobs := nappingCompiled.jobs
     bindings := #[bound "C-c o" "other"] }
 
-/-- A chunk whose `setup` registers `greet` as a command that is given its
+/-- A config whose `setup` registers `greet` as a command that is given its
 call, which says `label` and its first argument in the echo area, and
 `ask`, which asks `Name: ` with the initial value `Ada` and the continuation
 `greet`. -/
-def greetWithChunk (label : String) : String :=
+def greetWithText (label : String) : String :=
   "def setup : SetupM Unit := do
   commandWith \"greet\" fun call =>
     match call.arguments with
@@ -99,17 +99,17 @@ def greetWithChunk (label : String) : String :=
   command \"ask\" (discard <| prompt \"Name: \" { command := \"greet\" } \"Ada\")
 "
 
-/-- A chunk whose `setup` registers `ask` as in `greetWithChunk`, and no
+/-- A config whose `setup` registers `ask` as in `greetWithText`, and no
 `greet`. -/
-def askOnlyChunk : String :=
+def askOnlyText : String :=
   "def setup : SetupM Unit := do
   command \"ask\" (discard <| prompt \"Name: \" { command := \"greet\" } \"Ada\")
 "
 
-/-- A chunk with a store of one number and three commands: `bump`, over the
+/-- A config with a store of one number and three commands: `bump`, over the
 store, adds one; `bump-accept`, over the store, accepts the open prompt and
 adds one; and `ask` asks `Name: ` with the continuation `bump`. -/
-def bumpAcceptChunk : String :=
+def bumpAcceptText : String :=
   "def counter : Store Nat :=
   { name := \"counter\", version := 1, initial := 0, encode := .nat,
     decode := fun
@@ -125,30 +125,30 @@ def setup : SetupM Unit := do
   command \"ask\" (discard <| prompt \"Name: \" { command := \"bump\" })
 "
 
-/-- A chunk whose `setup` registers `pick`, which asks `Pick: ` with the
+/-- A config whose `setup` registers `pick`, which asks `Pick: ` with the
 completion source registered under `picks`, by name, and, when `defines`,
 that source: `wq`, `edit` and `w`. -/
-def sourceChunk (defines : Bool) : String :=
+def sourceText (defines : Bool) : String :=
   let source := "  defineSource (.ofTexts \"picks\" \"pick\" #[\"wq\", \"edit\", \"w\"])\n"
   "def setup : SetupM Unit := do\n" ++ (if defines then source else "") ++
     "  command \"pick\" (discard <| prompt \"Pick: \" { command := \"picked\" }\n" ++
     "    (sources := [.named \"picks\"]))\n"
 
-/-- A chunk whose `setup` registers `pick-theme`, which asks `Theme: ` with
+/-- A config whose `setup` registers `pick-theme`, which asks `Theme: ` with
 the completion source registered under `themes`, by name, one the
 executable's hosts ship (`Themes.source`), and, when `overrides`, a source
 of config's own under that name, whose one candidate is `mine`. -/
-def shippedSourceChunk (overrides : Bool) : String :=
+def shippedSourceText (overrides : Bool) : String :=
   let source := "  defineSource (.ofTexts \"themes\" \"theme\" #[\"mine\"])\n"
   "def setup : SetupM Unit := do\n" ++ (if overrides then source else "") ++
     "  command \"pick-theme\" (discard <| prompt \"Theme: \" { command := \"picked\" }\n" ++
     "    (sources := [.named \"themes\"]))\n"
 
-/-- A chunk whose `setup` makes the choices of completion style `choices`
+/-- A config whose `setup` makes the choices of completion style `choices`
 (lines of `setup`, each indented) and registers two commands, `pick` and
 `other`, that ask `Pick: ` with a source given as a value, of the category
 `pick` and of `other`, each over `wq`, `edit`, `rewrite` and `w`. -/
-def styleChunk (choices : List String) : String :=
+def styleText (choices : List String) : String :=
   let asks (command category : String) : String :=
     s!"  command \"{command}\" (discard <| prompt \"Pick: \" \{ command := \"picked\" }\n" ++
       s!"    (sources := [.given (.ofTexts \"{command}s\" \"{category}\" " ++
@@ -157,11 +157,11 @@ def styleChunk (choices : List String) : String :=
     asks "pick" "pick" ++
     asks "other" "other"
 
-/-- A chunk whose `setup` chooses the orderless style for the category
+/-- A config whose `setup` chooses the orderless style for the category
 `buffer`, so `switch-buffer` lists its candidates in their own order,
 registers the sources `defines` (lines of `setup`, each indented), and
 registers `make`, which makes a buffer of each of `names`, in order. -/
-def bufferStyleChunk (defines : List String) (names : List String := ["alpha", "beta"]) : String :=
+def bufferStyleText (defines : List String) (names : List String := ["alpha", "beta"]) : String :=
   "def setup : SetupM Unit := do\n  useStyleFor \"buffer\" \"orderless\"\n" ++
     "  command \"make\" do\n" ++
     String.join (names.map (s!"    discard <| createBuffer {·.quote}\n")) ++
@@ -224,14 +224,14 @@ def annotatedCompiled : Compiled :=
                   prompt "Pick: " { command := "picked" } ""
                     [.given (.fixed "annotated" "pick" annotatedCandidates)]) }] }
 
-/-- The candidates the prompt of `rowsChunk` asks among: five. -/
+/-- The candidates the prompt of `rowsText` asks among: five. -/
 def fiveTexts : Array String :=
   #["wq", "edit", "rewrite", "w", "we"]
 
-/-- A chunk whose `setup` defines the minibuffer display showing at most
+/-- A config whose `setup` defines the minibuffer display showing at most
 three rows, in the shipped one's place, and `pick`, which asks `Pick: `
 with a source given as a value over `fiveTexts`. -/
-def rowsChunk : String :=
+def rowsText : String :=
   "def setup : SetupM Unit := do\n" ++
     "  defineDisplay (Completion.Displays.minibuffer (rows := 3))\n" ++
     "  command \"pick\" (discard <| prompt \"Pick: \" { command := \"picked\" }\n" ++
@@ -259,10 +259,10 @@ def matchJobs (lines : Array String) (what : String) : Array String :=
       if label == s!"{Loop.matchLabel}:" && said == what then some id else none
     | _ => none
 
-/-- A chunk whose `setup` defines the style `slow`, which asks the matcher
+/-- A config whose `setup` defines the style `slow`, which asks the matcher
 and then answers what the orderless style answers, and chooses `chosen` as
 the default style. -/
-def slowStyleChunk (chosen : String) : String :=
+def slowStyleText (chosen : String) : String :=
   "def slow : Completion.Style :=
   { name := \"slow\"
     hits := fun text candidates => do
@@ -276,11 +276,11 @@ def setup : SetupM Unit := do
     "
 "
 
-/-- A chunk whose `setup` registers a source's job `echo`, which answers
+/-- A config whose `setup` registers a source's job `echo`, which answers
 the text it is asked with, `!` after it; a source `echo` of the category
 `pick` that it answers, asked again 20 ms after the text changes; and
 `pick`, which asks `Pick: ` with that source by name. -/
-def echoSourceChunk : String :=
+def echoSourceText : String :=
   "def setup : SetupM Unit := do
   sourceJob \"echo\" fun query deliver => deliver #[.ofText (query.text ++ \"!\")]
   defineSource (.answeringLater \"echo\" \"pick\" \"echo\" (reask := .afterPause 20))
@@ -375,17 +375,17 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "the continuation is looked up when the answer arrives: config registers it as a command that is given its call, a prompt is asked for, config is reloaded with another command of the name, and the accept key runs the new one with the answer; asked for again and reloaded with a config that registers none, the accept key leaves no such command in the echo area, by the continuation's name, and the prompt closed"
       run :=
-        withHost context [("10-greet.lean", greetWithChunk "one")]
+        withHost context [("init.lean", greetWithText "one")]
           (fun session => do
             session.ask [.reload]
             session.ask [.run "ask"]
-            session.write "10-greet.lean" (greetWithChunk "two")
+            session.write "init.lean" (greetWithText "two")
             session.ask [.reload]
             let asking ← session.scene
             session.pressKeys acceptKeys
             let renamed ← session.scene
             session.ask [.run "ask"]
-            session.write "10-greet.lean" askOnlyChunk
+            session.write "init.lean" askOnlyText
             session.ask [.reload]
             session.pressKeys acceptKeys
             let dropped ← session.scene
@@ -408,7 +408,7 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "the answer's command is a step of its own, looked up after the accepting command's write was written back: with a store, a command over it that accepts the open prompt and adds one, and a continuation over it that adds one, the store holds two after the accept"
       run :=
-        withHost context [("10-bump.lean", bumpAcceptChunk)]
+        withHost context [("init.lean", bumpAcceptText)]
           (fun session => do
             session.ask [.reload]
             session.ask [.run "ask", .run "bump-accept"]
@@ -419,7 +419,7 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "a completion source config registers supplies the candidates of a prompt that asks for it by name: after `w` is committed the minibuffer's status line is the label and the candidate list `w` and `wq`, the candidates the library's matcher lists; reloaded with a config that registers no such source, the same ask opens no prompt, leaves one view and refuses no step"
       run :=
-        withHost context [("10-source.lean", sourceChunk true)]
+        withHost context [("init.lean", sourceText true)]
           (fun session => do
             session.ask [.reload]
             session.ask [.run "pick"]
@@ -427,7 +427,7 @@ def promptChecks (context : Context) : List Check :=
               return false
             let asking ← session.sceneLines
             session.pressKeys cancelKeys
-            session.write "10-source.lean" (sourceChunk false)
+            session.write "init.lean" (sourceText false)
             session.ask [.reload]
             session.ask [.run "pick"]
             let (_, views) ← session.scene
@@ -442,7 +442,7 @@ def promptChecks (context : Context) : List Check :=
         -- compared from their fields on, whichever view they are of.
         let lists (asking : Array String) (candidate : String) : Bool :=
           listsAfter asking "Theme: " [candidate]
-        withHost context [("10-source.lean", shippedSourceChunk false)]
+        withHost context [("init.lean", shippedSourceText false)]
             (fun session => do
               let asked (query : String) : IO (Array String) := do
                 session.ask [.reload]
@@ -453,9 +453,9 @@ def promptChecks (context : Context) : List Check :=
                 session.pressKeys cancelKeys
                 return asking
               let shippedFirst ← asked theme.name
-              session.write "10-source.lean" (shippedSourceChunk true)
+              session.write "init.lean" (shippedSourceText true)
               let overridden ← asked "mine"
-              session.write "10-source.lean" (shippedSourceChunk false)
+              session.write "init.lean" (shippedSourceText false)
               let restored ← asked theme.name
               return lists shippedFirst theme.name && lists overridden "mine" &&
                   lists restored theme.name &&
@@ -464,7 +464,7 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "criterion 3: a config that chooses orderless for the category pick lists a pick prompt by it and every other by the default: after `w` is committed the pick prompt lists `wq`, `rewrite` and `w`, the candidates' own order, and a prompt of another category lists the same three with `w` first, the library's matcher's; reloaded with a config that chooses no style, the pick prompt lists `w` first too"
       run :=
-        withHost context [("10-style.lean", styleChunk ["useStyleFor \"pick\" \"orderless\""])]
+        withHost context [("init.lean", styleText ["useStyleFor \"pick\" \"orderless\""])]
           (fun session => do
             let asked (command : String) : IO (Array String) := do
               session.ask [.reload]
@@ -479,7 +479,7 @@ def promptChecks (context : Context) : List Check :=
                 listsAfter lines "Pick: " ["w", "rewrite", "wq"]
             let pick ← asked "pick"
             let other ← asked "other"
-            session.write "10-style.lean" (styleChunk [])
+            session.write "init.lean" (styleText [])
             let unchosen ← asked "pick"
             return listsAfter pick "Pick: " ["wq", "rewrite", "w"] && exactFirst other &&
                 exactFirst unchosen &&
@@ -488,7 +488,7 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "a category's compiled default sits between config's two choices, through the real elaborator: with compiled code giving pick the orderless style and config choosing nothing, the pick prompt lists `wq`, `rewrite` and `w` and another prompt `w` first; config's `useStyle \"fuzzy\"` leaves pick on orderless; config's `useStyleFor \"pick\" \"fuzzy\"` lists `w` first"
       run :=
-        withHost context [("10-style.lean", styleChunk [])]
+        withHost context [("init.lean", styleText [])]
           (fun session => do
             let asked (command : String) : IO (Array String) := do
               session.ask [.reload]
@@ -503,9 +503,9 @@ def promptChecks (context : Context) : List Check :=
                 listsAfter lines "Pick: " ["w", "rewrite", "wq"]
             let pick ← asked "pick"
             let other ← asked "other"
-            session.write "10-style.lean" (styleChunk ["useStyle \"fuzzy\""])
+            session.write "init.lean" (styleText ["useStyle \"fuzzy\""])
             let defaulted ← asked "pick"
-            session.write "10-style.lean" (styleChunk ["useStyleFor \"pick\" \"fuzzy\""])
+            session.write "init.lean" (styleText ["useStyleFor \"pick\" \"fuzzy\""])
             let chosen ← asked "pick"
             return listsAfter pick "Pick: " ["wq", "rewrite", "w"] && exactFirst other &&
                 listsAfter defaulted "Pick: " ["wq", "rewrite", "w"] &&
@@ -517,7 +517,7 @@ def promptChecks (context : Context) : List Check :=
       run :=
         let defines :=
           "defineStyle (.keeping \"starts\" fun text candidate => candidate.startsWith text)"
-        withHost context [("10-style.lean", styleChunk [defines, "useStyle \"starts\""])]
+        withHost context [("init.lean", styleText [defines, "useStyle \"starts\""])]
           (fun session => do
             let asked (command : String) : IO (Array String) := do
               session.ask [.run command]
@@ -529,8 +529,8 @@ def promptChecks (context : Context) : List Check :=
             session.ask [.reload]
             let pick ← asked "pick"
             let other ← asked "other"
-            session.write "10-style.lean"
-                (styleChunk [defines, "useStyle \"starts\"", "useStyleFor \"pick\" \"nope\""])
+            session.write "init.lean"
+                (styleText [defines, "useStyle \"starts\"", "useStyleFor \"pick\" \"nope\""])
             session.ask [.reload]
             let (echo, _) ← session.scene
             let fallen ← asked "pick"
@@ -543,11 +543,11 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "a config that chooses a style and a display nobody registered says so on a report line each, the display's after the style's"
       run :=
-        withHost context [("10-style.lean", styleChunk [])]
+        withHost context [("init.lean", styleText [])]
           (fun session => do
             session.ask [.reload]
-            session.write "10-style.lean"
-                (styleChunk ["useStyleFor \"pick\" \"gone\"", "useDisplay \"nope\""])
+            session.write "init.lean"
+                (styleText ["useStyleFor \"pick\" \"gone\"", "useDisplay \"nope\""])
             session.ask [.reload]
             let lines ← session.output.get
             let style := lines.findIdx? (· == s!"style: {Completion.Styles.unknown "gone"}")
@@ -561,7 +561,7 @@ def promptChecks (context : Context) : List Check :=
       run :=
         let more := "defineSource (.ofTexts \"more\" \"buffer\" #[\"zz-extra\"])"
         let mine := "defineSource (.ofTexts \"buffers\" \"buffer\" #[\"mine\"])"
-        withHost context [("10-buffers.lean", bufferStyleChunk [more])]
+        withHost context [("init.lean", bufferStyleText [more])]
           (fun session => do
             let asked : IO (Array String) := do
               session.ask [.reload]
@@ -572,9 +572,9 @@ def promptChecks (context : Context) : List Check :=
             session.ask [.reload]
             session.ask [.run "make"]
             let added ← asked
-            session.write "10-buffers.lean" (bufferStyleChunk [mine])
+            session.write "init.lean" (bufferStyleText [mine])
             let replaced ← asked
-            session.write "10-buffers.lean" (bufferStyleChunk [])
+            session.write "init.lean" (bufferStyleText [])
             let shipped ← asked
             let names := ["alpha", "beta", EditorState.scratchName]
             -- Two sources list two groups, so each group's rows follow a
@@ -591,7 +591,7 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "with config choosing orderless for buffer, a text of two components that is no buffer's name, typed into switch-buffer and accepted with nothing chosen, shows the first buffer the prompt lists for it, though the fuzzy matcher matches it with no name"
       run :=
-        withHost context [("10-buffers.lean", bufferStyleChunk [] ["mars.txt", "main.rs"])]
+        withHost context [("init.lean", bufferStyleText [] ["mars.txt", "main.rs"])]
           (fun session => do
             session.ask [.reload]
             session.ask [.run "make"]
@@ -630,7 +630,7 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "a source that answers later, from a job config registers with sourceJob, on the real elaborator: its prompt lists the job's answer for the initial text; after a key the job is asked again, after the source's pause, and the prompt lists its answer for the typed text"
       run :=
-        withHost context [("10-echo.lean", echoSourceChunk)]
+        withHost context [("init.lean", echoSourceText)]
           (fun session => do
             session.ask [.reload]
             session.ask [.run "pick"]
@@ -683,7 +683,7 @@ def promptChecks (context : Context) : List Check :=
         "a reload that installs while a match of config's style is held cancels that match before the reload is reported, and the scene after the install, with no key typed, starts a match with the new config's style; once the matcher answers, the listing is the new style's, and the first match never delivered"
       run := do
         let gate ← IO.Promise.new
-        withHost context [("10-slow.lean", slowStyleChunk "slow")]
+        withHost context [("init.lean", slowStyleText "slow")]
             (fun session => do
               try
                 session.ask [.reload]
@@ -691,7 +691,7 @@ def promptChecks (context : Context) : List Check :=
                 unless
                   ← eventually (return (matchJobs (← session.output.get) "started").size == 1) do
                   return false
-                session.write "10-slow.lean" (slowStyleChunk "orderless")
+                session.write "init.lean" (slowStyleText "orderless")
                 session.ask [.reload]
                 let reloaded ← session.output.get
                 gate.resolve ()
@@ -717,7 +717,7 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "criterion 1: a prompt lists its candidates one a row in a view of their own, up to the rows config's display sets, the chosen one in its face: at 640 by 480, with config's minibuffer display of three rows, a prompt of five lists the library's first three, each row in the candidate face, the minibuffer's status line the label alone; after the next-item key the first row is in the chosen face"
       run :=
-        withHost context [("10-rows.lean", rowsChunk)]
+        withHost context [("init.lean", rowsText)]
           (fun session => do
             session.host.resize 640 480
             session.ask [.reload]
@@ -748,7 +748,7 @@ def promptChecks (context : Context) : List Check :=
     { name :=
         "criterion 3: closing a prompt gives the windows above back the height its list took: at 640 by 480, with config's display of three rows, the window is the frame less the bottom row before the prompt, less the input and three rows too while it lists three, with the list's view directly above the minibuffer's, and stays so once a text cuts the matches to one, which the list then shows alone; after the cancel key, and after accepting, the window has its height back and no list view is in the scene"
       run :=
-        withHost context [("10-rows.lean", rowsChunk)]
+        withHost context [("init.lean", rowsText)]
           (fun session => do
             session.host.resize 640 480
             session.ask [.reload]
@@ -794,10 +794,10 @@ def promptChecks (context : Context) : List Check :=
         "criterion 5: a display config chooses for one category shows that category's prompts, the default the others', and a reload that drops the choice redraws the open prompt with the default at the install's scene: after `w` the pick prompt's list is the plain display's rows, built from the model, and the other prompt's the minibuffer display's; with the pick prompt open, a reload of a config without the choice, with no key typed, draws the minibuffer display's rows"
       run :=
         let choosing :=
-          styleChunk
+          styleText
             ["defineDisplay (Completion.Display.plain \"plain\")",
               "useDisplayFor \"pick\" \"plain\""]
-        withHost context [("10-display.lean", choosing)]
+        withHost context [("init.lean", choosing)]
           (fun session => do
             let asked (command : String) : IO (Array String) := do
               session.ask [.run command]
@@ -810,7 +810,7 @@ def promptChecks (context : Context) : List Check :=
             let other ← asked "other"
             session.pressKeys cancelKeys
             let reopened ← asked "pick"
-            session.write "10-display.lean" (styleChunk [])
+            session.write "init.lean" (styleText [])
             session.ask [.reload]
             let reloaded ← session.sceneLines
             let listed ← realOrder "w" #["wq", "edit", "rewrite", "w"]

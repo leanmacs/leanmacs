@@ -86,13 +86,13 @@ def commanding (name : String) (commands : List (String × String)) : Package :=
         Editor.command command (makes text) }
 
 /-- The state `packages` make, and the messages of those refused. -/
-def packaged (packages : Array Package) : Config.State Elaborated × Array String :=
+def packaged (packages : Array Package) : ModelState × Array String :=
   Config.State.ofPackages packages
 
 /-- Whether `state` holds what the package `everyKind name` registered: an
 entry of every kind for its owner, its three commands among them, its style
 default, and the cell of its store. -/
-def holdsEveryKind (state : Config.State Elaborated) (name : String) : Bool :=
+def holdsEveryKind (state : ModelState) (name : String) : Bool :=
   let owner : Config.Owner := { name }
   state.registry.ownersByKind.all (·.contains owner) &&
     (state.registry.entries.filter (·.owner == owner)).size == 3 &&
@@ -177,7 +177,7 @@ def packageChecks : List Check :=
         let (installed, effects) :=
           reduceFrom bumped [.requested, .finished (accepted ["a"] config)]
         let (emptied, _) := reduceFrom installed [.requested, .finished (accepted ["a"] (pure ()))]
-        let cell (state : Config.State Elaborated) :=
+        let cell (state : ModelState) :=
           (state.cells.find? { name := "one" } "counter").map (·.value)
         pure
           (holdsEveryKind state "one" && cell bumped == some (.nat 1) &&
@@ -218,10 +218,10 @@ def packageChecks : List Check :=
               defineStyle (.keeping s!"{name}-style" fun _ _ => true)
               useStyleFor category s!"{name}-style" }
         let (state, refused) := packaged #[styled "one" "pick", styled "two" "pick"]
-        let styleOf (state : Config.State Elaborated) (category : String) : String × String :=
+        let styleOf (state : ModelState) (category : String) : String × String :=
           let entry := state.registry.styleEntry (some category)
           (entry.style.name, entry.owner.name)
-        let chooses (setup : SetupM Unit) : Config.State Elaborated :=
+        let chooses (setup : SetupM Unit) : ModelState :=
           (reduceFrom state [.requested, .finished (accepted ["a"] setup)]).1
         let defaulted :=
           chooses do
@@ -253,7 +253,7 @@ def packageChecks : List Check :=
           packaged
             #[contributing "first" [("make-mode", "Makefile"), ("other-mode", "other")],
               contributing "second" [("third-mode", "third"), ("make-mode", "GNUmakefile")]]
-        let listed (state : Config.State Elaborated) : Array (String × Array String) :=
+        let listed (state : ModelState) : Array (String × Array String) :=
           state.registry.compileContributions.map fun contribution =>
             (contribution.mode, contribution.markers)
         let config : SetupM Unit :=

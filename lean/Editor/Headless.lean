@@ -2,6 +2,7 @@ import Editor.Clipboard.InProcess
 import Editor.Config.Directory
 import Editor.Config.Display
 import Editor.Config.Elaborate
+import Editor.Config.Lakefile.Toml
 import Editor.Config.Packages
 import Editor.Config.Reload
 import Editor.Display.Real
@@ -41,11 +42,16 @@ command it runs, it runs through the command loop ("The editor loop").
 
 A reload does not run on the editor thread. The reducer's `start` effect
 becomes a dedicated task, the reload job, which reads the source, elaborates
-and runs `setup` (`Config.build`), resolves a promise with the outcome and
-posts a wake-up to the editor queue. The editor thread meets the wake-up like
-any event, takes the outcome and feeds it to the reducer: a config is
-installed between two events, and the editor answers events while a chunk
-elaborates. It is a dedicated task, not one of the pool's: it reads files.
+the files that changed and runs `setup` (`Config.build`), resolves a promise
+with the outcome and posts a wake-up to the editor queue. The editor thread
+meets the wake-up like any event, takes the outcome and feeds it to the
+reducer: a config is installed between two events, and the editor answers
+events while a file elaborates. It is a dedicated task, not one of the
+pool's: it reads files, and writes the module data of the config files
+under `Config/` to a temporary directory (`Collaborators.dispose`). When the
+collaborators hold a generator (`Collaborators.generator`), it also creates
+the config directory's lakefile and toolchain file when they are absent;
+a host handed none writes nothing into the config directory.
 
 It knows a request from its driver, the wake-up of a reload job, the wake-up
 of a job that has ended, an event of the library's scripted source, an event
@@ -60,7 +66,7 @@ session, and calls the same operations of the reducer and of the job table
 as before, so reload and job completion work as they did.
 
 - **The host is given its input scheme**, as a parameter of its
-  collaborators' type (`Collaborators σ scheme`), and its loop runs that one
+  collaborators' type (`Collaborators β σ scheme`), and its loop runs that one
   (`Loop scheme`). The executable's is the Vim scheme over its default
   states (`Vim.Default.scheme`); a test hands a host the test scheme.
 - **The frame is made when the loop is first needed** (`Running.framed`):
@@ -792,11 +798,20 @@ end Host.Display
 /-- What a host that runs the input scheme `scheme` needs from outside. The
 scheme is a parameter, as it is of the loop (`Loop`): it is in `Type 1`, and
 cannot be a field of what a task is handed. -/
-structure Collaborators (σ : Type) (scheme : InputScheme) where
+structure Collaborators (β σ : Type) (scheme : InputScheme) where
   /-- How config is elaborated. -/
-  elaborator : Config.Elaborator σ
-  /-- Where the config's chunks come from. -/
+  elaborator : Config.Elaborator β σ
+  /-- Where the config's files come from. -/
   source : Config.Source
+  /-- The config directory read as a Lake package: its lakefile, which a
+  reload reads to say what a module that is not linked belongs to
+  (`Editor/Config/Session.lean`, "The package ports"). The default holds no
+  file, for a host with no directory. -/
+  package : Config.PackageFiles := Config.PackageFiles.none
+  /-- What writes the config directory's lakefile and toolchain file when
+  they are absent; none for a host that may not write there, which is the
+  default: such a host writes nothing. -/
+  generator : Option Config.Generator := none
   /-- Where a line of output goes. The editor thread calls it. -/
   emit : String → IO Unit
   /-- What the host's jobs wait on: the table of waits, the clock and the
@@ -895,6 +910,12 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   mode's, and a test stage's. None for a host on the real clock, the window
   mode's. -/
   clock : Option Job.FakeClock := none
+  /-- Removes what the collaborators left outside the process: the real
+  ones' directory of the config files' module data, if a config with
+  files under `Config/` had it made (`Editor/Config/Elaborate.lean`,
+  "Module files"). The executable's edges call it once, when the host has
+  ended; the default removes nothing. -/
+  dispose : IO Unit := pure ()
 
 /-- What the driver posts to the editor queue: a request, a marker to wait
 for, or the end of the loop. -/
@@ -1014,9 +1035,9 @@ def statusLine (view : ViewId) (status : Array StatusField) (statusFace : Option
 
 /-- The loop's state: everything the editor thread owns, for a host that
 runs the input scheme `scheme`. -/
-structure Running (σ : Type) (scheme : InputScheme) where
+structure Running (β σ : Type) (scheme : InputScheme) where
   /-- The config half of the editor's state. -/
-  config : Config.State σ := {}
+  config : Config.State β σ := {}
   /-- The texts and the snapshots made so far. -/
   texts : RealTexts
   /-- The display, over the snapshots `texts` publishes: what the host's
@@ -1038,7 +1059,7 @@ structure Running (σ : Type) (scheme : InputScheme) where
   /-- The jobs that are running, with their owners. -/
   jobs : Job.Jobs
   /-- Where the reload job that is running will leave its outcome. -/
-  job : Option (IO.Promise (Config.Outcome σ)) := none
+  job : Option (IO.Promise (Config.Outcome β σ)) := none
   /-- How many markers the loop has reached. -/
   markers : Nat := 0
   /-- Whether the driver has ended the loop. -/
@@ -1061,12 +1082,12 @@ structure Running (σ : Type) (scheme : InputScheme) where
 
 namespace Running
 
-variable {σ : Type} {scheme : InputScheme}
+variable {β σ : Type} {scheme : InputScheme}
 
 /-- Says `text` in the echo area of the frame's state, which the next scene
 shows; with no frame made yet, keeps it to say once the frame is made
 (`framed`). -/
-def said (running : Running σ scheme) (text : String) : Running σ scheme :=
+def said (running : Running β σ scheme) (text : String) : Running β σ scheme :=
   match running.frame with
   | some frame =>
     { running with frame := some { frame with state := { frame.state with echo := text } } }
@@ -1076,11 +1097,14 @@ def said (running : Running σ scheme) (text : String) : Running σ scheme :=
 outcome over through `promise`, and wakes the editor thread with an event.
 The wake-up is posted whatever happens, so the editor thread never waits for
 a job that is gone. -/
-def reloadJob (collaborators : Collaborators σ scheme) (base : Option σ)
-    (chunks : Array (Config.Chunk σ)) (promise : IO.Promise (Config.Outcome σ)) : IO Unit := do
+def reloadJob (collaborators : Collaborators β σ scheme) (base : Option β)
+    (files : Array (Config.LoadedFile σ)) (promise : IO.Promise (Config.Outcome β σ)) : IO Unit :=
+  do
   try
     promise.resolve
-        (← Config.build scheme collaborators.elaborator collaborators.source base chunks)
+        (←
+          Config.build scheme collaborators.elaborator collaborators.source collaborators.package
+              collaborators.generator base files)
   finally
     discard <| Ffi.postEvent .editor collaborators.wakeups 0 ""
 
@@ -1090,8 +1114,8 @@ elaborates, and the editor thread goes on to its next event. A reload's
 report is printed, and a rejected one's error is said in the echo area
 (`Config.Report.echo`, `said`); one that installs says nothing there, and
 hands the display the new theme (`Config.retheme`). -/
-def reduce (collaborators : Collaborators σ scheme) (running : Running σ scheme)
-    (event : Config.Event σ) : IO (Running σ scheme) := do
+def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (event : Config.Event β σ) : IO (Running β σ scheme) := do
   let (config, effects) := Config.step running.config event
   Config.retheme running.display.setTheme config effects
   -- A reload that installs is config's setting of a child's environment,
@@ -1113,9 +1137,9 @@ def reduce (collaborators : Collaborators σ scheme) (running : Running σ schem
       running := { running with jobs }
       for entry in removed do
         collaborators.emit s!"job {entry.id} {entry.name}: cancelled"
-    | .start base chunks =>
+    | .start base files =>
       let promise ← IO.Promise.new
-      discard <| IO.asTask (prio := .dedicated) (reloadJob collaborators base chunks promise)
+      discard <| IO.asTask (prio := .dedicated) (reloadJob collaborators base files promise)
       running := { running with job := some promise }
     | .themed =>
       -- `retheme` above has handed the display the theme.
@@ -1126,8 +1150,8 @@ def reduce (collaborators : Collaborators σ scheme) (running : Running σ schem
 
 /-- Takes the finished reload job's outcome and feeds it to the reducer. This
 is where a reload is installed: on the editor thread, between two events. -/
-def finish (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
-    IO (Running σ scheme) := do
+def finish (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    IO (Running β σ scheme) := do
   let some promise := running.job | return running
   let outcome :=
     promise.result?.get.getD
@@ -1141,8 +1165,8 @@ it. It runs on the pool; its posts wait in the mailbox, and when it has
 ended the runner posts a wake-up to the editor queue, with the job's id.
 How a registered job is started (`startJob`) and how the loop's own work is
 (`Loop.Spawn`, `launch`). -/
-def startWork (collaborators : Collaborators σ scheme) (running : Running σ scheme)
-    (owner : Config.Owner) (name : String) (work : Work) : IO (Nat × Running σ scheme) := do
+def startWork (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (owner : Config.Owner) (name : String) (work : Work) : IO (Nat × Running β σ scheme) := do
   let wake (id : Nat) : BaseIO Unit :=
     (discard <| Ffi.postEvent .editor collaborators.jobs id.toUInt64 "" : IO Unit).catchExceptions
       fun _ => pure ()
@@ -1160,15 +1184,15 @@ that registered it: its id, and the jobs with it, or `none` for a name no
 job is registered under. The job runs on the pool; when it has ended the
 runner posts a wake-up to the editor queue, with the job's id, from
 whichever thread the job ended on. -/
-def startJob (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String)
-    (arguments : List Argument := []) : IO (Option Nat × Running σ scheme) := do
+def startJob (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (name : String) (arguments : List Argument := []) : IO (Option Nat × Running β σ scheme) := do
   let some (owner, work) := running.config.work? name arguments | return (none, running)
   let (id, running) ← running.startWork collaborators owner name work
   return (some id, running)
 
 /-- Cancels the job started with `key`, if one is running or has finished and
 not been delivered (`Job.Jobs.cancel`), and forgets the key. -/
-def cancelKeyed (running : Running σ scheme) (key : String) : IO (Running σ scheme) := do
+def cancelKeyed (running : Running β σ scheme) (key : String) : IO (Running β σ scheme) := do
   let some (_, id) := running.keyed.find? (·.1 == key) | return running
   let jobs ← running.jobs.cancel id
   return { running with
@@ -1183,9 +1207,9 @@ the running job of that key first, and printed, `job <id> <label>:
 started`. How a step's jobs are taken in (`took`), and the jobs the
 reconciler of a prompt hands back after a publish no step made
 (`publish`). -/
-def launch (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+def launch (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
     (starts : Array JobStart) (cancels : Array String) (spawns : Array Loop.Spawn) :
-    IO (Running σ scheme) := do
+    IO (Running β σ scheme) := do
   let mut running := running
   -- A cancel ends the job of its key, finished and not delivered or not.
   for key in cancels do
@@ -1213,8 +1237,8 @@ def launch (collaborators : Collaborators σ scheme) (running : Running σ schem
 withdrawn from the clock and ended as cancelled in the table of waits, as a
 job's cancel ends its wait, so the task that awaits it ends and posts
 nothing. -/
-def withdrawPauses (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
-    BaseIO (Running σ scheme) := do
+def withdrawPauses (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    BaseIO (Running β σ scheme) := do
   for (id, _, _) in running.pauses do
     collaborators.services.timers.cancel id
     collaborators.services.completions.finish id .cancelled
@@ -1229,8 +1253,8 @@ wait completes, the clock's own completion posts an event to the editor
 queue under `pauseEvents`, with the wait's id as its code, synchronously,
 before the clock's move returns, so a driver's `join` after an `advance`
 finds it queued; a wait withdrawn posts nothing. -/
-def pause (collaborators : Collaborators σ scheme) (running : Running σ scheme)
-    (change : Loop.PauseChange) : BaseIO (Running σ scheme) := do
+def pause (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (change : Loop.PauseChange) : BaseIO (Running β σ scheme) := do
   match change with
   | .keep =>
     return running
@@ -1257,8 +1281,8 @@ def pause (collaborators : Collaborators σ scheme) (running : Running σ scheme
 /-- Withdraws the key hint delay armed, if one is, as `withdrawPauses`
 withdraws a pause: its wait is withdrawn from the clock and ended as
 cancelled, so it posts nothing. -/
-def withdrawHints (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
-    BaseIO (Running σ scheme) := do
+def withdrawHints (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    BaseIO (Running β σ scheme) := do
   if let some (id, _) := running.hintWait then
     collaborators.services.timers.cancel id
     collaborators.services.completions.finish id .cancelled
@@ -1272,8 +1296,8 @@ started on the job clock, due that many milliseconds from now, whose
 completion posts an event under `pauseEvents` with the wait's id as its
 code (`paused` tells it from a pause by its id). It prints nothing, and
 takes no job id. -/
-def delayHints (collaborators : Collaborators σ scheme) (running : Running σ scheme)
-    (change : Loop.HintDelayChange) : BaseIO (Running σ scheme) := do
+def delayHints (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (change : Loop.HintDelayChange) : BaseIO (Running β σ scheme) := do
   match change with
   | .keep =>
     return running
@@ -1295,8 +1319,8 @@ def delayHints (collaborators : Collaborators σ scheme) (running : Running σ s
 
 /-- Starts the job registered under `name`, with no arguments, as the driver
 asks, and prints its id. -/
-def spawn (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String) :
-    IO (Running σ scheme) := do
+def spawn (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (name : String) : IO (Running β σ scheme) := do
   let (id?, running) ← running.startJob collaborators name
   match id? with
   | some id =>
@@ -1307,14 +1331,14 @@ def spawn (collaborators : Collaborators σ scheme) (running : Running σ scheme
 
 /-- What the loop's programs watch: the library's interrupt flag, and the
 clock the host's jobs wait on, so a test moves one clock for both. -/
-def watch (collaborators : Collaborators σ scheme) : WatchHandler :=
+def watch (collaborators : Collaborators β σ scheme) : WatchHandler :=
   Watch.real collaborators.services.timers
 
 /-- Drops an event of the window input that no loop takes: one that cannot
 be read, or one that arrives when no frame could be made. It has been taken
 off the queue all the same, so the flag is lowered for it if the library
 marked it (`interrupt`, `Loop.lowerFor`). -/
-def drop (collaborators : Collaborators σ scheme) (interrupt : Bool) : IO Unit :=
+def drop (collaborators : Collaborators β σ scheme) (interrupt : Bool) : IO Unit :=
   (Loop.lowerFor interrupt).runM (watch collaborators)
 
 /-- Runs `program`, a program of the editor loop, against the library, with
@@ -1326,8 +1350,8 @@ programs put a refusal in the echo area and are not refused
 the same is never dropped in silence: it is printed,
 `loop: refused: <error>`, and hands back nothing. What it made before the
 refusal stays in the table of texts. -/
-def attempt {α : Type} (collaborators : Collaborators σ scheme) (running : Running σ scheme)
-    (program : EditorM α) : IO (Option α × Running σ scheme) := do
+def attempt {α : Type} (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (program : EditorM α) : IO (Option α × Running β σ scheme) := do
   let (result, texts) ←
     program.runReal running.texts running.display.handle (watch := watch collaborators)
         (clipboard := running.clipboard) (syntaxTree := running.syntaxTree)
@@ -1361,7 +1385,7 @@ config set, or the editor's 500 milliseconds (`Loop.keyHintDelay`); and
 `now`, the job clock's milliseconds (`Job.Timers.now`), which times what is
 viewed of a tracked excerpt (`Loop.Keys.now`). It is made for each window
 event, so a reload changes it between two events. -/
-def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) (now : Nat) :
+def keys (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) (now : Nat) :
     Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
     slowAfter := collaborators.slowAfter, registered := running.config.registry.registered
@@ -1393,8 +1417,8 @@ The publish is the core's, the one a step's is made of
 keys that can follow now, and what it says of their delay is carried out
 (`delayHints`), so an install that sets `.never`, or rebinds the keys under
 a pending prefix, closes or opens the hints with no key typed. -/
-def publish (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
-    IO (Running σ scheme) := do
+def publish (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    IO (Running β σ scheme) := do
   let some frame := running.frame | return running
   let keys := running.keys collaborators (← collaborators.services.timers.now)
   let (published, running) ← running.attempt collaborators (frame.publishHinted keys)
@@ -1407,8 +1431,8 @@ def publish (collaborators : Collaborators σ scheme) (running : Running σ sche
 frame is made when the loop is first needed, for a window event, a command
 run by name or a job's command. Making it is printed when refused
 (`attempt`), and there is then no frame. -/
-def framed (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
-    IO (Option (Loop scheme) × Running σ scheme) := do
+def framed (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    IO (Option (Loop scheme) × Running β σ scheme) := do
   if let some frame := running.frame then
     return (some frame, running)
   let (made, running) ← running.attempt collaborators collaborators.start
@@ -1477,8 +1501,8 @@ was.
 It has no termination proof: an answer's command can ask and accept again,
 for ever, which is runaway code, and the interrupt key stops it at its next
 request of the library. -/
-partial def took (collaborators : Collaborators σ scheme) (running : Running σ scheme)
-    (stepped : Loop.Stepped scheme) : IO (Running σ scheme) := do
+partial def took (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (stepped : Loop.Stepped scheme) : IO (Running β σ scheme) := do
   for entry in stepped.log do
     collaborators.log entry
   -- The frame the step replaced is let go of on the pool (`release`).
@@ -1529,8 +1553,8 @@ Making the frame and the step are each printed when refused (`attempt`):
 after a refused step the frame stays as it was. With no frame made the event
 is dropped (`drop`), which lowers the flag for an interrupt key, since no
 loop took it off the queue. -/
-def input (collaborators : Collaborators σ scheme) (running : Running σ scheme)
-    (received : Received) : IO (Running σ scheme) := do
+def input (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (received : Received) : IO (Running β σ scheme) := do
   if let .key which true _ := received.event then
     collaborators.emit s!"key arrived: {which.describe}"
   -- The window's appearance is asked once it has opened (`Config.step`).
@@ -1560,8 +1584,8 @@ none. What the step handed back is taken in (`took`). With no frame made,
 which the refusal printed before it explains, it says `no frame` and runs
 nothing. The driver's `run <name>` is an invocation with no arguments, and
 `open <path>` one of the open command with the path. -/
-def run (collaborators : Collaborators σ scheme) (running : Running σ scheme)
-    (invocation : Invocation) : IO (Running σ scheme) := do
+def run (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (invocation : Invocation) : IO (Running β σ scheme) := do
   let name := invocation.command
   let (made, running) ← running.framed collaborators
   let some frame := made |
@@ -1587,8 +1611,8 @@ watch (`watch`): the command's guard asks the library's interrupt flag. It
 is handed the host's clipboard and the host's syntax tree too, so a job's
 command reaches the ones a key's does: a job's command that sets a major
 mode with a syntax attaches and highlights through the host's binding. -/
-def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : Nat) :
-    IO (Running σ scheme) := do
+def ended (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) (id : Nat) :
+    IO (Running β σ scheme) := do
   let (result, jobs) ← running.jobs.finish id
   let some (entry, outcome) := result | return { running with jobs }
   -- A keyed job that ended has no key any more.
@@ -1635,8 +1659,8 @@ The key hint delay's wait posts under the same source: when `id` is the
 delay armed (`hintWait`), it is no longer, and the loop makes its
 generation's hints due and publishes them (`Loop.keyHintsDue`), printing
 nothing. -/
-def paused (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : UInt64) :
-    IO (Running σ scheme) := do
+def paused (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) (id : UInt64) :
+    IO (Running β σ scheme) := do
   if let some (_, generation) := running.hintWait.filter (·.1 == id) then
     let running := { running with hintWait := none }
     let some frame := running.frame | return running
@@ -1663,8 +1687,8 @@ loop run it (`runPosted`, `Loop.deliver`), labelled `job <id> <name>`, as
 a finished job's command is run, and prints how it went. A post of a job
 that was cancelled or removed is dropped: nothing runs and nothing is
 printed. The frame is made if there is none. -/
-def posted (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : Nat) :
-    IO (Running σ scheme) := do
+def posted (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) (id : Nat) :
+    IO (Running β σ scheme) := do
   let some invocation ← running.mailbox.take id | return running
   unless running.jobs.has id do
     return running
@@ -1746,8 +1770,8 @@ def sceneLines (scene : Scene) (published : Nat) (theme : String) : TextM (Array
   return lines ++ scene.keyHints.map hintLine
 
 /-- Prints the last scene published, or that there is none. -/
-def scene (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
-    IO (Running σ scheme) := do
+def scene (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    IO (Running β σ scheme) := do
   let some scene ← running.display.last? |
     collaborators.emit "scene: none"
     return running
@@ -1795,8 +1819,8 @@ def agreement (scene : Scene) (anchor : Nat) (asked : Array Asked)
 frame the display laid out of the last scene (`agreement`): the query that
 names the view's snapshot, at the anchor it was published with. A display
 that lays out no frame, the recorder, says `agree: no frame`. -/
-def agree (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
-    IO (Running σ scheme) := do
+def agree (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    IO (Running β σ scheme) := do
   let some frameRows := running.display.frameRows |
     collaborators.emit "agree: no frame"
     return running
@@ -1820,7 +1844,7 @@ def agree (collaborators : Collaborators σ scheme) (running : Running σ scheme
   return running
 
 /-- Prints the commands, the texts and the stores. -/
-def «show» (collaborators : Collaborators σ scheme) (running : Running σ scheme) : IO Unit := do
+def «show» (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) : IO Unit := do
   collaborators.emit (" ".intercalate ("commands:" :: running.config.registry.names.toList))
   for index in [0:running.texts.documents.size] do
     -- A text a command released has no document, and no line.
@@ -1838,8 +1862,8 @@ def takenByLoop (event : Ffi.Event) : Bool :=
 
 /-- Handles one event of the editor queue that the loop does not take
 (`takenByLoop`). -/
-def other (collaborators : Collaborators σ scheme) (running : Running σ scheme)
-    (event : Ffi.Event) : IO (Running σ scheme) := do
+def other (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (event : Ffi.Event) : IO (Running β σ scheme) := do
   match event.source.kind with
   | .script =>
     collaborators.emit s!"event {event.source.id} {event.code}"
@@ -1896,8 +1920,8 @@ unless the driver has ended the loop. An event the loop takes that cannot
 be read is dropped (`drop`), which lowers the interrupt flag for a key that
 carries the library's mark (`Event.interruptMarked`), since the event has
 been taken off the queue. -/
-def handle (collaborators : Collaborators σ scheme) (running : Running σ scheme)
-    (event : Ffi.Event) : IO (Running σ scheme) := do
+def handle (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (event : Ffi.Event) : IO (Running β σ scheme) := do
   if takenByLoop event then
     match Event.ofFfi event with
     | .ok received =>
@@ -1940,8 +1964,8 @@ over the same table, no jobs, an empty mailbox and no frame.
 A package that is refused is skipped, and what it was refused with is
 handed to the collaborators' log, prefixed with `package: `; the others
 register and the loop starts. -/
-def Running.new {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
-    IO (Running σ scheme) := do
+def Running.new {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme) :
+    IO (Running β σ scheme) := do
   let (config, refused) := Config.State.ofPackages collaborators.packages
   for message in refused do
     collaborators.log s!"package: {message}"
@@ -1964,7 +1988,7 @@ Before the first event it registers the packages it is handed
 (`Running.new`), and tells the library its interrupt key; when it ends it leaves the library with
 none, so that no key raises the flag while no loop takes keys off the
 queue. -/
-def loop {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme)
+def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
     (progress : IO.Ref Progress) : IO Unit := do
   discard <| Event.setInterruptKey (some collaborators.interruptKey)
   let mut running ← Running.new collaborators
@@ -2001,7 +2025,8 @@ structure Host where
 The loop it makes, when it is first needed, has the collaborators' working
 directory and home directory in its state (`Collaborators.workingDirectory`,
 `Collaborators.home`). -/
-def start {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) : IO Host := do
+def start {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme) :
+    IO Host := do
   let made := collaborators.start
   let collaborators :=
     { collaborators with
@@ -2352,9 +2377,9 @@ def advanceNeedsClock : String :=
 milliseconds. -/
 def Failure.describe (patience : Nat) : Failure → String
   | .reloading (some line) =>
-    s!"the settle on line {line} of the script did not finish within {patience} ms: a reload was still running. A chunk or `setup` of the config is slow, or does not end"
+    s!"the settle on line {line} of the script did not finish within {patience} ms: a reload was still running. A file or `setup` of the config is slow, or does not end"
   | .reloading none =>
-    s!"the script ended, and the reload it had asked for did not finish within {patience} ms. A chunk or `setup` of the config is slow, or does not end"
+    s!"the script ended, and the reload it had asked for did not finish within {patience} ms. A file or `setup` of the config is slow, or does not end"
   | .working (some line) =>
     s!"the join on line {line} of the script did not finish within {patience} ms: a job was still running. A job of the config is slow, or does not end"
   | .working none =>
@@ -2445,7 +2470,7 @@ A `settle` or a `join` that runs out ends the loop at once, whether a reload
 or a job is running or not. A rejected reload is something to print, not a
 failure, and so is a job that fails. A job the script leaves running is
 cancelled when the loop ends. -/
-def run {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme)
+def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
     (script : Array Line) (patience : Nat) : IO (Option Failure) := do
   let host ← start collaborators
   -- The serial of the last journal entry a `journal` line counted.
@@ -2551,14 +2576,17 @@ It is apart from `shipped`, which makes what it is over, so that the
 collaborators can be made with no pump started. -/
 def shippedOver (packages : Array Package) (base : Array Lean.Name) (sysroot : String)
     (oleans : List String) (configDir : String) (emit : String → IO Unit) (services : Job.Services)
-    (published : Snapshots) (held : Job.HeldSnapshots) :
-    Collaborators Config.Elaborate.State Vim.Default.scheme :=
-  { elaborator :=
+    (published : Snapshots) (held : Job.HeldSnapshots) (files : Config.Elaborate.ModuleFiles) :
+    Collaborators Config.Elaborate.Base Config.Elaborate.Handle Vim.Default.scheme :=
+  {
+    elaborator :=
       Config.Elaborate.elaborator
-        { sysroot, oleanDirs := oleans.map System.FilePath.mk, imports := base },
-    source := Config.Directory.source configDir, emit, services, published, held, requests := 1,
-    wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6, packages
-    log := IO.eprintln }
+        { sysroot, oleanDirs := oleans.map System.FilePath.mk, imports := base } files,
+    source := Config.Directory.source configDir,
+    package :=
+      { read := Config.Directory.read configDir, requires := Config.Lakefile.Toml.requires },
+    emit, services, published, held, requests := 1, wakeups := 2, jobs := 3, environment := 4,
+    posts := 5, pauseEvents := 6, packages, log := IO.eprintln, dispose := files.remove }
 
 /-- The environments every job of a host shares, over `state`
 (`Job.sharedEnvironments`), which report what they have to say by posting it
@@ -2582,7 +2610,8 @@ made, and starts the completion pump on a dedicated task, which quitting the
 queues ends. -/
 def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : String)
     (oleans : List String) (configDir : String) (emit : String → IO Unit) (host : Process.Host)
-    (fakeClock : Bool := false) : IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
+    (fakeClock : Bool := false) :
+    IO (Collaborators Config.Elaborate.Base Config.Elaborate.Handle Vim.Default.scheme) := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
@@ -2602,6 +2631,9 @@ def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : Strin
       pure none
   let timers := (clock.map (·.timers)).getD (Job.realTimers completions)
   let environments ← IO.mkRef ({ host } : Process.Environments)
+  -- The module data of the config files under `Config/` goes in a
+  -- temporary directory, made when the first is written.
+  let files ← Config.Elaborate.ModuleFiles.temporary
   let collaborators :=
     shippedOver packages base sysroot oleans configDir emit
       { completions, timers
@@ -2610,7 +2642,7 @@ def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : Strin
         fileWatches := Job.realFileWatches completions watches
         diffs := Job.realDiffs completions published.reader held refusedDiffs
         environments := reportedEnvironments environments 4, fuzzy := Fuzzy.real
-        snapshots := Job.realSnapshots published.reader } published held
+        snapshots := Job.realSnapshots published.reader } published held files
   return { collaborators with clock }
 
 /-- The headless mode of the executable, handed the packages its host
@@ -2699,6 +2731,12 @@ def main (packages : Array Package) (base : Array Lean.Name) (arguments : List S
     IO.eprintln s!"editor: {failure.describe settlePatience}"
   if drawn then
     discard Ffi.renderStop
+  -- The loop has ended, so no reload is elaborating: the directory of the
+  -- config files' module data goes, if one was made.
+  try
+    shipped.dispose
+  catch _ =>
+    pure ()
   -- Every child the library started is killed and reaped before the queues
   -- are quit: `run` has returned, so the loop has cancelled every job.
   Ffi.processesShutdown

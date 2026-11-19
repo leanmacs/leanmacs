@@ -6,7 +6,7 @@ import Lake.Toml.Load
 
 The adapter that reads the names a `lakefile.toml` requires from its text
 (`requires`), for the read-only package port of the config session
-(`Config.Package.requires`, `Editor/Config/Session.lean`). The session
+(`Config.PackageFiles.requires`, `Editor/Config/Session.lean`). The session
 core asks it when a config file imports a module that is not linked, to
 say whether the module belongs to a package the config's lakefile names
 (`Editor/Config/Lakefile.lean`).

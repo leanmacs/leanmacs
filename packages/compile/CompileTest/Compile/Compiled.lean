@@ -34,7 +34,7 @@ def compilePackageChecks : List Check :=
     { name :=
         "the package compile is accepted alone and registers, for the owner compile: compile, compile-command, recompile, compile-confirm, kill-compilation, compilation-output, next-error, previous-error and compile-goto-error; the job compile-run and no job compile-list; the mode compilation; the ex names compile and compile-command, which take text, and recompile, kill-compilation, next-error and previous-error, each bound to the command of its name; no key; and cargo-mode, lake-mode and mise-mode as its contributions, in that order"
       run :=
-        let (state, refused) : Config.State Unit × Array String :=
+        let (state, refused) : Config.State Unit Unit × Array String :=
           Config.State.ofPackages #[Compile.package]
         let registry := state.registry
         let owned (name : String) : Bool :=

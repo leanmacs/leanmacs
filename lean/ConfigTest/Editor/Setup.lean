@@ -17,11 +17,11 @@ namespace ConfigTest
 
 open Editor
 
-/-- A chunk whose `setup` registers `leader-find`, which says `leader find`
+/-- A config whose `setup` registers `leader-find`, which says `leader find`
 in the echo area, and `other`, which says `other`, binds `<leader> f f` to
 `leader-find`, and, given `leader`, sets the leader to the key string
 `leader`. -/
-def leaderChunk (leader : Option String := none) : String :=
+def leaderText (leader : Option String := none) : String :=
   "def setup : SetupM Unit := do
   command \"leader-find\" (message \"leader find\")
   command \"other\" (message \"other\")
@@ -41,16 +41,16 @@ def leaderChecks (context : Context) : List Check :=
   [{  name :=
         "under the Vim scheme with no leader set by config, a config binding of <leader> f f runs its command on SPC f f in normal state"
       run :=
-        withVimHost context [("10-leader.lean", leaderChunk)] fun session => do
+        withVimHost context [("init.lean", leaderText)] fun session => do
           session.ask [.reload]
           session.typed "SPC f f"
           return (← session.echo) == "leader find".quote },
     { name :=
         "a config that sets the leader to \\ reaches its <leader> f f binding on \\ f f after a reload, and SPC f f no longer runs it"
       run :=
-        withVimHost context [("10-leader.lean", leaderChunk)] fun session => do
+        withVimHost context [("init.lean", leaderText)] fun session => do
           session.ask [.reload]
-          session.write "10-leader.lean" (leaderChunk (some "\\"))
+          session.write "init.lean" (leaderText (some "\\"))
           session.ask [.reload]
           session.typed "\\ f f"
           let moved ← session.echo
@@ -61,7 +61,7 @@ def leaderChecks (context : Context) : List Check :=
     { name :=
         "SPC typed in insert state inserts a space in a config that binds keys under <leader>, and SPC f f after <Escape> still runs the binding"
       run :=
-        withVimHost context [("10-leader.lean", leaderChunk)] fun session => do
+        withVimHost context [("init.lean", leaderText)] fun session => do
           session.ask [.reload]
           session.typed "i a SPC b <Escape>"
           let line := lastViewLine (← session.sceneLines)

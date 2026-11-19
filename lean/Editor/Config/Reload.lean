@@ -18,7 +18,7 @@ the model tests run it with outcomes built by hand
   handled. The follow-up therefore reads the source afresh and starts from
   what was just installed, and two reloads cannot install out of order.
 - **Installing is the only place config changes anything.** An accepted
-  outcome replaces the chunks, replaces the config's entries in the registry,
+  outcome replaces the files, replaces the config's entries in the registry,
   commands, jobs, key bindings, modes, ex bindings, faces, themes,
   segments, languages, compile contributions, completion sources,
   completion styles and completion displays
@@ -261,11 +261,12 @@ def Report.echo (report : Report) : Option String :=
       some s!"reload: {first.source}:{first.line}:{first.column}: error: {line}{more}"
 
 /-- The config half of the editor's state. -/
-structure State (σ : Type) where
-  /-- The base, once a reload has imported it. -/
-  base : Option σ := none
-  /-- The chunks of the config that is installed. -/
-  chunks : Array (Chunk σ) := #[]
+structure State (β σ : Type) where
+  /-- The base, once a reload has made it: the linked modules config is
+  elaborated on, as the last reload left it. -/
+  base : Option β := none
+  /-- The files of the config that is installed, each with its handle. -/
+  files : Array (LoadedFile σ) := #[]
   /-- The commands. -/
   registry : Registry := {}
   /-- The cells of the stores. -/
@@ -315,11 +316,11 @@ structure State (σ : Type) where
   appearance : Option Appearance := none
 
 /-- What happened, as far as reloads go. -/
-inductive Event (σ : Type) where
+inductive Event (β σ : Type) where
   /-- A reload was asked for. -/
   | requested
   /-- The reload job finished with `outcome`. -/
-  | finished (outcome : Outcome σ)
+  | finished (outcome : Outcome β σ)
   /-- The theme called `name` was chosen, by a command, to be the theme in
   force. -/
   | choose (name : String)
@@ -327,10 +328,10 @@ inductive Event (σ : Type) where
   | windowOpened
 
 /-- What the runtime is to do. -/
-inductive Effect (σ : Type) where
+inductive Effect (β σ : Type) where
   /-- Start a reload job: `Config.build` with this base and these loaded
-  chunks, whose outcome comes back as a `finished` event. -/
-  | start (base : Option σ) (chunks : Array (Chunk σ))
+  files, whose outcome comes back as a `finished` event. -/
+  | start (base : Option β) (files : Array (LoadedFile σ))
   /-- Cancel every job that runs for `owner`, and drop the handlers of its
   jobs that have ended and not yet been dealt with: the config that started
   them has just been replaced. -/
@@ -345,16 +346,16 @@ inductive Effect (σ : Type) where
 
 namespace State
 
-variable {σ : Type}
+variable {β σ : Type}
 
 /-- The state with a reload job started, and the effect that starts it. -/
-def start (state : State σ) : State σ × Array (Effect σ) :=
+def start (state : State β σ) : State β σ × Array (Effect β σ) :=
   ({ state with
       running := true, pending := false },
-    #[.start state.base state.chunks])
+    #[.start state.base state.files])
 
 /-- How many commands the config registers. -/
-def commands (state : State σ) : Nat :=
+def commands (state : State β σ) : Nat :=
   (state.registry.entries.filter (·.owner == .config)).size
 
 /-- What the faces look like now: the theme in force (`themeName`), then
@@ -365,7 +366,7 @@ is in force, and a face it does not set is the theme's. The theme in force
 stands in for the built-in theme wholesale: a face it does not define is not
 the built-in theme's. A registry that holds no theme of the name in force
 draws in the built-in theme. -/
-def theme (state : State σ) : Theme :=
+def theme (state : State β σ) : Theme :=
   (((state.registry.theme? state.themeName).map (·.theme)).getD Theme.builtin) ++
     state.registry.definitions
 
@@ -383,7 +384,7 @@ def chooseAt (registry : Registry) (current : String) (named : Option String) :
 
 /-- The state once `outcome` is handled, and the report of it: an outcome
 that built a config installs it, and any other leaves the config as it was. -/
-def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
+def install (state : State β σ) (outcome : Outcome β σ) : State β σ × Report :=
   let state :=
     { state with
       base := outcome.base <|> state.base, running := false, finished := state.finished + 1 }
@@ -391,7 +392,7 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
   | none =>
     (state,
       { number := state.finished, installed := false, diagnostics := outcome.diagnostics,
-        files := state.chunks.size, commands := state.commands })
+        files := state.files.size, commands := state.commands })
   | some built =>
     -- A rule whose target the chosen layout lacks is left out, and said.
     let chosen := built.registrations.layout.getD Layout.default
@@ -403,7 +404,7 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
     let (cells, lost) := state.cells.install .config built.registrations.stores
     let state :=
       { state with
-        chunks := built.chunks,
+        files := built.files,
         registry :=
           { state.registry.replaceOwned .config
               built.registrations with
@@ -434,14 +435,14 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
         layout := built.registrations.layout, tabBar := built.registrations.tabBar
         titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
-        files := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments
+        files := state.files.size, commands := state.commands, unknownTheme, unknownSegments
         unknownStyles, unknownDisplays, unknownAtPoints, unusableRules })
 
 /-- The appearance the window is to be asked for, and the state that
 remembers it: when the window is open and the paper of the theme now in
 force (`theme`) classifies as an appearance other than the one last asked,
 that one; nothing otherwise. -/
-def ask (state : State σ) : State σ × Array (Effect σ) :=
+def ask (state : State β σ) : State β σ × Array (Effect β σ) :=
   match state.theme.paper.map Appearance.ofPaper with
   | some appearance =>
     if state.windowOpen && state.appearance != some appearance then
@@ -452,7 +453,7 @@ def ask (state : State σ) : State σ × Array (Effect σ) :=
 end State
 
 /-- The reducer before the window's appearance is asked. -/
-private def stepTheme {σ : Type} (state : State σ) : Event σ → State σ × Array (Effect σ)
+private def stepTheme {β σ : Type} (state : State β σ) : Event β σ → State β σ × Array (Effect β σ)
   | .requested => if state.running then ({ state with pending := true }, #[]) else state.start
   | .finished outcome =>
     let (state, report) := state.install outcome
@@ -474,14 +475,14 @@ private def stepTheme {σ : Type} (state : State σ) : Event σ → State σ × 
 /-- The reducer: the state after `event`, and the effects to perform. The
 window's appearance is asked last (`State.ask`), after whatever the event
 did to the theme in force. -/
-def step {σ : Type} (state : State σ) (event : Event σ) : State σ × Array (Effect σ) :=
+def step {β σ : Type} (state : State β σ) (event : Event β σ) : State β σ × Array (Effect β σ) :=
   let (state, effects) := stepTheme state event
   let (state, asked) := state.ask
   (state, effects ++ asked)
 
 namespace State
 
-variable {σ : Type}
+variable {β σ : Type}
 
 /-- The program of a plain command: `run`, which asks for nothing to be
 written. -/
@@ -496,7 +497,7 @@ applied to the tree of the store's cell, whose value is what to write back;
 The install rule makes a cell for every store a config declares, and a
 `setup` that registers a command over a store it does not declare is
 refused, so such a command always finds its cell. -/
-private def overStore? (state : State σ) (owner : Owner) (store : String)
+private def overStore? (state : State β σ) (owner : Owner) (store : String)
     (step : Value → EditorM Value) : Option (EditorM (Option Write)) := do
   let cell ← state.cells.find? owner store
   return do
@@ -511,7 +512,7 @@ the same name.
 
 A plain command and a command over a store are not told of the call; a
 command that is given its call is handed it. -/
-def command? (state : State σ) (name : String) : Option (Call → EditorM (Option Write)) := do
+def command? (state : State β σ) (name : String) : Option (Call → EditorM (Option Write)) := do
   let entry ← state.registry.find? name
   match entry.registration.action with
   | .plain run =>
@@ -530,7 +531,7 @@ command.
 No key ran it, so a command that is given its call is handed `target` and
 nothing else: no arguments and no keys. With no target there is no call to
 hand it, and it is not run: `none`. -/
-def program? (state : State σ) (name : String) (target : Option Target := none) :
+def program? (state : State β σ) (name : String) (target : Option Target := none) :
     Option (EditorM (Option Write)) := do
   let entry ← state.registry.find? name
   match entry.registration.action with
@@ -542,13 +543,13 @@ def program? (state : State σ) (name : String) (target : Option Target := none)
     state.overStore? entry.owner store step
 
 /-- The state once what a command wrote is written back. -/
-def written (state : State σ) : Option Write → State σ
+def written (state : State β σ) : Option Write → State β σ
   | none => state
   | some write => { state with cells := state.cells.set write.owner write.store write.value }
 
 /-- The job registered under `name`, to be started with `arguments`, and the
 owner the runtime is to start it for; `none` if there is no such job. -/
-def work? (state : State σ) (name : String) (arguments : List Argument := []) :
+def work? (state : State β σ) (name : String) (arguments : List Argument := []) :
     Option (Owner × Work) :=
   (state.registry.findJob? name).map fun entry => (entry.owner, entry.registration.work arguments)
 

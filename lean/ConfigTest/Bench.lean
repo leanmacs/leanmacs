@@ -81,13 +81,33 @@ namespace Bench
 def patience : Nat :=
   120000
 
-/-- A host to measure: its source is `chunks`, and it notes when each
+/-- The real elaborator a measurement runs on, over the toolchain in
+`sysroot` and the `.olean` directories `oleanDir` names, on the base
+`imports`, and the files it writes the module data of config files to: in
+a temporary directory of the system's, made when the first is written. A
+measurement that makes one removes it when it ends (`ModuleFiles.remove`). -/
+def measured (sysroot oleanDir : String) (imports : Array Lean.Name := #[`Editor]) :
+    IO
+      (Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle ×
+        Config.Elaborate.ModuleFiles) :=
+  do
+  let files ← Config.Elaborate.ModuleFiles.temporary
+  return (Config.Elaborate.elaborator { sysroot, oleanDirs := oleanDirs oleanDir, imports } files,
+      files)
+
+/-- A config to measure: its files, each a module name and a text, the root
+being the module `init`. A text is headed as a file a check writes is
+(`headed`). -/
+abbrev Files :=
+  List (String × String)
+
+/-- A host to measure: its source is `files`, and it notes when each
 reload's report is printed. -/
 structure Rig where
   /-- The host. -/
   host : Headless.Host
   /-- The config the host's source holds. -/
-  chunks : IO.Ref (Array Config.SourceChunk)
+  files : IO.Ref Files
   /-- The last reload's report line, and the monotonic time, in nanoseconds,
   at which it was printed. -/
   reported : IO.Ref (Option (String × Nat))
@@ -98,8 +118,9 @@ structure Rig where
 namespace Rig
 
 /-- Starts a host over `elaborator` and a source in memory. -/
-def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
-  let chunks ← IO.mkRef #[]
+def start (elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) : IO Rig :=
+  do
+  let files ← IO.mkRef ([] : Files)
   let reported ← IO.mkRef none
   let others ← IO.mkRef #[]
   let emit (line : String) : IO Unit := do
@@ -110,19 +131,21 @@ def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
   -- The configs measured here start no job: the clock is never asked.
   let completions ← Job.Completions.new
   let clock ← Job.FakeClock.new completions
+  let source :=
+    sourceOver do
+      return (← files.get).map fun (module, text) => (module, headed text)
   let host ←
     Headless.start (scheme := TestScheme.scheme)
-        { elaborator, source := { chunks := chunks.get }, emit,
-          services := { completions, timers := clock.timers }, published := ← Snapshots.new,
-          held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3, environment := 4,
-          posts := 5, pauseEvents := 6 }
-  return { host, chunks, reported, others }
+        { elaborator, source, emit, services := { completions, timers := clock.timers },
+          published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests := 1,
+          wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6 }
+  return { host, files, reported, others }
 
-/-- Makes `config` the source's chunks, asks for a reload, and returns the
+/-- Makes `config` the source's files, asks for a reload, and returns the
 nanoseconds from the request to the report. Throws unless the reload was
 installed. -/
-def reload (rig : Rig) (config : Array Config.SourceChunk) : IO Nat := do
-  rig.chunks.set config
+def reload (rig : Rig) (config : Files) : IO Nat := do
+  rig.files.set config
   rig.reported.set none
   rig.others.set #[]
   let asked ← IO.monoNanosNow
@@ -136,16 +159,14 @@ def reload (rig : Rig) (config : Array Config.SourceChunk) : IO Nat := do
 
 end Rig
 
-/-- A config of one chunk of one line, which differs with `round`. -/
-def oneLine (round : Nat) : Array Config.SourceChunk :=
-  #[{ name := "one.lean",
-      text := "def setup : SetupM Unit := command \"round" ++ toString round ++ "\" (pure ())\n" }]
+/-- A config of one file of one line, which differs with `round`. -/
+def oneLine (round : Nat) : Files :=
+  [("init", "def setup : SetupM Unit := command \"round" ++ toString round ++ "\" (pure ())\n")]
 
-/-- A config of one chunk of twenty lines, which differs with `round`. -/
-def twentyLines (round : Nat) : Array Config.SourceChunk :=
-  #[{ name := "twenty.lean",
-      text :=
-        "def greet : EditorM Unit := do
+/-- A config of one file of twenty lines, which differs with `round`. -/
+def twentyLines (round : Nat) : Files :=
+  [("init",
+      "def greet : EditorM Unit := do
   let text ← createText \"hello\"
   append text \", world\"
 
@@ -165,19 +186,42 @@ def setup : SetupM Unit := do
   command \"shout\" shout
   command \"twice\" (twice greet)
   command \"note\" (note " ++
-          toString round ++
-          ")\n" }]
+        toString round ++
+        ")\n")]
 
-/-- A config of one chunk of fifty definitions, a theorem proved by `simp`
+/-- Fifty definitions and a theorem proved by `simp`. -/
+def fiftyText : String :=
+  String.join
+      ((List.range 50).map fun index =>
+        s!"def f{index} (n : Nat) : Nat := n * {index} + {index}\n") ++
+    "theorem f1_spec (n : Nat) : f1 n = n + 1 := by simp [f1]\n"
+
+/-- A config of one file of fifty definitions, a theorem proved by `simp`
 and a `setup`, which differs with `round`. -/
-def fiftyDefinitions (round : Nat) : Array Config.SourceChunk :=
-  let definitions :=
-    (List.range 50).map fun index => s!"def f{index} (n : Nat) : Nat := n * {index} + {index}\n"
-  #[{ name := "fifty.lean",
-      text :=
-        String.join definitions ++ "theorem f1_spec (n : Nat) : f1 n = n + 1 := by simp [f1]\n" ++
-          s!"def round : Nat := {round}\n" ++
-          "def setup : SetupM Unit := command \"round\" (pure ())\n" }]
+def fiftyDefinitions (round : Nat) : Files :=
+  [("init",
+      fiftyText ++ s!"def round : Nat := {round}\n" ++
+        "def setup : SetupM Unit := command \"round\" (pure ())\n")]
+
+/-- The soak's config of the root alone: `fiftyDefinitions` in a root that
+imports `Lean` and uses it, so the base it is elaborated on holds `Lean`.
+It differs with `round`. -/
+def fiftyWithLean (round : Nat) : Files :=
+  [("init",
+      importing ["Lean"]
+        (fiftyText ++ s!"def round : Lean.Json := Lean.Json.num {round}\n" ++
+          "def setup : SetupM Unit := command round.compress (pure ())\n"))]
+
+/-- The soak's config of two files: the fifty definitions in the config file
+`Config/Defs.lean`, which differs with `round`, and a root that imports
+`Lean` and that file and uses both. So each reload elaborates the config
+file, writes its module data, and elaborates the root on an environment
+made from the base and that module file. -/
+def fiftyInAModule (round : Nat) : Files :=
+  [("Config.Defs", fiftyText ++ s!"def round : Nat := {round}\n"),
+    ("init",
+      importing ["Lean", "Config.Defs"]
+        "def named : Lean.Json := Lean.Json.num (f1 round)\ndef setup : SetupM Unit := command named.compress (pure ())\n")]
 
 /-- Nanoseconds as milliseconds with one decimal. -/
 def milliseconds (nanoseconds : Nat) : String :=
@@ -190,58 +234,85 @@ def medianAndMaximum (times : Array Nat) : String :=
   let median := (sorted.getD ((sorted.size - 1) / 2) 0 + sorted.getD (sorted.size / 2) 0) / 2
   s!"median {milliseconds median} ms, maximum {milliseconds (sorted.back?.getD 0)} ms"
 
-/-- `bench-start`: imports the base with `modules`, then loads the twenty-line
+/-- `elaborator` with `base` as the base a host with none starts from: the
+host's first reload grows it, and does not make another. -/
+def over (base : Config.Elaborate.Base)
+    (elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) :
+    Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle :=
+  { elaborator with base := fun earlier modules => elaborator.base (earlier <|> some base) modules }
+
+/-- `bench-start`: makes the base of `modules`, then loads the twenty-line
 config through a host, and prints how long each took. -/
 def start (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
-  let real :=
-    Config.Elaborate.elaborator
-      { sysroot, oleanDirs := oleanDirs oleanDir, imports := (modules.map String.toName).toArray }
+  let (real, _) ← measured sysroot oleanDir (modules.map String.toName).toArray
   let before ← IO.monoNanosNow
-  let base ← real.base
+  let base ← real.base none #[]
   let imported := (← IO.monoNanosNow) - before
-  let rig ← Rig.start { real with base := pure base }
+  let rig ← Rig.start (over base real)
   let first ← rig.reload (twentyLines 0)
   IO.println
       s!"bench-start {modules}: import {milliseconds imported} ms, first load {milliseconds first} ms"
   return 0
 
-/-- `bench-reload`: twenty reloads of each of the three configs, each reload
-with the text changed, and prints the median and the maximum of each. -/
+/-- `bench-reload`: twenty reloads of each of the three configs of one
+file, each reload with the text changed, and of the config of two files
+with the imported file changed, and prints the median and the maximum of
+each. -/
 def reload (sysroot oleanDir : String) : IO UInt8 := do
-  let rig ← Rig.start (Config.Elaborate.elaborator { sysroot, oleanDirs := oleanDirs oleanDir })
-  -- The first load imports the base; it is not one of the twenty.
+  let (real, files) ← measured sysroot oleanDir
+  let rig ← Rig.start real
+  -- The first load makes the base; it is not one of the twenty.
   discard <| rig.reload (oneLine 0)
   let configs :=
-    [("one-line chunk", oneLine), ("20-line config", twentyLines),
-      ("50 definitions and a simp proof", fiftyDefinitions)]
+    [("one-line root", oneLine), ("20-line config", twentyLines),
+      ("50 definitions and a simp proof", fiftyDefinitions),
+      ("50 definitions in an imported file, on a base with Lean", fiftyInAModule)]
   for (name, config) in configs do
+    -- The first load of a config may grow the base; it is not one of the
+    -- twenty either.
+    discard <| rig.reload (config 0)
     let mut times := #[]
     for round in [1:21] do
       times := times.push (← rig.reload (config round))
     IO.println s!"bench-reload: {name}: {medianAndMaximum times}"
+  files.remove
   return 0
 
-/-- `bench-modules`: imports the base with `modules` and prints the name of
+/-- `bench-modules`: makes the base of `modules` and prints the name of
 every module the import read, one a line and unescaped, so that
 `tools/stage-bundle.sh --closure` can map each to its files. -/
 def modules (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
-  let environment ←
-    Config.Elaborate.importBase
-        { sysroot, oleanDirs := oleanDirs oleanDir, imports := (modules.map String.toName).toArray }
-  for name in environment.allImportedModuleNames do
+  let (real, _) ← measured sysroot oleanDir (modules.map String.toName).toArray
+  let base ← real.base none #[]
+  for name in base.environment.allImportedModuleNames do
     IO.println (name.toString (escape := false))
   return 0
 
-/-- `bench-soak`: `count` reloads of the fifty-definition config, each with
-the text changed, and prints the mean time of one. -/
-def soak (sysroot oleanDir : String) (count : Nat) : IO UInt8 := do
-  let rig ← Rig.start (Config.Elaborate.elaborator { sysroot, oleanDirs := oleanDirs oleanDir })
-  discard <| rig.reload (fiftyDefinitions 0)
+/-- `count` reloads of `config`, each with the text changed, after a first
+load that is not counted, and `name` with the mean time of one on stdout. -/
+def soaked (name : String) (config : Nat → Files) (sysroot oleanDir : String) (count : Nat) :
+    IO UInt8 := do
+  let (real, files) ← measured sysroot oleanDir
+  let rig ← Rig.start real
+  discard <| rig.reload (config 0)
   let mut total := 0
   for round in [1:count + 1] do
-    total := total + (← rig.reload (fiftyDefinitions round))
-  IO.println s!"bench-soak: {count} reloads, mean {milliseconds (total / count)} ms per reload"
+    total := total + (← rig.reload (config round))
+  IO.println s!"{name}: {count} reloads, mean {milliseconds (total / count)} ms per reload"
+  files.remove
   return 0
+
+/-- `bench-soak`: `count` reloads of a config that is its root alone, fifty
+definitions in a root that imports `Lean` and uses it (`fiftyWithLean`),
+each with the text changed, and prints the mean time of one. -/
+def soak (sysroot oleanDir : String) (count : Nat) : IO UInt8 :=
+  soaked "bench-soak" fiftyWithLean sysroot oleanDir count
+
+/-- `bench-soak-modules`: `count` reloads of a config of two files, a root
+that imports `Lean` and a config file that changes each round
+(`fiftyInAModule`), and prints the mean time of one. -/
+def soakModules (sysroot oleanDir : String) (count : Nat) : IO UInt8 :=
+  soaked "bench-soak-modules" fiftyInAModule sysroot oleanDir count
 
 /-! ### The job benchmark
 
@@ -268,10 +339,9 @@ finished after 45 seconds (`docs/design/concurrency.md`, "Reload"). -/
 that sleeps a millisecond in a loop, and a job that computes for ever, with a
 reading of the clock every 100,000 iterations. A cancelled job ends at its
 next request, so the reading is what lets the computing job be ended. -/
-def jobsConfig : Array Config.SourceChunk :=
-  #[{ name := "jobs.lean",
-      text :=
-        "partial def ticker (token : Unit) : JobM Unit := do
+def jobsConfig : Files :=
+  [("init",
+      "partial def ticker (token : Unit) : JobM Unit := do
   sleep 1
   ticker token
 
@@ -290,7 +360,7 @@ def setup : SetupM Unit := do
   command \"noop\" (pure ())
   job \"ticker\" ticker fun _ => pure ()
   job \"spin\" (fun _ => spin 1) fun _ => pure ()
-" }]
+")]
 
 /-- What the samples of one row came to, in nanoseconds. -/
 structure Row where
@@ -378,9 +448,9 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
       if line.startsWith "reload " || line.startsWith "diagnostic: " then
         reloads.modify (·.push line)
   -- The base is imported once, here, and every host is handed it.
-  let adapter := Config.Elaborate.elaborator { sysroot, oleanDirs := oleanDirs oleanDir }
-  let base ← adapter.base
-  let elaborator := { adapter with base := pure base }
+  let (adapter, _) ← measured sysroot oleanDir
+  let base ← adapter.base none #[]
+  let elaborator := over base adapter
   let ids ← IO.mkRef (1 : UInt64)
   -- One row: a host of its own that loads the config and starts `count` jobs
   -- called `job`; `going` waits until they are under way; then the samples.
@@ -393,7 +463,7 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     reloads.set #[]
     let host ←
       Headless.start (scheme := TestScheme.scheme)
-          { elaborator, source := { chunks := pure jobsConfig }, emit,
+          { elaborator, source := memorySource jobsConfig, emit,
             services := { completions, timers := counted }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
             jobs := requests + 2, environment := requests + 3, posts := requests + 4
@@ -571,7 +641,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
   let timers := Job.realTimers completions
-  let elaborator := Config.Elaborate.elaborator { sysroot, oleanDirs := oleanDirs oleanDir }
+  let (elaborator, _) ← measured sysroot oleanDir
   let ids ← IO.mkRef (1 : UInt64)
   let refused ← IO.mkRef 0
   -- The editor thread reads the clock when it prints that it ran `noop`, and
@@ -596,7 +666,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     let requests ← ids.modifyGet fun next => (next, next + 6)
     let host ←
       Headless.start (scheme := TestScheme.scheme)
-          { elaborator, source := { chunks := pure #[] }, emit,
+          { elaborator, source := memorySource [], emit,
             services := { completions, timers, fuzzy := Fuzzy.real }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
             jobs := requests + 2, environment := requests + 3, posts := requests + 4,
@@ -686,11 +756,11 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
                 { name := "make-buffers", action := .plain makeWordBuffers }] })
     let shipped :=
       Headless.shippedOver packages #[`Editor] sysroot (ModuleLookup.searchPath oleanDir) "" emit
-        services published (← Job.HeldSnapshots.new)
+        services published (← Job.HeldSnapshots.new) (← Config.Elaborate.ModuleFiles.temporary)
     let host ←
       Headless.start
           { shipped with
-            source := { chunks := pure #[] }, requests, wakeups := requests + 1
+            source := memorySource [], requests, wakeups := requests + 1
             jobs := requests + 2, environment := requests + 3, posts := requests + 4
             pauseEvents := requests + 5, clock := some clock, log := fun _ => pure () }
     try
@@ -744,7 +814,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     let files ← Job.FakeFiles.new completions model
     let host ←
       Headless.start (scheme := TestScheme.scheme)
-          { elaborator, source := { chunks := pure #[] }, emit,
+          { elaborator, source := memorySource [], emit,
             services := { completions, timers, fuzzy := Fuzzy.real, files := files.files }
             published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
             wakeups := requests + 1, jobs := requests + 2, environment := requests + 3,
@@ -892,8 +962,8 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
       refused.modify (· + 1)
   let host ←
     Headless.start (scheme := TestScheme.scheme)
-        { elaborator := Config.Elaborate.elaborator { sysroot, oleanDirs := oleanDirs oleanDir }
-          source := { chunks := pure #[] }, emit, services, published, held, requests := 1
+        { elaborator := (← measured sysroot oleanDir).1
+          source := memorySource [], emit, services, published, held, requests := 1
           wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
           packages :=
             #[Completion.package, ModeLine.package, Files.package, Minibuffer.package,

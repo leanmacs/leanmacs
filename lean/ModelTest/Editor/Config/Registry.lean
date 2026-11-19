@@ -237,7 +237,7 @@ def registryChecks : List Check :=
                   | _ => throw "no number")
                 fun n => makes (toString n) }
         let registry := ({} : Config.Registry).replaceJobs .config #[doubling]
-        let state : Config.State Unit := { registry }
+        let state : Config.State Unit Unit := { registry }
         let starting (arguments : List Argument) :=
           (state.work? "double" arguments).map fun (owner, work) => (owner.name, worked work)
         pure

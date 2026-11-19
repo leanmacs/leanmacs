@@ -23,19 +23,19 @@ namespace ConfigTest
 
 open Editor
 
-/-- A chunk whose `setup` registers `make-other`, bound to `C-c o`, which
+/-- A config whose `setup` registers `make-other`, bound to `C-c o`, which
 makes a buffer `other` holding `almond alpaca`. -/
-def otherBufferChunk : String :=
+def otherBufferText : String :=
   "def setup : SetupM Unit := do
   command \"make-other\" (discard <| createBuffer \"other\" \"almond alpaca\")
   bindKey \"C-c o\" \"make-other\"
 "
 
-/-- A chunk whose `setup` defines the source `members`, of the category
+/-- A config whose `setup` defines the source `members`, of the category
 `member`, listing `field` and `method`; the at-point source `dots`, an empty
 region at the cursor completed from `members`, asked by itself when `.` is
 typed; and uses `dots` in every buffer. -/
-def dotsChunk : String :=
+def dotsText : String :=
   "def setup : SetupM Unit := do
   defineSource (Completion.Source.ofTexts \"members\" \"member\" #[\"field\", \"method\"])
   defineAtPoint
@@ -60,7 +60,7 @@ def atPointChecks (context : Context) : List Check :=
   [{  name :=
         "C-n in insert state lists the words of open buffers that match the word before the cursor"
       run :=
-        withVimHost context [("10-other.lean", otherBufferChunk)] fun session => do
+        withVimHost context [("init.lean", otherBufferText)] fun session => do
           session.ask [.reload]
           session.host.resize 640 480
           session.typed "C-c o i"
@@ -87,7 +87,7 @@ def atPointChecks (context : Context) : List Check :=
     { name :=
         "a source that declares a trigger character opens a session when that character is typed, and no other character does"
       run :=
-        withVimHost context [("10-dots.lean", dotsChunk)] fun session => do
+        withVimHost context [("init.lean", dotsText)] fun session => do
           session.ask [.reload]
           session.host.resize 640 480
           session.typed "i a x"

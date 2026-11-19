@@ -17,13 +17,13 @@ open Editor
 /-- The owner of the entry `greeting-reply` runs in the state a host handed
 `packages` starts from, when there is one. -/
 def replyOwner (packages : Array Package) : Option String :=
-  let (state, _) : Config.State Unit × Array String := Config.State.ofPackages packages
+  let (state, _) : Config.State Unit Unit × Array String := Config.State.ofPackages packages
   (state.registry.find? Greeting.replyName).map (·.owner.name)
 
 /-- The checks of the package `greeting-loud`, each with what must hold as
 a sentence. -/
 def greetingLoudChecks : List (String × Bool) :=
-  let (state, refused) : Config.State Unit × Array String :=
+  let (state, refused) : Config.State Unit Unit × Array String :=
     Config.State.ofPackages GreetingLoud.EditorPackage.packages
   [("the package `greeting-loud` is accepted, alone, and registers `greeting-reply`",
       refused == #[] && state.packages == #["greeting-loud"] &&

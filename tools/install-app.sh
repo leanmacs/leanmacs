@@ -10,7 +10,8 @@
 #    verifies the installed copy with `codesign --verify --strict --deep`.
 #    `$apps` is `/Applications`, or `$LEANMACS_APPLICATIONS` (for testing on
 #    a scratch prefix only);
-# 3. installs the default config `config/default`, a starter `SPC` map, to
+# 3. installs the default config `config/default`, a starter `SPC` map, its
+#    root `init.lean` and the files under `Config/`, to
 #    `$HOME/.config/leanmacs` only when that directory does not exist; when
 #    it does, it only says where the default config is, so an existing
 #    config is never touched;
@@ -49,7 +50,8 @@ echo "install: installed $app ($(git -C "$repo" describe --always --dirty)), sig
 
 if [ ! -e "$cfg" ]; then
   mkdir -p "$cfg"
-  cp "$default"/*.lean "$cfg/"
+  # The whole tree: the root, `init.lean`, and the files under `Config/`.
+  cp -R "$default"/. "$cfg/"
   echo "install: no config found; installed the default config in $cfg (SPC f f finds a file)"
 else
   echo "install: kept the config in $cfg as it is; the default config is in $default"
