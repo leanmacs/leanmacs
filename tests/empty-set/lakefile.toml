@@ -1,11 +1,17 @@
 # A package set with no package (docs/design/packages.md, "The package set
-# and its build"), used by one check alone: it requires the core and nothing
-# else, and it stays that way. `mise run lean-test` hands it to a package
-# step (tools/package-set.sh), which must refuse it with exit 2: a step
-# cannot pass by running over nothing. The default set (packages/) will not
-# do for that, since it gains packages.
+# and its build"), used by tests alone: it requires the core and nothing
+# else, and it stays that way. It is the default set (packages/) with its
+# packages dropped.
 #
-# Nothing builds an editor from it.
+# - `mise run lean-test` hands it to a package step (tools/package-set.sh),
+#   and `mise run ffi-test` to the package imports check
+#   (tools/package-imports-check.sh); each must refuse it with exit 2: a
+#   check cannot pass by running over nothing.
+# - `mise run lean` links an editor from it
+#   (`lake -d ../tests/empty-set build :editor`, in lean/), and `mise run
+#   ffi-test` runs the fixture tests/headless/core-themes on that editor:
+#   an editor with no package but the core's starts in the theme `default`
+#   and offers no shipped palette.
 name = "empty-set"
 
 [[require]]
