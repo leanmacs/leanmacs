@@ -67,7 +67,7 @@ def evilJumpOffsets (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option (L
   let offsets ←
     window.jumps.list.entries.toList.mapM fun place =>
         match place with
-        | .held _ marker => ((Jumps.offsetOf marker).runModel driver.model.texts).1.toOption
+        | .held _ marker => ((Marks.offsetOf marker).runModel driver.model.texts).1.toOption
         | .file .. => none
   return (offsets, window.jumps.list.index)
 

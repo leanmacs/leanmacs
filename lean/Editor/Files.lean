@@ -502,10 +502,10 @@ def placeCursor (view : ViewId) (offset : Nat) : EditorM Unit := do
 
 /-- The byte offset of `point` in `text` ("Open", in the module docs): the
 start of its row, clamped to the last line, and the bytes of the row's first
-`point.column` characters, clamped to its content (`Jumps.offsetAt`); or,
+`point.column` characters, clamped to its content (`Marks.offsetAt`); or,
 when the point says so, the row's first non-blank. -/
 def offsetAt (text : TextId) (point : At) : TextM Nat := do
-  let offset ← Jumps.offsetAt text point.row point.column
+  let offset ← Marks.offsetAt text point.row point.column
   if point.firstNonBlank then
     text.motion .lineFirstNonBlank offset
   else

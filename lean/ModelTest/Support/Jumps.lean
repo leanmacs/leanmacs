@@ -145,7 +145,7 @@ def placeText (driver : TestDriver) (place : Place) : String :=
   match place with
   | .held buffer marker =>
     let read : TextM Point := do
-      let offset ← Jumps.offsetOf marker
+      let offset ← Marks.offsetOf marker
       marker.text.pointOf offset
     match (read.runModel driver.model.texts).1 with
     | .ok point => s!"{buffer.index}@{point.row}:{point.column}"

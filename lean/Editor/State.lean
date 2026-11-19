@@ -9,6 +9,7 @@ import Editor.GeneratedView
 import Editor.Invocation
 import Editor.JumpList
 import Editor.Layout
+import Editor.Marks
 import Editor.Scene
 import Editor.State.Outbox
 import Editor.TabBar
@@ -1094,6 +1095,12 @@ and moving are `Editor/JumpList.lean`'s and `Editor/Jumps.lean`'s.
 - **The markers are the loop's to give up**, once a command has run to its
   end (`EditorState.placeMarkers`, `Loop.gaveUp`), so a command that is
   rolled back has unmarked nothing.
+- **A buffer keeps what its marks follow line deletions and undo by**
+  (`Buffer.markHistory`, `Marks.History`, `Editor/Marks.lean`). The loop
+  reads and sets it once an event has been handled
+  (`EditorState.followMarks`, `Editor/Marks/Follow.lean`): it erases a
+  mark whose line was deleted, puts lowercase marks back after an undo or
+  a redo, and gives up the markers of the marks it erased or replaced.
 
 ## Where a new field goes
 
@@ -1284,6 +1291,11 @@ structure Buffer where
   of its text it is held by ("The jump list and marks", in the module
   docs). No letter is here twice. -/
   marks : Array (Char × MarkerId) := #[]
+  /-- What its marks follow line deletions and undo by (`Marks.History`,
+  `Editor/Marks.lean`): the lines its marks and the global marks held in
+  it were on, its lowercase marks at the last boundary of its history, and
+  those each node of its history keeps. -/
+  markHistory : Marks.History := {}
   deriving BEq, Repr
 
 /-- Whether the buffer's text is in another state than the one last saved,

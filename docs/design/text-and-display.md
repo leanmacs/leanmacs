@@ -276,7 +276,11 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   file's path, row and column when their buffer is closed, and given up by
   the loop once no place holds them
   ([keymaps-and-modes.md](keymaps-and-modes.md), "The jump list and
-  marks"). A Rust
+  marks"). Since a marker moves through the one change set applied and
+  not back, a mark is not left to its marker alone: the loop erases a
+  mark whose line an edit removed and puts the lowercase marks back after
+  an undo or a redo by row and column, from what each buffer keeps beside
+  its marks (`lean/Editor/Marks.lean`). A Rust
   consumer that holds positions of its own (layout's cache keys) maps values
   with the mapper.
 

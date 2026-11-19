@@ -8,7 +8,9 @@ import Editor.Vocabulary
 Vim's marks (`:help mark-motions`): `m` sets one, and `` ` `` and `'` go to
 one, as evil's command and two motions. Where a mark is kept is the editor
 state's (`Editor/State.lean`, "The jump list and marks"); the places are
-held by markers, so a mark follows the edits made before it.
+held by markers, so a mark follows the edits made before it; a mark whose
+line is deleted is erased, and undo and redo put the lowercase marks back
+(`Editor/Marks.lean`).
 
 - **Setting a mark** (`setMark`, `set-mark`, the character first in its
   arguments): `a` to `z` sets a mark of the buffer the call's window shows,
@@ -89,7 +91,7 @@ def markTarget (line : Bool) (text : TextId) (origin : Vocabulary.From) : Editor
     match place with
     | .held buffer marker =>
       if buffer == origin.buffer && marker.text == text then
-        let offset ← Jumps.offsetOf marker
+        let offset ← Marks.offsetOf marker
         return {
             head :=
               ←

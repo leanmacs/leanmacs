@@ -15,6 +15,7 @@ import Editor.Files
 import Editor.Gutter
 import Editor.InputScheme
 import Editor.Key.Notation
+import Editor.Marks.Follow
 import Editor.ModeLine
 import Editor.State
 import Editor.VersionControl.Gutter
@@ -870,6 +871,9 @@ changed the state or not (`Loop.publish`):
    Then each excerpt buffer that is not held makes the source buffers its
    edits touched one step of its own (`EditorState.closeExcerptGroup`,
    `Editor/State.lean`, "Excerpt buffers"), over their trees just closed.
+   Then the marks follow the event (`EditorState.followMarks`,
+   `Editor/Marks/Follow.lean`): a mark whose line it deleted is erased,
+   and an undo or a redo puts the lowercase marks back.
    Then a quit that cannot go ahead is withdrawn ("Quit", above).
 2. **The scene** (`Loop.views`, `Loop.scene`). Each window the layout
    places, in drawing order, is a view in the rectangle `EditorState.rects`
@@ -2477,6 +2481,9 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
     (displaying : Completion.Displaying := .standard) (now : Nat := 0)
     (keyHints : Array KeyHint := #[]) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
+  -- The marks follow the event's line deletions and undo, now that the
+  -- histories know where their texts are.
+  let (state, unfollowed) ← state.followMarks
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
   -- A system quit that was refused or withdrawn is answered, once: the
@@ -2563,7 +2570,8 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   let (views, shown) := add views shown barred
   let state :=
     placed.refusedBy
-      (unrecorded <|> unlisted <|> unclosed <|> unshown <|> unlistedView <|> unbarred)
+      (unrecorded <|>
+        unfollowed <|> unlisted <|> unclosed <|> unshown <|> unlistedView <|> unbarred)
   Display.publish (scene state views loop.pending loop.menu keyHints)
   -- A snapshot is kept while a view of the scene names it: one taken for a
   -- float that closed above is released with the last scene's others.

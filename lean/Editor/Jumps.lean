@@ -1,4 +1,5 @@
 import Editor.Api
+import Editor.Marks
 
 /-!
 # Jumps: recording and moving through a window's jump list
@@ -40,7 +41,7 @@ commands, going to a place in a closed file, is the upper module's
   has its places dropped. Its own marks go with it.
 - **Attach** (`attach`): once a buffer holds a file, the places of that
   file become places held by markers of its text again, at their row and
-  column, clamped as a visit clamps (`offsetAt`).
+  column, clamped as a visit clamps (`Marks.offsetAt`).
 
 Pinned by `ModelTest.jumpChecks`; the moves that go to another buffer or a
 file by `ModelTest.jumpGoChecks`.
@@ -52,36 +53,6 @@ namespace Editor.Jumps
 ("A place is marked where the cursor is", in the module docs). -/
 def mark (text : TextId) (offset : Nat) : TextM MarkerId :=
   text.mark (.anchor { offset, bias := .after })
-
-/-- The offset the marker `marker` is at: an anchor's, or the head of a
-selection's primary range. -/
-def offsetOf (marker : MarkerId) : TextM Nat := do
-  match ← marker.text.marker marker with
-  | .anchor anchor =>
-    return anchor.offset
-  | .selection selection =>
-    return (selection.ranges[selection.primary]?.map (·.head)).getD 0
-
-/-- The byte offset of the row `row` and the column `column`, in characters,
-of `text`: the start of the row, clamped to the last line, and the bytes of
-the row's first `column` characters, clamped to its content. -/
-def offsetAt (text : TextId) (row column : Nat) : TextM Nat := do
-  let row := min row ((← text.lineCount) - 1)
-  let content ← text.rowContent row
-  let start ← text.offsetOf ⟨row, 0⟩
-  return start + (String.ofList (content.toList.take column)).utf8ByteSize
-
-/-- The row of the byte offset `offset` of `text`, and its column in
-characters. -/
-def pointAt (text : TextId) (offset : Nat) : TextM (Nat × Nat) := do
-  let point ← text.pointOf offset
-  let content ← text.rowContent point.row
-  let (column, _) :=
-    content.toList.foldl
-      (fun (count, bytes) char =>
-        if bytes < point.column then (count + 1, bytes + char.utf8Size) else (count, bytes))
-      (0, 0)
-  return (point.row, column)
 
 /-- The place of the cursor of `view`: a marker at the head of the primary
 range of its window's selection. `none` for a view with no window. -/
@@ -113,7 +84,7 @@ on now, read from its marker. -/
 def lineKey (place : Place) : TextM (Owner × Nat) := do
   match place with
   | .held buffer marker =>
-    return (.buffer buffer, (← marker.text.pointOf (← offsetOf marker)).row)
+    return (.buffer buffer, (← marker.text.pointOf (← Marks.offsetOf marker)).row)
   | .file path row _ =>
     return (.file path, row)
 
@@ -158,7 +129,7 @@ def goHeld (view : ViewId) (buffer : BufferId) (marker : MarkerId) (line : Bool)
   let some window := (← editorState).window? view | return
   if window.buffer != buffer then
     let .ok () ← view.show buffer | return
-  let offset ← offsetOf marker
+  let offset ← Marks.offsetOf marker
   let offset ←
     if line then
       marker.text.motion .lineFirstNonBlank offset
@@ -191,7 +162,7 @@ def detach (id : BufferId) : EditorM Unit := do
         | none =>
           return (marker, none)
         | some file =>
-          let (row, column) ← pointAt marker.text (← offsetOf marker)
+          let (row, column) ← Marks.pointAt marker.text (← Marks.offsetOf marker)
           return (marker, some (.file file.path row column))
   let change (place : Place) : Option Place :=
     match heldIn place with
@@ -223,7 +194,7 @@ def attach (id : BufferId) (path : System.FilePath) : EditorM Unit := do
     return
   let attached : Array ((Nat × Nat) × MarkerId) ←
     points.mapM fun (row, column) => do
-        return ((row, column), ← mark opened.text (← offsetAt opened.text row column))
+        return ((row, column), ← mark opened.text (← Marks.offsetAt opened.text row column))
   let change (place : Place) : Option Place :=
     match inFile place with
     | some point => (attached.find? (·.1 == point)).map fun (_, marker) => .held id marker

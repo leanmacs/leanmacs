@@ -2905,11 +2905,14 @@ the window's top-left corner, not the cursor ("Open questions").
 
 Vim 9.1's jump list and marks (`:help jumplist`, `:help jump-motions`,
 `:help mark-motions`), as `mark.c`'s `setpcmark`, `cleanup_jumplist`,
-`movemark` and `getmark_buf_fnum` implement them. The list's rules are
+`movemark`, `getmark_buf_fnum` and `mark_adjust`, and `undo.c`'s
+`u_undoredo`, implement them. The list's rules are
 plain data (`lean/Editor/JumpList.lean`); where the places are is editor
 state (`lean/Editor/State.lean`, "The jump list and marks"); the decisions
 over places are `lean/Editor/Jumps.lean`'s, and going to a closed file's
-place `lean/Editor/Jumps/Go.lean`'s; the keys are evil's
+place `lean/Editor/Jumps/Go.lean`'s; the rules by which marks follow line
+deletions and undo are `lean/Editor/Marks.lean`'s, run by the loop
+(`lean/Editor/Marks/Follow.lean`); the keys are evil's
 (`lean/Editor/Evil/Jumps.lean`, `lean/Editor/Evil/Marks.lean`).
 
 **Places are markers.** A jump list's entry, a mark and the
@@ -2982,6 +2985,20 @@ builds one sets `jumps` on its entry.
 - **A mark motion reads the marks of the window it is made in** and of the
   buffer that window shows (`Vocabulary.From.view`, `From.buffer`), which
   need not be the focused window, nor the only buffer over its text.
+- **A mark whose line is deleted is erased** (`mark_adjust`), a buffer's
+  mark or a global mark: `m a`, `dd` and `` `a `` says E20. A line is
+  deleted when one edit removes its row with its line break, or, for the
+  last row, with the line break before it, as `dd` on the last line
+  does. A deletion of part of the line keeps the mark at the column the
+  deletion left. The loop reads each mark's line once an event has been
+  handled and compares it with what the next event changed
+  (`Editor/Marks.lean`, `Editor/Marks/Follow.lean`).
+- **Undo and redo put the lowercase marks back** (`u_undoredo`): each step
+  of the undo tree keeps the buffer's lowercase marks from before it, by
+  row and column, and an undo or a redo across the step sets those marks
+  again while the step keeps the marks from before the move. So `m a`,
+  `dd`, `u` and `` `a `` lands on the mark's line and column, and `C-r`
+  erases it again. Global marks are not put back, as in Vim.
 
 **Not built**: the special marks `[`, `]`, `<`, `>`, `.`, `^`, `"` and
 `0` to `9`; `:marks`, `:jumps`, `:delmarks` and `:keepjumps`;
@@ -2990,9 +3007,15 @@ restarts (viminfo, shada); and `m` in the visual states.
 
 **Recorded departures**, not pinned against Vim:
 
-- **A deleted line's mark is kept**, collapsed to where the deletion was,
-  as a marker is. Vim deletes a named mark when its line is deleted
-  (`mark_adjust`'s `one_adjust`).
+- **`dd` on a buffer's only line keeps its mark**, at the start of the
+  empty line left, where Vim erases it: a line is deleted only with a line
+  break, and the only line has none, so it is not told from a deletion of
+  its content. And the rule is read from the text alone: a line whose
+  content is removed with its line break by any edit is erased, where Vim
+  asks which command made the edit. So a mark on an empty line that `J`
+  or a backspace at the start of the next line joins away is erased, and
+  so is one whose line a charwise delete takes from its start to the start
+  of the next line; Vim keeps both on the joined line.
 - **Text typed right at a place is typed before it**: the bias `after`
   that carries a place down with a line broken at it also moves it past a
   character typed at it, where Vim leaves a mark's column as it was.

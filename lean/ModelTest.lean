@@ -98,6 +98,7 @@ import ModelTest.Editor.Language
 import ModelTest.Editor.Layout
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
+import ModelTest.Editor.Marks
 import ModelTest.Editor.Menu
 import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
@@ -303,6 +304,14 @@ oldest past the limit, a filter-map changes and drops entries and carries
 the index, a clean-up keeps the latest entry of a line and carries the
 index, a step's plan records first from one past the end and
 fails off either end, and `:help jumplist`'s worked example step by step.
+
+The rules of marks across line deletions and undo (`Editor/Marks.lean`)
+are checked pure (`markRuleChecks`): a deletion of a whole line with its
+line break removes it and one of part of it does not, the last row only
+with the line break before it; a node made keeps the marks at the
+boundary, an undo and a redo across it put back what it kept and swap in
+the marks before the move, and a move across more than one edge or to
+another tree puts back nothing.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that the rectangles of its views are
@@ -837,7 +846,10 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   own marks, a global mark in another buffer, under an operator, in a
   closed buffer's file, reopened with one jump recorded, attached again to
   the reopened buffer's text so that an edit above it carries it, and
-  dropped with a closed buffer that held no file;
+  dropped with a closed buffer that held no file; a mark erased when its
+  line is deleted, on the last line too and for a global mark, kept by a
+  deletion of part of its line, put back by undo at its line and column,
+  erased again by redo and put back again by undo (`markUndoRows`);
 - `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
   All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
   item (`clipRan`), in each Vim state, on the clipboard model.
@@ -1113,6 +1125,7 @@ def checks : List Check :=
     layoutChecks ++
     floatChecks ++
     jumpListChecks ++
+    markRuleChecks ++
     stateChecks ++
     tabChecks ++
     displayRuleChecks ++
