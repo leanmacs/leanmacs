@@ -2123,11 +2123,33 @@ elaborate, or whose setup throws, is rejected and the old one stays.
 
 As built (`lean/Editor/Config/Reload.lean`, `lean/Editor/Headless.lean`):
 
-- **The reload job** is one dedicated task per reload. It reads the source,
-  imports the base if no earlier job has, elaborates the chunks that
-  changed, evaluates `setup` and runs it against a collecting handler, then
-  resolves a promise with the outcome and posts a wake-up to the editor
-  queue. It is a dedicated task, not one of the pool's: it reads files.
+- **The reload job** is one dedicated task per reload. It makes the base if
+  no earlier job has, reads the root and the headers of the config files it
+  imports, refuses what a file may not import, creates the config
+  directory's lakefile and toolchain file when the host may write them and
+  they are absent, grows the base by the linked modules the files import,
+  elaborates the files that changed and the files that import them,
+  evaluates the root's `setup` and runs it against a collecting handler,
+  then resolves a promise with the outcome and posts a wake-up to the
+  editor queue. It is a dedicated task, not one of the pool's: it reads
+  files, and it writes the module data of the config files under `Config/`
+  to a temporary directory of the host's.
+- **Lean's "importing" flag is up while the job makes an environment.**
+  Making the base, growing it, and making the environment of a file that
+  imports config files each run Lean's import with its "importing" flag up
+  (`Lean.withImporting`), and each turns the execution of initialisers on
+  first, since Lean turns it off when an import ends
+  (`lean/Editor/Config/Elaborate.lean`, "The base"). Before config was
+  modules the flag was up once in a process, for the base; now it is up for
+  30 to 190 ms at a time, once for each such environment, on the job
+  thread, while the editor thread runs. What makes that safe is unchanged:
+  no initialiser runs. A module the base may hold is linked into the
+  executable, so its native initialiser ran when the process started and
+  the import skips it; a config module declares none, since a file that
+  declares `initialize` is refused before its module data is written. The
+  flag itself is read by code that registers extensions and attributes
+  from an initialiser, and the editor thread runs none: it runs compiled
+  loop code and config's `setup` programs and commands, which are values.
 - **A reload needs a pool thread all the same.** Lean's frontend elaborates
   on pool tasks, although the adapter asks for synchronous elaboration. So
   while a job computes on every pool thread and none of them reaches a
@@ -2147,14 +2169,19 @@ As built (`lean/Editor/Config/Reload.lean`, `lean/Editor/Headless.lean`):
   a flag, and any number of them make exactly one follow-up job, started
   when the running one's outcome has been handled, so it reads the source
   afresh and starts from what was just installed.
-- **An accepted outcome** replaces the chunks and the config's entries in
+- **An accepted outcome** replaces the files and the config's entries in
   the registry, and meets the config's stores with the cells there are. A
-  rejected one changes nothing.
+  rejected one changes nothing. Either hands the base back, which a reload
+  may have grown, and the state keeps it for the next.
 - **Nothing of a replaced config is kept** by the editor: the state holds
-  the chunks of the config that is installed, and a finished job's outcome
-  is dropped once it is installed. `config-test` checks this with states
-  that each hold a library handle. Whether Lean frees an old environment is
-  observed by the benchmark's soak (`mise run config-bench`), not gated.
+  the base and the handles of the files of the config that is installed,
+  and a finished job's outcome is dropped once it is installed.
+  `config-test` checks this with a base and handles that each hold a
+  library handle. Whether Lean frees an old environment is observed by the
+  benchmark's soaks (`mise run config-bench`), not gated. One thing is kept
+  on purpose: a module file read for an environment stays mapped, since a
+  closure of an old config may still be alive
+  ([lean-runtime.md](lean-runtime.md), "Config and reload").
 
 - **A command asks for a reload** with `reloadConfig`
   (`lean/Editor/Api.lean`), built by the command loop's phase 12. The
@@ -2173,10 +2200,10 @@ As built (`lean/Editor/Config/Reload.lean`, `lean/Editor/Headless.lean`):
   `ConfigTest.exChecks` rewrites a config's file, runs the ex line
   `reload`, and sees the key run the new command.
 
-`config-test` shows the editor answering while a chunk elaborates: with a
-chunk's elaboration held open through the elaborator port, 100 events fed
-from a Rust thread and a command of the old config are answered before the
-chunk is let go.
+`config-test` shows the editor answering while a file elaborates: with a
+config file's elaboration held open through the elaborator port, 100 events
+fed from a Rust thread and a command of the old config are answered before
+the file is let go.
 
 **A reload cancels the old config's jobs when, and only when, it installs.**
 `Config.step` has an effect for it, `cancelJobs`, which it emits for an
@@ -2468,5 +2495,5 @@ reload leaves the old config's watch delivering.
   remains open is Lean code outside them: compiled runtime code (the command
   loop, the runners, the config session) is in `IO`, and config can still
   define an `IO` action. The session never runs one, but Lean's elaborator
-  does when a chunk says `#eval`, on the job thread, while the chunk
+  does when a config file says `#eval`, on the job thread, while the file
   elaborates. Should that be impossible too, or merely discouraged?

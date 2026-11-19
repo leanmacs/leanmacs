@@ -1,11 +1,13 @@
 # The headless mode
 
 ```sh
-editor headless [--render] [<sysroot> <olean dir>] <config dir> <script file>
+editor headless [--render] [--generate] [<sysroot> <olean dir>] <config dir> <script file>
 ```
 
 This is the editor with no window. It loads the config in a directory, runs
-a script against it and prints what happened. `<sysroot>` is the Lean
+a script against it and prints what happened. It writes nothing into the
+config directory unless it is given `--generate` ("A config directory",
+below). `<sysroot>` is the Lean
 toolchain's directory (`lean --print-prefix`) and `<olean dir>` the
 directory of the core's `.olean` files
 (`lean/.lake/build/lib/lean`). They are given both or neither, so three or
@@ -55,9 +57,13 @@ Leanmacs.app/Contents/Resources/lean/editor/               the editor's .olean f
 ```
 
 `Contents/Resources/lean/toolchain` is a sysroot: its modules are under its
-`lib/lean`, as a toolchain's are. The editor's directory holds every module
-of the config base, the default packages' beside the core's, so a bundle
-needs no record. Two directories given on the command line
+`lib/lean`, as a toolchain's are, and it holds `Std` and `Lean` whole, so
+config in a bundled editor may import them. The editor's directory holds
+every module of the config base, the default packages' beside the core's,
+so a bundle needs no record. A bundle holds no package set
+(`Contents/Resources/lean/set` is where one would be), so with `--generate`
+a bundled editor creates `lean-toolchain` and no lakefile, and says so as
+information. Two directories given on the command line
 are used in place of the bundle's. Outside a bundle there is no toolchain to
 fall back on, so two paths are refused, status 2, with
 `editor: no Lean toolchain: give <sysroot> <olean dir> before the config directory, or run the executable from an app bundle; <olean dir> is a search path, directories joined with `:`, which must hold the core's and every package's of the editor's set unless the build recorded them beside the executable (<executable>.oleans)`
@@ -77,14 +83,15 @@ the bundle ([`the-gate.md`](the-gate.md)). To stage one by hand, from
 sysroot=$(lean --print-prefix)
 base=$(lake -d ../packages query :editorBase | tr '\n' ' ')
 oleans=$(paste -s -d : ../packages/.lake/build/bin/editor.oleans)
-.lake/build/bin/config-test bench-modules "$sysroot" "$oleans" $base > <dir>/closure
+.lake/build/bin/config-test bench-modules "$sysroot" "$oleans" $base Std Lean > <dir>/closure
 ../tools/stage-bundle.sh --closure <dir>/closure <dir>/Leanmacs.app ../packages/.lake/build/bin/editor \
   "$sysroot" "$oleans" olean olean.server olean.private
 ```
 
 Those are the modules the default set's config base imports, `Editor` and
-the entry module of each default package, and the three file kinds
-importing them reads ([`lean-runtime.md`](../design/lean-runtime.md), "What
+the entry module of each default package, with every module of `Std` and
+`Lean`, which a config file may import, and the three file kinds importing
+them reads ([`lean-runtime.md`](../design/lean-runtime.md), "What
 config may import, measured"). The `.olean` directories are the ones the
 build recorded beside the editor, joined with `:`: the script copies each
 module from the first that holds it, all into the bundle's one directory.
@@ -133,12 +140,54 @@ directives read the drawing:
 after `C-f` and after the save, and `idle 1000`; `ffi-test` compares its
 output and the saved file's bytes ([the-gate.md](the-gate.md)).
 
-A config is the `.lean` files directly in the config directory, elaborated in
-the byte order of their names, each on top of the one before. They have no
-`import` line: `Editor` is imported and opened for them. Config defines
-commands and jobs, and a `setup` that registers them:
+## A config directory
+
+A config is a root, `init.lean`, and the config files it imports, directly
+or through others, each a Lean module under `Config/`
+([lean-runtime.md](../design/lean-runtime.md), "Config and reload"):
+
+```
+<config dir>/init.lean            the root: the one file whose `setup` is run
+<config dir>/Config/Greet.lean    a config file: the module `Config.Greet`
+<config dir>/lakefile.toml        read, never written without `--generate`
+<config dir>/lean-toolchain       the same
+```
+
+- Every file writes its own header: `import Editor`, and `open Editor` to
+  name the editor's declarations with no prefix. Nothing is imported or
+  opened for it.
+- A file may import a config file (`import Config.Greet`), a module of the
+  editor's package set, and a module of `Init`, `Std` or `Lean`. An import
+  of anything else rejects the reload, with a diagnostic at the import that
+  names the module. When the directory's `lakefile.toml` requires the
+  package that module belongs to, the diagnostic says the package set needs
+  a rebuild: the headless mode reads the lakefile for that, and only reads
+  it.
+- A file under `Config/` that nothing imports is not read.
+- Only the `setup` the root itself defines is run.
+- A directory with no `init.lean` that holds `.lean` files directly in it is
+  a config in the old form, files in byte order with no header. It is
+  rejected with one diagnostic that names the files and
+  `mise run config-migrate`, which converts it. A directory with neither is
+  an empty config.
+
+**`--generate`** lets the headless mode write into the config directory, as
+the window mode does: before it elaborates anything, a reload creates the
+directory's `lakefile.toml` and `lean-toolchain` when they are absent, and
+never changes one that is there. The gate runs the headless mode on the
+config directories checked in under `tests/` with no `--generate`, so none
+of them is ever written to, and uses the option only on temporary copies
+(`tools/config-package-check.sh`, `mise run bundle-test`).
+
+## What config defines, and the script
+
+Config defines commands and jobs, and a `setup` that registers them. The
+fixture `tests/headless/config` is two files, `Config/Greet.lean`:
 
 ```lean
+import Editor
+open Editor
+
 def greet : EditorM Unit := do
   let text ← createText "hello"
   append text ", world"
@@ -147,10 +196,21 @@ def count : Unit → JobM Nat := fun _ => do
   sleep 1
   return 42
 
+```
+
+and the root, `init.lean`, which imports it:
+
+```lean
+import Editor
+import Config.Greet
+open Editor
+
 def setup : SetupM Unit := do
   command "greet" greet
   job "count" count fun n => discard <| createText s!"counted {n}"
 ```
+
+The examples below leave the header out.
 
 A command (`EditorM`) may change editor state and cannot wait. A job
 (`JobM`) may wait, here for a millisecond, and cannot change editor state:
@@ -424,7 +484,7 @@ key that config binds to a name nothing registers says
 `<name>: no such command` in the echo area.
 
 A `setup` registers each command name and each job name once. One that
-registers a name twice is rejected, like a chunk that does not elaborate.
+registers a name twice is rejected, like a file that does not elaborate.
 
 `setup` also binds key sequences to command names, written as key strings
 (`C-c s`, `<Escape>`; the table in `docs/design/keymaps-and-modes.md`, "Key
@@ -1971,6 +2031,11 @@ scene: none
 loop: refused: <error>
 ```
 
+`<c>` is how many files the installed config has: the root and the config
+files it imports. A diagnostic's `<source>` is the file's path in the config
+directory (`init.lean`, `Config/Greet.lean`), with the file's own line and
+column, or `setup`, `config` or `base` for one that is about no file.
+
 `scene` prints the frame's size, the focused view (`-` while the frame does
 not have the keyboard focus), the echo area and its padding in points (the
 bottom row's inset: the frame padding, and at least the window's corner
@@ -2045,7 +2110,8 @@ and `interrupted` when the interrupt key stopped it, each rolled back,
 replaced the config that registered it. A job the script leaves running is
 cancelled when the script ends.
 
-A reload that is rejected (a chunk does not elaborate, or `setup` throws)
+A reload that is rejected (a file does not elaborate, an import is refused,
+or `setup` throws)
 prints its diagnostics and leaves the config that was loaded in place, with
 its jobs still running. The exit status is 0 when the script ran to its end
 or a command quit the editor before it,
@@ -2053,7 +2119,7 @@ or a command quit the editor before it,
 status 1 a line on stderr says why: the script cannot be read; with
 `--render`, the render session could not be started, with the library's
 reason (the system refused its render thread); a `settle`, named by its
-line, ran out with a reload still running (a chunk or `setup` is slow or
+line, ran out with a reload still running (a file or `setup` is slow or
 does not end); a `join`, named by its line, ran out with a job still
 running; or the editor thread did not answer.
 

@@ -316,7 +316,8 @@ repository's cache space; every ref can restore `main`'s.
 
 `build.yml`'s job restores `ci`'s elan and Lake entries, with `ci`'s keys,
 and saves neither: it has no `actions/cache/save` step. The rule dates
-from when the bundle (813 MB on 2026-11-19) was built under `lean/.lake`
+from when the bundle (813 MB then; 1,995 MB since it carries `Lean`'s
+modules, 2026-11-19) was built under `lean/.lake`
 and must not enter the cache. The bundle is now built under `packages/.lake`
 (`packages/.lake/build/Leanmacs.app`), which no cache step names, and the
 rule and the workflow's comment were left as they were. Its rust-cache entry is its own (rust-cache keys on the job),

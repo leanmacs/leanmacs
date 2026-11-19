@@ -223,14 +223,17 @@ import ShippedThemes.EditorPackage
 import Compile.EditorPackage
 
 def main (args : List String) : IO UInt32 :=
-  Editor.Main.run (EditorCore.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ Compile.EditorPackage.packages) #[`Editor, `ShippedThemes.EditorPackage, `Compile.EditorPackage] args
+  Editor.Main.run (EditorCore.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ Compile.EditorPackage.packages) #[`Editor, `ShippedThemes.EditorPackage, `Compile.EditorPackage] { setName := "default-set", pin := "leanprover/lean4:v4.35.0\n" } args
 ```
 
 with a module doc and a doc string, since it is built with the core's Lean
 options and a warning in it fails the build. It imports each entry module
 of the set in order and appends their `packages` in that order; a set of
 the core alone (`tests/empty-set`) passes the core's array as it is and
-the base `Editor` alone. The gate requires the default set's root to
+the base `Editor` alone. The last value before the arguments is what the
+build says of the editor for the files it generates in a config directory
+("A config directory requires the set", below): the set's Lake name and the
+text of the core's `lean-toolchain`. The gate requires the default set's root to
 import exactly these five modules (`lake -d ../packages query
 :editorRootImports`, in `ffi-test`), and its base to be the three named
 (`:editorBase`).
@@ -289,9 +292,64 @@ mode, which the base imported, left the core.
   the gate does not run is the window mode's `main` itself, which opens
   the system's window; `mise run app-check` runs the shipped bundle's
   headless mode.
-- **Phase 7 builds on two things this leaves**: the list of base modules,
-  and a search path of several directories. Config files with real import
-  lines, and a base of everything linked, are that phase's.
+- **The base is where config starts, and it grows** (phase 7). A config
+  file is a Lean module with real import lines
+  ([lean-runtime.md](lean-runtime.md), "Config and reload"). It may import a
+  module the set's base holds, and a module of `Init`, `Std` or `Lean`,
+  which the base then grows to hold: every module of those three is linked
+  into an executable that links the elaborator, by the elaborator adapter's
+  own imports. An eager base of every linked module was measured and
+  refused: 0.61 s and 1.40 GB resident for each headless start, against
+  0.23 s and 0.60 GB. So what a set decides is still the base config starts
+  on, and an import of a module of a package that is not in the set is
+  refused, naming the module.
+
+#### A config directory requires the set
+
+A config directory is a Lake package, so that Lean's language server,
+started in it, checks a config file as the editor elaborates it. The editor
+generates its `lakefile.toml` when there is none
+(`lean/Editor/Config/LakePackage.lean`):
+
+```toml
+name = "config"
+
+[[require]]
+name = "default-set"
+path = "/…/packages"
+
+[[lean_lib]]
+name = "Config"
+globs = ["Config.+"]
+```
+
+- **It requires the set, by path, and nothing else.** The set requires the
+  core and each of its packages, so Lake resolves, for the language server,
+  exactly the modules the editor links, from the build directories the
+  editor's own build filled: nothing is fetched and nothing under the set
+  is rebuilt.
+- **The build tells the editor what to write.** The generated root hands
+  `Editor.Main.run` the set's Lake name and the pin, and the `editor` facet
+  writes the set's directory beside the executable, in
+  `<set>/.lake/build/bin/editor.set`, as it writes `editor.oleans`. In a
+  bundle the directory would be `Contents/Resources/lean/set`
+  (`lean/Editor/ModuleLookup.lean`, "The set"). An editor that finds no
+  set directory generates `lean-toolchain` alone: the app does, until it
+  ships a set (phase 9).
+- **The lakefile is the user's once it is there.** The editor never
+  rewrites it. When a config file imports a module that is not linked, the
+  editor reads the lakefile's `[[require]]` names, with Lake's TOML loader
+  and without running Lake (`lean/Editor/Config/Lakefile/Toml.lean`), and
+  when the module belongs to a package named there, by the entry-module
+  rule's casing (`greeting-loud` gives `GreetingLoud`), the diagnostic says
+  the package set needs a rebuild. A `lakefile.lean` is not read.
+- **What phase 8 builds on.** A user's own package set replaces the one
+  `require` of the default set: the lakefile then names the user's set, or
+  that set's own requires when a default package is dropped, and the
+  rebuild the diagnostic asks for is the build of that set. The
+  needs-a-rebuild diagnostic and its fixture
+  (`tests/headless/needs-rebuild`, a config whose lakefile requires the
+  fixture package `greeting`) are the half of that this phase built.
 
 - **It imports the core's config base, `Editor`**, for the link alone, as
   every root that links the elaborator does ("The core and its root",
@@ -307,6 +365,9 @@ mode, which the base imported, left the core.
   building the core as the root, then through a set, then as the root
   again rebuilds nothing. So `lean/` and the sets are all roots of builds
   the gate runs.
+- **And it records where the set is.** Beside `editor.oleans` the `editor`
+  facet writes `editor.set`, the set's directory on one line, absolute
+  ("A config directory requires the set", above).
 - **So the build records where the modules are, for the editor it links.**
   The set's build directory holds the editor and its root and no other
   module, so an editor run directly cannot find the modules config is
@@ -419,9 +480,9 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   `<P>Test/Linked/` cannot hold it. `GreetingTest.Linked` and
   `CompileTest.Linked` each hold theirs.
 - **A package's headless fixtures are excluded from the formatter** by a
-  `lean-fmt.toml` in the package (`exclude = ["tests/**"]`): a config chunk
-  is Lean with no import line, elaborated on the config base at runtime,
-  and does not compile as a module of the package.
+  `lean-fmt.toml` in the package (`exclude = ["tests/**"]`): a config file
+  is a module of a config directory, another Lake package, which the editor
+  elaborates at runtime, and is not built with this package.
 - **A library's `globs` must hold every module of the package's library**
   when its root does not import them all. A Lake library declared by its
   name alone holds only what its root module imports, so a module beside

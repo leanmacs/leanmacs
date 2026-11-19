@@ -87,7 +87,8 @@ count for a script a hundred times as long.
 **The app bundle is a facet of the set too** (`editorApp`, which nothing
 builds by default; `mise run app` builds it from the default set, at
 `packages/.lake/build/Leanmacs.app`). It copies the set's executable and the `.olean` files of
-the closure of `Editor` into `Leanmacs.app`, laid out as module lookup
+the closure of the set's config base with `Std` and `Lean`, which a config
+file may import, into `Leanmacs.app`, laid out as module lookup
 expects (`lean/Editor/ModuleLookup.lean`), writes `Info.plist`, with
 the version from `lean/app/version` as `CFBundleShortVersionString`, the
 build ID as `CFBundleVersion` and the commit as `LeanmacsCommit`, a key of
@@ -474,6 +475,16 @@ queues and exits.
   `<directory of the executable>/../lib/lean`, where Lake put the modules
   beside the executable; for a set's editor that directory holds only the
   generated root. `mise run edit` gives `--oleans` as it gives `--sysroot`.
+- **The package set the editor was built from** is found the same way, for
+  the lakefile the editor generates in a config directory ("Config and
+  reload"): outside a bundle, the build writes the set's directory beside
+  the editor it links, in `<executable>.set`, one line, absolute; in a
+  bundle it is `Contents/Resources/lean/set`. A directory that is not
+  there is none, and an editor that knows none generates no lakefile: a
+  bundle holds no set yet (`ModuleLookup.setDirectory?`). The set's Lake
+  name and the toolchain pin are not found but handed in: the generated
+  root passes them to `Editor.Main.run`
+  ([packages.md](packages.md), "A config directory requires the set").
 - **Where both are found** is a pure function of the executable's path,
   read from `IO.appPath` at the edge, of what the build recorded for it,
   read at the same edge, and of the directories the command
@@ -607,16 +618,119 @@ Rules found the hard way:
 ## Config and reload
 
 Lean environments are immutable and a declaration cannot be redefined. So
-config is an ordered list of named chunks (in practice, files), and a reload
-builds a new environment and swaps it in.
+config is Lean modules, and a reload builds a new config from the files as
+they now are and swaps it in.
 
-- The environment after importing the editor API is kept as a value and
-  never re-imported.
-- Each chunk caches the elaborator state after it. Changing chunk *k*
-  re-elaborates *k* and the chunks after it.
-- A reload is all-or-nothing: if any chunk fails to elaborate (including a
-  theorem that no longer holds), or config's `setup` throws, the old
-  environment stays.
+A config directory is a small Lake package:
+
+```
+init.lean            the root: the one file whose `setup` the editor runs
+Config/Keys.lean     any other config file: the module `Config.Keys`
+lakefile.toml        generated when absent
+lean-toolchain       generated when absent
+```
+
+- **Each config file is a module of its own.** A config is the root and
+  the config files it imports, directly or through others. Each file is
+  elaborated after the files it imports; a config file other than the root
+  has its module data written once, and the files that import it import
+  that. So after a change, a reload elaborates that file and the files that
+  import it, and no other (`Config.plan`). One environment chain could not
+  give that: a Lean environment is linear, and Lean 4.35 has no merge of
+  two environments, so a file that came after the changed one in a chain
+  would be elaborated again though it does not import it. A file under
+  `Config/` that nothing imports is not read.
+- **A file writes its own header.** `import Editor`, and `open Editor` to
+  name the editor's declarations with no prefix. Nothing is imported or
+  opened for it, which is what Lean's language server needs to accept the
+  file. A file that starts with `module` is refused: config files are plain
+  modules.
+- **What a file may import** is one of three things. `Config.<Name>` names
+  a config file, `Config/<Name>.lean`; a file that is not there is a
+  diagnostic at the import, and so is a cycle, which is named. A module the
+  base holds, or a module of `Init`, `Std` or `Lean`, is linked into the
+  editor and is loaded. Anything else rejects the reload, at the import's
+  line, naming the module: `module … is not linked into this editor`.
+  Every header is read, and every problem found, before anything is
+  elaborated.
+- **When that module belongs to a package the config's lakefile names**,
+  the diagnostic says the package set needs a rebuild. The editor reads the
+  `[[require]]` names of `lakefile.toml` from its text, with Lake's TOML
+  loader, and never runs Lake; a package named `greeting-loud` owns the
+  modules under `GreetingLoud`, the entry-module rule's casing. A
+  `lakefile.lean` is not read, and then the plain diagnostic is given.
+  Every host reads the lakefile, the headless mode too: reading is a port
+  of its own, apart from the one that writes
+  (`lean/Editor/Config/Session.lean`, "The package ports").
+- **The base grows with what config imports.** It starts as the set's base
+  ([packages.md](packages.md), "The config base of a set"), and a module of
+  `Std` or `Lean` is read on its first import and never twice in a process.
+  A base of every linked module from the start was measured and refused: it
+  cost 0.61 s and 1.40 GB resident for each headless start, against 0.23 s
+  and 0.60 GB. A file kept from an earlier reload stays valid when the base
+  grows: a module built on a smaller base imports beside a larger one.
+- **A reload is all-or-nothing**: if any file fails to elaborate (including
+  a theorem that no longer holds), an import is refused, or the root's
+  `setup` throws, the old config stays.
+- **Only the root's `setup` is run.** The editor runs the constant `setup`
+  that `init.lean` itself declares. A config file under `Config/` exports
+  its programs under names of its own, and the root's `setup` calls them. A
+  `setup` defined in another config file is not run, whether or not the
+  root imports that file; a root that declares none is refused with a
+  diagnostic that says so.
+- **The old form is refused.** A directory with no `init.lean` that holds
+  `.lean` files directly in it is config in the form of byte-ordered chunks
+  with no header, which the editor loaded before config was modules. The
+  reload is rejected with one diagnostic that names the files and the fix,
+  `mise run config-migrate`, which converts the directory
+  (`tools/config-migrate.sh`): each file but the last, in byte order,
+  becomes `Config/<Name>.lean`, the last becomes `init.lean`, and each gets
+  the header and an import of the file before it, which keeps what each
+  chunk saw. The converted config loads when its `setup` was defined in its
+  last file; one whose `setup` was in an earlier file is then refused with
+  the rule above until the definition is moved to `init.lean`.
+- **The editor generates the two other files when they are absent, and
+  never rewrites one that is there** (`lean/Editor/Config/LakePackage.lean`).
+  The lakefile requires the package set the editor was built from, by its
+  directory, and declares the library `Config` of every module under
+  `Config/`; `lean-toolchain` is the editor's pin. A `lean-toolchain` that
+  names another toolchain is a warning in the reload's report that names
+  both.
+  - **An editor run from a checkout writes both.** It finds its set's
+    directory in `<executable>.set`, which the build writes beside it
+    ("Start-up and shutdown").
+  - **The app writes `lean-toolchain` alone**, and says as information, in
+    the first reload of a process, that no lakefile is generated: a bundle
+    holds no package set to name until the packages roadmap's phase 9. An
+    editor writes a lakefile only when it knows a set directory that is
+    there, since Lake rejects a lakefile whose `require` names a path that
+    does not exist, and the editor would never rewrite it.
+  - **The window mode generates; the headless mode only with
+    `--generate`**, so the config directories under `tests/` are never
+    written to.
+- **`init.lean` is outside the generated library**, so Lake never builds
+  it. A TOML lakefile cannot declare "every file here" (Lake refuses a glob
+  with no name), so top-level config files would need the lakefile
+  rewritten whenever one is added. And on a file system that ignores case,
+  macOS's default, a built `init.olean` is found for Lean's own `Init`:
+  with `init` in a library, `lake build` followed by any compile in the
+  directory ended in `Stack overflow detected. Aborting.` after 99 s in a
+  prototype. A user who adds `init` to a library by hand meets that.
+- **Lean's language server checks a config file as the editor elaborates
+  it.** Started in the config directory (`lake serve`), it reports no
+  import error for a file that imports `Lean`, a module of a package of the
+  set and a config file, and reports a type error at its position. The gate
+  holds that on a directory the editor generated
+  (`tools/config-package-check.sh`, `config-test lsp`). It writes
+  `lake-manifest.json` and `.lake/` in the config directory, and builds
+  there the config files a file imports; it fetches nothing and builds
+  nothing under the set.
+- **The editor is more lenient than the server in one way.** A file with no
+  config import is elaborated on the base as it is, so it sees every module
+  the base holds, imported by it or not: once one file's `import Lean` made
+  the base hold `Lean`, the editor accepts another file that uses `Lean`
+  without importing it, and the server rejects that file. The reverse does
+  not happen for config files: each sees only the config files it imports.
 - Scratch evaluation (a REPL) sits on top and is discarded by a reload. It
   is not built: the prototype's was not carried into the executable.
 
@@ -626,21 +740,54 @@ elaboration. Closures that config registers are stored in compiled state
 (the keymap holds them) and keep working; calling a stored closure was no
 slower than a compiled command in the spike.
 
-Measured in the spike: reloading a one-line chunk takes about 2 ms, a
-20-line config about 11 ms, and 50 definitions with a `simp` proof about
-52 ms. Memory stayed flat over 500 reloads. `mise run config-bench` measures
-the same things in the executable as built (start-up by import set, reload
-time, and a soak of 500 reloads); it is run by hand and asserts nothing.
+**Measured**, with `mise run config-bench`, which is run by hand and asserts
+nothing (2026-11-19, an Apple M5 Max, macOS 27.2, Lean 4.35.0):
 
-Known limits: every later chunk is re-elaborated whether or not it depends
-on the change (real modules and Lean's import graph would fix this), and
-compiled code cannot be swapped. A chunk has no `import` line, so Lean's own
-tooling cannot check a config file by itself.
+| | |
+|---|---|
+| A reload of a one-line root | 2.0 ms (median of 20) |
+| Of a 20-line config, one file | 9.3 ms |
+| Of 50 definitions with a `simp` proof, one file | 38.9 ms |
+| Of the same 50 definitions in a config file the root imports, on a base that holds `Lean` | 283.6 ms |
+| Soak, a root alone that imports `Lean` and uses it (the 50 definitions): resident memory after 100 reloads, and after 500 | 1,440.3 MB, 1,440.0 MB: 0.0% apart; 40 ms a reload |
+| Soak, a root and an imported config file that changes each round, on a base with `Lean`: after 100, and after 500 | 1,635.9 MB, 1,671.9 MB: +2.2%; 285 ms a reload |
+
+- **A config of `init.lean` alone reloads as fast as before config was
+  modules**: its root is elaborated on the base's environment, with the
+  parser started after the header.
+- **A reload that touches an imported file costs tens to hundreds of
+  milliseconds more.** A file that imports config files gets an environment
+  of its own, made from the base's import state and their module files. In
+  a prototype that took about 30 ms on the set's base and 120 ms on a base
+  that holds `Lean`, and the first elaboration in a new environment 23 to
+  55 ms more. In the executable as built, the row of 283.6 ms is about
+  39 ms for the config file and about 245 ms for the root's environment and
+  the root, on a base that holds `Lean`.
+- **Replaced configs are freed.** Both soaks stay within 5% from 100
+  reloads to 500, the bound the phase set; memory is reported, never
+  gating.
+- **The importing path leaks a little, on purpose.** A module file is read
+  again for each environment that imports it, and the memory it is read
+  into is never freed: freeing it is unsafe while a closure of an old
+  config may be alive. That is the +2.2%: 36 MB over 400 reloads, about
+  90 KB a reload of this config, whose module file holds 50 definitions.
+- **The module directory** is a temporary directory the host makes when the
+  first config file's module data is written, and removes when it ends. A
+  process that crashed leaves it to the system's cleaning of temporary
+  files.
+
+Known limits: compiled code cannot be swapped. The Lean internals the
+session rests on can change with a toolchain bump:
+`Lean.importModulesCore` on a retained `Lean.ImportState`,
+`Lean.finalizeImport`, `Lean.ImportArtifacts` and `Lean.writeModule`, which
+config as modules added, beside `Lean.Parser.parseHeader`,
+`Lean.Elab.IO.processCommands` and `Environment.evalConst`.
 
 ### The config session as built
 
-The session is a pure core with two ports, and one adapter that knows Lean's
-elaborator.
+The session is a pure core with ports, and two adapters that link Lean's
+frontend: one elaborates, and one reads a lakefile's requires with Lake's
+TOML loader.
 
 | Piece | Where |
 |---|---|
@@ -658,36 +805,63 @@ elaborator.
 | An ex line and an ex binding, as data | `lean/Editor/Ex/Line.lean` |
 | What a command is run with when a key runs it: the focused window and its buffer, the arguments and the keys | `lean/Editor/Command/Call.lean` |
 | The cells of the stores, and the rule that installs a config's stores | `lean/Editor/Config/Stores.lean` |
-| One reload: the chunks, the plan, the build, over the two ports | `lean/Editor/Config/Session.lean` |
+| One reload: the ports, the import graph, which files a reload keeps, the build | `lean/Editor/Config/Session.lean` |
+| The config directory as a Lake package: the generated lakefile's text, and what to do given what the directory holds | `lean/Editor/Config/LakePackage.lean` |
+| The library a package's modules are under, and which of a lakefile's requires a module belongs to | `lean/Editor/Config/Lakefile.lean` |
+| A lakefile's requires, read with Lake's TOML loader | `lean/Editor/Config/Lakefile/Toml.lean` |
+| The elaborator port's pure model, and the contract it and the real adapter are held to | `lean/Editor/Config/Elaborator/Model.lean`, `Contract.lean` |
 | The reducer that serialises reloads and installs their outcomes | `lean/Editor/Config/Reload.lean` |
 | Handing a display the theme a reload installed | `lean/Editor/Config/Display.lean` |
 | The elaborator port answered by Lean's elaborator | `lean/Editor/Config/Elaborate.lean` |
-| The source port answered by a directory of `.lean` files | `lean/Editor/Config/Directory.lean` |
+| The source port answered by a config directory, and the directory read and written as a Lake package | `lean/Editor/Config/Directory.lean` |
 | The headless loop: the editor thread, the reload job, the output, and the command loop run against the library with a display recorder | `lean/Editor/Headless.lean` |
 
-- **The core has no elaborator in it.** Which chunks are elaborated and from
-  which cached state, all-or-nothing, when `setup` runs, replacement by
-  owner, the store rule and the serialising of reloads are plain Lean with
-  no `import Lean`, tested by `lake test` on hand-written fakes of the two
-  ports. `Elaborate.lean` is the only module that imports Lean's elaborator,
-  and `config-test` checks it, the directory source and the whole host
-  against the real collaborators (`mise run ffi-test`).
+- **The core has no elaborator in it.** Which files are a config, what a
+  file may import, the order they are elaborated in and what each is
+  handed, which loaded files a reload keeps, all-or-nothing, when `setup`
+  runs, replacement by owner, the store rule and the serialising of reloads
+  are plain Lean with no `import Lean`, tested by `lake test` on a pure
+  model of the elaborator port and hand-written fakes of the others
+  (`ModelTest.sessionChecks`, `reloadChecks`). Two modules link Lean's
+  parser and elaborator, each an adapter: `Elaborate.lean`, which turns a
+  config file into a module, and `Lakefile/Toml.lean`, which reads a
+  lakefile's requires with Lake's TOML loader
+  ([overview.md](overview.md), "Rules of the boundary"). `config-test`
+  checks them, the directory source and the whole host against the real
+  collaborators (`mise run ffi-test`).
+- **The elaborator port has a pure model, and one contract holds it and
+  the real adapter together.** The model reads a small language of its own
+  (`import`, `define`, `use`, `fail`, `warn` lines) and the adapter reads
+  Lean, so a property of the contract writes a file as abstract lines and
+  each side says how those are written. The properties are what the
+  session core rests on: a header's imports with their lines, a diagnostic
+  tagged with the file's path at its line, a file that sees what a module
+  of the base declares, a base that grows, a file that sees a config file
+  only when it is handed that file's handle (which is what makes keeping an
+  unchanged file sound), a handle that is one version of a file, and a
+  `setup` that is the root's own. `model-test` runs them on the model and
+  `config-test` on Lean's elaborator
+  (`ModelTest.elaboratorContractChecks`,
+  `ConfigTest.elaboratorContractChecks`).
 - **`setup` is a program over a setup port**: `SetupM Unit`, whose requests
   carry what is registered (a command, a store, a command over a store, a
   job, a face). A request can carry an `EditorM` because the setup port is not the
-  port `EditorM` runs over. After the last chunk the editor runs `setup` against
+  port `EditorM` runs over. After the root the editor runs its `setup` against
   a handler that collects its requests into a value, on the job thread.
   Nothing is registered until the editor thread installs that value, so a
   reload is all-or-nothing by construction, and a `setup` that throws is a
   program that ends in an error: the reload is rejected with its message.
   A new kind of registration is a new request.
-- **One unchecked evaluation per reload.** After the last chunk the adapter
-  elaborates a trailer, `def «editor.setup» : Editor.SetupM Unit := setup`,
-  so the elaborator checks that config defines `setup` at the right type,
-  and evaluates that one constant. A missing `setup` and one of another type
-  are ordinary diagnostics; one that depends on `sorry` is an error value
-  from the evaluation, and nothing runs. A config with no chunks has no
-  trailer and registers nothing.
+- **One unchecked evaluation per reload.** The `setup` that runs is the
+  constant `setup` the root itself declares. The adapter first requires
+  that the root declares it, and then elaborates a trailer,
+  `def «editor.setup» : Editor.SetupM Unit := _root_.setup`, so the
+  elaborator checks it at the right type, and evaluates that one constant.
+  A root that declares none is a diagnostic that says only the root's is
+  run, also when a config file it imports declares one, which the
+  diagnostic names; a `setup` of another type is an ordinary diagnostic;
+  one that depends on `sorry` is an error value from the evaluation, and
+  nothing runs. A config with no root has no trailer and registers nothing.
 - **A command is the value `setup` registered**, not a name looked up in an
   environment. The registry holds the `EditorM` program, tagged with its
   owner, and running a command is running that program against the editor's
@@ -901,13 +1075,15 @@ elaborator.
   a reload changes whether that paper is light or dark. A rejected reload's first error
   is said in the echo area (`Config.Report.echo`), and its whole report is
   printed: on stdout in the headless mode, on stderr in the window mode.
-- **The session runs no `IO` action from config.** A chunk is elaborated,
+- **The session runs no `IO` action from config.** A file is elaborated,
   `setup` is a program, a command is a program: every call from compiled
   Lean into config is a plain call of pure code.
-- **A rejected reload reports diagnostics as data**: a source (the chunk's
-  name, or `setup`), a line and a column, a severity and a message. A chunk
-  fails when it has an error; warnings are reported and do not reject. The
-  config that was loaded stays, with its commands and its stores.
+- **A rejected reload reports diagnostics as data**: a source (the file's
+  path in the config directory, `init.lean` or `Config/Keys.lean`, or
+  `setup`, `config` or `base`), a line and a column of that file, a
+  severity and a message. A file fails when it has an error; warnings and
+  information are reported and do not reject. The config that was loaded
+  stays, with its commands and its stores.
 
 ### Packages
 
@@ -1062,14 +1238,20 @@ failed loudly instead of producing a second copy.
 
 As built (`lean/Editor/Config/Elaborate.lean`):
 
-- **The base is imported once per process**, by the first reload job, from
-  the directories it is given, searched in order: the `.olean` directories
-  of the Lake packages whose modules the base holds, the core's first, and
-  then `lib/lean` under the toolchain's. A base module in none of them
-  fails the import, naming the module
-  (`ConfigTest.elaboratorChecks`). Not Lean's `initSearchPath`, which also
-  reads `LEAN_PATH` from the environment. A second import in one process
-  about doubled its resident memory in a prototype.
+- **The base is made once per process and grown, never made again.** The
+  first reload job imports the set's base from the directories it is
+  given, searched in order: the `.olean` directories of the Lake packages
+  whose modules the base holds, the core's first, and then `lib/lean` under
+  the toolchain's. A base module in none of them fails the import, naming
+  the module (`ConfigTest.elaboratorChecks`). Not Lean's `initSearchPath`,
+  which also reads `LEAN_PATH` from the environment. The adapter keeps
+  Lean's import state with the base, and a reload whose files import linked
+  modules the base does not hold reads those into it, each module file
+  once, and makes a new environment over the old imports and the new
+  (`Lean.importModulesCore` on the retained state, then
+  `Lean.finalizeImport`). A second import of the same modules in one
+  process about doubled its resident memory in a prototype, which is why
+  the state is kept and grown.
 - **The import runs no initialiser of a linked module.** Lean looks for a
   module's native initialiser first, and interprets a module's `initialize`
   declarations only when there is none. Each root that links the adapter
@@ -1096,14 +1278,16 @@ As built (`lean/Editor/Config/Elaborate.lean`):
   has config write to it, and reads it back from compiled code. Each side
   sees the other's write, and the import did not reset the reference.
 - **Config cannot name a binding.** `Editor` never imports `Editor.Ffi`, so
-  a chunk that mentions a binding is rejected as an unknown identifier
-  (checked by `config-test`).
-- **Config may not declare `initialize`.** Such a chunk elaborates, but the
+  a file that mentions a binding is rejected as an unknown identifier, and
+  one that imports the binding's module is refused at the import: the base
+  does not hold it (both checked by `config-test`).
+- **Config may not declare `initialize`.** Such a file elaborates, but the
   interpreter throws a C++ exception the first time a declaration that
   reads the constant is evaluated, and the process aborts. This one can be
-  refused before any code runs, so the adapter rejects a chunk that adds an
+  refused before any code runs, so the adapter rejects a file that adds an
   `initialize` declaration, with a diagnostic that points at the store,
-  which is where config keeps state.
+  which is where config keeps state. It is also what keeps an import of a
+  config file's module data from running an initialiser.
 
 ### An exception from the interpreter ends the process
 
@@ -1147,7 +1331,7 @@ elaborates it.
   | Nesting depth of source the parser survives, at the 3.9 KB a level measured | about 4,000 | about 16,000 | |
 
   The deepest stack the elaborator used was 6.2 MB, on input it then
-  rejected with "maximum recursion depth has been reached"; a chunk of 50
+  rejected with "maximum recursion depth has been reached"; a config of 50
   definitions and a `simp` proof used 78 KB. So 64 MiB is ten times the
   elaborator's worst case, and a runaway recursion in config ends in about
   15 ms having touched 64 MiB instead of a gigabyte. 16 MiB would abort
@@ -1954,15 +2138,24 @@ The window library added 2.3 MB to `editor` on macOS.
 
 `mise run config-bench` measures start-up time and resident memory for the
 import sets `Editor`, `Editor` with `Std`, and `Editor` with `Lean`, in the
-executable as built.
+executable as built: on 2026-11-19, 0.20 s and 596 MB, 0.26 s and 724 MB,
+and 0.54 s and 1,389 MB. Its two soaks measure memory across reloads of a
+config that imports `Lean`: resident memory after 500 reloads was 1,440.0 MB
+against 1,440.3 MB after 100 for a root alone, and 1,671.9 MB against
+1,635.9 MB, +2.2%, for a root and an imported config file that changes each
+round ("Config and reload" says why the second grows a little). So an
+editor whose config imports `Lean` holds about 1.4 GB, and one whose config
+does not holds about 0.6 GB: the base grows to hold `Lean` only when a
+config file imports it.
 
 ### What config may import, measured
 
-Config is elaborated on `Editor`, and an app bundle carries the module files
-that import reads, since it can rely on no toolchain on the machine. Which
-files those are, and what the set with `Lean` would cost instead, was
-measured from staged bundles (`tools/stage-bundle.sh`), on 2026-11-15, on an
-Apple M5 Max, macOS 27.2, Lean 4.35.0, with
+A config file may import a module of the editor's package set and a module
+of `Init`, `Std` or `Lean`, and an app bundle carries the module files such
+an import reads, since it can rely on no toolchain on the machine. Which
+files those are, and what a base with `Lean` costs, was measured from
+staged bundles (`tools/stage-bundle.sh`), on 2026-11-19, on an Apple M5
+Max, macOS 27.2, Lean 4.35.0, with
 
 ```sh
 mise run module-bench
@@ -1976,17 +2169,15 @@ reads, which `config-test bench-modules` lists.
 
 | | `Editor` | `Editor` with `Lean` |
 |---|---|---|
-| Modules the import reads | 700: `Init` 653, `Editor` 47 | 2,421: `Init` 653, `Std` 494, `Lean` 1,227, `Editor` 47 |
+| Modules the import reads | 907: `Init` 653, `Std` 139, `Editor` 115 | 2,489: `Init` 653, `Std` 494, `Lean` 1,227, `Editor` 115 |
 | File kinds the import reads | `.olean`, `.olean.server`, `.olean.private` | the same |
-| Bytes shipped, those kinds, whole directories | 734.6 MB | 1,728.1 MB |
-| Bytes shipped, those kinds, closure | 396.4 MB | 1,684.5 MB |
-| Of the closure: `.olean` / `.olean.server` / `.olean.private` | 126.5 / 11.6 / 258.4 MB | 360.0 / 30.6 / 1,293.9 MB |
-| Not shipped: `.ir` / `.ir.sig` of the closure | 18.4 / 0.1 MB | 354.4 / 0.4 MB |
-| `bench-start`: import, then first load of a 20-line config (median of 5) | 137.8 ms, 13.3 ms | 467.5 ms, 14.1 ms |
-| `bench-start`: real time (median of 5) | 0.17 s | 0.52 s |
-| `bench-start`: largest maximum resident set (of 5) | 406.3 MB | 1,205.5 MB |
-| The bundle's headless mode on `tests/headless/bundle`, `env -i`: real time (median of 5) | 0.18 s | not run |
-| The same: largest maximum resident set (of 5) | 406.1 MB | not run |
+| Bytes, those kinds, whole directories | 872.5 MB | 1,866.0 MB |
+| Bytes, those kinds, closure | 609.1 MB | 1,753.2 MB |
+| Of the closure: `.olean` / `.olean.server` / `.olean.private` | 254.2 / 16.4 / 338.5 MB | 428.7 / 30.6 / 1,293.9 MB |
+| Not shipped: `.ir` / `.ir.sig` of the closure | 25.5 / 0.1 MB | 354.4 / 0.4 MB |
+| `bench-start`: import, then first load of a 20-line config (median of 5) | 159.6 ms, 14.2 ms | 426.0 ms, 14.9 ms |
+| `bench-start`: real time (median of 5) | 0.21 s | 0.51 s |
+| `bench-start`: largest maximum resident set (of 5) | 559.4 MB | 1,247.2 MB |
 
 What the figures show:
 
@@ -1997,45 +2188,47 @@ What the figures show:
   executable, and the fixture's command, which calls compiled code of
   `Init` and of `Editor`, runs without them (`bundle-test`). The editor
   package's own modules have only `.olean` files; the toolchain's use the
-  module system, which reads all three. `.olean.private` is two thirds of
-  the bytes.
-- **`Editor` imports nothing of `Std`.** Its closure is all of `Init` and
-  47 of the package's modules, so the closure is 46% smaller than the whole
-  directories (`Std`'s 494 modules and the package's modules that `Editor`
-  does not import, the bindings, the config session and the headless mode,
-  are left out). The bundle ships the closure, and `bundle-test` stages
-  exactly it.
-- **With `Lean`, config would cost four times the bytes, about three times
-  the start-up, and three times the memory.** The closure saves little
-  there: `Lean` reaches nearly all of `Std` and all of `Init`.
+  module system, which reads all three. `.olean.private` is more than half
+  of the bytes.
+- **`Editor` reaches 139 of `Std`'s 494 modules and none of `Lean`'s.** Its
+  closure is all of `Init`, those and 115 of the package's modules, 30%
+  smaller than the whole directories.
+- **With `Lean`, the bytes are 2.9 times, the start-up 2.4 times and the
+  memory 2.2 times those of `Editor` alone.** The closure saves little
+  there: `Lean` reaches all of `Std` and all of `Init`.
 
-**The bundle ships the closure of the set's base since the packages
-roadmap's phase 6.** Config is elaborated on `Editor` and then the entry
-module of each package of the editor's set outside the core
-([packages.md](packages.md), "The config base of a set"): for the default
-set, `Editor`, `ShippedThemes.EditorPackage` and `Compile.EditorPackage`.
-`:editorApp` and `bundle-test` take that base's closure over the set's
-`.olean` directories, the core's and each default package's, and stage it
-into the bundle's one directory (`tools/stage-bundle.sh`, which takes the
-package directories joined with `:` and copies a module from the first
-that holds it). On 2026-11-19 that closure was 919 modules, 792 of the
-toolchain's and 127 of the editor's, ten of those the two packages'
-(`ShippedThemes` and its three, `Compile` and its five). `mise run
-module-bench` stages that bundle too, for the headless measurement, and
-on that date printed for it 616.0 MB in the three kinds, a median real
-time of 0.22 s for the headless mode on `tests/headless/bundle` with
-`env -i`, and a largest maximum resident set of 566.0 MB. The table above
-was not measured again: its 700 modules, 396.4 MB and 406 MB are the base
-of 2026-11-15, and the same run printed 907 modules (139 of them `Std`'s)
-and 609.1 MB for `Editor` alone, so the table and the sentences under it
-are behind the tree on their own account (the task
-`module-bench-figures-stale`).
+**The bundle ships the closure of the set's base with `Std` and `Lean`**
+(decided 2026-11-19, with config as modules). Config is elaborated on the
+set's base, `Editor` and then the entry module of each package of the
+editor's set outside the core ([packages.md](packages.md), "The config base
+of a set"): for the default set, `Editor`, `ShippedThemes.EditorPackage`
+and `Compile.EditorPackage`. A config file may import any module of `Std`
+or `Lean` beside it, and a bundled editor reads a module from the bundle
+alone, so `:editorApp` and `bundle-test` take the closure of that base with
+`Std` and `Lean` over the set's `.olean` directories, the core's and each
+default package's, and stage it into the bundle's one directory
+(`tools/stage-bundle.sh`, which takes the package directories joined with
+`:` and copies a module from the first that holds it). On 2026-11-19:
 
-Config imports what its set's base imports, and the bundle ships that
-set's closure, in those three kinds, about 396 MB beside the executable
-when it was measured. Whether
-config should be allowed `Lean` (for metaprogramming, say) is a later task,
-to be decided from these numbers.
+| | |
+|---|---|
+| Modules in the bundle | 2,501: `Init` 653, `Std` 494, `Lean` 1,227, `Editor` 117, `Compile` 6, `ShippedThemes` 4 |
+| Module files, the three kinds | 1,760.1 MB (616.0 MB for the 919 modules of the base alone, before) |
+| The bundle's headless mode, `env -i`, on a config that imports `Editor` alone (`tests/headless/generate`): real time (median of 5), largest maximum resident set | 0.24 s, 561.4 MB |
+| The same on a config that imports `Lean` (`tests/headless/bundle`) | 0.71 s, 1,294.0 MB |
+
+- **Carrying `Lean` costs disk, and start-up only for config that imports
+  it.** The module files are 2.9 times what they were; an editor whose
+  config does not import `Lean` starts as before and holds as much, since
+  the base grows only when a file imports a module it does not hold.
+- **The base does not start with everything linked.** Measured before the
+  decision: a base of every linked module cost 0.61 s and 1.40 GB resident
+  for each headless start against 0.23 s and 0.60 GB, which is also about
+  25 s more on the gate's headless runs.
+- **An editor reads a module of `Std` or `Lean` on its first import and
+  never twice in a process**: growing the base read what the two add in
+  165 ms and made the new environment in 154 ms in a prototype, with no
+  doubling of memory, and the environment it grew from stayed usable.
 
 **A dynamically linked build saves disk and nothing else**, so there is none.
 Lake has no option for one outside Windows; it would be link arguments of
@@ -2070,9 +2263,6 @@ slower, and it would tie the executable to a toolchain directory.
   with the config session: the base is safe to import beside a running
   editor thread only because every module in it is linked, so its
   initialisers are not run at import. An interpreted package's would be.
-- **A header for config chunks.** A chunk has no `import` line, so Lean's
-  tooling cannot check or format a config file by itself. Whether a chunk
-  should carry a header the session checks and skips is not decided.
 - **Overriding compiled features** beyond re-registration.
 - **Memory growth** with many packages loaded and with background jobs
   holding old environments.

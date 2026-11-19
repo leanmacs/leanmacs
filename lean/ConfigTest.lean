@@ -260,15 +260,20 @@ a config's registrations is `CompileTest.compileHookChecks`, on the same
 `setup` written as compiled code.
 
 A check controls time through a port, never by sleeping and hoping: a
-decorator of the elaborator port (`Gate`) holds one chunk's elaboration open
+decorator of the elaborator port (`Gate`) holds one file's elaboration open
 until the check lets it go, and a host's jobs wait on a fake clock
 (`Editor/Job/Fake.lean`) that only the check moves. Every wait is a poll with
 a bound, so broken code fails a check within seconds instead of hanging the
 executable. Each line a host emits is recorded with the thread that emitted
 it, which is how a check sees that a handler ran on the editor thread.
 
-All the checks share one import of the base, made once in `run`: a second
-import in one process about doubles its memory. Hosts follow one another on
+All the checks share one base, made once in `run` and grown when a check's
+config first imports a module it does not hold (`ConfigTest.sharing`): a
+second import of a module in one process about doubles its memory. The
+checks whose config imports `Lean` run last, since every environment made
+from a base that holds `Lean` costs a few times more. The module data of
+the config files the checks elaborate is written in a temporary directory
+of the run, removed when it ends. Hosts follow one another on
 the process's one editor queue and never overlap: every check stops its host
 before it returns.
 

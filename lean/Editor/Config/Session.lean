@@ -74,6 +74,13 @@ The decisions are here, in plain Lean with no elaborator in it:
 - `Source` is where the files come from. Its real adapter reads a
   directory (`Editor/Config/Directory.lean`).
 
+The core imports no adapter, and nothing of Lean's elaborator. Two modules
+of the editor link Lean's parser and elaborator, each the adapter of a
+port defined here: `Editor/Config/Elaborate.lean`, of the elaborator port,
+and `Editor/Config/Lakefile/Toml.lean`, which answers
+`PackageFiles.requires` with Lake's TOML loader
+(`docs/design/overview.md`, "Rules of the boundary").
+
 ## The package ports
 
 A config directory is also a Lake package (`Editor/Config/LakePackage.lean`),

@@ -33,8 +33,6 @@ storage, layout, rendering, the window and processes.
 - The pending key prefix and an input method's composition are not drawn.
 - A rejected reload shows only its first error in the window; the full
   report goes to stderr.
-- A config file has no `import` line: it sees only what the editor's
-  `Editor` module imports, not `Std` or `Lean`.
 - The download is for macOS on Apple silicon only. On Linux, build it from
   source; Windows has not been attempted.
 - The app is ad-hoc signed and not notarized, so macOS blocks its first
@@ -80,17 +78,39 @@ YYYYMMDDHHMMSS) and the commit.
 ## Config
 
 Config is Lean source in a directory: `~/.config/leanmacs`, or
-`$XDG_CONFIG_HOME/leanmacs` when that variable is set and not empty. Each
-`.lean` file directly in it is one chunk, and the chunks are elaborated in
-the byte order of their names (`10-keys.lean` before `20-setup.lean`).
-One of them defines `setup : SetupM Unit`, which registers commands, key
-bindings and options; the editor runs it once the chunks elaborate. The
-config is loaded at start and again on `:reload`, with no restart. A
-default directory that does not exist loads nothing.
+`$XDG_CONFIG_HOME/leanmacs` when that variable is set and not empty. The
+directory is a small Lean package:
 
-An example, as `~/.config/leanmacs/10-init.lean`:
+```
+init.lean            the root: the one file whose `setup` the editor runs
+Config/Keys.lean     any other config file: the module `Config.Keys`
+lakefile.toml        generated when absent
+lean-toolchain       generated when absent
+```
+
+- `init.lean` defines `setup : SetupM Unit`, which registers commands, key
+  bindings and options. The editor runs it once the config elaborates.
+- Every file is a Lean module and writes its own header: `import Editor`,
+  then `open Editor` to name the editor's declarations with no prefix.
+- A file may also import `Lean`, `Std`, a module of a package the editor
+  was built with, and another config file. A config file other than
+  `init.lean` lives under `Config/` and is imported by its module name:
+  `Config/Keys.lean` is `import Config.Keys`. An import of anything else is
+  refused, naming the module.
+- Only the `setup` that `init.lean` itself defines is run. A file under
+  `Config/` exports its programs under names of its own, and the root's
+  `setup` calls them; a `setup` defined in another file is not run.
+
+The config is loaded at start and again on `:reload`, with no restart. A
+reload elaborates the files that changed and the files that import them,
+and no other. A default directory that does not exist loads nothing.
+
+An example, as `~/.config/leanmacs/init.lean`:
 
 ```lean
+import Editor
+open Editor
+
 -- A command of your own: it says hello in the bottom row.
 def hello : EditorM Unit :=
   message "hello from my config"
@@ -108,7 +128,47 @@ Save it, then start the editor or type `:reload`, and `C-c h` or `:hello`
 says hello. If it fails to elaborate, the bottom row shows the first error
 and the old config stays. Everything `setup` can register is in
 [`lean/Editor/Setup.lean`](lean/Editor/Setup.lean), and each config under
-[`tests/headless/`](tests/headless/) is a small working example.
+[`tests/headless/`](tests/headless/) is a small working example;
+[`tests/headless/modules`](tests/headless/modules/config/init.lean) is one
+of several files.
+
+### The generated files, and the language server
+
+The editor writes `lakefile.toml` and `lean-toolchain` into the config
+directory when they are not there, and never changes one that is. They make
+the directory a Lake package whose Lean is the editor's, so Lean's language
+server, started in the directory by any editor, checks a config file as
+leanmacs elaborates it.
+
+- An editor run from a checkout writes both. Its lakefile requires the
+  package set the editor was built from, by that set's directory.
+- The app writes `lean-toolchain` alone for now: it ships no package set
+  for a lakefile to require.
+- The lakefile's library is every module under `Config/`. `init.lean` is in
+  no library, on purpose: on a file system that ignores case, a built
+  `init.olean` is found for Lean's own `Init`. Do not add `init` to a
+  library by hand.
+- The language server is stricter than the editor in one way: the editor
+  lets a file use a module another file made it load, and the server wants
+  each file to import what it uses.
+
+### Converting an older config
+
+Config used to be `.lean` files directly in the directory, with no header,
+elaborated in the byte order of their names (`10-keys.lean` before
+`20-setup.lean`). The editor refuses such a directory and says so. From a
+checkout, this converts it:
+
+```sh
+mise run config-migrate                 # ~/.config/leanmacs
+mise run config-migrate -- <config dir> # another directory
+```
+
+Each file but the last becomes `Config/<Name>.lean` and the last becomes
+`init.lean`; each gets the header and an import of the file before it. The
+converted config loads when its `setup` was defined in its last file. If
+`setup` was in an earlier file, the editor says that `init.lean` defines
+none: move the definition there.
 
 From source, `mise run edit` loads the same directory, or another given
 with `--config <dir>`. The app reads it too. Started from Finder it gets launchd's
@@ -189,10 +249,11 @@ mise run dmg-check    # checks that image
 
 `mise run install` keeps no backup of the app it replaces. When
 `~/.config/leanmacs` does not exist it installs the default config,
-[`config/default`](config/default/05-leader.lean), a starter Doom-style
+[`config/default`](config/default/init.lean), a starter Doom-style
 `SPC` map (`SPC f f` finds a file). An existing config is left as it is:
-to add the map to it, copy `config/default/05-leader.lean` in and call
-`leaderMap` from its `setup`.
+to add the map to it, copy `config/default/Config/Leader.lean` to its
+`Config/` directory, write `import Config.Leader` in its `init.lean` and
+call `leaderMap` from its `setup`.
 
 The app holds its own Lean toolchain modules
 ([building.md](docs/dev-practices/building.md), "The app bundle"). Finder

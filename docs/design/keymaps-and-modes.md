@@ -5136,12 +5136,12 @@ runs its command, through a host) and `ConfigTest.defaultConfigChecks`
   puts in `~/.config/leanmacs` when none is there. The Vim scheme itself
   binds nothing under the leader; the starter map is config's (the owner,
   2026-11-17).
-  - **The map is `leaderMap`** in `05-leader.lean`, apart from `setup` in
-    `90-setup.lean`, which calls it. A config has one `setup`, so to use
-    the map in a config of one's own, copy `05-leader.lean` in and call
-    `leaderMap` from that config's `setup`. Chunks elaborate in the byte
-    order of their file names, and `05-` sorts before the usual `10-`
-    chunks, so `leaderMap` is defined where such a `setup` is.
+  - **The map is `leaderMap`** in the config file `Config/Leader.lean`,
+    apart from `setup` in the root, `init.lean`, which imports that file
+    and calls it. The editor runs only the root's `setup`, so to use the
+    map in a config of one's own, copy `Config/Leader.lean` into it, write
+    `import Config.Leader` in its `init.lean` and call `leaderMap` from
+    that `setup`.
   - **The keys follow Doom Emacs's `SPC`**, each with a `desc` and each
     prefix named: `SPC .` and `SPC ,` find a file and switch buffer;
     `SPC :` executes a command by name ("Running a command by name");
@@ -5157,7 +5157,7 @@ runs its command, through a host) and `ConfigTest.defaultConfigChecks`
     Doom: `SPC w o` is `window-only`, as evil's map has it, and this
     editor's layout commands (`z`, `m`, `M`, `,`, `.`, `H J K L`, `F`) sit
     on the letters `C-w` gives them. Keys with no registered command are
-    left out. `05-leader.lean` holds the full list. Doom labels `SPC :` `M-x`; here it is
+    left out. `Config/Leader.lean` holds the full list. Doom labels `SPC :` `M-x`; here it is
     `Execute command`, since a Vim-first editor has no `M-x`. Doom's
     "project" is the repository and its `SPC SPC`, `SPC p f` and
     `SPC p p` read "Find file in project" and "Switch project"; here the
@@ -5606,7 +5606,7 @@ on a real file in the headless executable (`tests/headless/session/`,
 
 ### Config
 
-A reload fails as a whole if any chunk fails to elaborate, and `#guard` is
+A reload fails as a whole if any file fails to elaborate, and `#guard` is
 part of elaboration. So keymap tests written in config run on every reload,
 and a failing one keeps the old config.
 

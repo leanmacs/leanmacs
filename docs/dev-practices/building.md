@@ -116,15 +116,19 @@ Leanmacs.app/Contents/Resources/lean/editor/               the editor's modules
 
 The modules are the closure of the default set's config base, the modules
 config is elaborated on (`Editor`, then the entry module of each default
-package, `ShippedThemes.EditorPackage` and `Compile.EditorPackage`), the
-packages' modules in the same one directory as the core's, so the bundle
-holds `Contents/Resources/lean/editor/Compile.olean` beside
-`Editor.olean`. Each is there as its `.olean`, `.olean.server` and
+package, `ShippedThemes.EditorPackage` and `Compile.EditorPackage`), with
+every module of `Std` and `Lean`, which a config file may import
+([`lean-runtime.md`](../design/lean-runtime.md), "What config may import,
+measured"). The packages' modules are in the same one directory as the
+core's, so the bundle holds `Contents/Resources/lean/editor/Compile.olean`
+beside `Editor.olean`. Each is there as its `.olean`, `.olean.server` and
 `.olean.private` files: the
 layout and the file kinds `mise run bundle-test` stages
 ([`headless-mode.md`](headless-mode.md), "From an app bundle"), laid out by
-the same `tools/stage-bundle.sh`. On 2026-11-15 that was 2,006 files,
-382 MB, beside a 196 MB executable: 579 MB in all. `Info.plist` names the
+the same `tools/stage-bundle.sh`. On 2026-11-19 that was 7,249 files of
+2,501 modules, 1,760 MB, beside a 232 MB executable: 1,995 MB in all. It
+was 849 MB before the bundle carried `Lean`'s modules, which are two thirds
+of it now. `Info.plist` names the
 bundle identifier `io.github.leanmacs.Leanmacs`, the executable `editor`,
 the icon, `NSHighResolutionCapable`, `LSArchitecturePriority` arm64 and
 `LSMinimumSystemVersion`, the lowest macOS the bundle has been run on:

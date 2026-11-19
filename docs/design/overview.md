@@ -124,13 +124,29 @@ what not to add.
   compiled frames are skipped. Don't add a guard, a terminate or signal
   handler, or a C++ source to the glue to catch it; see
   [lean-runtime.md](lean-runtime.md).
-- **Config is elaborated behind a port.** `Editor/Config/Elaborate.lean` is
-  the only module that imports Lean's elaborator. The config session's
-  decisions are plain Lean, tested by `lake test` on fakes, with no
-  elaborator.
+- **Config is elaborated behind a port, and two adapters link Lean's
+  frontend.** The config session's decisions are plain Lean, tested by
+  `lake test` on a pure model of the elaborator port, with no elaborator.
+  Two modules link Lean's parser and elaborator, each an adapter of a port
+  the session core defines, and no other module does:
+  - `Editor/Config/Elaborate.lean` answers the elaborator port: it turns a
+    config file into a module with Lean's own frontend. The model and it
+    are held to one contract (`Editor/Config/Elaborator/Contract.lean`).
+  - `Editor/Config/Lakefile/Toml.lean` answers one function of the package
+    port, the names a `lakefile.toml` requires, with Lake's TOML loader,
+    which parses with Lean's parser and elaborates what it parsed. It is
+    the only module that names a Lake type. Lake is not run.
+
+  Both are core modules that the hosts import (`Editor/Headless.lean`), so
+  the core's root reaches them (`Editor/Core.lean`,
+  `tools/core-imports-check.sh`, rule 2), and every executable that links
+  one links the other: the editor, `config-test` and `ffi-test`. Neither is
+  part of the config base: `Editor` (`Editor.lean`) imports neither, so
+  config cannot name them, and `model-test` links neither.
 - **Only modules of the package go under `lean/`.** lean-fmt compiles every
   `.lean` file there. Config fixtures live under `tests/`, and tests write
-  their chunks from strings. A package outside the core keeps its headless
+  their config files from strings, into a temporary directory or a source
+  held in memory. A package outside the core keeps its headless
   fixtures under its own `tests/` and excludes them from the formatter
   ([packages.md](packages.md), "A package's tests and the gate's steps over
   them").

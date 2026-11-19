@@ -36,18 +36,66 @@ mise run config-bench
 ```
 
 This measures the config session in the executable as built, and asserts
-nothing, so it is not part of the gate either. It runs `config-test`'s three
+nothing, so it is not part of the gate either. It runs `config-test`'s
 benchmark subcommands, each in a fresh process under `/usr/bin/time -l`,
 which adds the process's real time and its maximum resident set size:
 
 | Subcommand | Measures |
 |---|---|
 | `bench-start <sysroot> <olean dir> <module>…` | How long importing the base with those modules takes, and the first load of a 20-line config. Run for `Editor`, for `Editor Std` and for `Editor Lean`. |
-| `bench-reload <sysroot> <olean dir>` | The median and the maximum of 20 reloads each of a one-line chunk, a 20-line config, and 50 definitions with a `simp` proof. |
-| `bench-soak <sysroot> <olean dir> <count>` | The mean time of a reload over that many reloads of the 50-definition config. Run with 100 and with 500: about equal resident set sizes mean replaced configs are freed. |
+| `bench-reload <sysroot> <olean dir>` | The median and the maximum of 20 reloads each of a one-line root, a 20-line config, 50 definitions with a `simp` proof, and a config of two files, the 50 definitions in a config file the root imports, on a base that holds `Lean`. |
+| `bench-soak <sysroot> <olean dir> <count>` | The mean time of a reload over that many reloads of a config that is its root alone: the 50 definitions in a root that imports `Lean` and uses it. |
+| `bench-soak-modules <sysroot> <olean dir> <count>` | The same for a config of two files: a root that imports `Lean` and a config file that changes each round, so each reload writes a module file and makes an environment that imports it. |
+
+Each soak is run with 100 and with 500 reloads by `tools/soak-ratio.sh`,
+which prints the subcommand's own line for each and then one line with the
+two maximum resident set sizes and the second as a change from the first:
+
+```
+bench-soak: resident after 100 reloads 1440.3 MB, after 500 reloads 1440.0 MB: -0.0%
+bench-soak-modules: resident after 100 reloads 1635.9 MB, after 500 reloads 1671.9 MB: +2.2%
+```
+
+About equal sizes mean replaced configs are freed; the phase that made
+config modules set 5% as the bound, and
+[lean-runtime.md](../design/lean-runtime.md), "Config and reload", records
+the figures and why the second soak grows a little. Memory is reported,
+never gating. The second soak takes about three minutes.
 
 A time is from the request for a reload to its report. The config is held in
-memory, so the benchmark touches no files. Run it on a quiet machine.
+memory, so the benchmark reads no config file; the soak of two files writes
+its module files to a temporary directory of the system's and removes it.
+Run it on a quiet machine.
+
+## Converting a config in the old form
+
+```sh
+mise run config-migrate                  # ~/.config/leanmacs
+mise run config-migrate -- <config dir>  # another directory
+```
+
+This converts a config directory from the form the editor no longer loads,
+`.lean` files in byte order with no header, to a root `init.lean` and
+modules under `Config/` (`tools/config-migrate.sh`, whose header says what
+it moves and what it refuses). It is run by hand, on a real config
+directory, which is why it is no part of the gate: the gate runs the same
+script on a temporary copy of a fixture
+([the-gate.md](the-gate.md), "The config directory").
+
+- Each file but the last, in byte order, is moved to `Config/<Name>.lean`,
+  `<Name>` being its name without its leading digits, in upper camel case,
+  and the last to `init.lean`. Each gets `import Editor`, an import of the
+  file before it, and `open Editor`, so each still sees every file before
+  it.
+- It prints each move, and changes nothing but the files it moves.
+- **The converted config loads when its `setup` was defined in its last
+  file.** The editor runs the `setup` that `init.lean` defines and no
+  other, so a config whose `setup` was in an earlier file is converted and
+  then refused, with a diagnostic that says the root defines none, until
+  the definition is moved to `init.lean`.
+- It refuses, and changes nothing, a directory that already holds an
+  `init.lean`, two files that give one module name, and a file whose name
+  gives none.
 
 ## What config may import, measured on demand
 
@@ -69,11 +117,14 @@ olean.private`, then that with `ir ir.sig`, and importing from each; and,
 with the closure staged with the kinds it needs, five runs of `bench-start`
 under `/usr/bin/time -l`. Then, once, the bundle as it is shipped: the
 editor is the default package set's, which elaborates config on the set's
-base (`Editor`, then the entry module of each default package), so the
-script stages that base's closure from the directories the build recorded
+base (`Editor`, then the entry module of each default package), and a
+config file may import `Std` and `Lean`, so the script stages the closure
+of that base with `Std` and `Lean` from the directories the build recorded
 beside the editor, as `bundle-test` does, prints its modules and bytes,
 and times five runs of that bundle's headless mode with an empty
-environment. Every temporary
+environment on each of two configs: `tests/headless/generate`, whose root
+imports `Editor` alone, and `tests/headless/bundle`, whose root imports
+`Lean`, so the base grows to hold it. Every temporary
 directory is removed by a trap. It takes about two minutes and a few GB of
 temporary disk. The figures, and what they decided, are in
 [`lean-runtime.md`](../design/lean-runtime.md), "What config may import,
@@ -208,7 +259,13 @@ iconset`, which must hold exactly the ten standard images, each read by
 ImageIO (`sips`) at its nominal size, 16 to 1024 pixels; and runs the
 copy's `Contents/MacOS/editor headless` on `tests/headless/bundle` with no
 directory argument, an empty environment (`env -i`) and `/` as the working
-directory, which must exit 0 and print exactly `expected`; and runs the
+directory, which must exit 0 and print exactly `expected` (the fixture's
+root imports `Lean`, so the bundle carries Lean's module files); runs its
+`editor headless --generate` the same way on a copy of
+`tests/headless/generate`, whose config directory holds `init.lean` alone,
+which must load the config, say that no lakefile is generated, and leave a
+`lean-toolchain` equal to `lean/lean-toolchain` and no `lakefile.toml`,
+since the bundle holds no package set to require; and runs the
 copy's `editor --version` the same way, which must print exactly the
 version, `build <ID>` and `commit <SHA>` lines, so the Lean plist reader
 reads the keys the build writes. Last, it builds
@@ -337,7 +394,8 @@ with the built bundle, the default package set's
 (`packages/.lake/build/Leanmacs.app`), by `ditto`, and verifies its
 signature. When
 `~/.config/leanmacs` does not exist it installs the default config
-`config/default` there, a starter `SPC` map (which the gate's
+`config/default` there, its root `init.lean` and the config file
+`Config/Leader.lean`, a starter `SPC` map (which the gate's
 `config-test` loads, [`the-gate.md`](the-gate.md)); an existing config is
 never touched, and the script only says where the default config is. It
 keeps no backups, since any commit's app can be rebuilt, and deletes the

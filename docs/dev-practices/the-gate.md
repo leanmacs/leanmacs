@@ -1059,6 +1059,13 @@ window mode elaborated config on the base it was handed: on `Editor`
 alone the reload is rejected with `Unknown identifier`. The base is an
 argument of `Window.host` and `Headless.shipped` with no default, so a
 caller that leaves it out does not build.
+`ffi-test window-host-generate <sysroot> <olean dir> <config dir>` runs it
+handed a generator, as the editor's `main` hands the window mode one, on a
+temporary copy of `tests/window/title-bar/config`, which holds a root and
+neither generated file. It exits 0 only when the start-up reload created
+the directory's `lean-toolchain` and `lakefile.toml` and loaded the
+config, so only when the window mode handed the session the generator it
+was handed ("The config directory", below).
 `ffi-test window-host-direct <editor> <sysroot> <config dir>` runs that
 again as the editor at `<editor>` starts when run directly with
 `--sysroot` and `--config` and no `--oleans`: the command line is read for
@@ -1089,20 +1096,23 @@ stderr that starts `editor: no Lean toolchain`.
 installed editor will find its modules. In a temporary directory removed by
 a trap, `tools/stage-bundle.sh` lays out `Leanmacs.app`: a copy of `editor`
 in `Contents/MacOS`, and the `.olean`, `.olean.server` and `.olean.private`
-files of the modules the default set's config base imports under
+files of the modules the default set's config base imports, and of every
+module of `Std` and `Lean`, which a config file may import, under
 `Contents/Resources/lean/toolchain/lib/lean` and
 `Contents/Resources/lean/editor`. The base is asked of Lake (`lake -d
 ../packages query :editorBase`: `Editor`, then the entry module of each
-default package), `config-test bench-modules` lists its closure, and the
-modules are searched for, and copied from, the directories the build
+default package), `config-test bench-modules` lists the closure of it with
+`Std` and `Lean`, and the modules are searched for, and copied from, the directories the build
 recorded beside the editor, the core's and each default package's, all
 into the bundle's one directory. The copy then runs
 `editor headless <config dir> <script file>` on `tests/headless/bundle`
 with no directory argument, an empty environment (`env -i`: no `HOME`,
 `PATH` or `LEAN_PATH`) and a working directory outside the bundle; it must
 exit 0 and print exactly `expected`, whose command calls compiled code of
-`Init` and of `Editor`. So the executable found the toolchain and its own
-`.olean` files from its own path, and those three file kinds are enough to
+`Init` and of `Editor`, and whose root imports `Lean` and names a
+declaration of Lean's elaborator, so it loads only from a bundle that
+carries Lean's module files. So the executable found the toolchain and its
+own `.olean` files from its own path, and those three file kinds are enough to
 import and run config: outside a bundle the same command line is refused,
 and the build tree's `.olean` directory is not beside the copy. The same
 copy then runs three fixtures of the default packages the same way, each
@@ -1113,7 +1123,14 @@ package of that name, whose config names `solarized-light`;
 config is written on `Compile.cargoMode`, `Compile.Format` and
 `Compile.shipped`. The last two elaborate only if the bundle's one
 directory holds the packages' module files beside the core's: a bundle
-has no record. It has a
+has no record. Then **the generated files**: the copy runs
+`editor headless --generate` on a copy of `tests/headless/generate`, whose
+config directory holds `init.lean` alone. The config must load, with the
+fixture's `expected` and one line more, the information that no lakefile is
+generated; the directory must then hold a `lean-toolchain` that is
+`lean/lean-toolchain` byte for byte, and no `lakefile.toml`: a staged
+bundle holds no package set (`Contents/Resources/lean/set`) for a lakefile
+to require, as the app does not yet. It has a
 time limit of its own, 120 seconds, for copying the executable and the
 module files. Then it checks `editor --version` through `IO.appPath` and
 the real file read (`lean/Editor/Version.lean`): `tests/headless/bundle/
@@ -1196,20 +1213,27 @@ delivered.
 
 `config-test` (`lean/ConfigTest.lean`) is linked like the editor, with
 Lean's elaborator, and is given the toolchain's directory and the package's
-`.olean` directory as arguments. It checks the real elaborator and the
-directory source against what the model tests' fakes assume, and runs the
-headless host in-process on the real event queue and the real text binding:
-a reload replaces a command; a type error, a throwing `setup` and a chunk
-that declares `initialize` each keep the old config; a reload does not
+`.olean` directory as arguments. It holds the real elaborator to the
+elaborator port's contract, the same properties `model-test` holds of the
+port's pure model (`lean/Editor/Config/Elaborator/Contract.lean`), checks
+what only Lean's elaborator can show of a config file as a module, the
+directory source, and the adapter that reads a lakefile's requires, and
+runs the headless host in-process on the real event queue and the real text
+binding: a reload replaces a command; a type error, a throwing `setup` and
+a file that declares `initialize` each keep the old config; after a change
+to one config file a reload elaborates that file and the files that import
+it, and no other; a root that imports a module that is not linked is
+rejected, naming the module, and the old config stays; a reload whose root
+first imports `Lean` installs; a reload does not
 register a command twice; a store's value survives a reload and is migrated
 when its type changes; a command the library refuses is reported as refused
-and leaves its store as it was; the editor answers events while a chunk
+and leaves its store as it was; the editor answers events while a file
 elaborates; reloads are serialised; a script that cannot run to its end
 says why; a job's command that sets a mode with a syntax tree reaches the
 host's syntax tree; a parse of a highlighted text the library delivers
 makes the host publish a scene, with no key pressed; and, in a Rust buffer
 of a host of the Vim scheme that ships, `v a f` selects the enclosing
-function and `d a f` deletes it. Its config directories are temporary directories of its own.
+function and `d a f` deletes it. Its config directories are temporary directories of its own, and so is the directory the module data of the config files it elaborates is written to.
 Its fourth argument is the default config `mise run install` ships
 (`config/default`), which it reads and never writes: `defaultConfigChecks`
 pin that a reload of it installs with no diagnostic and `SPC f f` then
@@ -1245,6 +1269,77 @@ need a process each:
 The conventions every binding follows, and the test that pins each, are in
 the crate docs of `crates/editor-ffi/src/lib.rs` and the module docs of
 `lean/Editor/Ffi.lean`.
+
+## The config directory
+
+Four things about a config directory are checked on built editors, in
+`ffi-test`, each on fixtures under `tests/`. The headless mode is run on a
+checked-in config directory with no `--generate`, so it writes nothing
+there; everything that is generated or converted is in a temporary
+directory the script makes and removes.
+
+- **Config as modules** (`tests/headless/modules`, `not-linked`,
+  `needs-rebuild`): three fixtures the default set's editor runs, each
+  diffed against its `expected`.
+  - `modules`: a root that imports `Lean`, the compile package's `Compile`
+    and two config files. The command a program of `Config/Keys.lean`
+    registers runs, since the root's `setup` calls it; the command the
+    `setup` of `Config/Unused.lean` registers is no command.
+  - `not-linked`: a root that imports `Lake` is rejected with one
+    diagnostic, at the import, that names the module.
+  - `needs-rebuild`: a root that imports `Greeting`, in a directory whose
+    `lakefile.toml` requires the fixture package `greeting`. The default
+    set's editor rejects it and says the package set needs a rebuild
+    (`expected`); the fixture set's editor, which links the package, loads
+    it (`installed-expected`). A third line fails if the fixture's config
+    directory holds anything but its two tracked files.
+- **The old form** (`tools/config-migrate-check.sh`, on
+  `tests/config-migrate`). `chunks/` is a config directory kept in the old
+  form on purpose: two files with no header, and no `init.lean`.
+  1. On it the editor must print `refused-expected`: `reload 1: rejected`
+     and one diagnostic that names the two files and
+     `mise run config-migrate`.
+  2. A temporary copy, converted by `tools/config-migrate.sh`, must hold
+     `init.lean` and `Config/Leader.lean` and no other file, and on it the
+     editor must print `migrated-expected`: the config loads and its command
+     runs.
+  3. The script must refuse, with status 1 and the directory left as it
+     was, a directory that already holds an `init.lean` and one where two
+     files give one module name, and convert nothing in a directory with no
+     `.lean` file.
+- **The generated files** (`tools/config-package-check.sh`, on
+  `tests/headless/generate`, whose config directory holds `init.lean`
+  alone).
+  1. The default set's `editor headless --generate`, on a temporary copy,
+     must print the fixture's `expected`, and leave a `lean-toolchain` that
+     is `lean/lean-toolchain` byte for byte and a `lakefile.toml` that
+     requires the set by its Lake name and its directory.
+  2. A second run must leave both files as they were.
+  3. A run without `--generate` on another copy must leave neither.
+
+  It must print `config-package: generated lakefile.toml and
+  lean-toolchain, the config loaded, and a second run wrote nothing`.
+  `bundle-test` has the staged bundle do the same, where no lakefile is
+  generated ("the generated files", above), and `ffi-test
+  window-host-generate` hands the window host a generator on a temporary
+  copy of `tests/window/title-bar/config`, which must then hold both files.
+- **The language server** (the same script, then `config-test lsp`,
+  `lean/ConfigTest/Lsp.lean`). The root and the config file of
+  `tests/config-package/lsp` are put in the directory the first step
+  generated: a root that imports `Lean`, `Compile` and `Config.Keys` and
+  holds one type error, on line 8 at column 19. `config-test lsp` starts
+  `<sysroot>/bin/lake serve` there, opens the root over the language server
+  protocol and waits until it is elaborated. The server must report that
+  one error and no other, so no import failed, and the check must print
+  `config-test lsp: init.lean: no import error, and the type error is at
+  8:19`. It takes about three seconds and needs no network: the generated
+  lakefile requires the set by path, and Lake writes `lake-manifest.json`
+  and `.lake/` in the temporary directory and nothing under `lean/` or
+  `packages/`. It gives up after three minutes.
+
+`mise run config-migrate` itself is run by hand, on a real config directory
+([`on-demand-checks.md`](on-demand-checks.md)); the gate runs its script on
+the copy alone.
 
 ## The host imports check
 
@@ -1668,6 +1763,6 @@ over the core and then over each package of the fixture set
   `lean-toolchain`, which is one reason every package holds a copy of the
   pin.
 - **A package's headless fixtures are excluded** by a `lean-fmt.toml` in
-  the package (`exclude = ["tests/**"]`): a config chunk does not compile
-  as a module. The core has no such file, since its fixtures are outside
+  the package (`exclude = ["tests/**"]`): a config file is a module of a
+  config directory, another Lake package, and is not built with this one. The core has no such file, since its fixtures are outside
   `lean/`.
