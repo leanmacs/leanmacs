@@ -795,6 +795,8 @@ def saved (order : SaveOrder) (reply : Except FileError File.Stamp) : EditorM Un
   match reply with
   | .ok _ =>
     message (wrote order.path)
+    -- The working sets that hold ranges of the file are written too.
+    WorkingSet.fileSaved order.buffer
     if let some start := order.after then
       if let .error refusal← startJob start.name start.arguments start.key then
         message s!"{start.name}: {refusal.describe}"

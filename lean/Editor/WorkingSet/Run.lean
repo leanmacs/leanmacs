@@ -3,6 +3,7 @@ import Editor.Command.Call
 import Editor.Files
 import Editor.Job
 import Editor.Jumps.Go
+import Editor.WorkingSet.Disk
 import Editor.WorkingSet.Places
 import Editor.Workspace.Attach
 
@@ -37,8 +38,11 @@ called with.
   new set.
 - A range whose file and span are in the set already is not added, and
   `already in <name>` is said; otherwise `<name>: added <path>:<line>`.
-- Until a workspace's sets are read from disk, they are kept in memory
-  only.
+- The workspace's sets are read first (`ensureRead`,
+  `Editor/WorkingSet/Disk.lean`); when that starts their load, the add runs
+  again once it is done. A range added asks for the sets to be written
+  (`requestWrite`). With no state directory the first add also says, once,
+  that working sets are not kept across restarts.
 
 ## Opening
 
@@ -122,11 +126,6 @@ def namesOf (kept : Kept) : Array String :=
   | some last => if names.contains last then #[last] ++ names.filter (· != last) else names
   | none => names
 
-/-- What `kept` is once it is known to be held in memory: in memory only
-when it was not read. The disk is read in a later step of this phase. -/
-def inMemory (kept : Kept) : Kept :=
-  if kept.disk == .notRead then { kept with disk := .memoryOnly } else kept
-
 /-! ## Adding -/
 
 /-- The bytes of the row the offset `offset` of `text` is on, with its line
@@ -191,15 +190,27 @@ def addTo (id : BufferId) (start stop : Nat) (name : String) : EditorM Unit := d
   let some (location, root, _) :=
     workspaceOfBuffer state id | message (noWorkspace addName buffer.name)
   let some relative := relativeIn root file.path | message (noWorkspace addName buffer.name)
-  let (kept, added) ← addRange (inMemory (keptAt state location)) name id relative start stop
-  setKept location kept
+  let continuation : Invocation :=
+    { command := addName,
+      arguments := [.str name, .bool true, .nat id.index, .nat start, .nat stop] }
+  unless ← ensureRead location continuation do
+    return
+  let (kept, added) ← addRange (keptAt (← editorState) location) name id relative start stop
   match added with
   | .already =>
+    setKept location kept
     message (alreadyIn name)
   | .added index =>
     let line :=
       ((kept.sets.find? (·.name == name)).bind (·.ranges[index]?)).map (·.stored.start.line)
-    message (addedSentence name relative (line.getD 1))
+    let said := addedSentence name relative (line.getD 1)
+    if kept.disk == .memoryOnly && !kept.said then
+      setKept location { kept with said := true }
+      message s!"{said}; {memoryOnlySentence}"
+    else
+      setKept location kept
+      message said
+    requestWrite location
 
 /-- `working-set-add` ("Adding", in the module docs): with an answer and the
 span the prompt carried, adds it; otherwise the window's selection, to the
@@ -438,7 +449,9 @@ def filesWork (arguments : List Argument) : Work := fun _ => do
 `root` and label `label`, in `call`'s window ("Opening", in the module
 docs). -/
 def openSet (call : Call) (location : Location) (root label name : String) : EditorM Unit := do
-  let kept := inMemory (keptAt (← editorState) location)
+  unless ← ensureRead location { command := openName, arguments := [.str name] } do
+    return
+  let kept := keptAt (← editorState) location
   unless kept.sets.any (·.name == name) do
     message (noSuchSet name label)
     return

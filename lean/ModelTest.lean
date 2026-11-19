@@ -153,6 +153,7 @@ import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.WindowCommands
 import ModelTest.Editor.WorkingSet
+import ModelTest.Editor.WorkingSet.Disk
 import ModelTest.Editor.WorkingSet.Places
 import ModelTest.Editor.WorkingSet.Refind
 import ModelTest.Editor.WorkingSet.Run
@@ -1079,7 +1080,15 @@ alone too:
   from; a row of project search's results pinned as its file's range; a
   selection across two files refused; a cursor's row; a range added twice;
   overlapping ranges in one excerpt; the prompt; and a set there is none
-  of.
+  of;
+- `workingSetDiskChecks`: the sets on disk (`Editor/WorkingSet/Disk.lean`)
+  on that driver with the state directory `/state` and the version-control
+  interface's model at `/r`, the second acceptance criterion: three ranges
+  written with `HEAD`'s commit; a fresh editor over the same files, one of
+  them edited by another program, opening the set as a changed, a moved
+  and a drifted range; the drifted form not moved by a later write; memory
+  only with no state directory; a newer or unparsable store left alone; no
+  repository; and the writes a save and a close make.
 
 Listing a workspace's files is checked in Lean alone too:
 
@@ -1253,6 +1262,7 @@ def checks : List Check :=
     workingSetRefindChecks ++
     workingSetPlaceChecks ++
     workingSetRunChecks ++
+    workingSetDiskChecks ++
     driverChecks ++
     promptChecks ++
     candidateChecks ++

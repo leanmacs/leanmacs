@@ -74,7 +74,7 @@ def workingSetRunChecks : List Check :=
           | some driver =>
             let added := addedDemo driver
             let shownSet := ran (evilFed added "<Escape>") WorkingSet.openName [.str "demo"]
-            added.loop.state.echo == "demo: added a.txt:2" &&
+            added.loop.state.echo == s!"demo: added a.txt:2; {WorkingSet.memoryOnlySentence}" &&
               shown shownSet == some (setBuffer "demo") &&
               excerptRead shownSet (setBuffer "demo") == some "bravo two\ncharlie three\n" &&
               headersOf shownSet (setBuffer "demo") == #["a.txt:2"] &&

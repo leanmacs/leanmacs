@@ -34,7 +34,12 @@ file commands (`Editor/Files.lean`) and the buffer commands
   closed): each range held in the buffer gets its stored form refreshed
   from the text now (`refreshed`: the quote, its context and its points;
   the path, the commit and the note kept) and becomes detached, its markers
-  given up. It answers whether anything was detached.
+  given up, and a write of the workspace's sets is asked for
+  (`requestWrite`). It answers the workspaces where anything was detached.
+- **A save** of a buffer holding a range of a workspace's read sets asks
+  for a write of them (`fileSaved`, called by `Files.saved` once the file
+  is written). The write is a job started by name, so this module does not
+  import the one that does it (`Editor/WorkingSet/Disk.lean`).
 - **Attach** (`attach`, called by `Files.adopt` once a buffer holds a
   file): in every workspace whose sets are read, or kept in memory, each
   detached range of the file (by its path relative to the workspace's root)
@@ -281,6 +286,36 @@ def refreshed (range : Range) : EditorM Range := do
   return { range with
       stored := capture content first last range.stored.path range.stored.commit range.stored.note }
 
+/-- The name of the job that writes a workspace's working sets: it reads the
+commit `HEAD` is at, and its command refreshes and renders the sets and
+starts the save (`Editor/WorkingSet/Disk.lean`). -/
+def writeJob : String :=
+  "working-set-write"
+
+/-- Asks for the working sets of the workspace at `location` to be written
+("When it is written", `Editor/WorkingSet/Disk.lean`): the job `writeJob`
+is started by name, keyed by the root, so a newer write cancels an older
+one still asking for the commit. Nothing is asked when the sets are not
+read (not read yet, unreadable or in memory only), when there is no state
+directory, or when no write job is registered. -/
+def requestWrite (location : Location) : EditorM Unit := do
+  let state ← editorState
+  unless (keptAt state location).disk == .read do
+    return
+  let some directory := state.stateDirectory | return
+  let some root := localRoot? location | return
+  let (settings, _) ← RegistryRequest.ask .workspaceSettings
+  discard <|
+      startJob writeJob [.str root, .str settings.git, .str directory.toString] (key :=
+        some s!"{writeJob} {root}")
+
+/-- Asks for a write of each workspace whose read sets hold a range in the
+buffer `id`, which was saved (`Files.saved`). -/
+def fileSaved (id : BufferId) : EditorM Unit := do
+  for (location, _, kept) in stores (← editorState) do
+    if kept.disk == .read && kept.sets.any (·.ranges.any (heldIn id)) then
+      requestWrite location
+
 /-- Gives up the markers `range` is held by, if it is held. -/
 def unhold (range : Range) : EditorM Unit := do
   if let .held _ start stop _ := range.hold then
@@ -316,6 +351,7 @@ def detach (id : BufferId) : EditorM (Array Location) := do
           ranges := ranges.push range
       sets := sets.push { set with ranges }
     setKept location { kept with sets }
+    requestWrite location
     detached := detached.push location
   return detached
 

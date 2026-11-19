@@ -16,7 +16,10 @@ set and a set opened as an excerpt buffer of its ranges
   activate key (`RET` in the Vim scheme's normal state) runs
   `working-set-visit`.
 - **`WorkingSet.jobs`**: `working-set-files`, which loads the files of a
-  set's ranges that no buffer holds, keyed by the set's buffer's name.
+  set's ranges that no buffer holds, keyed by the set's buffer's name; and
+  `working-set-load`, `working-set-write` and `working-set-save`, which
+  read a workspace's sets from the state directory and write them back
+  (`Editor/WorkingSet/Disk.lean`).
 
 Pinned by `ModelTest.workingSetRunChecks`, on the models, and by
 `ConfigTest.shippedChecks` over the hosts' registry.
@@ -39,6 +42,7 @@ def modes : Array Mode :=
 /-- The working sets' jobs, as a host registers them for the owner
 `compiled`. -/
 def jobs : Array Config.JobRegistration :=
-  #[{ name := filesJob, work := filesWork }]
+  #[{ name := filesJob, work := filesWork }, { name := loadJob, work := loadWork },
+    { name := writeJob, work := writeWork }, { name := saveJob, work := saveWork }]
 
 end Editor.WorkingSet
