@@ -498,6 +498,47 @@ def moduleSessionChecks : List Check :=
             outcome.base == some { modules := #["Editor"] } &&
             said outcome == #[("config", .error)] },
     { name :=
+        "a directory whose stray files cannot be listed, with no root, gives a rejected outcome with one diagnostic tagged config, which hands back the base: nothing is thrown"
+      run := do
+        let calls ← IO.mkRef #[]
+        let source : Source := { configOf [] with stray := throw (IO.userError "cannot list") }
+        let outcome ←
+          build TestScheme.scheme (recording calls) source PackageFiles.none none none #[]
+        return (← calls.get) == #[.base false #[]] && outcome.built.isNone &&
+            outcome.base == some { modules := #["Editor"] } &&
+            outcome.diagnostics ==
+              #[{ source := "config", severity := .error, message := "cannot list" }] },
+    { name :=
+        "a config directory whose files cannot be read as a package, with a generator, is one warning tagged config that says so, nothing is created, and the config is still built"
+      run := do
+        let calls ← IO.mkRef #[]
+        let files ← IO.mkRef #[]
+        let package : PackageFiles :=
+          { fakePackage calls files with read := fun _ => throw (IO.userError "no permission") }
+        let outcome ←
+          build TestScheme.scheme (recording calls) (configOf [plainRoot]) package
+              (some (fakeGenerator calls files (some set))) none #[]
+        let message := ((outcome.diagnostics.map (·.message))[0]?).getD ""
+        return outcome.built.isSome && (← files.get).isEmpty &&
+            ((← calls.get).filter (· matches .create _)).isEmpty &&
+            said outcome == #[("config", .warning)] &&
+            (message.splitOn "could not be read").length == 2 &&
+            (message.splitOn "no permission").length == 2 },
+    { name :=
+        "an elaborator that throws when asked whether a module is linked refuses the import as one that is not linked, and nothing is elaborated"
+      run := do
+        let calls ← IO.mkRef #[]
+        let elaborator :=
+          { recording calls with linked := fun _ _ => throw (IO.userError "cannot tell") }
+        let outcome ←
+          build TestScheme.scheme elaborator
+              (configOf [("init", ["import Editor", "define setup"])]) PackageFiles.none none none
+              #[]
+        return (← calls.get) == #[.base false #[]] && outcome.built.isNone &&
+            outcome.diagnostics ==
+              #[{ source := "init.lean", line := 1, column := 0, severity := .error,
+                  message := notLinked "Editor" none }] },
+    { name :=
         "a config file that cannot be read gives a rejected outcome with a diagnostic at the import of it"
       run := do
         let calls ← IO.mkRef #[]
