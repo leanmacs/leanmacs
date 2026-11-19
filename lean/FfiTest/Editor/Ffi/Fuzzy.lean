@@ -16,7 +16,9 @@ pattern matches out, as words. Which candidates match and in what order are
 the library's rules; these pin that the pattern, the candidates and the
 answer cross. The first case is one the library's rules fix whatever a
 matcher's scores: of `wq`, `edit` and `w` the pattern `w` matches the first
-and the third, and the third is the pattern. -/
+and the third, and the third is the pattern. The last two are of locating:
+a pattern and a text in, and the byte span the pattern is located at out,
+or none. -/
 def fuzzyChecks (_ : Unit) : List Check :=
   [{ name := "a ranking crosses: the candidates a pattern matches, as their indices, best first",
      run := return (← Editor.Ffi.fuzzyRank "w" #["wq", "edit", "w"]) == #[2, 0] },
@@ -47,6 +49,14 @@ def fuzzyChecks (_ : Unit) : List Check :=
         -- `candidate-99`, `candidate-199`, `candidate-990` and their like.
         return ranked.contains 99 && ranked.contains 9990 && !ranked.contains 98 &&
             ranked.all (· < 10000) &&
-            (← Editor.Ffi.fuzzyRank "" candidates).size == 10000 }]
+            (← Editor.Ffi.fuzzyRank "" candidates).size == 10000 },
+    { name := "a pattern located where it is expected crosses as its byte span"
+      run :=
+        return (← Editor.Ffi.fuzzyLocate "needle" "a needle in a haystack" 2 1) == some (2, 8) },
+    { name :=
+        "a pattern with one substitution, after two-byte characters, crosses as the span it is located at"
+      run := do
+        return (← Editor.Ffi.fuzzyLocate "neddle" "éé needle" 0 1) == some (5, 11) &&
+            (← Editor.Ffi.fuzzyLocate "nowhere" "éé needle" 0 1) == none }]
 
 end FfiTest

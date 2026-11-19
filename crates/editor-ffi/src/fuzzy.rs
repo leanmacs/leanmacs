@@ -25,10 +25,25 @@
 //! That a pattern and candidates of any length are answered, and not a
 //! panic of the matching library's, is the adapter's to keep (its crate
 //! docs, "The library's limit") and is pinned there. This module takes the candidates apart, forwards and writes the words.
+//!
+//! # Locating a pattern
+//!
+//! [`editor_ffi_fuzzy_locate`] is the other call, and keeps nothing either:
+//! a pattern, a text, the byte offset where the pattern is expected and the
+//! most errors allowed in; whether a span was found, and its byte range in
+//! a [`ByteRange`], out. It makes the searcher port's real adapter
+//! (`editor-fuzzy-triple-accel`) for the call and asks `editor-fuzzy`'s
+//! `locate::locate`, whose rule (fewest errors, then nearest, earliest,
+//! longest, never a span that cuts a character) is pinned by that crate's
+//! tests. A pattern or a text that is not UTF-8, which includes a length
+//! that ends inside a character, is answered not found: a Lean string is
+//! always UTF-8, so only a glue that is wrong sends one.
 
 use editor_fuzzy_nucleo::NucleoScorer;
+use editor_fuzzy_triple_accel::TripleAccel;
 
 use crate::log::RawWords;
+use crate::text::ByteRange;
 use crate::words::{self, Reader, Writer};
 
 /// How a ranking ended, as it crosses the boundary: the `status` of the
@@ -125,9 +140,59 @@ fn ranked(pattern: &str, words: &[u8], strings: &[u8]) -> Option<Vec<usize>> {
     ))
 }
 
+/// The span of `text` that `pattern` is located at, `near` the byte offset
+/// where it is expected and within `max_errors` byte edits, by the real
+/// searcher. `None` when there is none, and when either is not UTF-8.
+pub fn located(pattern: &[u8], text: &[u8], near: usize, max_errors: u32) -> Option<ByteRange> {
+    let pattern = std::str::from_utf8(pattern).ok()?;
+    let text = std::str::from_utf8(text).ok()?;
+    let found =
+        editor_fuzzy::locate::locate(&mut TripleAccel::new(), pattern, text, near, max_errors)?;
+    Some(ByteRange {
+        start: found.start as u64,
+        end: found.end as u64,
+    })
+}
+
+/// Locates for C: returns whether the `pattern_len` bytes at `pattern` are
+/// found in the `text_len` bytes at `text`, expected at the byte offset
+/// `near` and within `max_errors` byte edits, and if so fills `out` with
+/// the span (the module docs, "Locating a pattern").
+///
+/// # Safety
+///
+/// `pattern` points to `pattern_len` readable bytes and `text` to
+/// `text_len`, both unchanged for the call (no bytes at all may be lent
+/// with any pointer), and `out` points to a writable [`ByteRange`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_fuzzy_locate(
+    pattern: *const u8,
+    pattern_len: usize,
+    text: *const u8,
+    text_len: usize,
+    near: usize,
+    max_errors: u32,
+    out: *mut ByteRange,
+) -> bool {
+    // SAFETY: the caller guarantees each pointer and its length for the
+    // call.
+    let (pattern, text) = unsafe {
+        (
+            words::borrow(pattern, pattern_len),
+            words::borrow(text, text_len),
+        )
+    };
+    let Some(found) = located(pattern, text, near, max_errors) else {
+        return false;
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(found) };
+    true
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{candidates, ranking_words};
+    use super::{candidates, located, ranking_words};
     use crate::words::tests::{buffer, words_of};
 
     #[test]
@@ -185,6 +250,13 @@ mod tests {
         // `é` is two bytes: 1 and 1 cut it, and 2 does not.
         assert_eq!(candidates(&buffer(&[2, 1, 1]), "é"), None);
         assert_eq!(candidates(&buffer(&[2, 2, 0]), "é"), Some(vec!["é", ""]));
+    }
+
+    #[test]
+    fn a_pattern_or_a_text_that_is_not_utf8_is_not_found() {
+        assert_eq!(located(&[0xff], b"a", 0, 1), None);
+        // The first byte of `é` alone: a length that ends inside it.
+        assert_eq!(located(b"a", &"é".as_bytes()[..1], 0, 1), None);
     }
 
     #[test]

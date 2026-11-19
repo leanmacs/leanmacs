@@ -211,7 +211,9 @@ adapter, over `triple_accel` (`crates/editor-fuzzy-triple-accel`), is held
 to that contract, which sweeps generated texts from a fixed seed, and to
 its own two cases: one substitution is found with one error, and a
 pattern with no span near enough reports none. `mise run deny` holds that
-only that adapter depends on the library. `mise run deny` holds that only the
+only that adapter depends on the library, and only `editor-ffi` on the
+adapter, whose C function that locates a pattern has one wiring test
+beside the ranking's. `mise run deny` holds that only the
 adapter depends on the library. It checks no licence: the library's is
 MPL-2.0, and whether that is acceptable in this workspace is the owner's
 to confirm.
@@ -1158,7 +1160,8 @@ fuzzy matching interface's contract against its real binding
 (`lean/Editor/Fuzzy/Real.lean`), so against the library's matcher, and
 checks that a command run against the library that asks for a ranking is
 answered by it. `ffi-test`'s own `fuzzyChecks` pin that a pattern, a list
-of strings and the ranking cross the boundary. It runs the syntax tree
+of strings and the ranking cross the boundary, and that a pattern, a text
+and the span it is located at cross. It runs the syntax tree
 interface's contract against its real binding
 (`lean/Editor/SyntaxTree/Real.lean`), over the library's syntax service,
 waiting with a bound for each snapshot's tree before a question of its

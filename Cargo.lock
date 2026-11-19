@@ -442,6 +442,7 @@ dependencies = [
  "editor-fs-std",
  "editor-fuzzy",
  "editor-fuzzy-nucleo",
+ "editor-fuzzy-triple-accel",
  "editor-grep",
  "editor-grep-ripgrep",
  "editor-layout",

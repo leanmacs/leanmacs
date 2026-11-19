@@ -823,7 +823,7 @@ lean_obj_res editor_glue_snapshot_matches(b_lean_obj_arg snapshot,
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
-// ---- Fuzzy ranking ----
+// ---- Fuzzy ranking and locating ----
 //
 // The example of a list of strings crossing. The candidates go to the
 // library as words, their count and then the byte length of each, and as one
@@ -845,6 +845,32 @@ lean_obj_res editor_glue_fuzzy_rank(b_lean_obj_arg pattern,
                         byte_array_bytes(words), byte_array_len(words),
                         string_bytes(strings), string_len(strings), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// Locating a pattern with errors allowed: the pattern and the text are
+// borrowed for the call, and the span found comes back as a `ByteRange`, as
+// `find`'s does. The call keeps nothing in the library either.
+
+bool editor_ffi_fuzzy_locate(const uint8_t *pattern, size_t pattern_len,
+                             const uint8_t *text, size_t text_len, size_t near,
+                             uint32_t max_errors, editor_ffi_byte_range *out);
+
+// `Editor.Ffi.fuzzyLocateRaw : @& String → @& String → USize → UInt32 →
+// IO (Option ByteRange)`
+lean_obj_res editor_glue_fuzzy_locate(b_lean_obj_arg pattern,
+                                      b_lean_obj_arg text, size_t near,
+                                      uint32_t max_errors) {
+  editor_ffi_byte_range found;
+  if (!editor_ffi_fuzzy_locate(string_bytes(pattern), string_len(pattern),
+                               string_bytes(text), string_len(text), near,
+                               max_errors, &found)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  // `ByteRange`: no object fields, then `start` and `stop`.
+  lean_object *range = lean_alloc_ctor(0, 0, 2 * sizeof(uint64_t));
+  lean_ctor_set_uint64(range, uint64_field(0, 0), found.start);
+  lean_ctor_set_uint64(range, uint64_field(0, 1), found.end);
+  return lean_io_result_mk_ok(option_some(range));
 }
 
 // ---- The syntax service ----

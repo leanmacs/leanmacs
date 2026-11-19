@@ -1336,6 +1336,16 @@ is a second question of the same crate, behind a second port
   is unmaintained (2021). If it measures slow, or an advisory lands, the
   port lets another library (`diff-match-patch-rs`, `sassy`) replace it
   with no change above the port.
+- **Across the boundary** it is a second stateless call,
+  `editor_ffi_fuzzy_locate` (`crates/editor-ffi/src/fuzzy.rs`): the
+  pattern and the text borrowed for the call, the expected offset and the
+  limit as scalars, and whether a span was found with its `ByteRange`, as
+  `find` answers. It makes the adapter for the call and keeps nothing. A
+  pattern or text that is not UTF-8 is answered not found. Lean binds it as
+  `Ffi.fuzzyLocate` (`lean/Editor/Ffi/Fuzzy.lean`); one wiring case in
+  `crates/editor-ffi/tests/fuzzy.rs`, and two in `ffi-test`'s
+  `fuzzyChecks`, an exact place and one substitution after two-byte
+  characters.
 
 ### Search, as built
 
