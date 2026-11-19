@@ -161,9 +161,10 @@ run = [
   "sh ../tools/package-set.sh build ../tests/packages",
   # The editor of the set that holds no package, tests/empty-set, which
   # requires the core alone: the default set with its packages, the
-  # shipped themes and the compile mode, dropped. `ffi-test` runs a fixture
-  # on it (tests/headless/core-themes) to show what an editor without
-  # those packages has.
+  # shipped themes and the compile mode, dropped. `ffi-test` runs two
+  # fixtures on it (tests/headless/core-themes and
+  # tests/headless/core-ex-names) to show what an editor without those
+  # packages has.
   "lake -d ../tests/empty-set build --wfail :editor",
 ]
 
@@ -434,8 +435,9 @@ run = [
   "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/candidates/expected -",
   # The themes of an editor with no package but the core's
   # (tests/headless/core-themes), run on the editor built from the set
-  # tests/empty-set, which is the default set with the shipped themes'
-  # package dropped: on a config that defines one theme, `first`, and names
+  # tests/empty-set, which is the default set with its packages, the
+  # shipped themes' among them, dropped: on a config that defines one
+  # theme, `first`, and names
   # none, the first scene is drawn in `default`; `load-theme`'s prompt
   # lists `default` and `first` and no palette; `first` is loaded; and
   # `solarized-dark`, answered, is said in the echo area to be no
@@ -443,6 +445,16 @@ run = [
   # prints other lines for the same script: it lists the palettes and loads
   # `solarized-dark`. It touches no file.
   "out=$(../tests/empty-set/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/core-themes/config ../tests/headless/core-themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/core-themes/expected -",
+  # The ex names of the same editor (tests/headless/core-ex-names): the
+  # compile mode is a default package too (packages/compile/), so the
+  # editor of tests/empty-set does not hold it. It starts and loads config,
+  # on the base `Editor` alone, and `compile` typed on its ex line is
+  # reported as `bogus` is, an ex name nobody bound: `compile: not an ex
+  # command`, then `bogus: not an ex command`
+  # (`core-ex-names/expected`). The default set's editor opens the prompt
+  # `Compile command: ` for the first. It touches no file and starts no
+  # process.
+  "out=$(../tests/empty-set/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/core-ex-names/config ../tests/headless/core-ex-names/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/core-ex-names/expected -",
   # The segmented mode line, on a config of its own (tests/headless/
   # mode-line) that defines a segment and lists the mode line for each side,
   # one name nobody registered among them: the reload says that name, on a

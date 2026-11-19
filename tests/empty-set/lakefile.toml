@@ -9,9 +9,12 @@
 #   check cannot pass by running over nothing.
 # - `mise run lean` links an editor from it
 #   (`lake -d ../tests/empty-set build :editor`, in lean/), and `mise run
-#   ffi-test` runs the fixture tests/headless/core-themes on that editor:
+#   ffi-test` runs two fixtures on that editor: tests/headless/core-themes,
 #   an editor with no package but the core's starts in the theme `default`
-#   and offers no shipped palette.
+#   and offers no shipped palette; and tests/headless/core-ex-names, it
+#   starts, loads config, and answers `compile` on its ex line as it
+#   answers any ex name nobody bound, the compile mode being a default
+#   package (packages/compile/). Its config base is `Editor` alone.
 name = "empty-set"
 
 [[require]]

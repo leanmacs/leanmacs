@@ -1,6 +1,6 @@
 # The script `mise run ffi-test` has the headless mode of an editor built
 # from the core alone run (the set `tests/empty-set`, which is the default
-# set with its one package, the shipped themes, dropped), against the
+# set with its packages, the shipped themes among them, dropped), against the
 # config in `config/`, which defines one theme, `first`, and names none.
 # What it prints must be exactly `expected`. It touches no file.
 
