@@ -528,7 +528,9 @@ to and breaks off ("What an operator takes", in the module docs). A
 doubled operator with a count above 1 on the last line gives up too ("The
 doubled operator on the last line", in the module docs). A motion that is a
 jump and did not fail records the place the cursor started from in the
-window's jump list (`Jumps.record`). -/
+window's jump list (`Jumps.record`), and once the operator has acted gives
+the window back the previous-context mark it had when the cursor is on
+that place (`Jumps.checkPrevious`). -/
 def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.Motion)
     (objects : Array Vocabulary.TextObject) (call : Call) : EditorM Unit := do
   -- A motion's argument, when it has one, is the string after its name.
@@ -547,6 +549,10 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
   let before ← call.target.selection
   let some range := before.ranges[before.primary]? | throw .badSelection
   let head := range.head
+  -- The previous-context mark before a jump motion records, given back
+  -- once the operator has acted when the cursor did not move.
+  let previous ← Jumps.previousOf call.target.window.id
+  let jumped := kind == "motion" && (motions.find? (·.name == name)).any (·.jumps)
   -- What the echo area is to say once the operator has acted: what the
   -- motion handed back to be said.
   let (operand, said) : Vocabulary.Operand × Option String ←
@@ -640,6 +646,9 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
       giveUp noOperatorNamed
   discard <| call.target.window.id.setWanted none
   operator.act call operand
+  -- A motion that failed has given up or broken off by now.
+  if jumped then
+    Jumps.checkPrevious call.target.window.id previous
   if let some said := said then
     message said
 

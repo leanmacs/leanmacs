@@ -2943,6 +2943,12 @@ builds one sets `jumps` on its entry.
 - **Record** (`setpcmark`): the cursor's place is the window's
   previous-context mark and the list's last entry, the oldest dropped past
   100, and the index one past the end. Nothing is removed then.
+- **Check** (`checkpcmark`): a jump motion that leaves the cursor on the
+  place it recorded, with an operator or without, gives the window back
+  the previous-context mark it had before, so `G` on the last line, `gg`
+  on the first and `` `a `` with `a` under the cursor leave `''` where it
+  was; the entry the record appended stays in the list. `m'` and ``m` ``
+  set the mark all the same (`Jumps.checkPrevious`).
 - **Clean up** (`cleanup_jumplist`), at the start of every `C-o` and
   `C-i`: an entry is dropped when a later entry has the same buffer, or
   file, and the same line, read from the markers then, so entries that

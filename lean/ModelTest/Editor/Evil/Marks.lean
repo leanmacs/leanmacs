@@ -39,7 +39,15 @@ def markRows : List (String × String × String) :=
     ("G ` `", "a|b\nc\nd", "a|b\nc\nd"), ("G ` ` ` `", "a|b\nc\nd", "ab\nc\n|d"),
     ("G ' '", "  a|b\nc\nd", "  |ab\nc\nd"), ("m ' j ` `", "a|b\nc\nd", "a|b\nc\nd"),
     ("m ' j C-o", "a|b\nc", "a|b\nc"), ("m ` j ` `", "a|b\nc\nd", "a|b\nc\nd"),
-    ("m ` j C-o", "a|b\nc", "a|b\nc")]
+    ("m ` j C-o", "a|b\nc", "a|b\nc"),
+    -- A jump that leaves the cursor where it was keeps the previous-context
+    -- mark it had (Vim's checkpcmark), with an operator or without; m '
+    -- sets it all the same.
+    ("G G ' '", "a\nb\nc\nd\n  x|y\nf\ng\nh", "a\nb\nc\nd\n  |xy\nf\ng\nh"),
+    ("g g g g ' '", "a\nb\nc\nd\n  x|y\nf\ng\nh", "a\nb\nc\nd\n  |xy\nf\ng\nh"),
+    ("G m a ` a ` `", "a|b\nc\nd", "a|b\nc\nd"),
+    ("G y G ' '", "a\nb\nc\nd\n  x|y\nf\ng\nh", "a\nb\nc\nd\n  |xy\nf\ng\nh"),
+    ("m ' ' '", "a\n  b|c\nd", "a\n  |bc\nd")]
 
 /-- The rows of the checks of marks across line deletions and undo, as
 `evilRows` reads them. -/
@@ -206,7 +214,7 @@ def markExSaid (line : String) : Option (String × String) :=
 the text model, and across buffers on the file model. -/
 def evilMarkChecks : List Check :=
   [{  name :=
-        "m sets a mark and ` and ' go to it, exactly and at its line's first non-blank, as jumps, exclusive and line-wise under an operator; a mark follows a line inserted above it; a mark not set, a character that names none and m with one are said; '' and `` go back and forth, and m ' and m ` set the previous-context mark"
+        "m sets a mark and ` and ' go to it, exactly and at its line's first non-blank, as jumps, exclusive and line-wise under an operator; a mark follows a line inserted above it; a mark not set, a character that names none and m with one are said; '' and `` go back and forth, a jump that leaves the cursor where it was keeps the previous-context mark, and m ' and m ` set it"
       run := evilRows markRows },
     { name :=
         "a lowercase mark whose line is deleted is erased and a global mark stays, and one of a line deleted in part keeps the column the deletion left; undo puts a lowercase mark back where it was before the step, and redo erases it again; the step an insert session makes keeps the marks from before the session"

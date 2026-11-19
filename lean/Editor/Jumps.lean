@@ -22,6 +22,13 @@ commands, going to a place in a closed file, is the upper module's
   the primary range of the window's selection.
 - **Record** (`record`, Vim's `setpcmark`): the place is the window's
   previous-context mark and the list's last entry (`JumpList.record`).
+- **Check a jump** (`checkPrevious`, Vim's `checkpcmark`): a jump motion
+  reads the window's previous-context mark before it records
+  (`previousOf`), and once it has moved, a cursor still on the place it
+  recorded gives the window that mark back, so `G` on the last line, `gg`
+  on the first and `` `a `` with `a` under the cursor leave `''` where it
+  was. The list keeps the entry the record appended, as Vim's does. `m'`
+  records without a check.
 - **Move by `n`** (`plan`): the list is cleaned up first (`cleanup`), by
   each entry's buffer, or file, and the line its marker is on now
   (`lineKey`), so entries edits brought onto one line are one; then the
@@ -100,6 +107,27 @@ def record (view : ViewId) : EditorM Unit := do
   let some window := (← editorState).window? view | return
   let some place ← here view | return
   discard <| view.setJumps { list := window.jumps.list.record place, previous := some place }
+
+/-- The previous-context mark of the window of `view`, which a jump motion
+reads before it records (`checkPrevious`). `none` for a view with no
+window. -/
+def previousOf (view : ViewId) : EditorM (Option Place) := do
+  return ((← editorState).window? view).bind (·.jumps.previous)
+
+/-- Vim's `checkpcmark` ("Check a jump", in the module docs): once a jump
+in `view` has moved the cursor, gives the window back `before`, the
+previous-context mark it had before the jump recorded, when the cursor is
+on the place the jump recorded, in the same buffer. Nothing when `before`
+is `none`, as Vim keeps the place recorded when there was no mark before,
+and nothing for a view with no window. -/
+def checkPrevious (view : ViewId) (before : Option Place) : EditorM Unit := do
+  let some before := before | return
+  let some target := (← editorState).target? view | return
+  let some (.held buffer marker) := target.window.jumps.previous | return
+  let selection ← target.selection
+  let some range := selection.ranges[selection.primary]? | return
+  if buffer == target.window.buffer && (← Marks.offsetOf marker) == range.head then
+    discard <| view.setJumps { target.window.jumps with previous := some before }
 
 /-- What a clean-up compares two entries by: their buffer, or file. -/
 inductive Owner where

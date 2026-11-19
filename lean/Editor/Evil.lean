@@ -420,7 +420,9 @@ selection, and with both ends on the new head otherwise. The wanted column
 it hands the motion is the one the window keeps when this is called, read
 from the editor state. A motion that is a jump (`Vocabulary.Motion.jumps`)
 and did not fail records the place the cursor starts from in the window's
-jump list first (`Jumps.record`). A motion that leads out of its text
+jump list first (`Jumps.record`), and gives the window back the
+previous-context mark it had when the cursor ends on that place
+(`Jumps.checkPrevious`). A motion that leads out of its text
 (`Vocabulary.To.elsewhere`) is gone to as a jump (`Jumps.goTo`), which shows
 the other buffer or visits the file, and the cursor rests where it lands.
 The motion is told the call's window and its buffer (`Vocabulary.From.view`,
@@ -463,12 +465,17 @@ def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
     if let some said := raw.said then
       message said
     return
-  -- A jump records where the cursor starts from, before it moves.
-  if motion.jumps && !raw.failed then
+  -- A jump records where the cursor starts from, before it moves, and
+  -- gives the previous-context mark back when it did not move.
+  let jumped := motion.jumps && !raw.failed
+  let previous ← Jumps.previousOf view
+  if jumped then
     Jumps.record view
   let head ← rested (restOf call.report) text raw.head
   let anchor := if call.report.selecting then range.anchor else head
   call.target.select { ranges := #[⟨anchor, head⟩], shape := call.report.shape }
+  if jumped then
+    Jumps.checkPrevious view previous
   let keeps := if head == range.head then raw.unmoved else raw.wanted
   discard <| view.setWanted (keeps.map fun column => { column, head })
   if let some find := raw.find then
