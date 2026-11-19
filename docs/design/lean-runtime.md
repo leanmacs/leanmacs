@@ -406,11 +406,29 @@ queues and exits.
   `config: not loaded: no Lean toolchain given (--sysroot)`. `mise run
   edit` always gives the pinned one.
 - **The editor's `.olean` files** are, in a bundle,
-  `Contents/Resources/lean/editor`, and outside one
-  `<directory of the executable>/../lib/lean`, where Lake puts them in the
-  build tree, unless `--oleans` says otherwise.
+  `Contents/Resources/lean/editor`. Outside one they are where the build
+  that linked the executable recorded them, unless `--oleans` says
+  otherwise. The editor is linked from a package set into the set's build
+  directory, and each Lake package's modules are built in that package's
+  own, so no directory relative to the executable holds them
+  ([packages.md](packages.md), "The generated root"). The package-set
+  build writes `<executable>.oleans` beside the editor it links: one
+  directory a line, the core's first, then that of each other package of
+  the set that holds a library, in the order they register. The window
+  mode reads it at its edge and uses the first, the core's, where the
+  config base's modules are; the elaborator searches one directory beside
+  the toolchain's, and the rest are recorded for when the base holds a
+  package's modules. An executable with no record has no default: with a
+  toolchain and no `--oleans` no config is loaded, and the echo area says
+  `config: not loaded: the editor's .olean directory is not known; give it
+  with --oleans (lean/.lake/build/lib/lean in a checkout)`. Before the
+  editor came from a package set the default outside a bundle was
+  `<directory of the executable>/../lib/lean`, where Lake put the modules
+  beside the executable; for a set's editor that directory holds only the
+  generated root. `mise run edit` gives `--oleans` as it gives `--sysroot`.
 - **Where both are found** is a pure function of the executable's path,
-  read from `IO.appPath` at the edge, and of the directories the command
+  read from `IO.appPath` at the edge, of what the build recorded for it,
+  read at the same edge, and of the directories the command
   line gave, each of which overrides its own default wherever the
   executable is (`lean/Editor/ModuleLookup.lean`). The bundle is known by
   its layout alone, not by a `.app` suffix. Nothing is read from the

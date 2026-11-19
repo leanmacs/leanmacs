@@ -170,7 +170,10 @@ loads. Options go before the file:
 
 `packages/.lake/build/bin/editor <file>` runs it directly; it then loads no
 config unless given `--sysroot <dir>`, the Lean toolchain's directory
-(`lean --print-prefix`).
+(`lean --print-prefix`). It finds the editor's own modules from
+`editor.oleans`, which the build writes beside it; an `editor` copied
+elsewhere without that file also needs `--oleans <dir>`
+(`lean/.lake/build/lib/lean`), and says so.
 
 ### The macOS app
 

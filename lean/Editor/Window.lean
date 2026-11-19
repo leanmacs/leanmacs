@@ -25,8 +25,11 @@ before the first event (`Options.starts`). It reads nothing itself, so
   none given no config is loaded, and the echo area says so (`noToolchain`).
 - **`--oleans`** is the directory of the editor's `.olean` files. When not
   given it is the bundle's, `Contents/Resources/lean/editor`, for an
-  executable in a bundle, and `<directory of the executable>/../lib/lean`
-  outside one, where Lake puts them in the build tree.
+  executable in a bundle. Outside one it is the directory the build that
+  linked the executable recorded beside it (`Editor/ModuleLookup.lean`,
+  "The record"), which the edge reads; an executable with no record has no
+  default, so with a toolchain and no `--oleans` no config is loaded, and
+  the echo area says to give it (`noModules`).
 - **`--config`** is the config directory. When not given it is `leanmacs`
   under `$XDG_CONFIG_HOME`, or under `$HOME/.config` when that is unset or
   empty. A default directory that does not exist loads nothing and says
@@ -52,6 +55,9 @@ structure Environment where
   home : Option String
   /-- The executable's path. -/
   appPath : String
+  /-- The `.olean` directories the build recorded for the executable, in
+  order; none when it has no record (`ModuleLookup.recorded`). -/
+  recordedOleans : List String := []
   deriving DecidableEq, Repr
 
 /-- A way a frame reaches the display, by wgpu's names, that one run may ask
@@ -126,8 +132,9 @@ structure Options where
   configGiven : Bool
   /-- The Lean toolchain's directory, if one was given. -/
   sysroot : Option String
-  /-- The directory of the editor's `.olean` files. -/
-  oleans : String
+  /-- The directory of the editor's `.olean` files; none when there is none
+  to use (`ModuleLookup.resolve`). -/
+  oleans : Option String
   /-- Whether an input method may compose: `false` with `--no-ime`. -/
   composition : Bool
   /-- Whether the window mode prints its report to stderr once the window
@@ -154,6 +161,13 @@ def nothingDrew (reason : String) : String :=
 was given. -/
 def noToolchain : String :=
   "config: not loaded: no Lean toolchain given (--sysroot)"
+
+/-- What the echo area says when no config is loaded because a toolchain
+was given and the directory of the editor's `.olean` files is not known:
+the executable is outside a bundle, the build recorded none for it, and
+none was given. -/
+def noModules : String :=
+  "config: not loaded: the editor's .olean directory is not known; give it with --oleans (lean/.lake/build/lib/lean in a checkout)"
 
 /-- The default config directory: `leanmacs` under `$XDG_CONFIG_HOME`, or
 under `$HOME/.config` when that is unset or empty; none when neither is
@@ -229,6 +243,7 @@ def parse (environment : Environment) (arguments : List String) : Except String 
   | .ok read =>
     let directories :=
       ModuleLookup.resolve environment.appPath { sysroot := read.sysroot, oleans := read.oleans }
+        environment.recordedOleans
     .ok {
         file := read.file.map (resolve environment)
         config := read.config <|> defaultConfig environment
@@ -251,13 +266,16 @@ inductive ConfigPlan where
 
 /-- Whether config is loaded at start, given whether the default config
 directory exists (`defaultExists`, which the edge reads): never with no
-toolchain, which is said; from a directory given with `--config`, whether
-it exists or not; and from the default one only when it exists. -/
+toolchain, which is said; never with a toolchain and no directory of the
+editor's `.olean` files, which is said too; from a directory given with
+`--config`, whether it exists or not; and from the default one only when
+it exists. -/
 def Options.configPlan (options : Options) (defaultExists : Bool) : ConfigPlan :=
-  match options.sysroot, options.config with
-  | none, _ => .skip (some noToolchain)
-  | some _, none => .skip none
-  | some _, some directory =>
+  match options.sysroot, options.oleans, options.config with
+  | none, _, _ => .skip (some noToolchain)
+  | some _, none, _ => .skip (some noModules)
+  | some _, some _, none => .skip none
+  | some _, some _, some directory =>
     if options.configGiven || defaultExists then .load directory else .skip none
 
 /-- What the window mode posts to the editor loop before the first event. -/

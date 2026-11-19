@@ -1034,6 +1034,18 @@ loaded at start from the fixture `tests/window/title-bar/config`, whose
 reload with no bound, so the result does not race the clock, and the
 scenario must exit 0, which it does only when the scripted window was
 opened with the standard title bar.
+`ffi-test window-host-direct <editor> <sysroot> <config dir>` runs that
+again as the editor at `<editor>` starts when run directly with
+`--sysroot` and `--config` and no `--oleans`: the command line is read for
+that executable, so the `.olean` directory is its default, the one the
+package-set build recorded beside it (`<editor>.oleans`;
+`lean/Editor/ModuleLookup.lean`, "The record"), read at the same edge the
+editor reads it at. It must exit 0, which it does only when that config
+loaded, so the default directory holds the modules config is elaborated
+on. The gate runs it for the default set's editor and for the fixture
+set's, and then requires the fixture set's record to name three
+directories in order, the core's, `greeting`'s and `greeting-loud`'s, each
+holding its package's modules.
 `ffi-test window-host-undrawn <file>` runs the same wiring on
 the scripted platform whose renderer cannot be made, as a machine with no
 usable GPU gives: it must exit 0, which it does only when the window mode

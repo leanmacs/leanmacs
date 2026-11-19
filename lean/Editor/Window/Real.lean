@@ -242,8 +242,8 @@ def host (packages : Array Package) (platform : Ffi.Platform) (options : Options
     (shutdown : IO Unit) (processes : Process.Host) (patience : Option Nat := some configPatience)
     (workingDirectory : System.FilePath := "/") : IO UInt32 := do
   let shipped ←
-    Headless.shipped packages (options.sysroot.getD "") options.oleans (options.config.getD "")
-        IO.eprintln processes
+    Headless.shipped packages (options.sysroot.getD "") (options.oleans.getD "")
+        (options.config.getD "") IO.eprintln processes
   let collaborators :=
     { shipped with
       display := hostDisplay display platform
@@ -312,6 +312,24 @@ def shutdown : IO Unit := do
   Ffi.watchesShutdown
   Ffi.quit
 
+/-- What the window mode is told of the world, read at the edge, for the
+executable at `appPath`: the working directory, the two variables the
+default config directory is found by, and the `.olean` directories the
+build recorded beside that executable (`ModuleLookup.recorded`, with the
+real file read: a record that is not there, or cannot be read, is none).
+`main` reads it for the running executable, and `ffi-test
+window-host-direct` for an editor it is pointed at. -/
+def environmentAt (appPath : String) : IO Environment := do
+  let readFile (path : System.FilePath) : IO (Option String) := do
+    try
+      return some (← IO.FS.readFile path)
+    catch _ =>
+      return none
+  return {
+      workingDirectory := (← IO.currentDir).toString
+      xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME", home := ← IO.getEnv "HOME", appPath
+      recordedOleans := ← ModuleLookup.recorded appPath readFile }
+
 /-- `editor [<file>]`, with the packages its host registers and the command
 line's `arguments`: reads the world at
 the edge, opens the system's display and clipboard, and runs `host` on the
@@ -321,9 +339,7 @@ and the usage on stderr, and status 2. It exits explicitly, with the status
 ended the process with status 0 inside the run instead (the window port's
 rule; AppKit's terminate on macOS), once `shutdown` had run. -/
 def main (packages : Array Package) (arguments : List String) : IO UInt32 := do
-  let environment : Environment :=
-    { workingDirectory := (← IO.currentDir).toString, xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME"
-      home := ← IO.getEnv "HOME", appPath := (← IO.appPath).toString }
+  let environment ← environmentAt (← IO.appPath).toString
   let options ←
     match parse environment arguments with
     | .ok options =>

@@ -107,7 +107,7 @@ built from one:
 
 | Facet | On | Gives |
 |---|---|---|
-| `editor` | a package, the set | `<set>/.lake/build/bin/editor` |
+| `editor` | a package, the set | `<set>/.lake/build/bin/editor`, and beside it `editor.oleans`, the record of where the set's `.olean` directories are |
 | `editorApp` | a package, the set | `<set>/.lake/build/Leanmacs.app`, from the set's `editor` ([building.md](../dev-practices/building.md), "The app bundle") |
 | `editorLinked` | a module | An executable rooted at that module, linked as the editor is, in its package's `bin/`, named as the module with a dash for each dot |
 | `editorRootImports`, `editorRootTransImports` | a package, the set | For `lake query`: the generated root's direct and transitive imports, one module a line |
@@ -219,6 +219,22 @@ order.
   building the core as the root, then through a set, then as the root
   again rebuilds nothing. So `lean/` and the sets are all roots of builds
   the gate runs.
+- **So the build records where the modules are, for the editor it links.**
+  The set's build directory holds the editor and its root and no other
+  module, so an editor run directly cannot find the modules config is
+  elaborated on relative to itself. The `editor` facet writes
+  `<set>/.lake/build/bin/editor.oleans`: the `.olean` directory of each
+  Lake package of the set that holds a library, one a line, absolute, the
+  core's first and each other package after the ones it requires. Outside
+  a bundle the editor's default `.olean` directory is the first of them
+  ([lean-runtime.md](lean-runtime.md), "Start-up and shutdown";
+  `lean/Editor/ModuleLookup.lean`). One is enough while the config base's
+  modules are all the core's; the list is what the elaborator's search
+  path grows to when the base holds a package's modules (phase 6 moves
+  the compile mode, which the base imports, out of the core). The gate
+  starts the window mode's wiring for both sets' editors with that default
+  and requires config to load (`ffi-test window-host-direct`), and checks
+  the fixture set's record names its three directories in order.
 - **What "no hand-written list of packages" means.** No module names the
   Lake packages of a set: the set's lakefile is the one place, and the
   root is generated from it. Each Lake package's entry module still lists

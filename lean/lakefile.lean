@@ -249,6 +249,19 @@ def main (args : List String) : IO UInt32 :=
   Editor.Main.run ({lists}) args
 "
 
+/-- Writes `text` to `file`, making its directory, unless the file holds
+exactly `text` already: a build with nothing to do writes nothing. -/
+def writeIfChanged (file : FilePath) (text : String) : IO Unit := do
+  let old ←
+    if ← file.pathExists then
+      some <$> IO.FS.readFile file
+    else
+      pure none
+  unless old == some text do
+    if let some dir := file.parent then
+      IO.FS.createDirAll dir
+    IO.FS.writeFile file text
+
 /-- The name of the root module the package-set build generates. No library
 declares it. -/
 def setRootName : Name :=
@@ -278,18 +291,29 @@ def setRoot (pkg : Package) : FetchM Module := do
     ⟨pkg, `EditorSet,
       { srcDir := pkg.config.buildDir / "root", roots := #[], leanOptions := coreLeanOptions }⟩
   let root : Module := { lib, name := setRootName }
-  let file := root.leanFile
-  let text := rootSource entries
-  let old ←
-    if ← file.pathExists then
-      some <$> IO.FS.readFile file
-    else
-      pure none
-  unless old == some text do
-    if let some dir := file.parent then
-      IO.FS.createDirAll dir
-    IO.FS.writeFile file text
+  writeIfChanged root.leanFile (rootSource entries)
   return root
+
+/-- The record of where the `.olean` files of a set's packages are, written
+beside the editor the set's build links, at `<executable>.oleans`: one
+directory a line, the core's first, then that of each other package of the
+set that holds a Lean library, in the order they register (`setPackages`).
+
+The editor is linked into the set's build directory, and each package's
+modules are built in that package's own, so no directory relative to the
+executable holds the modules config is elaborated on. An editor run
+directly, outside a bundle, reads this record for its default `.olean`
+directory (`Editor/ModuleLookup.lean`, "The record"). It is written only
+when its text would change. -/
+def writeModuleRecord (pkg : Package) (executable : FilePath) : FetchM Unit := do
+  let ws ← getWorkspace
+  let some core := ws.findPackageByKey? __name__
+    | error "the core's package is not in the workspace"
+  let others :=
+    (setPackages ws pkg).filter fun dep => dep.keyName != __name__ && !dep.leanLibs.isEmpty
+  let directories := #[core.leanLibDir] ++ others.map (·.leanLibDir)
+  writeIfChanged (executable.toString ++ ".oleans")
+      (directories.foldl (fun text directory => text ++ s!"{directory}\n") "")
 
 /-- The editor of a package set: `lake -d <set dir> build :editor` gives
 `<set>/.lake/build/bin/editor`.
@@ -299,7 +323,9 @@ declares no target. This facet is the package-set build
 (`docs/design/packages.md`, "The package set and its build"): it writes
 the set's root module (`setRoot`), builds it with every module it imports,
 each in its own package's build directory, and links it as the editor is
-linked (`linkAsEditor`). It is defined here because the link's objects and
+linked (`linkAsEditor`). Beside the executable it records where the
+`.olean` files of the set's packages are (`writeModuleRecord`), which an
+editor run directly reads. It is defined here because the link's objects and
 arguments are the core's knowledge, and a lakefile cannot import another's
 definitions; a facet reaches every package of a workspace that holds this
 one.
@@ -308,7 +334,9 @@ It is the only way an editor is built: this package declares no `editor`
 executable, and no root module is written by hand. The executable imports
 the config session, so Lean's elaborator is linked in. -/
 package_facet editor pkg : FilePath := do
-  linkAsEditor (← setRoot pkg) (pkg.binDir / "editor")
+  let executable := pkg.binDir / "editor"
+  writeModuleRecord pkg executable
+  linkAsEditor (← setRoot pkg) executable
 
 /-- The direct imports of a set's root module, one module a line
 (`lake -d <set dir> query :editorRootImports`): the config base, the

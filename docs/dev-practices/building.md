@@ -26,7 +26,10 @@ the facet `editor`, and the default set is the set
 ([`packages.md`](../design/packages.md), "The package set and its build").
 The root module that names the packages is generated into
 `packages/.lake/build/root/EditorSetRoot.lean`; delete it and the next
-build writes it again. `editor demo` shows the build works:
+build writes it again. Beside the editor the build writes
+`editor.oleans`, the directories the `.olean` files of the set's packages
+are in, which the editor run directly reads to find the modules config is
+elaborated on (`lean/Editor/ModuleLookup.lean`). `editor demo` shows the build works:
 
 ```console
 $ packages/.lake/build/bin/editor demo

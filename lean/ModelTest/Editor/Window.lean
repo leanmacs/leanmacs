@@ -28,10 +28,11 @@ open Editor
 
 /-- What the window mode is told of the world by the checks of its command
 line: a working directory, both variables a config directory is found by,
-and where the executable is. -/
+where the executable is, outside a bundle, and the `.olean` directory the
+build recorded for it. -/
 def windowEnvironment : Window.Environment :=
   { workingDirectory := "/work/project", xdgConfigHome := some "/xdg", home := some "/home/ada"
-    appPath := "/opt/leanmacs/bin/editor" }
+    appPath := "/opt/leanmacs/bin/editor", recordedOleans := ["/opt/core/lib/lean"] }
 
 /-- The checks of the window mode's command line (`Editor/Window.lean`): the
 file, the options and their defaults, when config is loaded, and what is
@@ -56,8 +57,7 @@ def windowOptionChecks : List Check :=
           (parsed [] ==
               some
                 { file := none, config := some "/xdg/leanmacs", configGiven := false,
-                  sysroot := none, oleans := "/opt/leanmacs/bin/../lib/lean",
-                  composition := true } &&
+                  sysroot := none, oleans := some "/opt/core/lib/lean", composition := true } &&
             (parsed ["--no-ime"]).map (·.file) == some none) },
     { name :=
         "a Finder start: no arguments, / as the working directory, HOME set and XDG_CONFIG_HOME unset, in a bundle: no file, config from ~/.config/leanmacs, and the bundle's toolchain and .olean files"
@@ -86,7 +86,7 @@ def windowOptionChecks : List Check :=
           (parsed ["f"] ==
               some
                 { file := some "/work/project/f", config := some "/xdg/leanmacs",
-                  configGiven := false, sysroot := none, oleans := "/opt/leanmacs/bin/../lib/lean",
+                  configGiven := false, sysroot := none, oleans := some "/opt/core/lib/lean",
                   composition := true } &&
             (parsed ["f"] unset).bind (·.config) == some "/home/ada/.config/leanmacs" &&
             (parsed ["f"] empty).bind (·.config) == some "/home/ada/.config/leanmacs" &&
@@ -98,7 +98,7 @@ def windowOptionChecks : List Check :=
           some
             { file := some "/work/project/f", config := some "/c", configGiven := true,
               sysroot := some "/s"
-              oleans := "/o", composition := false }
+              oleans := some "/o", composition := false }
         pure
           (parsed ["--config", "/c", "--sysroot", "/s", "--oleans", "/o", "--no-ime", "f"] ==
               given &&
@@ -115,6 +115,7 @@ def windowOptionChecks : List Check :=
             plan ["--sysroot", "/s", "--config", "/c", "f"] false == some (.load "/c") &&
             plan ["f"] true == some (.skip (some Window.noToolchain)) &&
             plan ["--config", "/c", "f"] true == some (.skip (some Window.noToolchain)) &&
+            plan ["--oleans", "/o", "f"] true == some (.skip (some Window.noToolchain)) &&
             (parsed ["--sysroot", "/s", "f"]
                     { windowEnvironment with
                       xdgConfigHome := none, home := none }).map
@@ -125,15 +126,41 @@ def windowOptionChecks : List Check :=
       run :=
         let installed :=
           { windowEnvironment with appPath := "/Applications/Leanmacs.app/Contents/MacOS/editor" }
-        let directories (arguments : List String) : Option (Option String × String) :=
+        let directories (arguments : List String) : Option (Option String × Option String) :=
           (parsed arguments installed).map fun options => (options.sysroot, options.oleans)
         pure
           (directories ["f"] ==
               some
                 (some "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain",
-                  "/Applications/Leanmacs.app/Contents/Resources/lean/editor") &&
+                  some "/Applications/Leanmacs.app/Contents/Resources/lean/editor") &&
             (parsed ["f"] installed).map (·.configPlan true) == some (.load "/xdg/leanmacs") &&
-            directories ["--sysroot", "/s", "--oleans", "/o", "f"] == some (some "/s", "/o")) },
+            directories ["--sysroot", "/s", "--oleans", "/o", "f"] ==
+              some (some "/s", some "/o")) },
+    { name :=
+        "an executable outside a bundle, given --sysroot and no --oleans, loads config from the .olean directory the build recorded for it; with no record it loads none and says to give --oleans; and --oleans is used over the record"
+      run :=
+        let built :=
+          { windowEnvironment with
+            appPath := "/w/packages/.lake/build/bin/editor"
+            recordedOleans := ["/w/lean/.lake/build/lib/lean", "/w/other/.lake/build/lib/lean"] }
+        let unrecorded := { built with recordedOleans := [] }
+        let found (arguments : List String) (environment : Window.Environment) :
+          Option (Option String × Window.ConfigPlan) :=
+          (parsed arguments environment).map fun options =>
+            (options.oleans, options.configPlan true)
+        pure
+          (found ["--sysroot", "/s", "f"] built ==
+              some (some "/w/lean/.lake/build/lib/lean", .load "/xdg/leanmacs") &&
+            found ["--sysroot", "/s", "f"] unrecorded ==
+              some (none, .skip (some Window.noModules)) &&
+            found ["--sysroot", "/s", "--config", "/c", "f"] unrecorded ==
+              some (none, .skip (some Window.noModules)) &&
+            found ["--sysroot", "/s", "--oleans", "/o", "f"] built ==
+              some (some "/o", .load "/xdg/leanmacs") &&
+            found ["--sysroot", "/s", "--oleans", "/o", "f"] unrecorded ==
+              some (some "/o", .load "/xdg/leanmacs") &&
+            found ["f"] unrecorded == some (none, .skip (some Window.noToolchain)) &&
+            (Window.noModules.splitOn "--oleans").length > 1) },
     { name :=
         "two files, an option it does not know and an option with no value are each refused with the usage"
       run :=

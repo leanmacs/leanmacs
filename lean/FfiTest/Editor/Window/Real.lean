@@ -20,9 +20,10 @@ import EditorCore.EditorPackage
 /-!
 # FFI tests: `Editor/Window/Real.lean`
 
-The tests of `Editor/Window/Real.lean`: the `window-host`, `window-host-config`
-and `window-host-undrawn` scenarios (`windowHostScenario`,
-`windowHostConfigScenario`, `windowHostUndrawnScenario`), of `Window.host`. The
+The tests of `Editor/Window/Real.lean`: the `window-host`, `window-host-config`,
+`window-host-direct` and `window-host-undrawn` scenarios (`windowHostScenario`,
+`windowHostConfigScenario`, `windowHostDirectScenario`,
+`windowHostUndrawnScenario`), of `Window.host`. The
 root module `FfiTest` runs them, and each scenario's own doc says what it shows.
 
 It imports the config base, `Editor`, for the link alone: the window host
@@ -51,7 +52,7 @@ asked to show is `scratch`; 1 otherwise, saying why on stderr. The process start
 run's. -/
 def windowHostScenario (file : Option String) : IO UInt8 := do
   let options : Editor.Window.Options :=
-    { file, config := none, configGiven := false, sysroot := none, oleans := ""
+    { file, config := none, configGiven := false, sysroot := none, oleans := none
       composition := true, report := true }
   -- The window mode's shutdown, which first asks the window to minimise: a
   -- scripted window records that only while it runs, and runs until it is
@@ -144,7 +145,7 @@ saying why on stderr. -/
 def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 := do
   let options : Editor.Window.Options :=
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
-      oleans := oleanDir, composition := true }
+      oleans := some oleanDir, composition := true }
   let status ←
     Editor.Window.host EditorCore.EditorPackage.packages .scripted options (.load configDir)
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
@@ -161,6 +162,44 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
       "ffi-test window-host-config: the window opened with the title bar the start-up config chose"
   return 0
 
+/-- The window mode as the editor at `editorPath` starts it when run
+directly with `--sysroot <sysroot> --config <configDir>` and no `--oleans`:
+the command line is read by `Window.parse`, given that executable's path,
+so the directory of the editor's `.olean` files is the default for it,
+which the edge reads from the record the build wrote beside that
+executable (`Window.environmentAt`), and the host runs on the library's
+scripted platform as in `windowHostConfigScenario`, on the same fixture
+config. 0 when the command
+line was taken, the window mode ended with status 0 and the scripted window
+was opened with the standard title bar, which only the loaded config
+chooses: the default directory held the modules config is elaborated on. 1
+otherwise, saying why on stderr. -/
+def windowHostDirectScenario (editorPath sysroot configDir : String) : IO UInt8 := do
+  let environment ← Editor.Window.environmentAt editorPath
+  let options ←
+    match Editor.Window.parse environment ["--sysroot", sysroot, "--config", configDir] with
+    | .ok options =>
+      pure options
+    | .error message =>
+      IO.eprintln s!"ffi-test window-host-direct: the command line was refused: {message}"
+      return 1
+  let plan := options.configPlan false
+  let status ←
+    Editor.Window.host EditorCore.EditorPackage.packages .scripted options plan
+        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
+        Editor.Window.shutdown .headless (patience := none)
+  unless status == 0 do
+    IO.eprintln s!"ffi-test window-host-direct: the window mode ended with status {status}"
+    return 1
+  let opened ← Editor.Ffi.windowOpenedWith .scripted
+  unless opened == some (true, .standard) do
+    IO.eprintln
+        s!"ffi-test window-host-direct: the window was opened with {repr opened}, not the standard title bar: the config was not loaded from the default module directory, {repr options.oleans}"
+    return 1
+  IO.println
+      "ffi-test window-host-direct: config loaded from the module directory the editor finds by default"
+  return 0
+
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform whose renderer cannot be made, on the absolute path
 `file`, as `windowHostScenario` sets it up but with no report. The sample
@@ -170,7 +209,7 @@ render session was started; 1 otherwise, saying why on stderr. What the
 window mode prints of the failure is on stderr, for the gate to read. -/
 def windowHostUndrawnScenario (file : String) : IO UInt8 := do
   let options : Editor.Window.Options :=
-    { file := some file, config := none, configGiven := false, sysroot := none, oleans := ""
+    { file := some file, config := none, configGiven := false, sysroot := none, oleans := none
       composition := true }
   let status ←
     Editor.Window.host EditorCore.EditorPackage.packages .scriptedUndrawn options (.skip none)

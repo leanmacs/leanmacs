@@ -630,6 +630,20 @@ run = [
   # bar. The toolchain's directory and the `.olean` directory are passed in,
   # as for config-test. It touches no file.
   ".lake/build/bin/ffi-test window-host-config \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
+  # The same wiring as the editor starts it when run directly, with
+  # `--sysroot` and no `--oleans`: the command line is read for the default
+  # set's editor, so the `.olean` directory is the one that executable
+  # finds by default, which the package-set build records beside it
+  # (packages/.lake/build/bin/editor.oleans; lean/Editor/ModuleLookup.lean).
+  # The same config must load, so that directory holds the modules config
+  # is elaborated on. Then the same for the fixture set's editor.
+  ".lake/build/bin/ffi-test window-host-direct ../packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
+  ".lake/build/bin/ffi-test window-host-direct ../tests/packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
+  # And the record of the fixture set's editor names the `.olean` directory
+  # of each of the set's Lake packages that holds a library, one a line,
+  # the core's first and each package after the ones it requires: three
+  # directories and no more, each holding its package's modules.
+  "{ IFS= read -r core && IFS= read -r first && IFS= read -r second && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$first/Greeting/EditorPackage.olean\" && test -f \"$second/GreetingLoud/EditorPackage.olean\"",
   # The same wiring on the library's scripted platform whose renderer cannot
   # be made, as a machine with no usable GPU gives: the window runs with
   # nothing drawing in it. The scenario must exit 0, which it does only when

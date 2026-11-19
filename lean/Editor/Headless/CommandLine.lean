@@ -65,10 +65,13 @@ def read (appPath : String) (arguments : List String) : Except String Arguments 
     | _ => none
   match paths.head?.filter (·.startsWith "--"), named with
   | none, some (explicit, config, script) =>
+    -- Four paths give both directories and two give neither, so both are
+    -- known together: in a bundle, or given. Outside a bundle two paths
+    -- name no toolchain, whatever the build recorded for the executable.
     let directories := ModuleLookup.resolve appPath explicit
-    match directories.sysroot with
-    | some sysroot => .ok { render, sysroot, oleans := directories.oleans, config, script }
-    | none => .error noToolchain
+    match directories.sysroot, directories.oleans with
+    | some sysroot, some oleans => .ok { render, sysroot, oleans, config, script }
+    | _, _ => .error noToolchain
   | _, _ => .error ""
 
 end Editor.Headless
