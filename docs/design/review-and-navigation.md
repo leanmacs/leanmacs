@@ -195,7 +195,7 @@ callers and callees always, not on demand, and brought code to the reader.
 | Pickers | Fuzzy finders over files, symbols, buffers, anything | Fuzzy matching, tables |
 | Jump list | Positions held by anchors, so they survive edits. Built, with Vim's marks: `C-o`, `C-i`, `m`, `` ` `` and `'`, each window's list of anchor markers, a closed buffer's places kept as its file's rows and columns ([keymaps-and-modes.md](keymaps-and-modes.md), "The jump list and marks") | Anchors |
 | Working sets | Named, pinned collections of locations that persist | Persistent tables, anchors |
-| References and callers as excerpts | Results shown as code in an excerpt buffer, not a list of file names | Excerpt buffers, code index |
+| References and callers as excerpts | Results shown as code in an excerpt buffer, not a list of file names. Built first for project search (navigation-and-windows phase 4): `project-search` shows every match under the workspace as excerpts of the files' own buffers, editable in place as wgrep's results are ([text-and-display.md](text-and-display.md), "As built: the search results buffer") | Excerpt buffers, code index |
 | Neighbour strip | Callers and callees of the function at the cursor, always visible | Code index, block decorations |
 | Outline and breadcrumbs | The syntax tree's structure | Syntax queries |
 | Tours and maps | An ordered set of locations with notes, written by a person or an agent, validated against the code | Excerpt buffers, anchors, quote re-anchoring |

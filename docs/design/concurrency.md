@@ -846,6 +846,17 @@ and changes on disk:
   script was made for. `Diff.hunks` asks the same service for the hunks of
   whole lines instead, which the version-control gutter turns into marks
   (`lean/Editor/VersionControl/Gutter.lean`).
+- **A project search is a request a job awaits** (`lean/Editor/Grep.lean`):
+  `Grep.start` names a root, a pattern, open buffers' snapshots as overlays
+  (named as a save names its source), limits and a bound, and replies with
+  the search, named for the job; `Grep.next` waits for the next delivery,
+  the files found and not yet taken with their matches' rows and offsets,
+  and, in the last, how the search ended. The library's grep service walks
+  and reads on a thread of its own and holds a search back while its reader
+  takes nothing, so memory is bounded. A `next` of a search the job does
+  not hold is `noSuchSearch`, answered at once, and a search does not
+  outlive its job. `project-search` posts each delivery to the editor as a
+  command of its own (`lean/Editor/ProjectSearch/Run.lean`).
 - **No request carries a promise.** A request is plain data; how a wait is
   completed is the runner's business. A snapshot of editor state arrives as
   a further request of this port, each with a reply type, a
@@ -2005,6 +2016,13 @@ As built:
   registers each watch on a thread of its own and coalesces on its timer
   thread ([rust-library.md](rust-library.md), "Watching, as built"). No
   Lean thread is parked for a watch.
+- **The grep port** (`Job.Greps`) is beside them: start a search request
+  as a wait, take its reply once the wait has completed, and withdraw a
+  wait or cancel a search. Its fake is the pure model of project search
+  over the fake file service's model (`FakeFiles.greps`); its real
+  implementation the library's grep service, which runs each search on a
+  thread of its own ([rust-library.md](rust-library.md), "Project search,
+  as built"). No Lean thread is parked for a search.
 - **The pump** (`Job.pump`) is one dedicated task for the process's one
   table: it pulls the completion queue and finishes the wait each
   completion names, until quit. A completion carries an id whichever

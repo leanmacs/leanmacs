@@ -1260,6 +1260,56 @@ What it added to excerpt buffers is generic.
   sources is modified (`Loop.contextOf`). Its own tree is never moved, so
   it could not say.
 
+### As built: the search results buffer
+
+Navigation-and-windows phase 4 built `project-search`
+(`lean/Editor/ProjectSearch.lean`, `lean/Editor/ProjectSearch/Run.lean`),
+the second user of excerpt buffers: every match of a pattern under a
+workspace's root, as code, editable in place as wgrep's results are.
+It changed nothing of the excerpt text.
+
+- **One buffer a search**, `*search: <pattern> in <label>*`, emptied and
+  filled again when the same search runs again. It has the mode
+  `project-search`, whose activate key (`RET` in the Vim scheme) visits
+  the match under the cursor in the window it is pressed in, recording a
+  jump first (`TextId.locate`, `Jumps.placeCursor`).
+- **Excerpts of the files' own buffers.** Each file found is placed from
+  its buffer's text as it is when the buffer is ready, not from the rows
+  the library reported: its matches are asked of that text
+  (`TextId.matches`), each match's row and two rows each side make an
+  excerpt, overlapping ones merged, and a header above the first,
+  `<path relative to the root> · <n> matches`. A file whose text holds no
+  match by then is dropped. A file open in a buffer is searched in that
+  buffer's text, unsaved edits included (the snapshot is the library's
+  overlay); one no buffer holds is loaded and taken into a buffer shown
+  nowhere, as the review buffer takes in a file. An edit typed in the
+  results is an edit of the file's buffer, which is then modified, and
+  the results show the modified mark ("The modified mark of an excerpt
+  buffer", above).
+- **It grows a delivery at a time**, each file's excerpts inserted at its
+  place in the walk's order (`BufferId.insertExcerpts`, `Record.slot`), so
+  a file whose load finishes late does not reorder the results. The first
+  excerpts to arrive put each cursor on the results at their start.
+- **Matches are drawn as the last search's.** The search sets the last
+  search to its pattern, as Vim's `:vimgrep` sets the last search pattern,
+  so the loop draws every match in the results in `search-match` and `n`
+  and `N` step between them with no change to the loop; a later `/`
+  changes what is drawn. A pattern of the results buffer's own would need
+  a loop change, and is not built.
+- **What it keeps** is the buffer's value `project-search`
+  (`ProjectSearch.Record`): the root, the label, the pattern, each file in
+  walk order as pending, placed (its buffer and its excerpt count) or
+  dropped, the sentence the search ended with, and the snapshots it was
+  started with, released when it ends or when the next search into the
+  buffer starts.
+- **Not built**: closing the buffers a search took in when the results
+  close; a command that saves every modified buffer, wgrep's finish step.
+
+Pinned by `ModelTest.projectSearchChecks` (the pure decisions),
+`ModelTest.projectSearchRunChecks` (the commands on the loop's driver over
+the models) and `ContractTest.projectSearchChecks` (over the real
+bindings).
+
 ## Decorations
 
 Lean describes how text should look; the library merges and draws it.

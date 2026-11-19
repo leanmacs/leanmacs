@@ -336,7 +336,13 @@ one service (`crates/editor-ffi/clippy.toml`). `ffi-test`'s grep checks
 temporary directory, with an open buffer's snapshot in place of a file and
 an ignored file left out, read its deliveries from the real completion
 queue, and check a refused pattern's sentence, cancelling, and the
-decoding of a reply.
+decoding of a reply. On the Lean side the job port's search properties
+(`JobContract.grepProperties`) run against the pure model of project
+search and the runner over its fake in `model-test`, and against the
+library's grep service on real files in `contract-test`, beside its
+`grepChecks`; `project-search` itself is pinned on the loop's driver over
+the models (`ModelTest.projectSearchRunChecks`) and over the real bindings
+in a temporary directory (`ContractTest.projectSearchChecks`).
 
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:

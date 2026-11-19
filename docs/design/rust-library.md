@@ -1084,7 +1084,7 @@ interface in Lean:
 | Service | Notes |
 |---|---|
 | **Diff** | Line and word diff between two texts or snapshots, producing hunks; apply or revert a hunk. Used for gutter marks, for turning an agent's whole-file "old text / new text" into reviewable hunks, and for external reloads. Built of it: the line diff a reload applies, "Diff, as built for reload", below. |
-| **Search** | Regex and literal search over a rope without copying it; project-wide search on worker threads with streamed results. Built of it: search within a text, "Search, as built", below. |
+| **Search** | Regex and literal search over a rope without copying it; project-wide search on worker threads with streamed results. Built of it: search within a text, "Search, as built", and the search of a workspace's files, "Project search, as built", below. |
 | **Fuzzy matching** | Which candidates a pattern matches, and in what order, for a prompt's candidates and for pickers. Built: "Fuzzy matching, as built", below. |
 
 ### Diff, as built for reload
@@ -1271,7 +1271,8 @@ that cannot be read are one refusal, never a panic.
   What is given up: nucleo's incremental refinement (a longer pattern
   rescans only the last matches) and matching across cores. **Revisit
   when a measured match of the largest list a picker lists (the project
-  file picker, navigation-and-windows phase 3: 100,000 files) takes
+  file picker, the workspace finder, `find-file-in-workspace`: 100,000
+  files) takes
   longer than 50 ms on the worker**; the recorded run is at about 50 ms
   from the key to the listing, most of it Lean's own work over the
   candidates.
@@ -1553,6 +1554,25 @@ matches, then its end (more, complete or truncated with the counts, or the
 walk's refusal). Lean resolves each overlay's `File.Source` to a handle
 before it starts, so a snapshot it no longer holds is refused there and
 never crosses; the bindings are `lean/Editor/Ffi/Grep.lean`.
+
+**Limits and the deliveries** are the caller's: `project-search` asks for
+200 files with a match or 2,000 matches, whichever comes first, and 200
+matches a delivery (`lean/Editor/ProjectSearch.lean`). The walk is
+single-threaded and sorted, so the results come in a stable order; it is
+slower than `rg` on a large tree, and the parallel walker is a later
+optimisation, made only on a measurement. A row of a file that is not
+UTF-8, or of a UTF-16 file, is decoded or transcoded, so its offsets are
+not the buffer's: Lean places the excerpts from the buffer's own text, so
+only the counts can differ.
+
+**Tests**: the port's contract on the fake and on implementations that
+break it, the rule and the service on the fake, in `editor-grep`; the
+contract, every match under a root with real ignore files, the walk's
+order, `holds` once a row across blocks and a late NUL, on real files in a
+temporary directory, in `editor-grep-ripgrep`; how a start and a reply
+cross, in `editor-ffi`; and in Lean, `ffi-test`'s `grepChecks`, the job
+port's `grepProperties` against the model, the fake and the real service,
+and `contract-test`'s `grepChecks` and `projectSearchChecks`.
 
 `crates/editor-grep/clippy.toml` holds the crate's tests, the rule's and
 the service's among them, to the fake: no `std::fs`, no `Path` method that

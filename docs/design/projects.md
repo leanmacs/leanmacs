@@ -436,7 +436,19 @@ open when the table has it: found or registered this session.
 ## Who uses it
 
 - `navigation-and-windows` phase 3 (the project and file picker): the
-  workspace root.
+  workspace root. It was not built as a phase of its own: the workspace
+  finder, `find-file-in-workspace`, is it.
+- `navigation-and-windows` phase 4 (built): `project-search` searches what
+  `find-file-in-workspace` would list, by the same rule
+  (`Workspace.FindFile.searched`): the location's workspace, or the
+  buffer's, or the directory a command run for the buffer would use; a
+  location that cannot read files and run commands is refused. It does not
+  list through the workspace's lister: the library's grep service walks the
+  root with ripgrep's `ignore`, which reimplements git's rules where the
+  lister asks git (`git ls-files`). They differ at the edges: a file
+  force-added though an ignore file names it is listed by the finder and
+  left out of a search, and a `.gitignore` is honoured outside a repository
+  too ([rust-library.md](rust-library.md), "Project search, as built").
 - `version-control`: worktree lifecycle makes workspaces; a jj adapter is a
   new step of the finder (a step of `Workspace.find`, a clause of
   `World.find` and a contract property). Phase 1 (built): the status
