@@ -787,7 +787,7 @@ candidate list with no typed text (`EditorState.keyHints`, a
   (`Editor/Loop.lean`, "Decorations"). Nothing moves them on an edit: they
   are for a buffer its owner alone writes, such as a compilation buffer,
   which is read-only and whose spans the compile mode resets with its text
-  (`Editor/Compile.lean`, "Locations").
+  (`packages/compile/Compile.lean`, "Locations").
 - A buffer may have a **gutter** (`Buffer.gutter`, set by `setGutter`,
   which refuses `noSuchBuffer`): marks, each a byte range of its text at
   the gutter's revision with a short text and a face, which every window

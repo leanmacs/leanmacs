@@ -58,7 +58,7 @@ them are in `Editor/Files/Compiled.lean`.
   `Workspace.attach` starts, in that job's own command: setting the major
   mode leaves a buffer's minor modes alone and adding a minor mode leaves
   its major mode alone, so a file under a marker ends with its language,
-  `code` and the marker's minor modes (`ModelTest.compileHookChecks`).
+  `code` and the marker's minor modes (`CompileTest.compileHookChecks`).
 - **The path is matched twice**: when the command runs, and again when the
   result is delivered. Two opens of one path can be in flight, and the
   first delivery makes the buffer: the second then shows that buffer and
@@ -117,7 +117,7 @@ them are in `Editor/Files/Compiled.lean`.
   never the empty row after a final line feed, and the column to the row's
   content. A visit whose load is refused says `notOpened` and changes
   nothing else: no buffer, no cursor, no focus. The compile mode visits a
-  location's file so (`Editor/Compile.lean`, "Stepping").
+  location's file so (`packages/compile/Compile.lean`, "Stepping").
 - **Several paths open one after another** (`Files.open view path next`,
   `openAll`). Jobs run in parallel (`docs/design/concurrency.md`), so
   starting one load per path would show whichever load finished last.

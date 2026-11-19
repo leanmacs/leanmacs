@@ -363,7 +363,8 @@ list matched against it. Built by project navigation's phase 4
   buffer `:!` ran in (`lean/Editor/Shell.lean`), so a `:!` typed in it
   runs in that workspace again; outside any workspace it is `*shell
   output*`, with none. A workspace's compilation buffer,
-  `*compilation: <label>*` (`lean/Editor/Compile.lean`), is made with the
+  `*compilation: <label>*` (`packages/compile/Compile.lean`, the compile
+  mode's package), is made with the
   workspace of the buffer `compile` ran in, so `compile`, `recompile` and
   `kill-compilation` in it act on that workspace; a directory scope's has
   no workspace and keeps its directory in its `compile-directory` local

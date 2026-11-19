@@ -5,7 +5,7 @@ import Editor.Process.Environment
 
 What a tool prints as JSON, read into a tree (`Json.Value`), for the
 compile mode's computed commands (`mise tasks ls --json`,
-`Editor/Compile/Shipped.lean`). Pure. It is read here, and not with
+`packages/compile/Compile/Shipped.lean`). Pure. It is read here, and not with
 `Lean.Data.Json`, which lives in `Lean`, outside config's closure, as
 `Editor/Process/Environment.lean` records for `mise env --json`, whose
 string reader (`Process.string`, `Process.skipSpace`) it shares.

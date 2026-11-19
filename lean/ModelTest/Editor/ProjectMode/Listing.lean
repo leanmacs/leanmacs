@@ -35,7 +35,7 @@ host is handed the workspace's, the files', the ex line's, the minibuffer's
 and the shell's commands and jobs, with the job `compile-list`, and no
 package outside the core. What the compile mode makes of a listing, the
 commands `compile-command` offers and runs, is checked with the compile mode
-(`ModelTest.compileListedChecks`, `ModelTest.compileOfferChecks`).
+(`CompileTest.compileListedChecks`, `CompileTest.compileOfferChecks`).
 -/
 
 namespace ModelTest

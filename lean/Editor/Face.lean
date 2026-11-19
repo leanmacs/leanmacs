@@ -70,7 +70,7 @@ first, which sets every attribute. Among them is `search-match`, which the
 matches of the last search are drawn in (`Editor/Loop.lean`,
 "Decorations"), and `compilation.error`, `compilation.warning` and
 `compilation.note`, which the compile mode's locations are drawn in
-(`Editor/Compile.lean`, "Locations"), and `mode-line.active` and
+(`packages/compile/Compile.lean`, "Locations"), and `mode-line.active` and
 `window-divider`, the selected window's status row and the divider between
 tiled windows, which the loop names (`Loop.statusOf`, `Loop.dividerFace`).
 Layout reads four names by itself:

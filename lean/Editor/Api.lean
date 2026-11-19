@@ -612,7 +612,7 @@ arrived before it (`Editor/Loop.lean`, "Jobs from commands").
   invocation's name inside itself, with the focused window and the
   invocation's arguments (`runCommand`), and says `<name>: no such command`
   for a name no command is registered under. It is how a compile streams
-  its output into its buffer (`Editor/Compile.lean`).
+  its output into its buffer (`packages/compile/Compile.lean`).
 
 Pinned by `ModelTest.driverChecks`.
 

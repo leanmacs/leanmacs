@@ -9,27 +9,32 @@ that move in that roadmap (the compile mode and the shipped palettes), and
 put a check of that in the gate; its phase 4 built the package set and its
 build, which links the editor; its phase 5 moved the shipped palettes out
 of the core into the first default package, `shipped-themes`, and built
-the check of what a package imports. What a package is and how a host
-registers one are in [lean-runtime.md](lean-runtime.md), "Packages".
+the check of what a package imports; its phase 6 moved the compile mode
+out into the second, `compile`, published the core's test support as a
+test kit for a package's tests, and made the base config is elaborated on
+the package set's. What a package is and how a host registers one are in
+[lean-runtime.md](lean-runtime.md), "Packages".
 
-Every feature but the shipped palettes is still in the core's Lake package
-(`lean/lakefile.lean`, the package `editor-core`). The default package set
-(`packages/lakefile.toml`) requires the core and one default package,
-`shipped-themes` (`packages/shipped-themes/`). This document draws the
-lines the later phases cut along: phase 6 moves the compile mode out.
+Every feature but the shipped palettes and the compile mode is still in
+the core's Lake package (`lean/lakefile.lean`, the package `editor-core`).
+The default package set (`packages/lakefile.toml`) requires the core and
+two default packages, `shipped-themes` (`packages/shipped-themes/`) and
+`compile` (`packages/compile/`). This document draws the lines later moves
+cut along.
 
 ## The core and its root
 
-**The core** is every module under `lean/Editor/` except the modules of
-the feature that still moves out in this roadmap, called **the moving
-modules** here: the compile mode (`Editor.Compile` and every module under
-it, phase 6). The shipped palettes were the other moving feature until
-phase 5 moved them: they are the Lake package `shipped-themes` now, their
-modules are named `ShippedThemes.…`, and no module under `lean/Editor/` is
+**The core** is every module under `lean/Editor/`. Between phase 3, which
+cut the core's imports of a feature, and the phase that moved it, the
+feature's modules were still under `lean/Editor/` and not the core's: they
+were called **the moving modules**. There is none now. The shipped palettes
+moved in phase 5 and the compile mode in phase 6: they are the Lake
+packages `shipped-themes` and `compile`, their modules are named
+`ShippedThemes.…` and `Compile.…`, and no module under `lean/Editor/` is
 theirs.
 
 So the ex line, files, workspaces, version control and every other feature
-that does not move yet are core modules, and "core" in the gate's check
+that has not moved are core modules, and "core" in the gate's check
 means this set. The module map below says which of them are features that
 could move later.
 
@@ -40,18 +45,24 @@ could move later.
   in `lean/lakefile.lean`), so `lake build` builds it and with it every
   core module. No host module, no package and no executable's root imports
   it.
-- **`Editor` is the config base, not the core's root** (`lean/Editor.lean`).
-  User config is elaborated on it, and it imports the moving feature
-  (`Editor.Compile`, `Editor.Compile.Shipped`) so that config can call
-  it. It imports no palette, and never did: config names a shipped theme
-  by its name. It keeps its imports until the base changes (phase 7). It is not
-  under `lean/Editor/` and is not a core module: after phase 6 it imports a
-  package.
+- **`Editor` is the core's config base, not the core's root**
+  (`lean/Editor.lean`). User config is elaborated on it: it imports what
+  config may call of the core. It imports no package and cannot, since the
+  core requires none, so a set with no package still loads config on it.
+  It imported the compile mode (`Editor.Compile`, `Editor.Compile.Shipped`)
+  until phase 6 moved that mode out; it never imported a palette. It is not
+  under `lean/Editor/` and is not a core module.
+- **The base an editor elaborates config on is its package set's**: this
+  module, then the entry module of each package of the set outside the
+  core, in the order they register ("The config base of a set", below). So
+  config names what a default package declares (`Compile.cargoMode`,
+  `ShippedThemes.themes`), as it named the compile mode's declarations
+  while that was in the core.
 - **The list of the core's packages is not a module of the editor.**
   `EditorCore.EditorPackage` (`lean/EditorCore/EditorPackage.lean`) is the
   entry module of the core's Lake package ("A package's entry module",
   below): its `packages` names every package still in that Lake package,
-  the moving one among them, in the one order the headless fixtures show
+  in the one order the headless fixtures show
   ("Registration order is visible", below). It is a module outside
   `lean/Editor/` and outside the namespace `Editor`, in a library of its
   own (`lean_lib EditorCore`), which the generated root and the tests that
@@ -61,16 +72,17 @@ could move later.
   is named `editor-core` for this: named `editor`, its entry module would
   be `Editor.EditorPackage`, under the namespace that check rules.
 - **The executable's body is a core module, `Editor.Main`**
-  (`lean/Editor/Main.lean`). `Editor.Main.run` takes the packages as a
-  value and acts on the mode the command line selects; the demonstration
-  is there too. It is a module of the host, internal, and it imports
-  neither a package nor the config base. `Editor.Core` imports it, and
-  through it the hosts.
+  (`lean/Editor/Main.lean`). `Editor.Main.run` takes the packages and the
+  config base as values and acts on the mode the command line selects; the
+  demonstration is there too. It is a module of the host, internal, and it
+  imports neither a package nor the config base. `Editor.Core` imports it,
+  and through it the hosts.
 - **The executable's root is generated, not written.** No module under
   `lean/` defines `main` for the editor. The package-set build writes the
-  root from the set's Lake packages: it imports the config base,
+  root from the set's Lake packages: it imports the core's base,
   `Editor.Main` and each entry module, and its `main` is one call of
-  `Editor.Main.run` ("The package set and its build", below).
+  `Editor.Main.run`, with the packages and the names of the base's modules
+  ("The package set and its build", below).
 - **A root that links the elaborator imports the config base.** The
   elaborator adapter (`Editor.Config.Elaborate`) imports the base's modules
   from their `.olean` files at runtime, and each must already be linked
@@ -78,9 +90,12 @@ could move later.
   state"). The adapter used to import `Editor` to make that so, and through
   that import it, the headless host and the window host reached the
   compile mode. Now each root that links the adapter imports `Editor`
-  beside it: the generated root, `lean/ConfigTest/Check.lean`,
-  `lean/FfiTest/Editor/Window/Real.lean`. The check below fails a root
-  that does not, the generated root of the default set among them.
+  beside it: the generated root, which also imports every other module of
+  its base, the entry modules; `lean/ConfigTest/Check.lean`;
+  `lean/FfiTest/Editor/Window/Real.lean`; and the root of a package's
+  linked test that starts a host. The check below fails a root of the
+  core's build that does not, the generated root of the default set among
+  them.
 
 ## The package set and its build
 
@@ -91,9 +106,10 @@ built from one:
 - **The default set is `packages/lakefile.toml`** (the Lake package
   `default-set`). It requires the core (`editor-core`, from `../lean`) and
   the default packages, each of which has a directory under `packages/`
-  and a `require` there. There is one so far, `shipped-themes`
-  (`packages/shipped-themes/`, "The first default package", below). It is
-  the lakefile a user's set starts from.
+  and a `require` there. There are two, `shipped-themes`
+  (`packages/shipped-themes/`, "The first default package", below) and
+  `compile` (`packages/compile/`, "The default package `compile`", below),
+  required in that order. It is the lakefile a user's set starts from.
 - **The core defines the build**, as Lake facets in `lean/lakefile.lean`.
   Run in `lean/`, `lake -d ../packages build :editor` writes a root module
   from the set's packages, builds it and links
@@ -116,6 +132,7 @@ built from one:
 | `editorLinked` | a module | An executable rooted at that module, linked as the editor is, in its package's `bin/`, named as the module with a dash for each dot |
 | `editorRoot` | a package, the set | For `lake query`: writes the set's root module and prints its path; links and builds nothing |
 | `editorRootImports`, `editorRootTransImports` | a package, the set | For `lake query`: the generated root's direct and transitive imports, one module a line |
+| `editorBase` | a package, the set | For `lake query`: the set's config base, one module a line: `Editor`, then the entry module of each package of the set outside the core |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
 | `editorPackageImports` | a package, the set | For `lake query`: each direct import of a core module by a module of those packages, one a line, with the module's kind (`library`, `test`, `linked`); what the package imports check reads |
 
@@ -151,7 +168,7 @@ end Greeting.EditorPackage
 - **The module declares `packages : Array Editor.Package`** in the
   namespace of its own name. A Lake package may hold several `Package`
   values, which register in the order the array lists them; the core's
-  holds 21, and `shipped-themes`' one.
+  holds 20, and `shipped-themes`' and `compile`'s one each.
 - **A Lake package with no such module contributes nothing.** The build
   asks Lake whether a library of the package holds a module of that name
   (`Package.findModule?`) and whether its source file exists. It reads no
@@ -203,20 +220,62 @@ import Editor
 import Editor.Main
 import EditorCore.EditorPackage
 import ShippedThemes.EditorPackage
+import Compile.EditorPackage
 
 def main (args : List String) : IO UInt32 :=
-  Editor.Main.run (EditorCore.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages) args
+  Editor.Main.run (EditorCore.EditorPackage.packages ++ ShippedThemes.EditorPackage.packages ++ Compile.EditorPackage.packages) #[`Editor, `ShippedThemes.EditorPackage, `Compile.EditorPackage] args
 ```
 
 with a module doc and a doc string, since it is built with the core's Lean
 options and a warning in it fails the build. It imports each entry module
 of the set in order and appends their `packages` in that order; a set of
-the core alone (`tests/empty-set`) passes the core's array as it is. The
-gate requires the default set's root to import exactly these four modules
-(`lake -d ../packages query :editorRootImports`, in `ffi-test`).
+the core alone (`tests/empty-set`) passes the core's array as it is and
+the base `Editor` alone. The gate requires the default set's root to
+import exactly these five modules (`lake -d ../packages query
+:editorRootImports`, in `ffi-test`), and its base to be the three named
+(`:editorBase`).
 
-- **It imports the config base, `Editor`**, for the link alone, as every
-  root that links the elaborator does ("The core and its root", above).
+#### The config base of a set
+
+**An editor elaborates config on its set's base: `Editor`, then the entry
+module of each package of the set outside the core, in the order they
+register** (`setBase` in `lean/lakefile.lean`; the facet `editorBase`;
+`lean/Editor/Main.lean`, "The base"). Decided in phase 6, when the compile
+mode, which the base imported, left the core.
+
+- **The root hands the hosts the base as names**, beside the packages, and
+  imports every module of it, so each is linked into the executable: the
+  elaborator imports the base's modules from their `.olean` files at
+  runtime, and an imported module that is not linked would have its
+  initialisers run beside the editor's threads
+  ([lean-runtime.md](lean-runtime.md), "One shared state").
+- **No new convention.** The entry module is the one module every package
+  has, and it imports the package's library, so what config sees of a
+  package is what its entry module imports. A package that wants config
+  to see less puts less behind its entry module.
+- **The core's own entry module is not in the base.** What config sees of
+  the core is what `Editor` imports, as before, and does not change with
+  the set.
+- **A set without a package elaborates on less.** The editor of
+  `tests/empty-set` has the base `Editor` alone: it loads config, and a
+  config that names `Compile.cargoMode` is rejected there with `Unknown
+  identifier`.
+- **Config can name a default package's declarations**, the palettes'
+  among them (`ShippedThemes.themes`), which it could not before:
+  a side effect of the rule, pinned by the fixture
+  `packages/shipped-themes/tests/headless/package-names`.
+- **A linked test's host has `Editor` alone by default.**
+  `Headless.shipped` takes the base as an argument that defaults to
+  `Editor`, so a package's linked test whose config names no declaration
+  of a package needs only the core's `.olean` directory, which is what
+  the package steps hand it.
+- **Phase 7 builds on two things this leaves**: the list of base modules,
+  and a search path of several directories. Config files with real import
+  lines, and a base of everything linked, are that phase's.
+
+- **It imports the core's config base, `Editor`**, for the link alone, as
+  every root that links the elaborator does ("The core and its root",
+  above), and the rest of its base with the entry modules.
 - **No library declares it.** The build makes a library value in the set's
   package whose source directory is that build directory, and a module in
   it, which is how Lake builds an executable's root. So the set's lakefile
@@ -235,25 +294,32 @@ gate requires the default set's root to import exactly these four modules
   `<set>/.lake/build/bin/editor.oleans`: the `.olean` directory of each
   Lake package of the set that holds a library, one a line, absolute, the
   core's first and each other package after the ones it requires. Outside
-  a bundle the editor's default `.olean` directory is the first of them
-  ([lean-runtime.md](lean-runtime.md), "Start-up and shutdown";
-  `lean/Editor/ModuleLookup.lean`). One is enough while the config base's
-  modules are all the core's; the list is what the elaborator's search
-  path grows to when the base holds a package's modules (phase 6 moves
-  the compile mode, which the base imports, out of the core). The shipped
-  themes did not need it: config names a theme by its name, and the
-  registry is filled by linked code, so the package's fixtures run with
-  the core's directory alone. The gate starts the window mode's wiring for
-  both sets' editors with that default and requires config to load
-  (`ffi-test window-host-direct`), and checks each record: the default
-  set's names two directories, the core's and then `shipped-themes`', and
-  the fixture set's four, the core's, `greeting`'s, `greeting-loud`'s and
-  `shipped-themes`', each holding its package's modules.
+  a bundle the editor searches every one of them for the modules of its
+  base ([lean-runtime.md](lean-runtime.md), "Start-up and shutdown";
+  `lean/Editor/ModuleLookup.lean`): the base holds each package's entry
+  module, whose `.olean` files are in that package's directory. Until
+  phase 6 the base's modules were all the core's and the first directory
+  alone was used. The gate starts the window mode's wiring for both sets'
+  editors with that default and requires config to load (`ffi-test
+  window-host-direct`), and checks each record: the default set's names
+  three directories, the core's, then `shipped-themes`' and `compile`'s,
+  and the fixture set's five, the core's, `greeting`'s, `greeting-loud`'s,
+  `shipped-themes`' and `compile`'s, each holding its package's modules.
+- **A directory given on the command line is a search path**, one
+  directory or several joined with `:`, and outside a bundle the recorded
+  directories are searched after the ones given (`ModuleLookup.resolve`).
+  So every gate line that gives the core's directory alone (`editor
+  headless <sysroot> lean/.lake/build/lib/lean …`, the package steps'
+  fixtures) still finds a package's modules through the record, and an
+  editor with no record, a staged or relinked one, is given every
+  directory: the user-side link check gives its relinked editor two. In a
+  bundle the rule is unchanged: one directory, which holds every module of
+  the base, the packages' among them.
 - **What "no hand-written list of packages" means.** No module names the
   Lake packages of a set: the set's lakefile is the one place, and the
   root is generated from it. Each Lake package's entry module still lists
   its own `Package` values, which is what the root reads. The core's lists
-  21, and fewer as features move out.
+  20, and fewer as features move out.
 - **No root is written by hand, the user-side link's included.** That
   check ([lean-runtime.md](lean-runtime.md), "A link on the user's
   machine, measured") links an editor against a staged core of prebuilt
@@ -293,7 +359,9 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   own. The fixture package's shows both kinds: a command on the real text
   binding, and the headless host over the set's packages loading a config
   that binds a key to the package's command, which the key then runs
-  ("The fixture set", below);
+  ("The fixture set", below). The compile package's runs a compile over
+  the real process service and in a headless host ("The default package
+  `compile`", below);
 - **its headless fixtures** are the directories
   `<package>/tests/headless/<name>/`, each a `config/`, a `script` and an
   `expected`, run on the editor built from the set.
@@ -303,7 +371,7 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 | `test` | `lake -d <package> test --wfail`; a package with no test driver fails the step | `lean-test`, with the `cargo` that fails first on the `PATH` |
 | `build` | Once, the set's `editor`; then `lake -d <package> build --wfail`, the package's default targets under its own linter options; and its linked test's executable | `lean` |
 | `fmt` (`format` rewrites) | `lean-fmt format --check` and `lean-fmt check`, with `--root <package>`, from the formatter's host | `lean-fmt` (`lean-format`) |
-| `run` | The linked test, in the package's directory; then each headless fixture on the set's `editor`, compared with its `expected`. It prints what it ran, and the gate requires the fixture packages' and the default package's linked tests and fixtures among it | `ffi-test`, over the fixture set and over the default set |
+| `run` | The linked test, in the package's directory; then each headless fixture on the set's `editor`, compared with its `expected`. It prints what it ran, and the gate requires the fixture packages' and the default packages' linked tests and fixtures among it | `ffi-test`, over the fixture set and over the default set |
 
 - **The packages a step runs over** are those of the set that are path
   dependencies and hold a Lean library, other than the core, which the
@@ -312,8 +380,8 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   for it, `tests/empty-set`, which requires the core alone.
 - **The gate gives the steps the fixture set**, which requires the default
   set. So the default packages are tested, built, formatted and run through
-  it, `shipped-themes` among them, and `lean-test` requires the line the
-  `test` step prints as it reaches that package. The default set's own
+  it, and `lean-test` requires the line the `test` step prints as it
+  reaches each of them, `shipped-themes` and `compile`. The default set's own
   `editor` is built beside it, for the standing fixtures under
   `tests/headless/`, and **`run` is also given the default set**, so the
   default packages' linked tests and fixtures hold of the editor that is
@@ -321,14 +389,33 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 - **A package's linked-only test modules are under `<P>Test/Linked/`**,
   each mirroring the module it tests
   (`ShippedThemesTest/Linked/ShippedThemes.lean`), and `<P>Test/Linked.lean`
-  only imports them and runs them. A package has one test namespace where
+  imports them and runs them. A package has one test namespace where
   the core has four test roots, so its model tests keep `<P>Test/<path>`,
   which the test driver's root imports, and the ones that link the Rust
-  library need a place the driver does not import.
+  library need a place the driver does not import. **A check that starts
+  a host is in the root itself**, `<P>Test/Linked.lean`: only that module
+  may import the headless host, the config base and the core's entry
+  module ("What a package may import", below), so a module under
+  `<P>Test/Linked/` cannot hold it. `GreetingTest.Linked` and
+  `CompileTest.Linked` each hold theirs.
 - **A package's headless fixtures are excluded from the formatter** by a
   `lean-fmt.toml` in the package (`exclude = ["tests/**"]`): a config chunk
   is Lean with no import line, elaborated on the config base at runtime,
   and does not compile as a module of the package.
+- **A library's `globs` must hold every module of the package's library**
+  when its root does not import them all. A Lake library declared by its
+  name alone holds only what its root module imports, so a module beside
+  it that the root does not import, the entry module or the module that
+  defines the `Package` value, is no module of the library: it still
+  builds, since the generated root imports it, but the facet that lists a
+  package's imports asks the library for its modules and would not see it.
+  `compile` declares `globs = ["Compile.*"]` for that, and with it the
+  facet lists every module's imports. `shipped-themes` declares its
+  library by name alone: its root imports the palettes, and the one module
+  the root does not import, the entry module, imports no core module, so
+  no line is missed there. The facet could list the entry module whatever
+  the globs say; that is filed as the task
+  `package-imports-facet-entry-module`.
 - **The fixture packages' tests pass the package imports check** ("What
   a package may import", below). Their model tests read what a package
   registers through `Config.State.ofPackages` (`Editor.Config.Packages`,
@@ -354,7 +441,7 @@ set, holds its three themes.
 | `ShippedThemes/EditorPackage.lean` | The entry module: `packages := #[ShippedThemes.package]` |
 | `ShippedThemesTest/Model.lean` | The test driver's root, which runs `ShippedThemesTest.shippedThemesChecks`, `.solarizedChecks` and `.fairyFlossChecks`, in the test modules that mirror the three library modules |
 | `ShippedThemesTest/Linked.lean` | The linked test's root, which runs `ShippedThemesTest/Linked/ShippedThemes.lean`: each theme's picture against its reference image |
-| `tests/headless/themes`, `shipped-themes`, `load-theme` | Its headless fixtures |
+| `tests/headless/themes`, `shipped-themes`, `load-theme`, `package-names` | Its headless fixtures; the last, added in phase 6, loads a config that names the package's declaration `ShippedThemes.themes` |
 | `tests/render/` | The three reference images, with the text they show, the one font they are laid out in and that font's licence |
 
 - **It imports the core's API alone**: `Editor.Face` and `Editor.Package`.
@@ -389,17 +476,145 @@ set, holds its three themes.
   that order, as before the move. The gate runs it on the default set's
   editor and on the fixture set's.
 - **Dropping the package leaves the core's themes.** The set
-  `tests/empty-set` is the default set with this package dropped: it
+  `tests/empty-set` is the default set with its packages dropped: it
   requires the core alone. `mise run lean` links an editor from it and
   `ffi-test` runs the core's fixture `tests/headless/core-themes` on that
   editor: it starts in the theme `default`, `load-theme` offers `default`
   and the theme config defines and no palette, and a palette's name is
   answered with `load-theme: no theme is registered as …`.
-- **The app bundle needs nothing more for it.** The bundle ships the
-  module files of the config base's closure, which holds no module of this
-  package, and `bundle-test` runs the package's `shipped-themes` fixture
-  from a staged bundle with an empty environment: the themes are in the
-  executable.
+- **The app bundle carries its module files since phase 6.** Config names
+  a theme by its name, and the themes are in the executable, so the bundle
+  needed nothing of this package while the config base was the core's
+  alone. The base is the set's now, and holds this package's entry module,
+  so the bundle ships its `.olean` files with the rest of the base's
+  closure, in the bundle's one directory. `bundle-test` runs the
+  package's `shipped-themes` and `package-names` fixtures from a staged
+  bundle with an empty environment.
+
+### The default package `compile`
+
+`packages/compile/` is the Lake package `compile`: the compile mode,
+`compile` into a workspace's compilation buffer, with the modes that ship
+for cargo, lake and mise ([keymaps-and-modes.md](keymaps-and-modes.md),
+"The compile mode, as built"). Its five modules were modules of the core,
+`Editor.Compile` and the four under it, until the packages roadmap's
+phase 6. The default set requires it after `shipped-themes`, so every
+editor built from the default set, or from a set that requires the default
+set, holds it. It is the first package with behaviour: commands, a job
+over the process service, a major mode, ex names and contributions.
+
+| Path | What |
+|---|---|
+| `lakefile.toml` | The package: it requires the core by path, declares the library `Compile` with `globs = ["Compile.*"]`, the test library `CompileTest` and the test driver `compile-test`, and turns every linter on |
+| `Compile.lean` | The commands and the run: `compile`, `compile-command`, `recompile`, `kill-compilation`, the output's commands, the locations and the steps over them, the mode `compilation` (from `lean/Editor/Compile.lean`) |
+| `Compile/Errors.lean`, `Compile/Contribution.lean`, `Compile/Shipped.lean` | The matcher and the sites it yields; the offers and the formats in use; `cargo-mode`, `lake-mode` and `mise-mode` with rustc's and Lean's formats |
+| `Compile/Compiled.lean` | The `Package` value `Editor.Compile.package`, still named `compile`: nine commands, the job `compile-run`, the mode, the three contributions and six ex names |
+| `Compile/EditorPackage.lean` | The entry module: `packages := #[Editor.Compile.package]`. It imports `Compile.Compiled`, and so the whole library, which is what config sees of the package |
+| `CompileTest/Model.lean` | The test driver's root, which runs the ten model lists, 98 checks, in the test modules that mirror the library's (`CompileTest/Compile.lean`, `CompileTest/Compile/…`), over the support in `CompileTest/Support/Compile.lean` |
+| `CompileTest/Linked.lean` | The linked test's root: the two lists over the real process service (`CompileTest/Linked/Compile.lean`, `CompileTest/Linked/Compile/Shipped.lean`) and, in the root itself, a compile in a headless host; 7 checks |
+| `tests/headless/ex-names`, `config` | Its headless fixtures |
+| `tests/linked/run/` | The script the host check runs, and the lines the host must print |
+| `tests/compile/` | The fixtures of the checks over the real process service: `three-lines`, the programs that stand for cargo, lake, mise and git, and the trees the shipped modes are checked in |
+
+- **Its library imports the core's API alone**, eleven modules, with no
+  addition to the API: `Editor.Api`, `Editor.Command.Call`, `Editor.File`,
+  `Editor.Json`, `Editor.Mode`, `Editor.Package`, `Editor.ProjectMode`,
+  `Editor.ProjectMode.Format`, `Editor.ProjectMode.Listing`,
+  `Editor.Shell` and `Editor.Workspace.Modes`, the same eleven recorded
+  before the move. The package imports check holds that, over a library
+  whose globs hold every module ("What a package may import", below).
+- **Two of those are features' modules still in the core**: the shell
+  (`Editor.Shell`) and the workspace's modes (`Editor.Workspace.Modes`).
+  Both edges stay. When either feature moves into a package, this package
+  requires that package.
+- **Module names changed; no declaration did.** `Editor.Compile.Errors`
+  is the module `Compile.Errors`, and every declaration is still in the
+  namespace `Editor.Compile` (`Editor.Compile.compileName`,
+  `Editor.Compile.cargoMode`, `Editor.Compile.package`). Config names them
+  under `open Editor` (`Compile.cargoMode`), the core's vocabulary for the
+  compile mode is in that namespace already (`Compile.Contribution`,
+  `Compile.Format`), and about 4,700 lines of code and model tests changed
+  no name. The modules are not named `Editor.…`, so the core imports
+  check needs no name for them, as for the palettes.
+- **What stayed in the core**, each because it is the core's own data or a
+  core module uses it: the `compilation.*` faces
+  (`lean/Editor/Face/Vocabulary.lean`, `lean/Editor/Face.lean`); the
+  contribution vocabulary and the format data
+  (`lean/Editor/ProjectMode.lean`, `lean/Editor/ProjectMode/Format.lean`);
+  the listing, its store `compile-listings` and its job `compile-list`,
+  which the `workspace` package registers
+  (`lean/Editor/ProjectMode/Listing.lean`); `compileContribution` and
+  `projectCommands` of the setup port; and the registry's hook with the
+  loop being told the contributions ("The interfaces the core owns",
+  below). No core module names a compile command: the default config, the
+  Vim tables and the menu name none.
+- **It registers after every package of the core's**, by dependency, as a
+  user's package would, and not in the place it had in the core's list.
+  Five lines of three standing fixtures changed for it ("Registration
+  order is visible", below).
+- **Its model tests are the ones it had in the core.** The ten lists moved
+  with their sentences and assertions as they were, under the names
+  `CompileTest.compileChecks`, `.compileErrorChecks`,
+  `.compileLocationChecks`, `.compileHookChecks`, `.compileOfferChecks`,
+  `.compileListedChecks`, `.compilePackageChecks`, `.projectFormatChecks`,
+  `.projectModeChecks` and `.miseTaskChecks` (each was `ModelTest.<name>`).
+  They run on the core's test kit ("What moving the compile mode added to
+  the core's API", below). Three checks were added to them before the
+  move, while they were still the core's, for what two config tests held:
+  two in `compileHookChecks`, of a shipped contribution with one field
+  overridden and of a contribution with a format of its own, on a `setup`
+  written as compiled code (they were `ConfigTest.compileConfigChecks`, on
+  a real config, which is the fixture `config` now); and one in
+  `compilePackageChecks`, of what the package registers on its own (which
+  `ConfigTest.shippedChecks` held of the core's list). So the driver
+  prints `compile-test: 98 checks passed`, 95 and those three.
+- **Its linked test runs what `contract-test` ran, and a host.**
+  `CompileTest.compileRunChecks` was `ContractTest.compileChecks` and
+  `CompileTest.projectRunChecks` was `ContractTest.projectModeChecks`: the
+  model lists have the old names, and both are in one namespace now. They
+  run on the core's linked test kit, with the compile mode's keys and jobs
+  passed to the rig, which names no feature outside the core. The root
+  adds `hostCheck`: the headless host over the core's packages and this
+  one's, in a temporary working directory, runs
+  `tests/linked/run/script`, which starts a child that writes one error
+  line and blocks, steps to its location, kills it and recompiles; each
+  line of `tests/linked/run/holds` must be part of a line the host
+  printed. The output holds the temporary directory's path, which is why
+  it is not a headless fixture compared with a file. It prints `compile
+  linked test: 7 checks passed`.
+- **One table of waits a process.** The library has one completion queue,
+  and a pump ends the waits of the one table it is given, so the host,
+  which makes a table and starts the pump, is started first, and the
+  services the other checks run over are made over the host's table
+  (`Editor.Test.Linked.Services.over`).
+- **Its fixtures were written before the move** and moved byte for byte,
+  so that what they print is what the editor printed with the compile
+  mode in the core: `ex-names` (each of `:next-error`, `:previous-error`,
+  `:recompile`, `:kill-compilation`, `:compile` and `:compile-command`,
+  typed in an editor that has compiled nothing, reaches its command) and
+  `config` (a config that overrides a field of `Compile.cargoMode`,
+  builds a `Compile.Format` and reads a line with it, and names
+  `Compile.shipped`, elaborates and its command runs); and the host
+  check's script and list, which a gate line ran on the default editor in
+  a temporary directory before the move. `git log --follow` on each shows
+  the one commit that wrote it and the rename.
+- **A whole run cannot be a static fixture**: the compilation buffer's
+  first line and the echo of a visit hold the working directory's whole
+  path. `ex-names` holds only its last name, `lean`, where the gate runs
+  the editor.
+- **It carries its own copy of the git fixture** (`tests/compile/bin/git`,
+  a byte-for-byte copy of the core's `tests/workspaces/git`): a linked
+  test runs in its package's directory, and a package that read
+  `../../tests/workspaces` could not be fetched from anywhere else later.
+- **Dropping the package leaves an editor that starts.** The editor of
+  `tests/empty-set` loads config and answers `:compile` with `compile: not
+  an ex command`, the words it has for `:bogus`
+  (`tests/headless/core-ex-names`, in `ffi-test`). The listing job stays
+  registered there and lists a contribution's commands, which nothing
+  then reads.
+- **The app bundle carries its module files**, with the rest of the
+  config base's closure, and `bundle-test` runs the fixture `config` from
+  a staged bundle with an empty environment.
 
 ### The fixture set
 
@@ -412,7 +627,7 @@ packages too.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then the default set, and through it `shipped-themes` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then the default set, and through it `shipped-themes` and `compile` |
 | `tests/packages/greeting/` | The Lake package `greeting`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean`), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting` and registers `greeting-reply` again with another text; its test driver and the fixture `tests/headless/reply` |
 
@@ -441,9 +656,9 @@ packages too.
 ### Manifests: a set's build fetches nothing
 
 **Every Lake root has its `lake-manifest.json` committed**: the core, the
-default set, each default package, the fixture set, each fixture package,
-the empty set, the user-side link's set and its package, and the
-formatter's host.
+default set, each default package (`shipped-themes`, `compile`), the
+fixture set, each fixture package, the empty set, the user-side link's set
+and its package, and the formatter's host.
 
 - **A set's manifest holds path entries only.** With it present, a
   dependency the manifest does not hold fails the build (`dependency … not
@@ -471,9 +686,10 @@ formatter's host.
 
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
-`lean/` holds a copy of it** (the default set and its package
-`shipped-themes`, the fixture set and its two packages, the empty set, the
-user-side link's set and its package, and the formatter's host): `lean-fmt` refuses a root with no
+`lean/` holds a copy of it** (the default set and its packages
+`shipped-themes` and `compile`, the fixture set and its two packages, the
+empty set, the user-side link's set and its package, and the formatter's
+host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file when Lake is run in that
 directory. `tools/toolchain-check.sh`, first in `lean-test`, fails when a
 tracked copy differs from the pin, naming it. A bump of the pin
@@ -496,9 +712,21 @@ says which side of the rule its modules are on.
   test scheme (`Editor.InputScheme.Test`), the loop's driver
   (`Editor.Loop.Driver`), the reading of what a package registers
   (`Editor.Config.Packages`: `Package.registered`,
-  `Config.State.ofPackages`) and the theme picture check
-  (`Editor.Themes.Picture`). A package's tests are the modules under
-  `<P>Test`.
+  `Config.State.ofPackages`), the theme picture check
+  (`Editor.Themes.Picture`), and the core's test kit, `Editor.Test` and
+  every module under it: the support the core's own model tests are
+  written on (`Editor.Test.…`, 14 modules) and the rig of its checks over
+  the real services (`Editor.Test.Linked.…`, 4 modules). A package's tests
+  are the modules under `<P>Test`.
+- **The kit is the core's test support as it is, published.** A test
+  written on it uses the loop's key table, the registry's types and the
+  real services, which the kit's modules hand it by importing them: the
+  package names none of them in an `import` line, which is what the rule
+  limits. A kit with a surface that hides them is later work, filed as the
+  task `package-test-kit-surface`. The linked kit runs over the Rust
+  library, so only a test linked as the editor is can use it; the rule
+  does not say so, and the link does: the model test driver links no Rust
+  library.
 - **The root of a package's linked test may import a little more, and
   only it**: the real bindings of the ports (`….Real`), the headless host
   (`Editor.Headless`), the config base (`Editor`) and the core's entry
@@ -508,7 +736,10 @@ says which side of the rule its modules are on.
   bindings (`Editor.Ffi…`), the loop and the rest of the config session
   stay refused to it, as do the window hosts' real modules. A harness that
   hid the host from the linked test would be a new mechanism; none is
-  built.
+  built. **A module under `<P>Test.Linked` is a test module, not the
+  root**: it has a test's allowance and no more, so a check that starts a
+  host is written in the root (`GreetingTest.Linked`,
+  `CompileTest.Linked`).
 - **Internal modules** are those that exist to run the editor and not to be
   written against:
   - the hosts and the executable's modules (`Editor.Main`,
@@ -527,6 +758,9 @@ says which side of the rule its modules are on.
   - the modules that define the packages still in the core
     (`….Compiled`);
   - `Editor.Core`.
+
+  A test double is asked about first, so a kit module is importable by a
+  test whatever its own name would otherwise make it.
 - **The internal namespace is `Editor.Internal`.** A core module that no
   package may import is created under it from now on, so that its name
   says so. The modules listed above are internal today under older names
@@ -550,58 +784,62 @@ says which side of the rule its modules are on.
   module of a set's packages, with whether the importing module is the
   package's library's, a test's or the linked test's root
   (`lake -d <set dir> query :editorPackageImports`), and refuses the ones
-  the rule does not allow, each with its reason. **The lists are in the
-  script**: the test doubles, the internal modules, and what the linked
-  test may import beyond them, as names and patterns. No module lists the
+  the rule does not allow, each with its reason. It lists the modules of
+  each of a package's libraries, so a library's globs must hold every
+  module of it ("A package's tests and the gate's steps over them",
+  above). **The lists are in the script**: the test doubles, the internal
+  modules, and what the linked test may import beyond them, as names and
+  patterns. No module lists the
   API: a core module that is neither internal nor a test double is part
   of it. A change to the rule changes the script, this section and the
   lines the gate holds the script to (`tests/package-imports/`).
 
 Checked against the graph at `6ba99de5`, before either feature moved:
-every core module the moving modules import directly is importable. The compile mode's modules import
+every core module the two features' modules imported directly was
+importable. The compile mode's modules imported
 `Editor.Api`, `Editor.Command.Call`, `Editor.File`, `Editor.Json`,
 `Editor.Mode`, `Editor.Package`, `Editor.ProjectMode`,
 `Editor.ProjectMode.Format`, `Editor.ProjectMode.Listing`, `Editor.Shell`
 and `Editor.Workspace.Modes`; the shipped palettes' import `Editor.Face` and
 `Editor.Package`. `Editor.Themes.Check`, the completeness check the
-palettes' tests run, is importable.
+palettes' tests run, is importable. After each move the package's library
+imports exactly those: `lake -d ../packages query :editorPackageImports`
+lists the same eleven for `compile` and the same two for
+`shipped-themes`.
 
-**The compile mode's tests import internal modules today**, which the
-rule does not allow a package's tests. They are recorded here, not allowed
-by widening the rule; phase 6 extends the API, or changes the tests, when
-it moves them, as phase 5 did for the palettes' ("What moving the shipped
-themes added to the core's API", below):
+**The compile mode's tests imported internal modules** while they were
+the core's, which the rule does not allow a package's tests:
+`Editor.Command.Dispatch`, `Editor.Command.Real`, `Editor.Config.Elaborate`,
+`Editor.Config.Registry`, `Editor.Config.Session`, `Editor.Config.Stores`,
+`Editor.Display.Recorder`, `Editor.Ffi.Processes`, `Editor.Ffi.Snapshot`,
+`Editor.Job.Runner`, `Editor.Loop` and `Editor.Text.Real`, and the core's
+own test support (`ModelTest.Support.…`, `ContractTest.Support.…`). The
+rule was not widened to allow those. Phase 6 published the support as the
+test kit and the tests stopped naming the rest ("What moving the compile
+mode added to the core's API", below).
 
-- the compile mode's tests (`ModelTest.Editor.Compile` and the modules
-  under it, `ConfigTest.Editor.Compile`, `ContractTest.Editor.Compile` and
-  `.Compile.Shipped`): `Editor.Command.Dispatch`, `Editor.Command.Real`,
-  `Editor.Config.Elaborate`, `Editor.Config.Packages`,
-  `Editor.Config.Registry`, `Editor.Config.Session`,
-  `Editor.Config.Stores`, `Editor.Display.Recorder`,
-  `Editor.Ffi.Processes`, `Editor.Ffi.Snapshot`, `Editor.Job.Runner`,
-  `Editor.Loop` and `Editor.Text.Real`. Of these `Editor.Config.Packages`
-  is a test double since phase 5.
-
-**The core's tests do not name the compile mode.** A test module that
-mirrors a core module imports no module of the compile mode, so that
-phase 6 moves the compile mode's tests with it and splits none of the
-core's: the listing's checks build their host from core packages'
-commands and jobs (`ModelTest/Support/Listing.lean`), the contribution and
-the format data have checks of their own (`ModelTest.contributionChecks`,
+**The core's tests do not name the compile mode**, and could not: it is
+another Lake package, which the core does not require. Phase 3 had made
+that so while it was still under `lean/Editor/`: the listing's checks
+build their host from core packages' commands and jobs
+(`lean/Editor/Test/Listing.lean`), the contribution and the format data
+have checks of their own (`ModelTest.contributionChecks`,
 `ModelTest.formatDataChecks`), and what the compile mode makes of them is
-checked in its own test modules. Three test modules outside the compile
-mode's own still name it, each because it is the feature's own helper or
-names every package by design; the `compile` entry of the map lists them:
+checked in its own test modules, which moved with it. The three test
+modules outside the compile mode's own that still named it then went as
+follows:
 
-- `ModelTest.Support.Compile`, the compile checks' own support, which
-  moves with them;
+- `ModelTest.Support.Compile`, the compile checks' own support, moved with
+  them (`packages/compile/CompileTest/Support/Compile.lean`);
 - `ConfigTest.Editor.Headless`, which holds `ConfigTest.shippedChecks`,
-  the test of the shipped set as the executable's hosts register it, and
-  so names every package;
+  the test of the core's list as the executable's hosts register it,
+  states that the list holds nothing of the compile mode;
 - `ContractTest.Support.Projects`, the rig of the project-mode contract
-  checks over the real services, which registers the compile package.
-  Three version-control contract checks build on that rig and reach the
-  compile package through it; phase 6 splits the rig or moves it.
+  checks over the real services, registered the compile package, and
+  three version-control contract checks built on it. The rig is the linked
+  test kit's now (`lean/Editor/Test/Linked/Rig.lean`), its default keys and
+  jobs the files' and the workspace's alone, and the compile mode's checks
+  pass their own.
 
 **The core's tests do not name a shipped palette either.** Five test
 modules of core modules used a palette as their fixture theme
@@ -613,8 +851,8 @@ fixture themes made with `Palette.theme` from palettes written in
 `lean/ConfigTest/Support/Themes.lean`, and the appearance checks define
 theirs. No copy of a palette's values is kept in the core, so no licence
 notice is either. `ConfigTest.shippedChecks` and
-`ModelTest.packageSetChecks` state the core's list alone: 21 packages and
-the one theme `default`.
+`ModelTest.packageSetChecks` state the core's list alone: 20 packages, the
+one theme `default`, and nothing of the compile mode.
 
 ## What moving the shipped themes added to the core's API
 
@@ -648,11 +886,104 @@ in `lean/`):
   alone, and every other one was the picture scenario's, which is in
   `Editor.Themes.Picture` now.
 
-## The interfaces the core owns for the two moving features
+## What moving the compile mode added to the core's API
 
-Seven import edges led from a core module to a module outside the core.
-Each is cut, so the core's root reaches no moving module and phase 6 cuts
-none. What replaced each edge is an interface the core owns.
+The packages roadmap's phase 6 moved the compile mode into a package that
+imports only what the rule above allows. **Nothing was added to what a
+package's library may import**: the compile mode's five modules import the
+eleven API modules they imported in the core ("The default package
+`compile`", above). What changed is what a package's tests may import, in
+two groups of test doubles, and one requirement on a package's lakefile.
+Each is in the lists of `tools/package-imports-check.sh`, and the gate
+holds the script to lines for them (`tests/package-imports/`). Read
+against the import lines Lake prints for the package (`lake -d ../packages
+query :editorPackageImports`, in `lean/`):
+
+| Addition | What it is | Who may import it | Why the move needed it |
+|---|---|---|---|
+| `Editor.Test.…`, 14 modules under `lean/Editor/Test/` | The support the core's model tests are written on, moved from `lean/ModelTest/Support/` into the core's library and the namespace `Editor.Test`: test doubles | A package's tests | The compile mode's ten model lists run the loop's driver over the editor's models, in the worlds of files, workspaces and the shell the core's own tests use. As core tests they imported that support by name (`ModelTest.Support.…`), which is no module of the editor |
+| `Editor.Test.Linked.…`, 4 modules under `lean/Editor/Test/Linked/` | The rig of the core's checks over the real services, moved from `lean/ContractTest/Support/`, with a new module for the services themselves: test doubles | A package's tests; in practice its linked test, since they run over the Rust library | The compile mode's two lists over the real process service drive the loop over the real text binding and the library's job services. As core tests they imported that rig (`ContractTest.Support.…`) and the raw bindings |
+| A library's globs | Not a module: a package's library must hold every module of it, by `globs` when its root does not import them all | A package's lakefile | The facet that lists a package's imports reads each library's modules. Declared by name alone, `Compile` did not hold `Compile.Compiled`, `Compile.Shipped` or `Compile.EditorPackage`, and their imports were not checked |
+
+The model kit, each module with what it holds. The compile package's tests
+import nine of them by name (`Driver`, `Files`, `Keys`, `Listing`, `Loop`,
+`Models`, `Prompts`, `Shell`, `Workspace`); the other five came because
+those import them, and a kit that left them behind would not build.
+
+| Module | What it holds |
+|---|---|
+| `Editor.Test.Models` | The editor's models, and programs over the ports run on their models |
+| `Editor.Test.Keys` | Keys and key maps for fixtures: the keys a key string names, an invocation by name |
+| `Editor.Test.Jobs` | Jobs run on the job model and on the runner over its fakes, with a fake clock |
+| `Editor.Test.Completion` | Candidates and completion styles written as data |
+| `Editor.Test.Geometry` | Rectangles, sample areas and window counts |
+| `Editor.Test.States` | Editor states a check starts from: windows, buffers, tabs, open prompts |
+| `Editor.Test.Config` | Config fixtures: registered commands, faces, themes, bindings, the loop's context |
+| `Editor.Test.Loop` | The command loop stepped on the editor's models, with keymaps and commands written in the test |
+| `Editor.Test.Driver` | The loop's driver over the editor's models and the job model, and what a check reads back from it |
+| `Editor.Test.Files` | The file commands' keys, files and driver |
+| `Editor.Test.Workspace` | The workspace's world, jobs, commands, keys and driver |
+| `Editor.Test.Shell` | The shell command's jobs, bindings, commands and replies |
+| `Editor.Test.Prompts` | Prompts and the minibuffer: their commands, bindings, registry and driver |
+| `Editor.Test.Listing` | A contribution with a listing and its world, which names core modules only |
+
+The linked kit:
+
+| Module | What it holds |
+|---|---|
+| `Editor.Test.Linked.Jobs` | Jobs on the real runner: how long a check waits, a job's outcome as a check compares it |
+| `Editor.Test.Linked.Trees` | Temporary directories of a check's own, and files written into them |
+| `Editor.Test.Linked.Rig` | The loop over the real services, as a check drives it: its jobs, commands and keys, runs settled until every job has run, and a child's `PATH` |
+| `Editor.Test.Linked.Services` | New: the library's real job services over one table of waits, that table with the completion pump started, the shutdown, and how many children are not yet reaped. `contract-test`'s `main` held the first three inline, and the compile checks read the last from the raw binding |
+
+- **The rig names no feature outside the core.** Its default keys and jobs
+  are the file commands' and the workspace's, with no contribution told to
+  the loop. It held the compile mode's too, and three version-control
+  contract checks reached the compile mode through it. The compile mode's
+  checks pass their own keys and jobs now, built from what the rig hands
+  out (`rigCommands`, `rigJobs`) and the package's registrations.
+- **What the tests stopped importing.** The model tests named
+  `Editor.Loop`, `Editor.Command.Dispatch`, `Editor.Config.Registry`,
+  `Editor.Config.Stores`, `Editor.Config.Owner` and `Editor.Ex.Compiled`;
+  the two lists over the real services also `Editor.Command.Real`,
+  `Editor.Display.Recorder`, `Editor.Ffi.Processes`, `Editor.Ffi.Snapshot`,
+  `Editor.Job.Runner` and `Editor.Text.Real`, and through the old rig
+  `Editor.Files.Compiled` and `Editor.Workspace.Compiled`. All are
+  internal. Each import line went, and the names the tests still use of
+  them come with the kit's modules. `Editor.Config.Elaborate` and
+  `Editor.Config.Session` were the config test's
+  (`ConfigTest.compileConfigChecks`), which did not move as code: it drove
+  the config session's internals. Its two facts are held by the package's
+  fixture `config`, that a real config written on the package's
+  declarations elaborates, and by two checks of
+  `CompileTest.compileHookChecks`, of what the hook makes of those
+  registrations.
+- **The linked test's root uses the allowance phase 5 settled**:
+  `CompileTest.Linked` imports `Editor`, `Editor.Headless` and
+  `EditorCore.EditorPackage` for its check of a host, and
+  `Editor.Test.Linked.Services` for the services and the shutdown, so it
+  names no raw binding.
+- **The core's own tests are written on the same modules**: `model-test`
+  and `contract-test` import the kit from its new place, with no copy.
+  `Editor.Core` imports the kit, so it is in the core's closure and the
+  core imports check's second rule holds of it.
+- **Rejected**: allowing `ModelTest.Support.…` by name, which would widen
+  the rule past the modules of the editor; copies of the support in the
+  package, which would be two definitions of the shell's and the files'
+  worlds; and rewriting the tests on a new, narrower harness, which would
+  have changed about 2,400 lines of checks that the move had to leave as
+  they were.
+- **The cost, and what is filed.** The kit is wide: it is the support as
+  the core's tests need it, and a package's test written on it depends on
+  the loop's key table and the registry's types by name, if not by import
+  line. Narrowing it to a surface that hides them is the task
+  `package-test-kit-surface`.
+
+## The interfaces the core owns for the two features that moved
+
+Seven import edges led from a core module to a module of one of the two
+features. Phase 3 cut each, so that phases 5 and 6 moved the features and
+cut none. What replaced each edge is an interface the core owns.
 
 | Edge that was cut | What the core owns now |
 |---|---|
@@ -675,9 +1006,9 @@ none. What replaced each edge is an interface the core owns.
   (`Editor.Compile.Contribution`, `Editor.Compile.Format`, …), so config
   and tests changed only `import` lines; a core module that declares names
   in `Editor.Compile` is unusual, and the two modules' docs say why. What
-  stays with the compile mode is what reads them: the matcher and the
-  sites it yields (`lean/Editor/Compile/Errors.lean`), and the offers and
-  the formats in use (`lean/Editor/Compile/Contribution.lean`). No general
+  went with the compile mode is what reads them: the matcher and the
+  sites it yields (`packages/compile/Compile/Errors.lean`), and the offers
+  and the formats in use (`packages/compile/Compile/Contribution.lean`). No general
   "contribute to a named point" operation was built: it would be a new
   mechanism with owner, reload and refusal rules of its own.
 - **The listing** (`lean/Editor/ProjectMode/Listing.lean`). Running a
@@ -694,13 +1025,14 @@ none. What replaced each edge is an interface the core owns.
   when the listing starts.
 - **Ex names by owning package.** A package binds the ex names of its own
   commands (`exCommand`): the `compile` package its six
-  (`lean/Editor/Compile/Compiled.lean`) and the `version-control` package
-  its twelve (`lean/Editor/VersionControl/Compiled.lean`). The `ex`
+  (`packages/compile/Compile/Compiled.lean`) and the `version-control`
+  package its twelve (`lean/Editor/VersionControl/Compiled.lean`). The `ex`
   package keeps the files', its own and the buffers', which are features
   still in the core, and imports neither the compile mode nor version
-  control. Version control's names moved with compile's although version
-  control stays in the core, so that the names are bound in the order they
-  were ("Registration order is visible").
+  control. Version control's names moved with compile's in phase 3
+  although version control stays in the core, so that the names were bound
+  in the order they had been; the compile package's are bound after
+  version control's since it moved ("Registration order is visible").
 - **The `themes` package and `shipped-themes`.** The `themes` package
   (`lean/Editor/Themes/Compiled.lean`) keeps `load-theme`, the theme
   `default` (`Theme.builtin`) and the theme source, and imports no
@@ -717,16 +1049,17 @@ none. What replaced each edge is an interface the core owns.
   them (`Palette.theme`, `lean/Editor/Face.lean`). They are the core's
   names for what the compile mode draws: the compile mode names faces the
   core's vocabulary holds, and no core module imports it for them. No edge
-  was cut here; they stay in the core's vocabulary when the mode moves.
+  was cut here; they stayed in the core's vocabulary when the mode moved.
 
 ## The module map
 
-Every module under `lean/Editor/`, 253 of them
+Every module under `lean/Editor/`, 266 of them
 (`find lean/Editor -name '*.lean' | wc -l`; 254 at `6ba99de5`, phase 4
-added `Editor.Main`, and phase 5 added `Editor.Themes.Picture` and moved
-the three modules of the shipped palettes out), is **core** or part of a
-**feature that could become a package**. The counts below add up to 253:
-169 core and 84 in 20 features.
+added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
+the three modules of the shipped palettes out, and phase 6 moved the five
+of the compile mode out and added the 18 of the test kit), is **core** or
+part of a **feature that could become a package**. The counts below add
+up to 266: 187 core and 79 in 19 features.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -734,18 +1067,19 @@ the three modules of the shipped palettes out), is **core** or part of a
   any module a core module imports for a type it carries (`Editor.Ex.Line`,
   `Editor.Menu`, `Editor.ModeLine`, `Editor.Language`, `Editor.Workspace`,
   the three `Editor.ProjectMode` modules).
-- **A feature** is code reached through a package's registrations: the 21
-  packages of the core's list, as 20 features (the two version-control packages are
+- **A feature** is code reached through a package's registrations: the 20
+  packages of the core's list, as 19 features (the two version-control packages are
   one), with the Vim scheme counted with evil.
-- **Every feature here but `compile` stays in the core's Lake package**,
+- **Every feature here is in the core's Lake package**,
   and is a core module in the sense of the section above and of the gate's
   check. The map guides later moves; it does not commit to them. The
-  shipped palettes are no longer in the map: they are the Lake package
-  `shipped-themes` ("The first default package", above).
+  shipped palettes and the compile mode are no longer in the map: they are
+  the Lake packages `shipped-themes` and `compile` ("The first default
+  package" and "The default package `compile`", above).
 
 One row covers modules that share a class and a side of the import rule.
-"A package may import it" is `yes`, `in tests` (a test double), `no`
-(internal) or, for the moving feature, the phase that moves it.
+"A package may import it" is `yes`, `in tests` (a test double) or `no`
+(internal).
 "Under it" counts the modules below a name, not the module of that name.
 
 | Modules | Count | Class | A package may import it |
@@ -760,6 +1094,8 @@ One row covers modules that share a class and a side of the import rule.
 | The models: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `.Model.Json`, `.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 14 | core | in tests |
 | The contracts and cases: `Editor.Clipboard.Contract`, `Editor.Completion.Contract`, `.AtPointContract`, `.DisplayContract`, `.StyleContract`, `Editor.Display.Contract`, `Editor.Fuzzy.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.SyntaxTree.Contract`, `Editor.Text.Contract`, `Editor.Watch.Contract`, `Editor.Api.Cases`, `Editor.File.Cases`, `Editor.UndoTree.Cases` | 15 | core | in tests |
 | The fakes, the test scheme and the loop's driver: `Editor.Completion.Fake`, `Editor.Job.Fake`, `Editor.InputScheme.Test`, `Editor.Loop.Driver` | 4 | core | in tests |
+| The model test kit: `Editor.Test.Completion`, `.Config`, `.Driver`, `.Files`, `.Geometry`, `.Jobs`, `.Keys`, `.Listing`, `.Loop`, `.Models`, `.Prompts`, `.Shell`, `.States`, `.Workspace` | 14 | core | in tests |
+| The linked test kit: `Editor.Test.Linked.Jobs`, `.Rig`, `.Services`, `.Trees` | 4 | core | in tests |
 | The editor API and what is proved of it: `Editor.Api`, `.Api.Theorems`, `Editor.UndoTree`, `.UndoTree.Theorems` | 4 | core | yes |
 | The composite port and a command: `Editor.Command`, `.Call`, `.Control`, `.Registry`, `.Append`, `Editor.Program` | 6 | core | yes |
 | The ports: `Editor.Clipboard`, `Editor.Diff`, `.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Job`, `Editor.Process`, `.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 13 | core | yes |
@@ -777,7 +1113,6 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.BindingSearch.Compiled` | 1 | feature: binding-search | no |
 | `Editor.Buffers` | 1 | feature: buffers | yes |
 | `Editor.Buffers.Compiled` | 1 | feature: buffers | no |
-| `Editor.Compile`, `.Compiled`, `.Contribution`, `.Errors`, `.Shipped` | 5 | feature: compile | moving (phase 6) |
 | `Editor.Completion.Styles`, `.Displays` | 2 | feature: completion | yes |
 | `Editor.Completion.Compiled` | 1 | feature: completion | no |
 | `Editor.Evil.Compiled` | 1 | feature: evil | no |
@@ -813,24 +1148,33 @@ One row covers modules that share a class and a side of the import rule.
 
 ### What each feature would have to cross
 
-For each feature, from Lake's direct imports (`lake query
-+<module>:imports`) at `6ba99de5`:
+For each feature, from each module's `import` lines, which are Lake's
+direct imports (`lake query +<module>:imports`), at the head of the
+packages roadmap's phase 6, with the compile mode moved out and the test
+kit published (the lists were first computed at `6ba99de5`, and computed
+again for this section then):
 
 - its modules;
 - the core modules that import one of them, each with what it imports (the
   core's root, `Editor.Core`, imports every feature's `Compiled` module
   and is left out, as is the list of the core's packages,
   `EditorCore.EditorPackage`, which is outside `lean/Editor/`);
+- the modules of the core's test kit that import one of them
+  (`Editor.Test.…`), which are core modules too, and a test double: a
+  feature that moved out would take its part of the kit with it, or the
+  kit would be split;
 - the other features' modules that import one of them;
 - the other features it imports;
-- the test modules that import one of them, other than its own tests, which
-  are the test modules that mirror its modules' paths (a `Support` module
-  is listed even where it is that feature's own helper, since it would
-  move or be split with it); names are written without the `Editor.`
-  after the test root, and "the root" is the test executable's root
-  module;
-- which of its modules the config base (`Editor`) imports, so that config
-  can call them;
+- the modules of a package outside the core that import one of them, its
+  tests' among them (`packages/`, with the Lake package's name first);
+- the core's test modules that import one of them, other than its own
+  tests, which are the test modules that mirror its modules' paths (a
+  `Support` module is listed even where it is that feature's own helper,
+  since it would move or be split with it); names are written without the
+  `Editor.` after the test root, and "the root" is the test executable's
+  root module;
+- which of its modules the core's config base (`Editor`) imports, so that
+  config can call them;
 - the reaches by name it is known to have, which the import graph does not
   show: a command named in the Vim scheme's default tables, in a menu, by
   an ex name or in the default config. **These are not exhaustive.**
@@ -839,8 +1183,10 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (3): `AtPoint`, `AtPoint.Compiled`, `Completion.Words`.
 - **Core modules that import it**: `Loop` (`AtPoint`).
+- **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: none.
 - **Other features it imports**: none.
+- **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (9): `ModelTest`: `Completion.AtPointContract`, `Config.Registry`, `Config.Reload`, `InputScheme.Vim.Default`, `Loop`, `Support.AtPoint`, `Support.Evil`; `ConfigTest`: `Bench`, `Headless`.
 - **The config base imports**: `AtPoint`, `Completion.Words`.
 - **Reaches by name** (not exhaustive): the Vim scheme's default tables name its commands (`at-point-complete`, `at-point-next` and the rest, `InputScheme/Vim/Default.lean`), and the loop asks it by import.
@@ -849,8 +1195,10 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (2): `BindingSearch`, `BindingSearch.Compiled`.
 - **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: none.
 - **Other features it imports**: none.
+- **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (2): `ModelTest`: `Completion.Contract`; `ConfigTest`: `ExecuteCommand`.
 - **The config base imports**: `BindingSearch`.
 - **Reaches by name** (not exhaustive): the default config binds `search-bindings` (`config/default`).
@@ -859,29 +1207,39 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (2): `Buffers`, `Buffers.Compiled`.
 - **Core modules that import it**: none.
+- **The test kit's modules that import it**: `Test.Files` (`Buffers.Compiled`).
 - **Other features' modules that import it**: ex: `Ex.Compiled` (`Buffers`); version-control: `VersionControl.Commit` (`Buffers`).
 - **Other features it imports**: files (`Files`).
-- **Test modules outside its own tests that import it** (7): `ModelTest`: `Completion.Contract`, `DisplayRules`, `VersionControl.Gutter`, `Support.Buffers`, `Support.Files`; `ConfigTest`: `Headless`, `Minibuffer`.
+- **Modules of packages outside the core that import it**: none.
+- **Test modules outside its own tests that import it** (6): `ModelTest`: `Completion.Contract`, `DisplayRules`, `VersionControl.Gutter`, `Support.Buffers`; `ConfigTest`: `Headless`, `Minibuffer`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the `ex` package binds `b`, `ls` and `bd` to its commands; the default config binds `switch-buffer`, `list-buffers` and `close-buffer`.
 
 #### `compile`
 
-- **Modules** (5): `Compile`, `Compile.Compiled`, `Compile.Contribution`, `Compile.Errors`, `Compile.Shipped`.
-- **Core modules that import it**: none.
-- **Other features' modules that import it**: none.
-- **Other features it imports**: shell (`Shell`); workspace (`Workspace.Modes`).
-- **Test modules outside its own tests that import it** (3): `ModelTest`: `Support.Compile`; `ConfigTest`: `Headless`; `ContractTest`: `Support.Projects`.
-- **The config base imports**: `Compile`, `Compile.Shipped`.
-- **Reaches by name** (not exhaustive): the face vocabulary lists `compilation.error`, `compilation.warning` and `compilation.note` (`Face/Vocabulary.lean`), which every palette defines; it reads the store `compile-listings` and starts the job `compile-list`, both the core's; its six ex names are its own package's.
+Moved out of the core by phase 6: the Lake package `compile`
+(`packages/compile/`; "The default package `compile`", above). It has
+nothing left to cross. No core module and no test of a core module
+imports it, and Lake would refuse the import: the core requires no
+package. It imports two features' modules that are still the core's,
+`Shell` and `Workspace.Modes`, and when either feature moves into a
+package it requires that package. What reaches it by name: config names
+its declarations through the set's base (`Compile.cargoMode`); the face
+vocabulary lists `compilation.error`, `compilation.warning` and
+`compilation.note` (`Face/Vocabulary.lean`), which every palette defines;
+it reads the store `compile-listings` and starts the job `compile-list`,
+both the core's; and its six ex names need the `ex` package for a line to
+run them.
 
 #### `completion`
 
 - **Modules** (3): `Completion.Compiled`, `Completion.Displays`, `Completion.Styles`.
 - **Core modules that import it**: `Command.Dispatch` (`Completion.Styles`); `Loop` (`Completion.Displays`, `Completion.Styles`); `Setup` (`Completion.Displays`, `Completion.Styles`).
+- **The test kit's modules that import it**: `Test.Driver` (`Completion.Styles`); `Test.Files` (`Completion.Styles`); `Test.Linked.Rig` (`Completion.Displays`, `Completion.Styles`); `Test.Loop` (`Completion.Displays`); `Test.Prompts` (`Completion.Displays`, `Completion.Styles`).
 - **Other features' modules that import it**: none.
 - **Other features it imports**: none.
-- **Test modules outside its own tests that import it** (39): `ModelTest`: `Api`, `AtPoint`, `Completion.Contract`, `Completion.DisplayContract`, `Completion.Filtering`, `Completion.Style`, `Completion.StyleContract`, `Config.Packages`, `Config.Registry`, `Config.Reload`, `Ex`, `Face.Vocabulary`, `Files`, `Loop`, `Setup`, `State`, `TabBar`, `TabCommands`, `Themes`, `Workspace`, `Support.AtPoint`, `Support.Candidates`, `Support.Driver`, `Support.Evil`, `Support.Files`, `Support.Loop`, `Support.Prompts`; `ConfigTest`: `Bench`, `AtPoint`, `Completion.Keys`, `Headless`, `Minibuffer`, `Support.Hosts`; `FfiTest`: `State`; `ContractTest`: `Compile`, `Completion.StyleContract`, `Shell`, `Watch.Real`, `Support.Projects`.
+- **Modules of packages outside the core that import it**: compile: `CompileTest.Linked.Compile` (`Completion.Displays`, `Completion.Styles`).
+- **Test modules outside its own tests that import it** (33): `ModelTest`: `Api`, `AtPoint`, `Completion.Contract`, `Completion.DisplayContract`, `Completion.Filtering`, `Completion.Style`, `Completion.StyleContract`, `Config.Packages`, `Config.Registry`, `Config.Reload`, `Ex`, `Face.Vocabulary`, `Files`, `Loop`, `Setup`, `State`, `TabBar`, `TabCommands`, `Themes`, `Workspace`, `Support.AtPoint`, `Support.Candidates`, `Support.Evil`; `ConfigTest`: `Bench`, `AtPoint`, `Completion.Keys`, `Headless`, `Minibuffer`, `Support.Hosts`; `FfiTest`: `State`; `ContractTest`: `Completion.StyleContract`, `Shell`, `Watch.Real`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the names `fuzzy`, `orderless`, `path` and `minibuffer`, which config chooses with `useStyle`, `useStyleFor`, `useDisplay`, and which the file prompt's category is given (`path`).
 
@@ -889,9 +1247,11 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (14): `Evil`, `Evil.Clipboard`, `Evil.Compiled`, `Evil.Motions`, `Evil.Objects`, `Evil.Operators`, `Evil.Registers`, `Evil.Repeat`, `Evil.Scroll`, `Evil.Theorems`, `Evil.TreeObjects`, `Evil.Undo`, `InputScheme.Vim`, `InputScheme.Vim.Default`.
 - **Core modules that import it**: `Headless` (`InputScheme.Vim.Default`).
+- **The test kit's modules that import it**: `Test.Config` (`InputScheme.Vim`).
 - **Other features' modules that import it**: menu: `Menu.Compiled` (`Evil.Clipboard`); themes: `Themes.Check` (`InputScheme.Vim.Default`), `Themes.Picture` (`InputScheme.Vim`).
 - **Other features it imports**: none.
-- **Test modules outside its own tests that import it** (28): `ModelTest`: `Api`, `AtPoint`, `ExcerptView`, `Face.Vocabulary`, `InputScheme.Contract`, `Loop`, `Menu`, `Minibuffer`, `State`, `TabBar`, `TabCommands`, `WindowCommands`, `Workspace.FindInProject`, `Support.AtPoint`, `Support.Config`, `Support.Evil`, `Support.Excerpt`, `Support.OperatorRows`, `Support.Views`, `Support.Vim`, `Support.Windows`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `Indent`, `Support.Syntax`; `FfiTest`: `ExcerptView`; `ContractTest`: `SyntaxTree.Real`.
+- **Modules of packages outside the core that import it**: none.
+- **Test modules outside its own tests that import it** (27): `ModelTest`: `Api`, `AtPoint`, `ExcerptView`, `Face.Vocabulary`, `InputScheme.Contract`, `Loop`, `Menu`, `Minibuffer`, `State`, `TabBar`, `TabCommands`, `WindowCommands`, `Workspace.FindInProject`, `Support.AtPoint`, `Support.Evil`, `Support.Excerpt`, `Support.OperatorRows`, `Support.Views`, `Support.Vim`, `Support.Windows`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `Indent`, `Support.Syntax`; `FfiTest`: `ExcerptView`; `ContractTest`: `SyntaxTree.Real`.
 - **The config base imports**: `Evil.Clipboard`, `Evil.Operators`, `Evil.Repeat`, `Evil.Scroll`, `Evil.Theorems`, `Evil.TreeObjects`, `Evil.Undo`, `InputScheme.Vim.Default`.
 - **Reaches by name** (not exhaustive): every command the Vim scheme's default tables name is looked up when its key is pressed, evil's own and other features'; the `menu` package names `undo` and `redo` as strings; the face vocabulary and the completeness check name the cursor face of each Vim state (`Themes/Check.lean`); the headless and window hosts are typed by `Vim.Default.scheme` (the section on input schemes, below).
 
@@ -899,18 +1259,22 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (2): `Ex`, `Ex.Compiled`.
 - **Core modules that import it**: `Loop` (`Ex`).
+- **The test kit's modules that import it**: `Test.Files` (`Ex`, `Ex.Compiled`); `Test.Shell` (`Ex`, `Ex.Compiled`).
 - **Other features' modules that import it**: frame-commands: `FrameCommands.Compiled` (`Ex`); window-commands: `WindowCommands` (`Ex`).
 - **Other features it imports**: buffers (`Buffers`); files (`Files`); shell (`Shell`).
-- **Test modules outside its own tests that import it** (14): `ModelTest`: `Completion.Contract`, `Evil`, `FrameCommands`, `Loop`, `Menu`, `Support.Buffers`, `Support.Compile`, `Support.Files`, `Support.Frame`, `Support.Shell`, `Support.Windows`; `ConfigTest`: `Headless`, `Support.Configs`; `ContractTest`: `Shell`.
+- **Modules of packages outside the core that import it**: none.
+- **Test modules outside its own tests that import it** (11): `ModelTest`: `Completion.Contract`, `Evil`, `FrameCommands`, `Loop`, `Menu`, `Support.Buffers`, `Support.Frame`, `Support.Windows`; `ConfigTest`: `Headless`, `Support.Configs`; `ContractTest`: `Shell`.
 - **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the Vim scheme's default tables name `ex`; `frame-commands` binds a key to `quit` and `window-quit` runs it, both by its name; the `compile` and `version-control` packages bind ex names, which need this package for a line to run them.
+- **Reaches by name** (not exhaustive): the Vim scheme's default tables name `ex`; `frame-commands` binds a key to `quit` and `window-quit` runs it, both by its name; the `version-control` package and, outside the core, the `compile` package bind ex names, which need this package for a line to run them.
 
 #### `execute-command`
 
 - **Modules** (2): `ExecuteCommand`, `ExecuteCommand.Compiled`.
 - **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: none.
 - **Other features it imports**: none.
+- **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (2): `ModelTest`: `Completion.Contract`; `ConfigTest`: `Headless`.
 - **The config base imports**: `ExecuteCommand`.
 - **Reaches by name** (not exhaustive): the default config binds `execute-command`.
@@ -919,9 +1283,11 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (3): `Completion.Paths`, `Files`, `Files.Compiled`.
 - **Core modules that import it**: `Loop` (`Files`).
+- **The test kit's modules that import it**: `Test.Files` (`Completion.Paths`, `Files`, `Files.Compiled`); `Test.Linked.Rig` (`Files`, `Files.Compiled`); `Test.Workspace` (`Files`).
 - **Other features' modules that import it**: buffers: `Buffers` (`Files`); ex: `Ex` (`Files`), `Ex.Compiled` (`Files`); menu: `Menu.Compiled` (`Files`); shell: `Shell` (`Files`); version-control: `VersionControl.Gutter` (`Files`), `VersionControl.Review` (`Files`), `VersionControl.Show` (`Files`), `VersionControl.Stage` (`Files`), `VersionControl.Status` (`Files`); workspace: `Workspace.FindFile` (`Files`).
 - **Other features it imports**: workspace (`Workspace.Attach`).
-- **Test modules outside its own tests that import it** (24): `ModelTest`: `Buffers`, `Command.Dispatch`, `Compile`, `Completion.Contract`, `DisplayRules`, `Ex`, `Loop`, `Menu`, `State`, `VersionControl.Stage`, `Window`, `Workspace.Attach`, `Workspace.FindFile`, `Support.Buffers`, `Support.Files`, `Support.VersionControl`, `Support.Workspace`; `ConfigTest`: `Bench`, `Ex`, `Headless`, `Loop`, `VersionControl.Gutter`, `Support.Configs`; `ContractTest`: `Support.Projects`.
+- **Modules of packages outside the core that import it**: compile: `CompileTest.Compile` (`Files`).
+- **Test modules outside its own tests that import it** (20): `ModelTest`: `Buffers`, `Command.Dispatch`, `Completion.Contract`, `DisplayRules`, `Ex`, `Loop`, `Menu`, `State`, `VersionControl.Stage`, `Window`, `Workspace.Attach`, `Workspace.FindFile`, `Support.Buffers`, `Support.VersionControl`; `ConfigTest`: `Bench`, `Ex`, `Headless`, `Loop`, `VersionControl.Gutter`, `Support.Configs`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the `ex` package binds `w`, `w!`, `e`, `e!`, `autoread` and `noautoread` to its commands; the `menu` package's Open and Save; the workspace finder accepts through `open-file` (`Workspace/FindFile.lean`); the default config binds `open-file`, `save-buffer` and `reload-buffer`.
 
@@ -929,8 +1295,10 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (2): `FrameCommands`, `FrameCommands.Compiled`.
 - **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: menu: `Menu.Compiled` (`FrameCommands`).
 - **Other features it imports**: ex (`Ex`).
+- **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (4): `ModelTest`: `Menu`, `Support.Frame`; `ConfigTest`: `Headless`; `FfiTest`: `Window.Real`.
 - **The config base imports**: `FrameCommands`.
 - **Reaches by name** (not exhaustive): the `menu` package's Minimise and Enter Full Screen.
@@ -939,8 +1307,10 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (1): `Language.Compiled`.
 - **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: none.
 - **Other features it imports**: none.
+- **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (1): `ConfigTest`: `Headless`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): opening a file sets the mode `code` (`Language.codeName`, a core module's name) and chooses a language from the table this package fills.
@@ -949,8 +1319,10 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (1): `Menu.Compiled`.
 - **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: none.
 - **Other features it imports**: evil (`Evil.Clipboard`); files (`Files`); frame-commands (`FrameCommands`).
+- **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (5): `ModelTest`: `Evil.Clipboard`, `Menu`, `Support.Frame`; `ConfigTest`: `Headless`; `FfiTest`: `Window.Real`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): none known.
@@ -959,9 +1331,11 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (2): `Minibuffer`, `Minibuffer.Compiled`.
 - **Core modules that import it**: none.
+- **The test kit's modules that import it**: `Test.Files` (`Minibuffer`, `Minibuffer.Compiled`); `Test.Prompts` (`Minibuffer`, `Minibuffer.Compiled`); `Test.Shell` (`Minibuffer`, `Minibuffer.Compiled`).
 - **Other features' modules that import it**: none.
 - **Other features it imports**: none.
-- **Test modules outside its own tests that import it** (25): `ModelTest`: `Api`, `BindingSearch`, `Evil`, `Evil.Clipboard`, `Ex`, `ExecuteCommand`, `Files`, `InputScheme.Vim.Default`, `Loop`, `Themes`, `Workspace.FindInProject`, `Support.Buffers`, `Support.Candidates`, `Support.Compile`, `Support.Evil`, `Support.Files`, `Support.FindFile`, `Support.Prompts`, `Support.Shell`; `ConfigTest`: `Bench`, `Files`, `Headless`, `Themes`, `VersionControl.Gutter`, `Support.Configs`.
+- **Modules of packages outside the core that import it**: compile: `CompileTest.Support.Compile` (`Minibuffer`).
+- **Test modules outside its own tests that import it** (21): `ModelTest`: `Api`, `BindingSearch`, `Evil`, `Evil.Clipboard`, `Ex`, `ExecuteCommand`, `Files`, `InputScheme.Vim.Default`, `Loop`, `Themes`, `Workspace.FindInProject`, `Support.Buffers`, `Support.Candidates`, `Support.Evil`, `Support.FindFile`; `ConfigTest`: `Bench`, `Files`, `Headless`, `Themes`, `VersionControl.Gutter`, `Support.Configs`.
 - **The config base imports**: `Minibuffer`.
 - **Reaches by name** (not exhaustive): the Vim scheme's default tables name its commands (`minibuffer-accept`, `minibuffer-cancel` and the rest); every feature that asks a prompt needs this package for the prompt to be answered.
 
@@ -969,8 +1343,10 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (1): `ModeLine.Compiled`.
 - **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: none.
 - **Other features it imports**: none.
+- **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (2): `ConfigTest`: `Bench`, `Support.Hosts`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the default order of the mode line names its segments (`ModeLine.Order.standard`: `state`, `buffer`, `modified`, `changed`, `directory`).
@@ -979,11 +1355,13 @@ For each feature, from Lake's direct imports (`lake query
 
 - **Modules** (2): `Shell`, `Shell.Compiled`.
 - **Core modules that import it**: none.
-- **Other features' modules that import it**: compile: `Compile` (`Shell`); ex: `Ex` (`Shell`).
+- **The test kit's modules that import it**: `Test.Shell` (`Shell`, `Shell.Compiled`).
+- **Other features' modules that import it**: ex: `Ex` (`Shell`).
 - **Other features it imports**: files (`Files`).
-- **Test modules outside its own tests that import it** (2): `ModelTest`: `InputScheme.Vim.Default`, `Support.Shell`.
+- **Modules of packages outside the core that import it**: compile: `Compile` (`Shell`).
+- **Test modules outside its own tests that import it** (1): `ModelTest`: `InputScheme.Vim.Default`.
 - **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): none known beyond its imports: the ex line's `:!` and the compile mode call it.
+- **Reaches by name** (not exhaustive): none known beyond its imports: the ex line's `:!` calls it, and so does the compile mode, from its package.
 
 #### `shipped-themes`
 
@@ -999,8 +1377,10 @@ the user asks `load-theme` for one.
 
 - **Modules** (2): `TabCommands`, `TabCommands.Compiled`.
 - **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: none.
 - **Other features it imports**: window-commands (`WindowCommands`).
+- **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (4): `ModelTest`: `Completion.Contract`, `InputScheme.Vim.Default`, `Support.Windows`; `ConfigTest`: `Headless`.
 - **The config base imports**: `TabCommands`.
 - **Reaches by name** (not exhaustive): the Vim scheme's tab table and the default config name its commands (`tab-new`, `tab-close`, `tab-next` and the rest).
@@ -1009,8 +1389,10 @@ the user asks `load-theme` for one.
 
 - **Modules** (4): `Themes`, `Themes.Check`, `Themes.Compiled`, `Themes.Picture`.
 - **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: none.
-- **Other features it imports**: evil (`InputScheme.Vim.Default`, `InputScheme.Vim`).
+- **Other features it imports**: evil (`InputScheme.Vim`, `InputScheme.Vim.Default`).
+- **Modules of packages outside the core that import it**: shipped-themes: `ShippedThemesTest.Linked.ShippedThemes` (`Themes.Picture`), `ShippedThemesTest.ShippedThemes` (`Themes.Check`).
 - **Test modules outside its own tests that import it** (9): `ModelTest`: `Appearance`, `Completion.Contract`, `ExecuteCommand`, `Face.Vocabulary`; `ConfigTest`: `ExecuteCommand`, `Headless`, `Minibuffer`; `FfiTest`: `ExcerptView`, `Support.Scenes`.
 - **The config base imports**: `Themes`.
 - **Reaches by name** (not exhaustive): the default config binds `load-theme`; the theme `default` is the one in force when config names none (`Theme.defaultName`); the package `shipped-themes`, outside the core, imports `Themes.Check` and `Themes.Picture` in its tests.
@@ -1019,8 +1401,10 @@ the user asks `load-theme` for one.
 
 - **Modules** (20): `VersionControl`, `VersionControl.Blame`, `VersionControl.Commit`, `VersionControl.Compiled`, `VersionControl.Contract`, `VersionControl.Git`, `VersionControl.Gutter`, `VersionControl.HistoryRead`, `VersionControl.Hunk`, `VersionControl.Log`, `VersionControl.Model`, `VersionControl.Plumbing`, `VersionControl.Porcelain`, `VersionControl.Review`, `VersionControl.ReviewHunks`, `VersionControl.Show`, `VersionControl.Stage`, `VersionControl.Status`, `VersionControl.Views`, `VersionControl.Worktrees`.
 - **Core modules that import it**: `Loop` (`VersionControl.Gutter`).
+- **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: workspace: `Workspace.FindInProject` (`VersionControl.Git`), `Workspace.Projects` (`VersionControl`).
 - **Other features it imports**: buffers (`Buffers`); files (`Files`); workspace (`Workspace.Attach`, `Workspace.Reach`).
+- **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (8): `ModelTest`: `the root`, `Workspace.FindInProject`, `Workspace.Projects`, `Support.Git`, `Support.VersionControl`; `ContractTest`: `the root`, `Support.Git`, `Support.VersionControl`.
 - **The config base imports**: `VersionControl.Commit`, `VersionControl.Stage`.
 - **Reaches by name** (not exhaustive): the default order of the mode line names its segment `review`; its twelve `vc-` ex names are its own package's.
@@ -1029,8 +1413,10 @@ the user asks `load-theme` for one.
 
 - **Modules** (2): `WindowCommands`, `WindowCommands.Compiled`.
 - **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: tab-commands: `TabCommands` (`WindowCommands`).
 - **Other features it imports**: ex (`Ex`).
+- **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (3): `ModelTest`: `InputScheme.Vim.Default`, `Support.Windows`; `ConfigTest`: `Headless`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the Vim scheme's `C-w` table and the default config name its commands (`window-split`, `window-close` and the rest).
@@ -1039,11 +1425,13 @@ the user asks `load-theme` for one.
 
 - **Modules** (11): `Workspace.Attach`, `Workspace.Compiled`, `Workspace.Contract`, `Workspace.FindFile`, `Workspace.FindInProject`, `Workspace.Finder`, `Workspace.Lister`, `Workspace.Model`, `Workspace.Modes`, `Workspace.Projects`, `Workspace.Reach`.
 - **Core modules that import it**: none.
-- **Other features' modules that import it**: compile: `Compile` (`Workspace.Modes`); files: `Files` (`Workspace.Attach`); version-control: `VersionControl.Views` (`Workspace.Attach`), `VersionControl.Worktrees` (`Workspace.Reach`).
+- **The test kit's modules that import it**: `Test.Linked.Rig` (`Workspace.Compiled`); `Test.Listing` (`Workspace.Model`, `Workspace.Modes`); `Test.Shell` (`Workspace.Attach`); `Test.Workspace` (`Workspace.Attach`, `Workspace.Model`, `Workspace.Modes`).
+- **Other features' modules that import it**: files: `Files` (`Workspace.Attach`); version-control: `VersionControl.Views` (`Workspace.Attach`), `VersionControl.Worktrees` (`Workspace.Reach`).
 - **Other features it imports**: files (`Files`); version-control (`VersionControl`, `VersionControl.Git`).
-- **Test modules outside its own tests that import it** (20): `ModelTest`: `the root`, `Compile`, `Compile.Shipped`, `Completion.Contract`, `ProjectMode.Listing`, `VersionControl.Gutter`, `VersionControl.Worktrees`, `Support.FindFile`, `Support.Listing`, `Support.Shell`, `Support.VersionControl`, `Support.Workspace`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `VersionControl.Gutter`; `ContractTest`: `the root`, `Compile.Shipped`, `Workspace`, `Support.Projects`.
+- **Modules of packages outside the core that import it**: compile: `Compile` (`Workspace.Modes`), `CompileTest.Compile` (`Workspace.Attach`, `Workspace.Model`, `Workspace.Modes`), `CompileTest.Compile.Shipped` (`Workspace.Model`, `Workspace.Modes`), `CompileTest.Linked.Compile.Shipped` (`Workspace.Modes`).
+- **Test modules outside its own tests that import it** (13): `ModelTest`: `the root`, `Completion.Contract`, `ProjectMode.Listing`, `VersionControl.Gutter`, `VersionControl.Worktrees`, `Support.FindFile`, `Support.VersionControl`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `VersionControl.Gutter`; `ContractTest`: `the root`, `Workspace`.
 - **The config base imports**: none of its modules directly.
-- **Reaches by name** (not exhaustive): the default config binds `find-file-in-workspace` and `find-file-in-project`; its package registers the job `compile-list`, which the compile mode starts by name.
+- **Reaches by name** (not exhaustive): the default config binds `find-file-in-workspace` and `find-file-in-project`; its package registers the job `compile-list`, which the compile mode, in its package, starts by name.
 
 ## Input schemes
 
@@ -1076,36 +1464,40 @@ the root generated for the default set, whose transitive imports it asks
 of the set (`lake -d ../packages query :editorRootTransImports`):
 
 1. **The root and what it imports hold no moving module.** A core module
-   that comes to import the compile mode fails the gate, naming the module
+   that comes to import a moving one fails the gate, naming the module
    reached.
 2. **Every `Editor.…` module the build reaches is in the root's closure**,
-   unless it is a moving module. This is what makes
-   the first rule a statement about every core module: a new core module
-   nothing in the core imports fails the gate until `Editor.Core` imports
-   it.
+   unless it is a moving module. A new core module nothing in the core
+   imports fails the gate until `Editor.Core` imports it, so the root's
+   closure is the whole core, and the first rule is a statement about
+   every core module.
 3. **A root that reaches the elaborator adapter reaches the config base**,
    which keeps the invariant the adapter's own import of `Editor` used to
    give.
 
-The moving names are arguments, not derived from the graph: "everything the
-root does not reach" would pass whatever the core imported. The gate runs
-the check again to see each rule bite: pointed at `Editor` (exit 1), at
-`Editor.Setup` (exit 3), and told a config base no executable's root
-imports (`--base Editor.Core`, exit 4). A run in which no root of the build
-reaches the elaborator adapter is refused (exit 2), since the third rule
-would then hold of nothing; the gate sees that too. The generated root is
-the only root that links the elaborator into the editor itself, so it is
-among the roots the script checks for the base.
-
-**The moving names are the compile mode's alone** (`Editor.Compile` and
-what is under it). They name modules that are still under `lean/Editor/`
-and are not the core's. The shipped palettes were among them until phase 5
-moved them; a feature that has moved needs no name here, because the
+**There is no moving name now, so the first rule holds of nothing.** A
+moving name is for the time between cutting a feature's edges and moving
+it: modules still under `lean/Editor/` that are not the core's. The
+compile mode's (`Editor.Compile` and what was under it) was the last;
+phase 6 moved it. A feature that has moved needs no name, because the
 direction is then Lake's to hold: its modules are in another Lake package,
 which the core does not require, so a core module that imported one would
-not build. The first rule is for the time between cutting a feature's
-edges and moving it, and for a feature whose modules keep the name
+not build. The rule and the argument stay for the next feature whose edges
+are cut before it moves, and for one whose modules keep the name
 `Editor.…` after they move.
+
+The moving names are arguments, not derived from the graph: "everything the
+root does not reach" would pass whatever the core imported. The gate runs
+the check again to see each rule bite: told that a feature still in the
+core, the shell, is moving (`Editor.Core Editor.Shell`, exit 1), pointed
+at `Editor.Setup` (exit 3), and told a config base no executable's root
+imports (`--base Editor.Core`, exit 4). Until phase 6 the first of these
+pointed the check at the root `Editor`, the config base, which imported
+the compile mode. A run in which no root of the build reaches the
+elaborator adapter is refused (exit 2), since the third rule would then
+hold of nothing; the gate sees that too. The generated root is the only
+root that links the elaborator into the editor itself, so it is among the
+roots the script checks for the base.
 
 ## Registration order is visible
 
@@ -1117,41 +1509,68 @@ so it is part of what the fixtures pin:
 
 - **The `commands:` lines** of `tests/headless/expected` and
   `tests/headless/bundle/expected` print every command name in
-  registration order. The compile mode's commands sit between the shell's
-  and at-point's.
+  registration order: the core's, then the compile package's nine after
+  version control's, then config's.
 - **The ex candidates for `e`** in `tests/headless/ex/expected` are the ex
   names in the order they were first bound (`Registry.exNames`), which the
   fuzzy rank keeps among equal scores. The names are bound by `ex`, then
-  `compile`, then `version-control`, the sixth, eighteenth and twentieth
-  packages of the core's list.
+  `version-control`, the sixth and the eighteenth packages of the core's
+  list, then by `compile`, which registers after the core's twenty.
 
 `ModelTest.packageSetChecks` pins what a model test can see of the core's
-list: its 21 names in order, with no package of the palettes among them;
-the ex names in bound order; and that the one theme it registers is
+list: its 20 names in order, with no package of the palettes or of the
+compile mode among them; the ex names in bound order, the `ex` package's
+and then version control's twelve; and that the one theme it registers is
 `default`. It is the test of the core's entry module
 (`lean/ModelTest/EditorCore/EditorPackage.lean`), over
 `EditorCore.EditorPackage.packages`.
 
 **Packages register by dependency, which puts a default package after the
-core's.** The default set holds one, `shipped-themes`, so the generated
-root registers the core's 21 and then it.
+core's.** The default set holds two, so the generated root registers the
+core's 20, then `shipped-themes`, then `compile`.
 
 - **No fixture line changed when the palettes moved.** The package was
-  thirteenth of the core's 22, directly after `themes`, and now registers
+  thirteenth of the core's 22, directly after `themes`, and registered
   last. It registers themes alone, and no core package after `themes`
   defines a theme, so the theme names read `default`, `solarized-dark`,
   `solarized-light`, `fairy-floss`, as they did, and a package that
   registers no command and no ex name changes neither the `commands:`
   lines nor the ex candidates. Checked on the built editor: every
-  `expected` under `tests/headless/` is unchanged.
+  `expected` under `tests/headless/` was unchanged.
 - **The theme order is pinned by a fixture of the package**,
   `packages/shipped-themes/tests/headless/load-theme`, which prints the
   theme prompt's candidates on a config that defines no theme. The other
-  two fixtures that name a theme print the theme in force, not the order.
-- **The compile package would register after version control and
-  at-point**, and both fixture lines above would change, unless phase 6
-  keeps the compile package's place in the order. That is phase 6's choice
-  to make with the fixtures in view.
+  fixtures that name a theme print the theme in force, not the order.
+- **Five lines of three standing fixtures changed when the compile mode
+  moved** (phase 6). The package was seventeenth of the core's 21, between
+  `shell` and `at-point`, and registers after all of the core's now:
+  - `tests/headless/expected`, lines 4 and 9, and
+    `tests/headless/bundle/expected`, line 3 (the `commands:` lines): the
+    nine names `compile`, `compile-command`, `recompile`,
+    `compile-confirm`, `kill-compilation`, `compilation-output`,
+    `next-error`, `previous-error` and `compile-goto-error` moved from
+    before `at-point-complete` to after `vc-gutter-moved`, the last of the
+    core's, and before config's own commands. No name was added or lost;
+  - `tests/headless/ex/expected`, lines 17 and 18 (the ten candidates the
+    ex line offers for `e`, and their decorations): `e`, `e!`,
+    `next-error`, `previous-error`, `autoread`, `noautoread` and `reload`
+    stay; `compile`, `compile-command` and `recompile` gave way to
+    `vc-stage-hunk`, `vc-unstage-hunk` and `vc-worktrees`, which score the
+    same and are bound first now.
+- **Why they were let change, and the package's old place not kept.**
+  Keeping it would take a way for one package to register in the middle
+  of another Lake package's list, which no user's package would have: it
+  would be a mechanism for the default packages alone, against the
+  roadmap's goal that a default package is built and loaded as a
+  third-party one is. Nothing a compile command does depends on the
+  order. What changed for a user: the command prompt lists the compile
+  commands after version control's, and `:e` no longer offers `compile`,
+  `compile-command` and `recompile` among its ten; typing `:c` does.
+- **What the compile mode's own fixtures show is unchanged by the move.**
+  They print no order: `packages/compile/tests/headless/ex-names` and
+  `config` were written against the editor with the compile mode in the
+  core and moved with no byte changed ("The default package `compile`",
+  above).
 
 ## Build times
 
@@ -1205,3 +1624,18 @@ medians were 68.5, 12.8 and 33.2.)
   to do that is three more Lake runs. The same modules are compiled as
   before, three of them in the package's build directory and not the
   core's, so the clean case moved by the extra links alone.
+- **Measured again with the second default package in place**
+  (2026-11-19, the same machine, the tree of the packages roadmap's
+  phase 6, three runs each). Nothing changed: 15.28, 15.33, 15.52, median
+  **15.3** s, 1.2 s more than the 14.1 above. Clean, with the build
+  directories of the core, the three sets, both default packages and both
+  fixture packages emptied: 77.95, 78.12, 80.05, median **78.1** s, 7.3 s
+  more than the 70.8 above. The incremental case was not measured again.
+  What the task gained: the compile package's test driver, which links an
+  executable of its own and runs 98 checks, its build under its own
+  linter options, and its linked test's link, a third of about 230 MB
+  beside the fixture package's and the shipped themes'; with nothing to
+  do that is three more Lake runs. The compile mode's modules and tests
+  are compiled as before, in the package's build directory and not the
+  core's, and the generated roots import one module more. How the 7.3 s
+  divides among the extra links and the rest was not separated.

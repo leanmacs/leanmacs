@@ -481,7 +481,11 @@ and the loop's dispatch.
 The model tests are split into test modules that mirror the module they
 test, under `lean/ModelTest/Editor/` (the checks of `lean/Editor/State.lean`
 are in `lean/ModelTest/Editor/State.lean`), with the helpers several of them
-share in small support modules under `lean/ModelTest/Support/`. Each imports
+share in small support modules under `lean/ModelTest/Support/`, and, for
+the ones a package's tests are also written on, under `lean/Editor/Test/`,
+the core's test kit, which the core publishes as a test double
+([packages.md](../design/packages.md), "What moving the compile mode added
+to the core's API"). Each imports
 only what it uses, and the root `lean/ModelTest.lean` keeps its imports, the
 `checks` aggregator and `main`. Splitting keeps lean-fmt's exact-frontend
 child, one per file with a 600 s bound by default
@@ -503,7 +507,8 @@ checks of `lean/Editor/Ffi/Document.lean` are in
 `lean/FfiTest/Editor/Ffi/Document.lean`, and a run of a port's contract
 against its real binding is in the mirror of that contract
 (`lean/ContractTest/Editor/Display/Contract.lean`). The helpers several
-test modules share are in `<Root>/Support/`; `Check` (and `failures`,
+test modules share are in `<Root>/Support/`, and contract-test's rig over
+the real services in the linked test kit, `lean/Editor/Test/Linked/`; `Check` (and `failures`,
 `run` and `usage`, and config-test's `Context`, where the root has them)
 are in `<Root>/Check.lean`; the benchmark is in
 `lean/ConfigTest/Bench.lean`; and the checks of the default config
@@ -684,7 +689,7 @@ whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` first runs the host imports check ("The host imports
 check", below) and the core imports check ("The core imports check"), then `lean/.lake/build/bin/ffi-test`, the test executable
-linked against the real library, then `contract-test`, handed six
+linked against the real library, then `contract-test`, handed five
 directories: `tests/process-environment` (the fixtures that stand in for
 mise in the checks of a child's environment), `tests/workspaces` (the
 fixture that stands in for git in the workspace finder's checks, which run
@@ -692,18 +697,21 @@ the finder's contract over the real process and file services; the mode
 marker search's contract runs there too, over the real file service, with
 no fixture),
 `tests/shell` (the fixture `:!` runs over the real process service, and the
-editor's working directory in those checks), `tests/compile` (the
-fixture `compile` runs over the real process service, which waits for files
-the check makes, so its pauses are the check's to end; and the programs that
-stand for cargo, lake and mise, put first on each child's `PATH` with the git
-fixture after them, and the trees the shipped modes are checked in, which
-the checks copy into a temporary directory, so no real tool runs), `tests/syntax`
+editor's working directory in those checks), `tests/syntax`
 (the syntax fixtures, whose Rust fixtures the indent and text-object checks
 read) and `tests/completion` (the fixture that stands in for fzf in the
 checks of a source a command filters, and in the checks of git's lister and
 the fallback that list a workspace's files, which run real git, isolated
 from the user's config, and real `find` in temporary directories, so they
-pass where fzf is not installed); each fixture must stay executable. Then `config-test`, handed
+pass where fzf is not installed); each fixture must stay executable. The
+checks of a compile over the real process service, which `contract-test`
+ran on `tests/compile` until the compile mode moved out of the core, are
+its package's linked test's now, on `packages/compile/tests/compile` (the
+fixture `three-lines`, which waits for files the check makes, so its
+pauses are the check's to end; and the programs that stand for cargo,
+lake, mise and git, put first on each child's `PATH`, with the trees the
+shipped modes are checked in, which the checks copy into a temporary
+directory, so no real tool runs): "The package steps", below. Then `config-test`, handed
 `tests/syntax` too, whose Rust indent fixture its indent checks mangle and
 re-indent through a headless host, and
 then the editor: once as `editor demo`, the demonstration, ten times in its headless
@@ -1049,9 +1057,12 @@ package-set build recorded beside it (`<editor>.oleans`;
 editor reads it at. It must exit 0, which it does only when that config
 loaded, so the default directory holds the modules config is elaborated
 on. The gate runs it for the default set's editor and for the fixture
-set's, and then requires the fixture set's record to name three
-directories in order, the core's, `greeting`'s and `greeting-loud`'s, each
-holding its package's modules.
+set's, and then requires the fixture set's record to name five
+directories in order, the core's, `greeting`'s, `greeting-loud`'s,
+`shipped-themes`' and `compile`'s, each holding its package's modules.
+The editor searches every recorded directory, after any its command line
+gives, which is a search path, directories joined with `:`
+(`lean/Editor/ModuleLookup.lean`).
 `ffi-test window-host-undrawn <file>` runs the same wiring on
 the scripted platform whose renderer cannot be made, as a machine with no
 usable GPU gives: it must exit 0, which it does only when the window mode
@@ -1067,9 +1078,14 @@ stderr that starts `editor: no Lean toolchain`.
 installed editor will find its modules. In a temporary directory removed by
 a trap, `tools/stage-bundle.sh` lays out `Leanmacs.app`: a copy of `editor`
 in `Contents/MacOS`, and the `.olean`, `.olean.server` and `.olean.private`
-files of the modules `Editor` imports (`config-test bench-modules`) under
+files of the modules the default set's config base imports under
 `Contents/Resources/lean/toolchain/lib/lean` and
-`Contents/Resources/lean/editor`. The copy then runs
+`Contents/Resources/lean/editor`. The base is asked of Lake (`lake -d
+../packages query :editorBase`: `Editor`, then the entry module of each
+default package), `config-test bench-modules` lists its closure, and the
+modules are searched for, and copied from, the directories the build
+recorded beside the editor, the core's and each default package's, all
+into the bundle's one directory. The copy then runs
 `editor headless <config dir> <script file>` on `tests/headless/bundle`
 with no directory argument, an empty environment (`env -i`: no `HOME`,
 `PATH` or `LEAN_PATH`) and a working directory outside the bundle; it must
@@ -1078,11 +1094,15 @@ exit 0 and print exactly `expected`, whose command calls compiled code of
 `.olean` files from its own path, and those three file kinds are enough to
 import and run config: outside a bundle the same command line is refused,
 and the build tree's `.olean` directory is not beside the copy. The same
-copy then runs a default package's fixture the same way, `shipped-themes`
-of the package of that name, whose config names `solarized-light`, and
-must print exactly its `expected`: the staged bundle holds no module file
-of the package, so its themes are in the executable, and config that
-names one by its name needs nothing more shipped. It has a
+copy then runs three fixtures of the default packages the same way, each
+of which must print exactly its `expected`: `shipped-themes` of the
+package of that name, whose config names `solarized-light`;
+`package-names` of the same package, whose config names its declaration
+`ShippedThemes.themes`; and `config` of the package `compile`, whose
+config is written on `Compile.cargoMode`, `Compile.Format` and
+`Compile.shipped`. The last two elaborate only if the bundle's one
+directory holds the packages' module files beside the core's: a bundle
+has no record. It has a
 time limit of its own, 120 seconds, for copying the executable and the
 module files. Then it checks `editor --version` through `IO.appPath` and
 the real file read (`lean/Editor/Version.lean`): `tests/headless/bundle/
@@ -1293,15 +1313,20 @@ cd lean && sh ../tools/core-imports-check.sh
 
 Part of `mise run ffi-test`, after the host imports check. A package may
 depend on the core, and the core depends on no package
-([packages.md](../design/packages.md)). The compile mode moves out of the
-core into a package of its own, and this check shows on Lake's module
-graph that no core module imports a module of it. It is given a root and
-the moving names, and both default: the root to `Editor.Core`, the core's
-root module (`lean/Editor/Core.lean`), and the moving names to
-`Editor.Compile`, meaning that module and every module under it. The
-shipped palettes were moving names until they moved: they are a Lake
-package of their own now (`packages/shipped-themes/`), which the core does
-not require, so Lake itself refuses a core module that imports one. Two options, `--base <module>` and `--elaborator <module>`, name the
+([packages.md](../design/packages.md)). The check shows on Lake's module
+graph that the core's root holds the whole core, that the core imports no
+module of a feature that is moving out of it, and that an executable that
+elaborates config links the config base. It is given a root and
+the moving names: the root defaults to `Editor.Core`, the core's
+root module (`lean/Editor/Core.lean`), and there is no moving name by
+default. A moving name is a module still under `lean/Editor/` that is not
+the core's, with every module under it: a feature between having its
+edges from the core cut and moving out. The shipped palettes and the
+compile mode (`Editor.Compile`) were the two; both have moved, into Lake
+packages of their own (`packages/shipped-themes/`, `packages/compile/`),
+which the core does not require, so Lake itself refuses a core module
+that imports one. So the first rule below holds of nothing today, and
+stays for the next such feature. Two options, `--base <module>` and `--elaborator <module>`, name the
 config base and the elaborator adapter in place of the editor's; the gate
 uses them to see the third rule fail. It checks three rules, in order, and
 stops at the first that fails:
@@ -1322,12 +1347,16 @@ stops at the first that fails:
   into any executable that elaborates config
   ([lean-runtime.md](../design/lean-runtime.md), "One shared state").
   Through that import the adapter and both hosts reached the compile
-  mode. Now each root that links the adapter imports `Editor` itself, and
-  this rule fails when one does not.
+  mode, which `Editor` imported while that mode was in the core. Now each
+  root that links the adapter imports `Editor` itself, and this rule
+  fails when one does not. The modules of a set's base beyond `Editor`,
+  the entry modules of its packages, are linked because the generated
+  root imports them to list the packages.
 - **The moving names are named, never derived.** "Every module the root
   does not reach" would pass whatever the core imported.
 - **No module is exempt by name.** The list of the core's packages
-  imports the moving packages, and it is not a module of the editor:
+  imports every package still in the core, and it is not a module of the
+  editor:
   `EditorCore.EditorPackage` is outside `lean/Editor/` and the namespace
   `Editor`, so the second rule, which is of the modules named `Editor.…`,
   does not meet it.
@@ -1343,9 +1372,11 @@ stops at the first that fails:
   written in any form. It makes six queries, one for the root and one for
   each root of the build, builds nothing and writes nothing under `lean/`
   or `packages/`: the build has written the generated root already.
-- **The gate sees each rule bite.** `ffi-test` runs it pointed at the root
-  `Editor`, the config base, which imports the compile mode, and requires
-  exit 1; pointed at the root `Editor.Setup`, which imports no moving
+- **The gate sees each rule bite.** `ffi-test` runs it told that a feature
+  still in the core, the shell, is moving (`core-imports-check.sh
+  Editor.Core Editor.Shell`), and requires exit 1, with `Editor.Shell` and
+  `Editor.Shell.Compiled` found in the root's closure; pointed at the root
+  `Editor.Setup`, which imports no moving
   module and is not the whole core, and requires exit 3; and told with
   `--base Editor.Core` that the config base is a module no executable's
   root imports, and requires exit 4, with the roots that link the
@@ -1387,7 +1418,10 @@ graph.
   line for each direct import of a module of the core's Lake package by a
   module of a package the gate's steps run over: the package, the
   importing module, its kind (`library`, `test`, `linked`) and the module
-  imported. Lake reads the modules' headers and builds nothing.
+  imported. Lake reads the modules' headers and builds nothing. It lists
+  the modules of each of the package's libraries, so a library whose root
+  does not import every module of it declares `globs` that hold them all,
+  as `compile`'s does.
 - **The lists are in the script**, as names and patterns: the test
   doubles, the internal modules, each with the reason printed for it, and
   what the linked test may import beyond the doubles. They are named,
@@ -1407,8 +1441,10 @@ graph.
   importing a model, a contract, the loop's driver beside the loop, and
   `Editor.Config.Packages` beside another module of the config session; a
   linked test importing a real binding, the headless host, the base and
-  the entry module). So a change to a list that lets an internal module
-  through, or refuses an allowed one, fails the gate.
+  the entry module; a test importing a module of the test kit and of the
+  linked test kit, which a library importing one is refused). So a change
+  to a list that lets an internal module through, or refuses an allowed
+  one, fails the gate.
 - **The sets it is run over**: the fixture set, `tests/packages/`, which
   requires the default set and so reaches every default package, and the
   user-side link's set, `tests/user-link/`.
@@ -1446,10 +1482,11 @@ package's tests are by convention are in
 
 - **The gate gives every step the fixture set**, `tests/packages/`, which
   requires the fixture package `greeting-loud`, through it `greeting`, and
-  the default set. So the default package, `shipped-themes`, is tested,
-  built, format-checked and run through it. `run` is also given the
-  default set itself, `packages/`, so that package's linked test and
-  fixtures hold of the default set's editor, the one that is shipped.
+  the default set. So the default packages, `shipped-themes` and
+  `compile`, are tested, built, format-checked and run through it. `run`
+  is also given the default set itself, `packages/`, so those packages'
+  linked tests and fixtures hold of the default set's editor, the one
+  that is shipped.
 - **The packages a step runs over** are those of the set that are path
   dependencies and hold a Lean library, other than the core. The script
   reads no lakefile.
@@ -1459,13 +1496,14 @@ package's tests are by convention are in
   ../tests/empty-set` must exit 2 and say why. `tests/empty-set` is a set
   kept for tests: it requires the core alone and never gains a package, as
   the default set has.
-- **The default package's tests are required to have run.** `lean-test`
+- **The default packages' tests are required to have run.** `lean-test`
   keeps the `test` step's output and requires the line the step prints as
-  it reaches the package, `package-set: test shipped-themes (<its
-  directory>)`, matched on what comes before the directory. The step
-  stops at the first driver that fails, so that line and exit 0 say the
-  package's driver ran and passed: its themes hold under the core's
-  completeness check.
+  it reaches each of them, `package-set: test shipped-themes (<its
+  directory>)` and `package-set: test compile (<its directory>)`, matched
+  on what comes before the directory. The step stops at the first driver
+  that fails, so those lines and exit 0 say each package's driver ran and
+  passed: the themes hold under the core's completeness check, and the
+  compile mode's 98 model checks hold on the core's test kit.
 - **A package with no test driver fails `test`**, since Lake refuses to
   test it.
 - **`run` says what it ran, and the gate requires it.** A step's exit
@@ -1475,31 +1513,51 @@ package's tests are by convention are in
   <package>`) and a last line with the counts, and `ffi-test` keeps the
   output and requires, over the fixture set, the fixture package's linked
   test, `hello`, `reply`, the linked test of `shipped-themes` with the
-  line its pictures print, its fixtures `load-theme`, `shipped-themes` and
-  `themes`, and `package-set: ran 2 linked tests and 5 headless fixtures
-  over 3 packages`; and over the default set, the same package's linked
-  test and three fixtures and `package-set: ran 1 linked test and 3
-  headless fixtures over 1 package`. A fixture or a linked test that is
+  line its pictures print, its fixtures `load-theme`, `package-names`,
+  `shipped-themes` and `themes`, the linked test of `compile` with its
+  line, `compile linked test: 7 checks passed`, its fixtures `config` and
+  `ex-names`, and `package-set: ran 3 linked tests and 8 headless fixtures
+  over 4 packages`; and over the default set, the two default packages'
+  linked tests and six fixtures and `package-set: ran 2 linked tests and 6
+  headless fixtures over 2 packages`. A fixture or a linked test that is
   renamed, moved or no longer found by the naming convention fails that
   line.
-- **The default package's own checks.** `shipped-themes`: sixteen checks
+- **The default packages' own checks.** `shipped-themes`: sixteen checks
   in its driver (`ShippedThemesTest/Model.lean`), the completeness check
   on each theme among them; a linked test that holds each theme's picture
-  to its reference image; and three fixtures. `themes` switches from a
+  to its reference image; and four fixtures, the fourth, `package-names`,
+  a config that names the package's declaration `ShippedThemes.themes`,
+  which elaborates because the editor's config base is its set's. `themes` switches from a
   theme of config's to `solarized-dark` and `fairy-floss`;
   `shipped-themes` starts in the `solarized-light` its config names; and
   `load-theme`, on a config that defines no theme, prints the theme
   prompt's candidates: `default`, `solarized-dark`, `solarized-light`,
   `fairy-floss`, in that order
-  ([headless-mode.md](headless-mode.md)).
-- **An editor without the default package.** `mise run lean` also links an
-  editor from `tests/empty-set`, the default set with `shipped-themes`
-  dropped, and `ffi-test` runs the core's fixture
-  `tests/headless/core-themes` on it: it starts in the theme `default`,
+  ([headless-mode.md](headless-mode.md)). `compile`: 98 checks in its
+  driver (`CompileTest/Model.lean`), the ten model lists it had in the
+  core, on the core's test kit; a linked test of 7 checks
+  (`CompileTest/Linked.lean`): a compile and the shipped modes over the
+  real process service, on the fixtures under
+  `packages/compile/tests/compile`, and a compile in a headless host, in a
+  temporary working directory, whose output must hold each line of
+  `packages/compile/tests/linked/run/holds`; and two fixtures, `ex-names`,
+  each of the six ex names reaching its command, and `config`, a config
+  written on the package's declarations. The two fixtures and the host's
+  script were written against the editor with the compile mode still in
+  the core, and moved into the package with no byte changed.
+- **An editor without the default packages.** `mise run lean` also links
+  an editor from `tests/empty-set`, the default set with its packages
+  dropped, and `ffi-test` runs two of the core's fixtures on it.
+  `tests/headless/core-themes`: it starts in the theme `default`,
   its theme prompt lists `default` and the theme config defines and no
   palette, and `solarized-dark`, answered, is said in the echo area to be
-  no registered theme. The default set's editor prints other lines for the
-  same script.
+  no registered theme. `tests/headless/core-ex-names`: it starts and loads
+  config, and `compile` typed on its ex line is answered `compile: not an
+  ex command`, as `bogus` is. The default set's editor prints other lines
+  for each script. The gate also requires that set's config base to be
+  `Editor` alone (`lake -d ../tests/empty-set query :editorBase`), and the
+  default set's `Editor`, `ShippedThemes.EditorPackage` and
+  `Compile.EditorPackage`.
 - **`run` refuses a directory that is not a whole fixture.** A directory
   under a package's `tests/headless/` with no `config/`, no `script` or no
   `expected` is exit 2, naming what is missing, and so is a set whose

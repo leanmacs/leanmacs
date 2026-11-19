@@ -8,15 +8,16 @@ maybe a column, and a severity. It is data a minor mode's contribution
 carries (`Contribution.formats`, `Editor/ProjectMode.lean`) and config
 names and builds, with no editor API. What reads a line with one, the
 matcher and the locations it yields, is the compile mode's
-(`Editor/Compile/Errors.lean`).
+(`packages/compile/Compile/Errors.lean`).
 
 ## Why this is a core module that declares names in `Editor.Compile`
 
 The setup port registers contributions, the registry holds them by owner
 and the workspace turns a contribution's minor mode on, so the types a
 contribution is made of are the core's. They were declared in the compile
-mode's modules, which are not core modules (`docs/design/packages.md`), and
-moved here so that no core module imports one. Every declaration keeps its
+mode's modules, which are a package's now (`packages/compile/`;
+`docs/design/packages.md`), and moved here so that no core module imports
+one. Every declaration keeps its
 full name (`Editor.Compile.Format`, `Editor.Compile.Severity`, …): config,
 the docs and the tests name them, and a move changes only `import` lines.
 
@@ -38,12 +39,12 @@ every existing format is unchanged.
 A pattern is a list of steps (`step`, `optionalStep`), each a sequence of
 pieces (`Piece`), each an atom (`Atom`) that may capture its text as a
 part. How a pattern is matched is the matcher's
-(`Editor/Compile/Errors.lean`, "The matcher").
+(`packages/compile/Compile/Errors.lean`, "The matcher").
 
 ## The general format
 
 `Format.general`, the format every run falls back to; the tool-specific
-formats (rustc's, Lean's) ship in `Editor/Compile/Shipped.lean`. It reads
+formats (rustc's, Lean's) ship in `packages/compile/Compile/Shipped.lean`. It reads
 GNU's `file:line:col: message` and `file:line: message`, with an optional
 `error`, `warning` or `note` after the location. The file stops at a colon,
 a space or a tab, so a compilation's header (`r@main in /r: make`), an
@@ -53,14 +54,14 @@ no severity is an error.
 ## Trees
 
 `optional` and `field` are the two helpers the trees of this vocabulary
-are written with: a site's (`Site.encode`, `Editor/Compile/Errors.lean`)
+are written with: a site's (`Site.encode`, `packages/compile/Compile/Errors.lean`)
 and a listing's entry's (`Listing.Entry`,
 `Editor/ProjectMode/Listing.lean`). They are here because this is the one
 module both import.
 
 Pinned by `ModelTest.formatDataChecks`, as data, with no matcher. What a
 format reads in a line is the compile mode's
-(`ModelTest.compileErrorChecks`).
+(`CompileTest.compileErrorChecks`).
 -/
 
 namespace Editor.Compile

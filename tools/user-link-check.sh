@@ -22,7 +22,8 @@
 #    - `toolchain/`: the whole Lean toolchain (`lean --print-prefix`);
 #    - `core/lib/`: the `.olean` file of each module the link of the
 #      built `editor` names (`packages/.lake/build/bin/editor.rsp`): the
-#      core's and the default packages' (`packages/shipped-themes`), each
+#      core's and the default packages' (`packages/shipped-themes`,
+#      `packages/compile`), each
 #      taken from the build directory of the Lake package that built it,
 #      which the record beside the built editor names
 #      (`packages/.lake/build/bin/editor.oleans`). So `core/` here is the
@@ -328,7 +329,8 @@ dev_link_names() {
 # module's `.olean`. The root is the one the package-set build generated for
 # the default set, the only object under the set's build directory. Every
 # other object is a module of a Lake package of the default set: the core's
-# or a default package's (`packages/shipped-themes`). Each package builds
+# or a default package's (`packages/shipped-themes`, `packages/compile`).
+# Each package builds
 # into its own directory, and the record beside the built editor names
 # their `.olean` directories, the core's first (`editor.oleans`;
 # docs/design/packages.md, "The generated root"). An object is staged from

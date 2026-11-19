@@ -17,10 +17,11 @@ holds them by owner (`Editor/Config/Registry.lean`, "Compile
 contributions"), the loop is told them (`Hook`, `Loop.Registered.compile`),
 and the workspace turns a contribution's minor mode on from its markers
 (`Editor/Workspace/Modes.lean`). So the vocabulary is the core's, and the
-compile mode, which is not a core module (`docs/design/packages.md`), is
-one reader of it: what it makes of contributions is in
-`Editor/Compile/Contribution.lean`. The declarations were moved here from
-that module and keep their full names (`Editor.Compile.Contribution`,
+compile mode, which is a package outside the core (`packages/compile/`;
+`docs/design/packages.md`), is one reader of it: what it makes of
+contributions is in `packages/compile/Compile/Contribution.lean`. The
+declarations were moved here from that module, while it was still under
+`lean/Editor/`, and keep their full names (`Editor.Compile.Contribution`,
 `Editor.Compile.NamedCommand`, `Editor.Compile.ProjectCommands`,
 `Editor.Compile.Hook`): config, the docs and the tests name them, and a
 move changes only `import` lines.
@@ -61,8 +62,9 @@ project does, and a reload's change is read at once.
 Pinned by `ModelTest.contributionChecks`, on values, and by
 `ModelTest.setupChecks` and `ModelTest.registryChecks`, which register and
 hold contributions: checks of core modules, none of which names the compile
-mode. What the compile mode makes of a contribution is its own tests'
-(`ModelTest.compileHookChecks`, `ModelTest.compileOfferChecks`).
+mode. What the compile mode makes of a contribution is its own tests', in
+its package (`CompileTest.compileHookChecks`,
+`CompileTest.compileOfferChecks`).
 -/
 
 namespace Editor

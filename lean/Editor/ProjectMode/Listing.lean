@@ -9,7 +9,7 @@ What gives a contribution the named commands it computes
 (`Contribution.listing`, `Editor/ProjectMode.lean`): a program run
 in the mode's root, whose standard output the contribution reads into named
 commands, as `mise-mode` runs `mise tasks ls --json`
-(`Editor/Compile/Shipped.lean`). Written over the editor API and the job
+(`packages/compile/Compile/Shipped.lean`). Written over the editor API and the job
 port: a command may not wait and a job may, so a check is a call that
 starts a job (`refreshListings`), the job, which stamps the markers and runs
 the listing (`listWork`), and the job's command, which keeps what it gave
@@ -18,9 +18,9 @@ the listing (`listWork`), and the job's command, which keeps what it gave
 It is a core module: running a contribution's `listing` and keeping what
 it gave is upkeep of the core's own data, and the workspace starts a check
 when a mode turns on (`Editor/Workspace/Modes.lean`, which
-`Editor/Workspace/Attach.lean` imports). So it imports neither
-`Editor.Compile`, which is not a core module (`docs/design/packages.md`),
-nor `Editor.Files`. The compile mode reads what is kept (`listedCommands`)
+`Editor/Workspace/Attach.lean` imports). So it imports neither the
+compile mode, which is a package outside the core (`packages/compile/`;
+`docs/design/packages.md`), nor `Editor.Files`. The compile mode reads what is kept (`listedCommands`)
 and starts a check of its own (`refreshListings`); a set of packages
 without it still lists a contribution's commands, which nothing then
 reads. The declarations keep their names in `Editor.Compile`
@@ -68,8 +68,8 @@ starts it.
 
 Pinned by `ModelTest.listingChecks`, on a host handed core packages'
 commands and jobs alone. What the compile mode makes of what is listed is
-its own tests' (`ModelTest.compileListedChecks`,
-`ModelTest.projectModeChecks`).
+its own tests', in its package (`CompileTest.compileListedChecks`,
+`CompileTest.projectModeChecks`).
 -/
 
 namespace Editor.Compile

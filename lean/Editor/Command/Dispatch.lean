@@ -145,7 +145,7 @@ from the next command.
   shows the buffer, in the order of the state's windows, and with none for
   a buffer no window shows. The compilation buffer is given its mode this
   way before it is displayed, so a display rule can match the mode
-  (`Editor/Compile.lean`).
+  (`packages/compile/Compile.lean`).
 - **A major mode with a syntax tree is highlighted first.** When the new
   lineage says how its text is parsed and drawn (`Mode.syntaxTreeOf`), the
   loop runs `Highlight.enter` for the buffer's text before the on-enter
@@ -221,7 +221,7 @@ from the next command.
     the commands that open a line ask (`Target.indentUnit`,
     `Editor/Api.lean`);
   - the compile hook (`compileHook`, from `Loop.Registered.compile`): the
-    compile mode asks (`Editor/Compile.lean`, "The hook");
+    compile mode asks (`packages/compile/Compile.lean`, "The hook");
   - whether a job is registered (`hasJob`, from `Loop.Registered.jobs`, as
     a start is checked): `prompt` asks it of a source that answers later;
   - which sources a category has (`categorySources`, filled from

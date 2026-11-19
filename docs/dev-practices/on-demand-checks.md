@@ -87,7 +87,8 @@ arm64 only, so it is not part of the gate, which runs on Linux too.
 
 It stages, by copy, in a temporary directory: the Lean toolchain; the
 `.olean` file and the object of each module the built editor's link names,
-the core's and the default packages' (`packages/shipped-themes`), the glue
+the core's and the default packages' (`packages/shipped-themes`,
+`packages/compile`), the glue
 object and the Rust archive, as `mise run lean` built them (the built
 editor is the default package set's, `packages/.lake/build/bin/editor`;
 each module is taken from the build directory of the Lake package that
@@ -115,7 +116,12 @@ machine, measured"). Then it
    staged `lake`, with an empty environment and decoys for the developer
    tools first on the `PATH`;
 3. signs the result with `codesign --force -s -` and verifies it;
-4. runs its headless mode with an empty environment: it must print exactly
+4. runs its headless mode with an empty environment, given the staged
+   toolchain and two `.olean` directories joined with `:`, the staged
+   pieces' and the one the package's build wrote: the relinked editor's
+   config base is its set's, `Editor` and then the entry modules of the
+   default packages and of the fixture package, and it has no record of
+   where their modules are. It must print exactly
    `tests/headless/expected` for the standing fixture, but for the
    package's command, `user-link-hello`, which each line that lists the
    commands must name once; and for

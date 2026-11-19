@@ -246,6 +246,12 @@ and main's changes to the repository writer (commits by their author,
 lines, still only its imports, its module doc and `main`; its runs and lists
 are in 27 test modules under `lean/ContractTest/Editor/`, and its helpers in
 eight support modules. contract-test's summary line is main's, byte for byte.
+(Since then the packages roadmap's phase 6 published part of that support
+as the core's linked test kit, `lean/Editor/Test/Linked/`, and fourteen of
+model-test's support modules as `lean/Editor/Test/`, and moved the compile
+mode's test modules out with it, to `packages/compile/CompileTest/`:
+[packages.md](packages.md), "What moving the compile mode added to the
+core's API".)
 ConfigTest gained no list: main's two edits to it are in
 `lean/ConfigTest/Support/Lines.lean` (`statusOf`'s modified mark) and
 `lean/ConfigTest/Editor/Loop.lean` (the slow-command check's clock reads).
@@ -709,7 +715,8 @@ Files from about 1,200 to 1,500 non-test lines were not audited, so a
 later audit knows where the line was drawn: `crates/editor-ffi/src/syntax.rs`
 (1,321), `crates/editor-syntax/src/contract.rs` (1,290),
 `lean/Editor/Job/Contract.lean` (1,367), `lean/Editor/Compile.lean`
-(1,242) and `crates/editor-release/src/nightly.rs` (1,232).
+(1,242; since moved to `packages/compile/Compile.lean` by the packages
+roadmap's phase 6) and `crates/editor-release/src/nightly.rs` (1,232).
 
 No limit on file size is checked in CI. It would push toward arbitrary
 splits, while the problems found here are structural.

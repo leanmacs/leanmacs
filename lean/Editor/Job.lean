@@ -103,7 +103,7 @@ its own command. A cancelled or removed job's posts are dropped: the runner
 hands a post over only while the job is not cancelled
 (`Editor/Job/Runner.lean`, "Posting a command"), and the host runs one only
 while the job is in its table (`Job.Jobs.has`). It is how a compile streams
-its output into its buffer (`Editor/Compile.lean`).
+its output into its buffer (`packages/compile/Compile.lean`).
 
 ## Reading a snapshot
 

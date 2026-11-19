@@ -7,17 +7,31 @@ editor headless [--render] [<sysroot> <olean dir>] <config dir> <script file>
 This is the editor with no window. It loads the config in a directory, runs
 a script against it and prints what happened. `<sysroot>` is the Lean
 toolchain's directory (`lean --print-prefix`) and `<olean dir>` the
-directory of the editor package's `.olean` files
+directory of the core's `.olean` files
 (`lean/.lake/build/lib/lean`). They are given both or neither, so three or
 five paths are refused; from the build tree they are always given, and
 every check of the gate but `bundle-test` gives them. Nothing is read from
 the environment or the working directory.
 
+**`<olean dir>` is a search path**: one directory, or several joined with
+`:`, searched in order for the modules config is elaborated on. Outside a
+bundle the editor then searches the directories the build that linked it
+recorded beside it (`<editor>.oleans`, one a Lake package of its set;
+`lean/Editor/ModuleLookup.lean`). Those modules are the editor's config
+base: `Editor`, and then the entry module of each package of its set
+outside the core ([packages.md](../design/packages.md), "The config base
+of a set"), whose `.olean` files are in the package's own build directory.
+So the core's directory alone is enough for an editor `mise run lean`
+linked, and config may name a default package's declarations
+(`Compile.cargoMode`, `ShippedThemes.themes`). An editor with no record
+beside it, a copy or a relinked one, is given every directory:
+`<core dir>:<package dir>`. With a directory missing, a reload is rejected
+with `diagnostic: base:0:0: error: unknown module prefix '<Module>'`.
+
 The executable is the one `mise run lean` links from the default package
 set, `packages/.lake/build/bin/editor`
-([`building.md`](building.md)); the `.olean` directory is still the
-core's. The examples below are run in `lean/`, so they name it
-`../packages/.lake/build/bin/editor`.
+([`building.md`](building.md)). The examples below are run in `lean/`, so
+they name it `../packages/.lake/build/bin/editor`.
 
 ## From an app bundle
 
@@ -32,7 +46,9 @@ Leanmacs.app/Contents/Resources/lean/editor/               the editor's .olean f
 ```
 
 `Contents/Resources/lean/toolchain` is a sysroot: its modules are under its
-`lib/lean`, as a toolchain's are. Two directories given on the command line
+`lib/lean`, as a toolchain's are. The editor's directory holds every module
+of the config base, the default packages' beside the core's, so a bundle
+needs no record. Two directories given on the command line
 are used in place of the bundle's. Outside a bundle there is no toolchain to
 fall back on, so two paths are refused, status 2, with
 `editor: no Lean toolchain: give <sysroot> <olean dir> before the config directory, or run the executable from an app bundle`
@@ -50,16 +66,22 @@ the bundle ([`the-gate.md`](the-gate.md)). To stage one by hand, from
 
 ```sh
 sysroot=$(lean --print-prefix)
-.lake/build/bin/config-test bench-modules "$sysroot" .lake/build/lib/lean Editor > <dir>/closure
+base=$(lake -d ../packages query :editorBase | tr '\n' ' ')
+oleans=$(paste -s -d : ../packages/.lake/build/bin/editor.oleans)
+.lake/build/bin/config-test bench-modules "$sysroot" "$oleans" $base > <dir>/closure
 ../tools/stage-bundle.sh --closure <dir>/closure <dir>/Leanmacs.app ../packages/.lake/build/bin/editor \
-  "$sysroot" .lake/build/lib/lean olean olean.server olean.private
+  "$sysroot" "$oleans" olean olean.server olean.private
 ```
 
-Those are the modules `Editor` imports and the three file kinds importing
-them reads ([`lean-runtime.md`](../design/lean-runtime.md), "What config
-may import, measured"). Without `--closure` the script stages whole
-top-level directories: `--roots` names the toolchain's (`Init,Std` by
-default), and the package's `Editor` is always staged.
+Those are the modules the default set's config base imports, `Editor` and
+the entry module of each default package, and the three file kinds
+importing them reads ([`lean-runtime.md`](../design/lean-runtime.md), "What
+config may import, measured"). The `.olean` directories are the ones the
+build recorded beside the editor, joined with `:`: the script copies each
+module from the first that holds it, all into the bundle's one directory.
+Without `--closure` the script stages whole top-level directories:
+`--roots` names the toolchain's (`Init,Std` by default), and `Editor` is
+staged from each package directory that holds it.
 
 `mise run app` builds this layout for real, as `Leanmacs.app`
 ([`building.md`](building.md), "The app bundle"), and `mise run app-check`
@@ -708,8 +730,8 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 4 0,0 0x0: "e", scroll 0, selections 1..1, padding 8 0
 status 4: minibuffer.prompt ":"
-view 2 0,0 0x0: "e\ne!\nnext-error\nprevious-error\nautoread\nnoautoread\nreload\ncompile\ncompile-command\nrecompile", scroll 0, selections , padding 8 0
-decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.candidate 2..4 minibuffer.match 2..3 minibuffer.candidate 5..15 minibuffer.match 6..7 minibuffer.candidate 16..30 minibuffer.match 18..19 minibuffer.candidate 31..39 minibuffer.match 36..37 minibuffer.candidate 40..50 minibuffer.match 47..48 minibuffer.candidate 51..57 minibuffer.match 52..53 minibuffer.candidate 58..65 minibuffer.match 64..65 minibuffer.candidate 66..81 minibuffer.match 72..73 minibuffer.candidate 82..91 minibuffer.match 83..84
+view 2 0,0 0x0: "e\ne!\nnext-error\nprevious-error\nautoread\nnoautoread\nreload\nvc-stage-hunk\nvc-unstage-hunk\nvc-worktrees", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.candidate 2..4 minibuffer.match 2..3 minibuffer.candidate 5..15 minibuffer.match 6..7 minibuffer.candidate 16..30 minibuffer.match 18..19 minibuffer.candidate 31..39 minibuffer.match 36..37 minibuffer.candidate 40..50 minibuffer.match 47..48 minibuffer.candidate 51..57 minibuffer.match 52..53 minibuffer.candidate 58..71 minibuffer.match 65..66 minibuffer.candidate 72..87 minibuffer.match 81..82 minibuffer.candidate 88..100 minibuffer.match 97..98
 status 2: -
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -
@@ -846,8 +868,8 @@ An eleventh, the same package's
 config in `shipped-themes/config` beside it, which names a shipped theme,
 `solarized-light` (`useTheme`): the `shipped-themes` package registers its
 themes before any config, so the name is found when the config is
-installed. Config names the theme by its name and imports no module of the
-package, so the `.olean` directory given is the core's alone. The first
+installed. Config names the theme by its name and no declaration of the
+package. The first
 scene is drawn in `solarized-light`. Then `load-theme` is answered with
 `fairy-floss`, and the next scene is drawn in it. Its output must be
 exactly `shipped-themes/expected`. `mise run bundle-test` runs this fixture
@@ -904,7 +926,7 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
 The core has a themes fixture of its own, `tests/headless/core-themes/script`,
 which `mise run ffi-test` runs on another editor: the one `mise run lean`
 links from the set `tests/empty-set`, which requires the core alone, the
-default set with the package `shipped-themes` dropped. Its config defines
+default set with its packages, `shipped-themes` among them, dropped. Its config defines
 one theme, `first`, and names none. The first scene is drawn in `default`;
 the theme prompt lists `default` and `first`, and no palette; `first` is
 loaded; and `solarized-dark`, answered, is no theme of this editor, which
@@ -2051,10 +2073,34 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   of the default set, which does not hold the fixture package, answers
   `run greeting-hello: no such command` to the same script, and `ffi-test`
   checks that too.
-- **The `.olean` directory is the core's.** Config is elaborated on the
-  config base, which holds no module of a package outside the core yet, so
-  a fixture's config cannot name a package's definitions; it can bind and
-  run a package's commands by name.
+- **The `.olean` directory given is the core's.** Config is elaborated on
+  the set's base, `Editor` and then the entry module of each package of
+  the set outside the core, and the editor finds a package's modules
+  through the record the build wrote beside it. So a fixture's config can
+  name a package's declarations, as
+  `packages/shipped-themes/tests/headless/package-names` and
+  `packages/compile/tests/headless/config` do, and can bind and run a
+  package's commands by name.
 - **The standing fixtures under `tests/headless/` are the core's**, run on
   the default set's editor, and none of them changed when the editor came
-  to be built from a package set.
+  to be built from a package set. Five lines of three of them changed
+  when the compile mode moved into a default package, for the order it
+  registers in ([packages.md](../design/packages.md), "Registration order
+  is visible").
+- **The compile mode's fixtures are its package's**:
+  `packages/compile/tests/headless/ex-names`, in which each of `:next-error`,
+  `:previous-error`, `:recompile`, `:kill-compilation`, `:compile` and
+  `:compile-command`, typed in an editor that has compiled nothing,
+  reaches its command (`next-error: no locations in lean`, the prompt
+  `Compile command: `, and so on; `lean` is the working directory's last
+  name, where the gate runs the editor); and
+  `packages/compile/tests/headless/config`, a config written on
+  `Compile.cargoMode`, `Compile.Format` and `Compile.shipped`. A run over a
+  real process is no static fixture, since its output holds the working
+  directory's whole path: the package's linked test runs one in a headless
+  host, in a temporary directory
+  (`packages/compile/tests/linked/run/script`).
+- **An editor without the compile package**, the one linked from
+  `tests/empty-set`, runs the core's fixture
+  `tests/headless/core-ex-names`: `:compile` is answered `compile: not an
+  ex command`, as `:bogus` is.

@@ -16,7 +16,8 @@ which gives the buffer its modes.
 
 `Editor/Workspace/Attach.lean` imports this module: its attach and its find
 job's command call `markModes`. So this module imports neither
-`Editor.Files` nor `Editor.Compile`.
+`Editor.Files` nor the compile mode, which is a package outside the core
+and imports this module (`packages/compile/Compile.lean`).
 
 - **When.** Once, when a buffer's file opens and its workspace is known:
   from attach's cached answer at once, or from the find job's command once
@@ -48,7 +49,7 @@ Pinned by `ModelTest.listingChecks`, on the loop's driver over the editor's
 models and the job model, with a host of core packages alone: a file's open
 turns its markers' mode on and checks its listing. The compile mode's
 checks hold the rest of what a mode's turning on means for it
-(`ModelTest.compileHookChecks`).
+(`CompileTest.compileHookChecks`).
 -/
 
 namespace Editor.Workspace

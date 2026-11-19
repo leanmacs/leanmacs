@@ -692,9 +692,11 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is the 21 packages, in order, each accepted, in the state
+  list is the 20 packages, in order, each accepted, with no package of
+  the shipped palettes or of the compile mode among them, in the state
   they make every entry's owner is one of them, the ex names are bound in
-  the order the headless fixtures show, and the one theme is `default`.
+  the order the headless fixtures show, the `ex` package's and then
+  version control's, and the one theme is `default`.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:

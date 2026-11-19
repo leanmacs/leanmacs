@@ -21,8 +21,9 @@ is found in, what its listing prints in each, and what a driver is asked
 about it. It names core modules only, so the checks of the listing
 (`ModelTest/Editor/ProjectMode/Listing.lean`) build their host from it with
 no package outside the core, and the compile mode's checks of what it makes
-of a listing (`ModelTest/Editor/Compile.lean`,
-`ModelTest/Editor/Compile/Contribution.lean`) use the same world. It holds no
+of a listing, in its package (`packages/compile/CompileTest/Compile.lean`,
+`packages/compile/CompileTest/Compile/Contribution.lean`), use the same
+world. It holds no
 checks of its own.
 
 Published for a package's tests: it is a module of the core's test kit, a

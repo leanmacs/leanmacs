@@ -15,7 +15,7 @@ open Editor
 
 /-- The checks of an error format as data (`Editor/ProjectMode/Format.lean`):
 pure, with no matcher. What a format reads in a line is the compile mode's
-(`ModelTest.compileErrorChecks`). -/
+(`CompileTest.compileErrorChecks`). -/
 def formatDataChecks : List Check :=
   [{  name :=
         "each severity's name reads back as that severity, no other word is one, and the words that name them are error, warning and note"

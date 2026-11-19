@@ -26,8 +26,8 @@ name = "greeting-loud"
 path = "greeting-loud"
 
 # The default set, and through it the core and the default packages
-# (packages/shipped-themes/): the gate's package steps reach those through
-# this set.
+# (packages/shipped-themes/, packages/compile/): the gate's package steps
+# reach those through this set.
 [[require]]
 name = "default-set"
 path = "../../packages"

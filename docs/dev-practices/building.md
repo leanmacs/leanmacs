@@ -18,8 +18,8 @@ fixture set with its packages:
 |---|---|
 | `lake build --wfail` | The core's modules and `ffi-test`, `config-test` and `contract-test`, under `lean/.lake/build` |
 | `lake -d ../packages build --wfail :editor` | The editor, from the default package set (`packages/lakefile.toml`): the package-set build writes its root module, builds it and links `packages/.lake/build/bin/editor` |
-| `sh ../tools/package-set.sh build ../tests/packages` | The fixture set's editor (`tests/packages/.lake/build/bin/editor`), and the default targets and the linked test of each package of the set: the fixture packages and, through the default set, `shipped-themes` |
-| `lake -d ../tests/empty-set build --wfail :editor` | An editor from the core alone (`tests/empty-set/.lake/build/bin/editor`), which `ffi-test` runs one fixture on |
+| `sh ../tools/package-set.sh build ../tests/packages` | The fixture set's editor (`tests/packages/.lake/build/bin/editor`), and the default targets and the linked test of each package of the set: the fixture packages and, through the default set, `shipped-themes` and `compile` |
+| `lake -d ../tests/empty-set build --wfail :editor` | An editor from the core alone (`tests/empty-set/.lake/build/bin/editor`), which `ffi-test` runs two fixtures on |
 
 The editor is `packages/.lake/build/bin/editor`. It is not a target of the
 core: the core's lakefile defines how an editor is linked from a set, as
@@ -29,8 +29,10 @@ The root module that names the packages is generated into
 `packages/.lake/build/root/EditorSetRoot.lean`; delete it and the next
 build writes it again. Beside the editor the build writes
 `editor.oleans`, the directories the `.olean` files of the set's packages
-are in, which the editor run directly reads to find the modules config is
-elaborated on (`lean/Editor/ModuleLookup.lean`). `editor demo` shows the build works:
+are in, the core's, `shipped-themes`' and `compile`'s for the default set,
+which the editor run directly reads and searches, all of them, to find the
+modules config is elaborated on (`lean/Editor/ModuleLookup.lean`): its
+set's base, `Editor` and then the entry module of each default package. `editor demo` shows the build works:
 
 ```console
 $ packages/.lake/build/bin/editor demo
@@ -112,8 +114,13 @@ Leanmacs.app/Contents/Resources/lean/toolchain/lib/lean/   the toolchain's modul
 Leanmacs.app/Contents/Resources/lean/editor/               the editor's modules
 ```
 
-The modules are the closure of `Editor`, the modules config is elaborated
-on, each as its `.olean`, `.olean.server` and `.olean.private` files: the
+The modules are the closure of the default set's config base, the modules
+config is elaborated on (`Editor`, then the entry module of each default
+package, `ShippedThemes.EditorPackage` and `Compile.EditorPackage`), the
+packages' modules in the same one directory as the core's, so the bundle
+holds `Contents/Resources/lean/editor/Compile.olean` beside
+`Editor.olean`. Each is there as its `.olean`, `.olean.server` and
+`.olean.private` files: the
 layout and the file kinds `mise run bundle-test` stages
 ([`headless-mode.md`](headless-mode.md), "From an app bundle"), laid out by
 the same `tools/stage-bundle.sh`. On 2026-11-15 that was 2,006 files,
@@ -181,7 +188,8 @@ image that does not look the same turned a quarter (`mise run app-check`
 turns it to show a new artwork rebuilds the icon).
 
 Lake rebuilds the bundle only when an input changes: the executable, the
-`Editor` library's modules, `config-test` (which lists the closure), the
+`Editor` library's modules, the default packages', which the executable
+links, `config-test` (which lists the closure), the
 stage script, the toolchain, the lakefile, the version file, the artwork,
 or the build ID or commit.
 A second `mise run app` with nothing changed copies and signs nothing, and

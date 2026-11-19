@@ -69,13 +69,16 @@ shipped ex name runs in its place until a reload drops it.
   A feature with ex names of its own binds them in its own package, and
   this package names no such feature: the compile mode's `compile`,
   `compile-command`, `recompile`, `kill-compilation`, `next-error` and
-  `previous-error` (`Editor/Compile/Compiled.lean`), and version control's
-  twelve `vc-…` names (`Editor/VersionControl/Compiled.lean`). The files'
+  `previous-error`, in its package outside the core
+  (`packages/compile/Compile/Compiled.lean`), and version control's twelve
+  `vc-…` names (`Editor/VersionControl/Compiled.lean`). The files'
   and the buffers' names are bound here because both features are the
   core's, as this one is (`docs/design/packages.md`). The core's list
-  registers this package before those two
-  (`EditorCore/EditorPackage.lean`), so the names are bound in the order they were when this package bound them
-  all, which is the order the ex names' completion source lists them in.
+  registers this package before version control's
+  (`EditorCore/EditorPackage.lean`), and the compile mode's package
+  registers after every package of the core's, so the ex names'
+  completion source, which keeps the order the names were bound in, lists
+  this package's, then version control's, then the compile mode's.
 - **The sources**: the `:!` history, then the ex names, so config can ask
   for them by name.
 

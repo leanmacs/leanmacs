@@ -224,8 +224,16 @@ in its own directory. The check stages each from the package the record
 beside the built editor says built it (`editor.oleans`), all into
 `core/`, which so stands for the prebuilt pieces, the core and the default
 packages together: 228 `.olean` files (165.4 MB) and 228 objects (17.9 MB)
-on that date, where the table above has 217. Shipping the default packages
-as prebuilt pieces of their own is phase 9's.
+on that date, where the table above has 217. Since the compile mode became
+the second default package, the same day, the link names objects of three
+Lake packages, and the stage holds 229 of each (165.5 MB and 17.9 MB): the
+compile mode's five modules were the core's before, and its entry module
+is the one more. The relinked editor's config base is its set's, `Editor`
+and then the entry modules of the default packages and of the fixture
+package, and it has no record, so the check's run step gives it two
+`.olean` directories joined with `:`, the staged pieces' and the one the
+package's build wrote. Shipping the default packages as prebuilt pieces of
+their own is phase 9's.
 The toolchain is staged whole, so the set is sufficient and not shown
 minimal: what `lake`, `lean` and `clang` read of it was not measured, only
 what the linker opened.
@@ -438,10 +446,17 @@ queues and exits.
   build writes `<executable>.oleans` beside the editor it links: one
   directory a line, the core's first, then that of each other package of
   the set that holds a library, in the order they register. The window
-  mode reads it at its edge and uses the first, the core's, where the
-  config base's modules are; the elaborator searches one directory beside
-  the toolchain's, and the rest are recorded for when the base holds a
-  package's modules. An executable with no record has no default: with a
+  mode and the headless mode read it at their edge, and the elaborator
+  searches every directory of it, in order, beside the toolchain's: the
+  base config is elaborated on is the set's, `Editor` and then the entry
+  module of each package of the set outside the core
+  ([packages.md](packages.md), "The config base of a set"), and each
+  package's `.olean` files are in its own directory. A directory given on
+  the command line is a search path too, one directory or several joined
+  with `:`, searched before the recorded ones, which are still added; in
+  a bundle the directories given are used alone, in place of the bundle's
+  one, which holds every module of the base. An executable with no record
+  has no default: with a
   toolchain and no `--oleans` no config is loaded, and the echo area says
   `config: not loaded: the editor's .olean directory is not known; give it
   with --oleans (lean/.lake/build/lib/lean in a checkout)`. Before the
@@ -540,9 +555,12 @@ scenes (`lean/Editor/Display/Recorder.lean`), and the frame is made, 0 by 0,
 at the first event from the window input, so that the texts commands make
 before it keep their indices. The first load is an ordinary reload: the
 loop answers events before and while it runs. The toolchain's directory
-and the editor's `.olean` directory are its first two paths; from an
+and the editor's `.olean` directory are its first two paths, the second a
+search path that the directories the build recorded for the executable
+follow, as for the window mode (above), so the core's directory alone is
+enough for an editor a package set's build linked; from an
 executable in an app bundle they may be left out, and are then the
-bundle's, resolved as the window mode's are (above). Outside a bundle two
+bundle's, resolved as the window mode's are. Outside a bundle two
 paths are refused, status 2, because there is no toolchain to use: the
 headless mode never falls back to the environment or the working
 directory (`lean/Editor/Headless/CommandLine.lean`).
@@ -969,11 +987,11 @@ def package : Package :=
   (`EditorCore.EditorPackage.packages`), which is no module of the editor:
   it is outside `lean/Editor/` and the namespace `Editor`, in a library of
   its own (`lean_lib EditorCore`). It
-  lists 21 packages, each
+  lists 20 packages, each
   defined in its feature's `Compiled.lean`: `completion`, `mode-line`,
   `files`, `minibuffer`, `evil`, `ex`, `buffers`, `frame-commands`, `menu`,
   `window-commands`, `tab-commands`, `themes`,
-  `execute-command`, `binding-search`, `workspace`, `shell`, `compile`,
+  `execute-command`, `binding-search`, `workspace`, `shell`,
   `at-point`, `version-control`, `version-control-gutter` and `languages`,
   in that order, which keeps each kind of entry where the hosts registered
   it before there were packages. `themes` keeps
@@ -982,16 +1000,22 @@ def package : Package :=
   `fairy-floss`, are the package `shipped-themes`, which is no package of
   the core's Lake package: it is a Lake package of its own, a default
   package (`packages/shipped-themes/`; [packages.md](packages.md), "The
-  first default package"), and registers after the core's 21, so the theme
-  names read `default`, then the three. Each package binds its own ex names: `ex` the files', its own
-  and the buffers', `compile` its six and `version-control` its twelve, so
-  the order of those three in the list is the order the ex names'
+  first default package"), and registers after the core's 20, so the theme
+  names read `default`, then the three. The compile mode is the package
+  `compile`, the second default package (`packages/compile/`;
+  [packages.md](packages.md), "The default package `compile`"): it was
+  seventeenth in this list, between `shell` and `at-point`, until the
+  packages roadmap's phase 6 moved it out, and registers after the shipped
+  themes now. Each package binds its own ex names: `ex` the files', its own
+  and the buffers', `version-control` its twelve and `compile` its six, and
+  the order those three register in is the order the ex names'
   completion lists them in ([packages.md](packages.md), "Registration
   order is visible"). The executable's root, which the package-set build
   generates, imports that module and each other entry module of the set
   and passes their arrays, appended, to `Editor.Main.run`
-  (`lean/Editor/Main.lean`), which hands them to the headless mode and to
-  the window mode (`Headless.main`, `Window.main`).
+  (`lean/Editor/Main.lean`), with the names of the modules config is
+  elaborated on, the set's base; `run` hands both to the headless mode and
+  to the window mode (`Headless.main`, `Window.main`).
 - **The lists are outside the host.** No module of a host imports an
   entry module or a module that defines a package: the host's modules are
   every module the generated root imports other than the entry modules,
@@ -1003,9 +1027,10 @@ def package : Package :=
   packages: the core loop still imports feature code that defines none,
   such as `Editor.Files` and `Editor.Ex`. Which features those are, and
   what each would have to cross to move out of the core, is the module map
-  of [packages.md](packages.md); the core's own imports of the two
-  features that do move, the compile mode and the shipped palettes, are
-  cut, and a second check holds that
+  of [packages.md](packages.md); the two features that have moved, the
+  shipped palettes and the compile mode, are Lake packages the core does
+  not require, so no core module can import them, and a second check
+  holds that the core's root reaches every core module
   (`tools/core-imports-check.sh`; [packages.md](packages.md), "The core
   imports check").
 - **The owner `compiled` registers nothing in a host.** It remains as the
@@ -1028,15 +1053,20 @@ failed loudly instead of producing a second copy.
 As built (`lean/Editor/Config/Elaborate.lean`):
 
 - **The base is imported once per process**, by the first reload job, from
-  two directories it is given: the package's `.olean` directory and
-  `lib/lean` under the toolchain's. Not Lean's `initSearchPath`, which also
+  the directories it is given, searched in order: the `.olean` directories
+  of the Lake packages whose modules the base holds, the core's first, and
+  then `lib/lean` under the toolchain's. A base module in none of them
+  fails the import, naming the module
+  (`ConfigTest.elaboratorChecks`). Not Lean's `initSearchPath`, which also
   reads `LEAN_PATH` from the environment. A second import in one process
   about doubled its resident memory in a prototype.
 - **The import runs no initialiser of a linked module.** Lean looks for a
   module's native initialiser first, and interprets a module's `initialize`
   declarations only when there is none. Each root that links the adapter
   imports `Editor` at compile time beside it (the editor's generated root,
-  `lean/ConfigTest/Check.lean`, `lean/FfiTest/Editor/Window/Real.lean`),
+  which imports the rest of its base too, the entry modules of the set's
+  packages; `lean/ConfigTest/Check.lean`;
+  `lean/FfiTest/Editor/Window/Real.lean`),
   so every module of the base is linked into any executable that can
   elaborate config, and its initialiser ran once, when the process
   started. The adapter itself does not import `Editor`: it is a core
@@ -1969,8 +1999,23 @@ What the figures show:
   the start-up, and three times the memory.** The closure saves little
   there: `Lean` reaches nearly all of `Std` and all of `Init`.
 
-Config imports what `Editor` imports, and the bundle ships that set's
-closure, in those three kinds, about 396 MB beside the executable. Whether
+**The bundle ships the closure of the set's base since the packages
+roadmap's phase 6.** Config is elaborated on `Editor` and then the entry
+module of each package of the editor's set outside the core
+([packages.md](packages.md), "The config base of a set"): for the default
+set, `Editor`, `ShippedThemes.EditorPackage` and `Compile.EditorPackage`.
+`:editorApp` and `bundle-test` take that base's closure over the set's
+`.olean` directories, the core's and each default package's, and stage it
+into the bundle's one directory (`tools/stage-bundle.sh`, which takes the
+package directories joined with `:` and copies a module from the first
+that holds it). On 2026-11-19 that closure was 919 modules, 792 of the
+toolchain's and 127 of the editor's, ten of those the two packages'
+(`ShippedThemes` and its three, `Compile` and its five). The table above
+was not measured again: its 700 modules are the base of 2026-11-15.
+
+Config imports what its set's base imports, and the bundle ships that
+set's closure, in those three kinds, about 396 MB beside the executable
+when it was measured. Whether
 config should be allowed `Lean` (for metaprogramming, say) is a later task,
 to be decided from these numbers.
 

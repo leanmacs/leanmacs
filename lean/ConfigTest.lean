@@ -77,7 +77,9 @@ show:
   `frame-commands` package's, binds `C-x C-d` to `find-file-in-another-workspace` in the
   prompt category `workspace-file` alone, and registers the buffer
   commands with the ex names `b`, `ls` and `bd` bound to them, and the
-  completion sources that ship;
+  completion sources that ship; and it holds nothing of the compile mode,
+  no command, ex name, job, mode or contribution, that mode being a
+  package outside the core's Lake package;
 - `scriptChecks`: the headless mode's script and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
   library, a scene published after a reload's install and a job's command

@@ -39,10 +39,10 @@ import Editor.Workspace.Contract
 
 The root module of the core: it imports every core module, directly or
 through another, and declares nothing. The core is every module under
-`lean/Editor/` except the modules of the feature that moves out of it into
-a package of its own (the compile mode, `Editor/Compile.lean` and
-`Editor/Compile/`). The shipped palettes moved out already
-(`packages/shipped-themes/`). The
+`lean/Editor/`: no feature is between having its edges from the core cut
+and moving out. The two that were have moved, the shipped palettes
+(`packages/shipped-themes/`) and the compile mode (`packages/compile/`),
+and are Lake packages that require the core. The
 list of the packages of the core's Lake package, its entry module, is not
 under `lean/Editor/` (`EditorCore/EditorPackage.lean`, a library of its
 own), and this module does not import it. `docs/design/packages.md` says
@@ -51,8 +51,9 @@ each feature still in the core would have to cross to move out.
 
 It is a root of the `Editor` library beside `Editor` (`lakefile.lean`), so
 the build makes it and with it every core module. It is not the config
-base: user config is elaborated on `Editor` (`Editor.lean`), which imports
-both moving features until the base changes. It is not a host either: no
+base: user config is elaborated on `Editor` (`Editor.lean`) and, in an
+editor built from a package set, on the entry modules of the set's
+packages after it (`Editor/Main.lean`, "The base"). It is not a host either: no
 host module, no package and no executable's root imports it, so the host
 imports check (`tools/host-imports-check.sh`) does not meet it.
 
@@ -76,11 +77,12 @@ base.
 ## The check
 
 `tools/core-imports-check.sh` checks, on Lake's module graph, in `mise run
-ffi-test`, that this module and what it imports hold no moving module, and
-that every module named `Editor.…` an executable or a test executable
-reaches is among them, unless it is moving. So a new core
-module that nothing here reaches fails the gate until it is imported here,
-and a core module that comes to import a moving one fails it too. It also
-checks that an executable that links the elaborator links the config base
-(`Editor/Config/Elaborate.lean`, "The base").
+ffi-test`, that every module named `Editor.…` an executable or a test
+executable reaches is this module or one it imports. So a new core module
+that nothing here reaches fails the gate until it is imported here. It
+also checks that an executable that links the elaborator links the config
+base (`Editor/Config/Elaborate.lean`, "The base"). And, given the name of
+a feature that is to move out while its modules are still under
+`lean/Editor/`, that this module and what it imports hold none of its
+modules: no feature is named today.
 -/

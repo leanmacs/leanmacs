@@ -1505,7 +1505,8 @@ windows; the minibuffer's
 `minibuffer.chosen`, `minibuffer.match`, `minibuffer.annotation`,
 `minibuffer.group`, completion's phase 4); the
 compile mode's locations by severity (`compilation.error`,
-`compilation.warning`, `compilation.note`, `lean/Editor/Compile.lean`,
+`compilation.warning`, `compilation.note`: the core's names, which the
+compile mode's package draws with, `packages/compile/Compile.lean`,
 "Locations"); `search-match`, the matches of the last search; and the tab
 bar's (`tab-bar` for each chip and `tab-bar.selected` for the tab in view's,
 window management phase 5). The status fields' faces

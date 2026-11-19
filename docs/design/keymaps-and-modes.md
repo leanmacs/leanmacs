@@ -57,7 +57,7 @@ registers, undo and dot repeat, on the editor API:
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
 | Ex bindings by owner, and binding one from `setup` | `lean/Editor/Config/Registry.lean` (`replaceEx`, `ex?`), `lean/Editor/Setup.lean` (`exCommand`) |
 | The ex command, and the commands `quit`, `save-and-quit` and `reload-config` | `lean/Editor/Ex.lean` |
-| The ex line's commands and the files', the ex line's own and the buffers' ex names, as the `ex` package registers them; the compile mode's and version control's ex names are bound by their own packages | `lean/Editor/Ex/Compiled.lean`, `lean/Editor/Compile/Compiled.lean`, `lean/Editor/VersionControl/Compiled.lean` |
+| The ex line's commands and the files', the ex line's own and the buffers' ex names, as the `ex` package registers them; the compile mode's and version control's ex names are bound by their own packages | `lean/Editor/Ex/Compiled.lean`, `packages/compile/Compile/Compiled.lean`, `lean/Editor/VersionControl/Compiled.lean` |
 
 The command loop steps every key press through its one scheme and runs the
 invocation it yields, as a command looked up by name in the registry. The
@@ -3417,7 +3417,7 @@ otherwise be a cycle).
   mode leaves the minor modes alone and adding a minor mode leaves the
   major mode alone, so a `.rs` file under a `Cargo.toml` ends in `code`,
   with its language, and with `cargo-mode` on (pinned by
-  `ModelTest.compileHookChecks`).
+  `CompileTest.compileHookChecks`, in the compile mode's package).
 - **A config mode with its own tree wins when the user sets it**: it never
   looks at the language. One derived from `code` with no tree takes the
   language's.
@@ -4368,21 +4368,29 @@ Doom Emacs's corfu module (owner decisions, 2026-11-17).
 
 ### The compile mode, as built
 
-Status: built by `shell-and-compile` phases 3 to 6
-(`lean/Editor/Compile.lean`, `lean/Editor/Compile/Errors.lean`,
-`lean/Editor/Compile/Contribution.lean`, `lean/Editor/Compile/Shipped.lean`,
-`lean/Editor/Compile/Compiled.lean`, `lean/Editor/Json.lean`,
-`lean/Editor/Workspace/Modes.lean`; the module docs have the detail). What
+Status: built by `shell-and-compile` phases 3 to 6, and moved out of the
+core into the default package `compile` by the packages roadmap's phase 6
+([packages.md](packages.md), "The default package `compile`"):
+`packages/compile/Compile.lean`, `packages/compile/Compile/Errors.lean`,
+`packages/compile/Compile/Contribution.lean`,
+`packages/compile/Compile/Shipped.lean` and
+`packages/compile/Compile/Compiled.lean`, over the core's
+`lean/Editor/Json.lean` and `lean/Editor/Workspace/Modes.lean`; the module
+docs have the detail. Its declarations are still in the namespace
+`Editor.Compile`, so config names them as it did (`Compile.cargoMode`). What
 a minor mode contributes is the core's vocabulary, in three core modules
 the packages roadmap's phase 3 split off, every name unchanged
 ([packages.md](packages.md), "The interfaces the core owns for the two
-moving features"): the contribution, its named commands, config's project
+features that moved"): the contribution, its named commands, config's project
 commands and the hook the loop is told (`lean/Editor/ProjectMode.lean`);
 an error format as data (`lean/Editor/ProjectMode/Format.lean`), which the
-compile mode's matcher reads output with (`lean/Editor/Compile/Errors.lean`);
+compile mode's matcher reads output with
+(`packages/compile/Compile/Errors.lean`);
 and the listing of computed commands
 (`lean/Editor/ProjectMode/Listing.lean`). The compile mode's ex names are
-bound by its own package (`lean/Editor/Compile/Compiled.lean`).
+bound by its own package (`packages/compile/Compile/Compiled.lean`). An
+editor built from a set without the package has none of the commands
+below, and answers `:compile` as it answers any ex name nobody bound.
 Emacs's `M-x compile`, one per workspace: a build or test command runs as
 `/bin/sh -c <line>` and its output arrives in the workspace's compilation
 buffer while editing goes on.
@@ -4488,7 +4496,7 @@ buffer while editing goes on.
 - **Contributions.** A minor mode gives the compile mode what fits a kind
   of project as data (`Compile.Contribution`), registered under the mode's
   name in config (`compileContribution`) or by a package (the `compile`
-  package's, `lean/Editor/Compile/Compiled.lean`): marker files, named commands (`build`, `test`, each a
+  package's, `packages/compile/Compile/Compiled.lean`): marker files, named commands (`build`, `test`, each a
   name and a command line, and maybe a directory of its own), error
   formats, whether its root is its outermost marker, and a listing that
   computes more commands.
@@ -4581,20 +4589,32 @@ buffer while editing goes on.
   `next-error-follow`; and a time limit (a build may run for many minutes;
   `kill-compilation` ends it, and `C-g` does not, as in Emacs).
 
-Pinned by `ModelTest.compileChecks`, `compileErrorChecks`,
-`compileLocationChecks`, `compileHookChecks`, `projectFormatChecks`,
-`jsonChecks`, `miseTaskChecks`, `listingChecks`, `compileListedChecks`,
-`compileOfferChecks`, `contributionChecks`, `formatDataChecks`,
-`projectModeChecks`, `modeMarkerChecks` and
-`readOnlyChecks` on the models; by `ConfigTest`'s checks that the hosts
-start with the shipped contributions and that config can override a field
-of one (`ConfigTest.compileConfigChecks`); by the mode marker search's contract (`Workspace.MarkerContract`),
-on its model and on the job model by `model-test` and over the real file
-service by `contract-test`; and over the real process service by
-`ContractTest.compileChecks`, with the fixture `tests/compile/three-lines`,
-and `ContractTest.projectModeChecks`, with the programs in
-`tests/compile/bin` standing in for cargo, lake and mise, the git fixture
-`tests/workspaces/git`, and the trees in `tests/compile`.
+Pinned, in the package's test driver (`compile-test`,
+`packages/compile/CompileTest/Model.lean`), by `CompileTest.compileChecks`,
+`compileErrorChecks`, `compileLocationChecks`, `compileHookChecks`,
+`projectFormatChecks`, `miseTaskChecks`, `compileListedChecks`,
+`compileOfferChecks`, `projectModeChecks` and `compilePackageChecks`, on
+the models, through the core's test kit; in the core's `model-test`, by
+`ModelTest.jsonChecks`, `listingChecks`, `contributionChecks`,
+`formatDataChecks`, `modeMarkerChecks` and `readOnlyChecks`, of what stays
+the core's; by the package's headless fixtures, on the editor built from a
+set that holds it: `ex-names`, each of its six ex names reaching its
+command, and `config`, a real config that overrides a field of a shipped
+contribution and builds a format of its own (what the hook makes of such a
+config is `compileHookChecks`'); by the mode marker search's contract
+(`Workspace.MarkerContract`), on its model and on the job model by
+`model-test` and over the real file service by `contract-test`; and, in
+the package's linked test (`packages/compile/CompileTest/Linked.lean`),
+over the real process service by `CompileTest.compileRunChecks`, with the
+fixture `packages/compile/tests/compile/three-lines`, and
+`CompileTest.projectRunChecks`, with the programs in
+`packages/compile/tests/compile/bin` standing in for cargo, lake, mise and
+git and the trees beside them, and by a compile in a headless host, on the
+script `packages/compile/tests/linked/run/script`. That a host of the
+core's packages alone starts with nothing of the compile mode is
+`ConfigTest.shippedChecks`', and that an editor built without the package
+answers `:compile` as an unknown ex name is the fixture
+`tests/headless/core-ex-names`.
 
 ## The ex command line
 
@@ -4604,7 +4624,7 @@ Status: decided 2026-11-14 and built, by the command loop's phase 12
 their registrations and the files', the ex line's and the buffers' names;
 the module docs have the detail). A feature with ex names of its own binds
 them in its own package: the compile mode's
-(`lean/Editor/Compile/Compiled.lean`) and version control's
+(`packages/compile/Compile/Compiled.lean`, a package outside the core) and version control's
 (`lean/Editor/VersionControl/Compiled.lean`). How quitting and reloading reach the host is in
 [concurrency.md](concurrency.md), "Quit" and "Reload".
 

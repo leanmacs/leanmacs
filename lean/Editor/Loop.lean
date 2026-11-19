@@ -1110,7 +1110,7 @@ excerpt buffer, its sources' buffers' spans, each translated to every
 excerpt of its source (`ExcerptView.sourceSpansOf`,
 `Editor/ExcerptView.lean`); its buffer's spans (`Buffer.spans`,
 `Editor/State.lean`, "Buffers"), each in the face its owner gave it, such
-as the compile mode's locations (`Editor/Compile.lean`, "Locations"); then
+as the compile mode's locations (`packages/compile/Compile.lean`, "Locations"); then
 what no scene has shown of its tracked excerpts, each in
 `review-unexamined` (`ExcerptView.unexaminedOf`), read before this scene
 marks what it shows (step 4b of "After each event"); then the matches of
