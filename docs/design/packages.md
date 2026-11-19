@@ -16,14 +16,11 @@ phase 6 the compile mode.
 
 ## The core and its root
 
-**The core** is every module under `lean/Editor/` except:
-
-- the modules of the two features that move out in this roadmap, called
-  **the moving modules** here: the compile mode (`Editor.Compile` and every
-  module under it, phase 6) and the shipped palettes
-  (`Editor.Themes.Solarized`, `Editor.Themes.FairyFloss` and
-  `Editor.Themes.Shipped`, phase 5);
-- `Editor.PackageSet`, the hand-written list of the packages that ship.
+**The core** is every module under `lean/Editor/` except the modules of
+the two features that move out in this roadmap, called **the moving
+modules** here: the compile mode (`Editor.Compile` and every module under
+it, phase 6) and the shipped palettes (`Editor.Themes.Solarized`,
+`Editor.Themes.FairyFloss` and `Editor.Themes.Shipped`, phase 5).
 
 So the ex line, files, workspaces, version control and every other feature
 that does not move yet are core modules, and "core" in the gate's check
@@ -43,13 +40,16 @@ could move later.
   them. It keeps its imports until the base changes (phase 7). It is not
   under `lean/Editor/` and is not a core module: after phase 6 it imports a
   package.
-- **`Editor.PackageSet` is neither core nor a feature.** It names every
-  package, the moving ones among them, in the one order the headless
-  fixtures show ("Registration order is visible", below), so it cannot be a
-  core module, and it holds no feature's code. The core's root does not
-  import it, and both import checks exempt it by name. Phase 4 replaces it
-  with a generated root. It is the one module the map below gives neither
-  class.
+- **The list of the packages that ship is not a module of the editor.**
+  `PackageSet` (`lean/PackageSet.lean`) names every package, the moving
+  ones among them, in the one order the headless fixtures show
+  ("Registration order is visible", below). It is the executable's wiring:
+  a module outside `lean/Editor/` and outside the namespace `Editor`, in a
+  library of its own (`lean_lib PackageSet`), which the executable's root
+  and the tests that need the list import. So it is no core module and no
+  feature's, the core's root does not import it, and the core imports
+  check, which is of the modules named `Editor.…`, exempts nothing by
+  name. Phase 4 replaces it with a generated root, also outside the core.
 - **A root that links the elaborator imports the config base.** The
   elaborator adapter (`Editor.Config.Elaborate`) imports the base's modules
   from their `.olean` files at runtime, and each must already be linked
@@ -94,15 +94,16 @@ says which side of the rule its modules are on.
     `Editor.Job.Runner`, `Editor.Job.Jobs`, `Editor.Job.Table`,
     `Editor.Job.Pool`);
   - the entry modules of the packages still in the core (`….Compiled`);
-  - `Editor.Core` and `Editor.PackageSet`.
+  - `Editor.Core`.
 - **The internal namespace is `Editor.Internal`.** A core module that no
   package may import is created under it from now on, so that its name
   says so. The modules listed above are internal today under older names
-  and keep them: renaming about 85 modules moves their mirrored test
+  and keep them: renaming about 84 modules moves their mirrored test
   modules and every path the documents cite, and is filed as a task of its
   own (`internal-namespace-rename`).
 - **`Editor`, the config base, is not part of the API.** A package imports
-  the modules it uses, not the base.
+  the modules it uses, not the base. Nor is `PackageSet`, which is no
+  module of the core: it imports the packages, and no package imports it.
 - **A feature still in the core is importable where its row says so.** The
   compile mode imports `Editor.Shell` and `Editor.Workspace.Modes`, which
   are features' modules; until those features move they are core modules a
@@ -113,7 +114,7 @@ says which side of the rule its modules are on.
   first package built outside the core (phase 5), which extends the API
   here if it needs to.
 
-Checked against the graph at `ec882976`: every core module the moving
+Checked against the graph at `6ba99de5`: every core module the moving
 modules import directly is importable. The compile mode's modules import
 `Editor.Api`, `Editor.Command.Call`, `Editor.File`, `Editor.Json`,
 `Editor.Mode`, `Editor.Package`, `Editor.ProjectMode`,
@@ -128,9 +129,10 @@ by widening the rule; phases 5 and 6 extend the API, or change the tests,
 when they move them:
 
 - the compile mode's tests (`ModelTest.Editor.Compile` and the modules
-  under it, `ContractTest.Editor.Compile` and `.Compile.Shipped`):
-  `Editor.Command.Dispatch`, `Editor.Command.Real`,
-  `Editor.Config.Packages`, `Editor.Config.Registry`,
+  under it, `ConfigTest.Editor.Compile`, `ContractTest.Editor.Compile` and
+  `.Compile.Shipped`): `Editor.Command.Dispatch`, `Editor.Command.Real`,
+  `Editor.Config.Elaborate`, `Editor.Config.Packages`,
+  `Editor.Config.Registry`, `Editor.Config.Session`,
   `Editor.Config.Stores`, `Editor.Display.Recorder`,
   `Editor.Ffi.Processes`, `Editor.Ffi.Snapshot`, `Editor.Job.Runner`,
   `Editor.Loop` and `Editor.Text.Real`;
@@ -140,6 +142,32 @@ when they move them:
   `Editor.Display.Real`, `Editor.Ffi.Display`, `Editor.Ffi.Document`,
   `Editor.Ffi.Marker`, `Editor.Ffi.Snapshot`, `Editor.Ffi.Window`,
   `Editor.Loop` and `Editor.Text.Real`.
+
+**The core's tests do not name the compile mode.** A test module that
+mirrors a core module imports no module of the compile mode, so that
+phase 6 moves the compile mode's tests with it and splits none of the
+core's: the listing's checks build their host from core packages'
+commands and jobs (`ModelTest/Support/Listing.lean`), the contribution and
+the format data have checks of their own (`ModelTest.contributionChecks`,
+`ModelTest.formatDataChecks`), and what the compile mode makes of them is
+checked in its own test modules. Three test modules outside the compile
+mode's own still name it, each because it is the feature's own helper or
+names every package by design; the `compile` entry of the map lists them:
+
+- `ModelTest.Support.Compile`, the compile checks' own support, which
+  moves with them;
+- `ConfigTest.Editor.Headless`, which holds `ConfigTest.shippedChecks`,
+  the test of the shipped set as the executable's hosts register it, and
+  so names every package;
+- `ContractTest.Support.Projects`, the rig of the project-mode contract
+  checks over the real services, which registers the compile package.
+  Three version-control contract checks build on that rig and reach the
+  compile package through it; phase 6 splits the rig or moves it.
+
+The shipped palettes are not yet cut out of the core's tests in the same
+way: five test modules of core modules use a palette as their fixture
+theme (the `shipped-themes` entry of the map lists them), which is phase
+5's to settle when it moves the palettes.
 
 ## The interfaces the core owns for the two moving features
 
@@ -211,11 +239,10 @@ none. What replaced each edge is an interface the core owns.
 
 ## The module map
 
-Every module under `lean/Editor/`, 255 of them at `ec882976` (`find
-lean/Editor -name '*.lean' | wc -l`), is **core** or part of a **feature
-that could become a package**, except `Editor.PackageSet`, which is neither
-("The core and its root"). The counts below add up to 255: 168 core,
-86 in 21 features, and 1 neither.
+Every module under `lean/Editor/`, 254 of them at `6ba99de5`
+(`find lean/Editor -name '*.lean' | wc -l`), is **core** or part of a
+**feature that could become a package**. The counts below add up to
+254: 168 core and 86 in 21 features.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -234,6 +261,7 @@ that could become a package**, except `Editor.PackageSet`, which is neither
 One row covers modules that share a class and a side of the import rule.
 "A package may import it" is `yes`, `in tests` (a test double), `no`
 (internal) or, for the two moving features, the phase that moves it.
+"Under it" counts the modules below a name, not the module of that name.
 
 | Modules | Count | Class | A package may import it |
 |---|---|---|---|
@@ -241,7 +269,7 @@ One row covers modules that share a class and a side of the import rule.
 | The hosts and the executable's modules: `Editor.Headless`, `.Headless.CommandLine`, `Editor.Window`, `.Window.Real`, `Editor.WindowCheck`, `.WindowCheck.Real`, `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup` | 9 | core | no |
 | The loop and its dispatch: `Editor.Loop`, `Editor.Command.Dispatch`, `Editor.Event.Queue`, `Editor.State.Outbox` | 4 | core | no |
 | The config session: `Editor.Config.Diagnostic`, `.Directory`, `.Display`, `.Elaborate`, `.Owner`, `.Packages`, `.Registry`, `.Reload`, `.Session`, `.Stores` | 10 | core | no |
-| The raw bindings: `Editor.Ffi` and the 25 modules under it | 27 | core | no |
+| The raw bindings: `Editor.Ffi` and the 26 modules under it | 27 | core | no |
 | The real bindings of ports and what runs them: `Editor.Clipboard.Real`, `.Clipboard.InProcess`, `Editor.Command.Real`, `Editor.Display.Real`, `.Display.Recorder`, `Editor.Fuzzy.Real`, `Editor.Job.Real`, `.Job.Runner`, `.Job.Jobs`, `.Job.Table`, `.Job.Pool`, `Editor.SyntaxTree.Real`, `Editor.Text.Real`, `Editor.Watch.Real` | 14 | core | no |
 | The models: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `.Model.Json`, `.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 14 | core | in tests |
 | The contracts and cases: `Editor.Clipboard.Contract`, `Editor.Completion.Contract`, `.AtPointContract`, `.DisplayContract`, `.StyleContract`, `Editor.Display.Contract`, `Editor.Fuzzy.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.SyntaxTree.Contract`, `Editor.Text.Contract`, `Editor.Watch.Contract`, `Editor.Api.Cases`, `Editor.File.Cases`, `Editor.UndoTree.Cases` | 15 | core | in tests |
@@ -267,7 +295,7 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Completion.Styles`, `.Displays` | 2 | feature: completion | yes |
 | `Editor.Completion.Compiled` | 1 | feature: completion | no |
 | `Editor.Evil.Compiled` | 1 | feature: evil | no |
-| `Editor.Evil` and the other 10 modules under it; `Editor.InputScheme.Vim`, `.Vim.Default` | 13 | feature: evil | yes |
+| `Editor.Evil` and 10 of the modules under it (all but `.Compiled`); `Editor.InputScheme.Vim`, `.Vim.Default` | 13 | feature: evil | yes |
 | `Editor.Ex` | 1 | feature: ex | yes |
 | `Editor.Ex.Compiled` | 1 | feature: ex | no |
 | `Editor.ExecuteCommand` | 1 | feature: execute-command | yes |
@@ -290,23 +318,23 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Themes.Compiled` | 1 | feature: themes | no |
 | `Editor.VersionControl.Compiled` | 1 | feature: version-control | no |
 | `Editor.VersionControl.Model`, `.Contract` | 2 | feature: version-control | in tests |
-| `Editor.VersionControl` and the other 16 modules under it | 17 | feature: version-control | yes |
+| `Editor.VersionControl` and 16 of the modules under it (all but `.Compiled`, `.Model` and `.Contract`) | 17 | feature: version-control | yes |
 | `Editor.WindowCommands` | 1 | feature: window-commands | yes |
 | `Editor.WindowCommands.Compiled` | 1 | feature: window-commands | no |
 | `Editor.Workspace.Compiled` | 1 | feature: workspace | no |
 | `Editor.Workspace.Model`, `.Contract` | 2 | feature: workspace | in tests |
 | `Editor.Workspace.Attach`, `.Finder`, `.FindFile`, `.FindInProject`, `.Lister`, `.Modes`, `.Projects`, `.Reach` | 8 | feature: workspace | yes |
-| `Editor.PackageSet` | 1 | neither | no |
 
 ### What each feature would have to cross
 
 For each feature, from Lake's direct imports (`lake query
-+<module>:imports`) at `ec882976`:
++<module>:imports`) at `6ba99de5`:
 
 - its modules;
 - the core modules that import one of them, each with what it imports (the
   core's root, `Editor.Core`, imports every feature's entry module and is
-  left out);
+  left out, as is the list of packages, `PackageSet`, which is outside
+  `lean/Editor/`);
 - the other features' modules that import one of them;
 - the other features it imports;
 - the test modules that import one of them, other than its own tests, which
@@ -357,7 +385,7 @@ For each feature, from Lake's direct imports (`lake query
 - **Core modules that import it**: none.
 - **Other features' modules that import it**: none.
 - **Other features it imports**: shell (`Shell`); workspace (`Workspace.Modes`).
-- **Test modules outside its own tests that import it** (6): `ModelTest`: `Json`, `ProjectMode.Listing`, `Support.Compile`; `ConfigTest`: `Files`, `Headless`; `ContractTest`: `Support.Projects`.
+- **Test modules outside its own tests that import it** (3): `ModelTest`: `Support.Compile`; `ConfigTest`: `Headless`; `ContractTest`: `Support.Projects`.
 - **The config base imports**: `Compile`, `Compile.Shipped`.
 - **Reaches by name** (not exhaustive): the face vocabulary lists `compilation.error`, `compilation.warning` and `compilation.note` (`Face/Vocabulary.lean`), which every palette defines; it reads the store `compile-listings` and starts the job `compile-list`, both the core's; its six ex names are its own package's.
 
@@ -527,7 +555,7 @@ For each feature, from Lake's direct imports (`lake query
 - **Core modules that import it**: none.
 - **Other features' modules that import it**: compile: `Compile` (`Workspace.Modes`); files: `Files` (`Workspace.Attach`); version-control: `VersionControl.Views` (`Workspace.Attach`), `VersionControl.Worktrees` (`Workspace.Reach`).
 - **Other features it imports**: files (`Files`); version-control (`VersionControl`, `VersionControl.Git`).
-- **Test modules outside its own tests that import it** (20): `ModelTest`: `the root`, `Compile`, `Compile.Shipped`, `Completion.Contract`, `ProjectMode.Listing`, `VersionControl.Gutter`, `VersionControl.Worktrees`, `Support.Compile`, `Support.FindFile`, `Support.Shell`, `Support.VersionControl`, `Support.Workspace`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `VersionControl.Gutter`; `ContractTest`: `the root`, `Compile.Shipped`, `Workspace`, `Support.Projects`.
+- **Test modules outside its own tests that import it** (20): `ModelTest`: `the root`, `Compile`, `Compile.Shipped`, `Completion.Contract`, `ProjectMode.Listing`, `VersionControl.Gutter`, `VersionControl.Worktrees`, `Support.FindFile`, `Support.Listing`, `Support.Shell`, `Support.VersionControl`, `Support.Workspace`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `VersionControl.Gutter`; `ContractTest`: `the root`, `Compile.Shipped`, `Workspace`, `Support.Projects`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the default config binds `find-file-in-workspace` and `find-file-in-project`; its package registers the job `compile-list`, which the compile mode starts by name.
 
@@ -561,7 +589,7 @@ the root `Editor.Core` and the moving names, it holds three rules:
    that comes to import the compile mode or a shipped palette fails the
    gate, naming the module reached.
 2. **Every `Editor.…` module the build reaches is in the root's closure**,
-   unless it is a moving module or `Editor.PackageSet`. This is what makes
+   unless it is a moving module. This is what makes
    the first rule a statement about every core module: a new core module
    nothing in the core imports fails the gate until `Editor.Core` imports
    it.
@@ -571,9 +599,14 @@ the root `Editor.Core` and the moving names, it holds three rules:
 
 The moving names are arguments, not derived from the graph: "everything the
 root does not reach" would pass whatever the core imported. The gate runs
-the check a second and a third time to see it bite, pointed at `Editor`
-(exit 1) and at `Editor.Setup` (exit 3). When a feature moves out of the
-core, its modules' names are added to the check's moving names.
+the check again to see each rule bite: pointed at `Editor` (exit 1), at
+`Editor.Setup` (exit 3), and told a config base no executable's root
+imports (`--base Editor.Core`, exit 4). A run in which no root of the build
+reaches the elaborator adapter is refused (exit 2), since the third rule
+would then hold of nothing; the gate sees that too. So **the root phase 4
+generates must be added to the script's list of roots**, or that root is
+not checked for the base. When a feature moves out of the core, its
+modules' names are added to the check's moving names.
 
 ## Registration order is visible
 
