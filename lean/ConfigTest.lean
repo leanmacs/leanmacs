@@ -233,7 +233,6 @@ executable. Each line a host emits is recorded with the thread that emitted
 it, which is how a check sees that a handler ran on the editor thread.
 
 All the checks share one import of the base, made once in `run`: a second
-import Editor.Config.Packages
 import in one process about doubles its memory. Hosts follow one another on
 the process's one editor queue and never overlap: every check stops its host
 before it returns.
