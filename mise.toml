@@ -437,9 +437,16 @@ run = [
   # default set's `editor headless --generate` creates `lean-toolchain`,
   # equal to `lean/lean-toolchain`, and a `lakefile.toml` that requires the
   # set by its directory, and the config loads; a second run rewrites
-  # neither; and a run without `--generate` on another copy writes neither
-  # (tools/config-package-check.sh). The line it prints is required.
-  "out=$(sh ../tools/config-package-check.sh ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; printf '%s\\n' \"$out\" | grep -qxF 'config-package: generated lakefile.toml and lean-toolchain, the config loaded, and a second run wrote nothing'",
+  # neither; and a run without `--generate` on another copy writes neither.
+  # Then Lean's language server, started in the directory the first run
+  # generated, with the root and the config file of
+  # tests/config-package/lsp put in it: the root imports `Lean`, `Compile`
+  # and `Config.Keys` and holds one type error, and the server must report
+  # that error, at 8:19, and no other, so no import failed
+  # (`config-test lsp`, lean/ConfigTest/Lsp.lean). It takes about three
+  # seconds, needs no network, and writes in the temporary directory alone
+  # (tools/config-package-check.sh). The two lines it prints are required.
+  "out=$(sh ../tools/config-package-check.sh ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'config-package: generated lakefile.toml and lean-toolchain, the config loaded, and a second run wrote nothing' 'config-test lsp: init.lean: no import error, and the type error is at 8:19'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"config-package-check did not print: $line\" >&2; exit 1; }; done",
   # The finder-session config fixture (tests/headless/finder-session): it
   # loads, and its command, run by its key `C-c h`
   # and by its ex name `finder-hello`, says `finder-session: config loaded`

@@ -22,6 +22,7 @@ import ConfigTest.Editor.Setup
 import ConfigTest.Editor.Themes
 import ConfigTest.Editor.Themes.Check
 import ConfigTest.Editor.VersionControl.Gutter
+import ConfigTest.Lsp
 
 /-!
 # Checks of the config session against the real elaborator
@@ -332,8 +333,14 @@ not. The third argument is the directory of the syntax fixtures
 (`tests/syntax`), which the indent checks read, and the fourth the directory
 of the default config (`config/default`), which `defaultConfigChecks` read.
 
-`bench-start`, `bench-reload` and `bench-soak` are the benchmark
-(`ConfigTest.Bench`; `mise run config-bench`), which the gate never runs.
+`lsp` is the language server check (`ConfigTest.Lsp`,
+`ConfigTest/Lsp.lean`): it starts Lean's language server in a config
+directory and requires the root's one error where the command line says,
+and `mise run ffi-test` runs it through `tools/config-package-check.sh`.
+
+`bench-start`, `bench-reload`, `bench-soak` and `bench-soak-modules` are the
+benchmark (`ConfigTest.Bench`; `mise run config-bench`), which the gate
+never runs.
 `bench-modules` lists the modules an import set reads, for
 `mise run module-bench` and the gate's `bundle-test`.
 `bench-jobs` is the job benchmark (`ConfigTest.Bench.jobs`;
@@ -367,6 +374,12 @@ def main (args : List String) : IO UInt32 := do
     | some count =>
       IO.Process.exit (← ConfigTest.Bench.soakModules sysroot oleanDir count)
     | none =>
+      ConfigTest.usage
+  | ["lsp", sysroot, configDir, line, column] =>
+    match line.toNat?, column.toNat? with
+    | some line, some column =>
+      IO.Process.exit (← ConfigTest.Lsp.run sysroot configDir line column)
+    | _, _ =>
       ConfigTest.usage
   | ["bench-jobs", sysroot, oleanDir, samples] =>
     match samples.toNat? with

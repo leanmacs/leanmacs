@@ -1,7 +1,8 @@
 #!/bin/sh
 # Checks that an editor run from the checkout makes a config directory a
 # Lake package: it generates the directory's lakefile and toolchain file
-# when they are absent, and never otherwise
+# when they are absent, and never otherwise, and Lean's language server,
+# started there, checks a config file as the editor elaborates it
 # (docs/dev-practices/the-gate.md, "The config directory";
 # docs/design/lean-runtime.md, "Config and reload").
 #
@@ -28,8 +29,20 @@
 #    leave neither file: without the option the headless mode writes
 #    nothing into a config directory.
 #
-# It exits 0 and prints one line when all of that holds, and otherwise says
-# what does not and exits 1. Everything it writes is in a temporary
+# 4. Lean's language server checks the directory as the editor elaborates
+#    it. The root and the config file of tests/config-package/lsp are put
+#    in the directory step 1 generated, beside its lakefile and toolchain
+#    file: a root that imports `Lean`, a module of a default package
+#    (`Compile`) and the config file `Config/Keys.lean`, and holds one type
+#    error, on line 8 at column 19. `config-test lsp` starts
+#    `<sysroot>/bin/lake serve` there and opens the root
+#    (lean/ConfigTest/Lsp.lean): the server must report that one error and
+#    no other, so no import failed. Lake writes `lake-manifest.json` and
+#    `.lake/` in the temporary directory and fetches nothing: the lakefile
+#    requires the set by path.
+#
+# It exits 0 and prints two lines when all of that holds, and otherwise
+# says what does not and exits 1. Everything it writes is in a temporary
 # directory of its own, which it removes.
 set -eu
 
@@ -92,3 +105,11 @@ held=$(cd "$work/plain" && find . -type f | tr '\n' ' ')
 [ "$held" = "./init.lean " ] || fail "without --generate the config directory holds $held"
 
 echo "config-package: generated lakefile.toml and lean-toolchain, the config loaded, and a second run wrote nothing"
+
+# 4. The language server, in the directory step 1 generated.
+lsp=$root/tests/config-package/lsp
+cp "$lsp/init.lean" "$work/config/init.lean"
+mkdir "$work/config/Config"
+cp "$lsp/Config/Keys.lean" "$work/config/Config/Keys.lean"
+"$root/lean/.lake/build/bin/config-test" lsp "$sysroot" "$work/config" 8 19 ||
+  fail "Lean's language server did not check the config directory as the editor does"
