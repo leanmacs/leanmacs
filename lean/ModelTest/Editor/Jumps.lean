@@ -41,6 +41,26 @@ def erasedRows (first last : Nat) : Option (List Char × Bool) :=
         (state.globalMark? 'A').isSome)
   (dispatchedFrom program start).map (·.1)
 
+/-- For each lowercase mark of buffer 0, after `Jumps.renewRow` over row
+`row` of a buffer over `ab`, `cd` and `ef` whose marks `a`, `b` and `c` are
+at the offsets 0, 4 and 7: its letter, its offset, and whether it is held by
+the marker it was set with. -/
+def renewedRow (row : Nat) : Option (List (Char × Nat × Bool)) :=
+  let start : TextM EditorState := do
+    let state ← evilState "ab\ncd\nef" 0
+    let text : TextId := ⟨0⟩
+    let marks ←
+      [('a', 0), ('b', 4), ('c', 7)].toArray.mapM fun (char, offset) => do
+          return (char, ← text.mark (.anchor { offset, bias := .after }))
+    return { state with buffers := state.buffers.modify 0 (·.map ({ · with marks })) }
+  let program : EditorM (List (Char × Nat × Bool)) := do
+    let before := ((← editorState).buffer? ⟨0⟩).map (·.marks) |>.getD #[]
+    Jumps.renewRow ⟨0⟩ row
+    let some buffer := (← editorState).buffer? ⟨0⟩ | return []
+    buffer.marks.toList.mapM fun (char, marker) => do
+        return (char, ← Marks.offsetOf marker, before.contains (char, marker))
+  (dispatchedFrom program start).map (·.1)
+
 /-- The checks of recording, cleaning up, detaching and attaching the places
 of a window's jump list, on the loop's driver over the editor's models and
 the file model (`jumpDriver`). -/
@@ -106,6 +126,11 @@ def jumpChecks : List Check :=
     { name :=
         "erasing rows erases the buffer's lowercase marks on them and keeps its others and the global marks"
       run :=
-        return erasedRows 1 2 == some (['a'], true) && erasedRows 0 0 == some (['b', 'c'], true) }]
+        return erasedRows 1 2 == some (['a'], true) && erasedRows 0 0 == some (['b', 'c'], true) },
+    { name :=
+        "renewing a row holds each lowercase mark on it by a new marker where its marker was, and keeps its others' markers"
+      run :=
+        return renewedRow 1 == some [('a', 0, true), ('b', 4, false), ('c', 7, true)] &&
+            renewedRow 3 == some [('a', 0, true), ('b', 4, true), ('c', 7, true)] }]
 
 end ModelTest

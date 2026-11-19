@@ -3000,7 +3000,11 @@ builds one sets `jumps` on its entry.
   lines they delete themselves, which the edit alone cannot tell apart
   from a change (`Jumps.eraseRows`): so `dd` on a buffer's only line
   erases its mark, as Vim's does, and `cc` there keeps it, and `3cc`
-  erases the marks of its lines after the first. A deletion of part of
+  erases the marks of its lines after the first. The linewise change
+  renews its first line's marks after its edit (`Jumps.renewRow`), since
+  when its last line is empty its edit stops at that line's start, as
+  `dd`'s does: so `m a`, `cj` on a line above an empty one, and `` `a ``
+  lands on the changed line, as in Vim. A deletion of part of
   the line keeps the mark at the column the deletion left. The loop reads each mark's line once an event has been
   handled and compares it with what the next event changed
   (`Editor/Marks.lean`, `Editor/Marks/Follow.lean`).

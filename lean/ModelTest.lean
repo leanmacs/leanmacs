@@ -528,8 +528,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   being one at the next move, a move past either end, a closed buffer's
   places detached into its file or dropped, attached again when the file
   is loaded, opening a file, a visit and switching buffers each recording
-  a jump, a visit at a row's first non-blank or that records none, and
-  erasing rows' lowercase marks;
+  a jump, a visit at a row's first non-blank or that records none,
+  erasing rows' lowercase marks, and renewing a row's;
 - `jumpGoChecks`: going through the list to another buffer or a closed
   file (`Editor/Jumps/Go.lean`) on that driver: the index moving at once,
   the cursor at the entry once the load lands, and no entry recorded by
@@ -856,7 +856,8 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   line is deleted, on the last line too, a global mark kept on the line
   that takes its place, kept by a
   deletion of part of its line, kept on the first line of `3cc` and of a
-  charwise delete across lines, erased by `3dd` on every line, by `dd` on
+  charwise delete across lines, kept on the first line of `cj` and `2cc`
+  above an empty line, erased by `3dd` on every line, by `dd` on
   a text's only line and by `3cc` on the lines after the first, kept by
   `cc` on the only line and by a redo of its `dd`, put back by undo at its line and column,
   erased again by redo and put back again by undo (`markUndoRows`); and

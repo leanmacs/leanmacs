@@ -56,6 +56,12 @@ def markUndoRows : List (String × String × String) :=
     -- delete from a line's start into a later line; a linewise delete
     -- erases the marks of every line it deletes.
     ("m a 3 c c <Escape> j ` a", "|ab\ncd\nef\ngh", "|\ngh"),
+    -- It keeps it when its last line is empty too, though its edit then
+    -- stops at a row's start, as dd's does, and when that line is the
+    -- text's last.
+    ("m a c j <Escape> j ` a", "|foo\n\nbar", "|\nbar"),
+    ("l l m a 2 c c <Escape> j ` a", "|foo\n\nbar", "|\nbar"),
+    ("m a c j <Escape> ` a", "|foo\n\n", "|\n"),
     ("m a v j d j ` a", "|ab\ncd\nef\ngh", "|d\nef\ngh"),
     ("m a j j l m b g g d ` b j ` a", "|ab\ncd\nef\ngh", "|f\ngh"),
     ("m a j m b j m c g g 3 d d ` a", "|ab\ncd\nef\ngh", Evil.markNotSet),

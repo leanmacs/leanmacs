@@ -45,6 +45,14 @@ commands, going to a place in a closed file, is the upper module's
   it (`Editor/Evil/Operators.lean`), since the edit alone does not say
   which lines they delete (`Editor/Marks.lean`, "A mark's line is erased
   when its line is deleted").
+- **Renew a row** (`renewRow`): a command that empties a line it keeps,
+  as the linewise change keeps its first line (Vim's `op_change`
+  truncates it), holds the buffer's lowercase marks on it by new place
+  markers where their markers are, after its edit. The loop erases a mark
+  by the line its marker was read on (`Editor/Marks/Follow.lean`), and a
+  marker set since was read on none, so the edit cannot erase the marks,
+  though it is `dd`'s in shape when the lines after the first end with an
+  empty one. The linewise change calls it (`Editor/Evil/Operators.lean`).
 - **Attach** (`attach`): once a buffer holds a file, the places of that
   file become places held by markers of its text again, at their row and
   column, clamped as a visit clamps (`Marks.offsetAt`).
@@ -64,6 +72,16 @@ def eraseRows (id : BufferId) (first last : Nat) : EditorM Unit := do
     let row := (← buffer.text.pointOf (← Marks.offsetOf marker)).row
     if first ≤ row && row ≤ last then
       discard <| id.setMark char none
+
+/-- Holds each lowercase mark of the buffer `id` on its row `row` by a new
+place marker where its marker is ("Renew a row", in the module docs).
+Nothing for a buffer that is not there. -/
+def renewRow (id : BufferId) (row : Nat) : EditorM Unit := do
+  let some buffer := (← editorState).buffer? id | return
+  for (char, marker) in buffer.marks do
+    let offset ← Marks.offsetOf marker
+    if (← buffer.text.pointOf offset).row == row then
+      discard <| id.setMark char (some (← Marks.placeMarker buffer.text offset))
 
 /-- The place of the cursor of `view`: a marker at the head of the primary
 range of its window's selection. `none` for a view with no window. -/
