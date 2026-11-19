@@ -5,9 +5,13 @@ mise run ci
 ```
 
 This is everything that must pass before review and before landing: Rust
-formatting, clippy, cargo-deny, rustdoc and the Rust tests; the Lean model
-tests (`mise run lean-test`); the Lean build, lean-fmt's format and lint
-checks; the check that the host's modules import no feature module, the
+formatting, clippy, cargo-deny, rustdoc and the Rust tests; the check that
+every copy of the Lean pin equals the pin and the Lean model
+tests (`mise run lean-test`); the Lean build, which links the editor from
+the default package set, lean-fmt's format and lint
+checks; the same tests, lint, format check and headless fixtures over
+every package of the fixture set ("The package steps", below); the check
+that the host's modules import no feature module, the
 check that the core imports no module of a feature that moves out of it,
 the checks of the Lean/Rust boundary, the contract checks against
 the real bindings and the checks of the config session against the real
@@ -477,7 +481,8 @@ only what it uses, and the root `lean/ModelTest.lean` keeps its imports, the
 child, one per file with a 600 s bound by default
 (`LEAN_FMT_CHILD_TIMEOUT_MS`), from meeting one huge file. As a single file
 of 38,031 lines it took 221 to 318 s under `lake exe lean-fmt format
---check --no-cache` on the owner's machine (2026-11-17) and once ran past
+--check --no-cache` (the formatter was then a dependency of the core) on
+the owner's machine (2026-11-17) and once ran past
 the bound on the `macos-26` runner; mirrored, the largest module
 (`lean/ModelTest/Editor/Loop.lean`, about 5,500 lines) took 9.4 s on the
 same machine, and the whole tree 23 s. Put a new check in the test module
@@ -1194,30 +1199,43 @@ cd lean && sh ../tools/host-imports-check.sh
 ```
 
 Part of `mise run ffi-test`. A host registers features only from the
-packages it is handed, and the one module that lists them,
-`lean/PackageSet.lean`, a library of its own outside `lean/Editor/`, is
-outside the host
-([lean-runtime.md](../design/lean-runtime.md), "Packages"). This check
-shows the import half of that on Lake's module graph, with both terms
-defined from the graph:
+packages it is handed, and the modules that list them, the entry modules
+of the Lake packages of a package set (`<P>.EditorPackage`; the core's is
+`lean/EditorCore/EditorPackage.lean`, a library of its own outside
+`lean/Editor/`), are outside the host
+([lean-runtime.md](../design/lean-runtime.md), "Packages";
+[packages.md](../design/packages.md), "The package set and its build").
+This check shows the import half of that on Lake's module graph, with both
+terms defined from the graph. With no argument it checks the root the
+package-set build generates for the default set (`packages/`); `--set <set
+dir>` names another set:
 
-- **The host's modules** are the modules `Main` imports, other than the
-  list module, with everything they import inside the package.
-- **A feature module** is the list module, or a module it imports
+- **The list modules** are the root's imports named `….EditorPackage`.
+- **The host's modules** are the modules the root imports, other than the
+  list modules, with everything they import inside the workspace.
+- **A feature module** is a list module, or a module one imports
   directly: the modules that define the packages.
 
 It passes when no host module is a feature module, and otherwise prints
 each one the host reaches and exits 1.
 
+- **The generated root is asked of the set.** No library declares it, so
+  `lake query +<module>:imports` does not find it; the check asks
+  `lake -d <set dir> query :editorRootImports`, a facet the core's
+  lakefile defines, and makes its other queries in the set's workspace,
+  which holds the modules of every package of the set.
+
 - **It asks Lake and reads no source text** (`lake query
   +<module>:imports` and `+<module>:transImports`, one module a line), so
   it follows a module that is renamed or moved, and an import written in
   any form. The queries build nothing and write nothing under `lean/`.
-- **The gate sees it bite.** `ffi-test` runs it a second time pointed at
-  the root `ConfigTest`, which imports the packages, and requires exit 1.
+- **The gate sees it bite.** `ffi-test` runs it a second time in its
+  module form (`host-imports-check.sh <root module> [<list module>]`),
+  pointed at the core's module `ConfigTest`, a root that imports the
+  packages, with the core's entry module as the list, and requires exit 1.
   A query Lake fails is exit 2, never 1, so a broken query cannot stand in
-  for a finding.
-- **`PackageSet.lean` imports package modules and nothing else**,
+  for a finding; so is a root with no list module among its imports.
+- **An entry module imports package modules and nothing else**,
   since its direct imports are what the check forbids a host.
 - **What it does not claim.** The core loop still imports feature code
   that defines no package, such as `Editor.Files` and `Editor.Ex`
@@ -1229,7 +1247,7 @@ each one the host reaches and exits 1.
 
 What a host registers from the list is checked by behaviour, not imports:
 a host handed no packages starts with an empty registry and no menu bar
-(`ConfigTest.hostChecks`), and in the state the shipped packages make every
+(`ConfigTest.hostChecks`), and in the state the core's packages make every
 entry's owner is one of them (`ModelTest.packageSetChecks`).
 
 ## The core imports check
@@ -1256,7 +1274,7 @@ stops at the first that fails:
 | Rule | Exit when it fails |
 |---|---|
 | The root and the modules it imports, directly or through another, hold no moving module | 1, after printing each one found |
-| Every module named `Editor.…` that a root of the build reaches (`Main`, `ModelTest`, `ConfigTest`, `FfiTest`, `ContractTest`) is the root or one of the modules it imports, unless it is a moving module | 3, after printing each one outside |
+| Every module named `Editor.…` that a root of the build reaches (`ModelTest`, `ConfigTest`, `FfiTest`, `ContractTest`, and the root generated for the default set) is the root or one of the modules it imports, unless it is a moving module | 3, after printing each one outside |
 | A root of the build that reaches the elaborator adapter (`Editor.Config.Elaborate`) reaches the config base (`Editor`) | 4, after printing each root that does not |
 
 - **The second rule is what makes the first a statement about every core
@@ -1273,15 +1291,23 @@ stops at the first that fails:
   this rule fails when one does not.
 - **The moving names are named, never derived.** "Every module the root
   does not reach" would pass whatever the core imported.
-- **No module is exempt by name.** The list of the packages that ship
+- **No module is exempt by name.** The list of the core's packages
   imports the moving packages, and it is not a module of the editor:
-  `PackageSet` is outside `lean/Editor/` and the namespace `Editor`, so the
-  second rule, which is of the modules named `Editor.…`, does not meet it.
+  `EditorCore.EditorPackage` is outside `lean/Editor/` and the namespace
+  `Editor`, so the second rule, which is of the modules named `Editor.…`,
+  does not meet it.
+- **The editor's own root is one of the roots.** It is generated by the
+  package-set build and no library declares it, so its transitive imports
+  are asked of the default set
+  (`lake -d ../packages query :editorRootTransImports`). It is the one
+  root that links the elaborator into the editor that is run, so the
+  third rule is about it first.
 - **It asks Lake and reads no source text** (`lake query
   +<module>:transImports`, one module a line), as the host imports check
   does, so it follows a module that is renamed or moved, and an import
   written in any form. It makes six queries, one for the root and one for
-  each root of the build, builds nothing and writes nothing under `lean/`.
+  each root of the build, builds nothing and writes nothing under `lean/`
+  or `packages/`: the build has written the generated root already.
 - **The gate sees each rule bite.** `ffi-test` runs it pointed at the root
   `Editor`, the config base, which imports the compile mode, and requires
   exit 1; pointed at the root `Editor.Setup`, which imports no moving
@@ -1294,7 +1320,7 @@ stops at the first that fails:
   no root are exit 2, before any rule is reported, so none can stand in
   for a finding or for a pass. The last is the case where no root of the
   build reaches the elaborator adapter, which is what a renamed adapter, or
-  a generated root missing from the script's list of roots, would look
+  a list of roots that has fallen behind the build, would look
   like. `ffi-test` sees that too: told with `--elaborator Editor.Core` that
   the adapter is a module no root reaches, it must exit 2 and say why.
 - **What it does not claim.** It names the two features that move in this
@@ -1303,6 +1329,82 @@ stops at the first that fails:
   module map records by which. And it says nothing of what a package
   imports: the check that a package imports only the core's API comes
   with the first package that is built outside the core.
+
+## The package steps
+
+```sh
+cd lean && sh ../tools/package-set.sh <step> ../tests/packages
+```
+
+A package outside the core gets the same gate as the core: its tests, its
+lint, its format check and its headless fixtures, each in the task that
+runs the core's. `tools/package-set.sh` asks Lake for the packages of a
+package set (`lake -d <set dir> query :editorPackages`, a facet the core's
+lakefile defines) and runs one step over each, each package after the ones
+it requires. What a set is, how the editor is built from one and what a
+package's tests are by convention are in
+[packages.md](../design/packages.md), "The package set and its build".
+
+| Step | What it runs for each package | In task |
+|---|---|---|
+| `test` | `lake -d <package> test --wfail`: the package's Lake test driver, the tests that need no Rust library | `lean-test`, with the `cargo` that fails first on the `PATH`, so a package's driver reaches no `rustlib` either |
+| `build` | Once, `lake -d <set dir> build --wfail :editor`, the set's editor. Then `lake -d <package> build --wfail`, its default targets under its own linter options, and `+<P>Test.Linked:editorLinked` when the package has that module | `lean` |
+| `fmt` | `lean-fmt format --check --root <package>`, then `lean-fmt check --root <package>`, from the formatter's host | `lean-fmt` |
+| `format` | `lean-fmt format` and `lean-fmt check --fix`, which rewrite | `lean-format` |
+| `run <sysroot> <core olean dir>` | The package's linked test, in its directory, with those two arguments. Then each `<package>/tests/headless/<name>/` on the set's editor: `editor headless <sysroot> <core olean dir> <name>/config <name>/script` must print exactly `<name>/expected` | `ffi-test` |
+
+- **The gate gives every step the fixture set**, `tests/packages/`, which
+  requires the fixture package `greeting-loud`, through it `greeting`, and
+  the default set. So a default package, once there is one, is run over
+  through it.
+- **The packages a step runs over** are those of the set that are path
+  dependencies and hold a Lean library, other than the core. The script
+  reads no lakefile.
+- **A step cannot pass over nothing.** With no package to run over it
+  exits 2, as it does for a query Lake fails and for a command line it
+  does not take. `lean-test` shows it: `package-set.sh test ../packages`
+  must exit 2 while the default set holds no package. When the default set
+  gains one, that line needs another set with none.
+- **A package with no test driver fails `test`**, since Lake refuses to
+  test it.
+- **The fixture's own checks.** `greeting`: three checks in its driver
+  (`GreetingTest/Greeting.lean`), a linked test that reads its text back
+  from the Rust library (`GreetingTest/Linked.lean`), and the fixture
+  `hello`, where its command runs on the fixture set's editor.
+  `greeting-loud`: three checks in its driver and the fixture `reply`,
+  which shows it registered after `greeting`. `ffi-test` also runs the
+  `hello` script on the default set's editor, which must answer `run
+  greeting-hello: no such command`.
+- **Seen to bite, once each by hand** (2026-11-19): a failing check in
+  `GreetingTest/Greeting.lean` fails `mise run lean-test`; a definition
+  with no doc string in `Greeting.lean` fails `mise run lean` (in its
+  `lean-test` step, where `lake test` first builds the library under the
+  package's linter options); a misformatted line fails `mise run lean-fmt`
+  (`would-format`); and a changed `expected` fails `mise run ffi-test`
+  with the diff.
+- **`run` builds nothing**, so `ffi-test` still only runs what `lean`
+  built, and may run beside `lean-fmt`.
+
+## The toolchain check
+
+```sh
+sh tools/toolchain-check.sh
+```
+
+First in `mise run lean-test`. `lean/lean-toolchain` is the pin every task
+reads, and each Lake root outside `lean/` holds a copy of it: the default
+set, the fixture set, each fixture package and the formatter's host
+([packages.md](../design/packages.md), "The toolchain copies"). The check
+compares every tracked file named `lean-toolchain` with the pin, byte for
+byte, prints each that differs and exits 1.
+
+- **The copies are the tracked ones** (`git ls-files`), so Lake's fetched
+  packages are never looked at. `git add` a new copy before running it.
+- **The gate sees it bite.** `lean-test` runs it again with another
+  reference file, the core's Lake manifest, and requires exit 1 with the
+  formatter host's copy named.
+- **It refuses to pass for no reason.** A reference it cannot read, a
+  failing `git`, and a tree with no copy other than the pin are exit 2.
 
 ## Formatting
 
@@ -1316,3 +1418,29 @@ cargo fmt --all        # Rust
 only, so `git add` a new C file before running them. They leave `vendor/`
 out: vendored C is upstream's generated code (`vendor/README.md`), neither
 checked nor rewritten here.
+
+`mise run lean-format` and its check, `mise run lean-fmt`, run lean-fmt
+over the core and then over each package of the fixture set
+(`tools/package-set.sh format`, `fmt`).
+
+- **lean-fmt is required by a package of its own, its host**
+  (`tools/lean-fmt/lakefile.toml`), not by the core: a package set that
+  requires the core would fetch every git dependency of the core
+  ([packages.md](../design/packages.md), "Manifests: a set's build fetches
+  nothing"). The tasks run it as `lake -d ../tools/lean-fmt exe lean-fmt …
+  --root <package>` in `lean/`: Lake builds the formatter from the host,
+  and `--root` names the package it is run over, `.` for the core.
+- **The clone stays under `lean/.lake/packages`** (the host's
+  `packagesDir`), where it was when the core required it and where CI's
+  cache of `lean/.lake` holds it. Its pin is the host's
+  `lake-manifest.json`; to bump it, change `rev` in the host's lakefile
+  with `lean/lean-toolchain` and run
+  `lake -d ../tools/lean-fmt update --keep-toolchain` in `lean/`.
+- **It writes a cache in the root it is given**, `.lean-fmt-cache`, which
+  git ignores in any directory, and it refuses a root with no
+  `lean-toolchain`, which is one reason every package holds a copy of the
+  pin.
+- **A package's headless fixtures are excluded** by a `lean-fmt.toml` in
+  the package (`exclude = ["tests/**"]`): a config chunk does not compile
+  as a module. The core has no such file, since its fixtures are outside
+  `lean/`.

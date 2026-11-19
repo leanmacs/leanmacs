@@ -315,9 +315,11 @@ repository's cache space; every ref can restore `main`'s.
 | Lake's build output and fetched packages | `lean/.lake` | `lake-v1-<OS>-<arch>-<hash of lean/lean-toolchain and lean/lake-manifest.json>-<commit>`, restoring the newest entry with the same prefix when the commit has none | By an `actions/cache/save` step after the gate, from `main` only, not when the exact key was restored. |
 
 `build.yml`'s job restores `ci`'s elan and Lake entries, with `ci`'s keys,
-and saves neither: it has no `actions/cache/save` step, because
-`lean/.lake` there holds the bundle, about 600 MB, which must not enter
-the cache. Its rust-cache entry is its own (rust-cache keys on the job),
+and saves neither: it has no `actions/cache/save` step. The rule dates
+from when the bundle (813 MB on 2026-11-19) was built under `lean/.lake`
+and must not enter the cache. The bundle is now built under `packages/.lake`
+(`packages/.lake/build/Leanmacs.app`), which no cache step names, and the
+rule and the workflow's comment were left as they were. Its rust-cache entry is its own (rust-cache keys on the job),
 saved from `main` only, as is its mise-action's.
 
 `release.yml`'s jobs have no cache step at all: the only cache either uses
@@ -336,6 +338,33 @@ Lean module (Lake still runs Cargo for `rustlib` on every build, which
 rebuilds the workspace's crates and `libeditor_ffi.a` since rust-cache
 does not hold them, and may relink), and saves nothing. A change of `lean/lean-toolchain` or
 `lean/lake-manifest.json` starts Lake's and elan's caches afresh.
+
+**What the Lake entry holds since the editor is built from a package set**
+([packages.md](../design/packages.md), "The package set and its build"):
+
+- **The core's build output and the formatter's clone**, as before. The
+  formatter is required by its host (`tools/lean-fmt/`), whose
+  `packagesDir` is `lean/.lake/packages`, so the clone and its build are
+  still under `lean/.lake`. On an entry without it, the first `lean-fmt`
+  step clones it there at the revision the host's manifest pins and builds
+  it (20 s on a developer's Mac).
+- **Not the sets' or the packages' build output**: `packages/.lake`,
+  `tests/packages/.lake` and each fixture package's `.lake` are in no
+  cache. So every run writes and compiles the two generated roots, links
+  the default set's editor and the fixture set's, builds the fixture
+  packages and links the linked test: seconds on a developer's Mac
+  ([packages.md](../design/packages.md), "Build times"), not measured on
+  a runner.
+- **The key no longer hashes the formatter's pin**, which moved from
+  `lean/lake-manifest.json` to `tools/lean-fmt/lake-manifest.json`. The
+  formatter's releases are tagged with the Lean toolchain they are built
+  for, so its pin changes with `lean/lean-toolchain`, which the key
+  hashes. A change of the formatter's revision alone would restore an
+  entry that holds the old clone; that case has not been run.
+- **The first run after this change starts from no Lake entry**: the
+  core's Lake package was renamed, and its manifest, which the key
+  hashes, changed with it. So it clones the formatter and builds every
+  Lean module once.
 
 ## Owner checks after the first push
 

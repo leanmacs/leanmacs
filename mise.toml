@@ -99,7 +99,7 @@ run = "cargo test --workspace --locked"
 # (the core's Lake manifest), it must name the formatter host's copy and
 # exit 1. Its output is shown only when it does not.
 [tasks.lean-test]
-description = "Check that every copy of the Lean pin equals lean/lean-toolchain (tools/toolchain-check.sh), then run the Lean model tests with `lake test`, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/)"
+description = "Check that every copy of the Lean pin equals lean/lean-toolchain (tools/toolchain-check.sh), then run the Lean model tests with `lake test`, and each fixture package's, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
 dir = "lean"
 run = [
   "sh ../tools/toolchain-check.sh",
@@ -123,7 +123,7 @@ run = [
 # once: the Lake tasks run in one chain, `lean-test`, `lean`, then `lean-fmt`
 # and `ffi-test`.
 [tasks.lean]
-description = "Build the Lean package and the executables with Lake, which runs Cargo for the Rust static library; every linter is on and a warning fails the build (lean/lakefile.lean)"
+description = "Build the Lean core and the test executables with Lake, which runs Cargo for the Rust static library, then the editor from the default package set (packages/) and the fixture set with its packages (tests/packages/); every linter is on and a warning fails the build (lean/lakefile.lean)"
 depends = ["lean-test"]
 dir = "lean"
 # On macOS the executables must be compiled and linked by the system compiler:
@@ -163,7 +163,7 @@ run = [
 # holds the copy of the pin the formatter requires of a root. Both tasks wait
 # for `lean`, so two Lake builds never run in lean/ at once.
 [tasks.lean-fmt]
-description = "Check Lean formatting and lean-fmt's lints; changes nothing"
+description = "Check Lean formatting and lean-fmt's lints, over the core and each package of the fixture set; changes nothing"
 depends = ["lean"]
 dir = "lean"
 run = [
@@ -175,7 +175,7 @@ run = [
 ]
 
 [tasks.lean-format]
-description = "Rewrite the Lean sources in lean-fmt's style and apply its safe lint fixes"
+description = "Rewrite the Lean sources of the core and of each package of the fixture set in lean-fmt's style and apply its safe lint fixes"
 depends = ["lean"]
 dir = "lean"
 run = [
@@ -210,7 +210,7 @@ run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xa
 # temporary repositories, takes about 15 s on a developer's Mac and 50 to
 # 60 s on the macOS runner while the gate's other tasks run beside it.
 [tasks.ffi-test]
-description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh) and that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean) and the editor executable"
+description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh) and that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, and each fixture package's linked test and headless fixtures (tools/package-set.sh)"
 depends = ["lean"]
 dir = "lean"
 timeout = "180s"
@@ -235,7 +235,7 @@ run = [
   # `Editor.…` module the build reaches is among them, unless it is one of
   # those; and every root that links the elaborator
   # links the config base. The roots of the build are the core's
-  # executables' and the root generated for the default set. Seven `lake
+  # executables' and the root generated for the default set. Six `lake
   # query` calls, about half a second each.
   "sh ../tools/core-imports-check.sh",
   # And each rule of the check bites. Pointed at the root `Editor`, the

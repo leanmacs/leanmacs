@@ -7,16 +7,29 @@ The prerequisites and the one command are in the top-level
 mise run lean
 ```
 
-This one command builds everything. Lake compiles the Lean package, runs
-`cargo build` for the Rust static library (`crates/editor-ffi`), compiles the
-C glue (`lean/ffi/glue.c`) and links the executables. Every Lean linter is
-on, and a warning fails the build.
+This one command builds everything. Lake compiles the core's Lean package
+(`lean/`), runs `cargo build` for the Rust static library
+(`crates/editor-ffi`), compiles the C glue (`lean/ffi/glue.c`) and links
+the test executables. Every Lean linter is on, and a warning fails the
+build. It then builds the editor from the default package set, and the
+fixture set with its packages:
 
-The editor is `lean/.lake/build/bin/editor`. `editor demo` shows the
-build works:
+| Command, run in `lean/` | Builds |
+|---|---|
+| `lake build --wfail` | The core's modules and `ffi-test`, `config-test` and `contract-test`, under `lean/.lake/build` |
+| `lake -d ../packages build --wfail :editor` | The editor, from the default package set (`packages/lakefile.toml`): the package-set build writes its root module, builds it and links `packages/.lake/build/bin/editor` |
+| `sh ../tools/package-set.sh build ../tests/packages` | The fixture set's editor (`tests/packages/.lake/build/bin/editor`), each fixture package's default targets and its linked test |
+
+The editor is `packages/.lake/build/bin/editor`. It is not a target of the
+core: the core's lakefile defines how an editor is linked from a set, as
+the facet `editor`, and the default set is the set
+([`packages.md`](../design/packages.md), "The package set and its build").
+The root module that names the packages is generated into
+`packages/.lake/build/root/EditorSetRoot.lean`; delete it and the next
+build writes it again. `editor demo` shows the build works:
 
 ```console
-$ lean/.lake/build/bin/editor demo
+$ packages/.lake/build/bin/editor demo
 Rust says 2 + 3 = 5
 Lean's main is on the process's main thread: false
 The main-thread service is on the process's main thread: true
@@ -41,7 +54,10 @@ the size was 265 MB before milestone 1 and has not been measured since.
 ### The headless mode
 
 Lake relinks the executables only when the Rust archive's contents change,
-so a second `mise run lean` rebuilds nothing.
+so a second `mise run lean` rebuilds nothing. What a clean build, a build
+with nothing to do and a build after one changed module take, before and
+after the editor came from a package set, is in
+[`packages.md`](../design/packages.md), "Build times".
 
 `mise run lean` runs the model tests first (`mise run lean-test`;
 [`the-gate.md`](the-gate.md)).
@@ -74,9 +90,11 @@ calls the glue's `__wrap_main`, and Lean's `main` is reached as
 mise run app
 ```
 
-This builds `lean/.lake/build/Leanmacs.app`, the editor as a macOS app
-bundle, with Lake (`editorApp` in `lean/lakefile.lean`). It builds on
-macOS on arm64 only; anywhere else the target fails with
+This builds `packages/.lake/build/Leanmacs.app`, the default package
+set's editor as a macOS app bundle, with Lake (the facet `editorApp` of
+`lean/lakefile.lean`, built as `lake -d ../packages build :editorApp` in
+`lean/`). It builds on
+macOS on arm64 only; anywhere else the facet fails with
 `the app bundle builds only on macOS on arm64` and the toolchain's target.
 It is not part of the gate, which never builds it.
 
@@ -131,7 +149,7 @@ them (lean/Editor/Version.lean):
 `commit` (`crates/editor-release-std`), which take each variable as it is
 when it is set, as CI sets them from its run (the build ID from the
 `build-id` job, the commit from `github.sha`), and read HEAD otherwise. A
-bare `lake build editorApp` without them is refused, naming the variable;
+bare `lake -d ../packages build :editorApp` without them is refused, naming the variable;
 `editorApp` checks only their shape (14 digits, 40 lowercase hex digits),
 and the tool checks the build ID is a real time. A local build from a tree
 with uncommitted changes is stamped with HEAD's commit all the same. The
@@ -139,13 +157,13 @@ plist is part of the bundle's trace, so a new commit rebuilds and re-signs
 the bundle.
 
 ```sh
-$ lean/.lake/build/Leanmacs.app/Contents/MacOS/editor --version
+$ packages/.lake/build/Leanmacs.app/Contents/MacOS/editor --version
 Leanmacs 0.1.0
 build 20261117190046
 commit 3d9490ca5c5244a972da004c20f1cf2b72ce29d9
 ```
 
-Outside a bundle, as `lean/.lake/build/bin/editor`, `--version` says it is
+Outside a bundle, as `packages/.lake/build/bin/editor`, `--version` says it is
 a development build, with no version, build ID or commit.
 
 The icon is made from `lean/app/Leanmacs.png`, a 1024×1024 PNG. Before
@@ -163,7 +181,7 @@ Lake rebuilds the bundle only when an input changes: the executable, the
 stage script, the toolchain, the lakefile, the version file, the artwork,
 or the build ID or commit.
 A second `mise run app` with nothing changed copies and signs nothing, and
-Lake prints no `Built editorApp` line. A rebuild starts from an empty
+Lake prints no `Built «default-set»:editorApp` line. A rebuild starts from an empty
 bundle, so it never keeps a module that is no longer imported. It assembles
 and signs the bundle beside the old one, in `Leanmacs.app.staging`, and
 renames it into place only then: Lake keeps the old trace when a build

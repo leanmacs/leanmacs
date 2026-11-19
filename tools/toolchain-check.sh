@@ -1,10 +1,10 @@
 #!/bin/sh
 # Checks that every copy of the Lean pin equals the pin
-# (docs/design/packages.md, "The package set and its build"; AGENTS.md,
-# "Toolchains"): `lean/lean-toolchain` is the one pin every task reads, and
-# each Lake package outside `lean/` holds a copy of it, which `lean-fmt`
-# requires of a package it is run over and elan reads when Lake is run in
-# that package's directory. A bump changes every copy in one commit.
+# (docs/design/packages.md, "The toolchain copies"): `lean/lean-toolchain`
+# is the one pin every task reads, and each Lake package outside `lean/`
+# holds a copy of it, which `lean-fmt` requires of a package it is run over
+# and elan reads when Lake is run in that package's directory. A bump of
+# the pin changes every copy in the same commit.
 #
 #   tools/toolchain-check.sh [<reference file>]
 #

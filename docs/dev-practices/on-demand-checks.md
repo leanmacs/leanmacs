@@ -86,8 +86,14 @@ non-zero at the first step that does not hold, naming it. It is macOS on
 arm64 only, so it is not part of the gate, which runs on Linux too.
 
 It stages, by copy, in a temporary directory: the Lean toolchain; the
-`.olean` file and the object of each of the editor's modules, the glue
-object and the Rust archive, as `mise run lean` built them; link stubs for
+`.olean` file and the object of each of the core's modules the built
+editor's link names, the glue object and the Rust archive, as `mise run
+lean` built them (the built editor is the default package set's,
+`packages/.lake/build/bin/editor`, and the one object its link names that
+is not staged is its generated root's, since the package brings a root of
+its own, still written by hand:
+[`lean-runtime.md`](../design/lean-runtime.md), "A link on the user's
+machine, measured"); link stubs for
 the system's frameworks and libraries, which `tools/link-stubs.sh` writes
 from the built editor's import table; and the trivial package
 `tests/user-link/package`, one module with one command. Then it
@@ -141,9 +147,11 @@ upgraded.
 mise run app-check
 ```
 
-This builds `Leanmacs.app` (`mise run app`;
+This builds `Leanmacs.app` from the default package set, at
+`packages/.lake/build/Leanmacs.app` (`mise run app`;
 [`building.md`](building.md), "The app bundle") and checks it, on macOS on
-arm64 only (`tools/app-check.sh`). First it works out the stamp it expects
+arm64 only (`tools/app-check.sh lean packages`: the core's directory and
+the set's). First it works out the stamp it expects
 with the tool `mise run app` stamps with (`leanmacs-release build-id` and
 `commit`), and exports it, so its own builds see the same values. When
 neither `LEANMACS_BUILD_ID` nor `LEANMACS_COMMIT` was set, it also requires
@@ -183,8 +191,9 @@ reads the keys the build writes. Last, it builds
 `editorApp` again and checks that the bundle's executable, its
 `CodeResources` and the build's trace file keep their modification times
 and inodes: the second build copied and signed nothing. Lake's output is
-printed, and holds no `Built editorApp` line. Then, in a clone of the Lean
-package in the temporary directory (`cp -c`, so it takes no space), with a
+printed, and holds no `Built «default-set»:editorApp` line. Then, in a
+clone of the core and of the default set, `lean/` and `packages/` side by
+side in the temporary directory (`cp -c`, so it takes no space), with a
 `cargo` that does nothing first on the `PATH`, it swaps the stage script
 for one that stages and then fails, builds `editorApp`, which must fail,
 puts the script back so the inputs hash to the old trace again, and builds
@@ -220,14 +229,14 @@ with both variables set, then rebuild from HEAD:
 
 ```sh
 LEANMACS_BUILD_ID=20010203040506 LEANMACS_COMMIT=$(printf 'a%.0s' $(seq 40)) mise run app-check
-plutil -extract CFBundleVersion raw -o - lean/.lake/build/Leanmacs.app/Contents/Info.plist   # 20010203040506
+plutil -extract CFBundleVersion raw -o - packages/.lake/build/Leanmacs.app/Contents/Info.plist   # 20010203040506
 mise run app
 ```
 
 It writes nothing outside its temporary directory but that second build,
 which is shown to write nothing, opens no window and needs no person. It is
 not part of the gate because the gate does not build the bundle, which is
-about 600 MB and must be signed, and runs on Linux too. It is the check for
+about 800 MB and must be signed, and runs on Linux too. It is the check for
 any change to `editorApp`, to `tools/stage-bundle.sh` or to module lookup
 (`lean/Editor/ModuleLookup.lean`): such a change is not done until this
 ends `app-check: ok`. CI's build job runs it on every push to main, before
@@ -300,7 +309,9 @@ mise run install
 
 This installs the app to use, on macOS on arm64 only. After `mise run
 app-check`, `tools/install-app.sh` replaces `/Applications/Leanmacs.app`
-with the built bundle (`ditto`) and verifies its signature. When
+with the built bundle, the default package set's
+(`packages/.lake/build/Leanmacs.app`), by `ditto`, and verifies its
+signature. When
 `~/.config/leanmacs` does not exist it installs the default config
 `config/default` there, a starter `SPC` map (which the gate's
 `config-test` loads, [`the-gate.md`](the-gate.md)); an existing config is
@@ -777,7 +788,7 @@ machine's own build output is not touched. The exit status is the gate's.
 | Where | What |
 |---|---|
 | `.linux-ci/home/` | The toolchains: rustup's, elan's, mise's installs. About 4.6 GB. |
-| `.linux-ci/work/` | The copy of the source, with Lake's build output. About 1.2 GB. |
+| `.linux-ci/work/` | The copy of the source, with the core's Lake build output and the formatter's clone (`lean/.lake`). About 1.2 GB. |
 | The Docker volume `editor-linux-ci-cargo` | Cargo's home and `target/`. They must not be on a directory mounted from macOS: clean runs failed there. About 1.4 GB. |
 | The Docker image `editor-linux-ci` | The system packages, mise and elan. About 0.9 GB. |
 
@@ -785,6 +796,17 @@ machine's own build output is not touched. The exit status is the gate's.
 `EDITOR_LINUX_CACHE` to put it elsewhere. `mise run linux-ci -- --clean`
 empties the copy's build output first and keeps the toolchains and Cargo's
 registry: everything is compiled again and nothing is downloaded again.
+
+Only `lean/.lake` is kept in the copy from one run to the next: the copy
+step removes everything else before it copies, the build output of the
+package sets and of the fixture packages among it (`packages/.lake`,
+`tests/packages/**/.lake`). So every run, clean or not, writes the two
+generated roots again, rebuilds the fixture packages and links both
+editors, on top of the core's modules, which are kept. That was chosen
+over keeping those directories: it is seconds, and the copy step stays one
+rule. `--clean` therefore empties what it did before and nothing more. Not
+run since the editor came from a package set (packages phase 4): Docker
+was not at hand.
 
 It runs on the machine's own architecture. It has been run on aarch64, not
 on x86_64.
@@ -1191,7 +1213,8 @@ again.
 ## The editor on a file, on demand
 
 `mise run edit -- <file>` (`lean/Editor/Window/Real.lean`) opens the
-editor on a file, in a window, to use. The gate runs the same wiring on
+editor on a file, in a window, to use: the editor `mise run lean` links
+from the default package set, `packages/.lake/build/bin/editor`. The gate runs the same wiring on
 the library's scripted platform (`ffi-test window-host`), and `mise run
 linux-window` runs it on a real window under Xvfb with xdotool typing
 (its seventh part).
