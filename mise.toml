@@ -23,6 +23,14 @@ opentofu = "1.13.2"
 "aqua:rhysd/actionlint" = "1.7.12"
 "aqua:zizmorcore/zizmor" = "1.32.0"
 "aqua:mikefarah/yq" = "4.54.1"
+# fzf, the default filter of `find-file-in-workspace`'s source
+# (lean/Editor/Workspace/FindFile.lean): for the workspace finder's benchmark
+# (`mise run find-file-bench`), never part of `ci`, whose checks stand in a
+# fixture for it (tests/completion), and on the PATH of an editor started
+# inside this project when dogfooding. Like cargo-deny, a prebuilt release
+# binary whose checksum aqua checks, the newest release at least two weeks
+# old when pinned (docs/dev-practices/ci.md).
+"aqua:junegunn/fzf" = "0.74.5"
 # Lean (lean, lake) is not listed here: `lean/lean-toolchain` is its one pin
 # (AGENTS.md, "Toolchains"). mise reads that file through the `lean` plugin,
 # which the global mise config declares along with

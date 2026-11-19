@@ -322,7 +322,9 @@ ci_rules() {
   #   pkl                     hk.pkl's language, read only by hk
   #   aqua:gitleaks/gitleaks  `mise run secrets-scan`, the secrets-scan job's
   #   opentofu                `mise run infra-*`, never run in CI
-  not_in_gate='hk pkl aqua:gitleaks/gitleaks opentofu'
+  #   aqua:junegunn/fzf       `mise run find-file-bench`, never run in CI; the
+  #                           gate's checks stand a fixture in for it
+  not_in_gate='hk pkl aqua:gitleaks/gitleaks opentofu aqua:junegunn/fzf'
   mise_tools=$(yq -p toml -o yaml '.tools | keys | .[]' "$root/mise.toml")
   if [ -z "$mise_tools" ]; then
     fail install-args 'no [tools] in mise.toml'
