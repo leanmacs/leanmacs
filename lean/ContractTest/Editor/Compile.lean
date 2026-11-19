@@ -13,6 +13,7 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Displays
 import Editor.Completion.Styles
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Display
@@ -62,7 +63,7 @@ open Editor
 commands by name; its job is the one registered. -/
 def compileKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      (Compile.commands.find? (·.name == name)).bind fun registration =>
+      (Compile.package.registered.commands.find? (·.name == name)).bind fun registration =>
         match registration.action with
         | .call run =>
           some fun call => do
@@ -108,7 +109,8 @@ def compileChecks (services : Job.Services) (fixtures : System.FilePath) : List 
           let .ok stepped := stepped | return false
           let some start := stepped.starts[0]? | return false
           let some work :=
-            (Compile.jobs.find? (·.name == start.name)).map (·.work start.arguments) | return false
+            (Compile.package.registered.jobs.find? (·.name == start.name)).map
+              (·.work start.arguments) | return false
           let posts ← IO.mkRef (#[] : Array Invocation)
           let handle ←
             Job.spawn services work (pure ()) fun invocation => posts.modify (·.push invocation)

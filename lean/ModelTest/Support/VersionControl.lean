@@ -4,6 +4,7 @@ import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Compile.Contribution
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.DisplayRules
@@ -91,7 +92,7 @@ def statusBindings : List (String × Invocation) :=
 
 /-- The commands of the status buffer checks (`statusBindings`). -/
 def statusCommands : List (String × Dispatched) :=
-  workspaceCommands ++ dispatchedOf VersionControl.commands ++
+  workspaceCommands ++ dispatchedOf VersionControl.package.registered.commands ++
     [("to-row", fun call => do
         if let .nat row :: _ := call.arguments then
           let offset ← call.target.buffer.text.offsetOf ⟨row, 0⟩
@@ -109,13 +110,15 @@ on their keys in a status buffer, and its name known to the loop that sets
 it. -/
 def statusKeys : Loop.Keys TestScheme.scheme :=
   let keys := dispatchKeys statusBindings statusCommands
-  let registry := ({} : Config.Registry).replaceModes .compiled VersionControl.modes
+  let registry :=
+    ({} : Config.Registry).replaceModes .compiled VersionControl.package.registered.modes
   { keys with
     maps := fun state view =>
       registry.activeMaps TestScheme.scheme state view ++ keys.maps state view
     registered :=
       { keys.registered with
-        entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) } }
+        entering := fun name =>
+          (VersionControl.package.registered.modes.find? (·.name == name)).map ([·]) } }
 
 /-- A driver of the status buffer checks: the workspace driver's world, with
 the status buffer's keys and jobs (or `keys` and `registered`), whose git in `/r` meets `repository`
@@ -151,10 +154,11 @@ def gitStarted (driver : TestDriver) : Array Process.Command :=
     command.program == "git" && command.directory == ("/r" : System.FilePath)
 
 /-- The jobs of the hunk and message buffer checks: every job of the
-version-control registrations (`VersionControl.jobs`), and the workspace
+version-control registrations (`VersionControl.package.registered.jobs`), and the workspace
 driver checks', the file commands' among them. -/
 def stagingJobs (name : String) : Option (List Argument → Work) :=
-  ((VersionControl.jobs.find? (·.name == name)).map (·.work)) <|> workspaceJobs name
+  ((VersionControl.package.registered.jobs.find? (·.name == name)).map (·.work)) <|>
+    workspaceJobs name
 
 /-- The bindings of the hunk and message buffer checks: the workspace driver
 checks', and `C-v s` (`vc-status`), `C-v g` (`vc-stage-hunk`), `C-v G`
@@ -210,7 +214,8 @@ def stagingKeys : Loop.Keys TestScheme.scheme :=
   { keys with
     registered :=
       { keys.registered with
-        entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) } }
+        entering := fun name =>
+          (VersionControl.package.registered.modes.find? (·.name == name)).map ([·]) } }
 
 /-- The writes the hunk and message buffer checks expect git to be asked for
 in `/r`: an apply, its reverse and a commit. -/
@@ -286,7 +291,7 @@ the shipped segments and version control's, as a host's registry holds them
 (`Headless.keys`), so `review` is drawn. -/
 def reviewModeLine : ModeLine :=
   (ModeLine.resolve ModeLine.Order.standard fun name =>
-      (ModeLine.shipped ++ VersionControl.segments).find? (·.name == name)).1
+      (ModeLine.shipped ++ VersionControl.package.registered.segments).find? (·.name == name)).1
 
 /-- The keys of the review buffer checks (`reviewBindings`), with the
 version-control modes known to the loop that sets them, and the mode line
@@ -333,7 +338,8 @@ def reviewKeys : Loop.Keys TestScheme.scheme :=
   { keys with
     registered :=
       { keys.registered with
-        entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) }
+        entering := fun name =>
+          (VersionControl.package.registered.modes.find? (·.name == name)).map ([·]) }
     modeLine := reviewModeLine }
 
 /-- The jobs of the review buffer checks: the hunk checks', with the review's,

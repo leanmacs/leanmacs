@@ -102,7 +102,7 @@ show:
   role (`Session.pressKeys`), so no check names a scheme's key;
 - `promptChecks`: prompts through the host, with the test scheme, the
   minibuffer's commands and its mode as compiled code hands them
-  (`Minibuffer.commands`, `Minibuffer.modes`) and commands written here: a
+  (`Minibuffer.package.registered.commands`, `Minibuffer.package.registered.modes`) and commands written here: a
   command asks, a commit is typed into the minibuffer and the scene shows
   it; the accept key runs the continuation's command with the answer and
   the cancel key does not; a job's result is delivered while a prompt is
@@ -121,7 +121,7 @@ show:
   for the roles the minibuffer's mode fills;
 - `exChecks`: the ex command line through the host, with the test scheme
   and the ex line's commands and the ex names that ship as compiled code
-  hands them (`Ex.commands`, `Ex.bindings`): the ex line `reload` reloads
+  hands them (`Ex.package.registered.commands`, `Ex.package.registered.ex`): the ex line `reload` reloads
   the config with no restart, so a key config rebound runs the other
   command; an ex name config binds runs config's command, and is unknown
   after a reload without it; config's binding of a shipped name runs in
@@ -207,7 +207,7 @@ show:
   - A job from config loads a file, and its handler makes a text of it:
     the file's path is written into the config it loads.
   - The file commands and their jobs as compiled code registers them
-    (`Files.commands`, `Files.jobs`): opening a file shows a buffer of its
+    (`Files.package.registered.commands`, `Files.package.registered.jobs`): opening a file shows a buffer of its
     text, named by its base name; saving a modified buffer writes the
     buffer's text and clears the status line's modified field; opening a
     path that is open starts no load; open then save with no edit leaves
@@ -230,6 +230,7 @@ executable. Each line a host emits is recorded with the thread that emitted
 it, which is how a check sees that a handler ran on the editor thread.
 
 All the checks share one import of the base, made once in `run`: a second
+import Editor.Config.Packages
 import in one process about doubles its memory. Hosts follow one another on
 the process's one editor queue and never overlap: every check stops its host
 before it returns.

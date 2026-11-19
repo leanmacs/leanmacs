@@ -1,6 +1,7 @@
 import Editor.Clipboard.InProcess
 import Editor.Compile.Contribution
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.DisplayRules
 import Editor.Ffi.Display
@@ -111,7 +112,8 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
         | .request _ | .title _ => none
     let compiled :=
       ({} : Editor.Config.Registry).replaceBindings .compiled
-        (Editor.FrameCommands.bindings ++ Editor.Menu.bindings)
+        (Editor.FrameCommands.package.registered.bindings ++
+          Editor.Menu.package.registered.bindings)
     let expected := compiled.menuOf Editor.Menu.standard
     unless menus == #[expected] do
       IO.eprintln

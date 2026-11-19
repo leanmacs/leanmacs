@@ -1,40 +1,46 @@
 import Editor.AtPoint
 import Editor.Completion.Words
-import Editor.Config.Registry
+import Editor.Package
 
 /-!
-# Completion at point's compiled registrations
+# The `at-point` package: completion at point
 
-What compiled code registers for completion at point, for a host to hand
-its registry before any config: its commands (`AtPoint.commands`,
-`Editor/AtPoint.lean`), which the Vim scheme's insert state binds; and the
-job of the shipped `words` source
-(`Words.jobs`), registered compiled so its owner is `compiled` and a reload
-does not cancel it (`Editor/Completion/Words.lean`). `Headless.shippedOver`
-registers it with the shipped at-point source (`Completion.AtPoint.shipped`),
-the shipped source (`Completion.Words.shipped`) and the use of `words` for
-every buffer.
+What a host registers for completion at point: the package `at-point`
+(`AtPoint.package`, `Editor/Package.lean`), for the owner `at-point`, when
+its loop starts, before any config (`Editor/Config/Packages.lean`).
+
+- **The commands** (`Editor/AtPoint.lean`), which the Vim scheme's insert
+  state binds.
+- **The job** of the shipped `words` source (`Completion.Words.job`,
+  `Editor/Completion/Words.lean`): it is the package's, so a reload does
+  not cancel it.
+- **The shipped source** (`Completion.Words.shipped`) and **the shipped
+  at-point source** (`Completion.AtPoint.shipped`), and **the use of
+  `words` for every buffer** (`useAtPoint`), so no core code names it.
 -/
 
 namespace Editor.AtPoint
 
-/-- Completion at point's commands, as a host registers them for the owner
-`compiled`. -/
-def commands : Array Config.Registration :=
-  #[{ name := completeName, action := .call complete },
-    { name := nextName, action := .call (stepOrAsk .next) },
-    { name := previousName, action := .call (stepOrAsk .previous) },
-    { name := tabName, action := .call tab }, { name := backtabName, action := .call backtab },
-    { name := returnName, action := .call «return» }, { name := quitName, action := .call quit },
-    { name := triggeredName, action := .call triggered },
-    { name := pausedName, action := .call paused }]
+/-- The package `at-point`: completion at point's commands, the job of the
+source `words`, the shipped source and the shipped at-point source, and the
+use of `words` for every buffer. -/
+def package : Package :=
+  { name := "at-point"
+    setup := do
+      commandWith completeName complete
+      commandWith nextName (stepOrAsk .next)
+      commandWith previousName (stepOrAsk .previous)
+      commandWith tabName tab
+      commandWith backtabName backtab
+      commandWith returnName «return»
+      commandWith quitName quit
+      commandWith triggeredName triggered
+      commandWith pausedName paused
+      sourceJob Completion.Words.job Completion.Words.gather
+      for source in Completion.Words.shipped do
+        defineSource source
+      for atPoint in Completion.AtPoint.shipped do
+        defineAtPoint atPoint
+      useAtPoint Completion.Words.source.name }
 
 end Editor.AtPoint
-
-namespace Editor.Completion.Words
-
-/-- The job of the source `words`, registered under `Words.job`. -/
-def jobs : Array Config.JobRegistration :=
-  #[{ name := job, work := Completion.answering gather }]
-
-end Editor.Completion.Words

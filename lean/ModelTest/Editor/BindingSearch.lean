@@ -5,6 +5,7 @@ import Editor.Command.Call
 import Editor.Completion
 import Editor.Completion.Candidate
 import Editor.Completion.Style
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Event
 import Editor.InputScheme.Test
@@ -41,11 +42,13 @@ def searchMarked : Dispatched := fun call => do
 
 /-- The commands of the binding search's checks, by name: the commands
 compiled code registers for the binding search and for the minibuffer
-(`BindingSearch.commands`, `Minibuffer.commands`), then `marked`
+(`BindingSearch.package.registered.commands`, `Minibuffer.package.registered.commands`), then `marked`
 (`searchMarked`). -/
 def searchCommands : List (String × Dispatched) :=
   let compiled : List (String × Dispatched) :=
-    (BindingSearch.commands ++ Minibuffer.commands).toList.filterMap fun registration =>
+    (BindingSearch.package.registered.commands ++
+          Minibuffer.package.registered.commands).toList.filterMap
+      fun registration =>
       match registration.action with
       | .call run =>
         some

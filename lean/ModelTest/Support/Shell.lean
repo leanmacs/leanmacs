@@ -3,6 +3,7 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Command.Model
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.DisplayRules
@@ -91,7 +92,10 @@ def shellBindings : List (String × Invocation) :=
 
 /-- The commands of the shell checks (`shellKeys`). -/
 def shellCommands : List (String × Dispatched) :=
-  workspaceCommands ++ dispatchedOf (Ex.commands ++ Minibuffer.commands ++ Shell.commands) ++
+  workspaceCommands ++
+    dispatchedOf
+      (Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
+        Shell.package.registered.commands) ++
     [("kube", fun call => do
         let location := Location.reachable "kube" "pod" "/app"
         discard <| Workspace.register location workspaceOrigin

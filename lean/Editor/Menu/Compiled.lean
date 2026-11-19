@@ -1,15 +1,19 @@
-import Editor.Config.Registry
 import Editor.Evil.Clipboard
 import Editor.Files
 import Editor.FrameCommands
 import Editor.Menu
+import Editor.Package
 
 /-!
-# The menu bar, as compiled code ships it
+# The `menu` package: the menu bar that ships
 
-The menu bar a host publishes (`Editor/Menu.lean`) and the compiled key
-bindings of its editor items, as a host is handed them
-(`Headless.shippedOver`):
+The menu bar a host publishes (`Editor/Menu.lean`) and the key bindings of
+its editor items: the package `menu` (`Menu.package`,
+`Editor/Package.lean`), whose `setup` binds the keys and defines the menus
+of `Menu.standard`, one at a time (`defineMenu`). A host registers it for
+the owner `menu` when its loop starts, before any config
+(`Editor/Config/Packages.lean`), and a host that is not handed it publishes
+no menu bar:
 
 - **`Menu.standard`**: the application's menu (About, Services, Hide, Hide
   Others, Show All, Quit, with the system's own key equivalents `s-h`,
@@ -17,13 +21,16 @@ bindings of its editor items, as a host is handed them
   Cut, Copy, Paste, a separator, Select All: the clipboard commands of
   `Editor/Evil/Clipboard.lean`) and Window (Minimise, Enter Full Screen). Its command items carry no key: a host
   fills them from the registry as it is at each step
-  (`Config.Registry.menuOf`), so a menu item and its key run the same
-  command, and config's rebinding moves the shortcut.
-- **`Menu.bindings`**: `s-o` runs `open-file`, `s-s` `save-buffer`, `s-z`
+  (`Config.Registry.menuBar?`), so a menu item and its key run the same
+  command, and config's rebinding moves the shortcut. Config replaces one
+  of these menus by defining a menu of its title, and adds one by defining
+  a new title (`Editor/Config/Registry.lean`, "Menus").
+- **The bindings** (`bindKeys`): `s-o` runs `open-file`, `s-s` `save-buffer`, `s-z`
   `undo`, `s-Z` (shift is in the character, as a chord says it) `redo`,
   `s-x` `clipboard-cut`, `s-c` `clipboard-copy`, `s-v` `clipboard-paste`
-  and `s-a` `select-all`. A host registers them for the owner `compiled` beside
-  `FrameCommands.bindings`, whose `C-s-f` and `s-m` are the Window menu's.
+  and `s-a` `select-all`. They come after the `frame-commands` package's
+  (`Editor/FrameCommands/Compiled.lean`), whose `C-s-f` and `s-m` are the
+  Window menu's.
 
 A chord the menu shows never reaches the window as a key on macOS: AppKit
 runs the item first. Since the menu's keys are the keymap's, the two agree,
@@ -53,8 +60,9 @@ def appName : String :=
 private def commandKey (character : Char) (alt : Bool := false) : KeyEquivalent :=
   { character, modifiers := { alt, superKey := true } }
 
-/-- The menu bar a host publishes, before its command items' keys are
-filled from the registry (`Config.Registry.menuOf`). -/
+/-- The menu bar that ships, before its command items' keys are filled from
+the registry (`Config.Registry.menuBar?`): the menus the `menu` package
+defines, in order. -/
 def standard : Menu :=
   {
     menus :=
@@ -86,14 +94,22 @@ def standard : Menu :=
 private def chord (text : String) : Key :=
   Key.chord { logical := .character text, modifiers := { superKey := true } }
 
-/-- The compiled key bindings of the menu's File and Edit items, as a host
-registers them for the owner `compiled`. The clipboard commands' names are
-`Editor/Evil/Clipboard.lean`'s. -/
-def bindings : Array Config.KeyBinding :=
-  #[.ofKeys [chord "o"] Files.openName, .ofKeys [chord "s"] Files.saveName,
-    .ofKeys [chord "z"] "undo", .ofKeys [chord "Z"] "redo", .ofKeys [chord "x"] Evil.cutName,
-    .ofKeys [chord "c"] Evil.copyName, .ofKeys [chord "v"] Evil.pasteName,
-    .ofKeys [chord "a"] Evil.selectAllName]
+/-- The package `menu`: the key bindings of the menu's File and Edit items,
+then the menus of `standard`, in order. The clipboard commands' names
+are `Editor/Evil/Clipboard.lean`'s. -/
+def package : Package :=
+  { name := "menu"
+    setup := do
+      bindKeys [chord "o"] Files.openName
+      bindKeys [chord "s"] Files.saveName
+      bindKeys [chord "z"] "undo"
+      bindKeys [chord "Z"] "redo"
+      bindKeys [chord "x"] Evil.cutName
+      bindKeys [chord "c"] Evil.copyName
+      bindKeys [chord "v"] Evil.pasteName
+      bindKeys [chord "a"] Evil.selectAllName
+      for menu in standard.menus do
+        defineMenu menu }
 
 end Menu
 

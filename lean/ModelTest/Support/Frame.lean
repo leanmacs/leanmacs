@@ -4,6 +4,7 @@ import Editor.Command.Dispatch
 import Editor.Command.Model
 import Editor.Compile.Contribution
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Display
@@ -53,8 +54,11 @@ config's commands. -/
 def frameRegistry (config : Array Config.KeyBinding := #[])
     (commands : Array Config.Registration := #[]) : Config.Registry :=
   (((({} : Config.Registry).replace .compiled
-                (FrameCommands.commands ++ Ex.commands)).replaceBindings
-            .compiled (FrameCommands.bindings ++ Menu.bindings)).replaceBindings
+                (FrameCommands.package.registered.commands ++
+                  Ex.package.registered.commands)).replaceBindings
+            .compiled
+            (FrameCommands.package.registered.bindings ++
+              Menu.package.registered.bindings)).replaceBindings
         .config config).replace
     .config commands
 

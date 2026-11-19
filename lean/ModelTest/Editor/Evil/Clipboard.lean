@@ -5,6 +5,7 @@ import Editor.Command.Call
 import Editor.Command.Model
 import Editor.Compile.Contribution
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.DisplayRules
@@ -50,7 +51,9 @@ open Editor
 /-- The registry of the clipboard command checks: the menu bar's compiled
 bindings, for the owner `compiled`, and `config` as config's bindings. -/
 def clipRegistry (config : Array Config.KeyBinding := #[]) : Config.Registry :=
-  (({} : Config.Registry).replaceBindings .compiled Menu.bindings).replaceBindings .config config
+  (({} : Config.Registry).replaceBindings .compiled
+        Menu.package.registered.bindings).replaceBindings
+    .config config
 
 /-- What a step of the clipboard command checks is handed: evil's commands
 and the minibuffer's, then `commands`, with the active keymaps and the menu
@@ -58,7 +61,7 @@ bar `clipRegistry config` makes, as a host's are. -/
 def clipHanded (config : Array Config.KeyBinding := #[])
     (commands : List (String × Dispatched) := []) : Loop.Keys Vim.Default.scheme :=
   let registry := clipRegistry config
-  { evilHanded Minibuffer.commands
+  { evilHanded Minibuffer.package.registered.commands
       commands with
     maps := registry.activeMaps Vim.Default.scheme
     menu := some (registry.menuOf Menu.standard) }

@@ -16,6 +16,7 @@ import Editor.Completion.Displays
 import Editor.Completion.Later
 import Editor.Completion.Styles
 import Editor.Config.Elaborate
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Display
 import Editor.Event
@@ -65,7 +66,7 @@ def promptCompiled : Compiled :=
   let asks : EditorM Unit := discard <| prompt "Name: " { command := "greet" } "Ada"
   { minibufferCompiled with
     commands :=
-      Minibuffer.commands ++
+      Minibuffer.package.registered.commands ++
         #[{ name := "ask", action := .plain asks },
           { name := "greet"
             action :=
@@ -178,7 +179,7 @@ clock, and delivers `rewrite` and `w`. -/
 def laterCompiled : Compiled :=
   { minibufferCompiled with
     commands :=
-      Minibuffer.commands ++
+      Minibuffer.package.registered.commands ++
         #[{ name := "ask-later"
             action :=
               .plain
@@ -199,7 +200,7 @@ a source given as a value over `manyPaths count`. -/
 def manyCompiled (count : Nat) : Compiled :=
   { minibufferCompiled with
     commands :=
-      Minibuffer.commands ++
+      Minibuffer.package.registered.commands ++
         #[{ name := "ask-many"
             action :=
               .plain
@@ -219,7 +220,7 @@ minibuffer's commands and its mode, and `ask-annotated`, which asks
 def annotatedCompiled : Compiled :=
   { minibufferCompiled with
     commands :=
-      Minibuffer.commands ++
+      Minibuffer.package.registered.commands ++
         #[{ name := "ask-annotated"
             action :=
               .plain
@@ -594,7 +595,9 @@ def promptChecks (context : Context) : List Check :=
                 listsAfter replaced Buffers.switchPrompt ["mine"] &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           { minibufferCompiled with
-            commands := Minibuffer.commands ++ Buffers.commands, sources := Buffers.sources } },
+            commands :=
+              Minibuffer.package.registered.commands ++ Buffers.package.registered.commands,
+            sources := Buffers.package.registered.sources } },
     { name :=
         "with config choosing orderless for buffer, a text of two components that is no buffer's name, typed into switch-buffer and accepted with nothing chosen, shows the first buffer the prompt lists for it, though the fuzzy matcher matches it with no name"
       run :=
@@ -612,7 +615,9 @@ def promptChecks (context : Context) : List Check :=
                 accepted.contains (statusOf 0 "mars.txt") &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           { minibufferCompiled with
-            commands := Minibuffer.commands ++ Buffers.commands, sources := Buffers.sources } },
+            commands :=
+              Minibuffer.package.registered.commands ++ Buffers.package.registered.commands,
+            sources := Buffers.package.registered.sources } },
     { name :=
         "criterion 1 over the recorder: a prompt asked with a source that answers later, from a compiled job that delivers two batches 10 ms apart on the fake clock, lists the first batch once it has arrived, in the library's order, and both once the job has ended; no step is refused"
       run :=

@@ -1,6 +1,7 @@
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Event
@@ -347,10 +348,14 @@ def evilPrompts : List (Option EvilDriver × String × (String → String)) :=
     message s!"hello {" ".intercalate (call.arguments.map argumentText)}"
     return none
   let asked :=
-    (evilDriver "a|bc" (evilHanded Minibuffer.commands [("ask", ask), ("greet", greet)])).map
+    (evilDriver "a|bc"
+          (evilHanded Minibuffer.package.registered.commands [("ask", ask), ("greet", greet)])).map
       fun driver => (driver.stepped (driver.loop.runNamed driver.handed "ask")).1
   let ex :=
-    (evilDriver "a|bc" (evilHanded (Ex.commands ++ Minibuffer.commands))).map (evilFed · ":")
+    (evilDriver "a|bc"
+          (evilHanded
+            (Ex.package.registered.commands ++ Minibuffer.package.registered.commands))).map
+      (evilFed · ":")
   [(asked, "greet", fun answer => s!"hello {answer}"), (ex, Ex.name, Ex.unknown)]
 
 /-- Whether `check` holds of each prompt of `evilPrompts`, each opened as
@@ -513,7 +518,8 @@ def evilInsertChecks : List Check :=
           let greet : Dispatched := fun call => do
             message s!"hello {" ".intercalate (call.arguments.map argumentText)}"
             return none
-          let handed := evilHanded Minibuffer.commands [("ask", ask), ("greet", greet)]
+          let handed :=
+            evilHanded Minibuffer.package.registered.commands [("ask", ask), ("greet", greet)]
           match evilDriver "a|bc" handed with
           | none => false
           | some driver =>
@@ -539,7 +545,8 @@ def evilInsertChecks : List Check :=
             call.target.select { ranges := #[⟨0, 0⟩], shape := .exclusive }
             return none
           let handed :=
-            evilHanded Minibuffer.commands [("ask", ask), ("greet", greet), ("home", home)]
+            evilHanded Minibuffer.package.registered.commands
+              [("ask", ask), ("greet", greet), ("home", home)]
           match evilDriver "a|bc" handed with
           | none => false
           | some driver =>
@@ -611,7 +618,7 @@ def evilInsertChecks : List Check :=
                 empty.loop.state.prompt.isSome &&
                 evilShown cleared == "a|bc"
           let unasked :=
-            match evilDriver "a|bc" (evilHanded Minibuffer.commands) with
+            match evilDriver "a|bc" (evilHanded Minibuffer.package.registered.commands) with
             | none => false
             | some driver =>
               let (ran, _) :=

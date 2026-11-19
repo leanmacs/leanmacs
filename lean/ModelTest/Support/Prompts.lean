@@ -10,6 +10,7 @@ import Editor.Completion.Candidate
 import Editor.Completion.Displays
 import Editor.Completion.Styles
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Display.Model
@@ -165,8 +166,8 @@ def minibufferBindings : List (String × String) :=
 mode registered for the owner `compiled`, as a host registers them, and the
 checks' bindings as config's. -/
 def minibufferRegistry : Config.Registry :=
-  ((({} : Config.Registry).replace .compiled Minibuffer.commands).replaceModes .compiled
-        Minibuffer.modes).replaceBindings
+  ((({} : Config.Registry).replace .compiled Minibuffer.package.registered.commands).replaceModes
+        .compiled Minibuffer.package.registered.modes).replaceBindings
     .config (minibufferBindings.toArray.map fun (text, command) => .ofKeys (keys text) command)
 
 /-- What a step of the minibuffer checks is handed: the active keymaps the

@@ -4,6 +4,7 @@ import ConfigTest.Support.Hosts
 import Editor.Completion
 import Editor.Config.Directory
 import Editor.Config.Elaborate
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Ex.Line
 import Editor.Face
@@ -107,11 +108,14 @@ def gutterChecks (context : Context) : List Check :=
           let stage ←
             Stage.overFiles context (Config.Directory.source configDir)
                 { commands :=
-                    Files.commands ++ Minibuffer.commands ++ Workspace.commands ++
-                      VersionControl.gutterCommands ++
+                    Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
+                      Workspace.package.registered.commands ++
+                      VersionControl.gutterPackage.registered.commands ++
                       #[opening "open-a" file]
-                  jobs := Files.jobs ++ Workspace.jobs ++ VersionControl.gutterJobs
-                  modes := Minibuffer.modes }
+                  jobs :=
+                    Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
+                      VersionControl.gutterPackage.registered.jobs
+                  modes := Minibuffer.package.registered.modes }
           let collaborators := stage.collaborators
           let services := collaborators.services
           let processes :=

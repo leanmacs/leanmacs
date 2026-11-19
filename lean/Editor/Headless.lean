@@ -3,10 +3,10 @@ import Editor.BindingSearch.Compiled
 import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
 import Editor.Compile.Compiled
-import Editor.Compile.Shipped
 import Editor.Config.Directory
 import Editor.Config.Display
 import Editor.Config.Elaborate
+import Editor.Config.Packages
 import Editor.Config.Reload
 import Editor.Display.Real
 import Editor.Display.Recorder
@@ -171,15 +171,15 @@ as before, so reload and job completion work as they did.
   started by a command, by its name, as config's is, for the owner
   `compiled`: a reload that installs cancels config's jobs only, so a
   compiled job runs across a reload. The executable is handed the file
-  commands and their jobs (`Files.commands`, `Files.jobs`,
+  commands and their jobs (`Files.package.registered.commands`, `Files.package.registered.jobs`,
   `Editor/Files/Compiled.lean`): `open-file` and `save-buffer`, the first
   commands it ships, which `show` lists before config's, and the jobs
   `load-file` and `save-file`. It is handed the minibuffer's commands and
-  its mode too (`Minibuffer.commands`, `Minibuffer.modes`,
+  its mode too (`Minibuffer.package.registered.commands`, `Minibuffer.package.registered.modes`,
   `Editor/Minibuffer/Compiled.lean`): `minibuffer-accept` and
   `minibuffer-cancel`, which the Vim scheme's minibuffer state binds to
   `<Enter>` and `<Escape>`, and the mode `minibuffer`, the first mode it
-  ships. And it is handed evil's commands (`Evil.commands`,
+  ships. And it is handed evil's commands (`Evil.package.registered.commands`,
   `Editor/Evil/Compiled.lean`), which the Vim scheme's keys name: `move`,
   the three that enter normal state and the visual states, the four that
   begin an insert, and `self-insert`, which a key that prints runs in
@@ -188,32 +188,32 @@ as before, so reload and job completion work as they did.
   command; and the commands that scroll a view. So with no config the
   editor moves, edits, undoes, repeats and scrolls.
   And it is handed the ex line's commands and the ex names
-  that ship (`Ex.commands`, `Ex.bindings`, `Editor/Ex/Compiled.lean`):
+  that ship (`Ex.package.registered.commands`, `Ex.package.registered.ex`, `Editor/Ex/Compiled.lean`):
   `ex`, which opens the ex line and runs its answer, `quit`,
   `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`,
   `wq`, `reload`, `b`, `ls` and `bd`, the last three bound to the buffer
-  commands it is handed (`Buffers.commands`,
+  commands it is handed (`Buffers.package.registered.commands`,
   `Editor/Buffers/Compiled.lean`): `switch-buffer`, `list-buffers` and
   `close-buffer`. The Vim scheme's default table binds `:` to the name
   `ex`, so that key opens the ex line. And it is handed the command that
-  loads a theme and the themes that ship (`Themes.commands`,
+  loads a theme and the themes that ship (`Themes.package.registered.commands`,
   `Themes.shipped`, `Editor/Themes/Compiled.lean`): `load-theme`, and the
   theme `default`, the built-in one. And it is handed the command prompt
-  (`ExecuteCommand.commands`, `Editor/ExecuteCommand/Compiled.lean`):
+  (`ExecuteCommand.package.registered.commands`, `Editor/ExecuteCommand/Compiled.lean`):
   `execute-command`, which lists every registered command and runs the one
-  accepted. And it is handed the binding search (`BindingSearch.commands`,
+  accepted. And it is handed the binding search (`BindingSearch.package.registered.commands`,
   `Editor/BindingSearch/Compiled.lean`): `search-bindings`, which lists
   every binding the scheme reaches in the view and runs the one accepted
   as its key would. And it is handed the workspace
-  command and the job that finds a file's workspace (`Workspace.commands`,
-  `Workspace.jobs`, `Editor/Workspace/Compiled.lean`): `workspace-current`,
+  command and the job that finds a file's workspace (`Workspace.package.registered.commands`,
+  `Workspace.package.registered.jobs`, `Editor/Workspace/Compiled.lean`): `workspace-current`,
   and `find-workspace`, which a file's open starts for its directory when
   no answer is cached, so a script that opens a file has that job too; and
   `find-mode-markers`, which gives a buffer the minor modes the compile
   contributions' markers turn on, and which every file's open starts once
   its workspace is known, since contributions ship. With them come
   `find-file-in-workspace`, its source `workspace-files` in the category
-  `workspace-file` (`Workspace.sources`) and the source's job
+  `workspace-file` (`Workspace.package.registered.sources`) and the source's job
   `workspace-files`, which lists the workspace's files with its lister and
   filters them with fzf (`Editor/Workspace/FindFile.lean`); and
   `find-file-in-project`, its source `project-workspaces` in the category
@@ -221,14 +221,14 @@ as before, so reload and job completion work as they did.
   `project-workspace-choose` and `project-workspace-find`, which list the
   project's worktrees and find the one chosen
   (`Editor/Workspace/FindInProject.lean`). And it is handed the
-  status buffer's commands, jobs and mode (`VersionControl.commands`,
-  `VersionControl.jobs`, `VersionControl.modes`,
+  status buffer's commands, jobs and mode (`VersionControl.package.registered.commands`,
+  `VersionControl.package.registered.jobs`, `VersionControl.package.registered.modes`,
   `Editor/VersionControl/Compiled.lean`): `vc-status` and the commands of
   its buffer, the jobs `vc-status-read` and `vc-status-apply`, which run
   git, and the mode `vc-status`; the ex name `vc-status` runs the first.
   It is handed `vc-show` and its job too, and the version-control gutter's
-  command and jobs (`VersionControl.gutterCommands`,
-  `VersionControl.gutterJobs`): a tracked file's buffer shows its lines
+  command and jobs (`VersionControl.gutterPackage.registered.commands`,
+  `VersionControl.gutterPackage.registered.jobs`): a tracked file's buffer shows its lines
   added, removed and changed against `HEAD` in a column before its text.
   And it is handed the
   `code` mode and the languages that ship (`Language.modes`,
@@ -2655,13 +2655,13 @@ commands, the command that loads a theme
 with the themes that ship, the command prompt, `execute-command`, which
 lists every registered command, the binding search, `search-bindings`, which
 lists every binding the scheme reaches, the workspace commands with the job that finds a
-file's workspace and the workspace finder's escape key (`Workspace.bindings`), the shell's command with the job that runs `:!`, the
+file's workspace and the workspace finder's escape key (`Workspace.package.registered.bindings`), the shell's command with the job that runs `:!`, the
 compile mode's commands, its jobs, its mode and the contributions that ship,
 `cargo-mode`, `lake-mode` and `mise-mode` (`Editor/Compile.lean`,
 `Editor/Compile/Shipped.lean`), the status buffer's commands, its jobs and
 its mode (`Editor/VersionControl/Compiled.lean`), the `code` mode with the languages that ship
 (`Editor/Language.lean`), and the menu bar (`Menu.standard`) with its
-items' bindings (`Menu.bindings`). Its display is the recorder and its
+items' bindings (`Menu.package.registered.bindings`). Its display is the recorder and its
 clipboard its own, as a host's are by default.
 
 It is apart from `shipped`, which makes what it is over, so that what the
@@ -2674,38 +2674,53 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     source := Config.Directory.source configDir, emit, services, published, held, requests := 1,
     wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
     commands :=
-      Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++ Buffers.commands ++
-        FrameCommands.commands ++
-        WindowCommands.commands ++
-        TabCommands.commands ++
-        Themes.commands ++
-        ExecuteCommand.commands ++
-        BindingSearch.commands ++
-        Workspace.commands ++
-        Shell.commands ++
-        Compile.commands ++
-        AtPoint.commands ++
-        VersionControl.commands ++
-        VersionControl.gutterCommands
-    bindings := FrameCommands.bindings ++ Menu.bindings ++ Workspace.bindings
+      Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
+        Evil.package.registered.commands ++
+        Ex.package.registered.commands ++
+        Buffers.package.registered.commands ++
+        FrameCommands.package.registered.commands ++
+        WindowCommands.package.registered.commands ++
+        TabCommands.package.registered.commands ++
+        Themes.package.registered.commands ++
+        ExecuteCommand.package.registered.commands ++
+        BindingSearch.package.registered.commands ++
+        Workspace.package.registered.commands ++
+        Shell.package.registered.commands ++
+        Compile.package.registered.commands ++
+        AtPoint.package.registered.commands ++
+        VersionControl.package.registered.commands ++
+        VersionControl.gutterPackage.registered.commands
+    bindings :=
+      FrameCommands.package.registered.bindings ++ Menu.package.registered.bindings ++
+        Workspace.package.registered.bindings
     menu := some Menu.standard
     compiledJobs :=
-      Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs ++ Completion.Words.jobs ++
-        VersionControl.jobs ++
-        VersionControl.gutterJobs
-    modes := Minibuffer.modes ++ Compile.modes ++ VersionControl.modes ++ Language.modes
-    ex := Ex.bindings
-    themes := Themes.shipped, languages := Language.shipped
-    segments := ModeLine.shipped ++ VersionControl.segments, contributions := Compile.shipped
+      Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
+        Shell.package.registered.jobs ++
+        Compile.package.registered.jobs ++
+        AtPoint.package.registered.jobs ++
+        VersionControl.package.registered.jobs ++
+        VersionControl.gutterPackage.registered.jobs
+    modes :=
+      Minibuffer.package.registered.modes ++ Compile.package.registered.modes ++
+        VersionControl.package.registered.modes ++
+        Language.modes
+    ex := Ex.package.registered.ex
+    themes := Themes.package.registered.themes, languages := Language.shipped
+    segments := ModeLine.shipped ++ VersionControl.package.registered.segments,
+    contributions := Compile.package.registered.contributions
     sources :=
-      Ex.sources ++ Buffers.sources ++ TabCommands.sources ++ Themes.sources ++
-        ExecuteCommand.sources ++
-        BindingSearch.sources ++
-        Completion.Words.shipped ++
-        Files.sources ++
-        Workspace.sources
-    styleDefaults := Files.styleDefaults
-    atPoints := Completion.AtPoint.shipped, atPointUses := #[(none, "words")]
+      Ex.package.registered.sources ++ Buffers.package.registered.sources ++
+        TabCommands.package.registered.sources ++
+        Themes.package.registered.sources ++
+        ExecuteCommand.package.registered.sources ++
+        BindingSearch.package.registered.sources ++
+        AtPoint.package.registered.sources ++
+        Files.package.registered.sources ++
+        Workspace.package.registered.sources
+    styleDefaults := Files.package.registered.styleDefaults
+    atPoints := AtPoint.package.registered.atPoints
+    atPointUses := AtPoint.package.registered.atPointUses
     log := IO.eprintln }
 
 /-- The environments every job of a host shares, over `state`

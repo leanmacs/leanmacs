@@ -1,4 +1,5 @@
 import Editor.Command.Model
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Display
 import Editor.Ex.Compiled
@@ -46,7 +47,7 @@ binds. -/
 def windowHanded (layout : Layout)
     (maps : EditorState → ViewId → List (Keymap Vim.Bound) := fun _ _ => []) :
     Loop.Keys Vim.Default.scheme :=
-  { evilHanded (Ex.commands ++ WindowCommands.commands) with
+  { evilHanded (Ex.package.registered.commands ++ WindowCommands.package.registered.commands) with
     layout := some layout, maps }
 
 /-- A driver of the window checks over `windowsUnder count layout`, with
@@ -79,7 +80,10 @@ keymaps. -/
 def tabHanded (layout : Layout := Layout.default)
     (maps : EditorState → ViewId → List (Keymap Vim.Bound) := fun _ _ => []) :
     Loop.Keys Vim.Default.scheme :=
-  { evilHanded (Ex.commands ++ WindowCommands.commands ++ TabCommands.commands) with
+  {
+    evilHanded
+      (Ex.package.registered.commands ++ WindowCommands.package.registered.commands ++
+        TabCommands.package.registered.commands) with
     layout := some layout, maps }
 
 /-- The state of a driver of the tab checks over one window under the

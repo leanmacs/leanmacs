@@ -1,5 +1,6 @@
 import Editor.Api
 import Editor.Command.Model
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Display
 import Editor.Display.Model
@@ -78,13 +79,14 @@ def frameCommandChecks : List Check :=
       run :=
         let rebound := frameRegistry #[.ofKeys (keys "C-s-f") FrameCommands.minimiseName]
         pure
-          (FrameCommands.bindings ==
+          (FrameCommands.package.registered.bindings ==
               #[.ofKeys (keys "C-s-f") FrameCommands.toggleFullscreenName,
                 .ofKeys (keys "s-m") FrameCommands.minimiseName,
                 .ofKeys (keys "s-q") Ex.quitName] &&
             FrameCommands.toggleFullscreenName == "toggle-fullscreen" &&
             FrameCommands.minimiseName == "minimise-window" &&
-            FrameCommands.commands.map (·.name) == #["toggle-fullscreen", "minimise-window"] &&
+            FrameCommands.package.registered.commands.map (·.name) ==
+              #["toggle-fullscreen", "minimise-window"] &&
             framed (frameDriver rebound) (presses "C-s-f") == some (#[.minimise], false)) }]
 
 end ModelTest

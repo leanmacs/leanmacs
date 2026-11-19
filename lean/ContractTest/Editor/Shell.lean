@@ -10,6 +10,7 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Displays
 import Editor.Completion.Styles
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Display
@@ -63,7 +64,9 @@ open Editor
 the shell's by name; the shell's job is the one registered. -/
 def shellKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ((Ex.commands ++ Shell.commands).find? (·.name == name)).bind fun registration =>
+      ((Ex.package.registered.commands ++ Shell.package.registered.commands).find?
+            (·.name == name)).bind
+        fun registration =>
         match registration.action with
         | .call run =>
           some fun call => do
@@ -92,7 +95,8 @@ partial def settle (services : Job.Services) (display : DisplayHandler) (texts :
     texts := after
   for start in stepped.starts do
     let some work :=
-      (Shell.jobs.find? (·.name == start.name)).map (·.work start.arguments) | return none
+      (Shell.package.registered.jobs.find? (·.name == start.name)).map
+        (·.work start.arguments) | return none
     let handle ← Job.spawn services work (pure ())
     unless ← eventually handle.ended do
       handle.cancel

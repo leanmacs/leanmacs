@@ -4,6 +4,7 @@ import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
 import Editor.BindingSearch.Compiled
+import Editor.Config.Packages
 import Editor.Event
 import Editor.ExecuteCommand.Compiled
 import Editor.Themes.Compiled
@@ -28,7 +29,9 @@ and the command that loads a theme, and the themes that ship. -/
 def commandCompiled : Compiled :=
   { minibufferCompiled with
     commands :=
-      Minibuffer.commands ++ ExecuteCommand.commands ++ BindingSearch.commands ++ Themes.commands
+      Minibuffer.package.registered.commands ++ ExecuteCommand.package.registered.commands ++
+        BindingSearch.package.registered.commands ++
+        Themes.package.registered.commands
     themes := Themes.shipped }
 
 /-- A chunk whose `setup` defines the style `starts`, which keeps the

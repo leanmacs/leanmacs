@@ -5,6 +5,7 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Compile.Contribution
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.DisplayRules
@@ -54,9 +55,9 @@ open Editor
 
 /-- What a step of the buffer command checks is handed. The commands are the
 ones compiled code registers for files, the minibuffer, the buffers and the
-ex line (`Files.commands`, `Minibuffer.commands`, `Buffers.commands`,
-`Ex.commands`), each under the name it is registered under, told of the ex
-names that ship (`Ex.bindings`), and five written here: `split`, which
+ex line (`Files.package.registered.commands`, `Minibuffer.package.registered.commands`, `Buffers.package.registered.commands`,
+`Ex.package.registered.commands`), each under the name it is registered under, told of the ex
+names that ship (`Ex.package.registered.ex`), and five written here: `split`, which
 splits the window it is called with and leaves the focus,
 `edit-then-close`, which inserts `x` at its window's cursors and then runs
 `close-buffer` inside itself, so the edit and the close are one command,
@@ -79,7 +80,10 @@ runs it with the name the minibuffer's buffer has (`Prompt.bufferName`),
 view on the call's window's buffer (`ViewId.newTab`), and `C-b c` runs
 `close-anyway`. -/
 def bufferKeys : Loop.Keys TestScheme.scheme :=
-  let registrations := Files.commands ++ Minibuffer.commands ++ Buffers.commands ++ Ex.commands
+  let registrations :=
+    Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
+      Buffers.package.registered.commands ++
+      Ex.package.registered.commands
   let compiled : List (String × Dispatched) :=
     registrations.toList.filterMap fun registration =>
       match registration.action with
@@ -132,8 +136,8 @@ def bufferKeys : Loop.Keys TestScheme.scheme :=
         ("C-b c", invoke "close-anyway")]
       (compiled ++ written) with
     registered :=
-      { ex := fun name => Ex.bindings.findRev? (·.name == name),
-        exNames := exNamesOf Ex.bindings } }
+      { ex := fun name => Ex.package.registered.ex.findRev? (·.name == name),
+        exNames := exNamesOf Ex.package.registered.ex } }
 
 /-- A driver of the buffer command checks over the initial state, with the
 file commands' jobs and the files of the file command checks; `none` if

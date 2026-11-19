@@ -1,4 +1,3 @@
-import Editor.Config.Registry
 import Editor.Evil
 import Editor.Evil.Clipboard
 import Editor.Evil.Motions
@@ -9,18 +8,20 @@ import Editor.Evil.Scroll
 import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
 import Editor.InputScheme.Vim
+import Editor.Package
 
 /-!
-# Evil's commands, as compiled code registers them
+# The `evil` package: evil's commands
 
-What a host is handed so that the Vim scheme's keys do something
-(`Editor/Evil.lean`): the registrations of the commands its invocations
-name. A host registers them for the owner `compiled` when its loop starts,
-before any config (`Editor/Config/Registry.lean`, "Compiled commands"), so
-they hold when config fails to load, and a reload does not replace them.
+What a host registers so that the Vim scheme's keys do something
+(`Editor/Evil.lean`): the package `evil` (`Evil.package`,
+`Editor/Package.lean`), whose `setup` registers the commands the scheme's
+invocations name. A host registers it for the owner `evil` when its loop
+starts, before any config (`Editor/Config/Packages.lean`), so they hold
+when config fails to load, and a reload does not replace them.
 
-- **`Evil.commands`**, each a command that is given what it was called with
-  (`Action.call`):
+- **The commands**, each a command that is given what it was called with
+  (`commandWith`):
 
   | Name | Runs |
   |---|---|
@@ -55,8 +56,8 @@ A name here and the name the Vim scheme's default tables give a key
 yields an invocation of a name, and this is where the name is given a
 command.
 
-This module is apart from `Editor/Evil.lean` because it names the registry,
-which is the config session's: `Editor.lean` imports the commands, the
+This module is apart from `Editor/Evil.lean` because it is what a host is
+handed, not what config calls: `Editor.lean` imports the commands, the
 motions (`Editor/Evil/Motions.lean`) and the text objects
 (`Editor/Evil/Objects.lean`), so that config can call them, and not this, which is the one module of evil's it leaves out.
 
@@ -68,41 +69,48 @@ Pinned by `ModelTest.evilMotionChecks`, `ModelTest.evilStateChecks` and
 
 namespace Editor.Evil
 
-/-- Evil's commands, as a host registers them for the owner `compiled`. -/
-def commands : Array Config.Registration :=
-  #[{ name := Vim.moveCommand, action := .call (move motions) },
-    { name := "normal", action := .call enter }, { name := "visual", action := .call enter },
-    { name := "visual-line", action := .call enter }, { name := "insert", action := .call insert },
-    { name := "append", action := .call append },
-    { name := "insert-line-start", action := .call insertLineStart },
-    { name := "append-line-end", action := .call appendLineEnd },
-    { name := Vim.selfInsertCommand, action := .call selfInsert },
-    { name := Vim.operateCommand, action := .call (operate operators motions objects) },
-    { name := Vim.selectObjectCommand, action := .call (selectObject objects) },
-    { name := "delete-char", action := .call deleteChar },
-    { name := "put-after", action := .call putAfter },
-    { name := "put-before", action := .call putBefore },
-    { name := "open-below", action := .call openBelow },
-    { name := "open-above", action := .call openAbove }, { name := "undo", action := .call undo },
-    { name := "redo", action := .call redo },
-    { name := Vim.repeatCommand, action := .call «repeat» },
-    { name := "scroll-down", action := .call (scroll .half true) },
-    { name := "scroll-up", action := .call (scroll .half false) },
-    { name := "scroll-page-down", action := .call (scroll .page true) },
-    { name := "scroll-page-up", action := .call (scroll .page false) },
-    { name := "scroll-line-to-top", action := .call (scrollLineTo .top) },
-    { name := "scroll-line-to-center", action := .call (scrollLineTo .middle) },
-    { name := "scroll-line-to-bottom", action := .call (scrollLineTo .bottom) },
-    { name := "insert-delete-backward", action := .call deleteBackward },
-    { name := "insert-delete-word-backward", action := .call deleteWordBackward },
-    { name := "insert-newline", action := .call newline },
-    { name := "insert-tab", action := .call insertTab },
-    { name := "insert-left", action := .call (insertMove motions left.name) },
-    { name := "insert-right", action := .call (insertMove motions right.name) },
-    { name := "insert-up", action := .call (insertMove motions up.name) },
-    { name := "insert-down", action := .call (insertMove motions down.name) },
-    { name := cutName, action := .call cut }, { name := copyName, action := .call copy },
-    { name := pasteName, action := .call paste },
-    { name := selectAllName, action := .call selectAll }]
+/-- The package `evil`: evil's commands, under the names the Vim scheme's
+default tables give its keys. -/
+def package : Package :=
+  { name := "evil"
+    setup := do
+      commandWith Vim.moveCommand (move motions)
+      commandWith "normal" enter
+      commandWith "visual" enter
+      commandWith "visual-line" enter
+      commandWith "insert" insert
+      commandWith "append" append
+      commandWith "insert-line-start" insertLineStart
+      commandWith "append-line-end" appendLineEnd
+      commandWith Vim.selfInsertCommand selfInsert
+      commandWith Vim.operateCommand (operate operators motions objects)
+      commandWith Vim.selectObjectCommand (selectObject objects)
+      commandWith "delete-char" deleteChar
+      commandWith "put-after" putAfter
+      commandWith "put-before" putBefore
+      commandWith "open-below" openBelow
+      commandWith "open-above" openAbove
+      commandWith "undo" undo
+      commandWith "redo" redo
+      commandWith Vim.repeatCommand «repeat»
+      commandWith "scroll-down" (scroll .half true)
+      commandWith "scroll-up" (scroll .half false)
+      commandWith "scroll-page-down" (scroll .page true)
+      commandWith "scroll-page-up" (scroll .page false)
+      commandWith "scroll-line-to-top" (scrollLineTo .top)
+      commandWith "scroll-line-to-center" (scrollLineTo .middle)
+      commandWith "scroll-line-to-bottom" (scrollLineTo .bottom)
+      commandWith "insert-delete-backward" deleteBackward
+      commandWith "insert-delete-word-backward" deleteWordBackward
+      commandWith "insert-newline" newline
+      commandWith "insert-tab" insertTab
+      commandWith "insert-left" (insertMove motions left.name)
+      commandWith "insert-right" (insertMove motions right.name)
+      commandWith "insert-up" (insertMove motions up.name)
+      commandWith "insert-down" (insertMove motions down.name)
+      commandWith cutName cut
+      commandWith copyName copy
+      commandWith pasteName paste
+      commandWith selectAllName selectAll }
 
 end Editor.Evil

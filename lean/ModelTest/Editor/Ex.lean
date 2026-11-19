@@ -9,6 +9,7 @@ import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Paths
 import Editor.Completion.Styles
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Display.Model
@@ -90,7 +91,7 @@ def exListed (pattern : String) (chosen : Option Nat := none)
 
 /-- What a step of the ex checks is handed. The commands are the ones
 compiled code registers for the ex line, the minibuffer and files
-(`Ex.commands`, `Minibuffer.commands`, `Files.commands`), each under the
+(`Ex.package.registered.commands`, `Minibuffer.package.registered.commands`, `Files.package.registered.commands`), each under the
 name it is registered under, and then the commands of the prompt checks:
 `greet`, which says what it was called with, `boom`, `other` and the test
 scheme's self-insert. The ex bindings a command is told of are `bindings`,
@@ -106,7 +107,9 @@ cancel commands, `C-e t` runs its command that moves to the next
 candidate, and `C-e o` runs `other`. -/
 def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
-    (Ex.commands ++ Minibuffer.commands ++ Files.commands).toList.filterMap fun registration =>
+    (Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
+          Files.package.registered.commands).toList.filterMap
+      fun registration =>
       match registration.action with
       | .call run =>
         some
@@ -137,10 +140,10 @@ def echoesSince (before after : TestDriver) : Array String :=
   (after.model.display.scenes.map (·.echo)).extract before.model.display.scenes.size
 
 /-- A driver of the ex checks told of the ex names that ship
-(`Ex.bindings`), with the file `note.txt` open in view 0 by the ex line
+(`Ex.package.registered.ex`), with the file `note.txt` open in view 0 by the ex line
 `e` and its path, its load finished. The load is job 1. -/
 def exNoteOpen : Option TestDriver :=
-  (exDriver Ex.bindings).map fun driver =>
+  (exDriver Ex.package.registered.ex).map fun driver =>
     ((fedTo driver (exLine s!"e {inFiles "note.txt"}")).1.finish 1).1
 
 /-- The checks of the ex command line (`Editor/Ex.lean`,
@@ -302,7 +305,7 @@ def exChecks : List Check :=
         "the ex name e with a path: once the load is finished the view the line was asked from shows a buffer with the file's text, holding the file's path; before that it shows the scratch buffer"
       run :=
         pure <|
-          match exDriver Ex.bindings with
+          match exDriver Ex.package.registered.ex with
           | none => false
           | some driver =>
             let path := inFiles "note.txt"
@@ -316,7 +319,7 @@ def exChecks : List Check :=
         "the ex name e with no argument asks for a path, with the open command's prompt, and starts no load"
       run :=
         pure <|
-          match exDriver Ex.bindings with
+          match exDriver Ex.package.registered.ex with
           | none => false
           | some driver =>
             let (asking, _) := fedTo driver (exLine "e")
@@ -358,7 +361,7 @@ def exChecks : List Check :=
         "the ex name w in the scratch buffer says the buffer has no file, by the save command's message, and starts nothing"
       run :=
         pure <|
-          match exDriver Ex.bindings with
+          match exDriver Ex.package.registered.ex with
           | none => false
           | some driver =>
             let (refused, _) := fedTo driver (exLine "w")
@@ -368,7 +371,7 @@ def exChecks : List Check :=
         "the ex name q in an editor with nothing modified stops the driver; and so does q after text was typed in the scratch buffer alone, which holds no file"
       run :=
         pure <|
-          match exDriver Ex.bindings with
+          match exDriver Ex.package.registered.ex with
           | none => false
           | some driver =>
             let (fresh, _) := fedTo driver (exLine "q")
@@ -406,7 +409,7 @@ def exChecks : List Check :=
     { name := "the ex name q with an argument says it takes none and does not stop the driver"
       run :=
         pure <|
-          match exDriver Ex.bindings with
+          match exDriver Ex.package.registered.ex with
           | none => false
           | some driver =>
             let (refused, _) := fedTo driver (exLine "q now")
@@ -478,7 +481,7 @@ def exChecks : List Check :=
         "the ex name wq in the scratch buffer says the buffer has no file, by the save command's message, starts nothing and does not ask to quit"
       run :=
         pure <|
-          match exDriver Ex.bindings with
+          match exDriver Ex.package.registered.ex with
           | none => false
           | some driver =>
             let (refused, _) := fedTo driver ([.commit "typed"] ++ exLine "wq")
@@ -544,7 +547,7 @@ def exChecks : List Check :=
         "the ex name reload asks for the config to be reloaded: the driver counts one reload, and two once the line is typed twice; with an argument it says it takes none and asks for none"
       run :=
         pure <|
-          match exDriver Ex.bindings with
+          match exDriver Ex.package.registered.ex with
           | none => false
           | some driver =>
             let (once, _) := fedTo driver (exLine "reload")
@@ -612,12 +615,12 @@ def exChecks : List Check :=
         "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread, reload, compile, compile-command, recompile, next-error, previous-error, vc-stage-hunk, vc-unstage-hunk, vc-worktrees, vc-commit-accept, vc-review, vc-review-since and vc-blame, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, asks the file source"
       run :=
         pure <|
-          match exDriver Ex.bindings with
+          match exDriver Ex.package.registered.ex with
           | none => false
           | some driver =>
             let (typed, _) := fedTo driver (presses "C-e e e")
             let (opening, _) := fedTo typed (presses "C-e t C-e y")
-            candidatesOf typed == some (exListed "e" none Ex.bindings) &&
+            candidatesOf typed == some (exListed "e" none Ex.package.registered.ex) &&
               (candidatesOf typed).map (·.listed.map (·.text)) ==
                 some
                   #["e", "e!", "autoread", "noautoread", "reload", "compile", "compile-command",

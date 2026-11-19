@@ -16,6 +16,7 @@ import Editor.Config.Diagnostic
 import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Session
 import Editor.DisplayRules
@@ -134,10 +135,10 @@ def withLanguageHost (context : Context) (more : String) (opens : List (String Ã
     let stage â†
       Stage.overFiles context (Config.Directory.source directory)
           { commands :=
-              Files.commands ++ Minibuffer.commands ++
+              Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
                 (opens.map fun (name, path) => opening name path).toArray
-            jobs := Files.jobs
-            modes := Minibuffer.modes ++ Language.modes
+            jobs := Files.package.registered.jobs
+            modes := Minibuffer.package.registered.modes ++ Language.modes
             languages := Language.shipped }
     onStage
         { stage with

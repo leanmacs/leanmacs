@@ -2,6 +2,7 @@ import ConfigTest.Check
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Lines
 import Editor.Completion
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Event
 import Editor.Event.Queue
@@ -144,7 +145,7 @@ def evilChecks (context : Context) : List Check :=
                 lines.contains "run delete-word: ok" &&
                 lines.contains "run again: ok" &&
                 lines.contains "run back: ok")
-          { commands := Evil.commands } },
+          { commands := Evil.package.registered.commands } },
     { name :=
         "the repeat command replays a change with the command the registry holds for its name: with config's operate command registered over the operators that ship and one of config's own, in place of the compiled one, a change made with config's operator is replayed with it, and deletes the next word"
       run :=
@@ -162,6 +163,6 @@ def evilChecks (context : Context) : List Check :=
                 again == ("".quote, #[viewLine "three" 0]) &&
                 lines.contains "run erase-word: ok" &&
                 lines.contains "run again: ok")
-          { commands := Evil.commands } }]
+          { commands := Evil.package.registered.commands } }]
 
 end ConfigTest

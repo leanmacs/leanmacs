@@ -10,6 +10,7 @@ import Editor.Completion.AtPoint
 import Editor.Completion.Displays
 import Editor.Completion.Styles
 import Editor.Config.Elaborate
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Session
 import Editor.Event
@@ -585,9 +586,9 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             jobs := requests + 2, environment := requests + 3, posts := requests + 4,
             pauseEvents := requests + 5,
             commands :=
-              (Minibuffer.commands.push (askingMany count)).push
+              (Minibuffer.package.registered.commands.push (askingMany count)).push
                 { name := "noop", action := .plain (pure ()) }
-            modes := Minibuffer.modes, inlineMatches := inline }
+            modes := Minibuffer.package.registered.modes, inlineMatches := inline }
     try
       let ask : IO Unit := do
         host.send (.run "ask-many")
@@ -722,10 +723,12 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             wakeups := requests + 1, jobs := requests + 2, environment := requests + 3,
             posts := requests + 4, pauseEvents := requests + 5,
             commands :=
-              (Files.commands ++ Minibuffer.commands).push
+              (Files.package.registered.commands ++ Minibuffer.package.registered.commands).push
                 { name := "noop", action := .plain (pure ()) }
-            compiledJobs := Files.jobs, sources := Files.sources
-            styleDefaults := Files.styleDefaults, modes := Minibuffer.modes
+            compiledJobs := Files.package.registered.jobs,
+            sources := Files.package.registered.sources
+            styleDefaults := Files.package.registered.styleDefaults,
+            modes := Minibuffer.package.registered.modes
             workingDirectory := "/big" }
     try
       let ask : IO Unit := do
@@ -870,13 +873,15 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
           source := { chunks := pure #[] }, emit, services, published, held, requests := 1
           wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
           commands :=
-            Files.commands ++ Minibuffer.commands ++ Workspace.commands ++
+            Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
+              Workspace.package.registered.commands ++
               #[{ name := "noop", action := .plain (pure ()) },
                 { name := "ask-plain"
                   action := .plain (discard <| Editor.prompt "Plain: " { command := "noop" } "") }]
-          compiledJobs := Files.jobs ++ Workspace.jobs
-          sources := Files.sources ++ Workspace.sources, styleDefaults := Files.styleDefaults
-          modes := Minibuffer.modes, workingDirectory := repository }
+          compiledJobs := Files.package.registered.jobs ++ Workspace.package.registered.jobs
+          sources := Files.package.registered.sources ++ Workspace.package.registered.sources,
+          styleDefaults := Files.package.registered.styleDefaults
+          modes := Minibuffer.package.registered.modes, workingDirectory := repository }
   try
     let joined (what : String) : IO Unit := do
       unless (← host.join patience) == .settled do

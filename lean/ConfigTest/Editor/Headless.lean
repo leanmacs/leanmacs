@@ -24,6 +24,7 @@ import Editor.Config.Diagnostic
 import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Config.Session
@@ -1762,10 +1763,12 @@ def ranScript (context : Context) (directives : List Headless.Directive) :
   IO.FS.withTempDir fun directory => do
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
-          { commands := Ex.commands ++ Minibuffer.commands ++ Files.commands
-            jobs := Files.jobs
-            modes := Minibuffer.modes
-            ex := Ex.bindings }
+          { commands :=
+              Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
+                Files.package.registered.commands
+            jobs := Files.package.registered.jobs
+            modes := Minibuffer.package.registered.modes
+            ex := Ex.package.registered.ex }
     let failure ← Headless.run stage.collaborators (scriptOf directives) patience
     return (failure, ← stage.output.get)
 
@@ -1840,7 +1843,7 @@ def exScriptChecks (context : Context) : List Check :=
           let compiled : Compiled :=
             { exCompiled with
               commands := exCompiled.commands ++ #[handing Ex.quitName, handing "other"]
-              jobs := Files.jobs }
+              jobs := Files.package.registered.jobs }
           let started := s!"job 1 {Files.loadJob}: started"
           let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
             let stage ← Stage.new context context.elaborator { chunks := pure #[] } compiled
@@ -2087,7 +2090,8 @@ def shippedChecks (_ : Unit) : List Check :=
             (← Snapshots.new) (← Job.HeldSnapshots.new)
         let registry := Headless.compiled shipped
         let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
-        return !WindowCommands.commands.isEmpty && WindowCommands.commands.all (compiled ·.name) &&
+        return !WindowCommands.package.registered.commands.isEmpty &&
+            WindowCommands.package.registered.commands.all (compiled ·.name) &&
             Vim.Default.windowKeys.all (compiled ·.2) },
     { name :=
         "the executable's hosts start with every tab command registered for the owner compiled, every command the Vim scheme's tab table names among them"
@@ -2099,7 +2103,8 @@ def shippedChecks (_ : Unit) : List Check :=
             (← Snapshots.new) (← Job.HeldSnapshots.new)
         let registry := Headless.compiled shipped
         let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
-        return !TabCommands.commands.isEmpty && TabCommands.commands.all (compiled ·.name) &&
+        return !TabCommands.package.registered.commands.isEmpty &&
+            TabCommands.package.registered.commands.all (compiled ·.name) &&
             Vim.Default.tabKeys.all (compiled ·.2) },
     { name :=
         "the executable's hosts start with the completion sources that ship registered for the owner compiled, so config can ask for each by name: the ex line's history and its names, the buffers, the tabs, the themes and the commands; and with the command prompt, execute-command, registered for that owner"

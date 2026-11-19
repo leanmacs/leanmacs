@@ -7,6 +7,7 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Candidate
 import Editor.Completion.Styles
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.DisplayRules
@@ -55,14 +56,15 @@ def saysOther : Dispatched := fun _ => do
 
 /-- What a step of the theme command's checks is handed: the commands
 compiled code registers for loading a theme and for the minibuffer
-(`Themes.commands`, `Minibuffer.commands`), and `other`, which says
+(`Themes.package.registered.commands`, `Minibuffer.package.registered.commands`), and `other`, which says
 `other`; told that the themes `default` and `second` are registered. `C-t
 t` runs the theme command with nothing, `C-t s` with the name `second`,
 `C-t n` with the name `nope`, `C-e y` runs the minibuffer's accept and `C-e
 o` runs `other`. -/
 def themeKeys : Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
-    (Themes.commands ++ Minibuffer.commands).toList.filterMap fun registration =>
+    (Themes.package.registered.commands ++ Minibuffer.package.registered.commands).toList.filterMap
+      fun registration =>
       match registration.action with
       | .call run =>
         some

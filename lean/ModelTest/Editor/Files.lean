@@ -10,6 +10,7 @@ import Editor.Completion.Paths
 import Editor.Completion.Style
 import Editor.Completion.Styles
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.DisplayRules
@@ -1184,10 +1185,10 @@ def fileCommandChecks : List Check :=
             -- found by its name.
             let saveId := ((saving.pending.find? (·.name == Files.saveJob)).map (·.id)).getD 0
             let (saved, _) := saving.finish saveId
-            Files.commands.map (·.name) ==
+            Files.package.registered.commands.map (·.name) ==
                 #[Files.openName, Files.saveName, Files.editName, Files.reloadName,
                   Files.autoReloadName] &&
-              Files.jobs.map (·.name) ==
+              Files.package.registered.jobs.map (·.name) ==
                 #[Files.loadJob, Files.saveJob, Files.reloadJob, Files.checkJob, Files.followJob,
                   Completion.Paths.job] &&
               (started steps).map (·.name) == #[Completion.Paths.job] &&
@@ -1406,7 +1407,7 @@ is matched with the path style; and a prompt over more than `inline`
 candidates is matched by a job. -/
 def fileNameKeys (inline : Nat := Loop.inlineMatches) : Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
-    (Files.commands ++ Minibuffer.commands).toList.filterMap
+    (Files.package.registered.commands ++ Minibuffer.package.registered.commands).toList.filterMap
       fun (registration : Config.Registration) =>
       match registration.action with
       | .call run =>
@@ -1445,7 +1446,7 @@ def fileNameDriver (home : Option System.FilePath := none) (files : FileModel :=
     return { (← EditorState.initial ⟨640, 480⟩) with
         workingDirectory := directory, home }
   (Loop.Driver.over (fileNameKeys inline)
-        (fun name => (Files.jobs.find? (·.name == name)).map (·.work)) start
+        (fun name => (Files.package.registered.jobs.find? (·.name == name)).map (·.work)) start
         editorModel).toOption.map
     fun driver => { driver with jobs := { driver.jobs with files } }
 

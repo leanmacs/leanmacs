@@ -1,70 +1,69 @@
-import Editor.Config.Registry
+import Editor.Package
 import Editor.WindowCommands
 
 /-!
-# The window commands, as compiled code registers them
+# The `window-commands` package: the window commands
 
-What a host is handed so that the frame's windows can be split, closed,
-focused and arranged (`Editor/WindowCommands.lean`): the registrations of
-the window commands, each a command of its call (`.call`), so it acts on
-the call's window and reads the count the call carries. A host registers
-them for the owner `compiled` when its loop starts, before any config
-(`Editor/Config/Registry.lean`, "Compiled commands"), so they hold when
-config fails to load, and config can call them and bind keys to them.
-`Headless.shippedOver` registers them for both hosts.
+What a host registers so that the frame's windows can be split, closed,
+focused and arranged (`Editor/WindowCommands.lean`): the package
+`window-commands` (`WindowCommands.package`, `Editor/Package.lean`), whose
+`setup` registers the window commands, each a command of its call
+(`commandWith`), so it acts on the call's window and reads the count the
+call carries. A host registers it for the owner `window-commands` when its
+loop starts, before any config (`Editor/Config/Packages.lean`), so they
+hold when config fails to load, and config can call them and bind keys to
+them. Both of the executable's hosts are handed it
+(`Editor/PackageSet.lean`).
 
-- **`WindowCommands.commands`**: every window command, under its name. No
+- **The commands**: every window command, under its name. No
   binding comes with them here: the Vim scheme binds them under `C-w`
   (`Vim.Default.windowKeys`), and a config that wants them in every state
   binds that table with `bindKey`.
 
-This module is apart from `Editor/WindowCommands.lean` because it names the
-registry, which is the config session's.
+This module is apart from `Editor/WindowCommands.lean` because it is what a
+host is handed, not what config calls.
 
 Pinned by `ModelTest.windowCommandChecks`, on the models.
 -/
 
 namespace Editor.WindowCommands
 
-/-- The window commands, as a host registers them for the owner
-`compiled`. -/
-def commands : Array Config.Registration :=
-  #[{ name := splitName, action := .call split },
-    { name := splitVerticallyName, action := .call splitVertically },
-    { name := newName, action := .call new }, { name := closeName, action := .call close },
-    { name := quitName, action := .call quit }, { name := onlyName, action := .call only },
-    { name := leftName, action := .call (focusToward .left) },
-    { name := downName, action := .call (focusToward .bottom) },
-    { name := upName, action := .call (focusToward .top) },
-    { name := rightName, action := .call (focusToward .right) },
-    { name := nextName, action := .call (focusCycled true) },
-    { name := previousName, action := .call (focusCycled false) },
-    { name := topName, action := .call (focusEnd false) },
-    { name := bottomName, action := .call (focusEnd true) },
-    { name := lastName, action := .call focusLast },
-    { name := exchangeName, action := .call (arranging exchange) },
-    { name := rotateName, action := .call (arranging fun _ => .rotate true) },
-    { name := rotateBackName, action := .call (arranging fun _ => .rotate false) },
-    { name := balanceName, action := .call (arranging fun _ => .balance) },
-    { name := tallerName,
-      action := .call (arranging fun count => .resize .rows true (steps count)) },
-    { name := shorterName,
-      action := .call (arranging fun count => .resize .rows false (steps count)) },
-    { name := widerName,
-      action := .call (arranging fun count => .resize .columns true (steps count)) },
-    { name := narrowerName,
-      action := .call (arranging fun count => .resize .columns false (steps count)) },
-    { name := zoomName, action := .call (arranging fun _ => .zoom) },
-    { name := promoteName, action := .call (arranging fun _ => .promote) },
-    { name := demoteName, action := .call (arranging fun _ => .demote) },
-    { name := mainMoreName,
-      action := .call (arranging fun count => .mainCount true (steps count)) },
-    { name := mainFewerName,
-      action := .call (arranging fun count => .mainCount false (steps count)) },
-    { name := edgeLeftName, action := .call (arranging fun _ => .edge .left) },
-    { name := edgeBottomName, action := .call (arranging fun _ => .edge .bottom) },
-    { name := edgeTopName, action := .call (arranging fun _ => .edge .top) },
-    { name := edgeRightName, action := .call (arranging fun _ => .edge .right) },
-    { name := floatName, action := .call (arranging fun _ => .float) }]
+/-- The package `window-commands`: every window command, under its name. -/
+def package : Package :=
+  { name := "window-commands"
+    setup := do
+      commandWith splitName split
+      commandWith splitVerticallyName splitVertically
+      commandWith newName new
+      commandWith closeName close
+      commandWith quitName quit
+      commandWith onlyName only
+      commandWith leftName (focusToward .left)
+      commandWith downName (focusToward .bottom)
+      commandWith upName (focusToward .top)
+      commandWith rightName (focusToward .right)
+      commandWith nextName (focusCycled true)
+      commandWith previousName (focusCycled false)
+      commandWith topName (focusEnd false)
+      commandWith bottomName (focusEnd true)
+      commandWith lastName focusLast
+      commandWith exchangeName (arranging exchange)
+      commandWith rotateName (arranging fun _ => .rotate true)
+      commandWith rotateBackName (arranging fun _ => .rotate false)
+      commandWith balanceName (arranging fun _ => .balance)
+      commandWith tallerName (arranging fun count => .resize .rows true (steps count))
+      commandWith shorterName (arranging fun count => .resize .rows false (steps count))
+      commandWith widerName (arranging fun count => .resize .columns true (steps count))
+      commandWith narrowerName (arranging fun count => .resize .columns false (steps count))
+      commandWith zoomName (arranging fun _ => .zoom)
+      commandWith promoteName (arranging fun _ => .promote)
+      commandWith demoteName (arranging fun _ => .demote)
+      commandWith mainMoreName (arranging fun count => .mainCount true (steps count))
+      commandWith mainFewerName (arranging fun count => .mainCount false (steps count))
+      commandWith edgeLeftName (arranging fun _ => .edge .left)
+      commandWith edgeBottomName (arranging fun _ => .edge .bottom)
+      commandWith edgeTopName (arranging fun _ => .edge .top)
+      commandWith edgeRightName (arranging fun _ => .edge .right)
+      commandWith floatName (arranging fun _ => .float) }
 
 end Editor.WindowCommands

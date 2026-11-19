@@ -10,6 +10,7 @@ import Editor.Completion.AtPoint
 import Editor.Completion.Later
 import Editor.Completion.Paths
 import Editor.Completion.Styles
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Display.Model
@@ -210,7 +211,7 @@ def filesDriver (registered : String → Option (List Argument → Work) := file
     fun driver => { driver with jobs := { files } }
 
 /-- A driver whose commands and jobs are the ones compiled code registers
-(`Files.commands`, `Files.jobs`, and `Minibuffer.commands`), each under the
+(`Files.package.registered.commands`, `Files.package.registered.jobs`, and `Minibuffer.package.registered.commands`), each under the
 name it is registered under, over the files of the file command checks:
 `C-o n` is bound to the open command with the path of `note.txt`, `C-o o`
 to the open command with no argument, `C-o w` to the save command, and
@@ -220,7 +221,9 @@ def compiledDriver : Option TestDriver :=
     dispatchKeys
       [("C-o n", opens (inFiles "note.txt")), ("C-o o", invoke Files.openName),
         ("C-o w", invoke Files.saveName), ("C-o y", invoke Minibuffer.acceptName)]
-      ((Files.commands ++ Minibuffer.commands).toList.filterMap fun registration =>
+      ((Files.package.registered.commands ++
+            Minibuffer.package.registered.commands).toList.filterMap
+        fun registration =>
         match registration.action with
         | .call run =>
           some
@@ -228,7 +231,8 @@ def compiledDriver : Option TestDriver :=
               run call
               return none)
         | _ => none)
-  (Loop.Driver.over keys (fun name => (Files.jobs.find? (·.name == name)).map (·.work))
+  (Loop.Driver.over keys
+        (fun name => (Files.package.registered.jobs.find? (·.name == name)).map (·.work))
         (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := { files := commandFiles } }
 
@@ -293,7 +297,9 @@ line, each under its name, and `undo` and `redo`, which move one step of the
 history of the buffer of the window they are called with. -/
 def reloadCommands : List (String × Dispatched) :=
   let compiled : List (String × Dispatched) :=
-    (Ex.commands ++ Minibuffer.commands ++ Files.commands ++ Buffers.commands).toList.filterMap
+    (Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
+          Files.package.registered.commands ++
+          Buffers.package.registered.commands).toList.filterMap
       fun (registration : Config.Registration) =>
       match registration.action with
       | .call run =>
@@ -314,7 +320,7 @@ def reloadCommands : List (String × Dispatched) :=
         return none)]
 
 /-- A driver of the reload checks: the commands of `reloadCommands`, every job
-compiled code registers for files (`Files.jobs`), the ex names that ship, and
+compiled code registers for files (`Files.package.registered.jobs`), the ex names that ship, and
 the files of the file command checks. `C-o n` opens `note.txt`, `C-o r` runs
 the reload command, `C-o R` the forced reload, `C-o u` undoes and `C-o U`
 redoes; `C-e e` opens the ex line and `C-e y` accepts it. -/
@@ -329,9 +335,10 @@ def reloadDriver : Option TestDriver :=
           ("C-e y", invoke Minibuffer.acceptName)]
         reloadCommands with
       registered :=
-        { ex := fun name => Ex.bindings.findRev? (·.name == name)
-          exNames := exNamesOf Ex.bindings } }
-  (Loop.Driver.over keys (fun name => (Files.jobs.find? (·.name == name)).map (·.work))
+        { ex := fun name => Ex.package.registered.ex.findRev? (·.name == name)
+          exNames := exNamesOf Ex.package.registered.ex } }
+  (Loop.Driver.over keys
+        (fun name => (Files.package.registered.jobs.find? (·.name == name)).map (·.work))
         (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := { files := commandFiles } }
 

@@ -13,6 +13,7 @@ import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Displays
 import Editor.Completion.Styles
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Display
@@ -63,14 +64,17 @@ open Editor
 /-- The jobs of the project mode checks: the file commands', the workspace
 finder's and the compile mode's, as a host registers them. -/
 def projectJobs : Array Config.JobRegistration :=
-  Files.jobs ++ Workspace.jobs ++ Compile.jobs
+  Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
+    Compile.package.registered.jobs
 
 /-- The keys of the project mode checks: none bound; the file commands',
 the workspace's and the compile mode's commands by name; their jobs
 registered; and the loop told the shipped contributions. -/
 def projectKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ((Files.commands ++ Workspace.commands ++ Compile.commands).find? (·.name == name)).bind
+      ((Files.package.registered.commands ++ Workspace.package.registered.commands ++
+                Compile.package.registered.commands).find?
+            (·.name == name)).bind
         fun registration =>
         match registration.action with
         | .call run =>

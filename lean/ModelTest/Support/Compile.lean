@@ -8,6 +8,7 @@ import Editor.Compile.Contribution
 import Editor.Compile.Errors
 import Editor.Compile.Listing
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.DisplayRules
@@ -130,7 +131,7 @@ def compileCommands : List (String × Dispatched) :=
     Compile.setRecord placeR
         { record with locations := record.locations.map ({ · with columnBase := 0 }) }
     return none
-  shellCommands ++ dispatchedOf Compile.commands ++
+  shellCommands ++ dispatchedOf Compile.package.registered.commands ++
     [("insert-x", insertX), ("to-start", toStart), ("focus-compilation", focusCompilation),
       ("squat-clone", squat), ("to-point", toPoint), ("zero-base", zeroBase)]
 
@@ -141,15 +142,15 @@ a compilation buffer as a host's registry puts them, then the keymap of
 `bindings`. -/
 def compileKeysOf (bindings : List (String × Invocation)) : Loop.Keys TestScheme.scheme :=
   let keys := dispatchKeys bindings compileCommands
-  let registry := ({} : Config.Registry).replaceModes .compiled Compile.modes
+  let registry := ({} : Config.Registry).replaceModes .compiled Compile.package.registered.modes
   { keys with
     maps := fun state view =>
       registry.activeMaps TestScheme.scheme state view ++ keys.maps state view
     registered :=
       { keys.registered with
-        entering := fun name => (Compile.modes.find? (·.name == name)).map ([·])
-        ex := fun name => Ex.bindings.find? (·.name == name)
-        exNames := Ex.bindings.map (·.name) } }
+        entering := fun name => (Compile.package.registered.modes.find? (·.name == name)).map ([·])
+        ex := fun name => Ex.package.registered.ex.find? (·.name == name)
+        exNames := Ex.package.registered.ex.map (·.name) } }
 
 /-- `driver` once every post is delivered and every pending job finished,
 oldest first, a post before a job's end; bounded. -/

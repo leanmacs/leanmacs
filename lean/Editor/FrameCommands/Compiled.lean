@@ -1,21 +1,22 @@
-import Editor.Config.Registry
 import Editor.Ex
 import Editor.FrameCommands
+import Editor.Package
 
 /-!
-# The frame's commands and their bindings, as compiled code registers them
+# The `frame-commands` package: the frame's commands and their bindings
 
-What a host is handed so that the window can be put in fullscreen,
+What a host registers so that the window can be put in fullscreen,
 minimised and quit from the keyboard (`Editor/FrameCommands.lean`): the
-registrations of the two frame commands, and the default key bindings. A host registers both
-for the owner `compiled` when its loop starts, before any config
-(`Editor/Config/Registry.lean`, "Compiled commands"), so they hold when
-config fails to load, and config's binding of the same keys is the one that
-runs while config binds them.
+package `frame-commands` (`FrameCommands.package`, `Editor/Package.lean`),
+whose `setup` registers the two frame commands and the default key
+bindings. A host registers it for the owner `frame-commands` when its loop
+starts, before any config (`Editor/Config/Packages.lean`), so they hold
+when config fails to load, and config's binding of the same keys is the one
+that runs while config binds them.
 
-- **`FrameCommands.commands`**: `toggle-fullscreen` and `minimise-window`,
+- **The commands**: `toggle-fullscreen` and `minimise-window`,
   in that order, each a plain command.
-- **`FrameCommands.bindings`**: `C-s-f` (Control and the system key,
+- **The bindings** (`bindKeys`, of the chords below): `C-s-f` (Control and the system key,
   Command on macOS, with `f`: the macOS shortcut for fullscreen) runs
   `toggle-fullscreen`, and `s-m` (Command-M) runs `minimise-window`. Both
   chords are the key equivalents of the Window menu's Enter Full Screen and
@@ -28,22 +29,16 @@ runs while config binds them.
   item AppKit runs before the key reaches the window: it reaches the loop
   as the system's quit, which runs the same command (`Editor/Loop.lean`,
   "Quit"). Where no menu takes the chord, as headless, the key runs it. The
-  command is the ex line's, so a host must be handed `Ex.commands` too for
-  the key to run anything.
+  command is the ex line's, so a host must be handed the `ex` package too
+  (`Editor/Ex/Compiled.lean`) for the key to run anything.
 
-This module is apart from `Editor/FrameCommands.lean` because it names the
-registry, which is the config session's.
+This module is apart from `Editor/FrameCommands.lean` because it is what a
+host is handed, not what config calls.
 
 Pinned by `ModelTest.frameCommandChecks`, on the models.
 -/
 
 namespace Editor.FrameCommands
-
-/-- The frame's commands, as a host registers them for the owner
-`compiled`. -/
-def commands : Array Config.Registration :=
-  #[{ name := toggleFullscreenName, action := .plain toggleFullscreen },
-    { name := minimiseName, action := .plain minimise }]
 
 /-- The chord `f` with Control and the system key held: `C-s-f`. -/
 def fullscreenChord : Key :=
@@ -57,10 +52,15 @@ def minimiseChord : Key :=
 def quitChord : Key :=
   Key.chord { logical := .character "q", modifiers := { superKey := true } }
 
-/-- The frame's default key bindings, as a host registers them for the
-owner `compiled`. -/
-def bindings : Array Config.KeyBinding :=
-  #[.ofKeys [fullscreenChord] toggleFullscreenName, .ofKeys [minimiseChord] minimiseName,
-    .ofKeys [quitChord] Ex.quitName]
+/-- The package `frame-commands`: the frame's commands and their default
+key bindings, `C-s-f`, `s-m` and `s-q`. -/
+def package : Package :=
+  { name := "frame-commands"
+    setup := do
+      command toggleFullscreenName toggleFullscreen
+      command minimiseName minimise
+      bindKeys [fullscreenChord] toggleFullscreenName
+      bindKeys [minimiseChord] minimiseName
+      bindKeys [quitChord] Ex.quitName }
 
 end Editor.FrameCommands

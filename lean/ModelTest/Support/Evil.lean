@@ -11,6 +11,7 @@ import Editor.Completion.AtPoint
 import Editor.Completion.Displays
 import Editor.Completion.Styles
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Display
@@ -110,8 +111,8 @@ abbrev EvilDriver :=
 
 /-- What a step of the evil checks is handed: no active keymaps, so that a
 key is looked up in the keymaps of its view's Vim state alone, and the
-commands compiled code registers for evil (`Evil.commands`) and for the
-minibuffer (`Minibuffer.commands`), as the executable registers both, so
+commands compiled code registers for evil (`Evil.package.registered.commands`) and for the
+minibuffer (`Minibuffer.package.registered.commands`), as the executable registers both, so
 that `/` and `?` ask and are answered, and those of `more`, each under the
 name it is registered under, then `commands`. A
 command of `more` runs in place of one of evil's of the same name, as the
@@ -121,7 +122,9 @@ def evilHanded (more : Array Config.Registration := #[])
   {
     command? := fun name =>
       match
-        (Evil.commands ++ Minibuffer.commands ++ AtPoint.commands ++ more).findRev?
+        (Evil.package.registered.commands ++ Minibuffer.package.registered.commands ++
+              AtPoint.package.registered.commands ++
+              more).findRev?
           (·.name == name) with
       | some { action := .call run, .. } =>
         some fun call => do

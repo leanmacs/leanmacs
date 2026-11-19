@@ -1,17 +1,18 @@
 import Editor.Buffers
-import Editor.Config.Registry
+import Editor.Package
 
 /-!
-# The buffer commands, as compiled code registers them
+# The `buffers` package: the buffer commands
 
-What a host is handed so that it has the buffer commands
-(`Editor/Buffers.lean`): their registrations. A host registers them for the
-owner `compiled` when its loop starts, before any config
-(`Editor/Config/Registry.lean`, "Compiled commands").
+What a host registers so that it has the buffer commands
+(`Editor/Buffers.lean`): the package `buffers` (`Buffers.package`,
+`Editor/Package.lean`), whose `setup` registers them and the buffer source.
+A host registers it for the owner `buffers` when its loop starts, before
+any config (`Editor/Config/Packages.lean`).
 
-- **`Buffers.commands`**: `switch-buffer`, `list-buffers` and
+- **The commands**: `switch-buffer`, `list-buffers` and
   `close-buffer`, each a command that is given what it was called with
-  (`Action.call`).
+  (`commandWith`).
   - `switch-buffer` shows the buffer its first argument, a string, names,
     exactly or by fuzzy match, in the window it was called with
     (`Buffers.switchCommand`). With no string it asks with a prompt whose
@@ -27,9 +28,12 @@ owner `compiled` when its loop starts, before any config
   - The ex names `b`, `ls` and `bd` are bound to these three
     (`Editor/Ex/Compiled.lean`).
 
-This module is apart from `Editor/Buffers.lean` because it names the
-registry, which is the config session's: `Editor.lean` imports the
-commands, so that config calls them, and not this.
+- **The source**: the buffer completion source, so config can ask for it
+  by name.
+
+This module is apart from `Editor/Buffers.lean` because it is what a host
+is handed, not what config calls: `Editor.lean` imports the commands, so
+that config calls them, and not this.
 
 Pinned by `ModelTest.bufferCommandChecks`, on the models, and by
 `ConfigTest.shippedChecks`, which reads what the hosts are handed.
@@ -37,16 +41,14 @@ Pinned by `ModelTest.bufferCommandChecks`, on the models, and by
 
 namespace Editor.Buffers
 
-/-- The buffer commands, as a host registers them for the owner
-`compiled`. -/
-def commands : Array Config.Registration :=
-  #[{ name := switchName, action := .call switchCommand },
-    { name := listName, action := .call listCommand },
-    { name := closeName, action := .call closeCommand }]
-
-/-- The buffer completion source, as a host registers it for the owner
-`compiled`, so config can ask for it by name. -/
-def sources : Array Completion.Source :=
-  #[source]
+/-- The package `buffers`: the buffer commands and the buffer completion
+source. -/
+def package : Package :=
+  { name := "buffers"
+    setup := do
+      commandWith switchName switchCommand
+      commandWith listName listCommand
+      commandWith closeName closeCommand
+      defineSource source }
 
 end Editor.Buffers

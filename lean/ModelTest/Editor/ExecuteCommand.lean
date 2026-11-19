@@ -5,6 +5,7 @@ import Editor.Command.Dispatch
 import Editor.Completion
 import Editor.Completion.Candidate
 import Editor.Completion.Style
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Event
 import Editor.ExecuteCommand
@@ -45,12 +46,13 @@ def saysMarked : Dispatched := fun _ => do
 
 /-- The commands of the command prompt's checks, by name, in the order they
 are registered: the commands compiled code registers for the command prompt,
-for loading a theme and for the minibuffer (`ExecuteCommand.commands`,
-`Themes.commands`, `Minibuffer.commands`), then `marked`, which says
+for loading a theme and for the minibuffer (`ExecuteCommand.package.registered.commands`,
+`Themes.package.registered.commands`, `Minibuffer.package.registered.commands`), then `marked`, which says
 `marked`. -/
 def executeCommands : List (String × Dispatched) :=
   let compiled : List (String × Dispatched) :=
-    (ExecuteCommand.commands ++ Themes.commands ++ Minibuffer.commands).toList.filterMap
+    (ExecuteCommand.package.registered.commands ++ Themes.package.registered.commands ++
+          Minibuffer.package.registered.commands).toList.filterMap
       fun registration =>
       match registration.action with
       | .call run =>

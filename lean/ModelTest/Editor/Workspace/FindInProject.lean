@@ -1,4 +1,5 @@
 import Editor.Completion.Later
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.InputScheme.Vim
 import Editor.InputScheme.Vim.Default
@@ -178,7 +179,7 @@ def escapeDriver (registry : Config.Registry) : Option TestDriver :=
 
 /-- The registry of compiled code's bindings, the escape's key among them. -/
 def shipped : Config.Registry :=
-  ({} : Config.Registry).replaceBindings .compiled Workspace.bindings
+  ({} : Config.Registry).replaceBindings .compiled Workspace.package.registered.bindings
 
 /-- A registry with no bindings. -/
 def bare : Config.Registry :=

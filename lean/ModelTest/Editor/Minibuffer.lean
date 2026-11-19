@@ -1,6 +1,7 @@
 import Editor.Command
 import Editor.Command.Model
 import Editor.Completion.Later
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Display.Model
 import Editor.Event
@@ -219,18 +220,19 @@ def promptModeChecks : List Check :=
         "the minibuffer's commands are registered under their nine names, each another, the one that asks for the input scheme under the name the Vim scheme yields and the one that takes a batch under the name a source's job posts; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
       run :=
         pure
-          (Minibuffer.commands.map (·.name) ==
+          (Minibuffer.package.registered.commands.map (·.name) ==
               #[Minibuffer.acceptName, Minibuffer.cancelName, Minibuffer.nextName,
                 Minibuffer.previousName, Minibuffer.insertName, Minibuffer.deleteBackwardName,
                 Minibuffer.deleteToStartName, Minibuffer.askName, Minibuffer.candidatesName] &&
-            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 9 &&
+            (Minibuffer.package.registered.commands.map (·.name)).toList.eraseDups.length == 9 &&
             Minibuffer.askName == Vim.askCommand &&
             Minibuffer.candidatesName == Completion.candidatesCommand &&
-            Minibuffer.modes.map (·.name) == #[Prompt.mode] &&
-            Minibuffer.modes.map (·.roles) ==
+            Minibuffer.package.registered.modes.map (·.name) == #[Prompt.mode] &&
+            Minibuffer.package.registered.modes.map (·.roles) ==
               #[[(Role.activate, Minibuffer.acceptName), (Role.quit, Minibuffer.cancelName),
                   (Role.nextItem, Minibuffer.nextName),
                   (Role.previousItem, Minibuffer.previousName)]] &&
-            Minibuffer.modes.all fun mode => mode.check TestScheme.scheme == []) }]
+            Minibuffer.package.registered.modes.all fun mode =>
+              mode.check TestScheme.scheme == []) }]
 
 end ModelTest

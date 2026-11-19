@@ -17,6 +17,7 @@ import Editor.Completion.Style
 import Editor.Completion.Styles
 import Editor.Completion.Words
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Diff.Script
@@ -6267,7 +6268,7 @@ def viewChecks : List Check :=
           let cells : Display.Cells := { advance := 8, lineHeight := 16 }
           let answer := "abcdefghijklm"
           let typed := " ".intercalate (answer.toList.map (·.toString))
-          let handed := evilHanded Minibuffer.commands [("ask", ask)]
+          let handed := evilHanded Minibuffer.package.registered.commands [("ask", ask)]
           let model : EditorModel := { editorModel with display := { cells } }
           match viewDriver (numbered 20) ⟨32, 64⟩ (handed := handed) (model := model) with
           | none => false

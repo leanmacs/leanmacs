@@ -1,40 +1,39 @@
-import Editor.Config.Registry
+import Editor.Package
 import Editor.Shell
 
 /-!
-# The shell's commands and its job, as compiled code registers them
+# The `shell` package: the shell's commands and its job
 
-What a host is handed so that `:!` runs (`Editor/Shell.lean`). A host
-registers both for the owner `compiled` when its loop starts, before any
-config (`Editor/Config/Registry.lean`, "Compiled commands"), beside the ex
-line's commands (`Editor/Ex/Compiled.lean`), which hand a `:!` line to
+What a host registers so that `:!` runs (`Editor/Shell.lean`): the package
+`shell` (`Shell.package`, `Editor/Package.lean`). A host registers it for
+the owner `shell` when its loop starts, before any config
+(`Editor/Config/Packages.lean`), beside the `ex` package
+(`Editor/Ex/Compiled.lean`), whose commands hand a `:!` line to
 `shell-command`.
 
-- **`Shell.commands`**: `shell-command`, which starts a run
+- **The commands**: `shell-command`, which starts a run
   (`Shell.command`); `shell-filter`, which starts a filter's
   (`Shell.filterCommand`); and `keyboard-quit`, which cancels the run in
   flight in the focused buffer's scope (`Shell.interruptCommand`).
-- **`Shell.jobs`**: `shell-run`, which runs the child and finishes with what
+- **The job**: `shell-run`, which runs the child and finishes with what
   came of it (`Shell.runWork`). A host that is not handed it runs no `:!`,
   and says so when one is asked for.
 
-This module is apart from `Editor/Shell.lean` because it names the registry,
-which is the config session's.
+This module is apart from `Editor/Shell.lean` because it is what a host is
+handed, not what config calls.
 
 Pinned by `ModelTest.shellChecks`, on the models.
 -/
 
 namespace Editor.Shell
 
-/-- The shell's commands, as a host registers them for the owner
-`compiled`. -/
-def commands : Array Config.Registration :=
-  #[{ name := commandName, action := .call command },
-    { name := filterName, action := .call filterCommand },
-    { name := interruptName, action := .call interruptCommand }]
-
-/-- The shell's job, as a host registers it for the owner `compiled`. -/
-def jobs : Array Config.JobRegistration :=
-  #[{ name := runJob, work := runWork }]
+/-- The package `shell`: the shell's commands and the job that runs `:!`. -/
+def package : Package :=
+  { name := "shell"
+    setup := do
+      commandWith commandName command
+      commandWith filterName filterCommand
+      commandWith interruptName interruptCommand
+      workJob runJob runWork }
 
 end Editor.Shell

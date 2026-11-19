@@ -4,6 +4,7 @@ import ConfigTest.Support.Keys
 import Editor.Completion
 import Editor.Config.Directory
 import Editor.Config.Elaborate
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Display.Real
 import Editor.Event
@@ -39,7 +40,8 @@ open Editor
 loads a theme and the themes that ship (`Editor/Themes/Compiled.lean`), and
 the minibuffer's commands and its mode, which its prompt is answered with. -/
 def themeCompiled : Compiled :=
-  { commands := Themes.commands ++ Minibuffer.commands, modes := Minibuffer.modes
+  { commands := Themes.package.registered.commands ++ Minibuffer.package.registered.commands,
+    modes := Minibuffer.package.registered.modes
     themes := Themes.shipped }
 
 /-- The face `default` of the theme `second` the theme checks' config

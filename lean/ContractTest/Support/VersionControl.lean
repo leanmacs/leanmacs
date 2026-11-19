@@ -1,4 +1,5 @@
 import ContractTest.Support.Projects
+import Editor.Config.Packages
 import Editor.VersionControl.Compiled
 
 /-!
@@ -16,7 +17,8 @@ open Editor
 /-- The jobs of the status buffer check: the file commands', the workspace
 finder's and the status buffer's, as a host registers them. -/
 def statusJobs : Array Config.JobRegistration :=
-  Files.jobs ++ Workspace.jobs ++ VersionControl.jobs
+  Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
+    VersionControl.package.registered.jobs
 
 /-- The keys of the status buffer check: none bound; the file commands',
 the workspace's and the version-control commands by name, `to-row`, which
@@ -39,7 +41,8 @@ def statusKeys : Loop.Keys TestScheme.scheme :=
       else
         if name == "set-text" then some setText
         else
-          ((Files.commands ++ Workspace.commands ++ VersionControl.commands).find?
+          ((Files.package.registered.commands ++ Workspace.package.registered.commands ++
+                    VersionControl.package.registered.commands).find?
                 (·.name == name)).bind
             fun registration =>
             match registration.action with
@@ -50,7 +53,8 @@ def statusKeys : Loop.Keys TestScheme.scheme :=
             | _ => none
     registered :=
       { jobs := fun name => statusJobs.any (·.name == name)
-        entering := fun name => (VersionControl.modes.find? (·.name == name)).map ([·]) } }
+        entering := fun name =>
+          (VersionControl.package.registered.modes.find? (·.name == name)).map ([·]) } }
 
 /-- The invocation that puts the window's cursor at the start of `row`. -/
 def toRow (row : Nat) : Invocation :=

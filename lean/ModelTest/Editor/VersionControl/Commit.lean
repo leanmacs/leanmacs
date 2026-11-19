@@ -1,3 +1,4 @@
+import Editor.Config.Packages
 import Editor.Event
 import Editor.InputScheme.Test
 import Editor.Job.Model
@@ -213,7 +214,7 @@ def commitBufferChecks : List Check :=
             VersionControl.commitMode.locals ==
               [("c", VersionControl.acceptName), ("k", VersionControl.abortName)] &&
             VersionControl.commitMode.problems == [] &&
-            VersionControl.modes.map (·.name) ==
+            VersionControl.package.registered.modes.map (·.name) ==
               #["vc-status", "vc-commit", "vc-worktrees", "vc-review", "vc-log", "vc-blame"] }]
 
 end ModelTest

@@ -1,6 +1,7 @@
 import Editor.Clipboard.Model
 import Editor.Command.Call
 import Editor.Command.Model
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Event
 import Editor.Evil
@@ -324,7 +325,8 @@ def evilRepeatChecks : List Check :=
               | .command command => if command.changes then some command.name else none
               | _ => none
           !changing.isEmpty &&
-            (Vim.operateCommand :: changing).all fun name => Evil.commands.any (·.name == name) },
+            (Vim.operateCommand :: changing).all fun name =>
+              Evil.package.registered.commands.any (·.name == name) },
     { name :=
         "a replayed change that names the clipboard register and began an insert session writes the clipboard as the replay's last request: run to its end it leaves the clipboard model holding the word it changed, and stopped by the interrupt before any one of its requests it is rolled back with the clipboard model holding what it held before"
       run :=

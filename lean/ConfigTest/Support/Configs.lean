@@ -7,6 +7,7 @@ import Editor.Command.Call
 import Editor.Completion
 import Editor.Config.Directory
 import Editor.Config.Elaborate
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Event
 import Editor.Event.Queue
@@ -56,7 +57,8 @@ def chunksOf (directory : System.FilePath) : IO (Array (String × String)) := do
 minibuffer's commands and its mode, as the executable is handed them
 (`Editor/Minibuffer/Compiled.lean`). -/
 def minibufferCompiled : Compiled :=
-  { commands := Minibuffer.commands, modes := Minibuffer.modes }
+  { commands := Minibuffer.package.registered.commands,
+    modes := Minibuffer.package.registered.modes }
 
 /-- Whether `message` is one line and names `path`. A message that will be
 printed as one diagnostic line must hold the path on its first line. -/
@@ -154,31 +156,32 @@ def nappingCompiled : Compiled :=
               discard <| (⟨0⟩ : ViewId).insertAtSelections "napped" }] }
 
 /-- What compiled code hands every host of the ex checks: the ex line's
-commands and the ex names that ship (`Ex.commands`, `Ex.bindings`,
+commands and the ex names that ship (`Ex.package.registered.commands`, `Ex.package.registered.ex`,
 `Editor/Ex/Compiled.lean`), the minibuffer's commands and its mode, the
 file commands, which two of the shipped names run, and `other`, written
 here, which says `other`, on `C-c o`. It is handed no job: no check here
 opens or saves a file. -/
 def exCompiled : Compiled :=
   { commands :=
-      Ex.commands ++ Minibuffer.commands ++ Files.commands ++
+      Ex.package.registered.commands ++ Minibuffer.package.registered.commands ++
+        Files.package.registered.commands ++
         #[{ name := "other", action := .plain (message "other") }]
-    modes := Minibuffer.modes
-    ex := Ex.bindings
+    modes := Minibuffer.package.registered.modes
+    ex := Ex.package.registered.ex
     bindings := #[bound "C-c o" "other"] }
 
 /-- A compiled command called `name`, written for the file checks, that runs
 the compiled open command with `path` as its argument: the driver's `run`
 hands a command no argument, so a check that opens a file hands its host a
 command of this kind for each path. It looks the open command up among the
-commands compiled code registers (`Files.commands`), so what runs is that
+commands compiled code registers (`Files.package.registered.commands`), so what runs is that
 registration. -/
 def opening (name : String) (path : System.FilePath) : Config.Registration :=
   { name
     action :=
       .call fun call => do
         let registered : Option Config.Action :=
-          (Files.commands.find? (·.name == Files.openName)).map (·.action)
+          (Files.package.registered.commands.find? (·.name == Files.openName)).map (·.action)
         match registered with
         | some (.call run) =>
           run { call with arguments := [.str path.toString] }
@@ -188,8 +191,8 @@ def opening (name : String) (path : System.FilePath) : Config.Registration :=
 /-- Runs `check` against a host over the library's file service
 (`Stage.overFiles`), with an empty config directory of its own, that is
 handed the file commands and their jobs as compiled code registers them
-(`Files.commands`, `Files.jobs`), the minibuffer's commands and its mode
-(`Minibuffer.commands`, `Minibuffer.modes`), as the executable is, and,
+(`Files.package.registered.commands`, `Files.package.registered.jobs`), the minibuffer's commands and its mode
+(`Minibuffer.package.registered.commands`, `Minibuffer.package.registered.modes`), as the executable is, and,
 for each name and path of `opens`, a command of that name that opens that
 path (`opening`). Stops the host: `false` if the check did not hold or the
 host did not stop. -/
@@ -199,11 +202,11 @@ def withFileHost (context : Context) (opens : List (String × System.FilePath))
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
           { commands :=
-              Files.commands ++ Minibuffer.commands ++
+              Files.package.registered.commands ++ Minibuffer.package.registered.commands ++
                 (opens.map fun (name, path) => opening name path).toArray ++
                 extra
-            jobs := Files.jobs
-            modes := Minibuffer.modes }
+            jobs := Files.package.registered.jobs
+            modes := Minibuffer.package.registered.modes }
     onStage stage fun host stage =>
         check
           { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,

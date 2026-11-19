@@ -5,6 +5,7 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Command.Model
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.Diff.Script
@@ -57,7 +58,8 @@ open Editor
 /-- The jobs of the gutter checks: the status buffer checks', and the
 version-control gutter's. -/
 def gutterJobs (name : String) : Option (List Argument → Work) :=
-  ((VersionControl.gutterJobs.find? (·.name == name)).map (·.work)) <|> statusJobs name
+  ((VersionControl.gutterPackage.registered.jobs.find? (·.name == name)).map (·.work)) <|>
+    statusJobs name
 
 /-- The keys of the gutter checks: the workspace driver checks', with
 `C-g x`, which makes the window's text `new\na\nB\nc\n`, `C-g z`, which
@@ -70,8 +72,8 @@ def gutterKeys : Loop.Keys TestScheme.scheme :=
     (workspaceBindings ++
       [("C-g x", invoke "gutter-edit"), ("C-g z", invoke "gutter-top"),
         ("C-g k", invoke Buffers.closeName), ("C-g h", invoke "gutter-stale-head")])
-    (workspaceCommands ++ dispatchedOf VersionControl.gutterCommands ++
-      dispatchedOf Buffers.commands ++
+    (workspaceCommands ++ dispatchedOf VersionControl.gutterPackage.registered.commands ++
+      dispatchedOf Buffers.package.registered.commands ++
       [("gutter-edit", fun call => do
           let text := call.target.buffer.text
           text.replaceRange 0 (← text.byteLength) "new\na\nB\nc\n"

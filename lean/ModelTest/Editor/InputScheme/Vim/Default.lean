@@ -1,5 +1,6 @@
 import Editor.AtPoint
 import Editor.AtPoint.Compiled
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Event
 import Editor.Evil.Compiled
@@ -255,7 +256,10 @@ def vimDefaultChecks : List Check :=
     { name :=
         "every command a key of insert state's table or of the minibuffer's state's table runs is registered under its name by evil's commands, the minibuffer's or completion at point's"
       run :=
-        let registered := (Evil.commands ++ Minibuffer.commands ++ AtPoint.commands).map (·.name)
+        let registered :=
+          (Evil.package.registered.commands ++ Minibuffer.package.registered.commands ++
+                AtPoint.package.registered.commands).map
+            (·.name)
         pure
           ((Vim.Default.insertCommands ++ Vim.Default.minibufferCommands).all fun
             | (_, .command command) => registered.contains command.name
@@ -517,7 +521,7 @@ def vimDefaultChecks : List Check :=
         "every row of the tab commands' table binds its keys in normal state to the command it names, and every command it names is a tab command that is registered"
       run :=
         pure <|
-          let registered := TabCommands.commands.map (·.name)
+          let registered := TabCommands.package.registered.commands.map (·.name)
           Vim.Default.tabKeys.length == 14 &&
             (Vim.Default.keymap Vim.Default.tabCommands).bindings.length ==
               Vim.Default.tabKeys.length &&
@@ -537,7 +541,7 @@ def vimDefaultChecks : List Check :=
         "every row of the window commands' table binds its keys in normal state to the command it names, and every command it names is a window command that is registered"
       run :=
         pure <|
-          let registered := WindowCommands.commands.map (·.name)
+          let registered := WindowCommands.package.registered.commands.map (·.name)
           !Vim.Default.windowKeys.isEmpty &&
             (Vim.Default.keymap Vim.Default.windowCommands).bindings.length ==
               Vim.Default.windowKeys.length &&

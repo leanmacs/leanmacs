@@ -12,6 +12,7 @@ import Editor.Completion.Fake
 import Editor.Completion.Later
 import Editor.Completion.Styles
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Stores
 import Editor.DisplayRules
@@ -209,8 +210,8 @@ as a host registers them, and as config's bindings two that ask and two
 that run the commands that move through the list by their names, from any
 view. -/
 def pickRegistry : Config.Registry :=
-  ((({} : Config.Registry).replace .compiled Minibuffer.commands).replaceModes .compiled
-        Minibuffer.modes).replaceBindings
+  ((({} : Config.Registry).replace .compiled Minibuffer.package.registered.commands).replaceModes
+        .compiled Minibuffer.package.registered.modes).replaceBindings
     .config
     ([("C-c a", "ask-pick"), ("C-c p", "ask-plain"), ("C-c 3", Minibuffer.nextName),
           ("C-c 4", Minibuffer.previousName)].toArray.map
