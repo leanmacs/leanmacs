@@ -317,6 +317,60 @@ budget for a typed key**: report it, do not only print it. It also names the inl
 [`docs/design/concurrency.md`](../design/concurrency.md), "Matching off the
 editor thread, measured". Run it on a quiet machine.
 
+## The workspace finder benchmark, on demand
+
+```sh
+mise run find-file-bench
+WORKSPACE_BENCH_REPO=/path/to/a/checkout mise run find-file-bench
+```
+
+This measures what a key costs in `find-file-in-workspace`'s prompt over a
+real repository, and the time from a key to the list it updates, in the
+executable as built, and asserts nothing, so it is not part of the gate;
+the gate builds the subcommand under every linter (`lean`) and never runs
+it. It needs fzf on the `PATH`, which `mise.toml` pins and the task's
+environment puts there.
+
+The repository is made by `tools/workspace-bench-repo.sh <dir> [count]` in
+a temporary directory that the task removes on exit: 100,000 files at
+`src/m<i / 100>/f<i>.rs`, each holding its own number, committed once on
+`main` by a fixed author at a fixed date, git reading neither the user's
+nor the system's config, so a run can be repeated on another machine.
+`WORKSPACE_BENCH_REPO` names a checkout to measure instead. The task runs
+`config-test bench-workspace-files <sysroot> <olean dir> <repository> 120`,
+with `LEAN_NUM_THREADS` and `LEAN_STACK_SIZE_KB` removed from the
+environment.
+
+It is one headless host of the test scheme over the library's real process
+and file services and its queue, its working directory the repository,
+registered with the file commands, the minibuffer's and the workspace
+commands, their jobs and sources. It opens `src/m0/f0.rs` and joins, which
+runs the git finder; runs `find-file-in-workspace` and joins, the first
+listing, and prints the prompt's status line, which names the workspace
+(`repo@main`, so git found it). A sample is one key of `m`, `1`, `2`, `f`,
+`3` and `4`, committed into the open prompt as typed text, and a `run
+noop` sent right after it; after the sixth key the prompt is cancelled and
+asked again, untimed. It takes 120 samples a row and prints the median,
+the 99th percentile and the maximum of each, in microseconds:
+
+| Row | What is timed |
+|---|---|
+| no candidates | A key in a prompt with no sources, on the same host: the floor. |
+| workspace finder, each key joined | From sending the key to the editor thread printing that it ran `noop`: the key's handling and its publish. Each key is joined, so the next finds no job in flight. |
+| key to the updated list | From sending the same key to the editor thread having run the post of the source's batch for its text (`job <id> workspace-files: ok`): the source's 50 ms pause, `git ls-files` and fzf on the pool, and the listing of the batch. |
+| workspace finder, keys 120 ms apart | The key alone, nothing joined: each arrives, after the pause, while the job of the text before it runs its lister or its filter, or while its batch is listed. |
+
+Then it runs the lister, `git ls-files -z --cached --others
+--exclude-standard`, and the filter, `fzf --read0 --print0 --filter m12`
+fed its output, each 20 times outside the editor, and prints their
+medians, so the listing's latency can be read against them. It says
+whether the two finder rows' keys are within bound: median at most twice
+the no-candidates median and 99th percentile under 1 ms. **A finder row
+out of bound fails project navigation phase 2's last criterion**: report
+it, do not only print it. The recorded runs are in
+[`docs/design/concurrency.md`](../design/concurrency.md), "A key in the
+workspace finder, measured". Run it on a quiet machine.
+
 ## The syntax round, measured on demand
 
 ```sh

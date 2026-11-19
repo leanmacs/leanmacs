@@ -11,8 +11,10 @@ Built in `lean/Editor/Workspace.lean` (the data and the table),
 `lean/Editor/Workspace/Finder.lean` (the finder),
 `lean/Editor/Workspace/Model.lean` and `lean/Editor/Workspace/Contract.lean`
 (its model and its contract), `lean/Editor/Workspace/Attach.lean` (a
-buffer's workspace and `workspace-current`) and
-`lean/Editor/Workspace/Compiled.lean` (their registrations).
+buffer's workspace and `workspace-current`),
+`lean/Editor/Workspace/Lister.lean` (which command lists a workspace's
+files), `lean/Editor/Workspace/FindFile.lean` (`find-file-in-workspace`)
+and `lean/Editor/Workspace/Compiled.lean` (their registrations).
 
 ## Three layers
 
@@ -114,6 +116,104 @@ None answering is no workspace: features fall back to the file's directory
 **An unborn branch is a limitation.** In a repository with no commit,
 `--abbrev-ref HEAD` fails, so git does not answer and the `.git` marker
 does: the workspace is rooted right but is its own project, with no branch.
+
+## Listing a workspace's files
+
+Which command lists a workspace's files is a choice made in Lean, with an
+order, as finding one is: `Workspace.lister settings workspace` answers it
+as a value (`Workspace.Lister`: its origin, its program and arguments,
+whether its records end in a NUL, and a prefix its records lose), and runs
+nothing. The first that answers wins:
+
+1. **Config, for the workspace's root**: `workspaceLister root program
+   arguments (nul := …)` in `setup`, matched against the workspace's root
+   with a trailing `/` aside.
+2. **Config, for its project**: `projectLister identity program arguments
+   (nul := …)`, which every workspace of the project shares. A root's
+   lister is used before its project's, as the more specific declaration.
+3. **Git**, for a workspace git found, run as the finder's git program in
+   git's environment (`GIT_DIR` and `GIT_WORK_TREE` removed):
+
+   ```
+   git ls-files -z --cached --others --exclude-standard
+   ```
+
+   Git applies its own ignore rules, `.gitignore` at every level,
+   `info/exclude` and the global excludes file, so the editor never
+   reimplements them; untracked files that are not ignored are listed.
+4. **The fallback**, for any other workspace and for none:
+
+   ```
+   find . -type f -not -path '*/.git/*' -print0
+   ```
+
+   Its records lose their leading `./`.
+
+Each runs at the workspace's root, and no shell sees its arguments.
+
+**Which adapter found a workspace is read from its branch**
+(`Workspace.foundByGit`): only the git adapter gives a branch
+(`Found.ofGit`), while config and the markers give none and a registered
+workspace is not local, so a local workspace with a branch is one git
+found. A workspace does not record its adapter: that would change the
+finder's contract and its model for one bit the branch already carries. An
+adapter that gives a branch without git (jj) changes the rule with it.
+
+Config's listers are refused for a root that is not absolute, for a program
+that names a relative path, which every process service refuses (a
+project's own script runs as `sh` with the script as its argument), and
+for one root or one project given a lister twice. An install replaces them
+(`Registry.workspaceListers`), and the loop is told them in the workspace
+settings (`Workspace.Settings.listers`, `RegistryRequest.workspaceSettings`).
+
+No lister is chosen for a location that is not on this machine: the finder
+refuses it first (below). The listers are Projectile's, as prior art:
+`projectile-git-command`, `git ls-files -zco --exclude-standard`, and
+`projectile-generic-command`, `find . -type f -print0`.
+
+## `find-file-in-workspace`
+
+A prompt over the files of a workspace, as Projectile's
+`projectile-find-file` and consult's `consult-fd` are: its source,
+`workspace-files`, in the category `workspace-file`, is a source a command
+filters ([concurrency.md](concurrency.md), "Sources a command filters"),
+whose lister is the workspace's (above) and whose filter is fzf, both run
+at the root, in the source's job. Its candidates are paths relative to the
+root.
+
+- **What is searched.** A workspace location handed as the command's
+  argument (`Location.arguments`) names the workspace the table has there;
+  otherwise it is the workspace of the focused buffer. A buffer with no
+  workspace is searched in its file's directory, or for a buffer with no
+  file in the editor's working directory, as `:!` runs there
+  (`BufferId.workingDirectory`), with the fallback lister. Arguments that
+  name no location, a count or a register a key hands, are ignored, and
+  what follows a location is left for the typed text a later phase hands.
+- **The label** names what is searched: `Find file in r@feature: `, the
+  workspace's `name@branch`, or the directory searched for a buffer with no
+  workspace.
+- **Refusals.** A workspace whose location cannot both read files and run
+  commands (`Location.can`) is refused, naming it:
+  `find-file-in-workspace: r@main is reachable through ssh host at
+  /srv/r, where files cannot be listed`. A location the table does not
+  know is refused with `no workspace is known at …`. Either way no prompt
+  opens and no process starts.
+- **The prompt's place is the root, and its context the lister**
+  (`prompt`'s `place` and `context`): the source's job reads both from its
+  query, so which lister answered is recorded with the prompt, and a test
+  or a message can name it (`Candidates.context`).
+- **Accepting** runs the command again, as its own continuation, with the
+  answer, `true` and the root: the answer, under the root, is opened by
+  running `open-file` by name (`runCommand`), so config's override of
+  `open-file` still applies, and the file opens in the window the prompt
+  was asked from.
+- **No key waits.** The command opens the prompt and returns; the lister
+  and fzf run only in the source's job, on the pool, and a new text
+  cancels it, which kills its child. Measured in
+  [concurrency.md](concurrency.md), "A key in the workspace finder,
+  measured".
+
+Keys come with project navigation's phase 5; until then it runs by name.
 
 ## A buffer's workspace
 
@@ -260,6 +360,10 @@ open when the table has it: found or registered this session.
   are listed in each worktree's own root and kept in that workspace's
   store (`compile-listings`), so each worktree offers its own tasks, while
   both share the project's compile history and config's commands for it.
+- `project-navigation` phase 2 (built): `find-file-in-workspace` lists
+  the focused buffer's workspace's files with the lister chosen for it,
+  config's, git's or the fallback, and refuses a location that cannot read
+  files (above).
 - Tasks `project-scoped-buffers-and-pickers` (scoping pickers by workspace)
   and `remote-workspace-execution` (running in a `reachable` location).
 

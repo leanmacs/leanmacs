@@ -3673,7 +3673,11 @@ asked and what accepting gives).
   `EditorState.directoryOf`, and the home directory, which a host sets
   when it knows it), filled where `prompt` and `completeAtPoint` make the
   query and carried to a later source's job by its order; a later field
-  is added to it, never a new type. A candidate is the text accepting it
+  is added to it, never a new type. A command may give `prompt` the place
+  itself, and a context (`Query.context`), plain arguments its sources
+  read: `find-file-in-workspace` gives the workspace's root and the
+  command that lists its files ([projects.md](projects.md),
+  "`find-file-in-workspace`"). A candidate is the text accepting it
   gives, and an optional label, annotation, kind and group; it may be
   partial (`Candidate.isPartial`: accepting it goes into it, as a
   directory is gone into, and keeps the prompt open), and hidden until
@@ -4103,7 +4107,13 @@ and orderless choose it.
   `completion-category-defaults`: the file prompt's category `file` gets
   `path` (`Files.styleDefaults`). It sits between config's two choices:
   `useStyleFor "file" "fuzzy"` overrides it, and `useStyle "orderless"`
-  does not reach it.
+  does not reach it. `find-file-in-workspace`'s category,
+  `workspace-file` ([projects.md](projects.md)), has no compiled default
+  of either kind: config picks its display with `useDisplayFor
+  "workspace-file" …` and its style with `useStyleFor "workspace-file" …`,
+  as for any category, and since its source is filtered (fzf has already
+  chosen and ordered the candidates) the style only marks the ranges it
+  matches.
   Styles are held by owner and replaced as a set, latest entry of a name
   wins; the choices are config's alone, set at each install
   (`Config.Registry.styleChoices`). `Registry.styleEntry` resolves them

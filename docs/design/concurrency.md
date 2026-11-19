@@ -1553,6 +1553,14 @@ accepting hands the continuation the chosen candidate.
   it matches, so highlighting looks the same as in other prompts. Nothing
   in it knows of files or workspaces; which commands list and filter is
   the source's choice, so project handling stays in Lean and config.
+  A source's job is handed only its query, so what the command that
+  opened the prompt chose reaches it there: `prompt` takes a place, which
+  replaces the asking view's, and a context, plain arguments
+  (`Query.context`), both kept with the prompt and carried in each order
+  the reconciler starts (`Completion.Order`, the context's length and its
+  arguments after the region). `find-file-in-workspace` hands its root as
+  the place and its lister as the context
+  ([projects.md](projects.md), "`find-file-in-workspace`").
   - **Prior art**: fzf.vim, and Emacs's consult (`consult-fd`,
     `consult-ripgrep`, affe), which hand both the listing and the filtering
     to external processes.
@@ -1644,6 +1652,52 @@ no-candidates median and its 99th percentile under 1 ms. The machine may
 not have been quiet (another worktree's builds were running on it during
 the session), which the no-candidates row's spread in run 2 suggests.
 
+**A key in the workspace finder, measured** (project navigation's phase
+2). `mise run find-file-bench` (`config-test bench-workspace-files`,
+[on-demand-checks.md](../dev-practices/on-demand-checks.md)) times a key
+typed into `find-file-in-workspace`'s prompt on one headless host of the
+test scheme over the library's real process and file services, in a
+repository that `tools/workspace-bench-repo.sh` generates: 100,000 files
+at `src/m<i / 100>/f<i>.rs`, paths of 17.8 bytes on average, committed
+once, which git found (the prompt's label `Find file in repo@main: `), so
+the lister is `git ls-files`. Three runs, 2026-11-18, at `cee8647b`, on
+an Apple M5 Max (18 cores, 128 GB, macOS 27.2.1, a pool of 18 threads),
+fzf 0.74.5, 120 keys a row, in µs, median / 99th percentile / maximum:
+
+| Run | no candidates | finder, each key joined | key to the updated list | finder, keys 120 ms apart |
+|---|---|---|---|---|
+| 1 | 56.7 / 87.9 / 91.5 | 198.4 / 310.8 / 321.3 | 136219.4 / 173959.7 / 178484.0 | 260.3 / 428.8 / 464.9 |
+| 2 | 56.2 / 105.7 / 111.6 | 187.6 / 304.8 / 318.4 | 133897.4 / 174818.3 / 175074.0 | 247.2 / 428.8 / 470.6 |
+| 3 | 55.9 / 94.8 / 103.6 | 196.8 / 297.3 / 307.9 | 134832.4 / 173571.9 / 174169.4 | 251.3 / 484.4 / 531.8 |
+
+Alone, outside the editor, the medians of 20 runs were, in the three runs,
+58.1, 58.9 and 57.7 ms for `git ls-files -z --cached --others
+--exclude-standard`, and 13.9, 13.8 and 13.8 ms for `fzf --read0 --print0
+--filter m12` fed its output.
+
+- **No key waits on the lister or the filter.** Every key is handled and
+  published within 0.6 ms, the 99th percentile under 0.5 ms in every row,
+  while the list it updates comes about 134 ms later: the source's 50 ms
+  pause, `git ls-files` (about 58 ms) and fzf (about 14 ms) run in the
+  source's job on the pool, and the batch's listing on the editor thread.
+  The cadence row's keys arrive while that job runs and cost no more than
+  about 60 µs over the joined row's.
+- **Both finder rows are out of the bound `bench-prompt`'s worker rows use**
+  in every run: their 99th percentile is under 1 ms, but their median,
+  188-260 µs, is more than twice the no-candidates median, 56-57 µs. The
+  cost is not the lister's or the filter's: it is the editor thread
+  marking the previous answer's candidates, up to the source's limit of
+  200, with the style's ranges for the new text at each key
+  (`Candidates.listing`, the passed candidates' `style.hits`), as an
+  inline listing of that size does; `bench-prompt`'s inline rows put 100
+  candidates at about 113 µs and 250 at about 187 µs on this machine. It
+  is within the inline bound the plan relied on (at most 200 records
+  reach the editor thread, under `Loop.inlineMatches`, 250) but not within
+  twice the no-candidates floor. Phase 2's last criterion is therefore not
+  met by this measure as written; marking the passed candidates off the
+  editor thread, or only once per batch, would bring a key back to the
+  floor.
+
 **A typed key with completion at point, measured** (completion's phase 5).
 The two insert rows of `mise run prompt-bench` time a word key in insert
 state under the Vim scheme that ships, on a fake job clock and the real
@@ -1721,6 +1775,12 @@ with itself as the continuation and the `:!` history and the bound ex
 names as its candidates, from two sources, so the answer is the line it
 runs
 ([keymaps-and-modes.md](keymaps-and-modes.md), "The ex command line").
+`find-file-in-workspace` asks `Find file in <name@branch>: ` with itself,
+`true` and the workspace's root as the continuation, over the source
+`workspace-files`, which lists the workspace's files with its lister and
+fzf in its job; the answer, a path under the root, is opened through
+`open-file` run by name, so config's override of it applies
+([projects.md](projects.md), "`find-file-in-workspace`").
 `save-buffer` does not ask: a buffer with a file needs no
 name, and one with no file needs a file that is not there yet, which is
 more than a prompt. Config asks with `prompt`, and registers the command
