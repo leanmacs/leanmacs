@@ -131,6 +131,9 @@ structure Record where
   files : Array FileEntry := #[]
   /-- The sentence the search ended with, once it has. -/
   ended : Option String := none
+  /-- The snapshots of open buffers the search was started with, by index:
+  released when it ends, or when the next search into the buffer starts. -/
+  snapshots : Array Nat := #[]
   deriving DecidableEq, Repr
 
 /-- The name of the results buffer's value that holds its record. -/
@@ -190,14 +193,15 @@ def Record.encode (record : Record) : Value :=
       ("ended",
         match record.ended with
         | some sentence => .str sentence
-        | none => .null)]
+        | none => .null),
+      ("snapshots", .list (record.snapshots.toList.map .nat))]
 
 /-- The record a tree is (`Record.encode`), if it is one. -/
 def Record.decode? : Value → Option Record
   |
   .record
       [("root", .str root), ("label", .str label), ("pattern", .str pattern),
-        ("files", .list files), ("ended", ended)] =>
+        ("files", .list files), ("ended", ended), ("snapshots", .list snapshots)] =>
     do
     let files ←
       files.toArray.mapM fun
@@ -212,7 +216,11 @@ def Record.decode? : Value → Option Record
         some none
       | _ =>
         none
-    return { root, label, pattern, files, ended }
+    let snapshots ←
+      snapshots.toArray.mapM fun
+          | .nat index => some index
+          | _ => none
+    return { root, label, pattern, files, ended, snapshots }
   | _ => none
 
 end ProjectSearch

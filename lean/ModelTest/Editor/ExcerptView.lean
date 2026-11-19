@@ -34,10 +34,6 @@ def exHeaders (first second : Nat) : Array Block :=
   #[{ before := first, text := "one", decorations := #[⟨0, 3, ExcerptView.headerFace⟩] },
     { before := second, text := "two", decorations := #[⟨0, 3, ExcerptView.headerFace⟩] }]
 
-/-- The view `view` of the last scene `driver` published. -/
-def lastView (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option View := do
-  (← driver.model.display.scenes.back?).views.find? (·.id == view)
-
 /-- Of the window's view in the last scene of `driver`: its scroll anchor's
 offset, the head of its selection's primary range, and whether the rows the
 display model answers from its anchor, asked with its blocks, hold the

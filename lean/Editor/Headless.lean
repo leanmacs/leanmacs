@@ -25,6 +25,7 @@ import Editor.Job.Real
 import Editor.Loop
 import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
+import Editor.ProjectSearch.Compiled
 import Editor.Shell.Compiled
 import Editor.SyntaxTree.Real
 import Editor.TabCommands.Compiled
@@ -220,7 +221,12 @@ as before, so reload and job completion work as they did.
   `project-workspace` and the jobs `project-workspaces`,
   `project-workspace-choose` and `project-workspace-find`, which list the
   project's worktrees and find the one chosen
-  (`Editor/Workspace/FindInProject.lean`). And it is handed the
+  (`Editor/Workspace/FindInProject.lean`). And it is handed project
+  search (`ProjectSearch.commands`, `ProjectSearch.jobs`,
+  `Editor/ProjectSearch/Compiled.lean`): `project-search`, which searches
+  the workspace's files into an editable excerpt buffer, the command
+  `project-search-found` its job posts each delivery as, and the job
+  `project-search`. And it is handed the
   status buffer's commands, jobs and mode (`VersionControl.commands`,
   `VersionControl.jobs`, `VersionControl.modes`,
   `Editor/VersionControl/Compiled.lean`): `vc-status` and the commands of
@@ -2682,6 +2688,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         ExecuteCommand.commands ++
         BindingSearch.commands ++
         Workspace.commands ++
+        ProjectSearch.commands ++
         Shell.commands ++
         Compile.commands ++
         AtPoint.commands ++
@@ -2690,7 +2697,8 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     bindings := FrameCommands.bindings ++ Menu.bindings ++ Workspace.bindings
     menu := some Menu.standard
     compiledJobs :=
-      Files.jobs ++ Workspace.jobs ++ Shell.jobs ++ Compile.jobs ++ Completion.Words.jobs ++
+      Files.jobs ++ Workspace.jobs ++ ProjectSearch.jobs ++ Shell.jobs ++ Compile.jobs ++
+        Completion.Words.jobs ++
         VersionControl.jobs ++
         VersionControl.gutterJobs
     modes := Minibuffer.modes ++ Compile.modes ++ VersionControl.modes ++ Language.modes

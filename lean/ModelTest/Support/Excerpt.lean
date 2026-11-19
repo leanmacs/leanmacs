@@ -178,6 +178,10 @@ def excerptInvoked (driver : EvilDriver) (name : String) : EvilDriver :=
 def excerptFed (driver : EvilDriver) (events : List Event) : EvilDriver :=
   events.foldl (fun driver event => (driver.feed { event, stamp := 0 }).1) driver
 
+/-- The view `view` of the last scene `driver` published. -/
+def lastView (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option View := do
+  (← driver.model.display.scenes.back?).views.find? (·.id == view)
+
 /-- The buffer called `name` in `driver`'s state, if there is one. -/
 def excerptBufferNamed (driver : EvilDriver) (name : String) : Option Buffer := do
   driver.loop.state.buffer? (← driver.loop.state.findBuffer name)

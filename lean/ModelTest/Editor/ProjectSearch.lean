@@ -47,7 +47,7 @@ def projectSearchChecks : List Check :=
       run := do
         let record :=
           { recordOf [(0, .placed 1 2), (1, .pending), (2, .dropped)] with
-            ended := some "project-search: 3 matches in 1 file" }
+            ended := some "project-search: 3 matches in 1 file", snapshots := #[4, 9] }
         return ProjectSearch.Record.decode? record.encode == some record &&
             ProjectSearch.Record.decode? (.str "x") == none },
     { name := "the results buffer's name, a file's header and each sentence"

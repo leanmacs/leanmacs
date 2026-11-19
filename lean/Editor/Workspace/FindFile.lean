@@ -131,14 +131,15 @@ structure Searched where
   typed : String := ""
   deriving DecidableEq, Repr
 
-/-- What the command says when no workspace is known at `location`. -/
-def noSuchWorkspace (location : Location) : String :=
-  s!"{name}: no workspace is known at {location.describe}"
+/-- What the command `command`, this one by default, says when no workspace
+is known at `location`. -/
+def noSuchWorkspace (location : Location) (command : String := name) : String :=
+  s!"{command}: no workspace is known at {location.describe}"
 
-/-- What the command says of `workspace`, whose location cannot read files
-and run commands. -/
-def cannotList (workspace : Workspace) : String :=
-  s!"{name}: {workspace.label} is {workspace.location.describe}, where files cannot be listed"
+/-- What the command `command`, this one by default, says of `workspace`,
+whose location cannot read files and run commands. -/
+def cannotList (workspace : Workspace) (command : String := name) : String :=
+  s!"{command}: {workspace.label} is {workspace.location.describe}, where files cannot be listed"
 
 /-- What the source's job says when its query carries no lister or no
 root. -/
@@ -148,29 +149,34 @@ def noWorkspaceAsked : String :=
 /-- What is searched in `workspace` ("What is searched", in the module
 docs): its root, its label and its lister; refused with `cannotList` when
 its location cannot read files and run commands. -/
-def ofWorkspace (settings : Settings) (workspace : Workspace) : Except String Searched :=
+def ofWorkspace (settings : Settings) (workspace : Workspace) (command : String := name) :
+    Except String Searched :=
   let can := workspace.location.can
   match workspace.location.root? with
   | some root =>
     if can.readFiles && can.runCommands then
       .ok { root, label := workspace.label, lister := lister settings (some workspace) }
-    else .error (cannotList workspace)
-  | none => .error (cannotList workspace)
+    else .error (cannotList workspace command)
+  | none => .error (cannotList workspace command)
 
 /-- What `call` searches in `state`, with config's workspace `settings`
 ("What is searched", in the module docs), or what the command says
-instead. -/
-def searched (state : EditorState) (settings : Settings) (call : Call) : Except String Searched :=
+instead. The refusals name `command`, this one by default: project search
+(`Editor/ProjectSearch/Run.lean`) decides what it searches by this rule
+too. -/
+def searched (state : EditorState) (settings : Settings) (call : Call) (command : String := name) :
+    Except String Searched :=
   match Location.of? call.arguments with
   | some (location, rest) =>
     match state.workspaces.workspace? location with
     | some workspace =>
-      (ofWorkspace settings workspace).map fun searched => { searched with typed := typedOf rest }
-    | none => .error (noSuchWorkspace location)
+      (ofWorkspace settings workspace command).map fun searched =>
+        { searched with typed := typedOf rest }
+    | none => .error (noSuchWorkspace location command)
   | none =>
     let buffer := call.target.window.buffer
     match state.workspaceOf? buffer with
-    | some (workspace, _) => ofWorkspace settings workspace
+    | some (workspace, _) => ofWorkspace settings workspace command
     | none =>
       let directory := state.commandDirectoryOf buffer
       .ok { root := directory, label := directory.toString, lister := lister settings none }

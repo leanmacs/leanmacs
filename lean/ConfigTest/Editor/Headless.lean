@@ -68,6 +68,7 @@ import Editor.Mode
 import Editor.ModeLine
 import Editor.Process.Environment
 import Editor.Program
+import Editor.ProjectSearch.Run
 import Editor.Scene
 import Editor.Setup
 import Editor.State
@@ -1999,6 +2000,19 @@ def shippedChecks (_ : Unit) : List Check :=
             jobs.all fun name =>
               registry.jobs.any
                 (fun entry => entry.registration.name == name && entry.owner == .compiled) },
+    { name :=
+        "the executable's hosts start with project-search and project-search-found registered compiled, and the job project-search"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        return [ProjectSearch.name, ProjectSearch.foundName].all
+              (fun name => (registry.find? name).any (·.owner == .compiled)) &&
+            registry.jobs.any fun entry =>
+              entry.registration.name == ProjectSearch.job && entry.owner == .compiled },
     { name :=
         "the executable's hosts start with find-file-in-another-workspace registered compiled and one compiled binding of it, C-x C-d in the prompt category workspace-file, described Find in another workspace; the global keymap does not bind C-x"
       run := do
