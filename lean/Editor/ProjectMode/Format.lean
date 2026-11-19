@@ -58,7 +58,9 @@ and a listing's entry's (`Listing.Entry`,
 `Editor/ProjectMode/Listing.lean`). They are here because this is the one
 module both import.
 
-Pinned by `ModelTest.compileErrorChecks`.
+Pinned by `ModelTest.formatDataChecks`, as data, with no matcher. What a
+format reads in a line is the compile mode's
+(`ModelTest.compileErrorChecks`).
 -/
 
 namespace Editor.Compile

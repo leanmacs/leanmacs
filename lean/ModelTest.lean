@@ -27,6 +27,7 @@ import ModelTest.Editor.Command.Dispatch
 import ModelTest.Editor.Command.Registry
 import ModelTest.Editor.Compile
 import ModelTest.Editor.Compile.Compiled
+import ModelTest.Editor.Compile.Contribution
 import ModelTest.Editor.Compile.Errors
 import ModelTest.Editor.Compile.Shipped
 import ModelTest.Editor.Completion.AtPointContract
@@ -105,6 +106,8 @@ import ModelTest.Editor.ModuleLookup
 import ModelTest.Editor.Process.Environment
 import ModelTest.Editor.Process.Model
 import ModelTest.Editor.Program
+import ModelTest.Editor.ProjectMode
+import ModelTest.Editor.ProjectMode.Format
 import ModelTest.Editor.ProjectMode.Listing
 import ModelTest.Editor.Scene
 import ModelTest.Editor.Scroll
@@ -994,6 +997,31 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   entries; the loop's marking and the face of what was not examined are
   among `excerptDisplayChecks`, on the loop's driver.
 
+What a minor mode contributes for a kind of project is the core's, and the
+compile mode is one reader of it (`docs/design/packages.md`), so each side
+has its own checks and no check of the core's names the compile mode:
+
+- `contributionChecks`: a contribution as data (`Editor/ProjectMode.lean`),
+  pure: its defaults, its marker mode, and a hook's project commands and
+  settings by a project's identity;
+- `formatDataChecks`: an error format as data
+  (`Editor/ProjectMode/Format.lean`), pure, with no matcher: the
+  severities' names, a step and an optional step, a format's defaults, the
+  general format's parts, and the two tree helpers;
+- `listingChecks`: a contribution's computed commands
+  (`Editor/ProjectMode/Listing.lean`), on the loop's driver over a host
+  handed core packages' commands and jobs only: a mode that turns on runs
+  its listing once in its root, a failed listing keeps why and says it
+  once, what is kept where, no listing where commands cannot run, each end
+  of a run's words, and an order's and an entry's round trip;
+- `compileOfferChecks` and `compileListedChecks`: what the compile mode
+  makes of a listing: the offers (`Editor/Compile/Contribution.lean`),
+  pure, and the commands `compile-command` offers and runs
+  (`Editor/Compile.lean`), on the compile checks' driver over the listing
+  checks' world;
+- `miseTaskChecks`: the reader of mise's task list
+  (`Editor/Compile/Shipped.lean`), pure.
+
 Listing a workspace's files is checked in Lean alone too:
 
 - `workspaceListerChecks`: which command lists a workspace's files
@@ -1245,8 +1273,13 @@ def checks : List Check :=
     compileErrorChecks ++
     compileLocationChecks ++
     compileHookChecks ++
+    compileOfferChecks ++
+    compileListedChecks ++
     projectFormatChecks ++
     jsonChecks ++
+    miseTaskChecks ++
+    contributionChecks ++
+    formatDataChecks ++
     listingChecks ++
     projectModeChecks ++
     versionControlParserChecks ++

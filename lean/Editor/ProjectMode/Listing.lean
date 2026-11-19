@@ -66,7 +66,10 @@ starts it.
 - **What is offered** (`listedCommands`): the commands of a mode's entry at
   a root; none for no entry or a failed one.
 
-Pinned by `ModelTest.listingChecks` and `ModelTest.projectModeChecks`.
+Pinned by `ModelTest.listingChecks`, on a host handed core packages'
+commands and jobs alone. What the compile mode makes of what is listed is
+its own tests' (`ModelTest.compileListedChecks`,
+`ModelTest.projectModeChecks`).
 -/
 
 namespace Editor.Compile

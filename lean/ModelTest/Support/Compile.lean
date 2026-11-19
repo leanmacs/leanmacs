@@ -15,7 +15,6 @@ import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
-import Editor.Job.Model
 import Editor.Keymap
 import Editor.Loop
 import Editor.Loop.Driver
@@ -34,18 +33,21 @@ import Editor.State
 import Editor.Text
 import Editor.Value
 import Editor.Workspace
-import Editor.Workspace.Modes
 import ModelTest.Support.Driver
 import ModelTest.Support.Files
 import ModelTest.Support.Keys
+import ModelTest.Support.Listing
 import ModelTest.Support.Loop
+import ModelTest.Support.Models
 import ModelTest.Support.Shell
 
 /-!
 # Model tests: support: Compile
 
 The compile commands' world: their jobs, keys, bindings and driver, the error
-formats they read, and the compile hook's setup. Shared by several test modules
+formats they read, the compile hook's setup, and the driver of the compile
+mode's checks of a listing, over the listing checks' world
+(`ModelTest/Support/Listing.lean`). Shared by several test modules
 under `ModelTest/Editor/`; it holds no checks of its own.
 -/
 
@@ -268,24 +270,9 @@ def hookBindings : List (String × Invocation) :=
       ("C-o g", opens "/r/hook/one/two/three/four/g.txt"), ("C-o k", opens "/r/crate/src/main.rs"),
       ("C-o 3", opens "/w/crate/src/main.rs"), ("C-o 4", opens "/o/src/main.rs")]
 
-/-- The on-modes of the buffer the view 0 of `driver` shows. -/
-def shownOnModes (driver : TestDriver) : Option (Array Workspace.OnMode) := do
-  return Workspace.onModesOf driver.loop.state (← showing driver).id
-
 /-- The minor modes of the buffer the view 0 of `driver` shows. -/
 def shownMinors (driver : TestDriver) : Option (Array String) :=
   (showing driver).map (·.buffer.minors)
-
-/-- `driver` once `keys` are pressed and every job they start, and every job
-those jobs' commands start, is finished, oldest first; with the names of the
-jobs finished, in order. -/
-def settledNames (driver : TestDriver) (keys : String) : TestDriver × Array String :=
-  (List.range 8).foldl
-    (fun (driver, names) _ =>
-      match driver.pending[0]? with
-      | some job => ((driver.finish job.id).1, names.push job.name)
-      | none => (driver, names))
-    ((fedTo driver (presses keys)).1, #[])
 
 /-- What `mise tasks ls --json` prints in `/m` in the project checks: three
 tasks with the real listing's shape, `build` and `test` in `/m` and `lint`
@@ -294,16 +281,27 @@ directory. -/
 def miseListing : String :=
   "[\n  {\n    \"name\": \"build\",\n    \"aliases\": [],\n    \"description\": \"\",\n    \"source\": \"/m/mise.toml\",\n    \"depends\": [],\n    \"dir\": \"/m\",\n    \"hide\": false,\n    \"raw\": false,\n    \"sources\": [],\n    \"outputs\": [],\n    \"shell\": null,\n    \"quiet\": false,\n    \"silent\": false,\n    \"tools\": {},\n    \"run\": [\"lake build\"],\n    \"file\": null\n  },\n  {\"name\": \"test\", \"dir\": \"/m\", \"depends\": [\"build\"], \"hide\": false, \"timeout\": 1.5e2, \"env\": {\"A\": \"1\"}, \"run\": [\"lake test\"]},\n  {\"name\": \"lint\", \"dir\": \"/m/sub\", \"depends\": [], \"hide\": false, \"usage\": {\"spec\": {\"args\": [[1, -2.5], true]}}}\n]\n"
 
-/-- The bindings of the listing checks: the hook checks', and `C-p 1`,
-`C-p 2`, `C-p 3` and `C-p 4`, which open `/t/a.txt`, `/t/b.txt`,
-`/t2/a.txt` and `/u/a.txt`. -/
-def listingBindings : List (String × Invocation) :=
-  hookBindings ++
-    [("C-p 1", opens "/t/a.txt"), ("C-p 2", opens "/t/b.txt"), ("C-p 3", opens "/t2/a.txt"),
-      ("C-p 4", opens "/u/a.txt")]
+/-- The bindings of the compile mode's checks of a listing: the hook
+checks', and the keys that open the listing checks' files
+(`listingFiles`). -/
+def compileListingBindings : List (String × Invocation) :=
+  hookBindings ++ listingFiles.map fun (key, path) => (key, opens path)
 
-/-- How many times `driver` has started `command`. -/
-def startedCount (driver : TestDriver) (command : Process.Command) : Nat :=
-  (driver.jobs.processes.started.filter (· == command)).size
+/-- The streaming children of the compile mode's checks of a listing. -/
+def compileListingStreams : Array Process.StreamScript :=
+  #[{ command := shellCommand "/t" "t-build", steps := linesSteps ["ok"] },
+    { command := shellCommand "/t/sub" "t-sub", steps := linesSteps ["ok"] },
+    { command := shellCommand "/u" "u-only", steps := linesSteps ["ok"] }]
+
+/-- A driver of the compile mode's checks of a listing over `registry`, by
+default `t-mode` registered in config (`listingRegistry`): the world of the
+listing checks (`listingJobModel`), with the compile checks' keys and jobs
+and the children `compileListingStreams`; `none` if making the state was
+refused. -/
+def compileListingDriver (registry : Config.Registry := listingRegistry) : Option TestDriver :=
+  let keys := compileKeysOf compileListingBindings
+  let keys := { keys with registered := { keys.registered with compile := registry.compileHook } }
+  (Loop.Driver.over keys compileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => { driver with jobs := listingJobModel compileListingStreams }
 
 end ModelTest

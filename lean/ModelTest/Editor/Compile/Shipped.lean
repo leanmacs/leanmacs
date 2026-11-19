@@ -37,8 +37,8 @@ import ModelTest.Support.Workspace
 /-!
 # Model tests: `Editor/Compile/Shipped.lean`
 
-The model tests of `Editor/Compile/Shipped.lean`: `projectFormatChecks` and
-`projectModeChecks`. The root module `ModelTest` runs them; its module doc says
+The model tests of `Editor/Compile/Shipped.lean`: `projectFormatChecks`,
+`projectModeChecks` and `miseTaskChecks`. The root module `ModelTest` runs them; its module doc says
 what each shows.
 -/
 
@@ -134,12 +134,13 @@ def projectWorld : Workspace.World :=
       #["/c/Cargo.toml", "/l/lakefile.lean", "/m/mise.toml", "/m/crate/Cargo.toml", "/mw/mise.toml",
         "/r2/Cargo.toml", "/r2/crates/m/Cargo.toml"] }
 
-/-- The bindings of the project mode checks: the listing checks', and `C-p
+/-- The bindings of the project mode checks: those of the compile mode's
+checks of a listing (`compileListingBindings`), and `C-p
 c`, `C-p l`, `C-p m`, `C-p n`, `C-p w` and `C-p r`, which open
 `/c/src/main.rs`, `/l/Foo/Bar.lean`, `/m/notes.txt`, `/m/crate/src/main.rs`,
 `/mw/notes.txt` and `/r2/crates/m/src/main.rs`. Test-scheme chords only. -/
 def projectBindings : List (String × Invocation) :=
-  listingBindings ++
+  compileListingBindings ++
     [("C-p c", opens "/c/src/main.rs"), ("C-p l", opens "/l/Foo/Bar.lean"),
       ("C-p m", opens "/m/notes.txt"), ("C-p n", opens "/m/crate/src/main.rs"),
       ("C-p w", opens "/mw/notes.txt"), ("C-p r", opens "/r2/crates/m/src/main.rs")]
@@ -372,5 +373,48 @@ def projectModeChecks : List Check :=
               startedCount again (miseList "/m") == 2 &&
               startedCount twice (miseList "/m") == 1 &&
               startedCount afterReload (miseList "/m") == 2 }]
+
+/-- The checks of the reader of mise's task list (`Compile.miseTasks`,
+`Editor/Compile/Shipped.lean`), over the JSON reader: pure. -/
+def miseTaskChecks : List Check :=
+  [{  name :=
+        "mise's task list gives one command per task, mise run and the task's name, in the task's dir, in the order listed: build and test in /m, lint in /m/sub; an empty list gives none"
+      run :=
+        pure
+          ((Compile.miseTasks miseListing.toUTF8).toOption.map
+                (·.map fun command =>
+                  (command.name, command.line, command.directory.map (·.toString))) ==
+              some
+                #[("build", "mise run build", some "/m"), ("test", "mise run test", some "/m"),
+                  ("lint", "mise run lint", some "/m/sub")] &&
+            (Compile.miseTasks "[]".toUTF8).toOption.map (·.size) == some 0) },
+    { name :=
+        "a task's name that is not a bare shell word is quoted: my task gives mise run 'my task', it's gives mise run 'it'\\''s; a name listed twice keeps its first, and a task with an empty dir has none"
+      run :=
+        let listing :=
+          "[{\"name\": \"my task\", \"dir\": \"\"}, {\"name\": \"it's\"}, {\"name\": \"my task\", \"dir\": \"/x\"}, {\"name\": \"a:b/c@d%e+f=g,h_i-j.k\"}]"
+        pure
+          ((Compile.miseTasks listing.toUTF8).toOption.map
+                (·.map fun command =>
+                  (command.name, command.line, command.directory.map (·.toString))) ==
+              some
+                #[("my task", "mise run 'my task'", none), ("it's", "mise run 'it'\\''s'", none),
+                  ("a:b/c@d%e+f=g,h_i-j.k", "mise run a:b/c@d%e+f=g,h_i-j.k", none)] &&
+            Compile.shellWord "" == "''" &&
+            Compile.shellWord "a$b" == "'a$b'") },
+    { name :=
+        "mise's task list is refused when it is not an array, a task is not an object, a task has no name or an empty one, or it is no JSON, saying why"
+      run :=
+        let refused (text : String) : Option String :=
+          match Compile.miseTasks text.toUTF8 with
+          | .error why => some why
+          | .ok _ => none
+        pure
+          (refused "{}" == some "it is not an array" &&
+            refused "[{\"name\": \"a\"}, 3]" == some "task 2 is not an object" &&
+            refused "[{\"name\": \"a\"}, {\"dir\": \"/m\"}]" == some "task 2 has no name" &&
+            refused "[{\"name\": \"\"}]" == some "task 1 has no name" &&
+            refused "[{\"name\": 1}]" == some "task 1 has no name" &&
+            refused "[" == some "a value is missing") }]
 
 end ModelTest

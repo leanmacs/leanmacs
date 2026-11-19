@@ -4583,10 +4583,12 @@ buffer while editing goes on.
 
 Pinned by `ModelTest.compileChecks`, `compileErrorChecks`,
 `compileLocationChecks`, `compileHookChecks`, `projectFormatChecks`,
-`jsonChecks`, `listingChecks`, `projectModeChecks`, `modeMarkerChecks` and
+`jsonChecks`, `miseTaskChecks`, `listingChecks`, `compileListedChecks`,
+`compileOfferChecks`, `contributionChecks`, `formatDataChecks`,
+`projectModeChecks`, `modeMarkerChecks` and
 `readOnlyChecks` on the models; by `ConfigTest`'s checks that the hosts
 start with the shipped contributions and that config can override a field
-of one; by the mode marker search's contract (`Workspace.MarkerContract`),
+of one (`ConfigTest.compileConfigChecks`); by the mode marker search's contract (`Workspace.MarkerContract`),
 on its model and on the job model by `model-test` and over the real file
 service by `contract-test`; and over the real process service by
 `ContractTest.compileChecks`, with the fixture `tests/compile/three-lines`,

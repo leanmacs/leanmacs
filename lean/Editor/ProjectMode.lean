@@ -58,8 +58,11 @@ latest; a project's are read from it by its identity (`Hook.projectsOf`,
 `Hook.settingsOf`), so every worktree of that codebase has them, no other
 project does, and a reload's change is read at once.
 
-Pinned by `ModelTest.setupChecks`, `ModelTest.registryChecks` and
-`ModelTest.compileHookChecks`.
+Pinned by `ModelTest.contributionChecks`, on values, and by
+`ModelTest.setupChecks` and `ModelTest.registryChecks`, which register and
+hold contributions: checks of core modules, none of which names the compile
+mode. What the compile mode makes of a contribution is its own tests'
+(`ModelTest.compileHookChecks`, `ModelTest.compileOfferChecks`).
 -/
 
 namespace Editor

@@ -30,7 +30,9 @@ run's output with. Pure, with no editor API.
   in on-mode order, then `Format.general`. A mode whose contribution is not
   registered, as after a reload that dropped it, gives none.
 
-Pinned by `ModelTest.compileHookChecks`.
+Pinned by `ModelTest.compileOfferChecks`, pure, and
+`ModelTest.compileHookChecks` and `ModelTest.compileListedChecks`, on the
+loop's driver.
 -/
 
 namespace Editor

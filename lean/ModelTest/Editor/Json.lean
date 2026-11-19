@@ -1,8 +1,5 @@
-import Editor.Compile.Shipped
 import Editor.Json
-import Editor.ProjectMode
 import ModelTest.Check
-import ModelTest.Support.Compile
 
 /-!
 # Model tests: `Editor/Json.lean`
@@ -50,45 +47,6 @@ def jsonChecks : List Check :=
             refusal "  " == some "a value is missing" &&
             (match Json.parse (ByteArray.mk #[0xff]) with
             | .error why => why == "it is not UTF-8"
-            | .ok _ => false)) },
-    { name :=
-        "mise's task list gives one command per task, mise run and the task's name, in the task's dir, in the order listed: build and test in /m, lint in /m/sub; an empty list gives none"
-      run :=
-        pure
-          ((Compile.miseTasks miseListing.toUTF8).toOption.map
-                (·.map fun command =>
-                  (command.name, command.line, command.directory.map (·.toString))) ==
-              some
-                #[("build", "mise run build", some "/m"), ("test", "mise run test", some "/m"),
-                  ("lint", "mise run lint", some "/m/sub")] &&
-            (Compile.miseTasks "[]".toUTF8).toOption.map (·.size) == some 0) },
-    { name :=
-        "a task's name that is not a bare shell word is quoted: my task gives mise run 'my task', it's gives mise run 'it'\\''s; a name listed twice keeps its first, and a task with an empty dir has none"
-      run :=
-        let listing :=
-          "[{\"name\": \"my task\", \"dir\": \"\"}, {\"name\": \"it's\"}, {\"name\": \"my task\", \"dir\": \"/x\"}, {\"name\": \"a:b/c@d%e+f=g,h_i-j.k\"}]"
-        pure
-          ((Compile.miseTasks listing.toUTF8).toOption.map
-                (·.map fun command =>
-                  (command.name, command.line, command.directory.map (·.toString))) ==
-              some
-                #[("my task", "mise run 'my task'", none), ("it's", "mise run 'it'\\''s'", none),
-                  ("a:b/c@d%e+f=g,h_i-j.k", "mise run a:b/c@d%e+f=g,h_i-j.k", none)] &&
-            Compile.shellWord "" == "''" &&
-            Compile.shellWord "a$b" == "'a$b'") },
-    { name :=
-        "mise's task list is refused when it is not an array, a task is not an object, a task has no name or an empty one, or it is no JSON, saying why"
-      run :=
-        let refused (text : String) : Option String :=
-          match Compile.miseTasks text.toUTF8 with
-          | .error why => some why
-          | .ok _ => none
-        pure
-          (refused "{}" == some "it is not an array" &&
-            refused "[{\"name\": \"a\"}, 3]" == some "task 2 is not an object" &&
-            refused "[{\"name\": \"a\"}, {\"dir\": \"/m\"}]" == some "task 2 has no name" &&
-            refused "[{\"name\": \"\"}]" == some "task 1 has no name" &&
-            refused "[{\"name\": 1}]" == some "task 1 has no name" &&
-            refused "[" == some "a value is missing") }]
+            | .ok _ => false)) }]
 
 end ModelTest

@@ -1625,4 +1625,87 @@ def compileHookChecks : List Check :=
               shownMinors opened == some #["cargo-mode"] &&
               shownOnModes opened == some #[{ mode := "cargo-mode", root := "/r/crate" }] }]
 
+/-- `driver` in which `t-list` cannot be run in `/t2`: the program is not
+found. -/
+def compileListingRefusedIn (driver : TestDriver) : TestDriver :=
+  withScript driver { command := tList "/t2", reply := .error (.notFound "t-list") }
+
+/-- The checks of what the compile mode makes of a contribution's computed
+commands (`Compile.commandCommand`, `Editor/Compile.lean`), on the loop's
+driver over the world of the listing checks, with `t-mode`: which commands
+`compile-command` offers and runs. That a listing runs, where what it gave
+is kept and how a failure is said are the listing's
+(`ModelTest.listingChecks`). -/
+def compileListedChecks : List Check :=
+  [{  name :=
+        "compile-command offers the listed commands after the contribution's own, a listed name in place of its own: build runs t-build in /t, and sub, listed in sub, runs t-sub in /t/sub"
+      run :=
+        pure <|
+          match compileListingDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-p 1"
+            let asked := pressedOn opened "C-k i"
+            let built := drained (fedTo opened (exLine "compile-command build")).1
+            let subbed := drained (fedTo opened (exLine "compile-command sub")).1
+            (candidatesOf asked).map (·.all.map (·.text)) ==
+                some #["build (t-mode)", "check (t-mode)", "fmt (t-mode)", "sub (t-mode)"] &&
+              built.jobs.processes.started.back? == some (shellCommand "/t" "t-build") &&
+              subbed.jobs.processes.started.back? == some (shellCommand "/t/sub" "t-sub") &&
+              startedCount subbed (tList "/t") == 1 },
+    { name :=
+        "compile-command offers none of the commands of a listing that failed, and asking does not run the listing again"
+      run :=
+        pure <|
+          match compileListingDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-p 3"
+            let asked := settledAfter opened "C-k i"
+            (candidatesOf asked).map (·.all.map (·.text)) ==
+                some #["build (t-mode)", "check (t-mode)"] &&
+              startedCount asked (tList "/t2") == 1 },
+    { name :=
+        "compile-command offers none of the commands of a listing that could not be run, and asking does not run it again"
+      run :=
+        pure <|
+          match compileListingDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter (compileListingRefusedIn driver) "C-p 3"
+            let asked := settledAfter opened "C-k i"
+            (candidatesOf asked).map (·.all.map (·.text)) ==
+                some #["build (t-mode)", "check (t-mode)"] &&
+              startedCount asked (tList "/t2") == 1 },
+    { name :=
+        "in a directory holding t.toml and no repository compile-command offers and runs what t-mode's listing gave there, kept in the unscoped store"
+      run :=
+        pure <|
+          match compileListingDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-p 4"
+            let asked := settledAfter opened "C-k i"
+            let ran := drained (fedTo opened (exLine "compile-command u-only")).1
+            startedCount asked (tList "/u") == 1 &&
+              (candidatesOf asked).map (·.all.map (·.text)) ==
+                some #["build (t-mode)", "check (t-mode)", "u-only (t-mode)"] &&
+              ran.jobs.processes.started.back? == some (shellCommand "/u" "u-only") },
+    { name :=
+        "in a workspace whose location cannot run commands compile-command offers nothing, starts no listing and says where commands cannot run"
+      run :=
+        let reachable := Location.reachable "kube" "pod" "/app"
+        pure <|
+          match compileListingDriver with
+          | none => false
+          | some driver =>
+            let waiting := settledBut (fedTo driver (presses "C-p 1")).1 Workspace.markerJob
+            let moved := settledOn (pressedOn waiting "C-e k") []
+            let asked := pressedOn moved "C-k i"
+            (shownWorkspace moved).map (·.1.location) == some reachable &&
+              startedCount asked (tList "/t") == 0 &&
+              !(asked.pending.any (·.name == Compile.listJob)) &&
+              asked.loop.state.prompt.isNone &&
+              (echoOf asked).map (·.endsWith "where commands cannot run") == some true }]
+
 end ModelTest

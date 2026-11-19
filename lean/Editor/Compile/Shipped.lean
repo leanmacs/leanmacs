@@ -65,7 +65,7 @@ keeps its first; `[]` gives none. Anything else is refused with why: `it is
 not an array`, `task <n> is not an object`, `task <n> has no name`, or the
 JSON reader's own reason.
 
-Pinned by `ModelTest.projectFormatChecks`, `ModelTest.jsonChecks` and
+Pinned by `ModelTest.projectFormatChecks`, `ModelTest.miseTaskChecks` and
 `ModelTest.projectModeChecks`, on the models, and over the real process
 service, with fixture programs standing in for cargo, lake, mise and git, by
 `ContractTest.projectModeChecks`.
