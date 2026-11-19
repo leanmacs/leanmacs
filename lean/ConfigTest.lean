@@ -59,17 +59,20 @@ show:
   directory of its own;
 - `hostChecks`: the phase's acceptance tests through the headless host, with
   the real elaborator, the real queue and the real text binding, asserted on
-  the lines the host prints;
+  the lines the host prints; and what a host starts from: handed no
+  packages, an empty registry and no menu bar, and handed a package it
+  refuses, that package logged and skipped and the others registered;
 - `threadChecks`: the editor answers events while a chunk elaborates, reloads
   are serialised, and a replaced config is not retained;
 - `jobChecks`: jobs from config through the host: a handler receives a job's
   result on the editor thread, a reload that installs cancels the old
   config's jobs and a rejected one does not, and how each ending of a job is
   reported;
-- `shippedChecks`: what the executable's hosts are handed as compiled code
-  (`Headless.shippedOver`): the registry they start with binds `C-s-f` to
-  `toggle-fullscreen`, `s-m` to `minimise-window` and `s-q` to `quit`, all
-  compiled, binds `C-x C-d` to `find-file-in-another-workspace` in the
+- `shippedChecks`: what the executable's hosts start with, the registry the
+  packages that ship make (`PackageSet.shipped`), each entry for the owner
+  named after its package: it binds `C-s-f` to
+  `toggle-fullscreen`, `s-m` to `minimise-window` and `s-q` to `quit`, the
+  `frame-commands` package's, binds `C-x C-d` to `find-file-in-another-workspace` in the
   prompt category `workspace-file` alone, and registers the buffer
   commands with the ex names `b`, `ls` and `bd` bound to them, and the
   completion sources that ship;
@@ -111,7 +114,7 @@ show:
   and it is looked up after the accepting command's write to a store was
   written back; a prompt lists the candidates of a source config registers
   and asks for by name, and of one the executable's hosts ship
-  (`Headless.shippedOver`), which config's source of its name replaces
+  (the `themes` package's), which config's source of its name replaces
   until a reload drops it; and completion phase 4's criteria: the list
   drawn in a view of its own up to the rows config's display sets, the
   height it takes given back when the prompt closes, an annotation's

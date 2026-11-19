@@ -43,7 +43,7 @@ How the editor asks one, holds the session it opens and closes it is in
 | Something more an at-point source is asked | A field of `Spot` (`Editor/Completion/Candidate.lean`), filled where `completeAtPoint` asks |
 | Something more it answers | A field of `Region`, read where `completeAtPoint` opens the session |
 | A new reason to ask | A constructor of `Occasion` and its case of `asksOn` |
-| A shipped at-point source | A value in `AtPoint.shipped` (`Editor/Completion/Words.lean`), registered compiled in `Headless.shippedOver`, and run by `ModelTest.atPointContractChecks` |
+| A shipped at-point source | A value in `AtPoint.shipped` (`Editor/Completion/Words.lean`), registered by the `at-point` package (`Editor/AtPoint/Compiled.lean`), and run by `ModelTest.atPointContractChecks` |
 | A rule every at-point source keeps | A property of `Editor/Completion/AtPointContract.lean` |
 
 Pinned by `ModelTest.atPointContractChecks` (the contract, on the model and

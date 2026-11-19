@@ -48,8 +48,8 @@ open Editor
 
 /-- The registry of the frame command checks: the frame's commands, and the
 ex line's, whose `quit` the frame's `s-q` names, and the frame's bindings,
-with the menu bar's bindings, registered for the owner `compiled`, as a
-host registers them, and `config` as config's bindings and `commands` as
+with the menu bar's bindings, registered for the owner `compiled`, an owner
+that is not config, as a host registers a package's, and `config` as config's bindings and `commands` as
 config's commands. -/
 def frameRegistry (config : Array Config.KeyBinding := #[])
     (commands : Array Config.Registration := #[]) : Config.Registry :=

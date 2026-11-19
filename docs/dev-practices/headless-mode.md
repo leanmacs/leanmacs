@@ -162,6 +162,16 @@ a rename, and is told what to expect on disk: the stamp a load or the last
 save answered, no file, or whatever is there. A save that finds another
 file than it expects is refused, with what is there, and writes nothing.
 
+Everything the editor ships is registered by a **package**: the headless
+host is handed the packages that ship (`lean/Editor/PackageSet.lean`, which
+`lean/Main.lean` passes to it) and registers them in order as its loop
+starts, before any config, each for the owner named after it
+([lean-runtime.md](../design/lean-runtime.md), "Packages"). A reload never
+replaces a package's commands, and config's command of a package's
+command's name runs in its place. A package the host refuses is said on
+stderr, in a line that starts `package: `, and skipped. "Compiled in",
+below, means registered by one of those packages.
+
 The editor ships two commands over those, compiled in, so they are there
 with no config and `show` lists them before config's
 (`lean/Editor/Files.lean`):
@@ -822,7 +832,7 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
 
 An eleventh, `tests/headless/shipped-themes/script`, runs on the config in
 `tests/headless/shipped-themes/config`, which names a shipped theme,
-`solarized-light` (`useTheme`): compiled code registers the shipped themes
+`solarized-light` (`useTheme`): the `themes` package registers the shipped themes
 before any config, so the name is found when the config is installed. The
 first scene is drawn in `solarized-light`. Then `load-theme` is answered
 with `fairy-floss`, and the next scene is drawn in it. Its output must be

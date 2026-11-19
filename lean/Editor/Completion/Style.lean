@@ -88,7 +88,8 @@ structure Matching where
   /-- Who registered the style `styleFor` answers for a prompt's category:
   a match job that runs it is that owner's, so an install that removes
   config's jobs ends a match of config's style (`Editor/Loop.lean`,
-  "Prompts"). Compiled for every category unless the host says. -/
+  "Prompts"). The owner `compiled`, the core's own, for every category
+  unless the host says. -/
   ownerFor : Option String → Config.Owner := fun _ => .compiled
 
 /-- The style a prompt of `category` is matched with: the one chosen for

@@ -143,84 +143,48 @@ as before, so reload and job completion work as they did.
   name. So a reload's modes, bindings and commands hold from the next key.
   What a command over a store asked to be written is written back to the
   stores.
-- **Compiled commands, jobs, bindings, modes, ex bindings, themes,
-  mode-line segments and languages are registered when the loop starts** (`compiled`), for
-  the owner `compiled`,
-  before any config: they are what the host's collaborators hand it. A reload replaces
-  config's commands, jobs, bindings, modes and ex bindings and never these,
-  so they run
-  when config fails to load, and config's command of a compiled command's
-  name runs in its place until a reload drops it. A compiled job is
-  started by a command, by its name, as config's is, for the owner
-  `compiled`: a reload that installs cancels config's jobs only, so a
-  compiled job runs across a reload. The executable is handed the file
-  commands and their jobs (`Files.package.registered.commands`, `Files.package.registered.jobs`,
-  `Editor/Files/Compiled.lean`): `open-file` and `save-buffer`, the first
-  commands it ships, which `show` lists before config's, and the jobs
-  `load-file` and `save-file`. It is handed the minibuffer's commands and
-  its mode too (`Minibuffer.package.registered.commands`, `Minibuffer.package.registered.modes`,
-  `Editor/Minibuffer/Compiled.lean`): `minibuffer-accept` and
-  `minibuffer-cancel`, which the Vim scheme's minibuffer state binds to
-  `<Enter>` and `<Escape>`, and the mode `minibuffer`, the first mode it
-  ships. And it is handed evil's commands (`Evil.package.registered.commands`,
-  `Editor/Evil/Compiled.lean`), which the Vim scheme's keys name: `move`,
-  the three that enter normal state and the visual states, the four that
-  begin an insert, and `self-insert`, which a key that prints runs in
-  insert state and in the minibuffer; and the operate command, `x`, the
-  two puts, the two commands that open a line, undo, redo and the repeat
-  command; and the commands that scroll a view. So with no config the
-  editor moves, edits, undoes, repeats and scrolls.
-  And it is handed the ex line's commands and the ex names
-  that ship (`Ex.package.registered.commands`, `Ex.package.registered.ex`, `Editor/Ex/Compiled.lean`):
-  `ex`, which opens the ex line and runs its answer, `quit`,
-  `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`,
-  `wq`, `reload`, `b`, `ls` and `bd`, the last three bound to the buffer
-  commands it is handed (`Buffers.package.registered.commands`,
-  `Editor/Buffers/Compiled.lean`): `switch-buffer`, `list-buffers` and
-  `close-buffer`. The Vim scheme's default table binds `:` to the name
-  `ex`, so that key opens the ex line. And it is handed the command that
-  loads a theme and the themes that ship (`Themes.package.registered.commands`,
-  `Themes.shipped`, `Editor/Themes/Compiled.lean`): `load-theme`, and the
-  theme `default`, the built-in one. And it is handed the command prompt
-  (`ExecuteCommand.package.registered.commands`, `Editor/ExecuteCommand/Compiled.lean`):
-  `execute-command`, which lists every registered command and runs the one
-  accepted. And it is handed the binding search (`BindingSearch.package.registered.commands`,
-  `Editor/BindingSearch/Compiled.lean`): `search-bindings`, which lists
-  every binding the scheme reaches in the view and runs the one accepted
-  as its key would. And it is handed the workspace
-  command and the job that finds a file's workspace (`Workspace.package.registered.commands`,
-  `Workspace.package.registered.jobs`, `Editor/Workspace/Compiled.lean`): `workspace-current`,
-  and `find-workspace`, which a file's open starts for its directory when
-  no answer is cached, so a script that opens a file has that job too; and
-  `find-mode-markers`, which gives a buffer the minor modes the compile
-  contributions' markers turn on, and which every file's open starts once
-  its workspace is known, since contributions ship. With them come
-  `find-file-in-workspace`, its source `workspace-files` in the category
-  `workspace-file` (`Workspace.package.registered.sources`) and the source's job
-  `workspace-files`, which lists the workspace's files with its lister and
-  filters them with fzf (`Editor/Workspace/FindFile.lean`); and
-  `find-file-in-project`, its source `project-workspaces` in the category
-  `project-workspace` and the jobs `project-workspaces`,
-  `project-workspace-choose` and `project-workspace-find`, which list the
-  project's worktrees and find the one chosen
-  (`Editor/Workspace/FindInProject.lean`). And it is handed the
-  status buffer's commands, jobs and mode (`VersionControl.package.registered.commands`,
-  `VersionControl.package.registered.jobs`, `VersionControl.package.registered.modes`,
-  `Editor/VersionControl/Compiled.lean`): `vc-status` and the commands of
-  its buffer, the jobs `vc-status-read` and `vc-status-apply`, which run
-  git, and the mode `vc-status`; the ex name `vc-status` runs the first.
-  It is handed `vc-show` and its job too, and the version-control gutter's
-  command and jobs (`VersionControl.gutterPackage.registered.commands`,
-  `VersionControl.gutterPackage.registered.jobs`): a tracked file's buffer shows its lines
-  added, removed and changed against `HEAD` in a column before its text.
-  And it is handed the
-  `code` mode and the languages that ship (`Language.modes`,
-  `Language.shipped`, `Editor/Language.lean`): `rust`, `json` and
-  `markdown`, so a file of one of them opens in `code`, highlighted. The ex
-  line is handed no key
-  binding: the Vim scheme's keys are its states' own keymaps. The frame's
-  bindings bind `s-q` to `quit`. Every default key names a command the host
-  is handed.
+- **Packages are registered when the loop starts** (`Running.new`), before
+  any config: the host is handed an array of them
+  (`Collaborators.packages`, `Editor/Package.lean`) and registers each, in
+  the array's order, for the owner named after it
+  (`Config.State.ofPackages`, `Editor/Config/Packages.lean`). Every
+  command, job, key binding, mode, ex binding, theme, mode-line segment,
+  language, compile contribution, completion source, style and display,
+  at-point source and menu the host has before config is a package's: the
+  host registers nothing else, and imports no module that defines a
+  package (`tools/host-imports-check.sh`). A host handed none starts with
+  an empty registry and publishes no menu bar.
+  - **A reload replaces config's registrations and never a package's**, so
+    a package's commands run when config fails to load, and config's
+    command of a package's command's name runs in its place until a reload
+    drops it. A package's job is started by a command, by its name, as
+    config's is, for the package's owner: a reload that installs cancels
+    config's jobs only, so a package's job runs across a reload.
+  - **A package that is refused is logged and skipped** (`Collaborators.log`,
+    the line prefixed with `package: `): one with an empty, reserved or
+    repeated name, one whose `setup` is refused, or one that sets what only
+    config may choose. The others register and the loop starts.
+  - **The executable's hosts are handed the packages that ship**
+    (`PackageSet.shipped`, `Editor/PackageSet.lean`, which `Main.lean`
+    passes to `main` here and to the window mode's), 21 of them, each in
+    its feature's `Compiled.lean`, which says what it registers. Among
+    them: the file commands and their jobs, the first commands `show`
+    lists (`files`); the minibuffer's commands and its mode, which the Vim
+    scheme's minibuffer state binds to `<Enter>` and `<Escape>`
+    (`minibuffer`); evil's commands, which the Vim scheme's keys name, so
+    with no config the editor moves, edits, undoes, repeats and scrolls
+    (`evil`); the ex line's commands and the ex names that ship (`ex`),
+    with the buffer commands three of them run (`buffers`); the frame's
+    commands and their bindings, `s-q` to `quit` among them
+    (`frame-commands`), and the menu bar (`menu`); the command that loads
+    a theme and the themes that ship (`themes`); the command prompt and
+    the binding search (`execute-command`, `binding-search`); the
+    workspace commands and the job a file's open starts to find its
+    workspace (`workspace`); the status buffer's commands, jobs and modes,
+    and the gutter's (`version-control`, `version-control-gutter`); and
+    the `code` mode with the languages that ship (`languages`). The ex
+    line is handed no key binding: the Vim scheme's keys are its states'
+    own keymaps. Every default key names a command a package registers.
 - **The interrupt key.** When the loop starts the host tells the library
   which key raises the interrupt flag (`Collaborators.interruptKey`, `C-g`),
   and leaves it with none when the loop ends. The loop's programs are run
@@ -295,7 +259,7 @@ through, the services the loop's jobs wait on, which a test makes of a fake
 clock, and the two tables the host makes before those services: the table of
 snapshots the loop's text binding publishes, of which the loop is the one
 writer, and what the jobs hold. Beside them, each with a default: the
-compiled commands, jobs, bindings and modes, the log, the threshold for a
+packages the host registers, the log, the threshold for a
 slow command, the interrupt key, how the frame is made
 (`Collaborators.start`), and how the display, the clipboard and the
 syntax tree are made (`Collaborators.display`, `Collaborators.clipboard`,
@@ -473,7 +437,7 @@ typed so far as its text and the prompt text as its status line, in the
 face `minibuffer.prompt`.
 
 `commands`, `text` and `store` answer `show`, which lists commands, the
-compiled ones among them, not jobs. The loop keeps
+packages' among them, before config's, not jobs. The loop keeps
 one table of texts for its life, and `show` lists every text in it that no
 command has released, under the index it was made with. A diagnostic that is about no place in particular has the
 position 0:0. A job's id is its number in this loop's table, from 1. A job
@@ -572,11 +536,9 @@ handed the command line after `headless`, which `Headless.read` reads
 (`Editor/Headless/CommandLine.lean`): the toolchain's directory and the
 editor's `.olean` directory are given, or, from an executable in an app
 bundle, are the bundle's (`Editor/ModuleLookup.lean`). It is `run`
-with the real elaborator, a directory as the source, stdout as the output,
-the library's timer service and file service for the jobs, and the file
-commands with their jobs, the minibuffer's commands with its mode, evil's
-commands and the ex line's commands with the ex names that ship as
-its compiled ones, then the quit and the explicit exit. Before the loop starts it warms the pool (`Editor/Job/Pool.lean`) and
+with the packages `main` is handed, the real elaborator, a directory as the
+source, stdout as the output, and the library's timer service and file
+service for the jobs, then the quit and the explicit exit. Before the loop starts it warms the pool (`Editor/Job/Pool.lean`) and
 starts the completion pump on a dedicated task (`Editor/Job/Real.lean`),
 which the quit ends. Its exit status is 0 when the script ran to its end, or
 a command quit the editor before it, and
@@ -605,17 +567,21 @@ clock it moves, with the thread each line was emitted from
 (`ConfigTest.scriptChecks`). Two of those are the loop's refusals: a scene
 whose echo is the refusal once a command has released the focused buffer's
 text, and `Running.attempt` on a program that is refused, which no script
-can make the loop run. `ConfigTest.dispatchChecks` send keys to hosts over
-the test scheme, with compiled commands and bindings written there: a key
+can make the loop run. `ConfigTest.hostChecks` also start a host handed no
+packages, which has an empty registry and no menu bar, and one handed a
+package it refuses, which it logs and skips. `ConfigTest.dispatchChecks` send keys to hosts over
+the test scheme, handed commands and bindings written there, as a package: a key
 runs its command, a failed command is rolled back, the interrupt key stops
 a command that loops, a reload replaces config's commands and bindings and
-leaves the compiled ones, and a slow command is logged, on the fake clock.
+leaves the package's, and a slow command is logged, on the fake clock.
 `ConfigTest.hostLoopChecks` are the commands no key ran: a `run` goes
 through the loop, makes the frame, is rolled back when it fails and is
 stopped by the interrupt key; a key's command starts a job, whose result
 comes back as a command after the keys sent meanwhile; and a job's command
-that loops is stopped by the interrupt key; and a host is handed a compiled
-job, which a compiled command starts before any config is loaded and a
+that loops is stopped by the interrupt key; a host handed two packages has
+their commands in list order as its loop starts, before any reload, and
+config's after them; and a host is handed a package's
+job, which a package's command starts before any config is loaded and a
 reload does not cancel. `ConfigTest.promptChecks` are hosts handed the
 minibuffer's commands and its mode: a command asks for a prompt, a commit
 is typed into the minibuffer, the accept key runs the answer's command
@@ -632,8 +598,8 @@ leave the file with the buffer's text and end the script with no failure,
 with the lines after the quit not run; a `q` that is refused leaves the
 script running; and a wait on a loop a command ended answers `ended`.
 `ConfigTest.fileChecks` are hosts over the
-library's file service, handed the file commands and their jobs as compiled
-code registers them, on real files in temporary directories.
+library's file service, handed the file commands and their jobs as the
+`files` package registers them, on real files in temporary directories.
 The `ffi-test` task runs the real executable
 once, on the fixture under `tests/headless`, which covers the command line,
 the pump and the timer service: the fixture's job sleeps on the real clock.

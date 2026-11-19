@@ -45,7 +45,7 @@ not part of it, so a directory `notes/` is matched as `notes`), and each
 span is shifted by its candidate's offset. **The directory part is never
 matched**, so it never ranks a candidate. A text that ends in `/` has an
 empty last component, and lists every candidate in order. It is the style
-compiled code gives the category `file` (`Files.styleDefaults`).
+the `files` package gives the category `file` (`Editor/Files/Compiled.lean`).
 
 Pinned by `ModelTest.styleChecks` and `styleContractChecks`.
 -/
@@ -153,8 +153,8 @@ def path : Style :=
               hit.ranges.map fun range =>
                 { start := range.start + offset, stop := range.stop + offset } } }
 
-/-- The styles that ship, registered compiled by every host
-(`Headless.Collaborators.styles`). -/
+/-- The styles that ship, which the `completion` package registers
+(`Editor/Completion/Compiled.lean`). -/
 def shipped : Array Style :=
   #[fuzzy, orderless, path]
 

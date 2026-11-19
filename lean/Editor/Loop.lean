@@ -1022,7 +1022,7 @@ loop asks for at three moments, and a save's own check.
   was not, its first edit. A buffer opened this step is not due: its stamp
   is a moment old. All that are due go in one `check-files` start, handed
   back with the step's other starts, and only where that job is
-  registered, so a host with no `Files.jobs` checks nothing.
+  registered, so a host not handed the `files` package checks nothing.
 - **What the check does.** Its command (`Files.checked`) is made of state
   requests alone, so it cannot be interrupted or rolled back: for each
   file it records what the stat found (`BufferId.markChanged`), told when

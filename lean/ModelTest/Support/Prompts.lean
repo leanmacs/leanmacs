@@ -163,8 +163,8 @@ def minibufferBindings : List (String × String) :=
     ("C-c 2", Minibuffer.cancelName)]
 
 /-- The registry of the minibuffer checks: the minibuffer's commands and its
-mode registered for the owner `compiled`, as a host registers them, and the
-checks' bindings as config's. -/
+mode registered for the owner `compiled`, an owner that is not config, as a
+host registers a package's, and the checks' bindings as config's. -/
 def minibufferRegistry : Config.Registry :=
   ((({} : Config.Registry).replace .compiled Minibuffer.package.registered.commands).replaceModes
         .compiled Minibuffer.package.registered.modes).replaceBindings

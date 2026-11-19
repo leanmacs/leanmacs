@@ -14,8 +14,8 @@ job has ended (`Editor/Loop.lean`, "Jobs from commands"). The editor thread
 never waits for a file.
 
 `Editor.lean` imports this module, so config calls `Files.open` and
-`Files.save`. The commands and the jobs as compiled code registers them
-are in `Editor/Files/Compiled.lean`.
+`Files.save`. The commands and the jobs as the `files` package registers
+them are in `Editor/Files/Compiled.lean`.
 
 ## Open
 
@@ -152,8 +152,8 @@ are in `Editor/Files/Compiled.lean`.
   a directory with a `~` component, which no typed text names), and asks the sources of the category `file`,
   with the shipped file source (`Completion.Paths.source`) as their
   default, so config adds to what it lists by registering a source in the
-  category. The style compiled code gives the category is the path style
-  (`Files.styleDefaults`).
+  category. The style the `files` package gives the category is the path style
+  (its `useStyleFor`, `Editor/Files/Compiled.lean`).
 - **The command resolves each path it is given** (`resolve`) before it
   opens it: a leading `~` under the home directory, an absolute path as it
   is, and anything else under the asking view's directory, with `.` and

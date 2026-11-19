@@ -241,8 +241,8 @@ rows: the default display. -/
 def minibuffer (rows : Nat := Displays.rows) : Display :=
   { name := "minibuffer", sheet := sheetOf rows }
 
-/-- The displays that ship, registered compiled by every host
-(`Headless.Collaborators.displays`). -/
+/-- The displays that ship, which the `completion` package registers
+(`Editor/Completion/Compiled.lean`). -/
 def shipped : Array Display :=
   #[minibuffer]
 

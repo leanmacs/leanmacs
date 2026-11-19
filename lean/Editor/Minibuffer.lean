@@ -9,8 +9,8 @@ import Editor.Role
 
 A prompt is answered and cancelled by commands, and the minibuffer takes
 keys through a mode, like any buffer (`docs/design/keymaps-and-modes.md`,
-"The minibuffer"). They are compiled: a host registers them for the owner
-`compiled` (`Editor/Minibuffer/Compiled.lean`), so they hold when config
+"The minibuffer"). They are a package's: a host registers them for the owner
+`minibuffer` (`Editor/Minibuffer/Compiled.lean`), so they hold when config
 fails to load, and a reload does not replace them.
 
 - **`minibuffer-accept`** (`acceptName`, `acceptCommand`) accepts the open

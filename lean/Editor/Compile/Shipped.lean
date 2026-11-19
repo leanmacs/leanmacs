@@ -34,8 +34,9 @@ is no `file:line`.
 
 ## The modes
 
-The contributions that ship (`shipped`), registered by every host for the
-owner `compiled`, so config's contribution of the same name replaces one:
+The contributions that ship (`shipped`), which the `compile` package
+registers (`Editor/Compile/Compiled.lean`), so config's contribution of the
+same name replaces one:
 
 - **`cargo-mode`** (`cargoMode`): marker `Cargo.toml`, outermost, so in a
   member crate its root is the Cargo workspace's, where cargo's

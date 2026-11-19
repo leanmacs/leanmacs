@@ -598,7 +598,7 @@ editor with git integration does.
 - **Which buffers.** A file buffer whose workspace is a local root that
   can run commands and is a repository (it has a `Workspace.branch`, a
   detached `HEAD` included), with the file under the root, where
-  the host registered the gutter's jobs (`VersionControl.gutterJobs`); the
+  the host registered the gutter's jobs (the `version-control-gutter` package); the
   gate auto-reload uses. The column appears once `HEAD`'s content has
   arrived. A file `HEAD` lacks (untracked, new, an unborn branch) has no
   gutter and no column, and neither does one whose read failed: a gutter

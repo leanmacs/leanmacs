@@ -68,7 +68,7 @@ share (`defineSource`, `Editor/Setup.lean`; `Editor/Config/Registry.lean`,
 | Something more a source is asked | A field of `Query` (`Editor/Completion/Candidate.lean`), filled where `prompt` asks, as `Query.place` is |
 | Something more a candidate carries | A field of `Candidate`, optional, and what draws it is the display's; one that crosses from a job is an argument of `Candidate.arguments` (`Editor/Completion/Later.lean`) |
 | A rule for what a source hides until the text reveals it | The source's `Candidate.hiddenUntil`; the listing's projection is `Candidates.answering` (`Editor/State.lean`) |
-| A shipped source | A value beside the rule it lists, a default of the category the prompt that lists it asks for, registered compiled in `Headless.shippedOver`, and run by `ModelTest.sourceContractChecks` |
+| A shipped source | A value beside the rule it lists, a default of the category the prompt that lists it asks for, registered by its feature's package (its `Compiled.lean`), and run by `ModelTest.sourceContractChecks` |
 | A way to match candidates | A style (`Editor/Completion/Style.lean`), not a source |
 | A rule every source keeps | A property of `Editor/Completion/Contract.lean` |
 | A source asked at a position of a buffer | An at-point source (`Editor/Completion/AtPoint.lean`), which names the sources to complete its region from (`Named`, `Named.ref`) |

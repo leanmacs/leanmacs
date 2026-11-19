@@ -43,10 +43,10 @@ the state's indices are from 0.
 A prompt's continuation is called with the window the prompt was asked
 from, a window of the tab in view, so an answer acts on the tab in view.
 
-They are compiled: a host registers them for the owner `compiled`
+They are a package's: a host registers them for the owner `tab-commands`
 (`Editor/TabCommands/Compiled.lean`), so config can call them and bind
 keys to them. `Editor.lean` imports this module, and not that one, which
-names the registry.
+is what a host is handed.
 
 Pinned by `ModelTest.tabCommandChecks`.
 -/

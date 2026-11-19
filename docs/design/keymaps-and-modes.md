@@ -807,15 +807,16 @@ structure Vocabulary.Operator where
 
 - Keyboard macros, because they replay keys and work under any scheme.
 - The command registry and `run`. Built: commands are registered by name
-  and by owner (`Config.Registry`), by compiled code for the owner
-  `compiled` when the host starts and by config's `setup` for the owner
+  and by owner (`Config.Registry`), by each package for the owner named
+  after it when the host starts ([lean-runtime.md](lean-runtime.md),
+  "Packages") and by config's `setup` for the owner
   `config`. The latest entry of a name is the one an invocation runs
   (`Config.State.command?`), and a reload appends config's after the
-  compiled ones, so config's command of a compiled command's name runs in
-  its place until a reload drops it, and the compiled one runs again.
+  packages', so config's command of a package's command's name runs in
+  its place until a reload drops it, and the package's runs again.
 - Key bindings, by owner in the same registry (`Registry.bindings`): a key
-  sequence and a command name. A reload replaces config's and never the
-  compiled ones, so compiled bindings run when config fails to load.
+  sequence and a command name. A reload replaces config's and never a
+  package's, so the packages' bindings run when config fails to load.
 - Vocabulary. Motions and operators each have a type and a compiled table
   (`Evil.motions`, `Evil.operators`, "Vocabulary" above). A registry of
   them by owner (entries replaced as a set, the latest wins), and text
@@ -2763,7 +2764,8 @@ focus; reads a count from its call's first `.nat` argument, as this scheme
 lays one out, 0 for none; and gives up with what its refusal says
 (`LayoutRefusal.describe`), so closing the last window says
 `window-close: the last window cannot be closed` in the echo area. They are
-registered for the owner `compiled` by both hosts (`Headless.shippedOver`).
+registered by the `window-commands` package, which both hosts are handed
+(`lean/Editor/WindowCommands/Compiled.lean`).
 
 The Vim scheme binds them under `C-w` in normal state (`windowKeys`, the
 table `windowCommands`):
@@ -2907,8 +2909,8 @@ prompt's continuation may be called with, is the window of no tab, and
 there it is the tab in view. Each reads a count from its call's first
 `.nat` argument and gives up with what its refusal says, so
 `tab-close: the last tab cannot be closed` and
-`tab-select-5: there is no tab 5`. They are registered for the owner
-`compiled` by both hosts. Tabs are numbered from 1.
+`tab-select-5: there is no tab 5`. They are registered by the
+`tab-commands` package, which both hosts are handed. Tabs are numbered from 1.
 
 The Vim scheme binds them under `C-w` in normal state with tmux's keys, the
 table `edmacs` settled on (`tabKeys`, the table `tabCommands`):
@@ -2967,25 +2969,25 @@ Which names have something behind them:
 | Names | State |
 |---|---|
 | The twenty-eight motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
-| `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (`Evil.commands`) |
+| `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (the `evil` package) |
 | `self-insert`, which no table names: typed text | Built and registered |
-| `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (`Minibuffer.commands`) |
-| `insert-delete-backward`, `insert-delete-word-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up`, `insert-down` | Built and registered (`Evil.commands`; "Insert state") |
-| The operators (`delete`, `change`, `yank`, `indent`, bound to `d`, `c`, `y` and `=`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
-| The twenty-two text objects of `objects` | Built: entries of `Evil.objects`, Vim's sixteen and the syntax tree's six, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (`Evil.commands`; "Text objects as built") |
-| `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo` | Built and registered (`Evil.commands`) |
+| `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (the `minibuffer` package) |
+| `insert-delete-backward`, `insert-delete-word-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up`, `insert-down` | Built and registered (the `evil` package; "Insert state") |
+| The operators (`delete`, `change`, `yank`, `indent`, bound to `d`, `c`, `y` and `=`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (the `evil` package) |
+| The twenty-two text objects of `objects` | Built: entries of `Evil.objects`, Vim's sixteen and the syntax tree's six, run by the command `operate` after an operator and by `select-object` in a visual state, both registered (the `evil` package; "Text objects as built") |
+| `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo` | Built and registered (the `evil` package) |
 | `repeat`, which no table names: the repeat key's invocation | Built and registered |
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
-| `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
-| `execute-command`, which no table names | Built and registered (`ExecuteCommand.commands`; "Running a command by name"). The scheme binds no key to it (the owner, 2026-11-17); the default config binds `SPC :` |
-| `search-bindings`, which no table names | Built and registered (`BindingSearch.commands`; "Searching the bindings"). The scheme binds no key to it, as for `execute-command`; the default config binds `SPC ?` |
-| `find-file-in-workspace` and `find-file-in-project`, which no table names | Built and registered (`Workspace.commands`). The scheme binds no key to them, as for `execute-command`; the default config binds `SPC p f` and `SPC SPC` to `find-file-in-workspace` and `SPC p p` to `find-file-in-project` |
-| `find-file-in-another-workspace`, which no table names | Built and registered (`Workspace.commands`). Compiled code binds `C-x C-d` to it in the prompt category `workspace-file` (`Workspace.bindings`), not in a state's table, so it holds in the `minibuffer` state while the workspace finder is open and nowhere else ("The minibuffer", under Modes) |
-| `keyboard-quit` | Built and registered (`Shell.commands`): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
-| `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
-| The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (`WindowCommands.commands`, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
-| The tab commands `tabKeys` names: `tab-next`, `tab-previous`, `tab-new`, `tab-close`, `tab-switch`, `tab-select-1` … `tab-select-9`; and `tab-rename`, `tab-move-right`, `tab-move-left`, with no key | Built and registered (`TabCommands.commands`, `lean/Editor/TabCommands.lean`; "Tab commands as built") |
-| `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (`Evil.commands`, `lean/Editor/Evil/Clipboard.lean`); the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
+| `ex` | Built and registered (the `ex` package): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
+| `execute-command`, which no table names | Built and registered (the `execute-command` package; "Running a command by name"). The scheme binds no key to it (the owner, 2026-11-17); the default config binds `SPC :` |
+| `search-bindings`, which no table names | Built and registered (the `binding-search` package; "Searching the bindings"). The scheme binds no key to it, as for `execute-command`; the default config binds `SPC ?` |
+| `find-file-in-workspace` and `find-file-in-project`, which no table names | Built and registered (the `workspace` package). The scheme binds no key to them, as for `execute-command`; the default config binds `SPC p f` and `SPC SPC` to `find-file-in-workspace` and `SPC p p` to `find-file-in-project` |
+| `find-file-in-another-workspace`, which no table names | Built and registered (the `workspace` package). Compiled code binds `C-x C-d` to it in the prompt category `workspace-file` (the `workspace` package), not in a state's table, so it holds in the `minibuffer` state while the workspace finder is open and nowhere else ("The minibuffer", under Modes) |
+| `keyboard-quit` | Built and registered (the `shell` package): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
+| `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (the `evil` package; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
+| The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (the `window-commands` package, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
+| The tab commands `tabKeys` names: `tab-next`, `tab-previous`, `tab-new`, `tab-close`, `tab-switch`, `tab-select-1` … `tab-select-9`; and `tab-rename`, `tab-move-right`, `tab-move-left`, with no key | Built and registered (the `tab-commands` package, `lean/Editor/TabCommands.lean`; "Tab commands as built") |
+| `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (the `evil` package, `lean/Editor/Evil/Clipboard.lean`); the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
 
 | Table | Keys |
 |---|---|
@@ -3582,8 +3584,9 @@ own, and that window has the focus.
   (`Prompt.mode`, `lean/Editor/State.lean`). No on-enter action runs, and
   the mode has none. A host that was not handed the mode has a minibuffer
   whose mode contributes nothing; the executable is handed the commands
-  and the mode (`Minibuffer.commands`, `Minibuffer.modes`), registered for
-  the owner `compiled`, so they hold when config fails to load and a
+  and the mode as the `minibuffer` package
+  (`lean/Editor/Minibuffer/Compiled.lean`), registered for
+  the owner `minibuffer`, so they hold when config fails to load and a
   reload does not replace them.
 - **A prompt does not capture the keyboard.** A command may focus another
   window while the prompt is open; keys then go there, and the prompt
@@ -4138,13 +4141,13 @@ and orderless choose it.
   that sends a long list to a match job (`Candidates.listingSize`).
 - **Config chooses** (`lean/Editor/Setup.lean`): `defineStyle style`
   registers one, `useStyleFor category name` chooses a category's, and
-  `useStyle name` the default. Every host registers `fuzzy`, `orderless`
-  and `path` for the owner `compiled` (`Headless.Collaborators.styles`).
-  Compiled code may give a category a default of its own
-  (`Config.Registry.styleDefaults`, `Headless.Collaborators.styleDefaults`,
+  `useStyle name` the default. The `completion` package registers `fuzzy`,
+  `orderless` and `path` (`lean/Editor/Completion/Compiled.lean`).
+  A package may give a category a default of its own, with `useStyleFor`
+  (`Config.Registry.styleDefaults`,
   set when the host starts and never by an install), as Emacs's
   `completion-category-defaults`: the file prompt's category `file` gets
-  `path` (`Files.styleDefaults`). It sits between config's two choices:
+  `path` from the `files` package. It sits between config's two choices:
   `useStyleFor "file" "fuzzy"` overrides it, and `useStyle "orderless"`
   does not reach it. `find-file-in-workspace`'s category,
   `workspace-file` ([projects.md](projects.md)), has no compiled default
@@ -4343,8 +4346,8 @@ Doom Emacs's corfu module (owner decisions, 2026-11-17).
   key. The at-point source `words` answers the word before the cursor; it
   asks by itself after 240 ms once two characters are typed, as
   `corfu-auto` does, and on a key even with nothing typed, which lists every
-  word. Compiled code uses it in every buffer
-  (`Headless.Collaborators.atPointUses`).
+  word. The `at-point` package uses it in every buffer
+  (`lean/Editor/AtPoint/Compiled.lean`).
 - **The headless mode's clock is fake** (`docs/dev-practices/headless-mode.md`):
   a pause fires only when a script advances it (`advance 240`).
 - **Reload.** At-point sources run only inside commands, looked up through
@@ -4475,8 +4478,8 @@ buffer while editing goes on.
   not there is said by Files, and no other cursor moves.
 - **Contributions.** A minor mode gives the compile mode what fits a kind
   of project as data (`Compile.Contribution`), registered under the mode's
-  name in config (`compileContribution`) or by compiled code (a host's
-  `contributions`): marker files, named commands (`build`, `test`, each a
+  name in config (`compileContribution`) or by a package (the `compile`
+  package's, `lean/Editor/Compile/Compiled.lean`): marker files, named commands (`build`, `test`, each a
   name and a command line, and maybe a directory of its own), error
   formats, whether its root is its outermost marker, and a listing that
   computes more commands.
@@ -4491,8 +4494,8 @@ buffer while editing goes on.
   ordered, once their roots are chosen, nearest root first, then by
   registration order. That one order picks the default command and the
   order formats are tried.
-- **The shipped modes.** Every host registers three contributions for the
-  owner `compiled` (`Compile.shipped`), which config's of the same name
+- **The shipped modes.** The `compile` package registers three
+  contributions (`Compile.shipped`), which config's of the same name
   replaces whole, and which config can build on (`{ Compile.cargoMode with
   … }`):
   - `cargo-mode`: marker `Cargo.toml`, outermost, because cargo prints
@@ -5408,7 +5411,8 @@ and two through the host:
 - **The lists on the models name no Vim key**: the ex command and the
   accept and cancel commands are on keys of the test scheme, and a line is
   a committed text. The ex line's own rules are checked with ex bindings
-  written in the test, and the names that ship with `Ex.bindings`.
+  written in the test, and the names that ship with the `ex` package's
+  (`Ex.package.registered.ex`).
 - **Each message is read from the function that makes it** (`Ex.unknown`,
   `Ex.noArgument`, `Ex.notQuitting`, and the file commands' in `Files`).
 - **The loop's part, stop and the withdrawn quit and the reload handed

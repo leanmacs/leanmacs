@@ -15,7 +15,8 @@ The registry is the editor's table of commands and of jobs. Each entry has an
 *owner* (`Editor/Config/Owner.lean`), and an owner's entries are replaced as
 a set, never added to: installing a reloaded config is `replace` for the
 owner `config`, so a command the new config no longer registers is gone, and
-one it registers again is there once.
+one it registers again is there once. Every other owner is a package's
+("Packages", below), whose entries a host registers once, when it starts.
 
 A registered command is a value: the `EditorM` program `setup` handed over
 (`Editor/Setup.lean`). Running it is running that program against the
@@ -68,7 +69,7 @@ localleader the installed config set (`leader`, `localLeader`, which an
 install sets, `none` when config set none), or the scheme's
 (`InputScheme.leaders`). The registry's leaders change only at an install,
 so this is the same as expanding at the install, which could not: an
-install knows no scheme, and compiled bindings are made before any config.
+install knows no scheme, and a package's bindings are made before any config.
 So the order of a `setup`'s calls does not matter, and a reload with a new
 leader moves every binding written with it, and every mode's suffix
 (`modeKeymaps`, `activeMaps`).
@@ -89,7 +90,7 @@ leader moves every binding written with it, and every mode's suffix
 `bindKey … (category := some "<category>")`). Such a binding is left out of
 the global keymap (`keymap`) and held in its category's keymap
 (`categoryKeymap`), bound by the same rules, oldest first, so config's
-binding of a sequence is over compiled code's. `activeMaps` puts the open
+binding of a sequence is over a package's. `activeMaps` puts the open
 prompt's category's keymap first among the active keymaps of the prompt's
 minibuffer view, ahead of its modes' and the global one. A minor mode could
 not carry such a key: under the Vim scheme a mode's key does not hold where
@@ -126,7 +127,7 @@ A prefix named twice is refused as a binding is: as written by `problem?`
 the command's name, the one bound last that is a single chord of one
 character with the system key held, as a menu's key equivalent must be (a
 key equivalent with no Command would take a plain key from typing, and a
-named key has none). So config's binding is shown over a compiled one, a
+named key has none). So config's binding is shown over a package's, a
 sequence config binds to another command shows for that one, and a
 command bound only to a longer sequence, a named key or a chord without
 the system key shows none. A chord one of the menu's system items already
@@ -142,7 +143,7 @@ never a key equivalent.
 A mode (`Editor/Mode.lean`) is held by owner like a command, in a
 `ModeEntry`, and replaced as a set (`replaceModes`): the owner is on the
 entry, never on the mode, so `setup` cannot choose it. The latest entry of a
-name is the one found (`mode?`), so config's mode of a compiled mode's name
+name is the one found (`mode?`), so config's mode of a package's mode's name
 is used in its place until a reload drops it.
 
 - **A mode's lineage** (`lineage`) is the mode, then its parent, and so
@@ -173,8 +174,8 @@ is used in its place until a reload drops it.
 An ex name is bound to a command's name (`Ex.Binding`,
 `Editor/Ex/Line.lean`), held by owner in an `ExEntry` and replaced as a set
 (`replaceEx`), as a key binding is. `ex?` finds the latest entry of a name,
-so config's binding of an ex name a compiled binding has is the one a line
-runs while config binds it, and the compiled one runs again once a reload
+so config's binding of an ex name a package binds is the one a line
+runs while config binds it, and the package's runs again once a reload
 drops it. The command's name is not looked up here: it is looked up when
 the line is run. An ex binding is not a command and is not counted as one.
 
@@ -187,10 +188,10 @@ yet.
 
 A theme (`NamedTheme`, `Editor/Face.lean`) is held by owner like a mode, in
 a `ThemeEntry`, and replaced as a set (`replaceThemes`). The latest entry of
-a name is the one found (`theme?`), so config's theme of a compiled theme's
-name is used in its place until a reload drops it. Compiled code registers
-the themes that ship (`Themes.shipped`, `Editor/Themes/Compiled.lean`),
-`default` among them; `setup` registers more with `defineTheme`
+a name is the one found (`theme?`), so config's theme of a package's theme's
+name is used in its place until a reload drops it. The `themes` package
+registers the themes that ship (`Themes.shipped`,
+`Editor/Themes/Compiled.lean`), `default` among them; `setup` registers more with `defineTheme`
 (`Editor/Setup.lean`). `themeNames` lists each name once, in the order it
 was first registered, and is what the loop is told for the command that
 loads a theme (`registered`). Which theme is in force is not the registry's
@@ -206,8 +207,8 @@ A segment of the mode line (`Segment`, `Editor/ModeLine.lean`) is held by
 owner like a theme, in a `SegmentEntry`, and replaced as a set
 (`replaceSegments`). The latest entry of a name is the one found
 (`segment?`), so config's segment of a shipped segment's name is drawn in
-its place until a reload drops it. Compiled code registers the shipped
-segments (`ModeLine.shipped`, through `Headless.Collaborators.segments`);
+its place until a reload drops it. The `mode-line` package registers the
+shipped segments (`ModeLine.shipped`, `Editor/ModeLine/Compiled.lean`);
 `setup` registers more with `defineSegment` (`Editor/Setup.lean`).
 `resolve` turns a listing (`ModeLine.Order`) into the mode line and the
 names nobody registered. Which listing is in force is not the registry's
@@ -221,13 +222,13 @@ refused here: it is left out at install, and the report names it.
 ## Languages
 
 A language (`Editor/Language.lean`) is held by owner like a theme, in a
-`LanguageEntry`, and replaced as a set (`replaceLanguages`). Compiled code
-registers the languages that ship (`Language.shipped`, through
-`Headless.Collaborators.languages`); `setup` registers more with
+`LanguageEntry`, and replaced as a set (`replaceLanguages`). The
+`languages` package registers the languages that ship (`Language.shipped`,
+`Editor/Language/Compiled.lean`); `setup` registers more with
 `defineLanguage` (`Editor/Setup.lean`). The table a path's language is
 chosen from (`languageTable`) is each owner's entries over the earlier
 owners' (`Language.over`): config's first, in the order it defined them,
-then the compiled ones it did not replace by name. So config's entry of a
+then the packages' it did not replace by name. So config's entry of a
 shipped name is used in that one's place until a reload drops it, and the
 loop is told the table (`registered`).
 
@@ -242,7 +243,7 @@ A compile contribution (`Compile.Contribution`,
 `compileContributions` is the registration order the compile mode uses:
 config's contributions in the order its `setup` registered them, then the
 others whose names config does not register, in their order. So config's
-contribution of a compiled one's name replaces it whole, markers, commands
+contribution of a package's one's name replaces it whole, markers, commands
 and formats, in config's place, until a reload drops it. Config's project
 commands (`projectCommands`) are config's alone, replaced by each install.
 The loop is told both (`compileHook`, `Loop.Registered.compile`).
@@ -257,19 +258,19 @@ with no marker is refused by `compileContribution` itself.
 A completion source (`Completion.Source`, `Editor/Completion.lean`) is held
 by owner like a theme, in a `SourceEntry`, and replaced as a set
 (`replaceSources`). The latest entry of a name is the one found (`source?`),
-so config's source of a compiled source's name is used in its place until a
-reload drops it. Compiled code registers the shipped sources (through
-`Headless.Collaborators.sources`); `setup` registers more with
+so config's source of a package's source's name is used in its place until a
+reload drops it. Packages register the shipped sources, each the package of
+the feature that lists it; `setup` registers more with
 `defineSource` (`Editor/Setup.lean`). The loop is told the lookup
 (`registered`, `Loop.Registered.sources`), and runs the source a prompt
 names inside the asking command (`ControlRequest.askSource`,
 `Editor/Command/Dispatch.lean`).
 
 The sources of a category (`sourcesIn`) are the names whose latest entry
-is of it, each once, in the order the name was first registered: compiled
+is of it, each once, in the order the name was first registered: packages'
 entries come first, so config's source of a shipped name keeps the
 shipped one's place and answers in its stead, and config's of a new name
-come after the compiled ones, in config's order. The loop is told them
+come after the packages', in config's order. The loop is told them
 (`Loop.Registered.categorySources`) for a prompt that asks for a category
 (`RegistryRequest.categorySources`).
 
@@ -282,22 +283,24 @@ A completion style (`Completion.Style`, `Editor/Completion/Style.lean`) is
 held by owner like a source, in a `StyleEntry`, and replaced as a set
 (`replaceStyles`). The latest entry of a name is the one found (`style?`),
 so config's style of a shipped style's name is used in its place until a
-reload drops it. Every host registers the shipped styles, `fuzzy`,
-`orderless` and `path`, for the owner `compiled` (`Headless.Collaborators.styles`);
+reload drops it. The `completion` package registers the shipped styles,
+`fuzzy`, `orderless` and `path` (`Editor/Completion/Compiled.lean`);
 `setup` registers more with `defineStyle` (`Editor/Setup.lean`).
 
 Which style a prompt is matched with is config's choice, by category, with a
 default for the rest (`useStyleFor`, `useStyle`): the choices are config's
 alone, set by each install (`styleChoices`), as its project commands are.
-Compiled code may give a category a style of its own (`styleDefaults`, as
-Emacs's `completion-category-defaults`), set when the host starts and never
-by an install: it sits between config's two choices, so `useStyleFor`
-overrides it and `useStyle` does not reach it. `styleEntry` resolves them to
-the one style entry a category is matched with: the entry of the style
-chosen for it when one is registered under that name, else the compiled
-default's for it, else the chosen default's, else the style registered under
-`fuzzy` (config's, when it registers one of that name), else the compiled
-fuzzy style, for a registry where no style of that name is. A chosen name
+A package may give a category a style of its own, with `useStyleFor`
+(`styleDefaults`, as Emacs's `completion-category-defaults`), set when the
+host starts and never by an install: it sits between config's two choices,
+so config's `useStyleFor` overrides it and its `useStyle` does not reach
+it, and of two packages' defaults for one category the later package's is
+used. `styleEntry` resolves them to the one style entry a category is
+matched with: the entry of the style chosen for it when one is registered
+under that name, else a package's default's for it, else the chosen
+default's, else the style registered under `fuzzy` (config's, when it
+registers one of that name), else the core's own fuzzy style, as the owner
+`compiled`'s, for a registry where no style of that name is. A chosen name
 no style is registered under is reported at install (`unknownStyles`,
 `Report.unknownStyles`, `Editor/Config/Reload.lean`). `matching` hands the
 loop both the style and who registered it
@@ -318,8 +321,8 @@ is held by owner like a style, in a `DisplayEntry`, and replaced as a set
 (`display?`), so config's display of a shipped display's name is used in
 its place until a reload drops it: that is how config sets the rows the
 minibuffer's list shows, with `defineDisplay (Completion.Displays.minibuffer
-(rows := n))`. Every host registers the shipped display, `minibuffer`, for
-the owner `compiled` (`Headless.Collaborators.displays`); `setup` registers
+(rows := n))`. The `completion` package registers the shipped display,
+`minibuffer` (`Editor/Completion/Compiled.lean`); `setup` registers
 more with `defineDisplay` (`Editor/Setup.lean`).
 
 Which display a prompt is shown with is config's choice, by category, with
@@ -328,7 +331,8 @@ config's alone, set by each install (`displayChoices`). `displayEntry`
 resolves them as `styleEntry` does: the entry of the display chosen for the
 category when one is registered under that name, else the chosen
 default's, else the display registered under `minibuffer`, else the
-compiled minibuffer display, for a registry where none is. A chosen name no
+core's own minibuffer display, as the owner `compiled`'s, for a registry
+where none is. A chosen name no
 display is registered under is reported at install (`unknownDisplays`,
 `Report.unknownDisplays`, `Editor/Config/Reload.lean`). `displaying` hands
 the loop the result. A display runs only inside the publish and is looked
@@ -349,12 +353,12 @@ is held by owner like a display, in an `AtPointEntry`, and replaced as a set
 name. Which a buffer asks is its chain (`atPointNames`): each of its minor
 modes, the one added last first, and then its major mode, each mode with its
 lineage, nearest first; for each mode, config's uses of it (`useAtPointIn`,
-`Editor/Setup.lean`) in setup order, then compiled code's, then the mode's
+`Editor/Setup.lean`) in setup order, then the packages', then the mode's
 own list (`Mode.atPoint`); and last the uses for every buffer (`useAtPoint`),
-config's then compiled code's. Each name is kept once, at its first place.
+config's then the packages'. Each name is kept once, at its first place.
 Uses are held by owner too, in an `AtPointUse` (`replaceAtPointUses`). The
-compiled use of the shipped `words` for every buffer comes from the host
-(`Headless.Collaborators.atPointUses`), so no core code names it. A name in
+use of the shipped `words` for every buffer is the `at-point` package's
+(`Editor/AtPoint/Compiled.lean`), so no core code names it. A name in
 a chain no at-point source is registered under is reported at install
 (`unknownAtPoints`, `Report.unknownAtPoints`), and never asked.
 
@@ -377,31 +381,53 @@ in has no menu bar (`none`), and a host then publishes none.
 A `setup` that defines a menu title twice is refused
 (`Registrations.menuTwice`).
 
-## Compiled commands
+## Packages
 
-Compiled code is an owner too (`Owner.compiled`). A host registers its
-compiled commands with `replace .compiled …` when it starts, before any
-config, and nothing replaces them afterwards. `replace` puts an owner's
-entries after every other owner's, and `find?` returns the latest entry of a
-name, so config's command of a name a compiled command has is the one that
-runs while config registers it, and the compiled one runs again once a
-reload drops it.
+A package (`Editor/Package.lean`) is a name and a `setup`, the program
+config's is: how a feature registers. A host is handed an array of
+packages and registers them when it starts, before any config
+(`Config.State.ofPackages`, `Editor/Config/Packages.lean`), and it
+registers nothing else.
 
-The names commands are registered under (`names`), compiled code's first,
-are what the command prompt lists (`registered`, `Editor/ExecuteCommand.lean`),
-so a reload that drops config's command drops it from the prompt.
+- **Each package is an owner**, named after it (`Package.owner`): its
+  commands, jobs, key bindings, prefix names, modes, ex bindings, faces,
+  themes, segments, languages, compile contributions, sources, styles,
+  displays, at-point sources and their uses and menus are registered for
+  that owner (`replaceOwned`), and its stores are that owner's cells.
+- **The order is the array's.** Each package's entries come after those of
+  the packages before it, and `find?` and the other lookups return the
+  latest entry of a name, so of two packages that register one name the
+  later is the one found. The names commands are registered under
+  (`names`), the packages' first in that order, are what the command
+  prompt lists (`registered`, `Editor/ExecuteCommand.lean`).
+- **Config comes after every package.** An install is `replaceOwned` for
+  the owner `config`, which puts config's entries after every other
+  owner's. So config's command of a name a package's command has is the
+  one that runs while config registers it, and config's binding of a
+  package's keys is the keymap's, and the package's runs again once a
+  reload drops config's. A reload that drops config's command drops it
+  from the prompt.
+- **A reload leaves every package's registrations in place.** An install
+  replaces the entries of `config` alone and cancels the jobs of `config`
+  alone, so a package's job runs across a reload. The owner a job is
+  started for is the one that registered it.
+- **What is refused.** A package's `setup` is refused as config's is
+  (`Registrations.problem?`), and also when it sets what only config may
+  choose; and a package is refused for a name that is empty, `config`,
+  `compiled` or an earlier package's. A refused package registers nothing,
+  and the others register (`Editor/Config/Packages.lean`, "What is
+  refused").
 
 A command may be given what it was called with (`Action.call`,
 `Editor/Command/Call.lean`): the window it acts on, the invocation's
-arguments and the keys. Compiled code registers one as such, and `setup`
-does with `commandWith`; `setup`'s `command` registers a plain command,
+arguments and the keys. `setup` registers one as such with `commandWith`,
+in a package or in config; `setup`'s `command` registers a plain command,
 which is told nothing of its call.
 
-Compiled jobs are registered the same way, with `replaceJobs .compiled …`
-when the host starts, and a command starts one by its name as it starts
-config's. The owner a job is started for is the one that registered it, and
-an install cancels the jobs of `config` alone, so a compiled job runs across
-a reload. The file commands' jobs are the first (`Editor/Files/Compiled.lean`).
+**The owner `compiled`** (`Owner.compiled`) registers nothing in a host. It
+is the owner of what the core falls back to when no package registered it:
+the fuzzy style and the minibuffer display of a registry that holds none
+(`styleEntry`, `displayEntry`). No package may take its name.
 -/
 
 namespace Editor.Config
@@ -467,7 +493,8 @@ structure KeyBinding where
   deriving DecidableEq, Repr
 
 /-- The binding of the keys `keys`, as chords, to the command called
-`command`, in every state: what compiled code binds. -/
+`command`, in every state: what `bindKeys` makes of them with no states,
+description or category. -/
 def KeyBinding.ofKeys (keys : List Key) (command : String) : KeyBinding :=
   { keys := keys.map .key, command }
 
@@ -641,7 +668,7 @@ it did not, which a host reads as `auto`. -/
   workspaceListers : Array Workspace.DeclaredLister := #[]
   /-- How many configs have been installed: the config generation a
   directory's cached workspace was found under (`Editor/Workspace.lean`).
-  0 while only compiled code is registered. -/
+  0 while only packages are registered. -/
   generation : Nat := 0
   /-- Config's display rules, in the order its `setup` made them, less the
   ones whose target the layout it chose lacks (`Editor/Config/Reload.lean`):
@@ -678,10 +705,11 @@ it did not, which a host reads as `auto`. -/
   `Editor/Setup.lean`), each a category, or `none` for the default, and a
   style's name, in the order it made them: set at every install. -/
   styleChoices : Array (Option String × String) := #[]
-  /-- Compiled code's style for a category, each a category and a style's
-  name, as Emacs's `completion-category-defaults`: set when the host starts
-  (`Headless.compiled`) and never by an install ("Styles", in the module
-  docs). -/
+  /-- The packages' styles for a category (`useStyleFor` in a package), each
+  a category and a style's name, as Emacs's `completion-category-defaults`:
+  set when the host starts (`Config.State.register`) and never by an
+  install; the latest of a category is the one used ("Styles", in the
+  module docs). -/
   styleDefaults : Array (String × String) := #[]
   /-- The completion display entries ("Displays", in the module docs). -/
   displays : Array DisplayEntry := #[]
@@ -730,10 +758,11 @@ def style? (registry : Registry) (name : String) : Option Completion.Style :=
 /-- The style entry a prompt of `category` (`none` for one with no
 category) is matched with ("Styles", in the module docs): the latest entry
 registered under the name config chose for the category, when one is; else
-under the name compiled code gives the category (`styleDefaults`), when one
+under the name a package gives the category (`styleDefaults`, the latest
+of the category), when one
 is; else under the name chosen for the default, when one is; else under `fuzzy`, so
 config's style of that name is used in the shipped one's place; else, for
-a registry where none is, the compiled fuzzy style, as compiled's. The one
+a registry where none is, the core's own fuzzy style, as the owner `compiled`'s. The one
 lookup both the style and its owner are read from (`matching`). -/
 def styleEntry (registry : Registry) (category : Option String) : StyleEntry :=
   let named (name : String) : Option StyleEntry := registry.styles.findRev? (·.style.name == name)
@@ -781,8 +810,8 @@ category) is shown with ("Displays", in the module docs): the latest entry
 registered under the name config chose for the category, when one is; else
 under the name chosen for the default, when one is; else under
 `minibuffer`, so config's display of that name is used in the shipped
-one's place; else, for a registry where none is, the compiled minibuffer
-display, as compiled's. `styleEntry`'s rule. -/
+one's place; else, for a registry where none is, the core's own minibuffer
+display, as the owner `compiled`'s. `styleEntry`'s rule. -/
 def displayEntry (registry : Registry) (category : Option String) : DisplayEntry :=
   let named (name : String) : Option DisplayEntry :=
     registry.displays.findRev? (·.display.name == name)
@@ -832,8 +861,8 @@ def replaceAtPointUses (registry : Registry) (owner : Owner)
 
 /-- The names of the completion sources registered in `category`: each name
 once, in the order it was first registered, kept only when its latest
-entry (`source?`) is of that category. Compiled entries come before
-config's, so a config source of a compiled name keeps the compiled one's
+entry (`source?`) is of that category. Packages' entries come before
+config's, so a config source of a package's name keeps the package's
 place, and one of a new name comes after them. -/
 def sourcesIn (registry : Registry) (category : String) : Array String :=
   let names := (registry.sources.map (·.source.name)).toList.eraseDups.toArray
@@ -1040,7 +1069,7 @@ def keymap (registry : Registry) (scheme : InputScheme) : Keymap scheme.Binding 
 
 /-- The keymap of the prompt category `category` for `scheme`: every owner's
 bindings given that category, bound as the global keymap's are, oldest
-first, so config's binding of a sequence is over compiled code's ("Key
+first, so config's binding of a sequence is over a package's ("Key
 bindings", in the module docs). -/
 def categoryKeymap (registry : Registry) (scheme : InputScheme) (category : String) :
     Keymap scheme.Binding :=
@@ -1181,7 +1210,7 @@ def activeMaps (registry : Registry) (scheme : InputScheme) (state : EditorState
     category ++ minors ++ major ++ [global]
 
 /-- The names the uses for `mode` (`none` for every buffer) give: config's
-in the order it made them, then compiled code's. -/
+in the order it made them, then the packages'. -/
 def usesFor (registry : Registry) (mode : Option String) : Array String :=
   let of (owner : Owner) :=
     (registry.atPointUses.filter fun use => use.owner == owner && use.mode == mode).map (·.source)
@@ -1192,7 +1221,7 @@ def usesFor (registry : Registry) (mode : Option String) : Array String :=
 and whose minor modes are `minors`, the one added last first ("At-point
 sources", in the module docs): each minor mode, then the major mode, each
 with its lineage nearest first, each mode giving its uses, config's then
-compiled code's, then its own list; then the uses for every buffer. Each
+the packages', then its own list; then the uses for every buffer. Each
 name once, at its first place. -/
 def atPointNames (registry : Registry) (major : Option String) (minors : Array String) :
     Array String :=
@@ -1638,7 +1667,7 @@ what it meant, so it is refused like a second store of a name; and so is a
 second job, a second binding of one key sequence, to the same command or to
 another, a second binding of one ex name, and a second mode of a name. A
 job and a command may share a name: one is run and the other is spawned. A
-binding's command is not looked up: it may be compiled, or not registered
+binding's command is not looked up: it may be a package's, or not registered
 at all; nor is a mode's, nor an ex binding's. A second `face` of a name in
 one `setup` is refused the same way: the second would be over the first
 attribute by attribute, which a config that sets a face in two places did

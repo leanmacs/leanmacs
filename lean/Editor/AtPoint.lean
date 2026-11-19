@@ -31,7 +31,7 @@ change's recording through `retype`, and only when they ran.
 
 | Addition | Where |
 |---|---|
-| A new key's command | A command here, its registration in `AtPoint.commands` (`Editor/AtPoint/Compiled.lean`), and its row in `Vim.Default.insertCommands` |
+| A new key's command | A command here, its registration in `AtPoint.package` (`Editor/AtPoint/Compiled.lean`), and its row in `Vim.Default.insertCommands` |
 | A new way to ask | An `Occasion` (`Editor/Completion/Candidate.lean`), and a command here that asks with it |
 
 Pinned by `ModelTest.atPointChecks` (asking, on the models),

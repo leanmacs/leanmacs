@@ -15,11 +15,11 @@ do something, through the display interface (`Display.askFrame`,
   button) put it there.
 - **`minimise-window`** (`minimise`) asks the window to minimise.
 
-They are compiled: a host registers them for the owner `compiled`, with
-their default bindings, `C-s-f` and `s-m`
+They are a package's: a host registers them for the owner
+`frame-commands`, with their default bindings, `C-s-f` and `s-m`
 (`Editor/FrameCommands/Compiled.lean`), so config can call them and rebind
-their keys. `Editor.lean` imports this module, and not that one, which names
-the registry.
+their keys. `Editor.lean` imports this module, and not that one, which is
+what a host is handed.
 
 Pinned by `ModelTest.frameCommandChecks`, on the models.
 -/

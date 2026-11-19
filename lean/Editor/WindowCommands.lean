@@ -39,10 +39,10 @@ scheme binds them under `C-w` (`Vim.Default.windowKeys`,
 | `arranging fun _ => .float` | `window-float` | Floats a tile or a docked window, pinned, centred in the tiled area, on top, and puts a float back at the end of the tiled list, the stack (`Arrange.float`): `C-w F`, which displaces Vim's `CTRL-W F` (split and edit the file under the cursor), not built here. The last tile is refused with `lastTile` |
 | `arranging fun _ => .edge side` | `window-edge-left`, `-bottom`, `-top`, `-right` | Docks the window at that edge, moves a window docked at another edge there, or moves a window docked there back to the end of the tiled list (`Arrange.edge`): Vim's `CTRL-W H J K L`, which move a window to the far side at the full extent. Recorded departures: under a layout with no such edge it gives up with `noSuchEdge`, where Vim restructures its frames under any layout, and on a window already at that edge it moves it back into the tiles, where Vim does nothing |
 
-They are compiled: a host registers them for the owner `compiled`
-(`Editor/WindowCommands/Compiled.lean`), so config can call them and bind
-keys to them. `Editor.lean` imports this module, and not that one, which
-names the registry.
+They are a package's: a host registers them for the owner
+`window-commands` (`Editor/WindowCommands/Compiled.lean`), so config can
+call them and bind keys to them. `Editor.lean` imports this module, and not
+that one, which is what a host is handed.
 
 Pinned by `ModelTest.windowCommandChecks`.
 -/

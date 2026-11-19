@@ -7,7 +7,8 @@ mise run ci
 This is everything that must pass before review and before landing: Rust
 formatting, clippy, cargo-deny, rustdoc and the Rust tests; the Lean model
 tests (`mise run lean-test`); the Lean build, lean-fmt's format and lint
-checks; the checks of the Lean/Rust boundary, the contract checks against
+checks; the check that the host's modules import no feature module, the
+checks of the Lean/Rust boundary, the contract checks against
 the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); the headless mode run from a staged app
 bundle (`mise run bundle-test`); the C format check; and the workflow lint
@@ -508,7 +509,7 @@ so that a change to one breaks no other's checks:
   parses to, and the invocation a binding makes of an argument. Pure.
 - **Ex bindings in the registry** (`registryChecks`, `setupChecks`,
   `reloadChecks`): by owner, bound from `setup` with its refusals, and
-  replaced by an install, which keeps the compiled ones.
+  replaced by an install, which keeps another owner's.
 - **The requests a command makes for it**: which command an ex name is
   bound to, answered by the dispatcher from what it is told of the
   registry (`registryRequestChecks`, `dispatchStateChecks`); an invocation
@@ -530,7 +531,8 @@ so that a change to one breaks no other's checks:
   check names a Vim key. The ex line's own rules run on ex bindings
   written in the test: a name nobody bound, an argument a name does not
   take, an empty line, a bound command that is not registered or is
-  refused. The five names run on `Ex.bindings`: `e` and a path, `w`, `q`
+  refused. The five names run on the `ex` package's ex bindings
+  (`Ex.package.registered.ex`): `e` and a path, `w`, `q`
   with nothing modified, with a file's buffer modified and with the
   scratch buffer alone modified, `w` then `q` and `wq` while the save is
   in flight, `wq` with no file, with the file changed behind the editor
@@ -668,7 +670,8 @@ build that reaches the Rust archive, so the task passes only if the test
 driver does not need it. The tests of the pool pin no size, so they pass
 whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
-`mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
+`mise run ffi-test` first runs the host imports check ("The host imports
+check", below), then `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, handed six
 directories: `tests/process-environment` (the fixtures that stand in for
 mise in the checks of a child's environment), `tests/workspaces` (the
@@ -1182,6 +1185,47 @@ need a process each:
 The conventions every binding follows, and the test that pins each, are in
 the crate docs of `crates/editor-ffi/src/lib.rs` and the module docs of
 `lean/Editor/Ffi.lean`.
+
+## The host imports check
+
+```sh
+cd lean && sh ../tools/host-imports-check.sh
+```
+
+Part of `mise run ffi-test`. A host registers features only from the
+packages it is handed, and the one module that lists them,
+`lean/Editor/PackageSet.lean`, is outside the host
+([lean-runtime.md](../design/lean-runtime.md), "Packages"). This check
+shows the import half of that on Lake's module graph, with both terms
+defined from the graph:
+
+- **The host's modules** are the modules `Main` imports, other than the
+  list module, with everything they import inside the package.
+- **A feature module** is the list module, or a module it imports
+  directly: the modules that define the packages.
+
+It passes when no host module is a feature module, and otherwise prints
+each one the host reaches and exits 1.
+
+- **It asks Lake and reads no source text** (`lake query
+  +<module>:imports` and `+<module>:transImports`, one module a line), so
+  it follows a module that is renamed or moved, and an import written in
+  any form. The queries build nothing and write nothing under `lean/`.
+- **The gate sees it bite.** `ffi-test` runs it a second time pointed at
+  the root `ConfigTest`, which imports the packages, and requires exit 1.
+  A query Lake fails is exit 2, never 1, so a broken query cannot stand in
+  for a finding.
+- **`Editor/PackageSet.lean` imports package modules and nothing else**,
+  since its direct imports are what the check forbids a host.
+- **What it does not claim.** The core loop still imports feature code
+  that defines no package, such as `Editor.Files` and `Editor.Ex`
+  (`lean/Editor/Loop.lean`). Cutting those imports is later work of the
+  packages roadmap, and this check says nothing of them.
+
+What a host registers from the list is checked by behaviour, not imports:
+a host handed no packages starts with an empty registry and no menu bar
+(`ConfigTest.hostChecks`), and in the state the shipped packages make every
+entry's owner is one of them (`ModelTest.packageSetChecks`).
 
 ## Formatting
 

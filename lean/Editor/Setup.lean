@@ -100,7 +100,7 @@ command and is not counted as one.
 
 A key sequence is bound to a command's name (`bindKey`), written as a key
 string (`Editor/Key/Notation.lean`). The name is looked up when the keys
-are typed, so a binding may name a compiled command, or a command that is
+are typed, so a binding may name a package's command, or a command that is
 not registered, which then says so in the echo area. A binding is not a
 command and is not counted as one. It is called `bindKey` and not `bind`,
 which would shadow the monad's inside `namespace Editor` and for config,
@@ -249,7 +249,7 @@ def setup : SetupM Unit := do
 ```
 
 `defineTheme` registers a theme by name, for this config; `useTheme` names
-the theme in force once the config is installed, a compiled one (`default`
+the theme in force once the config is installed, a package's (`default`
 is the built-in theme) or one the `setup` defines. A theme in force replaces
 the built-in theme wholesale, not over it: it must define every face it
 needs, the cursor faces, `selection`, `echo-area` and `mode-line` among them,
@@ -272,7 +272,7 @@ def setup : SetupM Unit := do
 
 `defineSource` registers a source for this config; a prompt asked with
 `.named "picks"` lists what it answers (`prompt`, `Editor/Api.lean`). Config's
-source of a compiled source's name is used in that one's place until a
+source of a package's source's name is used in that one's place until a
 reload drops it. A `setup` that defines a source name twice is refused
 (`Config.Registrations.sourceTwice`).
 
@@ -303,7 +303,7 @@ def setup : SetupM Unit := do
 
 `defineStyle` registers a style for this config; the shipped styles,
 `fuzzy` and `orderless` (`Completion.Styles.shipped`), are registered by
-every host. `useStyleFor category name` chooses the style of the prompts of
+the `completion` package, which the executable's hosts are handed. `useStyleFor category name` chooses the style of the prompts of
 `category`, and `useStyle name` the default for the others; with none
 chosen the default is `fuzzy`. A name no style is registered under is not
 refused: it is looked up at install, the category falls to the default
@@ -325,7 +325,8 @@ def setup : SetupM Unit := do
 ```
 
 `defineDisplay` registers a display for this config; the shipped display,
-`minibuffer` (`Completion.Displays.shipped`), is registered by every host.
+`minibuffer` (`Completion.Displays.shipped`), is registered by the
+`completion` package.
 Config's display of a shipped name is used in its place: the first line
 above replaces the shipped `minibuffer` with one that shows at most 15
 rows, which is how config sets the most rows the minibuffer's list shows
@@ -404,7 +405,7 @@ the buffer goes to the stack. Nothing about a rule is refused by `setup`:
 at install a rule whose target does not exist under the layout config
 chose is left out, and the echo area says so.
 
-The window commands are compiled and bound by the Vim scheme under `C-w`
+The window commands are a package's, bound by the Vim scheme under `C-w`
 in normal state. A config puts them in every state, insert state included,
 with one line that binds the scheme's own table:
 `for (keys, name) in Vim.Default.windowKeys do bindKey keys name`. Its
@@ -507,7 +508,7 @@ def setup : SetupM Unit := do
   projectCommands (.remote "github.com/me/tool") "make-mode" [("lint", "make lint")]
 ```
 
-Config's contribution of a mode's name replaces a compiled one of that name
+Config's contribution of a mode's name replaces a package's of that name
 whole. A contribution with no marker is refused, and so is one registered
 twice or naming a command twice, and project commands given twice for one
 project and mode, or naming a command twice.
@@ -985,7 +986,7 @@ def defineTheme (name : String) (theme : Theme) : SetupM Unit :=
 
 /-- Registers `source` as a completion source, for this config, under its
 name: a prompt that asks for that name lists what it answers
-(`Editor/Completion.lean`). Config's source of a compiled source's name is
+(`Editor/Completion.lean`). Config's source of a package's source's name is
 used in that one's place. The editor refuses the `setup` for a source name
 defined twice. -/
 def defineSource (source : Completion.Source) : SetupM Unit :=
@@ -993,7 +994,7 @@ def defineSource (source : Completion.Source) : SetupM Unit :=
 
 /-- Registers `style` as a completion style, for this config, under its
 name (`Editor/Completion/Style.lean`): `useStyle` and `useStyleFor` can
-then choose it. Config's style of a compiled style's name is used in that
+then choose it. Config's style of a package's style's name is used in that
 one's place. The editor refuses the `setup` for a style name defined
 twice. -/
 def defineStyle (style : Completion.Style) : SetupM Unit :=
@@ -1018,7 +1019,7 @@ def useStyleFor (category name : String) : SetupM Unit :=
 
 /-- Registers `display` as a completion display, for this config, under its
 name (`Editor/Completion/Display.lean`): `useDisplay` and `useDisplayFor`
-can then choose it. Config's display of a compiled display's name is used
+can then choose it. Config's display of a package's display's name is used
 in that one's place, so `defineDisplay (Completion.Displays.minibuffer
 (rows := n))` sets the rows the minibuffer's list shows. The editor refuses
 the `setup` for a display name defined twice. -/
@@ -1044,7 +1045,7 @@ def useDisplayFor (category name : String) : SetupM Unit :=
 
 /-- Registers `atPoint` as an at-point completion source, for this config,
 under its name (`Editor/Completion/AtPoint.lean`): a mode's list and
-`useAtPoint` can then name it. Config's at-point source of a compiled one's
+`useAtPoint` can then name it. Config's at-point source of a package's one's
 name is used in that one's place, so `defineAtPoint
 (Completion.AtPoint.words (pause := 100))` tunes the shipped `words`. The
 editor refuses the `setup` for a name defined twice. -/
@@ -1075,7 +1076,7 @@ def defineMenu (menu : Submenu) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.menu menu))
 
 /-- Names the theme called `name` as the one in force once the config is
-installed: the compiled theme of that name, or one this `setup` defines.
+installed: a package's theme of that name, or one this `setup` defines.
 The name is looked up when the config is installed, and a name no theme is
 registered under keeps the theme in force and says so in the echo area. The
 editor refuses the `setup` for naming a theme twice. -/
@@ -1284,7 +1285,7 @@ def compileWithoutMarkers (mode : String) : String :=
 the compile mode: its markers, which turn the mode on in a buffer whose
 file is under one of them inside its workspace, its named commands and its
 error formats (`Editor/Compile/Contribution.lean`). Config's contribution of
-a mode's name replaces a compiled one of that name whole. Refuses the
+a mode's name replaces a package's of that name whole. Refuses the
 `setup` for a contribution with no marker; the editor refuses one registered
 twice, or naming a command twice. -/
 def compileContribution (contribution : Compile.Contribution) : SetupM Unit := do

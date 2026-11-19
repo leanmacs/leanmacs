@@ -206,7 +206,7 @@ def candidateDriver (model : EditorModel := editorModel) : Option TestDriver :=
 
 /-- The registry of the candidate checks that press the minibuffer's keys:
 the minibuffer's commands and its mode registered for the owner `compiled`,
-as a host registers them, and as config's bindings two that ask and two
+an owner that is not config, as a host registers a package's, and as config's bindings two that ask and two
 that run the commands that move through the list by their names, from any
 view. -/
 def pickRegistry : Config.Registry :=

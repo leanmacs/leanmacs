@@ -48,8 +48,9 @@ namespace ModelTest
 
 open Editor
 
-/-- The registry of the clipboard command checks: the menu bar's compiled
-bindings, for the owner `compiled`, and `config` as config's bindings. -/
+/-- The registry of the clipboard command checks: the `menu` package's
+bindings, for the owner `compiled`, an owner that is not config, and
+`config` as config's bindings. -/
 def clipRegistry (config : Array Config.KeyBinding := #[]) : Config.Registry :=
   (({} : Config.Registry).replaceBindings .compiled
         Menu.package.registered.bindings).replaceBindings

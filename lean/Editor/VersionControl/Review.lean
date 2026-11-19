@@ -27,8 +27,8 @@ read from the working file's buffer. Written over the editor API
 `Editor/Diff.lean`), the pure core (`Editor/VersionControl/ReviewHunks.lean`)
 and the version-control interface's `worktrees` and `changes`
 (`Editor/VersionControl.lean`), through its git implementation. The
-commands, jobs, mode and segment as compiled code registers them are in
-`Editor/VersionControl/Compiled.lean`.
+commands, jobs, mode and segment as the `version-control` package registers
+them are in `Editor/VersionControl/Compiled.lean`.
 
 ## The command
 
@@ -200,7 +200,8 @@ branch, into the same buffer, and has the leader suffixes `k`
 (`vc-review-keep`) and `r` (`vc-review-revert`). It is not read-only: the
 buffer is edited in place.
 
-The segment `review` (`reviewSegment`, `VersionControl.segments`) gives, in
+The segment `review` (`reviewSegment`, which the `version-control` package
+registers) gives, in
 a buffer with a record, one field in `mode-line.secondary`:
 `<k> kept · <r> reverted · <n> not examined` (`Review.statusText`), a hunk
 not examined while one of its excerpts has never been on screen; elsewhere

@@ -287,8 +287,8 @@ def shipped : Array Segment :=
 /-- The default listing: the badge, the buffer's name, the modified mark,
 the changed mark, a review's counts and the directory on the left; the
 pending keys, the major mode, line:col and the position on the right.
-`review` is not a shipped segment: version control registers it
-(`VersionControl.segments`), and a mode line resolved over the shipped ones
+`review` is not a shipped segment: version control's package registers it
+(`Editor/VersionControl/Compiled.lean`), and a mode line resolved over the shipped ones
 alone leaves it out (`standard`). -/
 def Order.standard : Order where
   left := #["state", "buffer", "modified", "changed", "review", "directory"]

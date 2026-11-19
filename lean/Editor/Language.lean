@@ -190,7 +190,8 @@ command. -/
 def codeMode : Mode :=
   { name := codeName, syntaxTreeOfLanguage := true }
 
-/-- The modes this module registers as compiled code: `code`. -/
+/-- The modes that ship with the languages, which the `languages` package
+registers (`Editor/Language/Compiled.lean`): `code`. -/
 def modes : Array Mode :=
   #[codeMode]
 

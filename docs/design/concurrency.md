@@ -1753,8 +1753,8 @@ completing, a prompt or a session (`EditorState.completing?`), so a
 session's later sources start under `completion <view> <source>`, its long
 list is matched under `completion-match <view>`, and closing the session
 cancels both at the closing step's publish. `words` answers later from the
-job `words`, registered compiled, so its owner is `compiled` and a reload
-does not cancel it; it reads snapshots of the open buffers the asking
+job `words`, registered by the `at-point` package, so its owner is that
+package's and a reload does not cancel it; it reads snapshots of the open buffers the asking
 command took, released when the session closes. A trigger character asks
 through an invocation the step hands back (`at-point-triggered`), run as
 the next step. The pause is a timer the host arms on the job clock, not a
