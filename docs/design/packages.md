@@ -976,19 +976,21 @@ the fixture set: its packages' tests, its editor and its packages' builds.
 Wall clock, in seconds, three runs of each case and their median, on one
 machine (Apple M5 Max, 18 cores, 128 GB, macOS 27.2.1, Lean 4.35.0) on
 2026-11-19. Before is `fcf4e47b`, the commit phase 4 started from; after is
-`28aff3b2`, with the whole of the phase's build in place.
+`420430fb`, with the whole of the phase's build in place. (At `28aff3b2`,
+before the fixture's linked test came to link the config base, the three
+medians were 68.5, 12.8 and 33.2.)
 
 | Case | Before | After | Change |
 |---|---|---|---|
-| Clean: Lake's build directories emptied (`lean/.lake/build`, and after, those of both sets and both fixture packages); Cargo's `target/` kept | 58.8, 60.0, 61.1: **60.0** | 66.4, 68.5, 69.1: **68.5** | +8.5 |
-| Nothing changed | 8.70, 8.73, 8.73: **8.7** | 12.68, 12.76, 12.78: **12.8** | +4.1 |
-| Incremental: one private definition added to `lean/Editor/Shell.lean` | 27.9, 28.2, 28.2: **28.2** | 32.9, 33.2, 33.2: **33.2** | +5.0 |
+| Clean: Lake's build directories emptied (`lean/.lake/build`, and after, those of the three sets and both fixture packages); Cargo's `target/` kept | 58.8, 60.0, 61.1: **60.0** | 67.3, 69.8, 69.9: **69.8** | +9.8 |
+| Nothing changed | 8.70, 8.73, 8.73: **8.7** | 12.69, 12.72, 12.82: **12.7** | +4.0 |
+| Incremental: one private definition added to `lean/Editor/Shell.lean` | 27.9, 28.2, 28.2: **28.2** | 33.9, 34.0, 34.1: **34.0** | +5.8 |
 
 - **Most of the added time is the fixture set, not the default set.** With
-  nothing changed, the commands of the task take: the model tests 7.7 s;
-  the fixture packages' tests 1.1 s; the refusal of the empty default set
+  nothing changed, the commands of the task take: the model tests 7.9 s;
+  the fixture packages' tests 1.1 s; the refusal of the empty set
   0.4 s; the core's build 0.5 s; the default set's editor 0.5 s; and the
-  fixture set's editor, its two packages and the linked test 2.1 s, which
+  fixture set's editor, its two packages and the linked test 2.0 s, which
   is five Lake runs. A Lake run with nothing to do costs 0.4 to 0.5 s, and
   the task makes about ten where it made two.
 - **The incremental case relinks more.** A changed core module relinks
