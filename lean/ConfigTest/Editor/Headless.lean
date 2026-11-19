@@ -14,7 +14,6 @@ import Editor.Command
 import Editor.Command.Call
 import Editor.Compile
 import Editor.Compile.Compiled
-import Editor.Compile.Listing
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Compiled
@@ -77,6 +76,7 @@ import Editor.PackageSet
 import Editor.Process.Environment
 import Editor.Program
 import Editor.ProjectMode
+import Editor.ProjectMode.Listing
 import Editor.Scene
 import Editor.Setup
 import Editor.State
@@ -2207,12 +2207,13 @@ def shippedChecks (_ : Unit) : List Check :=
               some { name := "compile-command", command := Compile.commandName, takes := .text } &&
             !(registry.bindings.any (·.binding.command == Compile.commandName)) },
     { name :=
-        "the executable's hosts start with the job find-mode-markers registered by the workspace package, beside find-workspace, the job compile-list by the compile package, and with cargo-mode, lake-mode and mise-mode as the compile package's contributions, in that order"
+        "the executable's hosts start with the jobs find-mode-markers and compile-list registered by the workspace package, beside find-workspace, compile-list by no other package, and with cargo-mode, lake-mode and mise-mode as the compile package's contributions, in that order"
       run := do
         let registry := shippedRegistry
         return (registry.findJob? Workspace.markerJob).any (·.owner == Workspace.package.owner) &&
             (registry.findJob? Workspace.findJob).any (·.owner == Workspace.package.owner) &&
-            (registry.findJob? Compile.listJob).any (·.owner == Compile.package.owner) &&
+            (registry.jobs.filter (·.registration.name == Compile.listJob)).map (·.owner) ==
+              #[Workspace.package.owner] &&
             (registry.contributions.filter (·.owner == Compile.package.owner)).map
                 (·.contribution.mode) ==
               #["cargo-mode", "lake-mode", "mise-mode"] },

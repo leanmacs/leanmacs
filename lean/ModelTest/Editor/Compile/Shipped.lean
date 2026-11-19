@@ -1,7 +1,6 @@
 import Editor.Command.Dispatch
 import Editor.Compile.Contribution
 import Editor.Compile.Errors
-import Editor.Compile.Listing
 import Editor.Compile.Shipped
 import Editor.Completion.Candidate
 import Editor.Config.Registry
@@ -17,6 +16,7 @@ import Editor.Process.Model
 import Editor.Program
 import Editor.ProjectMode
 import Editor.ProjectMode.Format
+import Editor.ProjectMode.Listing
 import Editor.Scene
 import Editor.Setup
 import Editor.State

@@ -28,7 +28,6 @@ import ModelTest.Editor.Command.Registry
 import ModelTest.Editor.Compile
 import ModelTest.Editor.Compile.Compiled
 import ModelTest.Editor.Compile.Errors
-import ModelTest.Editor.Compile.Listing
 import ModelTest.Editor.Compile.Shipped
 import ModelTest.Editor.Completion.AtPointContract
 import ModelTest.Editor.Completion.Compiled
@@ -107,6 +106,7 @@ import ModelTest.Editor.PackageSet
 import ModelTest.Editor.Process.Environment
 import ModelTest.Editor.Process.Model
 import ModelTest.Editor.Program
+import ModelTest.Editor.ProjectMode.Listing
 import ModelTest.Editor.Scene
 import ModelTest.Editor.Scroll
 import ModelTest.Editor.Setup

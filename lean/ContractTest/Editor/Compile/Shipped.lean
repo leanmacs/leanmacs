@@ -8,7 +8,6 @@ import Editor.Command
 import Editor.Command.Real
 import Editor.Compile
 import Editor.Compile.Contribution
-import Editor.Compile.Listing
 import Editor.Compile.Shipped
 import Editor.Ffi.Processes
 import Editor.Ffi.Snapshot
@@ -17,6 +16,7 @@ import Editor.Invocation
 import Editor.Job.Runner
 import Editor.Loop
 import Editor.Program
+import Editor.ProjectMode.Listing
 import Editor.State
 import Editor.SyntaxTree
 import Editor.Text

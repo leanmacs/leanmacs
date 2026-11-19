@@ -1,5 +1,4 @@
 import Editor.Api
-import Editor.Compile.Contribution
 import Editor.Job
 import Editor.ProjectMode
 
@@ -7,7 +6,7 @@ import Editor.ProjectMode
 # Computed commands: a contribution's listing, run in its mode's root
 
 What gives a contribution the named commands it computes
-(`Contribution.listing`, `Editor/Compile/Contribution.lean`): a program run
+(`Contribution.listing`, `Editor/ProjectMode.lean`): a program run
 in the mode's root, whose standard output the contribution reads into named
 commands, as `mise-mode` runs `mise tasks ls --json`
 (`Editor/Compile/Shipped.lean`). Written over the editor API and the job
@@ -16,9 +15,20 @@ starts a job (`refreshListings`), the job, which stamps the markers and runs
 the listing (`listWork`), and the job's command, which keeps what it gave
 (`listed`).
 
-It imports neither `Editor.Compile` nor `Editor.Files`, so that
-`Editor/Workspace/Modes.lean`, which `Editor/Workspace/Attach.lean` imports,
-can start a check when a mode turns on.
+It is a core module: running a contribution's `listing` and keeping what
+it gave is upkeep of the core's own data, and the workspace starts a check
+when a mode turns on (`Editor/Workspace/Modes.lean`, which
+`Editor/Workspace/Attach.lean` imports). So it imports neither
+`Editor.Compile`, which is not a core module (`docs/design/packages.md`),
+nor `Editor.Files`. The compile mode reads what is kept (`listedCommands`)
+and starts a check of its own (`refreshListings`); a set of packages
+without it still lists a contribution's commands, which nothing then
+reads. The declarations keep their names in `Editor.Compile`
+(`Compile.refreshListings`, `Compile.listJob`, the store
+`compile-listings`), as the contribution's do (`Editor/ProjectMode.lean`),
+and the job `compile-list` is registered by the `workspace` package
+(`Editor/Workspace/Compiled.lean`), beside `find-mode-markers`, which
+starts it.
 
 ## The rules
 

@@ -1,5 +1,5 @@
 import Editor.Api
-import Editor.Compile.Listing
+import Editor.ProjectMode.Listing
 import Editor.Workspace.Finder
 
 /-!
@@ -37,7 +37,7 @@ job's command call `markModes`. So this module imports neither
   each as a minor mode, the farthest first, so the buffer's minor modes
   list the nearest first and its keymap wins. Then it checks the on-modes'
   listings in the buffer's place (`Compile.refreshListings`,
-  `Editor/Compile/Listing.lean`, which this module imports for it), so a
+  `Editor/ProjectMode/Listing.lean`, which this module imports for it), so a
   mode that computes its commands lists them as it turns on. A buffer
   whose markers turn no mode on is left as it was. A reload's
   contributions apply to files opened after it.

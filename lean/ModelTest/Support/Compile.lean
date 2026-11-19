@@ -4,7 +4,6 @@ import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Compile
 import Editor.Compile.Compiled
-import Editor.Compile.Listing
 import Editor.Config.Owner
 import Editor.Config.Packages
 import Editor.Config.Registry
@@ -28,6 +27,7 @@ import Editor.Process.Model
 import Editor.Program
 import Editor.ProjectMode
 import Editor.ProjectMode.Format
+import Editor.ProjectMode.Listing
 import Editor.Scene
 import Editor.Setup
 import Editor.State

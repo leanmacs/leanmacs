@@ -1,4 +1,5 @@
 import Editor.Package
+import Editor.ProjectMode.Listing
 import Editor.Workspace.Attach
 import Editor.Workspace.FindFile
 import Editor.Workspace.FindInProject
@@ -36,6 +37,12 @@ picks a workspace of the project to find files in
   and says nothing about it. And `find-mode-markers`, which gives a buffer
   whose file opened the minor modes its markers turn on
   (`Workspace.markerWork`, `Editor/Workspace/Modes.lean`). And
+  `compile-list`, which that job's command starts for each mode it turned
+  on whose contribution computes its commands: it runs the contribution's
+  listing in the mode's root when its markers' stamps have changed
+  (`Compile.listWork`, `Editor/ProjectMode/Listing.lean`). It is registered
+  here, not by the `compile` package, because the listing is the core's
+  and the mode marker search is what starts it. And
   `workspace-files`, the job of the finder's source, which runs the
   workspace's lister and fzf (`FindFile.answer`). And the picker's three:
   `project-workspaces`, its source's job, which lists the repository's
@@ -61,8 +68,9 @@ namespace Editor.Workspace
 /-- The package `workspace`: the workspace commands; the escape's key,
 `C-x C-d`, in the workspace finder's prompt category alone; the jobs a
 file's open starts to find its directory's workspace and its buffer's modes
-on markers, the finder's source's job and the picker's jobs; and the
-finder's source and the picker's. -/
+on markers, the job that lists a mode's computed commands, the finder's
+source's job and the picker's jobs; and the finder's source and the
+picker's. -/
 def package : Package :=
   { name := "workspace"
     setup := do
@@ -74,6 +82,7 @@ def package : Package :=
           some FindInProject.escapeDesc) (category := some FindFile.category)
       workJob findJob findWork
       workJob markerJob markerWork
+      workJob Compile.listJob Compile.listWork
       sourceJob FindFile.job FindFile.answer
       sourceJob FindInProject.job FindInProject.answer
       workJob FindInProject.chooseJob FindInProject.chooseWork

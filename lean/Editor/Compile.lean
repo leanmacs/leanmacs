@@ -2,11 +2,11 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Compile.Contribution
 import Editor.Compile.Errors
-import Editor.Compile.Listing
 import Editor.File
 import Editor.Mode
 import Editor.ProjectMode
 import Editor.ProjectMode.Format
+import Editor.ProjectMode.Listing
 import Editor.Shell
 import Editor.Workspace.Modes
 
@@ -239,7 +239,7 @@ next command.
   directory the command names.
 - **Computed commands.** A use, `compile`'s prompt and every path of
   `compile-command`, first checks the on-modes' listings in the scope's
-  place (`refreshScope`, `Editor/Compile/Listing.lean`), which reruns a
+  place (`refreshScope`, `Editor/ProjectMode/Listing.lean`), which reruns a
   listing whose markers' stamps changed, or after a reload; that use
   offers what was last listed, and a new list is offered from the use after
   the check's job's command arrives. The commands listed are offered with
@@ -376,7 +376,7 @@ def Scope.place : Scope → Place
   | .workspace found _ => .workspace found.location
   | .directory path => .directory path
 
-/-- The scope's listing place (`Editor/Compile/Listing.lean`): its
+/-- The scope's listing place (`Editor/ProjectMode/Listing.lean`): its
 workspace's location, `some none` for a directory scope, and none for a
 workspace whose location cannot run commands (`Location.can`). -/
 def Scope.listingPlace : Scope → Option (Option Location)

@@ -61,8 +61,9 @@ namespace ContractTest
 
 open Editor
 
-/-- The jobs of the project mode checks: the file commands', the workspace
-finder's and the compile mode's, as a host registers them. -/
+/-- The jobs of the project mode checks: the file commands', the
+workspace's, the listing job among them, and the compile mode's, as a host
+registers them. -/
 def projectJobs : Array Config.JobRegistration :=
   Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
     Compile.package.registered.jobs

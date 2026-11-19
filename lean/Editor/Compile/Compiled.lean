@@ -3,7 +3,7 @@ import Editor.Compile.Shipped
 import Editor.Package
 
 /-!
-# The `compile` package: the compile mode's commands, its jobs, its mode, the contributions that ship and its ex names
+# The `compile` package: the compile mode's commands, its job, its mode, the contributions that ship and its ex names
 
 What a host registers so that `compile` runs (`Editor/Compile.lean`): the
 package `compile` (`Compile.package`, `Editor/Package.lean`). A host
@@ -24,12 +24,13 @@ config (`Editor/Config/Packages.lean`).
   (`Compile.stepCommand`); and `compile-goto-error`, which visits the
   location on the cursor's line of a compilation buffer, the mode's
   `activate` (`Compile.gotoCommand`).
-- **The jobs**: `compile-run`, which runs the child, posts its output
-  as it comes and finishes with how it ended (`Compile.runWork`); and
-  `compile-list`, which runs a contribution's listing in its mode's root
-  when its markers' stamps have changed (`Compile.listWork`,
-  `Editor/Compile/Listing.lean`). A host
+- **The job**: `compile-run`, which runs the child, posts its output
+  as it comes and finishes with how it ended (`Compile.runWork`). A host
   that is not handed it runs no compile, and says so when one is asked for.
+  The job `compile-list`, which runs a contribution's listing, is the
+  `workspace` package's (`Editor/Workspace/Compiled.lean`,
+  `Editor/ProjectMode/Listing.lean`): a host handed this package and not
+  that one offers a contribution's own commands and no listed ones.
 - **The mode**: `compilation`, the compilation buffer's major mode
   (`Compile.mode`).
 - **The contributions** that ship (`Compile.shipped`,
@@ -60,7 +61,7 @@ models, and by `ConfigTest.shippedChecks`, in the shipped set.
 
 namespace Editor.Compile
 
-/-- The package `compile`: the compile mode's commands, its jobs, its mode,
+/-- The package `compile`: the compile mode's commands, its job, its mode,
 the contributions that ship (`shipped`) and its ex names. -/
 def package : Package :=
   { name := "compile"
@@ -75,7 +76,6 @@ def package : Package :=
       commandWith previousName (stepCommand previousName false)
       commandWith gotoName gotoCommand
       workJob runJob runWork
-      workJob listJob listWork
       defineMode mode
       for contribution in shipped do
         compileContribution contribution

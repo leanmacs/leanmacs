@@ -1,7 +1,6 @@
 import Editor.Command
 import Editor.Command.Dispatch
 import Editor.Compile.Contribution
-import Editor.Compile.Listing
 import Editor.Completion.Candidate
 import Editor.Config.Registry
 import Editor.Event
@@ -20,6 +19,7 @@ import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.ProjectMode
 import Editor.ProjectMode.Format
+import Editor.ProjectMode.Listing
 import Editor.Scene
 import Editor.Setup
 import Editor.State
@@ -40,9 +40,9 @@ import ModelTest.Support.Shell
 import ModelTest.Support.Workspace
 
 /-!
-# Model tests: `Editor/Compile/Listing.lean`
+# Model tests: `Editor/ProjectMode/Listing.lean`
 
-The model tests of `Editor/Compile/Listing.lean`: `listingChecks`. The root
+The model tests of `Editor/ProjectMode/Listing.lean`: `listingChecks`. The root
 module `ModelTest` runs them; its module doc says what each shows.
 -/
 
@@ -120,7 +120,7 @@ def listingDriver (registry : Config.Registry := hookRegistry (compileContributi
               scripts := model.processes.scripts ++ listingScripts, streams := listingStreams } } }
 
 /-- The checks of a contribution's computed commands
-(`Editor/Compile/Listing.lean`), on the loop's driver over the editor's
+(`Editor/ProjectMode/Listing.lean`), on the loop's driver over the editor's
 models, the job model and the process model, with `t-mode`. -/
 def listingChecks : List Check :=
   [{  name :=
