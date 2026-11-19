@@ -103,6 +103,16 @@ def projectDriver (linked : Array VersionControl.Model.Linked := threeLinked)
 def listRun : Process.Command :=
   VersionControl.Git.command "git" "/r" VersionControl.Git.worktreeListArguments
 
+/-- `driver` with git's worktree list in `/r` no longer scripted, so the
+process model refuses it. -/
+def unlisted (driver : TestDriver) : TestDriver :=
+  { driver with
+    jobs :=
+      { driver.jobs with
+        processes :=
+          { driver.jobs.processes with
+            scripts := driver.jobs.processes.scripts.filter (·.command != listRun) } } }
+
 /-- How many times `driver` started `command`. -/
 def runs (driver : TestDriver) (command : Process.Command) : Nat :=
   (driver.jobs.processes.started.filter (· == command)).size
@@ -299,6 +309,28 @@ def findInProjectChecks : List Check :=
             let asked := drainedAfter (settledAfter driver "C-o w") "C-o p"
             asked.loop.state.echo.startsWith s!"{Workspace.FindInProject.sourceName}: " &&
               listedTexts asked == some #[] },
+    { name :=
+        "a git worktree list that succeeds for the source but fails when the accept lists again is said as find-file-in-project: <why>, with no prompt open and no find started"
+      run :=
+        pure <|
+          match projectDriver with
+          | none => false
+          | some driver =>
+            let asked := askedInR driver
+            -- The accept's list runs with /r's worktree list no longer
+            -- scripted, so the process model refuses it; the source asked
+            -- so says why under its own name.
+            let chosen := drainedAfter (unlisted asked) "C-o j C-o j C-o y"
+            let why :=
+              (askedInR (unlisted driver)).loop.state.echo.drop
+                  (Workspace.FindInProject.sourceName.length + 2) |>.toString
+            let finds (driver : TestDriver) :=
+              runs driver (Workspace.Git.revParseCommand "git" "/w")
+            listedTexts asked == some #["r@fix", "r@feature", "r@main"] && !why.isEmpty &&
+              chosen.loop.state.echo == s!"{Workspace.FindInProject.name}: {why}" &&
+              chosen.loop.state.prompt.isNone &&
+              finds chosen == finds asked &&
+              chosen.pending.size + chosen.posting.size == 0 },
     { name :=
         "the source's job asked with nothing in its query's context fails, saying so; the choose order survives its arguments' round trip"
       run :=

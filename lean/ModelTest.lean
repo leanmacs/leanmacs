@@ -977,7 +977,8 @@ Listing a workspace's files is checked in Lean alone too:
   a worktree first reached added with the finder's identity and branch
   and found once, a gone worktree said, a registered workspace listed and
   refused, two of one label told apart, no project said, a project with
-  no git, and a failing worktree list said;
+  no git, a failing worktree list said, and one that fails only when the
+  accept lists again said by the command, with no prompt and no find;
 - `reachChecks`: reaching the workspace at a path the table has no
   answer for (`Editor/Workspace/Reach.lean`), with a probe continuation,
   on the workspace driver: the find job started and its answer recorded
