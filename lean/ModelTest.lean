@@ -241,9 +241,12 @@ The fuzzy matching interface's contract (`Editor/Fuzzy/Contract.lean`) is
 run against its model here (`fuzzyFailures`), and `contract-test` runs the
 same list against the real binding. `fuzzyChecks` are what only the model
 shows: its rule of what matches, and that after the candidates that are
-the pattern its order is the candidates'. They also show the contract
-biting on each of the two things it asks: a matcher written here that
-ignores case, and one that does not put an exact match first.
+the pattern its order is the candidates'; and of a located pattern, its
+order among spans of the fewest errors (nearest, earliest, longest) and
+that it answers no span that cuts a character. They also show the contract
+biting on each of the three things it asks: a matcher written here that
+ignores case, one that does not put an exact match first, and locators
+that answer nothing or a span with more errors than the fewest.
 
 The completion style interface (`Editor/Completion/Style.lean`) is checked
 over the fuzzy model (`styleChecks`): the fuzzy style answers the model's

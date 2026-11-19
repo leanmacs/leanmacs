@@ -7,7 +7,9 @@ import Editor.Fuzzy
 The fuzzy matching interface (`Editor/Fuzzy.lean`) answered by the Rust
 library (`Fuzzy.real`): a ranking is one call of `Ffi.fuzzyRank`, the
 library's ranking rule (`crates/editor-fuzzy`) over its matching library's
-adapter (`crates/editor-fuzzy-nucleo`).
+adapter (`crates/editor-fuzzy-nucleo`); a located pattern is one call of
+`Ffi.fuzzyLocate`, the library's locating rule over its searcher's adapter
+(`crates/editor-fuzzy-triple-accel`).
 
 The binding keeps nothing: there is no handle to make or free, and the
 candidates are borrowed by the library for the length of the call. It needs
@@ -26,5 +28,6 @@ namespace Editor
 /-- The fuzzy port answered by the library's matcher. -/
 def Fuzzy.real : FuzzyHandler
   | .rank pattern candidates => Ffi.fuzzyRank pattern candidates
+  | .locate pattern text near maxErrors => Ffi.fuzzyLocate pattern text near maxErrors
 
 end Editor

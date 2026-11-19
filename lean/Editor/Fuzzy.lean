@@ -16,8 +16,12 @@ config.
 - **`rank pattern candidates`** answers the indices of the candidates the
   pattern matches, best first, each once.
 
+- **`locate pattern text near maxErrors`** answers the byte span of `text`
+  that `pattern` is found at with at most `maxErrors` errors, `near` the byte
+  offset where it is expected, or none.
+
 It refuses nothing: any pattern and any candidates have an answer, which may
-be no index at all.
+be no index at all; any pattern and text have one, which may be none.
 
 ## What matches
 
@@ -44,6 +48,26 @@ candidates came in. So logic above the port is tested on the model, and a
 check of it computes what it expects with the model and never writes an
 order out.
 
+## What a located pattern is answered at
+
+An error is one byte inserted, deleted or substituted: the distance is
+byte-wise Levenshtein. A *candidate* is a span of `text` whose ends are on
+character boundaries and whose distance to `pattern` is at most
+`maxErrors`. The answer is a candidate with the fewest errors; the empty
+pattern, or no candidate, answers none.
+
+**"Fewest errors" is all an asker may rest on.** Which of several equally
+good spans is answered is the implementation's: the model takes the one
+whose start is nearest `near`, then the earliest, then the longest, and a
+library takes among the spans it reports by the same order
+(`crates/editor-fuzzy`, `locate`). One more thing is the library's own: it
+counts bytes, and a best span of its that cuts a character is dropped, not
+moved, so on text that is not ASCII it can answer a worse span or none
+where the model finds one. An asker that cannot place a pattern shows it
+as not found, which is safe either way. So the contract asks the fewest
+errors of ASCII texts alone, and of every text that an answer is within
+the errors and on character boundaries.
+
 ## Where an addition goes
 
 | Addition | Where |
@@ -63,12 +87,17 @@ namespace Editor
 inductive FuzzyRequest where
   /-- The indices of the `candidates` that `pattern` matches, best first. -/
   | rank (pattern : String) (candidates : Array String)
+  /-- The byte span of `text` that `pattern` is found at with at most
+  `maxErrors` errors, expected at the byte offset `near`. -/
+  | locate (pattern text : String) (near maxErrors : Nat)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: for a ranking, the indices of
-the candidates that match, best first, each once. -/
+the candidates that match, best first, each once; for a located pattern,
+its byte span, start and stop, or none. -/
 def FuzzyRequest.Reply : FuzzyRequest → Type
   | .rank _ _ => Array Nat
+  | .locate .. => Option (Nat × Nat)
 
 /-- The fuzzy port: `FuzzyRequest` and the reply to each request. -/
 abbrev fuzzyPort : Port :=
@@ -90,6 +119,12 @@ once: a candidate matches when the pattern's scalar values all occur in it
 in order, and a candidate that is the pattern comes first. -/
 def rank (pattern : String) (candidates : Array String) : FuzzyM (Array Nat) :=
   Program.request (port := fuzzyPort) (.rank pattern candidates)
+
+/-- The byte span of `text` that `pattern` is found at with the fewest
+errors, at most `maxErrors`, expected at the byte offset `near`; none for
+the empty pattern or when no span is within the errors. -/
+def locate (pattern text : String) (near maxErrors : Nat) : FuzzyM (Option (Nat × Nat)) :=
+  Program.request (port := fuzzyPort) (.locate pattern text near maxErrors)
 
 /-- No matcher: every request throws `this runner has no fuzzy service`. It
 is what a job runner has when it was given none (`Job.Services.fuzzy`,

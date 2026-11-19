@@ -28,7 +28,8 @@ open Editor
 library: to the real binding, with nothing handed in. The case is the one
 the contract fixes whatever the library's scores: of `wq`, `edit` and `w`
 the pattern `w` matches the first and the third, and the third is the
-pattern. -/
+pattern. The second is a located pattern, one substitution from the one span
+it can be. -/
 def fuzzyChecks : List Check :=
   [{  name :=
         "a command run against the library that asks for a fuzzy ranking is answered by the library's matcher: the candidate that is the pattern first, then the other that matches"
@@ -38,6 +39,15 @@ def fuzzyChecks : List Check :=
         let (result, _) ← command.runReal (.over table) (← recorderOf table).handle
         return match result with
           | .ok ranked => ranked == #[2, 0]
+          | .error _ => false },
+    { name :=
+        "a command run against the library that asks where a pattern is located is answered by the library's searcher: the span with one substitution"
+      run := do
+        let table ← Snapshots.new
+        let command : EditorM (Option (Nat × Nat)) := Fuzzy.locate "neddle" "a needle" 0 1
+        let (result, _) ← command.runReal (.over table) (← recorderOf table).handle
+        return match result with
+          | .ok span => span == some (2, 8)
           | .error _ => false }]
 
 end ContractTest

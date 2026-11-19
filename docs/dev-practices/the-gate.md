@@ -653,11 +653,15 @@ checks:
   The fuzzy matching interface's contract
   (`lean/Editor/Fuzzy/Contract.lean`) runs on its model here
   (`fuzzyFailures`), and `contract-test` runs it on its real binding:
-  which candidates a pattern matches, and that a candidate that is the
-  pattern is first. `fuzzyChecks` are what only the model shows, its
-  order after the exact matches, and the contract seen to report a
-  matcher that ignores case and one that does not put an exact match
-  first. **The model and the binding are not held to agree on the order
+  which candidates a pattern matches, that a candidate that is the
+  pattern is first, and where a pattern is located with errors allowed
+  (within the errors, on character boundaries, the fewest errors in ASCII
+  text against the contract's own oracle, and the pattern where it is
+  expected answered there). `fuzzyChecks` are what only the model shows,
+  its order after the exact matches and its order among located spans of
+  the fewest errors, and the contract seen to report a matcher that
+  ignores case, one that does not put an exact match first, and locators
+  that answer nothing or a span with more errors than the fewest. **The model and the binding are not held to agree on the order
   past the exact matches**, so every check above the port computes what
   it expects with the model. The completion sources' contract
   (`lean/Editor/Completion/Contract.lean`), that a source reads and does
@@ -1157,9 +1161,9 @@ contract against the clipboard a host with no window keeps
 against the library with no clipboard handed in is answered
 `unavailable`, and that one handed a clipboard reaches it. It runs the
 fuzzy matching interface's contract against its real binding
-(`lean/Editor/Fuzzy/Real.lean`), so against the library's matcher, and
-checks that a command run against the library that asks for a ranking is
-answered by it. `ffi-test`'s own `fuzzyChecks` pin that a pattern, a list
+(`lean/Editor/Fuzzy/Real.lean`), so against the library's matcher and
+searcher, and checks that a command run against the library that asks for
+a ranking, or where a pattern is located, is answered by it. `ffi-test`'s own `fuzzyChecks` pin that a pattern, a list
 of strings and the ranking cross the boundary, and that a pattern, a text
 and the span it is located at cross. It runs the syntax tree
 interface's contract against its real binding
