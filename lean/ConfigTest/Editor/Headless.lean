@@ -67,6 +67,7 @@ import Editor.Minibuffer
 import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
+import Editor.PackageSet
 import Editor.Process.Environment
 import Editor.Program
 import Editor.Scene
@@ -2228,7 +2229,44 @@ def shippedChecks (_ : Unit) : List Check :=
             bound "s-a" == some { command := "select-all" } &&
             ["open-file", "save-buffer", "undo", "redo", "clipboard-cut", "clipboard-copy",
                   "clipboard-paste", "select-all"].all
-              compiled }]
+              compiled },
+    { name :=
+        "transitional: the state the shipped packages make and the registry the bridged host starts with list the same commands, jobs, key bindings, modes, ex bindings, themes, segments, languages, compile contributions, styles, displays, at-point sources and their uses and style defaults, each in the same order, the same sources in every category, and the same menu bar"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let bridged := Headless.compiled shipped
+        let (state, refused) : Config.State Config.Elaborate.State × Array String :=
+          Config.State.ofPackages PackageSet.shipped
+        let packaged := state.registry
+        let same {α : Type} [BEq α] (read : Config.Registry → α) : Bool :=
+          read packaged == read bridged
+        let categories := (bridged.sources.map (·.source.category)).toList.eraseDups
+        return refused.isEmpty && !bridged.entries.isEmpty &&
+            same (·.entries.map (·.registration.name)) &&
+            same (·.jobs.map (·.registration.name)) &&
+            same (·.bindings.map (·.binding)) &&
+            same (·.modes.map (·.mode.name)) &&
+            same (·.ex.map (·.binding)) &&
+            same (·.themes.map (·.named.name)) &&
+            same (·.segments.map (·.segment.name)) &&
+            same (·.languageTable) &&
+            same (·.contributions.map (·.contribution.mode)) &&
+            same (·.styles.map (·.style.name)) &&
+            same (·.displays.map (·.display.name)) &&
+            same (·.atPoints.map (·.atPoint.name)) &&
+            same (·.atPointUses.map fun use => (use.mode, use.source)) &&
+            same (·.styleDefaults) &&
+            same (·.sources.size) &&
+            same
+              (fun registry =>
+                (registry.sources.map (·.source.category)).toList.eraseDups.length) &&
+            categories.all (fun category => same (·.sourcesIn category)) &&
+            packaged.menuBar? == shipped.menu.map bridged.menuOf &&
+            packaged.menuBar?.isSome }]
 
 /-- A chunk whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and

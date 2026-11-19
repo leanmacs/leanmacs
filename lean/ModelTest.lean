@@ -30,6 +30,7 @@ import ModelTest.Editor.Compile.Errors
 import ModelTest.Editor.Compile.Listing
 import ModelTest.Editor.Compile.Shipped
 import ModelTest.Editor.Completion.AtPointContract
+import ModelTest.Editor.Completion.Compiled
 import ModelTest.Editor.Completion.Contract
 import ModelTest.Editor.Completion.DisplayContract
 import ModelTest.Editor.Completion.Displays
@@ -91,13 +92,16 @@ import ModelTest.Editor.Json
 import ModelTest.Editor.Key.Notation
 import ModelTest.Editor.Keymap
 import ModelTest.Editor.Language
+import ModelTest.Editor.Language.Compiled
 import ModelTest.Editor.Layout
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Menu
 import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
+import ModelTest.Editor.ModeLine.Compiled
 import ModelTest.Editor.ModuleLookup
+import ModelTest.Editor.PackageSet
 import ModelTest.Editor.Process.Environment
 import ModelTest.Editor.Process.Model
 import ModelTest.Editor.Program
@@ -668,7 +672,16 @@ The config session's decisions are tested here too, with no elaborator:
   by name, and the others register; a reload leaves a package's entries,
   its style default and its store's cell; config's command and binding
   replace a package's until a reload drops them; and a package's
-  `useStyleFor` is a default config's `useStyleFor` overrides.
+  `useStyleFor` is a default config's `useStyleFor` overrides;
+- `completionPackageChecks`, `modeLinePackageChecks` and
+  `languagePackageChecks`: the packages of what ships in core modules
+  register it, in order: the shipped styles and displays
+  (`Editor/Completion/Compiled.lean`), the shipped segments
+  (`Editor/ModeLine/Compiled.lean`), and the `code` mode with the shipped
+  languages (`Editor/Language/Compiled.lean`);
+- `packageSetChecks`: the packages that ship (`Editor/PackageSet.lean`):
+  the list is the 21 packages, in order, each accepted, and in the state
+  they make every entry's owner is one of them.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -1042,6 +1055,10 @@ def checks : List Check :=
     reloadChecks ++
     reloadHintChecks ++
     packageChecks ++
+    completionPackageChecks ++
+    modeLinePackageChecks ++
+    languagePackageChecks ++
+    packageSetChecks ++
     windowTallyChecks ++
     windowLoopChecks ++
     windowArgumentChecks ++
