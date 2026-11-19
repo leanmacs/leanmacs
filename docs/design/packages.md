@@ -74,10 +74,8 @@ could move later.
   that import it, the headless host and the window host reached the
   compile mode. Now each root that links the adapter imports `Editor`
   beside it: the generated root, `lean/ConfigTest/Check.lean`,
-  `lean/FfiTest/Editor/Window/Real.lean`, and the root of the user-side
-  link fixture (`tests/user-link/package/Main.lean`). The check below
-  fails a root that does not, the generated root of the default set among
-  them.
+  `lean/FfiTest/Editor/Window/Real.lean`. The check below fails a root
+  that does not, the generated root of the default set among them.
 
 ## The package set and its build
 
@@ -110,6 +108,7 @@ built from one:
 | `editor` | a package, the set | `<set>/.lake/build/bin/editor`, and beside it `editor.oleans`, the record of where the set's `.olean` directories are |
 | `editorApp` | a package, the set | `<set>/.lake/build/Leanmacs.app`, from the set's `editor` ([building.md](../dev-practices/building.md), "The app bundle") |
 | `editorLinked` | a module | An executable rooted at that module, linked as the editor is, in its package's `bin/`, named as the module with a dash for each dot |
+| `editorRoot` | a package, the set | For `lake query`: writes the set's root module and prints its path; links and builds nothing |
 | `editorRootImports`, `editorRootTransImports` | a package, the set | For `lake query`: the generated root's direct and transitive imports, one module a line |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
 
@@ -240,11 +239,21 @@ order.
   root is generated from it. Each Lake package's entry module still lists
   its own `Package` values, which is what the root reads. The core's lists
   22 until features move out.
-- **One hand-written root remains, outside the editor's build**: the
-  user-side link check's fixture (`tests/user-link/package/Main.lean`),
-  which links against a staged core of prebuilt pieces. Generating that
-  root needs a prebuilt core that carries the facets, which is phase 9. It
-  is an opt-in check's fixture and no part of `mise run lean`.
+- **No root is written by hand, the user-side link's included.** That
+  check ([lean-runtime.md](lean-runtime.md), "A link on the user's
+  machine, measured") links an editor against a staged core of prebuilt
+  pieces, which carries no facet, with a linker that is not Lake's own
+  here. Its fixture is a package of a set of its own, `tests/user-link`
+  (the default set and the package `user-link`, whose entry module is
+  `UserLink.EditorPackage`), and the check asks the checkout for that
+  set's root alone: the facet `editorRoot` writes a set's root and prints
+  its path, and links and builds nothing
+  (`lake -d ../tests/user-link query :editorRoot`). The check stages that
+  file as the relinked editor's root. So the one generator writes every
+  root, and the gate shows that set's root generates and lists the
+  package after the core (`ffi-test`). What is left for a later phase is
+  shipping the generator: on a user's machine there is no checkout to ask,
+  so the prebuilt core must carry the facets (phase 9).
 
 ### A package's tests and the gate's steps over them
 
@@ -342,8 +351,8 @@ feature moves.
 ### Manifests: a set's build fetches nothing
 
 **Every Lake root has its `lake-manifest.json` committed**: the core, the
-default set, the fixture set, each fixture package, the empty set and the
-formatter's host.
+default set, the fixture set, each fixture package, the empty set, the
+user-side link's set and its package, and the formatter's host.
 
 - **A set's manifest holds path entries only.** With it present, a
   dependency the manifest does not hold fails the build (`dependency … not
@@ -372,7 +381,8 @@ formatter's host.
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
 `lean/` holds a copy of it** (the default set, the fixture set and its two
-packages, the empty set and the formatter's host): `lean-fmt` refuses a root with no
+packages, the empty set, the user-side link's set and its package, and the
+formatter's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file when Lake is run in that
 directory. `tools/toolchain-check.sh`, first in `lean-test`, fails when a
 tracked copy differs from the pin, naming it. A bump of the pin

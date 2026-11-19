@@ -8,7 +8,10 @@ A package as small as one can be (`mise run user-link-check`;
 `docs/design/lean-runtime.md`, "A link on the user's machine, measured"):
 one command, written against the editor's API as a package's would be,
 compiled on the machine that links it and offered to a host as a `Package`
-(`lean/Editor/Package.lean`), as the editor's own features are.
+(`lean/Editor/Package.lean`), as the editor's own features are. The
+package's entry module, `UserLink/EditorPackage.lean`, lists it, and the
+root the package-set build generates for the set in `tests/user-link`
+hands it to the hosts after the core's.
 
 It imports the editor's modules from their `.olean` files alone: nothing of
 the editor is compiled when this package builds.

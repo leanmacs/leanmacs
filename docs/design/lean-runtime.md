@@ -138,26 +138,39 @@ mise run user-link-check
 stages the pieces below in a temporary directory, by copy; builds the
 trivial package `tests/user-link/package` and links an `editor` from it
 with the staged `lake`, inside a sandbox where the tools cannot be reached;
-signs the result with `codesign --force -s -`; and runs it. The package
-brings two modules of its own: its one module, `UserLinkFixture`, with its
-one command, `user-link-hello`; and a hand-written root, `Main`, 78 lines
-that copy the body of the shipped headless host, standing in for the root
-the package-set build generates. The
-root has since been reduced: the fixture's module exports a `Package` and
-the root passes it to the shipped host after the packages of the core
-("Packages", under "Config and reload"), so it copies no body; the figures
-below are of the root as measured. **The stand-in root remains**, although
-the editor's own root is now generated ([packages.md](packages.md), "The
-generated root"): the build that generates it is a facet of the core's
-lakefile, and the staged core here is prebuilt pieces behind a lakefile
-with no target, which cannot carry it. A prebuilt core that supplies the
-facet is the packages roadmap's phase 9, and replaces the stand-in. The
-check now reads the pieces from the default set's editor
+signs the result with `codesign --force -s -`; and runs it. When this was
+measured the package brought two modules of its own: its one module,
+`UserLinkFixture`, with its one command, `user-link-hello`; and a root
+written by hand, `Main`, 78 lines that copied the body of the shipped
+headless host, standing in for the root the package-set build was to
+generate. The figures below are of that root. **That root is gone: the relinked
+editor's root is now generated**, as the editor's own is
+([packages.md](packages.md), "The generated root"). The fixture is a
+package of a set of its own, `tests/user-link` (the default set and the
+package `user-link`, with an entry module, `UserLink.EditorPackage`,
+beside its one module). The build that generates a root is a facet of the
+core's lakefile, and the staged core here is prebuilt pieces behind a
+lakefile with no target, which cannot carry it. So the check asks the
+checkout, where the facet is, for that set's root and nothing else
+(`lake -d ../tests/user-link query :editorRoot`, which writes the root and
+links nothing), and stages the file as `EditorSetRoot.lean` beside the
+package's sources and the lakefile of the user's side of the link
+(`tools/user-link/package/lakefile.lean`). The staged `lake` compiles that
+root and links it. What a later phase still owes is the generator on the
+user's machine, where there is no checkout to ask: a prebuilt core that
+supplies the facets is the packages roadmap's phase 9. The
+check reads the pieces from the default set's editor
 (`packages/.lake/build/bin/editor` and its `editor.rsp`), and the object it
-leaves out is the generated root's, where it was `Main`'s. The
+leaves out is that editor's generated root's, where it was `Main`'s. The
 check asserts: the relinked editor
 prints exactly `tests/headless/expected` for the standing headless fixture,
-and for `tests/user-link` the package's command runs and its message is in
+but for the package's own command: the relinked editor is the whole editor
+(`Editor.Main.run`) with the fixture package after the core's, so each of
+that fixture's two lines that list the commands names `user-link-hello`
+too, exactly once, and with that word taken out the output is `expected`
+to the byte. (The hand-written root had a mode of its own for the core's
+packages alone, which printed `expected` as it is.) And
+for `tests/user-link` the package's command runs and its message is in
 the echo area (`run user-link-hello: ok`, then `echo "hello from a package
 linked on this machine"`). MB are 10⁶ bytes of apparent size.
 
@@ -199,7 +212,7 @@ The staged pieces the relink used:
 | `core/libeditor_ffi.a` | The Rust archive (`target/release`) | 1 | 82.0 MB |
 | `core/lakefile.toml`, `core/lake-manifest.json` | `tools/user-link/core`: they make `core/` a Lake package with no target | 2 | 772 bytes |
 | `stubs/` | `tools/link-stubs.sh` on the built `editor`: 14 stubs and `platform-version` | 15 | 8,681 bytes |
-| `package/` | `tests/user-link/package`: `lakefile.lean`, `Main.lean`, `UserLinkFixture.lean` | 3 | 10,028 bytes |
+| `package/` | As measured, `tests/user-link/package`: `lakefile.lean`, `Main.lean`, `UserLinkFixture.lean`. Now the package's sources (`UserLinkFixture.lean`, `UserLink/EditorPackage.lean`), `tools/user-link/package/lakefile.lean` and the generated `EditorSetRoot.lean`: 4 files, 9,183 bytes | 3 | 10,028 bytes |
 
 The rule for the editor's modules is the built editor's own link line
 (`packages/.lake/build/bin/editor.rsp`; `lean/.lake/build/bin/editor.rsp`
@@ -213,8 +226,9 @@ Times are medians of five runs, in seconds of wall clock, the first column
 inside the sandbox. The package build elaborates the one module,
 `UserLinkFixture`. The whole build and link elaborates that and the
 hand-written root `Main`, compiles the C of both to objects, and links; so
-it includes compiling a root that a generated one is to replace, which
-matters when a later measurement is set beside this one:
+it includes compiling a root, as the build of the generated one that
+replaced it does (which also elaborates the package's entry module; on
+2026-11-19, with the generated root, the package build was 0.70 s):
 
 | | Bundled `clang` and `ld64.lld` | `/usr/bin/cc`, with the SDK (`--linker system`) |
 |---|---|---|
@@ -248,7 +262,8 @@ and its response file, with the 217 objects under `<stage>/core/obj` cut:
 
 The first two objects are the package's own modules, and `-rdynamic` is
 from `supportInterpreter`. From the editor's objects to `-dependency_info`
-it is the package's `moreLinkArgs` (`tests/user-link/package/lakefile.lean`),
+it is the package's `moreLinkArgs` (`tools/user-link/package/lakefile.lean`,
+which was `tests/user-link/package/lakefile.lean` when this was measured),
 and the rest is what Lake adds for the bundled compiler.
 
 **How the tools were made unreachable.** The machine has Xcode and the

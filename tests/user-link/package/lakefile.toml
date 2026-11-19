@@ -1,0 +1,28 @@
+# The fixture package of the user-side link check (`mise run
+# user-link-check`, tools/user-link-check.sh; docs/design/lean-runtime.md,
+# "A link on the user's machine, measured"): a package as small as one can
+# be, one module with one command (`UserLinkFixture.lean`) and its entry
+# module (`UserLink/EditorPackage.lean`).
+#
+# This lakefile is the package as the checkout sees it: a package of the
+# set in `..`, which requires the core as it is built here. It is what the
+# package-set build reads to generate the set's root. The check does not
+# build with it: it stages the package's sources with another lakefile,
+# tools/user-link/package/lakefile.lean, which requires the core as
+# prebuilt pieces and links the editor from them.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+name = "user-link"
+defaultTargets = ["UserLinkFixture", "UserLink"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../../lean"
+
+[[lean_lib]]
+name = "UserLinkFixture"
+
+[[lean_lib]]
+name = "UserLink"
+roots = ["UserLink.EditorPackage"]

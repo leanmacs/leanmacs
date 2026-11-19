@@ -90,13 +90,19 @@ It stages, by copy, in a temporary directory: the Lean toolchain; the
 editor's link names, the glue object and the Rust archive, as `mise run
 lean` built them (the built editor is the default package set's,
 `packages/.lake/build/bin/editor`, and the one object its link names that
-is not staged is its generated root's, since the package brings a root of
-its own, still written by hand:
-[`lean-runtime.md`](../design/lean-runtime.md), "A link on the user's
-machine, measured"); link stubs for
+is not staged is its generated root's, since the relinked editor has a
+root of its own); link stubs for
 the system's frameworks and libraries, which `tools/link-stubs.sh` writes
-from the built editor's import table; and the trivial package
-`tests/user-link/package`, one module with one command. Then it
+from the built editor's import table; the trivial package
+`tests/user-link/package`, one module with one command and its entry
+module; the lakefile of the user's side of the link
+(`tools/user-link/package/lakefile.lean`); and the relinked editor's root,
+which no one writes: the package-set build generates it for the set
+`tests/user-link`, the default set and that package (`lake -d
+../tests/user-link query :editorRoot` in `lean/`, which writes the root in
+that set's ignored build directory and links nothing;
+[`lean-runtime.md`](../design/lean-runtime.md), "A link on the user's
+machine, measured"). Then it
 
 1. probes the sandbox (`tools/user-link/sandbox.sb`): running
    `/usr/bin/xcrun`, `/usr/bin/clang`, `/usr/bin/ld`, `/usr/bin/cc` and
@@ -107,7 +113,9 @@ from the built editor's import table; and the trivial package
    tools first on the `PATH`;
 3. signs the result with `codesign --force -s -` and verifies it;
 4. runs its headless mode with an empty environment: it must print exactly
-   `tests/headless/expected` for the standing fixture, and for
+   `tests/headless/expected` for the standing fixture, but for the
+   package's command, `user-link-hello`, which each line that lists the
+   commands must name once; and for
    `tests/user-link` the package's command must run and say its message in
    the echo area (`tests/user-link/expected`, which holds the echo area's
    text alone, cut from the `scene` line);

@@ -1245,6 +1245,14 @@ each one the host reaches and exits 1.
   (`host-imports-check.sh --set ../tests/packages`), whose root imports
   three entry modules, the core's and the two fixture packages': the form
   a set with packages outside the core takes.
+- **The user-side link's set is asked for its root.** `ffi-test` also
+  requires `lake -d ../tests/user-link query :editorRoot` to give a file,
+  and that root's imports to be the config base, the executable's entry,
+  the core's entry module and the fixture package's, in that order. The
+  opt-in check that links an editor as a user's Mac would stages that
+  generated root ([on-demand-checks.md](on-demand-checks.md), "The
+  user-side link, on demand"), so the gate keeps its generation working
+  on every platform.
 - **The gate sees it bite.** `ffi-test` runs it another time in its
   module form (`host-imports-check.sh <root module> [<list module>]`),
   pointed at the core's module `ConfigTest`, a root that imports the
@@ -1430,8 +1438,8 @@ sh tools/toolchain-check.sh
 
 First in `mise run lean-test`. `lean/lean-toolchain` is the pin every task
 reads, and each Lake root outside `lean/` holds a copy of it: the default
-set, the fixture set, each fixture package, the empty set and the
-formatter's host
+set, the fixture set, each fixture package, the empty set, the user-side
+link's set and its package, and the formatter's host
 ([packages.md](../design/packages.md), "The toolchain copies"). The check
 compares every tracked file named `lean-toolchain` with the pin, byte for
 byte, prints each that differs and exits 1.

@@ -4,9 +4,18 @@ open Lake DSL System
 
 /-- The trivial package of the user-side link check (`mise run
 user-link-check`, `tools/user-link-check.sh`;
-`docs/design/lean-runtime.md`, "A link on the user's machine, measured"):
-one module with one command, and an `editor` linked from it and from pieces
-of the editor that are already built.
+`docs/design/lean-runtime.md`, "A link on the user's machine, measured"),
+as the check stages it: one module with one command, its entry module, and
+an `editor` linked from them, from the root the package-set build
+generated and from pieces of the editor that are already built.
+
+This is the package's lakefile on the user's side of the link. The check
+copies it into `<stage>/package` beside the package's sources
+(`tests/user-link/package`, whose own `lakefile.toml` is the package as
+the checkout sees it, and is not staged) and the generated root,
+`EditorSetRoot.lean`. It stands for the build a user's machine runs, which
+the packages roadmap's later phases ship; the root it compiles is already
+the generator's, not written here.
 
 Nothing of the editor is built here. Its modules' `.olean` files come from
 the package it requires (`«editor-core»` below), and their objects, the glue
@@ -38,6 +47,11 @@ require «editor-core» from stage / "core"
 
 /-- The package's one module, with the one command. -/
 lean_lib UserLinkFixture
+
+/-- The package's entry module, `UserLink.EditorPackage`, which lists its
+packages and which the generated root imports
+(`docs/design/packages.md`, "A package's entry module"). -/
+lean_lib UserLink where roots := #[`UserLink.EditorPackage]
 
 /-- The files in `dir`, at any depth, whose names end with `ending`, in
 order of their paths. -/
@@ -107,11 +121,16 @@ def stagedLinkArgs : Array String :=
         libraries ++
         #[s!"-Wl,-dependency_info,{report}"]
 
-/-- The relinked editor: the root `Main`, which is the shipped headless
-host and that host with the package's command, linked with the staged
-pieces. `supportInterpreter` exports its symbols, as the editor's own
-executable does, so interpreted config finds compiled definitions. -/
+/-- The relinked editor: the root `EditorSetRoot`, linked with the staged
+pieces. The root is the one the package-set build generates for the set
+`tests/user-link`, the default set and this package (`lake -d
+../tests/user-link query :editorRoot` in `lean/`), which the check stages
+as `EditorSetRoot.lean` beside this file: the editor's own entry
+(`Editor.Main.run`) handed the core's packages and then this package's. No
+root is written by hand. `supportInterpreter` exports its symbols, as the
+editor's own link does, so interpreted config finds compiled
+definitions. -/
 lean_exe editor where
-  root := `Main
+  root := `EditorSetRoot
   supportInterpreter := true
   moreLinkArgs := stagedLinkArgs

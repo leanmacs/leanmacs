@@ -239,9 +239,9 @@ import Editor.Main
 /-!
 # The executable's root, generated
 
-Written by the package-set build (the facet `editor` of `lean/lakefile.lean`)
-from the Lake packages of a package set, each after the packages it
-requires. Do not edit it: the build writes it again.
+Written by the package-set build (`setRoot` in `lean/lakefile.lean`) from
+the Lake packages of a package set, each after the packages it requires.
+Do not edit it: the build writes it again.
 -/
 
 /-- The editor, with the packages of the set's Lake packages. -/
@@ -337,6 +337,20 @@ package_facet editor pkg : FilePath := do
   let executable := pkg.binDir / "editor"
   writeModuleRecord pkg executable
   linkAsEditor (← setRoot pkg) executable
+
+/-- The root module of a package set, written and not built:
+`lake -d <set dir> query :editorRoot` writes
+`<set>/.lake/build/root/EditorSetRoot.lean` when its text would change
+(`setRoot`) and prints its path. It links nothing and builds no module.
+
+It is the generator of the package-set build on its own, for a link that
+is not Lake's here: the user-side link check stages the root of its
+fixture set with prebuilt pieces of the core and links them with the Lean
+toolchain's own linker (`tools/user-link-check.sh`), so that root is
+generated as the editor's is and written by no one. -/
+package_facet editorRoot pkg : FilePath := do
+  let root ← setRoot pkg
+  return Job.pure root.leanFile
 
 /-- The direct imports of a set's root module, one module a line
 (`lake -d <set dir> query :editorRootImports`): the config base, the
