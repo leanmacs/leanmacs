@@ -275,10 +275,18 @@ for entry in "$sysroot"/*; do
   cp -cR "$entry" "$stage/toolchain/"
 done
 
+# The arguments of the built editor's link whose paths end as the pattern
+# `$1` says, one a line, unquoted. That none does is no failure here, so
+# each caller can say what the link line lacks; `grep` failing for any other
+# reason still is.
+dev_link_names() {
+  { grep -o "\"[^\"]*$1\"" "$dev_link" || [ $? -eq 1 ]; } | tr -d '"'
+}
+
 # The objects the built editor's link names, less its root's, each with its
 # module's `.olean`.
 ir=$built/ir
-grep -o '"[^"]*\.c\.o\.export"' "$dev_link" | tr -d '"' >"$work/dev-objects"
+dev_link_names '\.c\.o\.export' >"$work/dev-objects"
 while IFS= read -r object; do
   case "$object" in
     "$ir/"*) relative=${object#"$ir/"} ;;
@@ -293,8 +301,8 @@ done <"$work/dev-objects"
 [ "$(files "$stage/core/obj")" -gt 0 ] || fail "the built editor's link names no object under $ir"
 
 # The glue object and the Rust archive, as that link names them.
-dev_glue=$(grep -o '"[^"]*/glue\.o"' "$dev_link" | tr -d '"')
-dev_archive=$(grep -o '"[^"]*/libeditor_ffi\.a"' "$dev_link" | tr -d '"')
+dev_glue=$(dev_link_names '/glue\.o')
+dev_archive=$(dev_link_names '/libeditor_ffi\.a')
 [ -f "$dev_glue" ] || fail "the built editor's link names no glue object"
 [ -f "$dev_archive" ] || fail "the built editor's link names no Rust archive"
 cp -c "$dev_glue" "$stage/core/glue.o"
