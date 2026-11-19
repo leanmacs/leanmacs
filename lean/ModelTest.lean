@@ -50,6 +50,7 @@ import ModelTest.Editor.DisplayRules
 import ModelTest.Editor.Evil
 import ModelTest.Editor.Evil.Clipboard
 import ModelTest.Editor.Evil.Jumps
+import ModelTest.Editor.Evil.Marks
 import ModelTest.Editor.Evil.Motions
 import ModelTest.Editor.Evil.Objects
 import ModelTest.Editor.Evil.Operators
@@ -827,6 +828,13 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   example scaled to eight lines, an entry following lines inserted above
   it, a failed search and the motions that are no jump recording nothing,
   and a split's copy of the list moved through on its own;
+- `evilMarkChecks`: `m`, `` ` `` and `'` (`Editor/Evil/Marks.lean`): a
+  mark set and gone to, exactly and at its line's first non-blank, as a
+  jump, under an operator, after an insert above it, the marks not set or
+  not named, `''` back and forth and `m '`, a mark motion run in a window
+  that is not focused, and across buffers on the file model: a buffer's
+  own marks, a global mark in another buffer, under an operator, and in a
+  closed buffer's file, reopened with one jump recorded;
 - `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
   All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
   item (`clipRan`), in each Vim state, on the clipboard model.
@@ -1200,6 +1208,7 @@ def checks : List Check :=
     evilUndoChecks ++
     evilRepeatChecks ++
     evilJumpChecks ++
+    evilMarkChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

@@ -64,6 +64,14 @@ A motion (`Motion`) is a name and a function from where a cursor is
   by its caller, which leaves the cursor at the position the motion
   answers (`Editor/Evil/Operators.lean`). The move command does not read
   it: the cursor goes to the target the motion answers.
+- **A motion is told the window and the buffer it is made in**
+  (`From.view`, `From.buffer`): the call's target's, which need not be the
+  focused window, nor the only buffer over its text. A motion that reads a
+  window's or a buffer's state, a mark, reads theirs.
+- **A motion may lead out of its text** (`To.elsewhere`): a global mark in
+  another buffer or a closed file. The move command goes there as a jump
+  (`Editor/Jumps/Go.lean`, `Jumps.goTo`); under an operator the motion
+  fails, as Vim's does.
 - **A motion may take an argument** (`From.argument`): the character its
   key's next key named, for `f`, `t`, `F` and `T`. A motion that takes one
   and is given none fails where it is.
@@ -159,6 +167,14 @@ namespace Editor.Vocabulary
 structure From where
   /-- The position the cursor is at. -/
   head : Nat
+  /-- The window the motion is made in: the call's target's, which need not
+  be the focused window. A motion that reads a window's state reads this
+  window's (`''` its previous-context mark). -/
+  view : ViewId
+  /-- The buffer that window shows: the call's target's. A motion that
+  reads a buffer's state reads this buffer's (`'a` its marks), and does not
+  find it by its text, which several buffers can share. -/
+  buffer : BufferId
   /-- The count typed, if one was. None is not a count of 1. -/
   count : Option Nat := none
   /-- The wanted column the view keeps, when it still holds: when the cursor
@@ -167,6 +183,16 @@ structure From where
   /-- The argument its key gave the motion, if it takes one: a character for
   `f`, a pattern for `/`. -/
   argument : Option String := none
+  deriving DecidableEq, Repr
+
+/-- A place outside the motion's text that a motion leads to
+(`To.elsewhere`). -/
+structure Elsewhere where
+  /-- The place: held in another buffer, or in a closed file. -/
+  place : Place
+  /-- Whether the cursor goes to the first non-blank of its line, as `'`
+  goes, or to the place itself, as `` ` `` goes. -/
+  line : Bool
   deriving DecidableEq, Repr
 
 /-- Where a motion leads. -/
@@ -197,6 +223,10 @@ structure To where
   (`EditorState.lastSearch`), which `n` and `N` repeat; `none` to keep the
   one there was. -/
   search : Option Search := none
+  /-- A place in another buffer or in a closed file the motion leads to,
+  which no head of this text is: a global mark's (`'A`). Its caller goes
+  there as a jump; `none` for a motion that stays in its text. -/
+  elsewhere : Option Elsewhere := none
   deriving DecidableEq, Repr
 
 /-- How an operator takes the cells between the head and a motion's

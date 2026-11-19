@@ -572,13 +572,14 @@ def vimDefaultChecks : List Check :=
                 (vimDefault text).1.current == [] && (vimDefault text).1.lastChange == none
           | _, _, _ => false },
     { name :=
-        "the motions that record a jump are exactly gg's, G's, the searches' (/, ?, n, N, * and #) and %'s, Vim 9.1's jump motions that are built"
+        "the motions that record a jump are exactly gg's, G's, the searches' (/, ?, n, N, * and #), %'s and the two that go to a mark (` and '), Vim 9.1's jump motions that are built"
       run :=
         pure <|
           let jumping := (Evil.motions.filter (·.jumps)).map (·.name)
           let documented :=
             #["first-line", "last-line", "search-forward", "search-backward", "search-next",
-              "search-previous", "word-search-forward", "word-search-backward", "matching-bracket"]
+              "search-previous", "word-search-forward", "word-search-backward", "matching-bracket",
+              "mark-exact", "mark-line"]
           jumping.all documented.contains && documented.all jumping.contains &&
             jumping.size == documented.size }]
 

@@ -1,4 +1,5 @@
 import Editor.Api
+import Editor.Evil.Marks
 import Editor.Vocabulary
 
 /-!
@@ -745,6 +746,6 @@ def motions : Array Vocabulary.Motion :=
     bigwordEnd, lineStart, lineFirstNonBlank, lineEnd, firstLine, lastLineMotion, findForward,
     findBackward, tillForward, tillBackward, findAgain, findAgainReverse, searchForward,
     searchBackward, searchNext, searchPrevious, wordSearchForward, wordSearchBackward,
-    matchingBracket]
+    matchingBracket, markExact, markLine]
 
 end Editor.Evil

@@ -44,6 +44,7 @@ they hold when config fails to load, and a reload does not replace them.
   | `clipboard-cut`, `clipboard-copy` (`Evil.cutName`, `Evil.copyName`) | `Evil.cut`, `Evil.copy`: they give up, nothing being selected, where no run table runs `"+d` or `"+y` in their place (`Editor/Evil/Clipboard.lean`) |
   | `clipboard-paste` (`Evil.pasteName`) | `Evil.paste`: the clipboard's text at the bar where the call's report is exclusive, and before the cursor otherwise |
   | `select-all` (`Evil.selectAllName`) | `Evil.selectAll`: every line selected, where the call's report selects lines |
+  | `set-mark` | `Evil.setMark`: Vim's `m`, the mark its first argument, a character, names, set at the cursor (`Editor/Evil/Marks.lean`) |
   | `jump-backward`, `jump-forward` | `Evil.jumpBackward`, `Evil.jumpForward`: Vim's `C-o` and `C-i`, a step back or on through the window's jump list by the count (`Editor/Evil/Jumps.lean`) |
 
   The seven of the second and third rows enter a state only when a key
@@ -107,6 +108,7 @@ def commands : Array Config.Registration :=
     { name := pasteName, action := .call paste },
     { name := selectAllName, action := .call selectAll },
     { name := "jump-backward", action := .call jumpBackward },
-    { name := "jump-forward", action := .call jumpForward }]
+    { name := "jump-forward", action := .call jumpForward },
+    { name := "set-mark", action := .call setMark }]
 
 end Editor.Evil

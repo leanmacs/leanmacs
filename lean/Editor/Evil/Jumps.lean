@@ -1,5 +1,4 @@
 import Editor.Evil
-import Editor.Jumps.Go
 
 /-!
 # Evil: `C-o` and `C-i`

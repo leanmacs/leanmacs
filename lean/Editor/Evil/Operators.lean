@@ -550,7 +550,8 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
       let some motion := motions.find? (·.name == name) | giveUp (noSuchMotion name)
       let taken ←
         motion.taken operator.replaces text
-            { head, count := if count == 0 then none else some count, argument }
+            { head, view := call.target.window.id, buffer := call.target.window.buffer
+              count := if count == 0 then none else some count, argument }
       if let some find := taken.find then
         setLastFind find
       if let some search := taken.search then
