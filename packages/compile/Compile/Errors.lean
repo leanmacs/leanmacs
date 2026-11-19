@@ -3,7 +3,7 @@ import Editor.ProjectMode.Format
 /-!
 # Error formats, read: locations in a compilation's output
 
-What the compile mode (`Editor/Compile.lean`, "Locations") finds in the
+What the compile mode (`Compile.lean`, "Locations") finds in the
 lines of a compilation's output: a file, a line, maybe a column, and a
 severity. Pure Lean with no outside world, so it is its own model and has
 no port, and free of the editor API.
@@ -76,7 +76,7 @@ would put a regex behind a port.
   sites and that line, so lines that arrive in two posts give the sites
   they give in one.
 
-Pinned by `ModelTest.compileErrorChecks`.
+Pinned by `CompileTest.compileErrorChecks`.
 -/
 
 namespace Editor.Compile

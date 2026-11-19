@@ -1,31 +1,40 @@
-The fixtures of contract-test's compile checks and its checks of the
-shipped modes (compileChecks in lean/ContractTest/Editor/Compile.lean and
-projectModeChecks in lean/ContractTest/Editor/Compile/Shipped.lean), whose
-directory `mise run ffi-test` hands contract-test as its fourth
-argument. Every script must stay executable (mode 100755). None of the
-trees is a member of the repository's Cargo workspace or Lake package, and
-nothing here is ever built.
+The fixtures of the compile package's checks over the real process service,
+in its linked test (packages/compile/CompileTest/Linked.lean): a compile
+(compileRunChecks in CompileTest/Linked/Compile.lean) and the shipped modes
+(projectRunChecks in CompileTest/Linked/Compile/Shipped.lean). The linked
+test is run in the package's directory (`mise run ffi-test`, through
+tools/package-set.sh run), so it finds this directory as `tests/compile`.
+Every script must stay executable (mode 100755). None of the trees is a
+member of the repository's Cargo workspace or of a Lake package, and nothing
+here is ever built. They were `tests/compile` at the repository's root, the
+fixtures of contract-test's compile checks, until the compile mode moved out
+of the core into this package.
 
 - three-lines: prints `one`, waits for a file `go-1` in its working
   directory, prints `two`, waits for `go-2`, prints `three` on standard
   error and exits 2. Each wait polls every 10 ms and gives up with exit 9
-  after 10 s. contract-test runs it with `compile` over the real process
+  after 10 s. The linked test runs it with `compile` over the real process
   service, in a temporary directory of its own, and makes each file only
   once it has seen the line before it in the compilation buffer: the pause
   is the test's to end, not a timer's, so the check is deterministic. Shell
   builtins and `sleep` only.
 
 The checks of the shipped modes (cargo-mode, lake-mode and mise-mode,
-lean/Editor/Compile/Shipped.lean) copy the trees below into a temporary
+packages/compile/Compile/Shipped.lean) copy the trees below into a temporary
 directory, with a copy of `cargo` shaped as its worktree (`cargo-wt`), and
-make each a repository for the git fixture (tests/workspaces/git). Every
-child they start gets `bin`, then tests/workspaces, then /usr/bin and /bin as
-its `PATH`, through its command's own environment, so the scripts in `bin`
-stand for the real tools, and no real cargo, lake, mise or git is run. Each
+make each a repository for the git fixture (`bin/git`). Every child they
+start gets `bin`, then /usr/bin and /bin as its `PATH`, through its
+command's own environment, so the scripts in `bin` stand for the real
+tools, and no real cargo, lake, mise or git is run. Each
 script writes its canned output, which ends in a line feed, on one stream,
 so the compilation buffer's lines are in the order written; shell builtins
 only.
 
+- bin/git: the fixture that stands in for git, a byte-for-byte copy of the
+  core's (tests/workspaces/git, whose README says what it answers). The
+  package carries its own copy because its linked test runs in the
+  package's directory, and a package that read `../../tests/workspaces`
+  could not be fetched from anywhere else later.
 - bin/cargo: `cargo build` writes `bin/cargo-build.txt` to standard error
   and exits 101: rustc's error for line 4, column 18 of `src/main.rs`, as
   cargo 1.98 prints it, with the `Compiling` line's path dropped. Anything

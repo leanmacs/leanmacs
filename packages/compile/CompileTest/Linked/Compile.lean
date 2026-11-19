@@ -1,10 +1,10 @@
-import ContractTest.Check
+import Compile
+import Compile.Compiled
+import CompileTest.Check
 import Editor.Api
 import Editor.Clipboard
 import Editor.Command
 import Editor.Command.Call
-import Editor.Compile
-import Editor.Compile.Compiled
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Displays
@@ -38,14 +38,18 @@ import Editor.Watch
 import Editor.Workspace
 
 /-!
-# Contract tests: `Editor/Compile.lean`
+# Linked tests: `Compile.lean`
 
-The tests of `Editor/Compile.lean`: `compileChecks`, a compile over the real
-process service. The root module `ContractTest` runs them; its module doc says
-what each shows.
+The tests of `Compile.lean` that need the Rust library: `compileRunChecks`,
+a compile over the real process service. The linked test's root,
+`CompileTest/Linked.lean`, runs them; its module doc says what each shows.
+They were `ContractTest.compileChecks` while the compile mode was a module
+of the core, and are written on the core's linked test kit
+(`Editor.Test.Linked`), which brings the loop, the real bindings and the
+services they run over.
 -/
 
-namespace ContractTest
+namespace CompileTest
 
 open Editor
 open Editor.Test.Linked
@@ -77,7 +81,7 @@ def compilationText (loop : Loop TestScheme.scheme) : EditorM (Option String) :=
 the compilation buffer before the child ends, with the fixture
 `three-lines` (`fixtures`, `tests/compile`), which waits for files the
 check makes. -/
-def compileChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
+def compileRunChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
   [{  name :=
         "criterion 11: over the real process service, the fixture three-lines shows each line in the compilation buffer before it ends, and its exit status in the last line; its child is reaped"
       run := do
@@ -162,4 +166,4 @@ def compileChecks (services : Job.Services) (fixtures : System.FilePath) : List 
         finally
           IO.FS.removeDirAll directory }]
 
-end ContractTest
+end CompileTest

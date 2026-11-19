@@ -1,20 +1,21 @@
-import Editor.Compile
-import Editor.Compile.Errors
+import Compile
+import Compile.Errors
+import CompileTest.Check
+import CompileTest.Support.Compile
 import Editor.ProjectMode.Format
 import Editor.Store
 import Editor.Value
 import Editor.Workspace
-import ModelTest.Check
-import ModelTest.Support.Compile
 
 /-!
-# Model tests: `Editor/Compile/Errors.lean`
+# Model tests: `Compile/Errors.lean`
 
-The model tests of `Editor/Compile/Errors.lean`: `compileErrorChecks`. The root
-module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `Compile/Errors.lean`: `compileErrorChecks`. The test
+driver's root, `CompileTest/Model.lean`, runs them; its module doc says what
+each shows.
 -/
 
-namespace ModelTest
+namespace CompileTest
 
 open Editor
 
@@ -26,7 +27,7 @@ def indentedFormat : Compile.Format :=
     continuation := some [{ pieces := [{ atom := .blanks }] }, { pieces := [{ atom := .rest }] }] }
 
 /-- The checks of error formats, the matcher, sites and `resolve`
-(`Editor/Compile/Errors.lean`): pure, with no driver. -/
+(`Compile/Errors.lean`): pure, with no driver. -/
 def compileErrorChecks : List Check :=
   let general := Compile.Format.general
   [{  name :=
@@ -183,4 +184,4 @@ def compileErrorChecks : List Check :=
             Compile.store.version == 3 &&
             Compile.directoryStore.version == 3) }]
 
-end ModelTest
+end CompileTest

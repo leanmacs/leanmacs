@@ -1,11 +1,11 @@
-import Editor.Compile.Errors
+import Compile.Errors
 import Editor.ProjectMode
 
 /-!
 # What the compile mode makes of contributions: offers and formats in use
 
 A contribution is what a minor mode gives the compile mode
-(`Editor/Compile.lean`), as data a package or config registers
+(`Compile.lean`), as data a package or config registers
 (`Contribution`, `ProjectCommands` and the hook the loop is told, `Hook`,
 all in `Editor/ProjectMode.lean`, a core module). This module is the
 compile mode's: the rules by which it turns the registered contributions
@@ -30,8 +30,8 @@ run's output with. Pure, with no editor API.
   in on-mode order, then `Format.general`. A mode whose contribution is not
   registered, as after a reload that dropped it, gives none.
 
-Pinned by `ModelTest.compileOfferChecks`, pure, and
-`ModelTest.compileHookChecks` and `ModelTest.compileListedChecks`, on the
+Pinned by `CompileTest.compileOfferChecks`, pure, and
+`CompileTest.compileHookChecks` and `CompileTest.compileListedChecks`, on the
 loop's driver.
 -/
 

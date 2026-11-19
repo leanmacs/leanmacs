@@ -1,8 +1,8 @@
+import Compile
+import Compile.Compiled
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
-import Editor.Compile
-import Editor.Compile.Compiled
 import Editor.Config.Packages
 import Editor.DisplayRules
 import Editor.Ex.Line
@@ -41,11 +41,11 @@ import Editor.Workspace
 The compile commands' world: their jobs, keys, bindings and driver, the error
 formats they read, the compile hook's setup, and the driver of the compile
 mode's checks of a listing, over the listing checks' world
-(`Editor/Test/Listing.lean`). Shared by several test modules
-under `ModelTest/Editor/`; it holds no checks of its own.
+(`Editor/Test/Listing.lean`, the core's test kit). Shared by several test
+modules under `CompileTest/`; it holds no checks of its own.
 -/
 
-namespace ModelTest
+namespace CompileTest
 
 open Editor
 open Editor.Test
@@ -299,4 +299,4 @@ def compileListingDriver (registry : Config.Registry := listingRegistry) : Optio
   (Loop.Driver.over keys compileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := listingJobModel compileListingStreams }
 
-end ModelTest
+end CompileTest

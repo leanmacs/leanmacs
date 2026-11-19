@@ -1,22 +1,29 @@
 #!/bin/sh
-# Checks that the core imports no module of a feature that moves out of it,
-# on Lake's module graph (docs/design/packages.md, "The core imports
-# check"): a package may depend on the core, and the core on no package.
+# Checks that the core's root holds the whole core, that the core imports
+# no module of a feature that moves out of it, and that an executable that
+# elaborates config links the config base, on Lake's module graph
+# (docs/design/packages.md, "The core imports check"): a package may depend
+# on the core, and the core on no package.
 #
 #   tools/core-imports-check.sh [--base <module>] [--elaborator <module>]
 #                                [<root module> [<moving name>...]]
 #
 # Run it in `lean/`. The root module defaults to `Editor.Core`, the core's
-# root. A moving name is a module that is not the core's, with every module
-# under it; they default to the compile mode (`moving`, below). The shipped
-# palettes moved out already: they are a Lake package of their own
-# (packages/shipped-themes/), their modules are not named `Editor.…`, and
-# the core cannot import them, since Lake resolves a package's imports from
-# its `require`s and the core requires nothing. They are named, never derived: "what the root does not
-# reach" would pass whatever the core imported. `--base` names the config
-# base and `--elaborator` the elaborator adapter, in place of the editor's
-# (`base` and `elaborator`, below): the gate uses them to see the third
-# rule fail.
+# root. A moving name is a module under `lean/Editor/` that is not the
+# core's, with every module under it: a feature whose edges from the core
+# are cut and which has not moved out yet. There is none by default
+# (`moving`, below): the two features that had one have moved. The shipped
+# palettes and the compile mode are Lake packages of their own
+# (packages/shipped-themes/, packages/compile/), their modules are not
+# named `Editor.…`, and the core cannot import them, since Lake resolves a
+# package's imports from its `require`s and the core requires nothing. A
+# moving name is named, never derived: "what the root does not reach" would
+# pass whatever the core imported. So with none given the first rule holds
+# of nothing, and the check is its second and third; the gate still sees
+# the first bite, by naming a feature that is in the core as moving.
+# `--base` names the config base and `--elaborator` the elaborator adapter,
+# in place of the editor's (`base` and `elaborator`, below): the gate uses
+# them to see the third rule fail.
 #
 # It checks three things, in this order, and stops at the first that fails:
 #
@@ -29,7 +36,7 @@
 #    exits 3. This is what makes the first a statement about every core
 #    module: a core module the root does not import would be checked by
 #    nothing. No module is exempt by name: the list of the core's
-#    packages, which names the moving packages, is
+#    packages, which names every package still in the core, is
 #    `EditorCore.EditorPackage`, outside `Editor/` and its namespace.
 # 3. A root of the build that reaches the elaborator adapter (`elaborator`)
 #    reaches the config base (`base`): an executable that can elaborate
@@ -69,8 +76,9 @@ built="ModelTest ConfigTest FfiTest ContractTest"
 # The package set whose generated root is a root of the build too: the
 # default set's directory, from `lean/`.
 built_set=../packages
-# The moving names when none is given.
-moving="Editor.Compile"
+# The moving names when none is given: none. A feature between having its
+# edges from the core cut and moving out is named here until it has moved.
+moving=""
 
 usage() {
   echo "usage: tools/core-imports-check.sh [--base <module>] [--elaborator <module>] [<root module> [<moving name>...]]" >&2

@@ -25,11 +25,6 @@ import ModelTest.Editor.Command.Append
 import ModelTest.Editor.Command.Control
 import ModelTest.Editor.Command.Dispatch
 import ModelTest.Editor.Command.Registry
-import ModelTest.Editor.Compile
-import ModelTest.Editor.Compile.Compiled
-import ModelTest.Editor.Compile.Contribution
-import ModelTest.Editor.Compile.Errors
-import ModelTest.Editor.Compile.Shipped
 import ModelTest.Editor.Completion.AtPointContract
 import ModelTest.Editor.Completion.Compiled
 import ModelTest.Editor.Completion.Contract
@@ -687,13 +682,13 @@ The config session's decisions are tested here too, with no elaborator:
   (`Editor/Completion/Compiled.lean`), the shipped segments
   (`Editor/ModeLine/Compiled.lean`), and the `code` mode with the shipped
   languages (`Editor/Language/Compiled.lean`);
-- `exPackageChecks`, `compilePackageChecks` and
-  `versionControlPackageChecks`: each package binds its own ex names, in
-  order: the `ex` package the files', its own and the buffers' and no other
-  (`Editor/Ex/Compiled.lean`), the `compile` package its six
-  (`Editor/Compile/Compiled.lean`), and the `version-control` package its
-  twelve, the gutter's package none
+- `exPackageChecks` and `versionControlPackageChecks`: each package binds
+  its own ex names, in order: the `ex` package the files', its own and the
+  buffers' and no other (`Editor/Ex/Compiled.lean`), and the
+  `version-control` package its twelve, the gutter's package none
   (`Editor/VersionControl/Compiled.lean`), each to a command it registers;
+  the compile mode's six are its package's, outside the core
+  (`CompileTest.compilePackageChecks`, `packages/compile/`);
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
@@ -1007,14 +1002,15 @@ has its own checks and no check of the core's names the compile mode:
   handed core packages' commands and jobs only: a mode that turns on runs
   its listing once in its root, a failed listing keeps why and says it
   once, what is kept where, no listing where commands cannot run, each end
-  of a run's words, and an order's and an entry's round trip;
-- `compileOfferChecks` and `compileListedChecks`: what the compile mode
-  makes of a listing: the offers (`Editor/Compile/Contribution.lean`),
-  pure, and the commands `compile-command` offers and runs
-  (`Editor/Compile.lean`), on the compile checks' driver over the listing
-  checks' world;
-- `miseTaskChecks`: the reader of mise's task list
-  (`Editor/Compile/Shipped.lean`), pure.
+  of a run's words, and an order's and an entry's round trip.
+
+What the compile mode makes of them is checked in its package
+(`packages/compile/CompileTest/`): `CompileTest.compileOfferChecks`,
+`.compileListedChecks`, `.compileHookChecks`, `.projectFormatChecks`,
+`.projectModeChecks` and `.miseTaskChecks`, which were this executable's
+until the compile mode moved out of the core, with `.compileChecks`,
+`.compileErrorChecks`, `.compileLocationChecks` and
+`.compilePackageChecks`.
 
 Listing a workspace's files is checked in Lean alone too:
 
@@ -1102,7 +1098,6 @@ def checks : List Check :=
     modeLinePackageChecks ++
     languagePackageChecks ++
     exPackageChecks ++
-    compilePackageChecks ++
     versionControlPackageChecks ++
     packageSetChecks ++
     windowTallyChecks ++
@@ -1260,19 +1255,10 @@ def checks : List Check :=
     excerptBufferChecks ++
     excerptDisplayChecks ++
     excerptViewedChecks ++
-    compileChecks ++
-    compileErrorChecks ++
-    compileLocationChecks ++
-    compileHookChecks ++
-    compileOfferChecks ++
-    compileListedChecks ++
-    projectFormatChecks ++
     jsonChecks ++
-    miseTaskChecks ++
     contributionChecks ++
     formatDataChecks ++
     listingChecks ++
-    projectModeChecks ++
     versionControlParserChecks ++
     versionControlPlumbingChecks ++
     versionControlHistoryParserChecks ++

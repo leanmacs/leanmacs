@@ -1,0 +1,59 @@
+# The compile mode, `compile` into a workspace's compilation buffer: a
+# default package, a Lake package outside the core that the default package
+# set requires (../lakefile.toml; docs/design/packages.md, "The package set
+# and its build"). It was modules of the core until the packages roadmap's
+# phase 6. The gate's package steps build, test, lint, format-check and run
+# it headless through the fixture set, which requires the default set
+# (tools/package-set.sh), and the package imports check holds what it
+# imports of the core (tools/package-imports-check.sh).
+#
+# - `Compile` is the package's library: `Compile.lean`, the commands and
+#   the run; the modules under `Compile/`, the matcher, the offers, the
+#   shipped modes and the `Package` value; and its entry module
+#   `Compile/EditorPackage.lean`, which the package-set build reads. Its
+#   `globs` hold every module under `Compile`, not only what the root
+#   imports: the root does not import the `Package` value or the entry
+#   module, and a library declared by its name alone would hold neither, so
+#   the package imports check would not see their imports.
+# - `compile-test` is its test driver (`lake test`): the tests that need no
+#   Rust library, rooted at `CompileTest/Model.lean`. It is no default
+#   target, as the core's `model-test` is not: `mise run lean` links with
+#   the system compiler, which this executable has no flags for.
+# - `CompileTest` holds the test modules, `CompileTest/Linked.lean` among
+#   them: the root of the executable the core's `editorLinked` facet links
+#   as the editor is linked, with the Rust library. It runs a compile and
+#   the shipped modes over the real process service, on the fixtures in
+#   `tests/compile/`, and a compile in a headless host, on the script in
+#   `tests/linked/run/`.
+# - `tests/headless/` holds its headless fixtures.
+#
+# Every Lean linter is on and a warning fails the build, as in the core.
+#
+# It imports two features that are still core modules, the shell
+# (`Editor.Shell`) and the workspace's modes (`Editor.Workspace.Modes`).
+# When either moves into a package, this one requires that package.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/compile update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages,
+# tests/user-link), and commit each lake-manifest.json.
+name = "compile"
+testDriver = "«compile-test»"
+defaultTargets = ["Compile", "CompileTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "Compile"
+globs = ["Compile.*"]
+
+[[lean_lib]]
+name = "CompileTest"
+globs = ["CompileTest.+"]
+
+[[lean_exe]]
+name = "compile-test"
+root = "CompileTest.Model"

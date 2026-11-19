@@ -1,7 +1,6 @@
 import Editor.AtPoint.Compiled
 import Editor.BindingSearch.Compiled
 import Editor.Buffers.Compiled
-import Editor.Compile.Compiled
 import Editor.Completion.Compiled
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
@@ -44,12 +43,13 @@ for that package's entry module.
 It is not a module of the editor: it is under neither `Editor/` nor the
 namespace `Editor`, and it is a library of its own (`lean_lib EditorCore`,
 `lakefile.lean`), which the generated root and the tests that need the
-list import. It names every package of the core's Lake package, the one
-that moves out of the core among them (the compile mode's,
-`Editor/Compile/Compiled.lean`), so it can be neither a core module nor a
-feature's (`docs/design/packages.md`): the core's root (`Editor/Core.lean`)
-does not import it, and the core imports check, which is of the modules
-named `Editor.…`, does not meet it (`tools/core-imports-check.sh`).
+list import. It names every package of the core's Lake package, so it is
+no feature's module, and it is no core module either
+(`docs/design/packages.md`): the core's root (`Editor/Core.lean`) does not
+import it, and the core imports check, which is of the modules named
+`Editor.…`, does not meet it (`tools/core-imports-check.sh`). The compile
+mode's package was in it until that mode moved out, into the Lake package
+`compile` (`packages/compile/`), whose entry module lists it now.
 
 ## This module is outside the host
 
@@ -82,18 +82,20 @@ language table read as they did:
   theme, so the themes of a Lake package that requires the core (the
   palettes of `shipped-themes`, `packages/shipped-themes/`) follow
   `default`, as the theme prompt lists them;
-- `ex` comes before `compile`, and `compile` before `version-control`:
-  each binds its own ex names, and the ex names' completion lists them in
-  the order they were bound, the `ex` package's first;
-- `compile` comes between `shell` and `at-point`: the command prompt lists
-  commands in registration order;
+- `ex` comes before `version-control`: each binds its own ex names, and
+  the ex names' completion lists them in the order they were bound, the
+  `ex` package's first;
 - `languages` comes last: the `code` mode after version control's modes.
 
 Nothing in this list is ordered by what a package depends on: a command's
 name is looked up when it is run, so a package may name a command of a
 later one. Between Lake packages the order is by dependency: every package
 here registers before any package of a Lake package that requires the
-core.
+core. So the compile mode's package, which was seventeenth here, between
+`shell` and `at-point`, registers after all of these now: its commands
+follow version control's in the command prompt, and its ex names follow
+version control's (`docs/design/packages.md`, "Registration order is
+visible").
 -/
 
 namespace EditorCore.EditorPackage
@@ -106,7 +108,7 @@ def packages : Array Package :=
   #[Completion.package, ModeLine.package, Files.package, Minibuffer.package, Evil.package,
     Ex.package, Buffers.package, FrameCommands.package, Menu.package, WindowCommands.package,
     TabCommands.package, Themes.package, ExecuteCommand.package, BindingSearch.package,
-    Workspace.package, Shell.package, Compile.package, AtPoint.package, VersionControl.package,
+    Workspace.package, Shell.package, AtPoint.package, VersionControl.package,
     VersionControl.gutterPackage, Language.package]
 
 end EditorCore.EditorPackage

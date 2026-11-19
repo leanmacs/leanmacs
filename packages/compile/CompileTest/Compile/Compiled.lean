@@ -1,20 +1,21 @@
-import Editor.Compile
-import Editor.Compile.Compiled
+import Compile
+import Compile.Compiled
+import CompileTest.Check
 import Editor.Config.Packages
-import ModelTest.Check
 
 /-!
-# Model tests: `Editor/Compile/Compiled.lean`
+# Model tests: `Compile/Compiled.lean`
 
-The model tests of `Editor/Compile/Compiled.lean`: `compilePackageChecks`.
-The root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `Compile/Compiled.lean`: `compilePackageChecks`.
+The test driver's root, `CompileTest/Model.lean`, runs them; its module doc
+says what each shows.
 -/
 
-namespace ModelTest
+namespace CompileTest
 
 open Editor
 
-/-- The checks of the `compile` package (`Editor/Compile/Compiled.lean`):
+/-- The checks of the `compile` package (`Compile/Compiled.lean`):
 the ex names it binds are its own to bind, and what it registers on its
 own, read through the core's test double for that
 (`Config.State.ofPackages`, `Editor/Config/Packages.lean`): its commands,
@@ -60,4 +61,4 @@ def compilePackageChecks : List Check :=
               #[("cargo-mode", Compile.package.owner), ("lake-mode", Compile.package.owner),
                 ("mise-mode", Compile.package.owner)]) }]
 
-end ModelTest
+end CompileTest

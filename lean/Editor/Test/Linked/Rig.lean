@@ -49,7 +49,8 @@ import Editor.Workspace.Compiled
 # The linked test kit: Rig
 
 The editor's loop over the real services, as the checks of a feature over
-them drive it: its jobs and keys (`ProjectRig`, `rigJobs`, `rigKeys`), runs
+them drive it: its jobs, commands and keys (`ProjectRig`, `rigJobs`,
+`rigCommands`, `rigKeys`), runs
 settled until every job has run, an opened file and a buffer's text; and a
 child's `PATH`, set for every child a rig's services start (`withPath`,
 `onChanged`, `onFixturePath`). Shared by several test modules; it holds no
@@ -127,14 +128,18 @@ workspace's, the listing job among them, as a host registers them. -/
 def rigJobs : Array Config.JobRegistration :=
   Files.package.registered.jobs ++ Workspace.package.registered.jobs
 
+/-- The commands a rig's checks run by default: the file commands' and the
+workspace's, as a host registers them. A check of another feature appends
+its own, as it appends its jobs to `rigJobs`. -/
+def rigCommands : Array Config.Registration :=
+  Files.package.registered.commands ++ Workspace.package.registered.commands
+
 /-- The keys a rig's checks run by default: none bound; the file commands'
-and the workspace's commands by name; their jobs registered; and no
-contribution told to the loop. -/
+and the workspace's commands by name (`rigCommands`); their jobs
+registered; and no contribution told to the loop. -/
 def rigKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ((Files.package.registered.commands ++ Workspace.package.registered.commands).find?
-            (·.name == name)).bind
-        fun registration =>
+      (rigCommands.find? (·.name == name)).bind fun registration =>
         match registration.action with
         | .call run =>
           some fun call => do

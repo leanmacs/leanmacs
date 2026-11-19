@@ -1,11 +1,13 @@
+import Compile
+import Compile.Contribution
+import Compile.Errors
+import Compile.Shipped
+import CompileTest.Check
+import CompileTest.Support.Compile
 import Editor.Api
 import Editor.Clipboard
 import Editor.Command
 import Editor.Command.Model
-import Editor.Compile
-import Editor.Compile.Contribution
-import Editor.Compile.Errors
-import Editor.Compile.Shipped
 import Editor.Completion.Candidate
 import Editor.Display
 import Editor.Display.Model
@@ -56,20 +58,18 @@ import Editor.Workspace
 import Editor.Workspace.Attach
 import Editor.Workspace.Model
 import Editor.Workspace.Modes
-import ModelTest.Check
-import ModelTest.Support.Compile
 
 /-!
-# Model tests: `Editor/Compile.lean`
+# Model tests: `Compile.lean`
 
-The model tests of `Editor/Compile.lean`: `compileChecks`,
+The model tests of `Compile.lean`: `compileChecks`,
 `compileLocationChecks` and `compileHookChecks`. `compileHookChecks` are of the
-compile hook, which `Editor/Workspace/Modes.lean` and `Editor/Compile.lean`
-share; they are here with the other compile checks. The root module `ModelTest`
-runs them; its module doc says what each shows.
+compile hook, which `Editor/Workspace/Modes.lean` and `Compile.lean`
+share; they are here with the other compile checks. The test driver's root,
+`CompileTest/Model.lean`, runs them; its module doc says what each shows.
 -/
 
-namespace ModelTest
+namespace CompileTest
 
 open Editor
 open Editor.Test
@@ -209,7 +209,7 @@ def compiledLastLine (driver : TestDriver) : Option String :=
   ((compiledText driver "*compilation: r@main*").map fun text =>
       ((text.splitOn "\n").filter (!·.isEmpty)).getLast?).join
 
-/-- The compile checks (`Editor/Compile.lean`), on the loop's driver over the
+/-- The compile checks (`Compile.lean`), on the loop's driver over the
 editor's models, the job model and the process model, in the world of
 `compileWorld`. -/
 def compileChecks : List Check :=
@@ -716,7 +716,7 @@ def splitsRefusedIf (refuseSplits : Bool) :
     (reply, (state, model))
 
 /-- The checks of the locations the compile mode finds in its output
-(`Editor/Compile.lean`, "Locations"), on the loop's driver over the
+(`Compile.lean`, "Locations"), on the loop's driver over the
 editor's models, the job model and the process model, in the world of
 `compileWorld`. -/
 def compileLocationChecks : List Check :=
@@ -1191,7 +1191,7 @@ def hookLanguageDriver : Option TestDriver :=
               languages := [modelRs] } } }
 
 /-- The checks of the compile hook (`Editor/Workspace/Modes.lean`,
-`Editor/Compile.lean`, "The hook"), on the loop's driver over the editor's
+`Compile.lean`, "The hook"), on the loop's driver over the editor's
 models, the job model and the process model, in the world of `hookWorld`
 with the contributions of `hookSetup`. -/
 def compileHookChecks : List Check :=
@@ -1670,7 +1670,7 @@ def compileListingRefusedIn (driver : TestDriver) : TestDriver :=
   withScript driver { command := tList "/t2", reply := .error (.notFound "t-list") }
 
 /-- The checks of what the compile mode makes of a contribution's computed
-commands (`Compile.commandCommand`, `Editor/Compile.lean`), on the loop's
+commands (`Compile.commandCommand`, `Compile.lean`), on the loop's
 driver over the world of the listing checks, with `t-mode`: which commands
 `compile-command` offers and runs. That a listing runs, where what it gave
 is kept and how a failure is said are the listing's
@@ -1747,4 +1747,4 @@ def compileListedChecks : List Check :=
               asked.loop.state.prompt.isNone &&
               (echoOf asked).map (·.endsWith "where commands cannot run") == some true }]
 
-end ModelTest
+end CompileTest

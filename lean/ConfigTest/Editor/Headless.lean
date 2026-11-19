@@ -12,8 +12,6 @@ import Editor.Buffers.Compiled
 import Editor.Clipboard.InProcess
 import Editor.Command
 import Editor.Command.Call
-import Editor.Compile
-import Editor.Compile.Compiled
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Compiled
@@ -2182,42 +2180,26 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.sourcesIn "theme" == #[Themes.source.name] &&
             registry.sourcesIn ExecuteCommand.category == #[ExecuteCommand.source.name] },
     { name :=
-        "the executable's hosts start with compile, recompile, compile-confirm, kill-compilation, compilation-output, next-error, previous-error and compile-goto-error, the job compile-run and the mode compilation registered by the compile package, and the ex names compile, which takes text, recompile, kill-compilation, next-error and previous-error bound to them"
+        "the executable's hosts start with nothing of the compile mode: no command, ex name, job, mode or contribution of it is registered by a package of the core's Lake package, and compile as an ex name is not bound; the minibuffer's mode is"
       run := do
         let registry := shippedRegistry
-        let compiled (name : String) : Bool :=
-          (registry.find? name).any (·.owner == Compile.package.owner)
-        return [Compile.compileName, Compile.recompileName, Compile.confirmName, Compile.killName,
-                  Compile.outputName, Compile.nextName, Compile.previousName, Compile.gotoName].all
-              compiled &&
-            (registry.findJob? Compile.runJob).any (·.owner == Compile.package.owner) &&
-            (registry.mode? Compile.modeName).isSome &&
+        let names :=
+          ["compile", "compile-command", "recompile", "compile-confirm", "kill-compilation",
+            "compilation-output", "next-error", "previous-error", "compile-goto-error"]
+        return names.all (fun name => (registry.find? name).isNone) &&
+            names.all (fun name => (registry.ex? name).isNone) &&
+            (registry.findJob? "compile-run").isNone &&
+            (registry.mode? "compilation").isNone &&
             (registry.mode? Minibuffer.mode.name).isSome &&
-            registry.ex? "compile" ==
-              some { name := "compile", command := Compile.compileName, takes := .text } &&
-            (registry.ex? "recompile").map (·.command) == some Compile.recompileName &&
-            (registry.ex? "kill-compilation").map (·.command) == some Compile.killName &&
-            (registry.ex? "next-error").map (·.command) == some Compile.nextName &&
-            (registry.ex? "previous-error").map (·.command) == some Compile.previousName },
+            registry.contributions.isEmpty },
     { name :=
-        "the executable's hosts start with compile-command registered by the compile package, and the ex name compile-command, which takes text, bound to it; no default key binds it"
-      run := do
-        let registry := shippedRegistry
-        return (registry.find? Compile.commandName).any (·.owner == Compile.package.owner) &&
-            registry.ex? "compile-command" ==
-              some { name := "compile-command", command := Compile.commandName, takes := .text } &&
-            !(registry.bindings.any (·.binding.command == Compile.commandName)) },
-    { name :=
-        "the executable's hosts start with the jobs find-mode-markers and compile-list registered by the workspace package, beside find-workspace, compile-list by no other package, and with cargo-mode, lake-mode and mise-mode as the compile package's contributions, in that order"
+        "the executable's hosts start with the jobs find-mode-markers and compile-list registered by the workspace package, beside find-workspace, and compile-list by no other package: the listing is the core's, whichever package gives the contributions it lists"
       run := do
         let registry := shippedRegistry
         return (registry.findJob? Workspace.markerJob).any (·.owner == Workspace.package.owner) &&
             (registry.findJob? Workspace.findJob).any (·.owner == Workspace.package.owner) &&
             (registry.jobs.filter (·.registration.name == Compile.listJob)).map (·.owner) ==
-              #[Workspace.package.owner] &&
-            (registry.contributions.filter (·.owner == Compile.package.owner)).map
-                (·.contribution.mode) ==
-              #["cargo-mode", "lake-mode", "mise-mode"] },
+              #[Workspace.package.owner] },
     { name :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered by the themes package, and no other theme: the packages of the core's Lake package ship no palette"
       run := do

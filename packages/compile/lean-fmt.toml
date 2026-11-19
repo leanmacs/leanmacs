@@ -1,0 +1,8 @@
+# lean-fmt's config for this package (`mise run lean-fmt`, through
+# tools/package-set.sh fmt). The Lean files under `tests/` are no modules of
+# this package and do not compile on their own: the headless fixtures'
+# config chunks, which the editor elaborates on its config base at runtime,
+# with no import line, and the Lean sources of the fixture tree the shipped
+# modes are checked in (`tests/compile/lake/`). Everything else is checked
+# with the defaults, as the core is.
+exclude = ["tests/**"]

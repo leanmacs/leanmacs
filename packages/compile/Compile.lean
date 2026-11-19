@@ -1,7 +1,7 @@
+import Compile.Contribution
+import Compile.Errors
 import Editor.Api
 import Editor.Command.Call
-import Editor.Compile.Contribution
-import Editor.Compile.Errors
 import Editor.File
 import Editor.Mode
 import Editor.ProjectMode
@@ -22,7 +22,20 @@ command may not wait and a job may, so a compile is the command `compile`,
 which starts the job `compile-run`; the job, which runs the child and posts
 its output as it comes (`post`); and the commands the posts and the job's
 end run. The commands, the job and the mode as compiled code registers them
-are in `Editor/Compile/Compiled.lean`.
+are in `Compile/Compiled.lean`.
+
+**It is a package, not a module of the core**: the library of the Lake
+package `compile` (`packages/compile/`), a default package the default set
+requires (`docs/design/packages.md`, "The default package `compile`"). Its
+modules are named `Compile.…` and import only modules of the core's API;
+paths written `Editor/…` here are the core's (`lean/Editor/…`). Its
+declarations keep the namespace `Editor.Compile`, which the core's own
+vocabulary for it is in already (`Compile.Contribution`, `Compile.Format`,
+in `Editor/ProjectMode.lean` and `Editor/ProjectMode/Format.lean`), so
+config writes `Compile.cargoMode` as it did. What stays the core's: that
+vocabulary, the listing of computed commands with its job and its store
+(`Editor/ProjectMode/Listing.lean`), and the faces `compilation.*`
+(`Editor/Face/Vocabulary.lean`).
 
 ## The scope
 
@@ -146,7 +159,7 @@ is still said.
 ## Locations
 
 The error formats (`Editor/ProjectMode/Format.lean`), read by the matcher
-(`Editor/Compile/Errors.lean`), find the locations of a
+(`Compile/Errors.lean`), find the locations of a
 run's output as its lines arrive, not at its end: `compilation-output` and
 `finished` scan the lines they have just appended (`noteSites`, `scan`),
 from the row and byte offset where they start (`append`'s answer), with the
@@ -156,7 +169,7 @@ never scanned, and a run whose compilation buffer was closed finds none.
 
 - **The formats** a run's output is read with are its on-modes'
   contributions' formats, in on-mode order, then the general format
-  (`formatsOf`, `Editor/Compile/Contribution.lean`): so a line two formats
+  (`formatsOf`, `Compile/Contribution.lean`): so a line two formats
   read is the nearest mode's location.
 - **A relative file** resolves against the directory the run ran in (the
   record's last directory, which `start` set for this run), lexically
@@ -266,10 +279,12 @@ are `j` and `k`, which stay motions in a compilation buffer, so
 `next-error` and `previous-error` are commands and ex names only, and no
 global key binds them.
 
-Pinned by `ModelTest.compileChecks`, `ModelTest.compileErrorChecks`,
-`ModelTest.compileLocationChecks` and `ModelTest.compileHookChecks`, on the
+Pinned by `CompileTest.compileChecks`, `CompileTest.compileErrorChecks`,
+`CompileTest.compileLocationChecks` and `CompileTest.compileHookChecks`, on the
 loop's driver over the editor's models, the job model and the process
-model, and over the real process service by `ContractTest.compileChecks`.
+model, and over the real process service by `CompileTest.compileRunChecks`,
+in the package's linked test, which also runs a compile in a headless host
+(`CompileTest/Linked.lean`).
 -/
 
 namespace Editor.Compile

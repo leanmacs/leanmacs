@@ -1,11 +1,11 @@
-import Editor.Compile
-import Editor.Compile.Shipped
+import Compile
+import Compile.Shipped
 import Editor.Package
 
 /-!
 # The `compile` package: the compile mode's commands, its job, its mode, the contributions that ship and its ex names
 
-What a host registers so that `compile` runs (`Editor/Compile.lean`): the
+What a host registers so that `compile` runs (`Compile.lean`): the
 package `compile` (`Compile.package`, `Editor/Package.lean`). A host
 registers it for the owner `compile` when its loop starts, before any
 config (`Editor/Config/Packages.lean`).
@@ -34,7 +34,7 @@ config (`Editor/Config/Packages.lean`).
 - **The mode**: `compilation`, the compilation buffer's major mode
   (`Compile.mode`).
 - **The contributions** that ship (`Compile.shipped`,
-  `Editor/Compile/Shipped.lean`): `cargo-mode`, `lake-mode` and `mise-mode`,
+  `Compile/Shipped.lean`): `cargo-mode`, `lake-mode` and `mise-mode`,
   each registered with `compileContribution`.
 - **The ex names** (`exCommand`), in this order, which the ex names'
   completion source keeps: `compile` runs `compile` and takes text: the
@@ -51,12 +51,14 @@ config (`Editor/Config/Packages.lean`).
   line to run them; this package names it nowhere, and the `ex` package
   does not name this one.
 
-This module is apart from `Editor/Compile.lean` because it is what a host is
+This module is apart from `Compile.lean` because it is what a host is
 handed, not what config calls.
 
-Pinned by `ModelTest.compilePackageChecks`, `ModelTest.compileChecks`,
-`ModelTest.compileLocationChecks` and `ModelTest.compileHookChecks`, on the
-models, and by `ConfigTest.shippedChecks`, in the shipped set.
+Pinned by `CompileTest.compilePackageChecks`, which reads what the package
+registers on its own, and `CompileTest.compileChecks`,
+`CompileTest.compileLocationChecks` and `CompileTest.compileHookChecks`, on
+the models; and, in an editor built from a set that holds it, by the
+package's headless fixtures (`tests/headless/ex-names`, `config`).
 -/
 
 namespace Editor.Compile

@@ -2,7 +2,6 @@ import ConfigTest.Bench
 import ConfigTest.Check
 import ConfigTest.DefaultConfig
 import ConfigTest.Editor.AtPoint
-import ConfigTest.Editor.Compile
 import ConfigTest.Editor.Completion.Keys
 import ConfigTest.Editor.Config.Directory
 import ConfigTest.Editor.Config.Elaborate
@@ -226,14 +225,14 @@ show:
     with no path: it asks for one, the path is committed into the
     minibuffer, and the accept key opens it. Each host is handed the
     minibuffer's commands and its mode for that.
-- `compileConfigChecks`: the compile mode as a real config sees it on the
-  base (`ConfigTest/Editor/Compile.lean`), with no host: a config that
-  overrides one field of a shipped contribution elaborates, and the hook
-  has config's one command with the shipped markers and formats; and a
-  config's own contribution, with a format of its own, and its project
-  commands elaborate and install, the format reading its line. They are
-  apart from the checks of core modules, none of which names the compile
-  mode.
+
+The compile mode as a real config sees it is not checked here: the compile
+mode is a package outside the core (`packages/compile/`), and the base this
+executable elaborates on is the core's. That a real config written on the
+package's declarations elaborates is its headless fixture `config`, run on
+the editor built from a set that holds it, and what the hook makes of such
+a config's registrations is `CompileTest.compileHookChecks`, on the same
+`setup` written as compiled code.
 
 A check controls time through a port, never by sleeping and hoping: a
 decorator of the elaborator port (`Gate`) holds one chunk's elaboration open
@@ -287,7 +286,6 @@ def checks (context : Context) : List Check :=
     fileChecks context ++
     languageChecks context ++
     reloadChecks context ++
-    compileConfigChecks context ++
     autoReloadChecks context ++
     gutterChecks context ++
     exScriptChecks context ++

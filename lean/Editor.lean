@@ -2,8 +2,6 @@ import Editor.Api.Theorems
 import Editor.AtPoint
 import Editor.BindingSearch
 import Editor.Command.Append
-import Editor.Compile
-import Editor.Compile.Shipped
 import Editor.Completion.Filtering
 import Editor.Completion.Words
 import Editor.Evil.Clipboard
@@ -231,15 +229,20 @@ tests, and are not imported.
 shell command run in the buffer's workspace as a job, and what comes of it
 said in the echo area or shown in the workspace's output buffer. Its
 registrations (`Editor/Shell/Compiled.lean`) name the registry and are not
-imported. So is `compile` (`Editor/Compile.lean`): a build or test command
-run per workspace, its output streamed into the workspace's compilation
-buffer; its registrations (`Editor/Compile/Compiled.lean`) are not
-imported either. What a minor mode gives it, its markers, named commands
-and error formats (`Editor/ProjectMode.lean`, with the formats of
-`Editor/ProjectMode/Format.lean`), comes with `Editor/Setup.lean`, which
-registers it (`compileContribution`, `projectCommands`). The formats that
-ship (`Editor/Compile/Shipped.lean`) are imported, so config can build on
-them.
+imported.
+
+`compile` is not here: the compile mode is a package outside the core
+(`packages/compile/`), and the core requires no package, so this module
+cannot import it. What a minor mode gives the compile mode, its markers,
+named commands and error formats (`Editor/ProjectMode.lean`, with the
+formats of `Editor/ProjectMode/Format.lean`), is the core's and comes with
+`Editor/Setup.lean`, which registers it (`compileContribution`,
+`projectCommands`). Config reaches the package's own declarations, the
+shipped modes (`Compile.cargoMode`) and the matcher among them, because
+an editor elaborates config on its package set's base, which is this
+module and then the entry module of each package of the set
+(`Editor/Main.lean`, "The base"); an editor built from a set without that
+package elaborates config on this module alone.
 
 Version control is here too (`Editor/VersionControl.lean`): the interface
 a version-control system answers, in the editor's own terms, with its git

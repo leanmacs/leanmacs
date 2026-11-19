@@ -35,7 +35,7 @@ is no `file:line`.
 ## The modes
 
 The contributions that ship (`shipped`), which the `compile` package
-registers (`Editor/Compile/Compiled.lean`), so config's contribution of the
+registers (`Compile/Compiled.lean`), so config's contribution of the
 same name replaces one:
 
 - **`cargo-mode`** (`cargoMode`): marker `Cargo.toml`, outermost, so in a
@@ -65,10 +65,10 @@ keeps its first; `[]` gives none. Anything else is refused with why: `it is
 not an array`, `task <n> is not an object`, `task <n> has no name`, or the
 JSON reader's own reason.
 
-Pinned by `ModelTest.projectFormatChecks`, `ModelTest.miseTaskChecks` and
-`ModelTest.projectModeChecks`, on the models, and over the real process
+Pinned by `CompileTest.projectFormatChecks`, `CompileTest.miseTaskChecks` and
+`CompileTest.projectModeChecks`, on the models, and over the real process
 service, with fixture programs standing in for cargo, lake, mise and git, by
-`ContractTest.projectModeChecks`.
+`CompileTest.projectRunChecks`.
 -/
 
 namespace Editor.Compile

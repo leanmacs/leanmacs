@@ -1,23 +1,24 @@
-import Editor.Compile.Contribution
+import Compile.Contribution
+import CompileTest.Check
 import Editor.ProjectMode
 import Editor.Test.Listing
 import Editor.Workspace
-import ModelTest.Check
 
 /-!
-# Model tests: `Editor/Compile/Contribution.lean`
+# Model tests: `Compile/Contribution.lean`
 
-The model tests of `Editor/Compile/Contribution.lean`: `compileOfferChecks`.
-The root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `Compile/Contribution.lean`: `compileOfferChecks`.
+The test driver's root, `CompileTest/Model.lean`, runs them; its module doc
+says what each shows.
 -/
 
-namespace ModelTest
+namespace CompileTest
 
 open Editor
 open Editor.Test
 
 /-- The checks of the commands the compile mode offers
-(`Compile.offers`, `Editor/Compile/Contribution.lean`): pure, over the
+(`Compile.offers`, `Compile/Contribution.lean`): pure, over the
 listing checks' contribution `t-mode` (`tContribution`). -/
 def compileOfferChecks : List Check :=
   [{  name :=
@@ -41,4 +42,4 @@ def compileOfferChecks : List Check :=
             Compile.offers #[tContribution] #[] #[{ mode := "t-mode", root := "/t2" }] listed ==
               #[offer "build" "t-fixed-build" "/t2", offer "check" "t-check" "/t2"]) }]
 
-end ModelTest
+end CompileTest

@@ -1,6 +1,8 @@
-import Editor.Compile.Contribution
-import Editor.Compile.Errors
-import Editor.Compile.Shipped
+import Compile.Contribution
+import Compile.Errors
+import Compile.Shipped
+import CompileTest.Check
+import CompileTest.Support.Compile
 import Editor.Completion.Candidate
 import Editor.Event
 import Editor.File.Model
@@ -28,18 +30,16 @@ import Editor.Text
 import Editor.Workspace
 import Editor.Workspace.Model
 import Editor.Workspace.Modes
-import ModelTest.Check
-import ModelTest.Support.Compile
 
 /-!
-# Model tests: `Editor/Compile/Shipped.lean`
+# Model tests: `Compile/Shipped.lean`
 
-The model tests of `Editor/Compile/Shipped.lean`: `projectFormatChecks`,
-`projectModeChecks` and `miseTaskChecks`. The root module `ModelTest` runs them; its module doc says
-what each shows.
+The model tests of `Compile/Shipped.lean`: `projectFormatChecks`,
+`projectModeChecks` and `miseTaskChecks`. The test driver's root,
+`CompileTest/Model.lean`, runs them; its module doc says what each shows.
 -/
 
-namespace ModelTest
+namespace CompileTest
 
 open Editor
 open Editor.Test
@@ -53,7 +53,7 @@ def rustcLines : Array String :=
     "For more information about this error, try `rustc --explain E0308`.",
     "error: could not compile `probe` (bin \"probe\") due to 1 previous error"]
 
-/-- The checks of the shipped error formats (`Editor/Compile/Shipped.lean`,
+/-- The checks of the shipped error formats (`Compile/Shipped.lean`,
 "The formats"): pure, with no driver. -/
 def projectFormatChecks : List Check :=
   let general := Compile.Format.general
@@ -204,7 +204,7 @@ def reloaded (driver : TestDriver) : TestDriver :=
 def offeredAfter (driver : TestDriver) (keys : String) : Option (Array String) :=
   (candidatesOf (settledAfter driver keys)).map (·.all.map (·.text))
 
-/-- The checks of the shipped modes (`Editor/Compile/Shipped.lean`), on the
+/-- The checks of the shipped modes (`Compile/Shipped.lean`), on the
 loop's driver over the editor's models, the job model and the process
 model, in the world of `projectWorld`, with only the shipped contributions
 registered. -/
@@ -373,7 +373,7 @@ def projectModeChecks : List Check :=
               startedCount afterReload (miseList "/m") == 2 }]
 
 /-- The checks of the reader of mise's task list (`Compile.miseTasks`,
-`Editor/Compile/Shipped.lean`), over the JSON reader: pure. -/
+`Compile/Shipped.lean`), over the JSON reader: pure. -/
 def miseTaskChecks : List Check :=
   [{  name :=
         "mise's task list gives one command per task, mise run and the task's name, in the task's dir, in the order listed: build and test in /m, lint in /m/sub; an empty list gives none"
@@ -415,4 +415,4 @@ def miseTaskChecks : List Check :=
             refused "[{\"name\": 1}]" == some "task 1 has no name" &&
             refused "[" == some "a value is missing") }]
 
-end ModelTest
+end CompileTest

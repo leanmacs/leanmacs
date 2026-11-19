@@ -1,13 +1,12 @@
-import ContractTest.Check
+import Compile
+import Compile.Compiled
+import Compile.Contribution
+import Compile.Shipped
+import CompileTest.Check
 import Editor.Api
 import Editor.Clipboard
 import Editor.Command
-import Editor.Compile
-import Editor.Compile.Compiled
-import Editor.Compile.Contribution
-import Editor.Compile.Shipped
 import Editor.Config.Packages
-import Editor.Files.Compiled
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Program
@@ -21,18 +20,21 @@ import Editor.Test.Linked.Trees
 import Editor.Text
 import Editor.Watch
 import Editor.Workspace
-import Editor.Workspace.Compiled
 import Editor.Workspace.Modes
 
 /-!
-# Contract tests: `Editor/Compile/Shipped.lean`
+# Linked tests: `Compile/Shipped.lean`
 
-The tests of `Editor/Compile/Shipped.lean`: `projectModeChecks`, the shipped
-modes over the real process service. The root module `ContractTest` runs them;
-its module doc says what each shows.
+The tests of `Compile/Shipped.lean` that need the Rust library:
+`projectRunChecks`, the shipped modes over the real process service. The
+linked test's root, `CompileTest/Linked.lean`, runs them; its module doc
+says what each shows. They were `ContractTest.projectModeChecks` while the
+compile mode was a module of the core, and are written on the core's linked
+test kit (`Editor.Test.Linked`): its rig, with the compile mode's keys and
+jobs passed in (`projectKeys`, `projectJobs`).
 -/
 
-namespace ContractTest
+namespace CompileTest
 
 open Editor
 open Editor.Test.Linked
@@ -43,14 +45,13 @@ mode's, as a host registers them. -/
 def projectJobs : Array Config.JobRegistration :=
   rigJobs ++ Compile.package.registered.jobs
 
-/-- The keys of the project mode checks: none bound; the file commands',
-the workspace's and the compile mode's commands by name; their jobs
-registered; and the loop told the shipped contributions. -/
+/-- The keys of the project mode checks: none bound; the rig's commands
+(`rigCommands`), the file commands' and the workspace's, and the compile
+mode's, by name; their jobs registered; and the loop told the shipped
+contributions. -/
 def projectKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ((Files.package.registered.commands ++ Workspace.package.registered.commands ++
-                Compile.package.registered.commands).find?
-            (·.name == name)).bind
+      ((rigCommands ++ Compile.package.registered.commands).find? (·.name == name)).bind
         fun registration =>
         match registration.action with
         | .call run =>
@@ -162,10 +163,11 @@ def withProjects (services : Job.Services) (compile workspaces : System.FilePath
 
 /-- What only the real process service shows of the shipped modes, with
 fixture programs standing in for cargo, lake, mise and git (`compile`,
-`tests/compile`, and `workspaces`, `tests/workspaces`), first on each
+`tests/compile`, and `workspaces`, the directory that holds the git
+fixture, `tests/compile/bin` in this package), first on each
 child's `PATH`: each check opens files of the trees `materializeProjects`
 writes, runs a named command and steps to its locations. -/
-def projectModeChecks (services : Job.Services) (compile workspaces : System.FilePath) :
+def projectRunChecks (services : Job.Services) (compile workspaces : System.FilePath) :
     List Check :=
   let canned (name : String) : System.FilePath := compile / "bin" / name
   [{  name :=
@@ -267,4 +269,4 @@ def projectModeChecks (services : Job.Services) (compile workspaces : System.Fil
               (← focusedAt rig mainTexts inMain) == some (main.toString, 3, 17) &&
               history == #["cargo build"] }]
 
-end ContractTest
+end CompileTest

@@ -99,7 +99,7 @@ run = "cargo test --workspace --locked"
 # (the core's Lake manifest), it must name the formatter host's copy and
 # exit 1. Its output is shown only when it does not.
 [tasks.lean-test]
-description = "Check that every copy of the Lean pin equals lean/lean-toolchain (tools/toolchain-check.sh), then run the Lean model tests with `lake test`, and those of each package of the fixture set, the default packages among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
+description = "Check that every copy of the Lean pin equals lean/lean-toolchain (tools/toolchain-check.sh), then run the Lean model tests with `lake test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
 dir = "lean"
 run = [
   "sh ../tools/toolchain-check.sh",
@@ -110,14 +110,16 @@ run = [
   # driver, with the same `cargo` that fails, so a package's model tests
   # reach no `rustlib` either. The fixture set requires the default set, so
   # the default packages are among them, and the step's output is kept to
-  # require that: it must hold the line the step prints as it reaches the
-  # package of the shipped themes, `package-set: test shipped-themes
-  # (<its directory>)`, matched on what comes before the directory. The
-  # step stops at the first package whose driver fails, so that line and
-  # exit 0 say the package's tests ran and passed: its themes hold under
-  # the core's completeness check
-  # (packages/shipped-themes/ShippedThemesTest/ShippedThemes.lean).
-  "out=$(PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh test ../tests/packages 2>&1) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; printf '%s\\n' \"$out\" | grep -qF 'package-set: test shipped-themes (' || { echo 'lean-test: the package steps did not test shipped-themes'; exit 1; }",
+  # require that: it must hold the line the step prints as it reaches each
+  # default package, `package-set: test shipped-themes (<its directory>)`
+  # and `package-set: test compile (<its directory>)`, matched on what
+  # comes before the directory. The step stops at the first package whose
+  # driver fails, so those lines and exit 0 say each package's tests ran
+  # and passed: the themes hold under the core's completeness check
+  # (packages/shipped-themes/ShippedThemesTest/ShippedThemes.lean), and the
+  # compile mode's model checks, which were the core's until it moved out,
+  # hold on the core's test kit (packages/compile/CompileTest/Model.lean).
+  "out=$(PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh test ../tests/packages 2>&1) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for name in shipped-themes compile; do printf '%s\\n' \"$out\" | grep -qF \"package-set: test $name (\" || { echo \"lean-test: the package steps did not test $name\"; exit 1; }; done",
   # And a step refuses a set it would run over nothing of: the fixture set
   # tests/empty-set requires the core alone, so it holds no package and the
   # step must exit 2, saying so. Its output is shown only when it does not.
@@ -158,10 +160,10 @@ run = [
   # docs/dev-practices/the-gate.md, "The package steps").
   "sh ../tools/package-set.sh build ../tests/packages",
   # The editor of the set that holds no package, tests/empty-set, which
-  # requires the core alone: the default set with its one package, the
-  # shipped themes, dropped. `ffi-test` runs a fixture on it
-  # (tests/headless/core-themes) to show what an editor without that
-  # package has.
+  # requires the core alone: the default set with its packages, the
+  # shipped themes and the compile mode, dropped. `ffi-test` runs a fixture
+  # on it (tests/headless/core-themes) to show what an editor without
+  # those packages has.
   "lake -d ../tests/empty-set build --wfail :editor",
 ]
 
@@ -236,19 +238,20 @@ run = [
   # imports check"), checked on the root the package-set build generates for
   # the default set (packages/): the modules that root imports, other than
   # the entry modules that list the packages (`EditorCore.EditorPackage`
-  # and the default packages', `ShippedThemes.EditorPackage`), reach neither an entry
-  # module nor a module one imports. Three `lake query` calls, about half a
-  # second each.
+  # and the default packages', `ShippedThemes.EditorPackage` and
+  # `Compile.EditorPackage`), reach neither an entry module nor a module one
+  # imports. Three `lake query` calls, about half a second each.
   "sh ../tools/host-imports-check.sh",
   # And the check bites: pointed at the core's module `ConfigTest`, a root
   # that imports the packages, it must find them and exit 1. Its output is
   # shown only when it does not.
   "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
   # The same check on the root generated for the fixture set
-  # (tests/packages/), with `--set`: that root imports four entry modules,
-  # the core's, the two fixture packages' and the shipped themes', and the
-  # host's modules must reach none of them, nor `Greeting`, `GreetingLoud`
-  # or `ShippedThemes`, which they import.
+  # (tests/packages/), with `--set`: that root imports five entry modules,
+  # the core's, the two fixture packages', the shipped themes' and the
+  # compile mode's, and the host's modules must reach none of them, nor
+  # `Greeting`, `GreetingLoud`, `ShippedThemes` or `Compile.Compiled`,
+  # which they import.
   "sh ../tools/host-imports-check.sh --set ../tests/packages",
   # The root of the user-side link's fixture set (tests/user-link/): the
   # check that links an editor as a user's Mac would (`mise run
@@ -256,42 +259,50 @@ run = [
   # generates for that set, written by the facet `editorRoot`, which writes
   # a set's root and links nothing. Here the facet must give a file, and
   # the root's imports, as Lake resolves them, must be the config base, the
-  # executable's entry, the core's entry module, the default package's and
+  # executable's entry, the core's entry module, the default packages' and
   # then the fixture package's: the root the check compiles is generated,
-  # lists the fixture package after the core and the default set's package,
-  # and its modules are found.
-  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage UserLink.EditorPackage '",
-  # The shipped themes are a Lake package in the default set, and no
-  # package of the core: the root generated for the default set (packages/)
-  # imports the config base, the executable's entry, the core's entry
-  # module and then `ShippedThemes.EditorPackage`, and nothing else; and
-  # the record beside the default set's editor names two `.olean`
-  # directories and no more, the core's and then the package's, which is
-  # under packages/ and holds the package's entry module. That the core's
-  # own list holds no palette is `ModelTest.packageSetChecks`'.
-  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage '",
-  "{ IFS= read -r core && IFS= read -r themes && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$themes/ShippedThemes/EditorPackage.olean\" && test \"$themes\" = \"$(cd ../packages/shipped-themes && pwd)/.lake/build/lib/lean\"",
+  # lists the fixture package after the core and the default set's
+  # packages, and its modules are found.
+  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage Compile.EditorPackage UserLink.EditorPackage '",
+  # The shipped themes and the compile mode are Lake packages in the
+  # default set, and no packages of the core: the root generated for the
+  # default set (packages/) imports the config base, the executable's
+  # entry, the core's entry module and then `ShippedThemes.EditorPackage`
+  # and `Compile.EditorPackage`, in the order the set's lakefile requires
+  # them, and nothing else; and the record beside the default set's editor
+  # names three `.olean` directories and no more, the core's and then each
+  # package's, which is under packages/ and holds the package's entry
+  # module. That the core's own list holds no palette and no package of the
+  # compile mode is `ModelTest.packageSetChecks`', and that the core's hosts
+  # start with nothing of the compile mode `ConfigTest.shippedChecks`'.
+  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage Compile.EditorPackage '",
+  "{ IFS= read -r core && IFS= read -r themes && IFS= read -r compile && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$themes/ShippedThemes/EditorPackage.olean\" && test \"$themes\" = \"$(cd ../packages/shipped-themes && pwd)/.lake/build/lib/lean\" && test -f \"$compile/Compile/EditorPackage.olean\" && test \"$compile\" = \"$(cd ../packages/compile && pwd)/.lake/build/lib/lean\"",
   # The config base of a set is the set's (lean/Editor/Main.lean, "The
   # base"; the facet `editorBase`): `Editor`, the core's base, then the
   # entry module of each package of the set outside the core, so that
   # config can name what a default package declares. The default set's is
-  # `Editor` and the shipped themes' entry module, and that of the set with
-  # no package (tests/empty-set) `Editor` alone: an editor without the
-  # package still loads config.
-  "test \"$(lake -d ../packages query :editorBase | tr '\\n' ' ')\" = 'Editor ShippedThemes.EditorPackage '",
+  # `Editor`, the shipped themes' entry module and the compile mode's, and
+  # that of the set with no package (tests/empty-set) `Editor` alone: an
+  # editor without the packages still loads config.
+  "test \"$(lake -d ../packages query :editorBase | tr '\\n' ' ')\" = 'Editor ShippedThemes.EditorPackage Compile.EditorPackage '",
   "test \"$(lake -d ../tests/empty-set query :editorBase | tr '\\n' ' ')\" = 'Editor '",
-  # The core imports no module of a feature that moves out of it, on Lake's
-  # module graph (tools/core-imports-check.sh; docs/dev-practices/the-gate.md,
-  # "The core imports check"): the core's root, `Editor.Core`, and what it
-  # imports hold no module of the compile mode; every
-  # `Editor.…` module the build reaches is among them, unless it is one of
-  # those; and every root that links the elaborator
-  # links the config base. The roots of the build are the core's
-  # executables' and the root generated for the default set. Six `lake
-  # query` calls, about half a second each.
+  # The core's root holds the whole core, on Lake's module graph
+  # (tools/core-imports-check.sh; docs/dev-practices/the-gate.md, "The core
+  # imports check"): every `Editor.…` module the build reaches is the
+  # core's root, `Editor.Core`, or one of the modules it imports; and every
+  # root that links the elaborator links the config base. No feature is
+  # between having its edges from the core cut and moving out, so the check
+  # is given no moving name, and its first rule, that the root reaches no
+  # moving module, holds of nothing: the two features it was about, the
+  # shipped palettes and the compile mode, are Lake packages now, which the
+  # core cannot import. The roots of the build are the core's executables'
+  # and the root generated for the default set. Six `lake query` calls,
+  # about half a second each.
   "sh ../tools/core-imports-check.sh",
-  # And each rule of the check bites. Pointed at the root `Editor`, the
-  # config base, which imports the compile mode, it must find it and exit 1.
+  # And each rule of the check bites. Told that a feature still in the
+  # core, the shell (`Editor.Shell`), is moving, it must find its modules
+  # in the core's root's closure and exit 1: the first rule is ready for
+  # the next feature whose edges are cut before it moves.
   # Pointed at the root `Editor.Setup`, which imports no moving module and
   # not the whole core, it must find the core modules outside it and exit 3.
   # Told the config base is `Editor.Core`, which no executable's root
@@ -299,7 +310,7 @@ run = [
   # exit 4. And told the elaborator adapter is `Editor.Core`, which no root
   # reaches, so that the third rule would hold of nothing, it must say so
   # and exit 2. The output of each is shown only when it is not that.
-  "status=0; out=$(sh ../tools/core-imports-check.sh Editor 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
+  "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Core Editor.Shell 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Setup 2>&1) || status=$?; test \"$status\" -eq 3 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --base Editor.Core 2>&1) || status=$?; test \"$status\" -eq 4 || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/core-imports-check.sh --elaborator Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 2 && test \"${out#core-imports-check: no root of the build}\" != \"$out\"; } || { printf '%s\\n' \"$out\"; exit 1; }",
@@ -344,14 +355,14 @@ run = [
   # (tests/workspaces). Its third is the directory of the fixture `:!` runs
   # over the real process service, which is also the editor's working
   # directory in those checks (tests/shell). Its fourth is the directory of
-  # the fixtures `compile` runs over the real process service (tests/compile):
-  # the fixture `three-lines`, and the programs that stand for cargo, lake
-  # and mise first on each child's PATH, with the trees the shipped modes are
-  # checked in. Its fifth is the directory of the syntax fixtures, whose Rust
-  # fixtures the indent and text-object checks read (tests/syntax). Its
-  # sixth is the directory of the fixture that stands in for fzf in the
-  # checks of a source a command filters (tests/completion).
-  ".lake/build/bin/contract-test ../tests/process-environment ../tests/workspaces ../tests/shell ../tests/compile ../tests/syntax ../tests/completion",
+  # the syntax fixtures, whose Rust fixtures the indent and text-object
+  # checks read (tests/syntax). Its fifth is the directory of the fixture
+  # that stands in for fzf in the checks of a source a command filters
+  # (tests/completion). A compile over the real process service is no check
+  # of this executable any more: it is the compile package's linked test's
+  # (packages/compile/CompileTest/Linked.lean), which the package steps run
+  # below on that package's own fixtures (packages/compile/tests/compile).
+  ".lake/build/bin/contract-test ../tests/process-environment ../tests/workspaces ../tests/shell ../tests/syntax ../tests/completion",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment; its third argument is the directory of the syntax
@@ -546,29 +557,6 @@ run = [
   # printed, and `q` quits the editor: the loop ends, the `scene` line after
   # it is not run, and the status is 0 (`ex/expected`). It writes no file.
   "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/ex/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/ex/expected -",
-  # The compile mode, on the default editor, with three fixtures written
-  # before the compile mode moves out of the core into a default package
-  # (the packages roadmap's phase 6), so that what they print is a baseline
-  # the move must keep. `compile-ex-names`: each of its six ex names, typed
-  # on the ex line of an editor that has compiled nothing, reaches its
-  # command (`compile-ex-names/expected`). The echoes name the working
-  # directory by its last name, `lean`, where this task runs.
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/compile-ex-names/config ../tests/headless/compile-ex-names/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/compile-ex-names/expected -",
-  # `compile-config`: a config that names the compile mode's declarations
-  # (a shipped contribution with one field overridden, a format of its own,
-  # project commands) elaborates on the editor's base and its command runs
-  # (`compile-config/expected`).
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/compile-config/config ../tests/headless/compile-config/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/compile-config/expected -",
-  # `compile-run`: a compile over a real process, in a temporary working
-  # directory, which this entry's one shell makes and removes by a trap:
-  # the child writes one error line and blocks until `kill-compilation`
-  # kills it, `next-error` and `previous-error` step over its one location,
-  # and `recompile` runs the line again. The output holds the temporary
-  # directory's path, so it is not compared with a file: each line of
-  # `compile-run/holds` must be part of a line of it. The config is the one
-  # that registers nothing, and every path handed to the editor is
-  # absolute, since it runs in the temporary directory.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && sysroot=$(lean --print-prefix) && here=$PWD && out=$(cd \"$dir\" && \"$here/../packages/.lake/build/bin/editor\" headless \"$sysroot\" \"$here/.lake/build/lib/lean\" \"$here/../tests/headless/compile-ex-names/config\" \"$here/../tests/headless/compile-run/script\") && while IFS= read -r line; do printf '%s\\n' \"$out\" | grep -qF -- \"$line\" || { printf '%s\\n' \"$out\"; echo \"ffi-test: the compile run did not print a line holding: $line\"; exit 1; }; done < ../tests/headless/compile-run/holds",
   # `e`, an edit, `w` and `q` on a real file, as a process. Lean spawns no
   # child (docs/design/overview.md), so the check is here: this entry is one
   # shell, which makes a temporary directory and removes it by a trap when
@@ -731,10 +719,11 @@ run = [
   ".lake/build/bin/ffi-test window-host-direct ../tests/packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
   # And the record of the fixture set's editor names the `.olean` directory
   # of each of the set's Lake packages that holds a library, one a line,
-  # the core's first and each package after the ones it requires: four
+  # the core's first and each package after the ones it requires: five
   # directories and no more, each holding its package's modules, the last
-  # the shipped themes', which the set reaches through the default set.
-  "{ IFS= read -r core && IFS= read -r first && IFS= read -r second && IFS= read -r third && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$first/Greeting/EditorPackage.olean\" && test -f \"$second/GreetingLoud/EditorPackage.olean\" && test -f \"$third/ShippedThemes/EditorPackage.olean\"",
+  # two the shipped themes' and the compile mode's, which the set reaches
+  # through the default set.
+  "{ IFS= read -r core && IFS= read -r first && IFS= read -r second && IFS= read -r third && IFS= read -r fourth && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$first/Greeting/EditorPackage.olean\" && test -f \"$second/GreetingLoud/EditorPackage.olean\" && test -f \"$third/ShippedThemes/EditorPackage.olean\" && test -f \"$fourth/Compile/EditorPackage.olean\"",
   # The same wiring on the library's scripted platform whose renderer cannot
   # be made, as a machine with no usable GPU gives: the window runs with
   # nothing drawing in it. The scenario must exit 0, which it does only when
@@ -775,18 +764,30 @@ run = [
   # fixture `reply` of the package that requires it, the linked test of
   # the shipped themes' package, which the set reaches through the default
   # set, its four fixtures `load-theme`, `package-names`, `shipped-themes`
-  # and `themes`, and the count of all. A fixture or a linked test that is renamed, moved
+  # and `themes`, the linked test of the compile mode's package with the
+  # line it prints, its two fixtures `config` and `ex-names`, and the count
+  # of all. A fixture or a linked test that is renamed, moved
   # or no longer found fails this line. The linked tests' own lines are
   # required too: the fixture package's check against the Rust library, as
   # `ffi-test` is the core's, and its check of a config session on the real
-  # elaborator, as `config-test` is the core's; and the shipped themes'
+  # elaborator, as `config-test` is the core's; the shipped themes'
   # pictures against their reference images
-  # (packages/shipped-themes/tests/render/README.md).
-  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: ran 2 linked tests and 6 headless fixtures over 3 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
+  # (packages/shipped-themes/tests/render/README.md); and the compile
+  # mode's seven checks: a compile and the shipped modes over the real
+  # process service, on the package's fixtures
+  # (packages/compile/tests/compile/README), and a compile in a headless
+  # host (packages/compile/CompileTest/Linked.lean). The compile mode's
+  # fixtures were written against the editor with the compile mode still in
+  # the core, and moved into the package unchanged: `ex-names`, each of its
+  # six ex names reaching its command, and `config`, a config written on
+  # the package's declarations, which elaborates because the set's config
+  # base holds the package's entry module.
+  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: ran 3 linked tests and 8 headless fixtures over 4 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
   # The same step over the default set (packages/): the linked test and
   # the fixtures of the default packages, on the editor built from the
-  # default set, the one that is shipped. So the shipped themes' four
-  # fixtures hold of that editor too, `load-theme` among them: with no
+  # default set, the one that is shipped. So the compile mode's linked test
+  # and two fixtures, and the shipped themes' four
+  # fixtures, hold of that editor too, `load-theme` among them: with no
   # theme of config's, its theme prompt offers `default`, `solarized-dark`,
   # `solarized-light` and `fairy-floss`, in that order; and `package-names`,
   # whose config names a declaration of the package
@@ -795,7 +796,7 @@ run = [
   # lines do not give, is found through the record the build wrote beside
   # the editor. The lines of what it is here to run are required, as
   # above.
-  "out=$(sh ../tools/package-set.sh run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: ran 1 linked test and 4 headless fixtures over 1 package'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps over the default set did not print: $line\"; exit 1; }; done",
+  "out=$(sh ../tools/package-set.sh run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: ran 2 linked tests and 6 headless fixtures over 2 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps over the default set did not print: $line\"; exit 1; }; done",
   # And the editor of the default set, which does not hold the fixture
   # package, has no such command: on the same config and script its
   # headless mode must print `run greeting-hello: no such command`. So the
@@ -838,13 +839,16 @@ run = [
 # beside the copy. The fixture's commands only make texts, so nothing is
 # written outside the temporary directory.
 #
-# Then two fixtures of a default package from the same bundle, the shipped
-# themes' (packages/shipped-themes/tests/headless/): `shipped-themes`, whose
-# config names `solarized-light`, and `package-names`, whose config names a
-# declaration of the package, `ShippedThemes.themes`. Each is copied and
-# run the same way and must print exactly its `expected`. The second
-# elaborates only if the bundle's one `.olean` directory holds the
-# package's module files beside the core's: a bundle has no record, and the
+# Then three fixtures of the default packages from the same bundle: the
+# shipped themes' (packages/shipped-themes/tests/headless/)
+# `shipped-themes`, whose config names `solarized-light`, and
+# `package-names`, whose config names a declaration of the package,
+# `ShippedThemes.themes`; and the compile mode's
+# (packages/compile/tests/headless/) `config`, whose config is written on
+# `Compile.cargoMode`, `Compile.Format` and `Compile.shipped`. Each is
+# copied and run the same way and must print exactly its `expected`. The
+# last two elaborate only if the bundle's one `.olean` directory holds the
+# packages' module files beside the core's: a bundle has no record, and the
 # editor is given no directory.
 #
 # Then `editor --version` (lean/Editor/Version.lean), through `IO.appPath`
@@ -854,11 +858,11 @@ run = [
 # `version-expected`; and the build tree's `editor`, outside a bundle, must
 # print the line of a development build.
 [tasks.bundle-test]
-description = "Stage the app bundle's layout in a temporary directory, with the module files of the default set's config base, and run the headless mode of a copy of the editor there, with no directory argument, an empty environment and a working directory outside it, on the bundle fixture and on a default package's fixtures, and its --version on a fixture Info.plist (tools/stage-bundle.sh, tests/headless/bundle)"
+description = "Stage the app bundle's layout in a temporary directory, with the module files of the default set's config base, and run the headless mode of a copy of the editor there, with no directory argument, an empty environment and a working directory outside it, on the bundle fixture and on the default packages' fixtures, and its --version on a fixture Info.plist (tools/stage-bundle.sh, tests/headless/bundle)"
 depends = ["lean"]
 dir = "lean"
 timeout = "120s"
-run = '''lean_dir=$PWD && dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && base=$(lake -d ../packages query :editorBase | tr '\n' ' ') && oleans=$(paste -s -d : ../packages/.lake/build/bin/editor.oleans) && .lake/build/bin/config-test bench-modules "$sysroot" "$oleans" $base >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" "$dir/Leanmacs.app" ../packages/.lake/build/bin/editor "$sysroot" "$oleans" olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" - && themes=$lean_dir/../packages/shipped-themes/tests/headless/shipped-themes && cp -R "$themes/config" "$dir/themes-config" && cp "$themes/script" "$dir/themes-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/themes-config" "$dir/themes-script") && printf '%s\n' "$out" | diff "$themes/expected" - && names=$lean_dir/../packages/shipped-themes/tests/headless/package-names && cp -R "$names/config" "$dir/names-config" && cp "$names/script" "$dir/names-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/names-config" "$dir/names-script") && printf '%s\n' "$out" | diff "$names/expected" - && cp "$fixtures/Info.plist" "$dir/Leanmacs.app/Contents/Info.plist" && env -i "$dir/Leanmacs.app/Contents/MacOS/editor" --version | diff "$fixtures/version-expected" - && "$lean_dir/../packages/.lake/build/bin/editor" --version | grep -qxF 'Leanmacs, a development build: not run from an app bundle, so it has no version, build ID or commit''''
+run = '''lean_dir=$PWD && dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && base=$(lake -d ../packages query :editorBase | tr '\n' ' ') && oleans=$(paste -s -d : ../packages/.lake/build/bin/editor.oleans) && .lake/build/bin/config-test bench-modules "$sysroot" "$oleans" $base >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" "$dir/Leanmacs.app" ../packages/.lake/build/bin/editor "$sysroot" "$oleans" olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" - && themes=$lean_dir/../packages/shipped-themes/tests/headless/shipped-themes && cp -R "$themes/config" "$dir/themes-config" && cp "$themes/script" "$dir/themes-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/themes-config" "$dir/themes-script") && printf '%s\n' "$out" | diff "$themes/expected" - && names=$lean_dir/../packages/shipped-themes/tests/headless/package-names && cp -R "$names/config" "$dir/names-config" && cp "$names/script" "$dir/names-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/names-config" "$dir/names-script") && printf '%s\n' "$out" | diff "$names/expected" - && compile=$lean_dir/../packages/compile/tests/headless/config && cp -R "$compile/config" "$dir/compile-config" && cp "$compile/script" "$dir/compile-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/compile-config" "$dir/compile-script") && printf '%s\n' "$out" | diff "$compile/expected" - && cp "$fixtures/Info.plist" "$dir/Leanmacs.app/Contents/Info.plist" && env -i "$dir/Leanmacs.app/Contents/MacOS/editor" --version | diff "$fixtures/version-expected" - && "$lean_dir/../packages/.lake/build/bin/editor" --version | grep -qxF 'Leanmacs, a development build: not run from an app bundle, so it has no version, build ID or commit''''
 
 # The build ID (crates/editor-release, `build_id`): LEANMACS_BUILD_ID when
 # it is set, else HEAD's committer time in UTC, the time landing sets. CI's
