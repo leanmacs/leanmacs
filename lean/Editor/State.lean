@@ -1365,21 +1365,10 @@ def Jumps.places (jumps : Jumps) : Array Place :=
   jumps.list.entries ++ jumps.previous.toArray
 
 /-- `jumps` with each place changed by `change`, and dropped where it
-answers `none`. The list's index goes with its entry, or to the next entry
-kept when that one is dropped, and stays one past the end. -/
+answers `none`: the list's as `JumpList.filterMap` changes it, which
+carries its index, and the previous-context mark. -/
 def Jumps.filterMap (change : Place → Option Place) (jumps : Jumps) : Jumps :=
-  let entries := jumps.list.entries
-  let (kept, index) :=
-    (List.range entries.size).foldl
-      (fun (kept, index) from_ =>
-        let index := if jumps.list.index == from_ then kept.size else index
-        match entries[from_]?.bind change with
-        | some place => (kept.push place, index)
-        | none => (kept, index))
-      ((#[] : Array Place), jumps.list.index)
-  { list :=
-      { entries := kept, index := if jumps.list.index ≥ entries.size then kept.size else index }
-    previous := jumps.previous.bind change }
+  { list := jumps.list.filterMap change, previous := jumps.previous.bind change }
 
 /-- A window: a view of a buffer. -/
 structure Window where

@@ -12,11 +12,16 @@ those places and runs these rules on them.
   end, the oldest is dropped when the list grows past `limit` (Vim's
   `JUMPLISTSIZE`, 100), and the index is set one past the end. Nothing is
   removed at record time.
+- **Filter-map** (`filterMap`, `filterMapIdx`): each entry is changed, or
+  dropped. The index is carried along with the entry it pointed at, or to
+  the next entry kept when that one is dropped, and an index one past the
+  end stays one past the end. It is the one place that carries the index:
+  the clean-up is one, and so is the editor's detaching and attaching of a
+  closed buffer's places (`Jumps.filterMap`).
 - **Clean up** (`cleanup`, Vim's `cleanup_jumplist` under the default
   `jumpoptions`): an entry is dropped when a later entry has the same key,
-  so the latest of a key is kept. The index is carried along with the entry
-  it pointed at, or to the next entry kept when that one is dropped, and an
-  index one past the end stays one past the end. The key is the caller's:
+  so the latest of a key is kept, the index carried by `filterMapIdx`.
+  The key is the caller's:
   the editor's is the entry's buffer, or file, and line, read when the
   clean-up runs, so that entries edits brought onto one line are one.
 - **Step by `n`** (`plan`, the arithmetic of Vim's `movemark`, `C-o` being
@@ -61,11 +66,11 @@ def record {α : Type} (list : JumpList α) (entry : α) : JumpList α :=
     if entries.size > limit then entries.extract (entries.size - limit) entries.size else entries
   { entries, index := entries.size }
 
-/-- The list cleaned up (Vim's `cleanup_jumplist`): each entry that a later
-entry has the same key as is dropped. The index goes with the entry it was
-at, or to the next entry kept when that one is dropped, and one past the end
-stays one past the end. -/
-def cleanup {α β : Type} [BEq β] (key : α → β) (list : JumpList α) : JumpList α :=
+/-- The list with each entry changed by `change`, told the entry's index, and
+dropped where it answers `none`. The index goes with the entry it was at, or
+to the next entry kept when that one is dropped, and one past the end stays
+one past the end. -/
+def filterMapIdx {α β : Type} (change : Nat → α → Option β) (list : JumpList α) : JumpList β :=
   let entries := list.entries
   let (kept, index) :=
     (List.range entries.size).foldl
@@ -73,13 +78,26 @@ def cleanup {α β : Type} [BEq β] (key : α → β) (list : JumpList α) : Jum
         -- The index of the entry being looked at moves to where the next
         -- entry kept goes.
         let index := if list.index == from_ then kept.size else index
-        match entries[from_]? with
-        | none => (kept, index)
-        | some entry =>
-          let later := (entries.extract (from_ + 1) entries.size).any (key · == key entry)
-          if later then (kept, index) else (kept.push entry, index))
-      ((#[] : Array α), list.index)
+        match entries[from_]?.bind (change from_) with
+        | some entry => (kept.push entry, index)
+        | none => (kept, index))
+      ((#[] : Array β), list.index)
   { entries := kept, index := if list.index ≥ entries.size then kept.size else index }
+
+/-- The list with each entry changed by `change`, and dropped where it
+answers `none`; the index as `filterMapIdx` carries it. -/
+def filterMap {α β : Type} (change : α → Option β) (list : JumpList α) : JumpList β :=
+  list.filterMapIdx fun _ => change
+
+/-- The list cleaned up (Vim's `cleanup_jumplist`): each entry that a later
+entry has the same key as is dropped. The index goes with the entry it was
+at, or to the next entry kept when that one is dropped, and one past the end
+stays one past the end (`filterMapIdx`). -/
+def cleanup {α β : Type} [BEq β] (key : α → β) (list : JumpList α) : JumpList α :=
+  let entries := list.entries
+  list.filterMapIdx fun from_ entry =>
+    let later := (entries.extract (from_ + 1) entries.size).any (key · == key entry)
+    if later then none else some entry
 
 /-- What a step of a list decides ("Step by `n`", in the module docs). -/
 structure Plan where

@@ -299,8 +299,9 @@ trees a test says are not delivered refusing questions of captures with
 
 A window's jump list as plain data (`Editor/JumpList.lean`) is checked
 pure, over line numbers (`jumpListChecks`): a record appends and drops the
-oldest past the limit, a clean-up keeps the latest entry of a line and
-carries the index, a step's plan records first from one past the end and
+oldest past the limit, a filter-map changes and drops entries and carries
+the index, a clean-up keeps the latest entry of a line and carries the
+index, a step's plan records first from one past the end and
 fails off either end, and `:help jumplist`'s worked example step by step.
 
 The editor state (`Editor/State.lean`) is checked on the text model

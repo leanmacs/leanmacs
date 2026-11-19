@@ -63,6 +63,24 @@ def jumpListChecks : List Check :=
       run := return jumpCleaned (jumpLines [1, 5, 2, 5, 9] 1) == jumpLines [1, 2, 5, 9] 1 },
     { name := "a clean-up keeps an index one past the end one past the end"
       run := return jumpCleaned (jumpLines [3, 3, 3] 3) == jumpLines [3] 1 },
+    { name := "a filter-map changes each entry and carries the index with its entry"
+      run :=
+        let keepOdd (n : Nat) : Option Nat := if n % 2 == 1 then some (n * 10) else none
+        return (jumpLines [1, 2, 3, 5] 2).filterMap keepOdd == jumpLines [10, 30, 50] 1 },
+    { name := "a filter-map moves an index at a dropped entry to the next entry kept"
+      run :=
+        let keepOdd (n : Nat) : Option Nat := if n % 2 == 1 then some n else none
+        return (jumpLines [1, 2, 4, 5] 1).filterMap keepOdd == jumpLines [1, 5] 1 &&
+            (jumpLines [1, 2, 4] 2).filterMap keepOdd == jumpLines [1] 1 },
+    { name := "a filter-map keeps an index one past the end one past the end"
+      run :=
+        let keepOdd (n : Nat) : Option Nat := if n % 2 == 1 then some n else none
+        return (jumpLines [1, 2, 3] 3).filterMap keepOdd == jumpLines [1, 3] 2 &&
+            (jumpLines [2, 4] 2).filterMap keepOdd == jumpLines [] 0 },
+    { name := "an indexed filter-map is told each entry's index"
+      run :=
+        let change (index entry : Nat) : Option Nat := if index == 1 then none else some (entry + index)
+        return (jumpLines [7, 7, 7] 1).filterMapIdx change == jumpLines [7, 9] 1 },
     { name := "a step back from one past the end records first and lands on the entry before"
       run :=
         return (jumpLines [1, 2, 3] 3).plan (-1) == some { recordFirst := true, index := 2 } &&
