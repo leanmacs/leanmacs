@@ -669,8 +669,11 @@ run = [
   # run: the fixture package's linked test, its fixture `hello`, the
   # fixture `reply` of the package that requires it, and the count of all
   # three. A fixture or a linked test that is renamed, moved or no longer
-  # found fails this line.
-  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: ran 1 linked test and 2 headless fixtures over 2 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
+  # found fails this line. The linked test's own two lines are required
+  # too: its check against the Rust library, as `ffi-test` is the core's,
+  # and its check of a config session on the real elaborator, as
+  # `config-test` is the core's.
+  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: ran 1 linked test and 2 headless fixtures over 2 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
   # And the editor of the default set, which does not hold the fixture
   # package, has no such command: on the same config and script its
   # headless mode must print `run greeting-hello: no such command`. So the

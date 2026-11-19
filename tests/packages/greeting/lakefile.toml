@@ -12,7 +12,9 @@
 #   the system compiler, which this executable has no flags for.
 # - `GreetingTest` holds the test modules, `GreetingTest/Linked.lean` among
 #   them: the root of the executable the core's `editorLinked` facet links
-#   as the editor is linked, with the Rust library.
+#   as the editor is linked, with the Rust library. It checks the package
+#   against the library and in a config session on the real elaborator,
+#   whose config is `tests/linked/config/`.
 # - `tests/headless/` holds its headless fixtures.
 #
 # Every Lean linter is on and a warning fails the build, as in the core.

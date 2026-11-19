@@ -245,10 +245,15 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 - **the module `<P>Test.Linked`**, when the package has one, is the root of
   one executable linked as the editor is (`editorLinked`), for the tests
   that need the Rust library, as `ffi-test` and `config-test` are the
-  core's. It is handed the toolchain's directory and the core's `.olean`
-  directory, so it can start a config session. One executable, not two:
-  the core's two differ in what they check, not in how they are linked. A
-  later phase splits it if a package needs to;
+  core's. One executable, not two: the core's two differ in what they
+  check, not in how they are linked, so a package's holds both kinds of
+  check. It is handed the toolchain's directory and the core's `.olean`
+  directory, which a config session on the real elaborator needs, and is
+  run in the package's directory, so it can name a config directory of its
+  own. The fixture package's shows both kinds: a command on the real text
+  binding, and the headless host over the set's packages loading a config
+  that binds a key to the package's command, which the key then runs
+  ("The fixture set", below);
 - **its headless fixtures** are the directories
   `<package>/tests/headless/<name>/`, each a `config/`, a `script` and an
   `expected`, run on the editor built from the set.
@@ -276,7 +281,10 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 - **The fixture packages' tests import internal modules.** Their model
   tests read what a package registers through `Config.State.ofPackages`
   (`Editor.Config.Packages`, `Editor.Config.Reload`), and the linked test
-  runs a command on the real text binding (`Editor.Text.Real`). The import
+  runs a command on the real text binding (`Editor.Text.Real`), starts the
+  headless host (`Editor.Headless`), shuts the library down with the
+  bindings that come with it, and names the core's entry module for the
+  set's packages. The import
   rule ("What a package may import", below) does not allow a package's
   tests those. Nothing checks the rule yet; phase 5, which adds the check,
   settles what a package's tests may import.
@@ -290,7 +298,7 @@ feature moves.
 | Path | What |
 |---|---|
 | `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then the default set |
-| `tests/packages/greeting/` | The Lake package `greeting`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean`), its linked test (`GreetingTest/Linked.lean`) and the fixture `tests/headless/hello` |
+| `tests/packages/greeting/` | The Lake package `greeting`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean`), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting` and registers `greeting-reply` again with another text; its test driver and the fixture `tests/headless/reply` |
 
 - **A package outside the core is built by the package-set build and its

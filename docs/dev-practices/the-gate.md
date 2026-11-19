@@ -1386,8 +1386,13 @@ package's tests are by convention are in
   `expected` is exit 2, naming what is missing, and so is a set whose
   packages hold no linked test and no fixture at all.
 - **The fixture's own checks.** `greeting`: three checks in its driver
-  (`GreetingTest/Greeting.lean`), a linked test that reads its text back
-  from the Rust library (`GreetingTest/Linked.lean`), and the fixture
+  (`GreetingTest/Greeting.lean`); a linked test
+  (`GreetingTest/Linked.lean`) with a check of each kind the core has an
+  executable for, one that reads its text back from the Rust library, as
+  `ffi-test` does, and one that starts the headless host on the real
+  elaborator over the set's packages, loads a config that binds a key to
+  the package's command and sees the key run it, as `config-test` does;
+  and the fixture
   `hello`, where its command runs on the fixture set's editor.
   `greeting-loud`: three checks in its driver and the fixture `reply`,
   which shows it registered after `greeting`. `ffi-test` also runs the
