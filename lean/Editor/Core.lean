@@ -4,7 +4,6 @@ import Editor.AtPoint.Compiled
 import Editor.BindingSearch.Compiled
 import Editor.Buffers.Compiled
 import Editor.Clipboard.Contract
-import Editor.Command.Append
 import Editor.Completion.AtPointContract
 import Editor.Completion.Compiled
 import Editor.Completion.Contract
@@ -15,7 +14,6 @@ import Editor.Display.Contract
 import Editor.Evil.Compiled
 import Editor.Evil.Theorems
 import Editor.Ex.Compiled
-import Editor.Executable
 import Editor.ExecuteCommand.Compiled
 import Editor.File.Cases
 import Editor.Files.Compiled
@@ -24,6 +22,7 @@ import Editor.InputScheme.Contract
 import Editor.Json
 import Editor.Language.Compiled
 import Editor.Loop.Driver
+import Editor.Main
 import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.ModeLine.Compiled
@@ -31,12 +30,9 @@ import Editor.Shell.Compiled
 import Editor.SyntaxTree.Contract
 import Editor.TabCommands.Compiled
 import Editor.Themes.Compiled
-import Editor.Version
 import Editor.VersionControl.Compiled
 import Editor.VersionControl.Contract
 import Editor.Watch.Contract
-import Editor.Window.Real
-import Editor.WindowCheck.Real
 import Editor.WindowCommands.Compiled
 import Editor.Workspace.Compiled
 import Editor.Workspace.Contract
@@ -65,14 +61,14 @@ imports check (`tools/host-imports-check.sh`) does not meet it.
 
 ## What it imports
 
-The core modules no other core module imports: the entry modules of the
-packages still in the core (`….Compiled`), the contracts, fakes, cases and
-theorems, the hosts and the executable's modules, `Editor.Json`,
-`Editor.Command.Append`, and the driver of the loop that tests run it with
-(`Editor.Loop.Driver`). Everything else comes with them. The theorem
-modules and `Editor.Command.Append` are also the config base's imports
-(`Editor.lean`); they are named here because no core module imports the
-base.
+The core modules no other core module imports: the modules that define
+the packages still in the core (`….Compiled`), the contracts, fakes, cases
+and theorems, the executable's entry (`Editor.Main`, which brings the
+hosts, the executable's modes and `Editor.Command.Append`), `Editor.Json`,
+and the driver of the loop that tests run it with (`Editor.Loop.Driver`).
+Everything else comes with them. The theorem modules are also the config
+base's imports (`Editor.lean`); they are named here because no core module
+imports the base.
 
 ## The check
 
