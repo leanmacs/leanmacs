@@ -1,0 +1,76 @@
+# What no line of `editor-fuzzy` may name, its tests included: a real file,
+# the machine's clock, or either port's real adapter. The crate decides the
+# order of a ranking (`src/lib.rs`) and which span a located pattern is
+# answered at (`src/locate.rs`), over the `Scorer` and `Searcher` ports it
+# defines. Its tests, the rules', the fakes' and the contracts', run on the
+# published fakes, `InOrder` and `locate::Scan`, and on scorers and
+# searchers written in them, with every text built in code.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none. So this file governs
+# every target of this crate and no other. `disallowed_methods` and
+# `disallowed_types` are on by default at `warn`, and `mise run lint`
+# denies warnings, so a line that names one of these fails the gate.
+#
+# The adapters' entries name crates this one does not depend on. Clippy
+# takes a path into a crate that is not in the build without a warning, and
+# the entry is then idle; each is here so that a dev-dependency on an
+# adapter, which Cargo allows though it is a cycle, cannot hand a test of
+# this crate a real matching library. `deny.toml` closes that route too.
+#
+# Seen to bite once by hand, on 2026-11-19: with a test added to
+# `src/locate.rs` that calls `std::time::Instant::now()`,
+# `std::fs::read("/nonexistent")` and `Path::new("/").exists()` and names
+# `std::fs::File`, `cargo clippy -p editor-fuzzy --all-targets -- -D
+# warnings` (what `mise run lint` runs, for this crate) fails with "use of
+# a disallowed method `std::time::Instant::now`", "`std::fs::read`",
+# "`std::path::Path::exists`" and "use of a disallowed type
+# `std::fs::File`". With the test taken out it passes.
+#
+# What this does not hold is what `crates/editor-text/clippy.toml` says of
+# its own list: it is a list of names. A call through `libc`, which this
+# crate does not depend on, is a reviewer's to look for.
+
+disallowed-methods = [
+  # The clocks of the machine.
+  { path = "std::time::Instant::now", reason = "the crate keeps no time: a ranking and a search are never timed" },
+  { path = "std::time::SystemTime::now", reason = "the crate keeps no time" },
+  # The ports' real adapters.
+  { path = "editor_fuzzy_nucleo::NucleoScorer::new", reason = "the crate's tests run on the scorer's fake, `InOrder`, and on scorers written in them; the library is the adapter's own tests' and `editor-ffi`'s wiring test's" },
+  { path = "editor_fuzzy_triple_accel::TripleAccel::new", reason = "the crate's tests run on the searcher's fake, `locate::Scan`, and on searchers written in them; the library is the adapter's own tests' and `editor-ffi`'s wiring test's" },
+  # Every free function of `std::fs`.
+  { path = "std::fs::canonicalize", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::copy", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::create_dir", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::create_dir_all", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::exists", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::hard_link", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::metadata", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::read", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::read_dir", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::read_link", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::read_to_string", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::remove_dir", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::remove_dir_all", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::remove_file", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::rename", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::set_permissions", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::symlink_metadata", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::write", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  # The methods of `Path` that ask the disk.
+  { path = "std::path::Path::canonicalize", reason = "the crate asks nothing of the disk" },
+  { path = "std::path::Path::exists", reason = "the crate asks nothing of the disk" },
+  { path = "std::path::Path::is_dir", reason = "the crate asks nothing of the disk" },
+  { path = "std::path::Path::is_file", reason = "the crate asks nothing of the disk" },
+  { path = "std::path::Path::is_symlink", reason = "the crate asks nothing of the disk" },
+  { path = "std::path::Path::metadata", reason = "the crate asks nothing of the disk" },
+  { path = "std::path::Path::read_dir", reason = "the crate asks nothing of the disk" },
+  { path = "std::path::Path::read_link", reason = "the crate asks nothing of the disk" },
+  { path = "std::path::Path::symlink_metadata", reason = "the crate asks nothing of the disk" },
+  { path = "std::path::Path::try_exists", reason = "the crate asks nothing of the disk" },
+]
+
+disallowed-types = [
+  { path = "std::fs::File", reason = "the crate reads and writes no file: its tests build their texts in code" },
+  { path = "std::fs::OpenOptions", reason = "the crate reads and writes no file: its tests build their texts in code" },
+]

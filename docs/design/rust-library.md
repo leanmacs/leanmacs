@@ -1285,6 +1285,40 @@ in `editor-fuzzy`; the adapter's own cases, its limit and the port's
 contract on it, in `editor-fuzzy-nucleo`; the C function's decoding and
 one wiring case, in `editor-ffi`. No test pins a score's value.
 
+**Locating a quote** (navigation-and-windows phase 5, for a working set's
+ranges found again after their file changed, `review-and-navigation.md`)
+is a second question of the same crate, behind a second port
+(`crates/editor-fuzzy/src/locate.rs`).
+
+- `Searcher::spans(pattern, text, max_errors)` reports spans of the text
+  whose byte-wise Levenshtein distance to the pattern is at most
+  `max_errors`, each with its distance; at least one with the fewest
+  errors any span of the text has, and none when no span is within them.
+- `locate(searcher, pattern, text, near, max_errors)` is what the editor
+  asks, and its rule is the crate's: the empty pattern is answered none
+  without asking; a reported span counts when it is within the text, both
+  ends are character boundaries and its errors are within the limit; the
+  answer is the one with the fewest errors, then the start nearest
+  `near`, then the earliest, then the longest. **"Fewest errors" is all
+  an asker may rest on**: which of several equal spans a library reports
+  is its own.
+- **A span that cuts a character is dropped, not moved.** Errors are
+  counted in bytes, as the library counts them, so on text that is not
+  ASCII the library's best span can cut a character, and the answer is
+  then a worse span or none. For the editor that is safe: a quote it
+  cannot place is shown drifted, never moved wrongly.
+- **The fake** is `Scan`: every span whose ends are character boundaries,
+  measured one by one. **The contract** is `contract::check_searcher`:
+  every span reported is within the text, its claimed errors and the
+  limit; the fewest errors reported are an exhaustive oracle's, asked of
+  ASCII texts, where bytes and characters agree; nothing is reported when
+  the oracle finds nothing within the limit; the pattern where it is
+  expected is answered there; an answer's ends are character boundaries;
+  and a sweep of generated texts from a fixed seed. It is seen to bite on
+  searchers written in its tests: one that claims fewer errors than a
+  span has, one that misses the best spans, one that reports past the
+  limit, one that reports nothing, and one that reports past the text.
+
 ### Search, as built
 
 Built by the daily-driver floor's phase 3, for `/ ? n N * #` in a buffer.

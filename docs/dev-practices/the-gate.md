@@ -198,7 +198,15 @@ two cases: a pattern whose characters are in a candidate in order but
 apart matches it, and one with a character the candidate lacks does not.
 No test pins a score. One test runs the rule over the real adapter
 through the C function, for the wiring alone
-(`crates/editor-ffi/tests/fuzzy.rs`). `mise run deny` holds that only the
+(`crates/editor-ffi/tests/fuzzy.rs`). Locating a pattern with errors
+allowed, the crate's second rule (`src/locate.rs`), reaches a library only
+through the `Searcher` port: which span is answered (fewest errors, then
+nearest, earliest, longest, and never one that cuts a character) is tested
+on the published fake, `Scan`, and on searchers that answer canned spans;
+the port's contract, `contract::check_searcher`, against an exhaustive
+oracle, is tested on `Scan` and on searchers written to break each of its
+properties. The crate's `clippy.toml` refuses the clocks, every file of
+the disk and both adapters' constructors in all of it. `mise run deny` holds that only the
 adapter depends on the library. It checks no licence: the library's is
 MPL-2.0, and whether that is acceptable in this workspace is the owner's
 to confirm.

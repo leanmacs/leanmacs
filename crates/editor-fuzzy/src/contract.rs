@@ -13,8 +13,15 @@
 //! properties say what that rule leaves no room for: folding case, taking a
 //! composed character for its parts, reading a character of the pattern as
 //! syntax. [`SWEEP`] asks the rule of generated texts.
+//!
+//! [`check_searcher`] does the same for a [`Searcher`], the port that
+//! finds a pattern with errors allowed ([`locate`]). Its
+//! properties are about which spans are reported and how many errors they
+//! have, against an exhaustive oracle: every span of the text, measured
+//! one by one.
 
 use crate::Scorer;
+use crate::locate::{self, Searcher};
 
 /// A scorer answers one entry for each candidate.
 pub const ONE_EACH: &str = "one answer for each candidate";
@@ -90,6 +97,180 @@ pub fn check(scorer: &mut impl Scorer) -> Vec<&'static str> {
     .into_iter()
     .filter_map(|(name, holds)| (!holds).then_some(name))
     .collect()
+}
+
+/// Every span a searcher reports is within the text, has at most the
+/// errors it claims, and claims at most the errors allowed.
+pub const SPANS_WITHIN: &str =
+    "every span reported is within the text, the errors it claims and the errors allowed";
+/// The fewest errors a searcher reports are the fewest any span of the
+/// text has, when those are within the errors allowed. Asked of ASCII
+/// texts, where every byte is a character boundary.
+pub const FEWEST: &str = "the fewest errors reported are the fewest any span of the text has";
+/// A searcher reports nothing when no span of the text is within the
+/// errors allowed.
+pub const NONE_WITHIN: &str = "nothing is reported when no span is within the errors allowed";
+/// The pattern, where it is expected, is answered there with no errors.
+pub const AT_NEAR: &str = "the pattern where it is expected is answered there";
+/// An answer's ends are on character boundaries, in text that is not
+/// ASCII. The core drops a span that cuts a character, so any searcher
+/// keeps this; it is here so that the adapter's run states it too.
+pub const BOUNDARIES: &str = "an answer's ends are on character boundaries";
+/// Generated patterns and texts, from a fixed seed: the four properties
+/// above that are asked of a text, over the sweep's alphabets.
+pub const SEARCH_SWEEP: &str = "generated texts keep the searcher's properties";
+
+/// Every property of a searcher, by name.
+pub const SEARCHER_PROPERTIES: [&str; 6] = [
+    SPANS_WITHIN,
+    FEWEST,
+    NONE_WITHIN,
+    AT_NEAR,
+    BOUNDARIES,
+    SEARCH_SWEEP,
+];
+
+/// Holds `searcher` to the contract of the [`Searcher`] port, and returns
+/// the names of the properties that fail: none when it keeps them all.
+pub fn check_searcher(searcher: &mut impl Searcher) -> Vec<&'static str> {
+    let within = SEARCH_CASES
+        .iter()
+        .all(|&(pattern, text, k)| spans_within(searcher, pattern, text, k));
+    let fewest = SEARCH_CASES
+        .iter()
+        .filter(|(pattern, text, _)| pattern.is_ascii() && text.is_ascii())
+        .all(|&(pattern, text, k)| fewest_holds(searcher, pattern, text, k));
+    let none = SEARCH_CASES
+        .iter()
+        .all(|&(pattern, text, k)| none_holds(searcher, pattern, text, k));
+    let at_near = AT_NEAR_CASES
+        .iter()
+        .all(|&(pattern, text, near)| at_near_holds(searcher, pattern, text, near));
+    let boundaries = SEARCH_CASES
+        .iter()
+        .all(|&(pattern, text, k)| boundaries_hold(searcher, pattern, text, k));
+    let sweep = search_sweep_holds(searcher);
+    [
+        (SPANS_WITHIN, within),
+        (FEWEST, fewest),
+        (NONE_WITHIN, none),
+        (AT_NEAR, at_near),
+        (BOUNDARIES, boundaries),
+        (SEARCH_SWEEP, sweep),
+    ]
+    .into_iter()
+    .filter_map(|(name, holds)| (!holds).then_some(name))
+    .collect()
+}
+
+/// A pattern, a text and the errors allowed.
+type Search = (&'static str, &'static str, u32);
+
+/// The cases every property but [`AT_NEAR`] is asked of: exact, one of
+/// each kind of error, none near enough, an empty text, and text that is
+/// not ASCII.
+const SEARCH_CASES: &[Search] = &[
+    ("needle", "a needle in a haystack", 1),
+    ("needle", "a neddle in a haystack", 1),
+    ("needle", "a neeedle in a haystack", 2),
+    ("needle", "a nedle in a haystack", 1),
+    ("needle", "nothing like it", 1),
+    ("needle", "", 2),
+    ("abc", "ab", 1),
+    ("abcd", "xx abxd yy abcx zz", 1),
+    ("aaa", "aaaaa", 0),
+    ("café", "un cafe noir", 2),
+    ("漢字です", "これは漢字だす", 3),
+    ("e", "é", 2),
+];
+
+/// A pattern, a text it is in, and the byte offset where it is.
+type Placed = (&'static str, &'static str, usize);
+
+/// The cases [`AT_NEAR`] is asked of: alone, among copies of itself,
+/// overlapping one, and after characters that are not ASCII.
+const AT_NEAR_CASES: &[Placed] = &[
+    ("needle", "a needle", 2),
+    ("needle", "needle needle needle", 7),
+    ("aa", "aaaa", 1),
+    ("字", "漢字漢字", 9),
+];
+
+/// The bytes of `text` from `start` to `end`.
+fn bytes(text: &str, start: usize, end: usize) -> &[u8] {
+    &text.as_bytes()[start..end]
+}
+
+/// [`SPANS_WITHIN`] of one search.
+fn spans_within(searcher: &mut impl Searcher, pattern: &str, text: &str, k: u32) -> bool {
+    searcher.spans(pattern, text, k).iter().all(|span| {
+        span.start <= span.end
+            && span.end <= text.len()
+            && span.errors <= k
+            && locate::distance(pattern.as_bytes(), bytes(text, span.start, span.end))
+                <= span.errors
+    })
+}
+
+/// The fewest errors of any span of `text`, by measuring every one.
+fn oracle(pattern: &str, text: &str) -> u32 {
+    (0..=text.len())
+        .flat_map(|start| (start..=text.len()).map(move |end| (start, end)))
+        .map(|(start, end)| locate::distance(pattern.as_bytes(), bytes(text, start, end)))
+        .min()
+        .unwrap_or(u32::MAX)
+}
+
+/// [`FEWEST`] of one search.
+fn fewest_holds(searcher: &mut impl Searcher, pattern: &str, text: &str, k: u32) -> bool {
+    let best = oracle(pattern, text);
+    if best > k {
+        return true;
+    }
+    searcher
+        .spans(pattern, text, k)
+        .iter()
+        .map(|span| span.errors)
+        .min()
+        == Some(best)
+}
+
+/// [`NONE_WITHIN`] of one search.
+fn none_holds(searcher: &mut impl Searcher, pattern: &str, text: &str, k: u32) -> bool {
+    oracle(pattern, text) <= k || searcher.spans(pattern, text, k).is_empty()
+}
+
+/// [`AT_NEAR`] of one case, allowed one error.
+fn at_near_holds(searcher: &mut impl Searcher, pattern: &str, text: &str, near: usize) -> bool {
+    locate::locate(searcher, pattern, text, near, 1) == Some(near..near + pattern.len())
+}
+
+/// [`BOUNDARIES`] of one search.
+fn boundaries_hold(searcher: &mut impl Searcher, pattern: &str, text: &str, k: u32) -> bool {
+    locate::locate(searcher, pattern, text, 0, k)
+        .is_none_or(|span| text.is_char_boundary(span.start) && text.is_char_boundary(span.end))
+}
+
+/// How many searches [`SEARCH_SWEEP`] asks.
+const SEARCH_ROUNDS: u64 = 400;
+
+/// Whether [`SEARCH_SWEEP`] holds of `searcher`: patterns of at most five
+/// characters and texts of at most twelve, from the first three of
+/// [`ALPHABETS`], each allowed up to two errors. [`FEWEST`] is asked only
+/// of the ASCII ones.
+fn search_sweep_holds(searcher: &mut impl Searcher) -> bool {
+    let mut generator = Generator(7);
+    (0..SEARCH_ROUNDS).all(|round| {
+        let alphabet = ALPHABETS[usize::try_from(round).unwrap_or(0) % 3];
+        let pattern = generator.text(alphabet, 5);
+        let text = generator.text(alphabet, 12);
+        let k = u32::try_from(generator.below(3)).unwrap_or(0);
+        let ascii = pattern.is_ascii() && text.is_ascii();
+        spans_within(searcher, &pattern, &text, k)
+            && (!ascii || fewest_holds(searcher, &pattern, &text, k))
+            && none_holds(searcher, &pattern, &text, k)
+            && boundaries_hold(searcher, &pattern, &text, k)
+    })
 }
 
 /// A pattern, and candidates asked with it in one call, each with whether
@@ -270,6 +451,104 @@ mod tests {
         SWEEP, check,
     };
     use crate::Scorer;
+    use crate::locate::{Scan, Searcher, Span};
+
+    use super::{
+        AT_NEAR, FEWEST, NONE_WITHIN, SEARCH_SWEEP, SEARCHER_PROPERTIES, SPANS_WITHIN,
+        check_searcher,
+    };
+
+    #[test]
+    fn the_searcher_properties_are_six_and_each_is_named_once() {
+        let mut names = SEARCHER_PROPERTIES.to_vec();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), 6);
+    }
+
+    /// A searcher that reports what [`Scan`] reports, changed by its
+    /// function.
+    struct Bent<F>(F);
+
+    impl<F: Fn(Vec<Span>) -> Vec<Span>> Searcher for Bent<F> {
+        fn spans(&mut self, pattern: &str, text: &str, max_errors: u32) -> Vec<Span> {
+            (self.0)(Scan.spans(pattern, text, max_errors))
+        }
+    }
+
+    #[test]
+    fn a_searcher_that_claims_fewer_errors_than_a_span_has_is_reported() {
+        let mut searcher = Bent(|spans: Vec<Span>| {
+            spans
+                .into_iter()
+                .map(|span| Span {
+                    errors: span.errors.saturating_sub(1),
+                    ..span
+                })
+                .collect()
+        });
+
+        assert_eq!(
+            check_searcher(&mut searcher),
+            [SPANS_WITHIN, FEWEST, AT_NEAR, SEARCH_SWEEP]
+        );
+    }
+
+    #[test]
+    fn a_searcher_that_misses_the_best_spans_is_reported() {
+        let mut searcher = Bent(|spans: Vec<Span>| {
+            let best = spans.iter().map(|span| span.errors).min();
+            spans
+                .into_iter()
+                .filter(|span| Some(span.errors) != best)
+                .collect()
+        });
+
+        assert_eq!(
+            check_searcher(&mut searcher),
+            [FEWEST, AT_NEAR, SEARCH_SWEEP]
+        );
+    }
+
+    /// A searcher that measures every span as [`Scan`] does and reports
+    /// them all, within the errors allowed or not.
+    struct Unlimited;
+
+    impl Searcher for Unlimited {
+        fn spans(&mut self, pattern: &str, text: &str, _: u32) -> Vec<Span> {
+            Scan.spans(pattern, text, u32::MAX)
+        }
+    }
+
+    #[test]
+    fn a_searcher_that_reports_spans_past_the_errors_allowed_is_reported() {
+        assert_eq!(
+            check_searcher(&mut Unlimited),
+            [SPANS_WITHIN, NONE_WITHIN, SEARCH_SWEEP]
+        );
+    }
+
+    #[test]
+    fn a_searcher_that_reports_nothing_is_reported() {
+        let mut searcher = Bent(|_: Vec<Span>| Vec::new());
+
+        assert_eq!(
+            check_searcher(&mut searcher),
+            [FEWEST, AT_NEAR, SEARCH_SWEEP]
+        );
+    }
+
+    #[test]
+    fn a_searcher_that_reports_a_span_past_the_text_is_reported() {
+        let mut searcher = Bent(|mut spans: Vec<Span>| {
+            if let Some(last) = spans.last_mut() {
+                last.end += 1;
+            }
+            spans
+        });
+
+        assert!(check_searcher(&mut searcher).contains(&SPANS_WITHIN));
+    }
 
     /// A scorer that matches a candidate when `matches` says so of the
     /// pattern and the candidate, and scores every match 0.
