@@ -20,15 +20,19 @@
 #
 # 1. Stage, by copy and never by link, into `<tmp>/stage`:
 #    - `toolchain/`: the whole Lean toolchain (`lean --print-prefix`);
-#    - `core/lib/`: the `.olean` file of each of the core's modules the
-#      link of the built `editor` names
-#      (`packages/.lake/build/bin/editor.rsp`). Its root is not among
-#      them: the package-set build generates it in the set's build
-#      directory, not the core's;
+#    - `core/lib/`: the `.olean` file of each module the link of the
+#      built `editor` names (`packages/.lake/build/bin/editor.rsp`): the
+#      core's and the default packages' (`packages/shipped-themes`), each
+#      taken from the build directory of the Lake package that built it,
+#      which the record beside the built editor names
+#      (`packages/.lake/build/bin/editor.oleans`). So `core/` here is the
+#      prebuilt pieces, the core and the default packages together, as one
+#      staged package. Its root is not among them: the package-set build
+#      generates it in the set's build directory, not a package's;
 #    - `core/obj/`: the object of each of those modules (`.c.o.export`).
-#      The generated root's, the one object the link names outside the
-#      core's build directory, is left out because the package brings the
-#      root, and two `main` symbols cannot link;
+#      The generated root's, the one object the link names outside every
+#      package's build directory, is left out because the package brings
+#      the root, and two `main` symbols cannot link;
 #    - `core/glue.o` and `core/libeditor_ffi.a`: the glue object and the
 #      Rust archive, prebuilt;
 #    - `core/lakefile.toml` and `core/lake-manifest.json`
@@ -188,6 +192,8 @@ built=$lean_dir/.lake/build
 set_built=$repo/packages/.lake/build
 dev_editor=$set_built/bin/editor
 dev_link=$set_built/bin/editor.rsp
+# The record of where the set's `.olean` directories are, one a line.
+dev_oleans=$set_built/bin/editor.oleans
 sysroot=$(cd "$lean_dir" && lean --print-prefix)
 
 [ -x "$dev_editor" ] || fail "no built editor at $dev_editor; run \`mise run lean\` first"
@@ -314,24 +320,51 @@ dev_link_names() {
 
 # The objects the built editor's link names, less its root's, each with its
 # module's `.olean`. The root is the one the package-set build generated for
-# the default set, the only object under the set's build directory.
+# the default set, the only object under the set's build directory. Every
+# other object is a module of a Lake package of the default set: the core's
+# or a default package's (`packages/shipped-themes`). Each package builds
+# into its own directory, and the record beside the built editor names
+# their `.olean` directories, the core's first (`editor.oleans`;
+# docs/design/packages.md, "The generated root"). An object is staged from
+# the package whose build directory holds it, with that package's `.olean`
+# of the module, and an object under none of them is refused. They all go
+# into the one staged package, `core/`: the prebuilt pieces, which the
+# fixture's root imports by module name.
 ir=$built/ir
 set_root=$set_built/ir/EditorSetRoot.c.o.export
+[ -f "$dev_oleans" ] || fail "no record of the built editor's .olean directories at $dev_oleans; run \`mise run lean\` first"
+[ "$(head -n 1 "$dev_oleans")" = "$built/lib/lean" ] ||
+  fail "the first .olean directory $dev_oleans names is not the core's, $built/lib/lean"
 dev_link_names '\.c\.o\.export' >"$work/dev-objects"
 grep -qxF "$set_root" "$work/dev-objects" ||
   fail "the built editor's link does not name the generated root's object, $set_root"
 while IFS= read -r object; do
   [ "$object" != "$set_root" ] || continue
-  case "$object" in
-    "$ir/"*) relative=${object#"$ir/"} ;;
-    *) fail "the built editor's link names an object outside $ir: $object" ;;
-  esac
+  relative=
+  oleans=
+  # The record is read on a descriptor of its own, inside the loop over the
+  # objects.
+  while IFS= read -r library <&4; do
+    package_ir=${library%/lib/lean}/ir
+    case "$object" in
+      "$package_ir/"*)
+        relative=${object#"$package_ir/"}
+        oleans=$library
+        break
+        ;;
+    esac
+  done 4<"$dev_oleans"
+  [ -n "$relative" ] ||
+    fail "the built editor's link names an object that no package of $dev_oleans built: $object"
   module=${relative%.c.o.export}
   mkdir -p "$stage/core/obj/$(dirname "$relative")" "$stage/core/lib/$(dirname "$relative")"
   cp -c "$object" "$stage/core/obj/$relative"
-  cp -c "$built/lib/lean/$module.olean" "$stage/core/lib/$module.olean"
+  cp -c "$oleans/$module.olean" "$stage/core/lib/$module.olean"
 done <"$work/dev-objects"
-[ "$(files "$stage/core/obj")" -gt 0 ] || fail "the built editor's link names no object under $ir"
+[ "$(files "$stage/core/obj")" -gt 0 ] || fail "the built editor's link names no object but its root's"
+# The core's are among them: a record that named another directory first, or
+# a link with no core module, would stage a core of nothing.
+[ -f "$stage/core/obj/Editor.c.o.export" ] || fail "the built editor's link names no object under $ir"
 
 # The glue object and the Rust archive, as that link names them.
 dev_glue=$(dev_link_names '/glue\.o')
@@ -624,8 +657,8 @@ opened=$(grep "^$stage/toolchain/" "$work/link-inputs" || true)
 if [ -n "$opened" ]; then
   echo "     of it, opened by the linker: $(printf '%s\n' "$opened" | wc -l | tr -d ' ') files, $(mb "$(printf '%s\n' "$opened" | tr '\n' '\0' | xargs -0 stat -f %z | awk '{ s += $1 } END { printf "%d", s }')") MB"
 fi
-piece "core/lib (the editor's modules, .olean)" "$stage/core/lib"
-piece "core/obj (the editor's modules, .c.o.export)" "$stage/core/obj"
+piece "core/lib (the editor's and the default packages' modules, .olean)" "$stage/core/lib"
+piece "core/obj (the editor's and the default packages' modules, .c.o.export)" "$stage/core/obj"
 piece "core/glue.o (the glue object)" "$stage/core/glue.o"
 piece "core/libeditor_ffi.a (the Rust archive)" "$stage/core/libeditor_ffi.a"
 piece "core/lakefile.toml, core/lake-manifest.json (the package config)" "$stage/core/lakefile.toml" "$stage/core/lake-manifest.json"
