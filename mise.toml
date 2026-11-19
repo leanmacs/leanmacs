@@ -159,7 +159,7 @@ run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xa
 # temporary repositories, takes about 15 s on a developer's Mac and 50 to
 # 60 s on the macOS runner while the gate's other tasks run beside it.
 [tasks.ffi-test]
-description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean) and the editor executable"
+description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh) and that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean) and the editor executable"
 depends = ["lean"]
 dir = "lean"
 timeout = "180s"
@@ -174,6 +174,21 @@ run = [
   # packages, it must find them and exit 1. Its output is shown only when it
   # does not.
   "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The core imports no module of a feature that moves out of it, on Lake's
+  # module graph (tools/core-imports-check.sh; docs/dev-practices/the-gate.md,
+  # "The core imports check"): the core's root, `Editor.Core`, and what it
+  # imports hold neither the compile mode nor a shipped palette; every
+  # `Editor.…` module the build reaches is among them, unless it is one of
+  # those or the list of packages; and every root that links the elaborator
+  # links the config base. Six `lake query` calls, about half a second each.
+  "sh ../tools/core-imports-check.sh",
+  # And the check bites twice. Pointed at the root `Editor`, the config base,
+  # which imports the compile mode, it must find it and exit 1. Pointed at
+  # the root `Editor.Setup`, which imports no moving module and not the whole
+  # core, it must find the core modules outside it and exit 3. The output of
+  # each is shown only when its status is another.
+  "status=0; out=$(sh ../tools/core-imports-check.sh Editor 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
+  "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Setup 2>&1) || status=$?; test \"$status\" -eq 3 || { printf '%s\\n' \"$out\"; exit 1; }",
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
   # developer's shell must not reach it.
