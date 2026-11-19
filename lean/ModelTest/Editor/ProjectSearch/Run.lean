@@ -51,10 +51,12 @@ def opening (name text : String) : Config.Registration :=
         discard <| call.target.window.id.show id }
 
 /-- The commands of the checks: project search's, opening `a.txt` with
-unsaved text and `b.txt` as on disk, and closing the results buffer. -/
+unsaved text, `b.txt` as on disk and `d.txt` as on disk in the load checks'
+world, and closing the results buffer. -/
 def registrations : Array Config.Registration :=
   ProjectSearch.commands ++
     #[opening "a.txt" "x needle\nyy\n", opening "b.txt" "needle one\nb\nc\nd\ne\nf\nneedle two\n",
+      opening "d.txt" "needle d\n",
       { name := "close-results"
         action :=
           .call fun _ => do
@@ -73,6 +75,20 @@ def driverOver (files : FileModel := disk) : Option EvilDriver :=
       { driver with
         registered := jobs, jobs := { files } }
     excerptInvoked (excerptInvoked driver "open-b.txt") "open-a.txt"
+
+/-- The load checks' disk: `disk`, and `d.txt`, after `c.txt` in the walk,
+with one match. -/
+def loadDisk : FileModel :=
+  disk.withFile "/w/d.txt" "needle d\n".toUTF8
+
+/-- A driver over `loadDisk` whose window shows `d.txt` and then `a.txt`,
+both open, `a.txt`'s text unsaved; `b.txt` is open in no buffer. -/
+def loadDriver : Option EvilDriver :=
+  (evilDriver "|" (evilHanded registrations)).map fun driver =>
+    let driver :=
+      { driver with
+        registered := jobs, jobs := { files := loadDisk } }
+    excerptInvoked (excerptInvoked driver "open-d.txt") "open-a.txt"
 
 /-- `driver` once `command` is invoked with `arguments`. -/
 def invoked (driver : EvilDriver) (command : String) (arguments : List Argument := []) :
@@ -242,6 +258,51 @@ def projectSearchRunChecks : List Check :=
                 "project-search: the text model matches literal patterns only" &&
               (searched crowded).loop.state.echo ==
                 "project-search: stopped after 201 matches in 200 files; narrow the pattern"
-          | _, _ => false }]
+          | _, _ => false },
+    { name :=
+        "a file no buffer holds is loaded into a buffer shown nowhere, and its excerpts land at its walk slot though the open file after it was placed first"
+      run :=
+        pure <|
+          match loadDriver with
+          | none => false
+          | some driver =>
+            let done := searched driver
+            let windows := done.loop.state.windows.size
+            excerptRead done results == some (resultsText ++ "\n" ++ "needle d\n") &&
+              excerptRead done "b.txt" == some "needle one\nb\nc\nd\ne\nf\nneedle two\n" &&
+              shownName done == some results &&
+              windows == 1 &&
+              done.loop.state.echo == "project-search: 4 matches in 3 files" },
+    { name := "a file whose text holds no match once it is loaded is dropped"
+      run :=
+        pure <|
+          match loadDriver with
+          | none => false
+          | some driver =>
+            let started := invoked driver ProjectSearch.name [.str "needle"]
+            -- The disk changes after the search read it and before the load.
+            let changed :=
+              { started with
+                jobs :=
+                  { started.jobs with
+                    files := started.jobs.files.withFile "/w/b.txt" "none\n".toUTF8 } }
+            let done := drained changed
+            let states :=
+              (((excerptBufferNamed done results).map (·.text)).bind fun _ =>
+                    (done.loop.state.findBuffer results).bind
+                      (ProjectSearch.recordOf done.loop.state)).map
+                fun record => record.files.map (·.state matches .dropped)
+            excerptRead done results == some ("x needle\nyy\n" ++ "\n" ++ "needle d\n") &&
+              states == some #[false, true, false] },
+    { name := "editing through an adopted file's excerpt changes the adopted buffer"
+      run :=
+        pure <|
+          match loadDriver with
+          | none => false
+          | some driver =>
+            let done := searched driver
+            let changed := evilFed (excerptFed (evilFed done "3 j c w") [.commit "pin"]) "<Escape>"
+            excerptRead changed "b.txt" == some "pin one\nb\nc\nd\ne\nf\nneedle two\n" &&
+              (excerptBufferNamed changed "b.txt").any (·.isModified) }]
 
 end ModelTest

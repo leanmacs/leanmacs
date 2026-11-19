@@ -2001,7 +2001,7 @@ def shippedChecks (_ : Unit) : List Check :=
               registry.jobs.any
                 (fun entry => entry.registration.name == name && entry.owner == .compiled) },
     { name :=
-        "the executable's hosts start with project-search and project-search-found registered compiled, and the job project-search"
+        "the executable's hosts start with project-search and project-search-found registered compiled, and the jobs project-search and project-search-load"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -2011,8 +2011,9 @@ def shippedChecks (_ : Unit) : List Check :=
         let registry := Headless.compiled shipped
         return [ProjectSearch.name, ProjectSearch.foundName].all
               (fun name => (registry.find? name).any (·.owner == .compiled)) &&
-            registry.jobs.any fun entry =>
-              entry.registration.name == ProjectSearch.job && entry.owner == .compiled },
+            [ProjectSearch.job, ProjectSearch.loadJob].all fun name =>
+              registry.jobs.any fun entry =>
+                entry.registration.name == name && entry.owner == .compiled },
     { name :=
         "the executable's hosts start with find-file-in-another-workspace registered compiled and one compiled binding of it, C-x C-d in the prompt category workspace-file, described Find in another workspace; the global keymap does not bind C-x"
       run := do

@@ -16,7 +16,8 @@ searched it reads.
   it is registered because a post must name a registered command, and is
   not meant to be run by hand.
 - **`ProjectSearch.jobs`**: `project-search`, the search, keyed by its
-  results buffer's name.
+  results buffer's name; and `project-search-load`, which loads the files a
+  delivery found that no buffer holds.
 
 Pinned by `ModelTest.projectSearchRunChecks`, on the models, and by
 `ConfigTest.shippedChecks` over the hosts' registry.
@@ -32,6 +33,6 @@ def commands : Array Config.Registration :=
 /-- Project search's jobs, as a host registers them for the owner
 `compiled`. -/
 def jobs : Array Config.JobRegistration :=
-  #[{ name := job, work := searchWork }]
+  #[{ name := job, work := searchWork }, { name := loadJob, work := loadWork }]
 
 end Editor.ProjectSearch
