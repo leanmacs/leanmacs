@@ -201,8 +201,8 @@ other register in the order the set's lakefile names them.
 
 Lake's own list (`Workspace.packages`) is not in that order: it holds a
 package reached only through another after the package that requires it.
-So this walks the `require`s itself, depth first. `entered` holds the
-packages whose walk has begun, so a package is visited once and a cycle,
+So this walks the `require`s itself, depth first. The walk keeps the names
+of the packages it has entered, so a package is visited once and a cycle,
 which Lake refuses when it loads the workspace, could not loop here. -/
 partial def setPackages (ws : Workspace) (set : Package) : Array Package :=
   (visit set (#[], #[])).2
@@ -268,8 +268,11 @@ def setRoot (pkg : Package) : FetchM Module := do
   let ws ← getWorkspace
   let mut entries : Array Name := #[]
   for dep in setPackages ws pkg do
-    if let some mod← entryModule? dep then
+    match ← entryModule? dep with
+    | some mod =>
       entries := entries.push mod.name
+    | none =>
+      pure ()
   let lib : LeanLib :=
     ⟨pkg, `EditorSet,
       { srcDir := pkg.config.buildDir / "root", roots := #[], leanOptions := coreLeanOptions }⟩
