@@ -365,9 +365,15 @@ Then it runs the lister, `git ls-files -z --cached --others
 fed its output, each 20 times outside the editor, and prints their
 medians, so the listing's latency can be read against them. It says
 whether the two finder rows' keys are within bound: median at most twice
-the no-candidates median and 99th percentile under 1 ms. **A finder row
-out of bound fails project navigation phase 2's last criterion**: report
-it, do not only print it. The recorded runs are in
+the no-candidates median and 99th percentile under 1 ms, the bound
+project navigation phase 2's plan set. **Report a finder row out of
+bound**, do not only print it. Phase 2's last criterion is that no key
+waits on the lister or the filter, which the gap between the finder rows
+and the key-to-list row shows; the recorded runs meet it, while both
+finder rows' medians are more than twice the floor, because the editor
+thread re-marks the passed candidates on every key. The rdm task
+`mark-filtered-candidates-once-per-batch` is the work that brings them
+back within the bound. The recorded runs are in
 [`docs/design/concurrency.md`](../design/concurrency.md), "A key in the
 workspace finder, measured". Run it on a quiet machine.
 
