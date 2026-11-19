@@ -1,13 +1,19 @@
 import Editor.File
 
 /-!
-# Contract tests: support: Trees
+# The linked test kit: Trees
 
 Temporary directories of a check's own, and files written into them. Shared by
 several test modules; it holds no checks of its own.
+
+Published for a package's tests: it is a module of the core's linked test
+kit, a test double in the namespace `Editor.Test.Linked`, which a package's
+test modules may import and its library may not
+(`docs/design/packages.md`, "What a package may import"). The core's own
+checks against the real bindings (`contract-test`) are written on it.
 -/
 
-namespace ContractTest
+namespace Editor.Test.Linked
 
 open Editor
 
@@ -27,4 +33,4 @@ def writeMaking (path : System.FilePath) (content : String) : IO Unit := do
     IO.FS.createDirAll parent
   IO.FS.writeBinFile path (File.encodeText content)
 
-end ContractTest
+end Editor.Test.Linked

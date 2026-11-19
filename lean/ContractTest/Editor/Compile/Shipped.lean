@@ -1,28 +1,27 @@
 import ContractTest.Check
-import ContractTest.Support.Jobs
-import ContractTest.Support.Projects
-import ContractTest.Support.Trees
 import Editor.Api
 import Editor.Clipboard
 import Editor.Command
-import Editor.Command.Real
 import Editor.Compile
+import Editor.Compile.Compiled
 import Editor.Compile.Contribution
 import Editor.Compile.Shipped
-import Editor.Ffi.Processes
-import Editor.Ffi.Snapshot
+import Editor.Config.Packages
+import Editor.Files.Compiled
 import Editor.InputScheme.Test
 import Editor.Invocation
-import Editor.Job.Runner
-import Editor.Loop
 import Editor.Program
 import Editor.ProjectMode.Listing
 import Editor.State
 import Editor.SyntaxTree
+import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Rig
+import Editor.Test.Linked.Services
+import Editor.Test.Linked.Trees
 import Editor.Text
-import Editor.Text.Real
 import Editor.Watch
 import Editor.Workspace
+import Editor.Workspace.Compiled
 import Editor.Workspace.Modes
 
 /-!
@@ -36,6 +35,41 @@ its module doc says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
+
+/-- The jobs of the project mode checks: the rig's (`rigJobs`), the file
+commands' and the workspace's, the listing job among them, and the compile
+mode's, as a host registers them. -/
+def projectJobs : Array Config.JobRegistration :=
+  rigJobs ++ Compile.package.registered.jobs
+
+/-- The keys of the project mode checks: none bound; the file commands',
+the workspace's and the compile mode's commands by name; their jobs
+registered; and the loop told the shipped contributions. -/
+def projectKeys : Loop.Keys TestScheme.scheme :=
+  { command? := fun name =>
+      ((Files.package.registered.commands ++ Workspace.package.registered.commands ++
+                Compile.package.registered.commands).find?
+            (·.name == name)).bind
+        fun registration =>
+        match registration.action with
+        | .call run =>
+          some fun call => do
+            run call
+            return none
+        | _ => none
+    registered :=
+      { jobs := fun name => projectJobs.any (·.name == name)
+        compile := { contributions := Compile.shipped } } }
+
+/-- The loop, with its working directory `base`, once each of `invocations`
+has run and settled, in order: the rig's `runSettled`
+(`Editor/Test/Linked/Rig.lean`) with the project mode checks' keys and jobs
+(`projectKeys`, `projectJobs`), which the rig, naming no feature outside the
+core, does not default to. -/
+def runSettled (rig : ProjectRig) (base : System.FilePath) (invocations : List Invocation) :
+    IO (Option (Loop TestScheme.scheme × RealTexts)) :=
+  Editor.Test.Linked.runSettled rig base invocations projectKeys projectJobs
 
 /-- The invocation of `compile-command` with the answer `answer`. -/
 def compileCommandOf (answer : String) : Invocation :=
@@ -121,9 +155,9 @@ def withProjects (services : Job.Services) (compile workspaces : System.FilePath
   withBase fun base => do
     materializeProjects base compile
     let rig ← ProjectRig.new services s!"{compile / "bin"}:{workspaces}:/usr/bin:/bin"
-    let before ← Ffi.processesPending
+    let before ← pendingChildren
     let held ← check rig base
-    let reaped ← eventually (return (← Ffi.processesPending) == before)
+    let reaped ← eventually (return (← pendingChildren) == before)
     return held && reaped
 
 /-- What only the real process service shows of the shipped modes, with

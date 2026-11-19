@@ -1,5 +1,4 @@
 import ContractTest.Check
-import ContractTest.Support.Jobs
 import Editor.Clipboard
 import Editor.Command
 import Editor.Command.Call
@@ -40,6 +39,7 @@ import Editor.Shell.Compiled
 import Editor.State
 import Editor.SyntaxTree
 import Editor.TabBar
+import Editor.Test.Linked.Jobs
 import Editor.Text
 import Editor.Text.Real
 import Editor.Value
@@ -57,6 +57,7 @@ shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-! ## `:!` over the real process service -/
 

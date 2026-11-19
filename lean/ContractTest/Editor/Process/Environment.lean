@@ -1,5 +1,4 @@
 import ContractTest.Check
-import ContractTest.Support.Jobs
 import Editor.Command
 import Editor.Ffi.Processes
 import Editor.Invocation
@@ -9,6 +8,7 @@ import Editor.Job.Runner
 import Editor.Process
 import Editor.Process.Environment
 import Editor.Program
+import Editor.Test.Linked.Jobs
 
 /-!
 # Contract tests: `Editor/Process/Environment.lean`
@@ -21,6 +21,7 @@ root module `ContractTest` runs them; its module doc says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-! ## A child's environment over the real process service -/
 

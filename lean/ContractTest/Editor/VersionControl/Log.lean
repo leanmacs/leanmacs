@@ -1,8 +1,8 @@
 import ContractTest.Check
 import ContractTest.Support.Git
-import ContractTest.Support.Projects
-import ContractTest.Support.Trees
 import ContractTest.Support.VersionControl
+import Editor.Test.Linked.Rig
+import Editor.Test.Linked.Trees
 import Editor.VersionControl.Contract
 
 /-!
@@ -17,6 +17,7 @@ root module `ContractTest` runs them; its module doc says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The name of the buffer the focused view of `loop` shows. -/
 def focusedName (loop : Loop TestScheme.scheme) : Option String :=

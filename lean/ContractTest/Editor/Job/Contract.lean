@@ -1,5 +1,4 @@
 import ContractTest.Support.Files
-import ContractTest.Support.Jobs
 import Editor.Command
 import Editor.Ffi.Diffs
 import Editor.Ffi.Document
@@ -13,6 +12,7 @@ import Editor.Job.Contract
 import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.Program
+import Editor.Test.Linked.Jobs
 import Editor.Text
 import Editor.Text.Real
 
@@ -29,6 +29,7 @@ says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The names of the job port's contract properties that do not hold of the
 runner over the library's timer service. -/

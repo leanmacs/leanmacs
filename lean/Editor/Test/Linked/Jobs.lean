@@ -9,16 +9,22 @@ import Editor.Text
 import Editor.Text.Model
 
 /-!
-# Contract tests: support: Jobs
+# The linked test kit: Jobs
 
 Jobs on the real runner: how long a check waits (`patience`, `eventually`), a
 job's outcome as a check compares it (`texts`), a job that reports its value,
 whether a job ended as expected, and a run of jobs on the runner over the
 library's timer service. Shared by several test modules; it holds no checks of
 its own.
+
+Published for a package's tests: it is a module of the core's linked test
+kit, a test double in the namespace `Editor.Test.Linked`, which a package's
+test modules may import and its library may not
+(`docs/design/packages.md`, "What a package may import"). The core's own
+checks against the real bindings (`contract-test`) are written on it.
 -/
 
-namespace ContractTest
+namespace Editor.Test.Linked
 
 open Editor
 
@@ -77,4 +83,4 @@ def runOnTimers (services : Job.Services) (job : JobM Bool) : IO (Job.Outcome Bo
   | _ =>
     return .cancelled
 
-end ContractTest
+end Editor.Test.Linked

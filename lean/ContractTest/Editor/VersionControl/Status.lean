@@ -1,8 +1,5 @@
 import ContractTest.Check
 import ContractTest.Support.Git
-import ContractTest.Support.Jobs
-import ContractTest.Support.Projects
-import ContractTest.Support.Trees
 import ContractTest.Support.VersionControl
 import Editor.Api
 import Editor.Clipboard
@@ -18,6 +15,9 @@ import Editor.Job.Runner
 import Editor.Loop
 import Editor.State
 import Editor.SyntaxTree
+import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Rig
+import Editor.Test.Linked.Trees
 import Editor.Text
 import Editor.Text.Real
 import Editor.VersionControl
@@ -42,6 +42,7 @@ says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- `loop`, over `texts`, once each job of `queue` has run, and every job
 their commands start, oldest first, as the model's driver settles

@@ -1,9 +1,9 @@
 import ContractTest.Support.Git
-import ContractTest.Support.Jobs
 import Editor.Ffi.Processes
 import Editor.Job
 import Editor.Job.Runner
 import Editor.Program
+import Editor.Test.Linked.Jobs
 import Editor.VersionControl
 import Editor.VersionControl.Contract
 import Editor.VersionControl.Git
@@ -19,6 +19,7 @@ the version-control interface's contract over real git. The root module
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The names of the version-control contract's properties
 (`Editor/VersionControl/Contract.lean`) that do not hold of the git

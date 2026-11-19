@@ -1,5 +1,5 @@
-import ContractTest.Support.Projects
 import Editor.Config.Packages
+import Editor.Test.Linked.Rig
 import Editor.VersionControl.Compiled
 
 /-!
@@ -13,6 +13,7 @@ modules; it holds no checks of its own.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The jobs of the status buffer check: the file commands', the workspace
 finder's and the status buffer's, as a host registers them. -/

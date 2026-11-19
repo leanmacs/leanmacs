@@ -1,10 +1,10 @@
 import ContractTest.Check
-import ContractTest.Support.Jobs
-import ContractTest.Support.Trees
 import Editor.Completion.Filtering
 import Editor.Ffi.Processes
 import Editor.Job
 import Editor.Job.Runner
+import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Trees
 
 /-!
 # Contract tests: `Editor/Completion/Filtering.lean`
@@ -18,6 +18,7 @@ runs them; its module doc says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The text the metacharacter check types: shell metacharacters and quotes,
 which a shell would run. -/

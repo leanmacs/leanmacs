@@ -1,9 +1,10 @@
-import ContractTest.Support.Jobs
-import ContractTest.Support.Trees
 import Editor.Job
 import Editor.Job.Runner
 import Editor.Process
 import Editor.Program
+import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Rig
+import Editor.Test.Linked.Trees
 import Editor.VersionControl
 import Editor.VersionControl.Git
 import Editor.VersionControl.Model
@@ -11,62 +12,17 @@ import Editor.VersionControl.Model
 /-!
 # Contract tests: support: Git
 
-Real git and the processes the checks run: a command with its own `PATH`, git
-isolated from the user's configuration, the environment of the runs that write a
-repository out, a configured repository, and its status. Shared by several test
-modules; it holds no checks of its own.
+Real git and the processes the checks run: git isolated from the user's
+configuration, the environment of the runs that write a repository out, a
+configured repository, and its status. A command with its own `PATH` is the
+linked test kit's (`Editor/Test/Linked/Rig.lean`, `onChanged`). Shared by
+several test modules; it holds no checks of its own.
 -/
 
 namespace ContractTest
 
 open Editor
-
-/-- `command` with `PATH` set to `path` in its own environment, in place of
-any `PATH` it sets. -/
-def withPath (path : String) (command : Process.Command) : Process.Command :=
-  { command with
-    environment :=
-      { command.environment with
-        set := (command.environment.set.filter (·.1 != "PATH")).push ("PATH", path) } }
-
-/-- `services` whose process service starts every child with its command
-changed by `change`, after the environment its directory's lookup gives it:
-each request that starts a child is matched constructor by constructor, so
-the replies' types line up. The test process's own environment is never
-touched. -/
-def onChanged (services : Job.Services) (change : Process.Command → Process.Command) :
-    Job.Services :=
-  let processes := services.processes
-  let changed : ProcessRequest → ProcessRequest
-    | .run command limit => .run (change command) limit
-    | .runWithin command limit time => .runWithin (change command) limit time
-    | .runInput command input limit time => .runInput (change command) input limit time
-    | .runHead command input limit time => .runHead (change command) input limit time
-    | .start command streaming => .start (change command) streaming
-    | other => other
-  { services with
-    processes :=
-      { start := fun id request => processes.start id (changed request)
-        take := fun id request =>
-          match request with
-          | .run command limit => processes.take id (.run (change command) limit)
-          | .runWithin command limit time =>
-            processes.take id (.runWithin (change command) limit time)
-          | .runInput command input limit time =>
-            processes.take id (.runInput (change command) input limit time)
-          | .runHead command input limit time =>
-            processes.take id (.runHead (change command) input limit time)
-          | .start command streaming => processes.take id (.start (change command) streaming)
-          | .read process => processes.take id (.read process)
-          | .write process bytes => processes.take id (.write process bytes)
-          | .closeInput process => processes.take id (.closeInput process)
-        cancel := processes.cancel } }
-
-/-- `services` whose process service starts every child with `PATH` set to
-`path`, after the environment its directory's lookup gives it
-(`onChanged`). -/
-def onFixturePath (services : Job.Services) (path : String) : Job.Services :=
-  onChanged services (withPath path)
+open Editor.Test.Linked
 
 /-- The variables that keep a git run from reading the user's or the
 system's config: no system config, `global` as the global one, `/dev/null`

@@ -1,7 +1,6 @@
 import ContractTest.Check
 import ContractTest.Support.Displays
 import ContractTest.Support.Files
-import ContractTest.Support.Jobs
 import ContractTest.Support.Syntax
 import Editor.Clipboard
 import Editor.Command
@@ -31,6 +30,7 @@ import Editor.Program
 import Editor.Scene
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
+import Editor.Test.Linked.Jobs
 import Editor.Text
 import Editor.Text.Real
 import Editor.Watch
@@ -47,6 +47,7 @@ doc says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- An hour, in milliseconds: how long a job sleeps when its wait must not
 complete while a check runs. -/

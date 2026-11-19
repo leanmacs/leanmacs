@@ -1,10 +1,10 @@
 import ContractTest.Check
-import ContractTest.Support.Jobs
-import ContractTest.Support.Trees
 import Editor.Ffi.Processes
 import Editor.Job
 import Editor.Job.Runner
 import Editor.Program
+import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Trees
 import Editor.Workspace
 import Editor.Workspace.Finder
 
@@ -19,6 +19,7 @@ them; its module doc says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- Whether `Workspace.find`, with git standing in as the fixture under
 `fixtures`, answers each directory of `asked` with its answer, over

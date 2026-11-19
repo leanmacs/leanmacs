@@ -1,8 +1,8 @@
-import ContractTest.Support.Jobs
-import ContractTest.Support.Trees
 import Editor.Ffi.Processes
 import Editor.Job
 import Editor.Job.Runner
+import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Trees
 import Editor.Workspace
 import Editor.Workspace.Contract
 import Editor.Workspace.Model
@@ -19,6 +19,7 @@ what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- Writes the git fixture's file for `repository` in its top level: the
 three lines rev-parse prints there (`tests/workspaces/README`), and its

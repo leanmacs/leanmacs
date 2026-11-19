@@ -1,11 +1,8 @@
 import ContractTest.Check
-import ContractTest.Support.Jobs
 import Editor.Api
 import Editor.Clipboard
 import Editor.Command
 import Editor.Command.Call
-import Editor.Command.Dispatch
-import Editor.Command.Real
 import Editor.Compile
 import Editor.Compile.Compiled
 import Editor.Completion
@@ -13,23 +10,16 @@ import Editor.Completion.AtPoint
 import Editor.Completion.Displays
 import Editor.Completion.Styles
 import Editor.Config.Packages
-import Editor.Config.Registry
-import Editor.Config.Stores
 import Editor.Display
-import Editor.Display.Recorder
 import Editor.DisplayRules
 import Editor.Ex.Line
-import Editor.Ffi.Processes
-import Editor.Ffi.Snapshot
 import Editor.InputScheme
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
-import Editor.Job.Runner
 import Editor.Keymap
 import Editor.Language
 import Editor.Layout
-import Editor.Loop
 import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
@@ -39,8 +29,10 @@ import Editor.Scene
 import Editor.State
 import Editor.SyntaxTree
 import Editor.TabBar
+import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Rig
+import Editor.Test.Linked.Services
 import Editor.Text
-import Editor.Text.Real
 import Editor.Value
 import Editor.Watch
 import Editor.Workspace
@@ -56,6 +48,7 @@ what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-! ## A compile over the real process service -/
 
@@ -88,7 +81,7 @@ def compileChecks (services : Job.Services) (fixtures : System.FilePath) : List 
   [{  name :=
         "criterion 11: over the real process service, the fixture three-lines shows each line in the compilation buffer before it ends, and its exit status in the last line; its child is reaped"
       run := do
-        let before ← Ffi.processesPending
+        let before ← pendingChildren
         let directory ← IO.FS.createTempDir
         try
           let published ← Snapshots.new
@@ -153,7 +146,7 @@ def compileChecks (services : Job.Services) (fixtures : System.FilePath) : List 
           let some (.finished command) ← handle.outcome? | return false
           last ← deliver command
           handle.settle
-          let reaped ← eventually (return (← Ffi.processesPending) == before)
+          let reaped ← eventually (return (← pendingChildren) == before)
           let lastLine (text : String) : String :=
             ((text.splitOn "\n").filter (!·.isEmpty)).getLast?.getD ""
           let has (text : Option String) (part : String) : Bool :=

@@ -1,6 +1,5 @@
 import ContractTest.Support.Displays
 import ContractTest.Support.Files
-import ContractTest.Support.Jobs
 import Editor.Clipboard
 import Editor.Command
 import Editor.Command.Real
@@ -16,6 +15,7 @@ import Editor.Job.Contract
 import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.SyntaxTree
+import Editor.Test.Linked.Jobs
 import Editor.Text
 import Editor.Text.Real
 import Editor.Watch
@@ -31,6 +31,7 @@ runs them; its module doc says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- Plays `case` on the real text binding and the library's file service, on
 real files, and says what went wrong; `none` when the case held.

@@ -1,8 +1,8 @@
 import ContractTest.Check
 import ContractTest.Support.Git
-import ContractTest.Support.Projects
-import ContractTest.Support.Trees
 import ContractTest.Support.VersionControl
+import Editor.Test.Linked.Rig
+import Editor.Test.Linked.Trees
 import Editor.VersionControl.Contract
 
 /-!
@@ -16,6 +16,7 @@ module doc says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The lines `1` to `20`, each ended by a line feed. -/
 def twentyLines : String :=

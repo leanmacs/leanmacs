@@ -1,13 +1,9 @@
-import ContractTest.Support.Git
-import ContractTest.Support.Jobs
 import Editor.Api
 import Editor.Clipboard
 import Editor.Command
 import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Command.Real
-import Editor.Compile.Compiled
-import Editor.Compile.Shipped
 import Editor.Completion
 import Editor.Completion.AtPoint
 import Editor.Completion.Displays
@@ -35,12 +31,13 @@ import Editor.Loop
 import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
+import Editor.Process
 import Editor.Program
-import Editor.ProjectMode
 import Editor.Scene
 import Editor.State
 import Editor.SyntaxTree
 import Editor.TabBar
+import Editor.Test.Linked.Jobs
 import Editor.Text
 import Editor.Text.Real
 import Editor.Value
@@ -49,32 +46,93 @@ import Editor.Workspace
 import Editor.Workspace.Compiled
 
 /-!
-# Contract tests: support: Projects
+# The linked test kit: Rig
 
-The editor's loop over the real services, as the project mode checks and the
-status buffer checks drive it: its jobs and keys (`ProjectRig`), runs settled
-until every job has run, an opened file and a buffer's text. Shared by several
-test modules; it holds no checks of its own.
+The editor's loop over the real services, as the checks of a feature over
+them drive it: its jobs and keys (`ProjectRig`, `rigJobs`, `rigKeys`), runs
+settled until every job has run, an opened file and a buffer's text; and a
+child's `PATH`, set for every child a rig's services start (`withPath`,
+`onChanged`, `onFixturePath`). Shared by several test modules; it holds no
+checks of its own.
+
+**The rig names no feature that is not the core's.** Its default keys and
+jobs are the file commands' and the workspace's, with no contribution told
+to the loop. A check of another feature passes its own: the version-control
+checks theirs (`ContractTest/Support/VersionControl.lean`), and the compile
+mode's, in its package, the compile mode's commands and jobs and the
+shipped contributions (`packages/compile/CompileTest/Linked/Compile/Shipped.lean`).
+
+Published for a package's tests: it is a module of the core's linked test
+kit, a test double in the namespace `Editor.Test.Linked`, which a package's
+test modules may import and its library may not
+(`docs/design/packages.md`, "What a package may import"). It runs over the
+Rust library, so only a test linked as the editor is can use it: a
+package's linked test (`<P>Test.Linked` and the modules under it), as the
+core's `contract-test` does.
 -/
 
-namespace ContractTest
+namespace Editor.Test.Linked
 
 open Editor
 
-/-- The jobs of the project mode checks: the file commands', the
-workspace's, the listing job among them, and the compile mode's, as a host
-registers them. -/
-def projectJobs : Array Config.JobRegistration :=
-  Files.package.registered.jobs ++ Workspace.package.registered.jobs ++
-    Compile.package.registered.jobs
+/-- `command` with `PATH` set to `path` in its own environment, in place of
+any `PATH` it sets. -/
+def withPath (path : String) (command : Process.Command) : Process.Command :=
+  { command with
+    environment :=
+      { command.environment with
+        set := (command.environment.set.filter (·.1 != "PATH")).push ("PATH", path) } }
 
-/-- The keys of the project mode checks: none bound; the file commands',
-the workspace's and the compile mode's commands by name; their jobs
-registered; and the loop told the shipped contributions. -/
-def projectKeys : Loop.Keys TestScheme.scheme :=
+/-- `services` whose process service starts every child with its command
+changed by `change`, after the environment its directory's lookup gives it:
+each request that starts a child is matched constructor by constructor, so
+the replies' types line up. The test process's own environment is never
+touched. -/
+def onChanged (services : Job.Services) (change : Process.Command → Process.Command) :
+    Job.Services :=
+  let processes := services.processes
+  let changed : ProcessRequest → ProcessRequest
+    | .run command limit => .run (change command) limit
+    | .runWithin command limit time => .runWithin (change command) limit time
+    | .runInput command input limit time => .runInput (change command) input limit time
+    | .runHead command input limit time => .runHead (change command) input limit time
+    | .start command streaming => .start (change command) streaming
+    | other => other
+  { services with
+    processes :=
+      { start := fun id request => processes.start id (changed request)
+        take := fun id request =>
+          match request with
+          | .run command limit => processes.take id (.run (change command) limit)
+          | .runWithin command limit time =>
+            processes.take id (.runWithin (change command) limit time)
+          | .runInput command input limit time =>
+            processes.take id (.runInput (change command) input limit time)
+          | .runHead command input limit time =>
+            processes.take id (.runHead (change command) input limit time)
+          | .start command streaming => processes.take id (.start (change command) streaming)
+          | .read process => processes.take id (.read process)
+          | .write process bytes => processes.take id (.write process bytes)
+          | .closeInput process => processes.take id (.closeInput process)
+        cancel := processes.cancel } }
+
+/-- `services` whose process service starts every child with `PATH` set to
+`path`, after the environment its directory's lookup gives it
+(`onChanged`). -/
+def onFixturePath (services : Job.Services) (path : String) : Job.Services :=
+  onChanged services (withPath path)
+
+/-- The jobs a rig's checks run by default: the file commands' and the
+workspace's, the listing job among them, as a host registers them. -/
+def rigJobs : Array Config.JobRegistration :=
+  Files.package.registered.jobs ++ Workspace.package.registered.jobs
+
+/-- The keys a rig's checks run by default: none bound; the file commands'
+and the workspace's commands by name; their jobs registered; and no
+contribution told to the loop. -/
+def rigKeys : Loop.Keys TestScheme.scheme :=
   { command? := fun name =>
-      ((Files.package.registered.commands ++ Workspace.package.registered.commands ++
-                Compile.package.registered.commands).find?
+      ((Files.package.registered.commands ++ Workspace.package.registered.commands).find?
             (·.name == name)).bind
         fun registration =>
         match registration.action with
@@ -83,11 +141,9 @@ def projectKeys : Loop.Keys TestScheme.scheme :=
             run call
             return none
         | _ => none
-    registered :=
-      { jobs := fun name => projectJobs.any (·.name == name)
-        compile := { contributions := Compile.shipped } } }
+    registered := { jobs := fun name => rigJobs.any (·.name == name) } }
 
-/-- What the project mode checks run with: their services, whose file
+/-- What a rig's checks run with: their services, whose file
 service reads the table of snapshots their texts publish and keeps its loads
 in `held`, and the display those texts are drawn on. -/
 structure ProjectRig where
@@ -120,7 +176,7 @@ def ProjectRig.new (services : Job.Services) (path : String) : IO ProjectRig :=
   ProjectRig.over (onFixturePath services path)
 
 /-- `stepped`'s loop once what the step asked for is done, as a host does
-it, with `keys` and the jobs `jobs`, the project mode checks' by default:
+it, with `keys` and the jobs `jobs`, the rig's by default:
 each invocation it answered run as a step of its own; each job it
 started spawned on the rig's services with its posts collected, waited for,
 then each post delivered in order (`runPosted`) and then its command, handed
@@ -129,8 +185,8 @@ what the job held (`Job.finishWith`); each taken in the same way, at most
 in time or ended otherwise than finished, or a step was refused. -/
 partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
     (stepped : Loop.Stepped TestScheme.scheme) (depth : Nat := 8)
-    (keys : Loop.Keys TestScheme.scheme := projectKeys)
-    (jobs : Array Config.JobRegistration := projectJobs) :
+    (keys : Loop.Keys TestScheme.scheme := rigKeys)
+    (jobs : Array Config.JobRegistration := rigJobs) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   if depth == 0 then
     return none
@@ -169,8 +225,8 @@ partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
 /-- `loop`, over `texts`, once each of `invocations` has run with `keys` and
 settled with `jobs` (`settleProjects`), in order. -/
 def runSettledFrom (rig : ProjectRig) (loop : Loop TestScheme.scheme) (texts : RealTexts)
-    (invocations : List Invocation) (keys : Loop.Keys TestScheme.scheme := projectKeys)
-    (jobs : Array Config.JobRegistration := projectJobs) :
+    (invocations : List Invocation) (keys : Loop.Keys TestScheme.scheme := rigKeys)
+    (jobs : Array Config.JobRegistration := rigJobs) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   let mut loop := loop
   let mut texts := texts
@@ -187,8 +243,8 @@ def runSettledFrom (rig : ProjectRig) (loop : Loop TestScheme.scheme) (texts : R
 `invocations` has run with `keys` and settled with `jobs`
 (`settleProjects`), in order. -/
 def runSettled (rig : ProjectRig) (base : System.FilePath) (invocations : List Invocation)
-    (keys : Loop.Keys TestScheme.scheme := projectKeys)
-    (jobs : Array Config.JobRegistration := projectJobs) :
+    (keys : Loop.Keys TestScheme.scheme := rigKeys)
+    (jobs : Array Config.JobRegistration := rigJobs) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   let begin : EditorM (Loop TestScheme.scheme) := do
     let loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
@@ -211,4 +267,4 @@ def bufferText (rig : ProjectRig) (texts : RealTexts) (loop : Loop TestScheme.sc
   let (text, _) ← read.runReal texts rig.display
   return text.toOption.join
 
-end ContractTest
+end Editor.Test.Linked

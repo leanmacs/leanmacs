@@ -1,10 +1,10 @@
 import ContractTest.Check
 import ContractTest.Support.Git
-import ContractTest.Support.Jobs
-import ContractTest.Support.Trees
 import Editor.Job
 import Editor.Job.Runner
 import Editor.Program
+import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Trees
 import Editor.VersionControl
 import Editor.VersionControl.Contract
 import Editor.VersionControl.Git
@@ -21,6 +21,7 @@ implementation of the version-control interface over real git. The root module
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- The checks of the git implementation over real git of what the model has
 no value for: a branch's change asked from each of two worktrees made with

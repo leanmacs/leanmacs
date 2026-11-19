@@ -28,24 +28,20 @@ import ContractTest.Editor.Watch.Real
 import ContractTest.Editor.Workspace
 import ContractTest.Editor.Workspace.Contract
 import ContractTest.Editor.Workspace.Lister
-import ContractTest.Support.Jobs
 import Editor.Api.Cases
 import Editor.Clipboard.Contract
 import Editor.Completion.StyleContract
 import Editor.Display
 import Editor.Display.Contract
-import Editor.Ffi.Events
 import Editor.File.Cases
 import Editor.Fuzzy.Contract
-import Editor.Fuzzy.Real
 import Editor.Job.Contract
 import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.SyntaxTree.Contract
-import Editor.Text
+import Editor.Test.Linked.Services
 import Editor.Text.Contract
-import Editor.Text.Real
 import Editor.UndoTree.Cases
 import Editor.VersionControl.Contract
 import Editor.Watch.Contract
@@ -67,11 +63,17 @@ such as `displayFailures` in `ContractTest/Editor/Display/Contract.lean`, and
 what only a real binding shows is in the mirror of that binding, such as
 `clipboardChecks` in `ContractTest/Editor/Clipboard/Real.lean`. A test
 module keeps the helpers only its checks use. Helpers that several test
-modules use are in small support modules under `ContractTest/Support/`,
-each of one kind of fixture, and `ContractTest.Check` holds the `Check` type
-and `checkFailures`. Everything is in the namespace `ContractTest`, so a
-list is `ContractTest.<name>Checks` whichever module holds it. This module
-keeps only `main`, which runs them in the order its doc gives.
+modules use are in small support modules, each of one kind of fixture:
+under `ContractTest/Support/`, and, for the ones a package's linked test is
+also written on, under `Editor/Test/Linked/` (the core's linked test kit,
+in the namespace `Editor.Test.Linked`, which the core publishes as a test
+double: jobs on the real runner, temporary trees, the loop's rig over the
+real services, and those services with their pump;
+`docs/design/packages.md`, "What a package may import").
+`ContractTest.Check` holds the `Check` type and `checkFailures`. Every list
+is in the namespace `ContractTest`, so a list is
+`ContractTest.<name>Checks` whichever module holds it. This module keeps
+only `main`, which runs them in the order its doc gives.
 
 - The text port's contract (`Editor/Text/Contract.lean`) against its real
   binding (`Editor/Text/Real.lean`), and the properties of taking a job's
@@ -333,23 +335,14 @@ def main (arguments : List String) : IO UInt32 := do
           "usage: contract-test <the directory of the process-environment fixtures> <the directory of the workspace fixtures> <the directory of the shell fixtures> <the directory of the compile fixtures> <the directory of the syntax fixtures> <the directory of the completion fixtures>"
       return 2
   let pool ← Editor.Job.Pool.whole ContractTest.warmPatience
-  let completions ← Editor.Job.Completions.new
-  -- No command of this run publishes a snapshot to these services: the file
-  -- properties save what their own jobs loaded.
-  let published ← Editor.Snapshots.new
-  let held ← Editor.Job.HeldSnapshots.new
-  let timers := Editor.Job.realTimers completions
-  let services : Editor.Job.Services :=
-    { completions, timers
-      files := Editor.Job.realFiles completions published.reader held
-      processes :=
-        Editor.Job.realProcesses completions (← Editor.Job.RefusedRuns.new) timers
-          (← Editor.Job.TimedRuns.new)
-      fileWatches := Editor.Job.realFileWatches completions (← Editor.Job.RealWatches.new)
-      diffs :=
-        Editor.Job.realDiffs completions published.reader held (← Editor.Job.RefusedDiffs.new)
-      fuzzy := Editor.Fuzzy.real }
-  let pump ← IO.asTask (prio := .dedicated) (Editor.Job.pump completions)
+  -- The real services, over a table of waits of their own, with the pump
+  -- started (`Editor/Test/Linked/Services.lean`). No command of this run
+  -- publishes a snapshot to them: the file properties save what their own
+  -- jobs loaded.
+  let running ← Editor.Test.Linked.Services.start
+  let completions := running.completions
+  let held := running.held
+  let services := running.jobs
   let properties := Editor.TextContract.properties
   -- The undo tree's cases run through the same binding, so the count of
   -- live documents covers the texts they make too.
@@ -421,8 +414,7 @@ def main (arguments : List String) : IO UInt32 := do
   let watchChecks := ContractTest.watchChecks services.timers
   let watchCheckFailed ← ContractTest.checkFailures watchChecks
   let apiFailed ← ContractTest.apiFailures
-  Editor.Ffi.quit
-  let pumpEnded ← ContractTest.eventually (IO.hasFinished pump)
+  let pumpEnded ← running.stop
   let failed :=
     textFailed.map (s!"the real text binding: {·}") ++ pairCheckFailed ++ jobFailed ++ postFailed ++
       fuzzyJobFailed ++

@@ -1,11 +1,11 @@
 import ContractTest.Check
 import ContractTest.Support.Git
-import ContractTest.Support.Jobs
-import ContractTest.Support.Trees
 import Editor.Ffi.Processes
 import Editor.Job
 import Editor.Job.Runner
 import Editor.Process
+import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Trees
 import Editor.Workspace.FindFile
 import Editor.Workspace.Lister
 
@@ -22,6 +22,7 @@ runs them; its module doc says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked
 
 /-- Whether the records `lister` lists at `root`, filtered by the fixture
 filter under `fixtures` with the empty text, which keeps them all, as

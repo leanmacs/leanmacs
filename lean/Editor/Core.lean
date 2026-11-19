@@ -21,6 +21,9 @@ import Editor.Main
 import Editor.Menu.Compiled
 import Editor.ModeLine.Compiled
 import Editor.TabCommands.Compiled
+import Editor.Test.Linked.Rig
+import Editor.Test.Linked.Services
+import Editor.Test.Linked.Trees
 import Editor.Test.Listing
 import Editor.Test.Prompts
 import Editor.Themes.Compiled
@@ -29,7 +32,6 @@ import Editor.VersionControl.Compiled
 import Editor.VersionControl.Contract
 import Editor.Watch.Contract
 import Editor.WindowCommands.Compiled
-import Editor.Workspace.Compiled
 import Editor.Workspace.Contract
 
 /-!
@@ -60,13 +62,14 @@ The core modules no other core module imports: the modules that define
 the packages still in the core (`….Compiled`), the contracts, fakes, cases
 and theorems, the executable's entry (`Editor.Main`, which brings the
 hosts, the executable's modes and `Editor.Command.Append`), `Editor.Json`,
-and the test kit the core publishes for a package's tests (`Editor.Test.…`,
-`Editor/Test/`: `Editor.Test.Listing` and `Editor.Test.Prompts`, which
-import the rest of it). Everything else comes with them: the kit is the
-support the core's own model tests are written on, so it imports the
-driver of the loop that tests run it with (`Editor.Loop.Driver`) and the
-modules that define the packages its fixtures register, and those are not
-named here again. The theorem modules are also the config base's imports
+and the test kit the core publishes for a package's tests: the model
+tests' (`Editor.Test.…`, `Editor/Test/`: `Editor.Test.Listing` and
+`Editor.Test.Prompts`, which import the rest of it) and the linked tests'
+(`Editor.Test.Linked.…`, `Editor/Test/Linked/`: its rig, its services and
+its trees). Everything else comes with them: the kit is the support the
+core's own tests are written on, so it imports the driver of the loop that
+tests run it with (`Editor.Loop.Driver`) and the modules that define the
+packages its fixtures register, and those are not named here again. The theorem modules are also the config base's imports
 (`Editor.lean`); they are named here because no core module imports the
 base.
 
