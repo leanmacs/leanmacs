@@ -75,7 +75,12 @@ def markUndoRows : List (String × String × String) :=
     ("m a d d u C-r u G ` a", "ab\nc|d\nef", "ab\nc|d\nef"),
     -- Undo puts back the column the mark had before the step, not where
     -- the text it put back left the mark's marker.
-    ("m a 0 d w u G ` a", "ab\nc|d ef\ngh", "ab\nc|d ef\ngh")]
+    ("m a 0 d w u G ` a", "ab\nc|d ef\ngh", "ab\nc|d ef\ngh"),
+    -- Inside an open group the boundary stays the one from before it: the
+    -- step an insert session makes keeps the marks as they were before the
+    -- session, those its linewise change erased and those its typing moved.
+    ("j m b g g 3 c c <Escape> u ` b", "|ab\ncd\nef\ngh", "ab\n|cd\nef\ngh"),
+    ("m a i x y <Escape> u G ` a", "ab\nc|def\ngh", "ab\nc|def\ngh")]
 
 /-- The jobs of the mark checks, by name: those compiled code registers for
 files. -/
@@ -167,7 +172,7 @@ def evilMarkChecks : List Check :=
         "m sets a mark and ` and ' go to it, exactly and at its line's first non-blank, as jumps, exclusive and line-wise under an operator; a mark follows a line inserted above it; a mark not set, a character that names none and m with one are said; '' and `` go back and forth, and m ' sets the previous-context mark"
       run := evilRows markRows },
     { name :=
-        "a lowercase mark whose line is deleted is erased and a global mark stays, and one of a line deleted in part keeps the column the deletion left; undo puts a lowercase mark back where it was before the step, and redo erases it again"
+        "a lowercase mark whose line is deleted is erased and a global mark stays, and one of a line deleted in part keeps the column the deletion left; undo puts a lowercase mark back where it was before the step, and redo erases it again; the step an insert session makes keeps the marks from before the session"
       run := evilRows markUndoRows },
     { name :=
         "under an operator a mark that is not set gives the operator up, saying so, with the text as it was"
