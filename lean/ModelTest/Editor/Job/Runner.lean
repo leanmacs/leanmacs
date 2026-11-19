@@ -27,7 +27,7 @@ import ModelTest.Support.Models
 # Model tests: `Editor/Job/Runner.lean`
 
 The model tests of `Editor/Job/Runner.lean`: `waitChecks`, `runnerChecks`,
-`fileRunnerChecks` and `fileWatchRunnerChecks`. `fileWatchRunnerChecks` are the
+`fileRunnerChecks`, `fileWatchRunnerChecks` and `grepRunnerChecks`. `fileWatchRunnerChecks` are the
 runner's watch waits on the fake of the watch service. The root module
 `ModelTest` runs them; its module doc says what each shows.
 -/
@@ -824,5 +824,35 @@ def fileWatchRunnerChecks : List Check :=
         jobs.cancelAll
         let allEnded ← eventually (return (← watches.watching) == 0)
         return annasEnded && one && allEnded }]
+
+/-- The checks of the runner's grep port on the fake file service, whose
+model answers a search: a search is named for its job, and it does not
+outlive the job. -/
+def grepRunnerChecks : List Check :=
+  [{  name :=
+        "a cancelled job's search is cancelled through the grep service, and another job's next of it is noSuchSearch"
+      run := do
+        let (rig, files) ←
+          Rig.withFiles
+              ((({} : FileModel).withDirectory fileRoot).withFile (fileRoot / "a") "x".toUTF8)
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let .ok _ ← Grep.start fileRoot "x" #[] { files := 9, found := 9 } 9 | return false
+                sleep 1000000
+                return true)
+        unless ← eventually (return (← files.searching) == 1) do
+          return false
+        let id := ((← files.grepsStarted)[0]?.map (·.1)).getD 0
+        let other ←
+          rig.spawn
+              (reporting fun _ => do
+                let .error .noSuchSearch ← Grep.next ⟨id.toNat⟩ | return false
+                return true)
+        let refused ← other.endedAs (.finished #["true"])
+        spawned.handle.cancel
+        let cancelled ← spawned.endedAs .cancelled
+        return refused && cancelled && (← files.searching) == 0 &&
+            (← files.grepsCancelled) == #[id] }]
 
 end ModelTest

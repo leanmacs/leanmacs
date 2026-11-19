@@ -1,6 +1,7 @@
 import Editor.File.Model
 import Editor.FileWatch.Model
 import Editor.Fuzzy.Model
+import Editor.Grep.Model
 import Editor.Job
 import Editor.Process.Model
 
@@ -40,6 +41,11 @@ here.
   (`JobModel.fileWatches`, `Editor/FileWatch/Model.lean`). A run of a
   command touches those watches with what the command changes on disk,
   when the run ends; a `next` moves the clock to when its delivery is due.
+- A search request is answered by the model of project search
+  (`JobModel.greps`, `Editor/Grep/Model.lean`), over the files and the
+  snapshots of `files`. It moves no clock: a search is worked at its start.
+- **A search does not outlive its job.** When the run ends, however it ends,
+  every search is recorded as ended and forgotten (`GrepModel.endAll`).
 - **A watch does not outlive its job.** When the run ends, however it ends,
   every watch is recorded as ended and forgotten (`FileWatchModel.endAll`).
 - **A streaming child does not outlive its job.** When the run ends, finished,
@@ -87,6 +93,8 @@ structure JobModel where
   processes : ProcessModel := {}
   /-- What the job's watches see (`Editor/FileWatch/Model.lean`). -/
   fileWatches : FileWatchModel := {}
+  /-- The job's searches (`Editor/Grep/Model.lean`), over `files`. -/
+  greps : GrepModel := {}
   /-- The environments the host's jobs share
   (`Editor/Process/Environment.lean`). -/
   environments : Process.Environments := {}
@@ -126,6 +134,9 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
       { model with
         fileWatches, now })
   | .diff request, model => (model.files.diff request, model)
+  | .grep request, model =>
+    let (reply, greps) := model.greps.handle model.files request
+    (reply, { model with greps })
   | .environment request, model =>
     let (reply, environments, said) := model.environments.handle request
     (reply,
@@ -139,11 +150,13 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
   | .snapshot id, model => ((model.files.snapshots[id.index]?).join.map (·.contents), model)
 
 /-- The model once the job has ended: every streaming child it started is
-ended (`ProcessModel.endAll`), as the runner cancels them, and every watch
-(`FileWatchModel.endAll`), however the job ended. -/
+ended (`ProcessModel.endAll`), as the runner cancels them, every watch
+(`FileWatchModel.endAll`) and every search (`GrepModel.endAll`), however the
+job ended. -/
 def ended (model : JobModel) : JobModel :=
   { model with
-    processes := model.processes.endAll, fileWatches := model.fileWatches.endAll }
+    processes := model.processes.endAll, fileWatches := model.fileWatches.endAll
+    greps := model.greps.endAll }
 
 /-- Whether the job is cancelled by now. -/
 def cancelled (model : JobModel) : Bool :=

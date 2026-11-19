@@ -132,11 +132,12 @@ def runFilesOnFake (property : JobContract.FileProperty) :
   let outcome ← runOnFake (property.holds fileRoot) (some rig)
   return (outcome, filesIn (← files.model))
 
-/-- The names of the job port's file and diff properties that do not hold of
-the job model, and of those that do not hold of the runner over the fake of
-the file service, whose model answers a diff. -/
+/-- The names of the job port's file, diff and search properties that do not
+hold of the job model, and of those that do not hold of the runner over the
+fake of the file service, whose model answers a diff and a search. -/
 def fileFailures : IO (List String) := do
-  let properties := JobContract.fileProperties ++ JobContract.diffProperties
+  let properties :=
+    JobContract.fileProperties ++ JobContract.diffProperties ++ JobContract.grepProperties
   let onModel ← JobContract.fileFailures runFilesOnModel properties
   let onFake ← JobContract.fileFailures runFilesOnFake properties
   return onModel.map (s!"the job model: {·}") ++

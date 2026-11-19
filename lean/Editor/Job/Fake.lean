@@ -1,5 +1,6 @@
 import Editor.File.Model
 import Editor.FileWatch.Model
+import Editor.Grep.Model
 import Editor.Job.Runner
 import Editor.Process.Model
 
@@ -239,6 +240,17 @@ structure FakeFiles.State where
   diffsPending : Array UInt64 := #[]
   /-- Every diff ever started, each with its wait's id, oldest first. -/
   diffsStarted : Array (UInt64 × DiffRequest) := #[]
+  /-- The searches started and held (`Editor/Grep/Model.lean`), each named
+  by its start's wait id. -/
+  greps : GrepModel := {}
+  /-- The search waits that were started and have been neither taken nor
+  withdrawn. -/
+  grepsPending : Array UInt64 := #[]
+  /-- Every search request ever started, each with its wait's id, oldest
+  first. -/
+  grepsStarted : Array (UInt64 × GrepRequest) := #[]
+  /-- The searches cancelled while held, oldest first. -/
+  grepsCancelled : Array UInt64 := #[]
 
 /-- The fake of the file port (`Job.Files`, `Editor/Job/Runner.lean`): the
 pure model of files (`Editor/File/Model.lean`) behind a reference. It is
@@ -428,6 +440,79 @@ the snapshots this file service's model holds, so a job's load and its diff
 see one table, as the library's two services do. -/
 def diffs (files : FakeFiles) : Diffs :=
   { start := files.startDiff, take := files.takeDiff, cancel := files.cancelDiff }
+
+/-- Starts the search `request` as the wait `id`, and completes the wait
+unless completions are held, as a file request's is. -/
+def startGrep (files : FakeFiles) (id : UInt64) (request : GrepRequest) : BaseIO Unit := do
+  let held ←
+    files.state.modifyGet fun state =>
+        let state :=
+          { state with
+            grepsPending := state.grepsPending.push id
+            grepsStarted := state.grepsStarted.push (id, request) }
+        if state.holding then (true, { state with parked := state.parked.push id })
+        else (false, state)
+  unless held do
+    files.completions.finish id .completed
+
+/-- The model's answer to the search `request`, started as the wait `id`,
+over the files and snapshots the model holds when it is taken: a start names
+its search by its wait's id, as the library's service does. A request that
+is not pending is refused as failed. -/
+def takeGrep (files : FakeFiles) (id : UInt64) : (request : GrepRequest) → BaseIO request.Reply
+  | .start root pattern overlays limits bound =>
+    files.state.modifyGet fun state =>
+      if state.grepsPending.contains id then
+        let state := { state with grepsPending := state.grepsPending.erase id }
+        match state.greps.start state.model id.toNat root pattern overlays limits bound with
+        | .ok greps => (.ok ⟨id.toNat⟩, { state with greps })
+        | .error error => (.error error, state)
+      else (.error (.failed "the request is not pending"), state)
+  | .next search =>
+    files.state.modifyGet fun state =>
+      if state.grepsPending.contains id then
+        let (reply, greps) := state.greps.read search.number
+        (reply,
+          { state with
+            grepsPending := state.grepsPending.erase id, greps })
+      else (.error (.failed "the request is not pending"), state)
+
+/-- Withdraws the search wait `id`, if its request is pending, or cancels the
+search `id`, if it is held. -/
+def cancelGrep (files : FakeFiles) (id : UInt64) : BaseIO Unit :=
+  files.state.modify fun state =>
+    let state :=
+      if state.grepsPending.contains id then
+        { state with
+          grepsPending := state.grepsPending.erase id
+          parked := state.parked.filter (· != id)
+          withdrawn := state.withdrawn.push id }
+      else state
+    if state.greps.searches.any (·.id == id.toNat) then
+      { state with
+        greps := { state.greps with searches := state.greps.searches.filter (·.id != id.toNat) }
+        grepsCancelled := state.grepsCancelled.push id }
+    else state
+
+/-- The fake of the grep port (`Job.Greps`): the model of project search over
+the files and the snapshots this file service's model holds, so a job's load
+and its search see one table, as the library's two services do. -/
+def greps (files : FakeFiles) : Greps :=
+  { start := files.startGrep, take := files.takeGrep, cancel := files.cancelGrep }
+
+/-- Every search request ever started, each with its wait's id, oldest
+first. -/
+def grepsStarted (files : FakeFiles) : BaseIO (Array (UInt64 × GrepRequest)) :=
+  return (← files.state.get).grepsStarted
+
+/-- How many searches the fake holds: started and neither ended nor
+cancelled. -/
+def searching (files : FakeFiles) : BaseIO Nat :=
+  return (← files.state.get).greps.searches.size
+
+/-- The searches cancelled while held, oldest first. -/
+def grepsCancelled (files : FakeFiles) : BaseIO (Array UInt64) :=
+  return (← files.state.get).grepsCancelled
 
 /-- Every diff ever started, each with its wait's id, oldest first. -/
 def diffsStarted (files : FakeFiles) : BaseIO (Array (UInt64 × DiffRequest)) :=

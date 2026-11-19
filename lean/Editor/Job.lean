@@ -2,6 +2,7 @@ import Editor.Command
 import Editor.Diff
 import Editor.File
 import Editor.FileWatch
+import Editor.Grep
 import Editor.Process
 import Editor.Process.Environment
 
@@ -191,6 +192,16 @@ answers it with (`FileModel.diff`), since that holds the snapshots a diff
 names; its fake is `FakeFiles.diffs`, over the same model, and its real
 implementation `realDiffs`. Withdrawing a wait tells the diff service too.
 
+The grep service is the fifth: `JobRequest.grep`, whose requests are
+`GrepRequest`s (`Editor/Grep.lean`). Its model is `Editor/Grep/Model.lean`,
+over the files and the snapshots of the file model, with the state of its
+searches in `JobModel.greps`; its fake is `FakeFiles.greps`, over the same
+model, so a job's loads and its searches see one table; and its real
+implementation `realGreps`. A start whose overlay names a snapshot the job
+does not hold is `noSuchSnapshot` at once, as a diff's source is.
+Withdrawing a wait tells the grep service too, and ending a job cancels its
+searches (`Handle.endGreps`).
+
 The matcher is the last, and answers at once: `JobRequest.fuzzy`, whose
 requests are `FuzzyRequest`s, so a new question of the matcher is a
 constructor of the fuzzy port and not of this one. Its model answers with
@@ -214,6 +225,8 @@ asked from inside a job, and that it registers no wait.
 - the diff request as data, `Editor/Diff.lean`, the edit script it answers,
   `Editor/Diff/Script.lean`, and the pure model of a line diff,
   `Editor/Diff/Model.lean`;
+- the search requests as data, `Editor/Grep.lean`, and the pure model of a
+  project search, `Editor/Grep/Model.lean`;
 - its pure model, `Editor/Job/Model.lean`, which tests run against;
 - its contract, `Editor/Job/Contract.lean`: three lists of properties, of
   the clock, of the file requests and of the process requests, run against
@@ -250,6 +263,9 @@ inductive JobRequest where
   | fileWatch (request : FileWatchRequest)
   /-- Diff two snapshots (`Editor/Diff.lean`), and wait for it. -/
   | diff (request : DiffRequest)
+  /-- Search the files under a directory, or wait for a search's next
+  delivery (`Editor/Grep.lean`). -/
+  | grep (request : GrepRequest)
   /-- Ask the environments the host's jobs share
   (`Editor/Process/Environment.lean`): answered at once. -/
   | environment (request : EnvironmentRequest)
@@ -276,6 +292,7 @@ def JobRequest.Reply : JobRequest → Type
   | .process request => request.Reply
   | .fileWatch request => request.Reply
   | .diff request => request.Reply
+  | .grep request => request.Reply
   | .environment request => request.Reply
   | .post _ => Unit
   | .fuzzy request => Except String request.Reply
@@ -576,6 +593,21 @@ or for why they were refused. Worked off the editor's thread, as `Diff.lines`
 is. `Editor/Diff.lean` has the rules. -/
 def Diff.hunks (old new : File.Source) (limit : Nat) : JobM (Except DiffError Diff.Hunks) :=
   ExceptT.lift (Program.request (port := jobPort) (.diff (.hunks old new limit)))
+
+/-- Searches the files under `root` for `pattern`, with each overlay's
+snapshot searched in place of the file at its path, stopping at `limits`,
+with at most `bound` matches a delivery: the search, named for the job,
+which does not outlive it. `Editor/Grep.lean` has the rules. -/
+def Grep.start (root : System.FilePath) (pattern : String)
+    (overlays : Array (System.FilePath × File.Source)) (limits : Grep.Limits) (bound : Nat) :
+    JobM (Except GrepError Grep.Id) :=
+  ExceptT.lift
+    (Program.request (port := jobPort) (.grep (.start root pattern overlays limits bound)))
+
+/-- Waits for the next delivery of `search`: the files found and not yet
+taken, and, in the last, how it ended. -/
+def Grep.next (search : Grep.Id) : JobM (Except GrepError Grep.Delivery) :=
+  ExceptT.lift (Program.request (port := jobPort) (.grep (.next search)))
 
 namespace Job
 

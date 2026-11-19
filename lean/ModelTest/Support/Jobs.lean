@@ -186,7 +186,7 @@ def Rig.withFiles (model : FileModel) : BaseIO (Rig × Job.FakeFiles) := do
   return ({ rig with
         services :=
           { rig.services with
-            files := files.files, diffs := files.diffs } },
+            files := files.files, diffs := files.diffs, greps := files.greps } },
       files)
 
 /-- The made-up directory the commands of a process property run in, for the
