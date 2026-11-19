@@ -315,6 +315,25 @@ def moduleSessionChecks : List Check :=
                   message := noSuchFile "Config.Missing" }] &&
             ((noSuchFile "Config.Missing").splitOn "Config/Missing.lean").length == 2 },
     { name :=
+        "an import whose name differs from a config file's, or from a linked module's, only in the case of its letters is refused at the import with a diagnostic that names the file found and the spelling to use, and nothing is elaborated"
+      run := do
+        let source :=
+          configOf
+            [("init", ["import Config.keys", "import lean.Data", "import editor", "define setup"]),
+              ("Config.Keys", ["define a"])]
+        let (outcome, calls, _) ← firstBuild source
+        let message := misspelt "Config.keys" "Config.Keys" "Config/Keys.lean"
+        return withoutReads calls == #[.base false #[]] && outcome.built.isNone &&
+            outcome.diagnostics ==
+              #[{ source := "init.lean", line := 1, column := 0, severity := .error, message },
+                { source := "init.lean", line := 2, column := 0, severity := .error,
+                  message := misspelt "lean.Data" "Lean.Data" "Lean/Data.olean" },
+                { source := "init.lean", line := 3, column := 0, severity := .error,
+                  message := misspelt "editor" "Editor" "Editor.olean" }] &&
+            (message.splitOn "Config/Keys.lean").length == 2 &&
+            (message.splitOn "`import Config.Keys`").length == 2 &&
+            (message.splitOn "\n").length == 1 },
+    { name :=
         "config files that import each other in a cycle reject the reload with a diagnostic that names the cycle, at the import that closes it"
       run := do
         let source :=

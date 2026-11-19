@@ -1,3 +1,4 @@
+import Editor.Config.ExactPath
 import Editor.Config.Session
 
 /-!
@@ -18,8 +19,15 @@ lean-toolchain
   is `init`. A directory with none has no root.
 - **A config file** is read by its module name, from the path the name
   gives under the directory (`Config.pathOf`): `Config/Evil/Keys.lean` for
-  `Config.Evil.Keys`. A name with no file is none. Nothing is listed: a
-  file under `Config/` that no file imports is never read.
+  `Config.Evil.Keys`. A name with no file is absent. A file under `Config/`
+  that no file imports is never read.
+- **A name is exact about case.** A file is found by listing each
+  directory on its path and requiring an entry of exactly that name
+  (`Editor/Config/ExactPath.lean`), not by asking whether the path exists:
+  on a file system that ignores case, `Config/keys.lean` exists when
+  `Config/Keys.lean` does. A name that is a file's but for case is
+  misspelt, with the module that file is, and a file `Init.lean` is no
+  root.
 - **The stray files** are the `.lean` files directly in the directory
   other than the root, in the byte order of their names: what a config in
   the old form, byte-ordered chunks with no header, is made of. A
@@ -78,22 +86,41 @@ def demand (directory : System.FilePath) : IO Unit := do
   unless isDirectory do
     throw (unreadable "directory" directory "it is not a directory")
 
-/-- The source whose files are in `directory`: the
-root is `init.lean`, the config file of a module is at the path its name
-gives (`Config.pathOf`), and the stray files are the `.lean` files
-directly in the directory other than the root, in the byte order of their
-names. A file that is not there is none; a directory that is not there, and
-a file that cannot be read or is not UTF-8, throw one line that names the
-path. -/
+/-- The module name of the config file at the path `components` below the
+config directory: `Config.Keys` for `Config`, `Keys.lean`. -/
+def moduleAt (components : List String) : String :=
+  let path := ".".intercalate components
+  if path.endsWith ".lean" then (path.dropEnd 5).toString else path
+
+/-- The source whose files are in `directory`: the root is `init.lean`, the
+config file of a module is at the path its name gives (`Config.pathOf`),
+and the stray files are the `.lean` files directly in the directory other
+than the root, in the byte order of their names. A file is found by
+exactly its name, whatever the file system makes of case
+(`Editor/Config/ExactPath.lean`): a config file whose name differs from the
+one asked for only in case is misspelt, and a root spelt otherwise than
+`init.lean` is no root. A file that is not there is absent; a directory
+that is not there, and a file that cannot be read or is not UTF-8, throw
+one line that names the path. -/
 def source (directory : System.FilePath) : Source :=
-  let fileAt (module path : String) : IO (Option SourceFile) := do
-    unless ← isFile (directory / path) do
-      return none
-    return some { module, path, text := ← fileText (directory / path) }
+  let fileAt (module path : String) : IO (Lookup SourceFile) := do
+    match ← ExactPath.find directory (path.splitOn "/") with
+    | .absent =>
+      return .absent
+    | .spelled components =>
+      return .misspelt (moduleAt components) ("/".intercalate components)
+    | .exact =>
+      unless ← isFile (directory / path) do
+        return .absent
+      return .found { module, path, text := ← fileText (directory / path) }
   {
     root := do
       demand directory
-      fileAt rootModule rootPath,
+      match ← fileAt rootModule rootPath with
+      | .found file =>
+        return some file
+      | _ =>
+        return none,
     file := fun module => fileAt module (pathOf module),
     stray := do
       let entries ←

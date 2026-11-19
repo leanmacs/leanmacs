@@ -1,3 +1,4 @@
+import Editor.Config.ExactPath
 import Editor.Config.Session
 import Lean
 import Std
@@ -47,10 +48,14 @@ list of modules imported, and the environment made from them.
   the state remembers it, and a second read would map the file again at
   another address and about double its memory. The base the reload was
   handed stays usable, since both are values.
-- **What is linked** (`isLinked`): a module the base holds, or a module
-  of `Init`, `Std` or `Lean` whose `.olean` file is in the toolchain. A
-  module of the editor that the base does not hold, a binding
-  (`Editor.Ffi`) among them, is not: config cannot name a binding.
+- **What is linked** (`linkedAs`): a module the base holds, or a module
+  of `Init`, `Std` or `Lean` whose `.olean` file is in the toolchain. The
+  name is exact about case: `Lean.data.json` is not linked though a file
+  system that ignores case opens `Lean/Data/Json.olean` for it, and looking
+  it up says that it is `Lean.Data.Json` misspelt
+  (`Editor/Config/ExactPath.lean`). A module of the editor that the base
+  does not hold, a binding (`Editor.Ffi`) among them, is not: config
+  cannot name a binding.
 - **Paths are arguments.** The search path is exactly the `.olean`
   directories it is given, in order, and then `lib/lean` under the
   toolchain's directory: the core's directory, and that of each package
@@ -338,16 +343,46 @@ def toolchainRoots : Array Lean.Name :=
 def Base.holds (base : Base) (module : Lean.Name) : Bool :=
   (base.environment.getModuleIdx? module).isSome
 
-/-- Whether a config file may import `module` on `base`: the base holds
-it, or it is a module of `Init`, `Std` or `Lean` (`toolchainRoots`) whose
-`.olean` file is in the toolchain. Every such module is linked into the
-executable, so reading it runs no initialiser. -/
-def isLinked (settings : Settings) (base : Base) (module : Lean.Name) : IO Bool := do
+/-- The components of the module name `module`, unescaped. -/
+def components (module : Lean.Name) : List String :=
+  (module.toString (escape := false)).splitOn "."
+
+/-- What looking `module` up on `base` finds: whether a config file may
+import it. It is linked when the base holds it, or when it is a module of
+`Init`, `Std` or `Lean` (`toolchainRoots`) whose `.olean` file is in the
+toolchain: every such module is linked into the executable, so reading it
+runs no initialiser. The name is exact about case, whatever the file
+system makes of it (`Editor/Config/ExactPath.lean`): a name that is a
+module's of the base, or a module file's of the toolchain, but for the
+case of its letters is that module misspelt. The toolchain is asked only
+for a module the base does not hold. -/
+def linkedAs (settings : Settings) (base : Base) (module : Lean.Name) : IO (Lookup Unit) := do
   if base.holds module then
-    return true
-  unless toolchainRoots.contains module.getRoot do
-    return false
-  (Lean.modToFilePath (settings.sysroot / "lib" / "lean") module "olean").pathExists
+    return .found ()
+  let folded (name : Lean.Name) : String := ExactPath.folded (name.toString (escape := false))
+  if let some held := base.environment.header.moduleNames.find? (folded · == folded module) then
+    return .misspelt (held.toString (escape := false))
+        ("/".intercalate (components held) ++ ".olean")
+  unless toolchainRoots.any (folded · == folded module.getRoot) do
+    return .absent
+  let path :=
+    match (components module).reverse with
+    | last :: before => (s!"{last}.olean" :: before).reverse
+    | [] => []
+  match ← ExactPath.find (settings.sysroot / "lib" / "lean") path with
+  | .exact =>
+    return .found ()
+  | .absent =>
+    return .absent
+  | .spelled found =>
+    let file := "/".intercalate found
+    let spelling := ".".intercalate found
+    return .misspelt
+        (if spelling.endsWith ".olean" then (spelling.dropEnd 6).toString else spelling) file
+
+/-- Whether a config file may import `module` on `base` (`linkedAs`). -/
+def isLinked (settings : Settings) (base : Base) (module : Lean.Name) : IO Bool :=
+  return (← linkedAs settings base module).isFound
 
 /-- Reads the modules `added`, and what they import, into `state`, each
 module file once, the ones `artifacts` names from the files it names, and
@@ -502,7 +537,7 @@ config files through `files`. -/
 def elaborator (settings : Settings) (files : ModuleFiles) : Elaborator Base Handle :=
   { imports := fun file => headerImports file.path file.text,
     base := fun earlier modules => grow settings earlier (modules.map String.toName),
-    linked := fun base module => isLinked settings base module.toName,
+    linked := fun base module => linkedAs settings base module.toName,
     file := fun base handles file => do
       let (found, environment) ← elaborateFile base handles file
       let some environment := environment | return { diagnostics := found, handle := none }

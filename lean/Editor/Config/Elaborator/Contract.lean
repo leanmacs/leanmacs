@@ -32,8 +32,12 @@ is not linked.
   leaves a handle.
 - **The base.** A file sees what a module the base holds declares. A
   module the base holds is linked, one it can grow to hold is linked, and
-  another is not. A base grown to hold a module lets a file see what that
-  module declares, and the base it grew from still elaborates a file.
+  another is not. A name is exact about case: a linked module's name
+  written in another case is not linked, and is found to be that module
+  misspelt. A side names its modules with a capital in each, so the small
+  letters are another name. A base grown to hold a module lets a file see
+  what that module declares, and the base it grew from still elaborates a
+  file.
 - **Isolation.** A file handed the handle of a config file sees what that
   file defines, and a file not handed it does not, the root as any other.
   A file handed the handles of the files it reaches through others sees
@@ -182,9 +186,21 @@ def properties {β σ : Type} (subject : Subject β σ) : List Property :=
         "a module the base holds is linked, one it can grow to hold is linked, and another is not"
       holds := do
         let base ← subject.start
-        return (← elaborator.linked base subject.held.1) &&
-            (← elaborator.linked base subject.grown.1) &&
-            !(← elaborator.linked base subject.unlinked) },
+        return (← elaborator.linked base subject.held.1).isFound &&
+            (← elaborator.linked base subject.grown.1).isFound &&
+            (← elaborator.linked base subject.unlinked) == .absent },
+    { name :=
+        "a module's name is exact about case: the name of a module the base holds, and of one it can grow to hold, written with small letters alone is not linked, and is found to be that module misspelt"
+      holds := do
+        let base ← subject.start
+        let spelt (module : String) : IO (Option String) := do
+          match ← elaborator.linked base (module.map Char.toLower) with
+          | .misspelt spelling _ =>
+            return some spelling
+          | _ =>
+            return none
+        return (← spelt subject.held.1) == some subject.held.1 &&
+            (← spelt subject.grown.1) == some subject.grown.1 },
     { name :=
         "a base grown to hold a linked module lets a file see what that module declares, and the base it grew from still elaborates a file"
       holds := do

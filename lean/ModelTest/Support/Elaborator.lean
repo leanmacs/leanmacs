@@ -92,13 +92,21 @@ def recording (calls : IO.Ref (Array SessionCall))
 
 /-- A source over `files`, each a module name and the lines of its text,
 the root being the module `init`, with `stray` as the `.lean` files beside
-it. -/
+it. A config file is found by exactly its module name; a name that differs
+from a file's only in the case of its letters is that file misspelt. -/
 def configOf (files : List (String × List String)) (stray : List String := []) : Source :=
   let find (module : String) : Option SourceFile :=
     (files.find? (·.1 == module)).map fun (_, lines) =>
       { module, path := if module == rootModule then rootPath else pathOf module,
         text := "\n".intercalate lines }
-  { root := pure (find rootModule), file := fun module => pure (find module),
+  { root := pure (find rootModule),
+    file := fun module =>
+      match find module with
+      | some file => pure (.found file)
+      | none =>
+        match files.find? fun (other, _) => other.map Char.toLower == module.map Char.toLower with
+        | some (other, _) => pure (.misspelt other (pathOf other))
+        | none => pure .absent,
     stray := pure stray.toArray }
 
 /-- A hand-written fake of the package port over `files`, the names and

@@ -653,6 +653,18 @@ lean-toolchain       generated when absent
   line, naming the module: `module … is not linked into this editor`.
   Every header is read, and every problem found, before anything is
   elaborated.
+- **A module's name is exact about case**, on every file system. On one
+  that ignores case, macOS's default, a test of whether a path exists
+  answered yes for `Lean/data/json.olean` and `Config/keys.lean`, so
+  `import Lean.data.json` was accepted and `import Config.keys` loaded
+  `Config/Keys.lean` as a module of another name: a config that loaded on
+  a Mac and nowhere else. So a config file, and a module of the toolchain
+  the base does not hold, are found by listing each directory on the path
+  and requiring an entry equal to the name byte for byte
+  (`lean/Editor/Config/ExactPath.lean`), and a module the base holds by
+  its name in the base. An import whose name is another module's but for
+  case is refused at the import, naming the file found and the spelling to
+  use (`Config.misspelt`); a file `Init.lean` is no root.
 - **When that module belongs to a package the config's lakefile names**,
   the diagnostic says the package set needs a rebuild. The editor reads the
   `[[require]]` names of `lakefile.toml` from its text, with Lake's TOML
@@ -786,6 +798,18 @@ nothing (2026-11-19, an Apple M5 Max, macOS 27.2, Lean 4.35.0):
   55 ms more. In the executable as built, the row of 283.6 ms is about
   39 ms for the config file and about 245 ms for the root's environment and
   the root, on a base that holds `Lean`.
+- **Finding a file exactly costs nothing measurable.** Listing each
+  directory on a path, in place of one test of existence, is done once for
+  the root and once for each config import in a reload, and for a module of
+  the toolchain only while the base does not hold it. With `bench-reload`
+  and `bench-reload-directory`, medians of 20, before and after it (two
+  runs of each, 2026-11-19, the machine above): the 50 definitions in one
+  file, 38.4 ms before and 38.9 ms after from memory, 38.3 to 38.6 ms and
+  38.8 to 39.1 ms from a directory; the same in an imported file on a base
+  with `Lean`, 277.4 to 277.9 ms and 279.4 to 280.5 ms from memory, 276.2 to
+  276.4 ms and 278.4 to 278.5 ms from a directory. That is under 1%, within
+  what two runs of one build differ by, so a reload keeps no cache of
+  listings.
 - **Replaced configs are freed.** Both soaks stay within 5% from 100
   reloads to 500, the bound the phase set; memory is reported, never
   gating.

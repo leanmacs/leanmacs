@@ -99,15 +99,22 @@ partial def configFiles (directory : System.FilePath) : IO (List (String × Stri
   return rootFile ++ under
 
 /-- A source over the files `files` gives each time it is asked, each a
-module name and a text, as they are: the root is the module `init`, and
-nothing is stray. -/
+module name and a text, as they are: the root is the module `init`, a
+config file is found by exactly its module name, and nothing is stray. -/
 def sourceOver (files : IO (List (String × String))) : Config.Source :=
   let find (module : String) : IO (Option Config.SourceFile) := do
     return ((← files).find? (·.1 == module)).map fun (_, text) =>
         { module,
           path := if module == Config.rootModule then Config.rootPath else Config.pathOf module
           text }
-  { root := find Config.rootModule, file := find, stray := pure #[] }
+  { root := find Config.rootModule,
+    file := fun module => do
+      match ← find module with
+      | some file =>
+        return .found file
+      | none =>
+        return .absent,
+    stray := pure #[] }
 
 /-- A source over `files` held in memory, each a module name and a text,
 which is headed as a file a check writes is (`headed`): the root is the

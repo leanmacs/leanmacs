@@ -41,7 +41,9 @@ makes a file that imports nothing changed safe to keep.
 A base is the modules it holds. It starts as `Settings.held`, and grows by
 the modules it is asked to hold. A module is linked when the base holds it
 or when its first component is one of `Settings.linkable`; asking for a
-base to hold a module that is not linked throws.
+base to hold a module that is not linked throws. A name is exact about
+case: one that is a linked module's but for the case of its letters is not
+linked, and looking it up says which module it is (`linkedAs`).
 
 ## `setup`
 
@@ -130,6 +132,31 @@ one of `settings.linkable`. -/
 def isLinked (settings : Settings) (base : Base) (module : String) : Bool :=
   base.modules.contains module || settings.linkable.contains (Lakefile.rootOf module)
 
+/-- `name` with each of its letters small: two module names that differ
+only in case are one name so written. -/
+def folded (name : String) : String :=
+  name.map Char.toLower
+
+/-- The file of the linked module `module`, as the model names it. -/
+def fileOf (module : String) : String :=
+  "/".intercalate (module.splitOn ".") ++ ".olean"
+
+/-- What looking the linked module `module` up finds: itself when it is
+linked (`isLinked`); and otherwise the module it is but for case, when
+there is one: one the base holds, or one whose first component is one of
+`settings.linkable` but for case, with the rest as it was written. -/
+def linkedAs (settings : Settings) (base : Base) (module : String) : Lookup Unit :=
+  if isLinked settings base module then .found ()
+  else
+    match base.modules.find? (folded · == folded module) with
+    | some held => .misspelt held (fileOf held)
+    | none =>
+      match settings.linkable.find? (folded · == folded (Lakefile.rootOf module)) with
+      | some root =>
+        let spelling := ".".intercalate (root :: (module.splitOn ".").drop 1)
+        .misspelt spelling (fileOf spelling)
+      | none => .absent
+
 /-- Whether `name` is visible on `base`: it is under a module the base
 holds. -/
 def Base.declares (base : Base) (name : String) : Bool :=
@@ -176,7 +203,7 @@ def elaborator (settings : Settings := {}) : Elaborator Base Handle :=
             modules.foldl
               (fun held module => if held.contains module then held else held.push module)
               base.modules },
-    linked := fun base module => pure (isLinked settings base module),
+    linked := fun base module => pure (linkedAs settings base module),
     file := fun base handles file => pure (elaborate base handles file),
     root := fun base handles file => pure (elaborate base handles file),
     setup := fun handle =>

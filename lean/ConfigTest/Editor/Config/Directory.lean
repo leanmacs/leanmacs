@@ -31,20 +31,39 @@ def directoryChecks (_ : Unit) : List Check :=
               (← source.root) ==
                 some { module := "init", path := "init.lean", text := "the root" } },
     { name :=
-        "a config file is read by its module name from the path under Config that the name gives, a nested one too, and a name with no file gives none"
+        "a config file is read by its module name from the path under Config that the name gives, a nested one too, and a name with no file is absent"
       run :=
         IO.FS.withTempDir fun directory => do
           writeFiles directory
               [("init.lean", ""), ("Config/Keys.lean", "keys"), ("Config/Evil/Keys.lean", "evil")]
           let source := Config.Directory.source directory
           return (← source.file "Config.Keys") ==
-                some { module := "Config.Keys", path := "Config/Keys.lean", text := "keys" } &&
+                .found { module := "Config.Keys", path := "Config/Keys.lean", text := "keys" } &&
               (← source.file "Config.Evil.Keys") ==
-                some
+                .found
                   { module := "Config.Evil.Keys", path := "Config/Evil/Keys.lean",
                     text := "evil" } &&
-              (← source.file "Config.Missing").isNone &&
-              (← source.file "Config.Evil").isNone },
+              (← source.file "Config.Missing") == .absent &&
+              (← source.file "Config.Evil") == .absent },
+    { name :=
+        "on a file system that ignores case, a file is found by exactly its name: a config file asked for in another case is misspelt, with the module and the path the directory spells, though the path opens; a file Init.lean is no root (on a file system that does not ignore case, there is nothing to show, and the check passes)"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory [("Init.lean", "not the root"), ("Config/Evil/Keys.lean", "evil")]
+          -- The file system ignores case when the path in other case opens.
+          unless ← (directory / "config" / "evil" / "keys.lean").pathExists do
+            return true
+          let source := Config.Directory.source directory
+          return (← source.root).isNone &&
+              (← source.file "Config.Evil.keys") ==
+                .misspelt "Config.Evil.Keys" "Config/Evil/Keys.lean" &&
+              (← source.file "Config.evil.Keys") ==
+                .misspelt "Config.Evil.Keys" "Config/Evil/Keys.lean" &&
+              (← source.file "Config.Evil.Keys") ==
+                .found
+                  { module := "Config.Evil.Keys", path := "Config/Evil/Keys.lean",
+                    text := "evil" } &&
+              (← source.file "Config.Evil.Other") == .absent },
     { name :=
         "the stray files are the .lean files directly in the directory other than the root, in the byte order of their names: no other file, no directory, and nothing below one"
       run :=

@@ -205,10 +205,41 @@ def elaboratorChecks (context : Context) : List Check :=
             inFile.built.isNone &&
             placed inFile == #[("Config/Keys.lean", 0, .error)] },
     { name :=
+        "an import of a module of the toolchain under a name that differs from the module's in the case of its letters is refused at the import, whatever the file system makes of the name, also once the base holds the module"
+      run := do
+        let misspelt ←
+          buildConfig context
+              [("init",
+                  "import Editor\nimport Lean.data.json\nopen Editor\ndef setup : SetupM Unit := pure ()\n")]
+        let beside ←
+          buildConfig context
+              [("init",
+                  "import Editor\nimport Lean.Data.Json\nimport Lean.data.json\nopen Editor\ndef setup : SetupM Unit := pure ()\n")]
+        let said := Config.misspelt "Lean.data.json" "Lean.Data.Json" "Lean/Data/Json.olean"
+        return misspelt.built.isNone && placed misspelt == #[("init.lean", 2, .error)] &&
+            misspelt.diagnostics.map (·.message) == #[said] &&
+            beside.built.isNone &&
+            placed beside == #[("init.lean", 3, .error)] &&
+            beside.diagnostics.map (·.message) == #[said] },
+    { name :=
+        "a module is looked up by exactly its name: the name of a module the base holds, of a module of the toolchain and of a module under one, each in another case, is that module misspelt, with its file; a name that is no module's in any case is absent"
+      run := do
+        let base ← context.elaborator.base none #[]
+        let found (module : String) : IO (Config.Lookup Unit) :=
+          context.elaborator.linked base module
+        return (← found "editor") == .misspelt "Editor" "Editor.olean" &&
+            (← found "configfixture") == .misspelt "ConfigFixture" "ConfigFixture.olean" &&
+            (← found "std") == .misspelt "Std" "Std.olean" &&
+            (← found "lean.Data.Json") == .misspelt "Lean.Data.Json" "Lean/Data/Json.olean" &&
+            (← found "Lean.Data.JSON") == .misspelt "Lean.Data.Json" "Lean/Data/Json.olean" &&
+            (← found "Lean.Data.NoSuchModule") == .absent &&
+            (← found "lake") == .absent },
+    { name :=
         "a module the base holds and a module of Lean in the toolchain are linked; a module of the toolchain outside Init, Std and Lean, a module of Lean that is not there, and a binding module the base does not hold are not"
       run := do
         let base ← context.elaborator.base none #[]
-        let linked (module : String) : IO Bool := context.elaborator.linked base module
+        let linked (module : String) : IO Bool :=
+          return (← context.elaborator.linked base module).isFound
         return (← linked "Editor") && (← linked "ConfigFixture") && (← linked "Lean.Data.Json") &&
             (← linked "Std") &&
             !(← linked "Lake") &&

@@ -72,7 +72,8 @@ show:
   generated lakefile read back, and the core's copy of Lake's casing rule
   against Lake's own;
 - `directoryChecks`: the directory as a source of config files (the root, a
-  config file by its module name, the stray files) and as a Lake package (a
+  config file by exactly its module name, also on a file system that
+  ignores case, the stray files) and as a Lake package (a
   file read by name, and a file created only when it is not there), each
   check in a temporary directory of its own;
 - `moduleHostChecks`: config as modules through the headless host, with the

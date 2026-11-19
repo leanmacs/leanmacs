@@ -704,6 +704,19 @@ def moduleHostChecks (context : Context) : List Check :=
                 lines.extract (lines.size - 4) lines.size ==
                   #["text 0: \"\"", "text 1: \"a2\"", "text 2: \"b1\"", "text 3: \"c2\""] },
     { name :=
+        "an import of a config file under a name that differs from the file's in the case of its letters is rejected at the import, on a file system that ignores case as on one that does not, and the old config stays"
+      run :=
+        withHost context
+          [("Config/Keys.lean", greetText "v1"), ("init.lean", importing ["Config.Keys"] setupText)]
+          fun session => do
+          session.ask [.reload]
+          session.write "init.lean" (importing ["Config.keys"] setupText)
+          session.ask [.reload]
+          session.ask [.run "greet"]
+          return (← session.lines) ==
+              #["reload 1: installed, 2 files, 1 commands", "reload 2: rejected",
+                "diagnostic: init.lean: error", "run greet: ok"] },
+    { name :=
         "a root that imports a module that is not linked is rejected with a diagnostic at the import that names the module, and the old config stays"
       run :=
         withHost context [("init.lean", greetText "v1" ++ setupText)] fun session => do
@@ -755,7 +768,7 @@ def handleElaborator : Config.Elaborator Ffi.Counter Ffi.Counter :=
       match earlier with
       | some base => pure base
       | none => Ffi.Counter.new 0,
-    linked := fun _ _ => pure false,
+    linked := fun _ _ => pure .absent,
     file := fun _ _ _ => return { diagnostics := #[], handle := some (← Ffi.Counter.new 0) },
     root := fun _ _ _ => return { diagnostics := #[], handle := some (← Ffi.Counter.new 0) },
     setup := fun _ => return .ok (pure ()) }

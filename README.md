@@ -96,7 +96,9 @@ lean-toolchain       generated when absent
   was built with, and another config file. A config file other than
   `init.lean` lives under `Config/` and is imported by its module name:
   `Config/Keys.lean` is `import Config.Keys`. An import of anything else is
-  refused, naming the module.
+  refused, naming the module. A module's name is exact about case, on a
+  Mac as elsewhere: `import Config.keys` is refused, naming
+  `Config/Keys.lean` and the spelling to use.
 - Only the `setup` that `init.lean` itself defines is run. A file under
   `Config/` exports its programs under names of its own, and the root's
   `setup` calls them; a `setup` defined in another file is not run.

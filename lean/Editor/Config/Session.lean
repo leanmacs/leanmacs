@@ -19,15 +19,22 @@ The decisions are here, in plain Lean with no elaborator in it:
 
 - **What a config is.** The files reached from the root by imports of
   config files. A file under `Config/` that nothing imports is not read.
-- **What a file may import.** An import is one of three things
-  (`classify`). `Config.<…>` names a config file; a file that is not there
-  is a diagnostic at the import. A module that is linked into the editor
+- **What a file may import.** An import is one of three things.
+  `Config.<…>` names a config file; a file that is not there is a
+  diagnostic at the import. A module that is linked into the editor
   (`Elaborator.linked`) is loaded with the base. Anything else is refused,
   at the import, naming the module; when the module belongs to a package
   the config's lakefile requires (`Lakefile.owner?`), the diagnostic says
   the editor's package set needs a rebuild. An import cycle among config
   files is refused, naming the cycle. Every header is read, and every
   problem found, before anything is elaborated.
+- **A module's name is exact about case.** On a file system that ignores
+  case, a path spelt in another case opens the same file, so `import
+  Config.keys` would load `Config/Keys.lean` under a module name its file
+  does not have, and load nowhere else. The ports look a module up by
+  exactly its name (`Lookup`), and an import whose name is another
+  module's but for case is refused at the import, naming the file found
+  and the spelling to use (`misspelt`).
 - **What is elaborated.** Each file is a module of its own, elaborated
   after the config files it imports and handed the handles of all of them,
   the ones it reaches through others too (`order`, `reach`). A loaded file
@@ -138,14 +145,39 @@ def isConfigModule (module : String) : Bool :=
   | "Config" :: _ :: _ => true
   | _ => false
 
+/-- What looking a module up by its name found. A module's name is exact
+about the case of its letters, whatever the file system is: on one that
+ignores case a path spelt in another case opens the same file, and a
+config that loads there must load, or be refused, everywhere alike. So a
+port that looks a module up says when the name it was asked for is another
+module's but for case, and loads nothing. -/
+inductive Lookup (α : Type) where
+  /-- The module is there, under exactly this name. -/
+  | found (value : α)
+  /-- There is no such module. -/
+  | absent
+  /-- No module has exactly this name, and one has a name that differs from
+  it only in the case of its letters: `spelling` is that module's name, and
+  `file` the file found for it, as a diagnostic names it. -/
+  | misspelt (spelling file : String)
+  deriving DecidableEq, Repr
+
+/-- Whether the lookup found the module under exactly the name asked
+for. -/
+def Lookup.isFound {α : Type} : Lookup α → Bool
+  | .found _ => true
+  | _ => false
+
 /-- The port a config's source is read through. -/
 structure Source where
   /-- The root as it now is, or none when the config has none. Throws when
   it cannot be read. -/
   root : IO (Option SourceFile)
-  /-- The config file whose module name this is, as it now is, or none when
-  there is no such file. Throws when it cannot be read. -/
-  file : String → IO (Option SourceFile)
+  /-- The config file whose module name is exactly this, as it now is;
+  absent when there is no such file; misspelt when a file is there whose
+  module name differs from this one only in case. Throws when it cannot be
+  read. -/
+  file : String → IO (Lookup SourceFile)
   /-- The names of the `.lean` files directly in the config directory other
   than the root, in the byte order of their names: what a config in the old
   form is made of. Throws when they cannot be listed. -/
@@ -180,10 +212,11 @@ structure Elaborator (β σ : Type) where
   base given, or made when none is given: with none given and no module
   named, the base config starts on. Throws when it cannot be made. -/
   base : Option β → Array String → IO β
-  /-- Whether the module called this is linked into the editor, so that a
-  config file may import it: one the base holds, or one the base can grow
-  to hold. -/
-  linked : β → String → IO Bool
+  /-- Whether the module called exactly this is linked into the editor, so
+  that a config file may import it: one the base holds, or one the base can
+  grow to hold. Misspelt when no module of that name is linked and one is
+  whose name differs from it only in case. -/
+  linked : β → String → IO (Lookup Unit)
   /-- Elaborates a config file other than the root as a module on the base,
   over the handles of the config files it imports, all of them, the ones
   it reaches through others too, each after the ones it imports. -/
@@ -240,21 +273,6 @@ structure Node where
   imports : Array Import
   deriving DecidableEq, Repr
 
-/-- What an import names. -/
-inductive ImportKind where
-  /-- A config file. -/
-  | config
-  /-- A module linked into the editor. -/
-  | linked
-  /-- Neither: the import is refused. -/
-  | refused
-  deriving DecidableEq, Repr
-
-/-- What an import of `module` names, given whether the module is linked:
-a config file when its name is under `Config`, whatever is linked. -/
-def classify (module : String) (linked : Bool) : ImportKind :=
-  if isConfigModule module then .config else if linked then .linked else .refused
-
 /-- The diagnostic that `source` failed with `message`, about no place in
 particular. -/
 def failure (source message : String) : Diagnostic :=
@@ -274,6 +292,12 @@ def notLinked (module : String) (owner : Option String) : String :=
     s!"module `{module}` is not linked into this editor: it is a module of the package `{package}`, which the config's lakefile requires, so the editor's package set needs a rebuild with that package in it"
   | none =>
     s!"module `{module}` is not linked into this editor: config may import a config file (`Config.<Name>`), a module of the editor's package set, or a module of `Init`, `Std` or `Lean`"
+
+/-- What is said of an import of `module` when no module has exactly that
+name and the module `spelling`, whose file is `file`, differs from it only
+in the case of its letters: the file found, and the spelling to use. -/
+def misspelt (module spelling file : String) : String :=
+  s!"the import of `{module}` finds {file}, the file of the module `{spelling}`: a module's name is exact about the case of its letters, on every file system, so write `import {spelling}`"
 
 /-- What is said of an import of the config file `module` when there is no
 such file. -/
@@ -446,23 +470,9 @@ def readHeaders {β σ : Type} (elaborator : Elaborator β σ) (source : Source)
     | .ok imports =>
       let mut configImports := #[]
       for wanted in imports do
-        let isLinked ←
-          if isConfigModule wanted.module then
-            pure false
-          else
-            try
-              elaborator.linked base wanted.module
-            catch _ =>
-              pure false
-        match classify wanted.module isLinked with
-        | .linked =>
-          unless headers.linked.contains wanted.module do
-            headers := { headers with linked := headers.linked.push wanted.module }
-        | .refused =>
-          let message ← refusedImport package wanted.module
-          headers :=
-            { headers with problems := headers.problems.push (refusal file.path wanted message) }
-        | .config =>
+        let refuse (headers : Headers) (message : String) : Headers :=
+          { headers with problems := headers.problems.push (refusal file.path wanted message) }
+        if isConfigModule wanted.module then
           if met.contains wanted.module then
             if (pending.any (·.module == wanted.module)) then
               configImports := configImports.push wanted
@@ -474,17 +484,30 @@ def readHeaders {β σ : Type} (elaborator : Elaborator β σ) (source : Source)
               catch error =>
                 pure (Except.error (toString error))
             match read with
-            | .ok (some imported) =>
+            | .ok (.found imported) =>
               pending := pending.push imported
               configImports := configImports.push wanted
-            | .ok none =>
-              headers :=
-                { headers with
-                  problems :=
-                    headers.problems.push (refusal file.path wanted (noSuchFile wanted.module)) }
+            | .ok .absent =>
+              headers := refuse headers (noSuchFile wanted.module)
+            | .ok (.misspelt spelling found) =>
+              headers := refuse headers (misspelt wanted.module spelling found)
             | .error reason =>
-              headers :=
-                { headers with problems := headers.problems.push (refusal file.path wanted reason) }
+              headers := refuse headers reason
+        else
+          -- An elaborator that throws has not said the module is linked.
+          let linked ←
+            try
+              elaborator.linked base wanted.module
+            catch _ =>
+              pure .absent
+          match linked with
+          | .found () =>
+            unless headers.linked.contains wanted.module do
+              headers := { headers with linked := headers.linked.push wanted.module }
+          | .absent =>
+            headers := refuse headers (← refusedImport package wanted.module)
+          | .misspelt spelling found =>
+            headers := refuse headers (misspelt wanted.module spelling found)
       headers := { headers with nodes := headers.nodes.push { file, imports := configImports } }
   return headers
 
