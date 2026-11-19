@@ -3353,16 +3353,6 @@ def readOnlyChecks : List Check :=
               echoOf committed == some "ro is read-only" &&
               (showing elsewhere).bind (·.text) == some "z" }]
 
-/-- The buffer called `name` in `driver`'s state, if there is one. -/
-def excerptBufferNamed (driver : EvilDriver) (name : String) : Option Buffer := do
-  driver.loop.state.buffer? (← driver.loop.state.findBuffer name)
-
-/-- What the text of the buffer called `name` holds in `driver`'s text model,
-read as a command reads it, so an excerpt text is caught up. -/
-def excerptRead (driver : EvilDriver) (name : String) : Option String := do
-  let buffer ← excerptBufferNamed driver name
-  (buffer.text.read.runModel driver.model.texts).1.toOption
-
 /-- The checks of excerpt buffers (`Editor/State.lean`, "Excerpt buffers";
 `Editor/Command/Dispatch.lean`, "Read-only buffers and excerpt sources";
 `Editor/Api.lean`, "Undo"), on the loop's driver over the editor's

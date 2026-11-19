@@ -1207,6 +1207,7 @@ def checks : List Check :=
     indentEditChecks ++
     indentLevelChecks ++
     apiStateChecks ++
+    insertExcerptChecks ++
     driverChecks ++
     promptChecks ++
     candidateChecks ++

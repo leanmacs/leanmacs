@@ -1230,6 +1230,15 @@ What it added to excerpt buffers is generic.
   clock's milliseconds at the first, and how long it was on screen
   (`Buffer.Viewed`). `BufferId.setExcerptHeaders` rewrites the headers and
   keeps it.
+- **Inserting excerpts** (`BufferId.insertExcerpts id index list`, built by
+  navigation-and-windows phase 4 for project search's results) splices
+  `list` into the buffer's list before `index` and keeps every excerpt it
+  has: each kept one is set again over its source range as it is now
+  (`TextId.excerpts`), so its text, an edit typed in it and its anchors
+  stay, and its entry, header and viewed record included, is kept. It is
+  one `setExcerpts` of the whole list, so a list that grows a delivery at a
+  time costs one re-assembly a delivery. Pinned by
+  `ModelTest.insertExcerptChecks`.
 - **The viewed record is written by the publish.** Once a scene's views
   are decorated, the loop credits the time since the last publish, on the
   clock the host hands each step (`Loop.Keys.now`, the job clock under

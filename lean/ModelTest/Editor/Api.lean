@@ -37,6 +37,7 @@ import ModelTest.Support.Candidates
 import ModelTest.Support.Completion
 import ModelTest.Support.Driver
 import ModelTest.Support.Evil
+import ModelTest.Support.Excerpt
 import ModelTest.Support.Loop
 import ModelTest.Support.Models
 import ModelTest.Support.States
@@ -44,8 +45,8 @@ import ModelTest.Support.States
 /-!
 # Model tests: `Editor/Api.lean`
 
-The model tests of `Editor/Api.lean`: `apiStateChecks` and
-`insertCandidateChecks`, which run `insertCandidate` and the accept of a
+The model tests of `Editor/Api.lean`: `apiStateChecks`,
+`insertExcerptChecks` and `insertCandidateChecks`, which run `insertCandidate` and the accept of a
 partial candidate through the minibuffer's commands under the Vim scheme that
 ships. The root module `ModelTest` runs them; its module doc says what each
 shows.
@@ -485,5 +486,71 @@ def insertCandidateChecks : List Check :=
             evilShown entered ⟨1⟩ == "src/|" && entered.loop.state.prompt.isSome &&
               answered.loop.state.prompt.isNone &&
               answered.loop.state.echo == picked [.str "a.txt"] }]
+
+/-- The commands of the insert checks, beside the excerpt buffer checks':
+`insert-beta` inserts the excerpt of `two`'s second row, headed `beta`, into
+`ex` before its second excerpt; and `make-empty` makes an excerpt buffer
+`empty` of no excerpt, inserts `one`'s first row, headed `h`, into it, and
+shows it. -/
+def insertRegistrations : Array Config.Registration :=
+  #[{ name := "insert-beta"
+      action :=
+        .call fun _ => do
+          let some ex ← findBuffer "ex" | return
+          let some two ← findBuffer "two" | return
+          discard <|
+              ex.insertExcerpts 1 #[{ buffer := two, start := 6, stop := 11, header := "beta" }] },
+    { name := "make-empty"
+      action :=
+        .call fun call => do
+          let some one ← findBuffer "one" | return
+          let .ok empty ← createExcerptBuffer "empty" #[] | return
+          discard <|
+              empty.insertExcerpts 0 #[{ buffer := one, start := 0, stop := 4, header := "h" }]
+          discard <| call.target.window.id.show empty }]
+
+/-- A driver of the insert checks: the excerpt buffer checks' driver with the
+insert commands, once `make-ex` has run. -/
+def insertDriver : Option EvilDriver :=
+  (evilDriver "|" (evilHanded (excerptRegistrations ++ insertRegistrations))).map
+    (excerptInvoked · "make-ex")
+
+/-- The headers of the excerpt buffer called `name`. -/
+def headersOf (driver : EvilDriver) (name : String) : Option (Array String) := do
+  let buffer ← excerptBufferNamed driver name
+  let excerpts ← buffer.excerpts
+  return excerpts.entries.map (·.header)
+
+/-- The checks of `BufferId.insertExcerpts`, on the loop's driver over the
+editor's models: excerpts inserted after an edit typed in the first keep its
+text, its anchor and its header, and the new one is at its index; and an
+empty excerpt buffer takes one. -/
+def insertExcerptChecks : List Check :=
+  [{  name :=
+        "inserting an excerpt after an edit typed in excerpt 0 keeps its text, its anchor and its header, and leaves the new excerpt at index 1"
+      run :=
+        pure <|
+          match insertDriver with
+          | none => false
+          | some driver =>
+            let typed := evilFed (excerptFed (evilFed driver "l i") [.commit "X"]) "<Escape>"
+            let inserted := excerptInvoked typed "insert-beta"
+            -- An edit before the first excerpt in its source, and one typed
+            -- in it again: an anchored range follows both.
+            let moved := excerptInvoked inserted "edit-one"
+            let typedAgain := evilFed (excerptFed (evilFed moved "g g i") [.commit "Y"]) "<Escape>"
+            excerptRead inserted "ex" == some "tXwo\n\nbeta\n\nalpha\n" &&
+              headersOf inserted "ex" == some #["one", "beta", "two"] &&
+              excerptRead moved "ex" == some "tXwo\n\nbeta\n\nalpha\n" &&
+              excerptRead typedAgain "ex" == some "YtXwo\n\nbeta\n\nalpha\n" &&
+              excerptRead typedAgain "one" == some "Zone\nYtXwo\nthree\n" },
+    { name := "an excerpt is inserted into an excerpt buffer of none"
+      run :=
+        pure <|
+          match insertDriver with
+          | none => false
+          | some driver =>
+            let made := excerptInvoked driver "make-empty"
+            excerptRead made "empty" == some "one\n" && headersOf made "empty" == some #["h"] }]
 
 end ModelTest

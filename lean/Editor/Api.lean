@@ -1524,6 +1524,32 @@ def setExcerpts (id : BufferId) (list : Array BufferExcerpt) :
     let some kept := buffer.excerpts | return .error .notExcerpts
     EditorState.ask (.setExcerptHistory id { kept with entries })
 
+/-- Inserts `list`, ranges of buffers' texts, into the list of the excerpt
+buffer `id` before the excerpt at `index` (at the end past its last), and
+keeps every excerpt it has: each kept excerpt's range of its source as it is
+now (`TextId.excerpts`), so its text, and an edit typed in it, stay, and its
+entry, its header and what was viewed of it included
+(`EditorState.setExcerptHistory`). It is how a list grows as results arrive
+(`Editor/ProjectSearch.lean`). Refused with `noSuchBuffer` for a buffer there
+is none of, `id` or one `list` names, and `notExcerpts` for one that is not
+an excerpt buffer; what the store refuses is thrown. -/
+def insertExcerpts (id : BufferId) (index : Nat) (list : Array BufferExcerpt) :
+    EditorM (Except BufferRefusal Unit) := do
+  let some buffer := (← editorState).buffer? id | return .error (.noSuchBuffer id)
+  let some kept := buffer.excerpts | return .error .notExcerpts
+  match ← excerptsOf list with
+  | .error refusal =>
+    return .error refusal
+  | .ok (added, entries) =>
+    let placed ← buffer.text.excerpts
+    let current : Array Excerpt :=
+      (placed.zip kept.entries).map fun (placed, entry) =>
+        ⟨entry.source, placed.sourceStart, placed.sourceStop⟩
+    let at' := min index current.size
+    buffer.text.setExcerpts (current.extract 0 at' ++ added ++ current.extract at')
+    let entries := kept.entries.extract 0 at' ++ entries ++ kept.entries.extract at'
+    EditorState.ask (.setExcerptHistory id { kept with entries })
+
 /-- Replaces the headers of the excerpt buffer `id`'s entries with
 `headers`, in list order, an entry past their end keeping its own, and keeps
 everything else of them, what was viewed included
