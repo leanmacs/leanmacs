@@ -1,7 +1,9 @@
 #!/bin/sh
-# Stands for `mise` in contract-test's checks of the shipped modes
-# (lean/ContractTest/Editor/Compile/Shipped.lean, projectModeChecks), found
-# first on the child's PATH.
+# Stands for `mise` in the compile package's linked test, in its checks
+# of the shipped modes over the real process service
+# (packages/compile/CompileTest/Linked/Compile/Shipped.lean,
+# projectRunChecks, which were contract-test's projectModeChecks until the
+# compile mode moved out of the core), found first on the child's PATH.
 # `mise tasks ls --json` prints a JSON array of two tasks, `build` and
 # `test`, each with the directory it runs in (`pwd -P`) as its `dir` and a
 # few other fields, as mise does; `mise run <task>` with a file

@@ -1,7 +1,9 @@
 #!/bin/sh
-# Stands for `lake` in contract-test's checks of the shipped modes
-# (lean/ContractTest/Editor/Compile/Shipped.lean, projectModeChecks), found
-# first on the child's PATH.
+# Stands for `lake` in the compile package's linked test, in its checks
+# of the shipped modes over the real process service
+# (packages/compile/CompileTest/Linked/Compile/Shipped.lean,
+# projectRunChecks, which were contract-test's projectModeChecks until the
+# compile mode moved out of the core), found first on the child's PATH.
 # `lake build` writes the lines of `lake-build.txt`, beside this
 # script, to standard output and exits 1; anything else says what it
 # expected and exits 2. Real Lake writes its last line, `error: build
