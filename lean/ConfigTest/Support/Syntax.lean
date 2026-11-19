@@ -20,12 +20,12 @@ import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
 import Editor.Mode
-import Editor.PackageSet
 import Editor.Scene
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
 import Editor.Text
 import Editor.Text.Real
+import PackageSet
 
 /-!
 # Config tests: support: Syntax

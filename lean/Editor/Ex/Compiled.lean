@@ -73,7 +73,7 @@ shipped ex name runs in its place until a reload drops it.
   twelve `vc-…` names (`Editor/VersionControl/Compiled.lean`). The files'
   and the buffers' names are bound here because both features are the
   core's, as this one is (`docs/design/packages.md`). The shipped set
-  registers this package before those two (`Editor/PackageSet.lean`), so
+  registers this package before those two (`PackageSet.lean`), so
   the names are bound in the order they were when this package bound them
   all, which is the order the ex names' completion source lists them in.
 - **The sources**: the `:!` history, then the ex names, so config can ask

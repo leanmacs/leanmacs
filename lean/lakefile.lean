@@ -24,6 +24,14 @@ import among them (the bindings, the real bindings of the ports, the config
 session, the hosts). -/
 @[default_target] lean_lib Editor where roots := #[`Editor, `Editor.Core]
 
+/-- The list of the packages that ship (`PackageSet.lean`): the executable's
+wiring, which names every package and so is no module of the editor
+(`docs/design/packages.md`). It is a library of its own, outside `Editor/`,
+that the executable's root and the tests that need the list import; it is
+built for them, and the packages roadmap's phase 4 replaces it with a
+generated root. -/
+lean_lib PackageSet
+
 /-- Code that `ffi-test overflow` has Lean's interpreter run
 (`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
 own that no executable imports, so it is compiled to an `.olean` and never

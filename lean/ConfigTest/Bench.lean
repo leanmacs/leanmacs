@@ -37,7 +37,6 @@ import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine.Compiled
 import Editor.Package
-import Editor.PackageSet
 import Editor.Program
 import Editor.Scene
 import Editor.Setup
@@ -50,6 +49,7 @@ import Editor.Text.Real
 import Editor.Watch
 import Editor.Workspace.Compiled
 import Editor.Workspace.FindFile
+import PackageSet
 
 /-!
 # Config tests: the benchmark

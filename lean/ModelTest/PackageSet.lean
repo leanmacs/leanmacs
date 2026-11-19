@@ -3,14 +3,14 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Package
-import Editor.PackageSet
 import ModelTest.Check
 import ModelTest.Support.Elaborator
+import PackageSet
 
 /-!
-# Model tests: `Editor/PackageSet.lean`
+# Model tests: `PackageSet.lean`
 
-The model tests of `Editor/PackageSet.lean`: `packageSetChecks`. The root
+The model tests of `PackageSet.lean`: `packageSetChecks`. The root
 module `ModelTest` runs them; its module doc says what each shows.
 -/
 
@@ -25,7 +25,7 @@ def shippedPackageNames : Array String :=
     "binding-search", "workspace", "shell", "compile", "at-point", "version-control",
     "version-control-gutter", "languages"]
 
-/-- The checks of the packages that ship (`Editor/PackageSet.lean`): the
+/-- The checks of the packages that ship (`PackageSet.lean`): the
 list a host is handed is whole, every package of it is accepted, and what
 it registers is all theirs. -/
 def packageSetChecks : List Check :=

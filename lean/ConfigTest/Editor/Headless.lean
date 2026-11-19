@@ -72,7 +72,6 @@ import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Package
-import Editor.PackageSet
 import Editor.Process.Environment
 import Editor.Program
 import Editor.ProjectMode
@@ -97,6 +96,7 @@ import Editor.Workspace.Compiled
 import Editor.Workspace.FindFile
 import Editor.Workspace.FindInProject
 import Editor.Workspace.Modes
+import PackageSet
 
 /-!
 # Config tests: `Editor/Headless.lean`

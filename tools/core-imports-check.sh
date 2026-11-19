@@ -18,10 +18,12 @@
 #    exits 1.
 # 2. Every module named `Editor.…` that a root of the build reaches (`built`,
 #    below) is the root or one of the modules it imports, unless it is a
-#    moving module or the module that lists the packages (`list`). Otherwise
-#    it prints each one outside, one a line, and exits 3. This is what makes
-#    the first a statement about every core module: a core module the root
-#    does not import would be checked by nothing.
+#    moving module. Otherwise it prints each one outside, one a line, and
+#    exits 3. This is what makes the first a statement about every core
+#    module: a core module the root does not import would be checked by
+#    nothing. No module is exempt by name: the list of the packages that
+#    ship, which names the moving packages, is `PackageSet`, outside
+#    `Editor/` and its namespace.
 # 3. A root of the build that reaches the elaborator adapter (`elaborator`)
 #    reaches the config base (`base`): an executable that can elaborate
 #    config links every module config may import. Otherwise it prints each
@@ -38,9 +40,6 @@
 # form. It makes one query for the root and one for each root of the build.
 set -eu
 
-# The module that lists the packages that ship. It is neither the core's nor
-# a feature's: it names the packages, the moving ones among them.
-list=Editor.PackageSet
 # The config base: the module user config is elaborated on.
 base=Editor
 # The module that links Lean's elaborator in and elaborates config on the
@@ -128,7 +127,7 @@ for target in $built; do
         (Editor.*) ;;
         (*) continue ;;
       esac
-      if [ "$module" = "$list" ] || is_moving "$module"; then
+      if is_moving "$module"; then
         continue
       fi
       if ! printf '%s\n' "$core" | grep -qxF "$module"; then
@@ -147,7 +146,7 @@ done
 
 # 2. Every `Editor.…` module the build reaches is in the root's closure.
 if [ -n "$outside" ]; then
-  echo "core-imports-check: the build reaches these modules, which $root does not import and which are neither moving nor $list:" >&2
+  echo "core-imports-check: the build reaches these modules, which $root does not import and which are not moving:" >&2
   printf '%s\n' "$outside" | sed '/^$/d' | sort -u
   exit 3
 fi

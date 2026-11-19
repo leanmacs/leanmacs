@@ -163,7 +163,7 @@ save answered, no file, or whatever is there. A save that finds another
 file than it expects is refused, with what is there, and writes nothing.
 
 Everything the editor ships is registered by a **package**: the headless
-host is handed the packages that ship (`lean/Editor/PackageSet.lean`, which
+host is handed the packages that ship (`lean/PackageSet.lean`, which
 `lean/Main.lean` passes to it) and registers them in order as its loop
 starts, before any config, each for the owner named after it
 ([lean-runtime.md](../design/lean-runtime.md), "Packages"). A reload never

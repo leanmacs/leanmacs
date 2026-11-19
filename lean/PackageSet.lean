@@ -30,6 +30,20 @@ imports this module and passes the array on, and a host registers the
 array it is given, in order, when it starts, before any config
 (`Config.State.ofPackages`, `Editor/Config/Packages.lean`).
 
+## This module is the executable's wiring, outside `Editor/`
+
+It is not a module of the editor: it is under neither `Editor/` nor the
+namespace `Editor`, and it is a library of its own (`lean_lib PackageSet`,
+`lakefile.lean`), which the executable's root and the tests that need the
+list import. It names every package, the two that move out of the core
+among them (the compile mode's, `Editor/Compile/Compiled.lean`, and the
+shipped palettes', `Editor/Themes/Shipped.lean`), so it can be neither a
+core module nor a feature's (`docs/design/packages.md`): the core's root
+(`Editor/Core.lean`) does not import it, and the core imports check, which
+is of the modules named `Editor.…`, does not meet it
+(`tools/core-imports-check.sh`). The packages roadmap's phase 4 replaces
+it with a root generated from the package set.
+
 ## This module is outside the host
 
 No module of a host imports this one, or any module it imports: a host
@@ -43,15 +57,6 @@ imports are what that check forbids a host. A helper it needed would have
 to live in a package's module, or the check would forbid the host that
 helper too. Tests import it for the list (`ModelTest.packageSetChecks`,
 `ConfigTest.shippedChecks`).
-
-## This module is outside the core too
-
-It names every package, the two that move out of the core among them (the
-compile mode's, `Editor/Compile/Compiled.lean`, and the shipped palettes',
-`Editor/Themes/Shipped.lean`), so it is neither a core module nor a
-feature's: the core's root (`Editor/Core.lean`) does not import it, and
-the core imports check exempts it by name
-(`tools/core-imports-check.sh`; `docs/design/packages.md`).
 
 ## The order
 
@@ -78,7 +83,9 @@ Nothing is ordered by what a package depends on: a command's name is looked
 up when it is run, so a package may name a command of a later one.
 -/
 
-namespace Editor.PackageSet
+namespace PackageSet
+
+open Editor
 
 /-- The packages that ship, in the order a host registers them ("The
 order", in the module docs). -/
@@ -89,4 +96,4 @@ def shipped : Array Package :=
     BindingSearch.package, Workspace.package, Shell.package, Compile.package, AtPoint.package,
     VersionControl.package, VersionControl.gutterPackage, Language.package]
 
-end Editor.PackageSet
+end PackageSet

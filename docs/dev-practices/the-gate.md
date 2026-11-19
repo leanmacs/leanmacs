@@ -1195,7 +1195,8 @@ cd lean && sh ../tools/host-imports-check.sh
 
 Part of `mise run ffi-test`. A host registers features only from the
 packages it is handed, and the one module that lists them,
-`lean/Editor/PackageSet.lean`, is outside the host
+`lean/PackageSet.lean`, a library of its own outside `lean/Editor/`, is
+outside the host
 ([lean-runtime.md](../design/lean-runtime.md), "Packages"). This check
 shows the import half of that on Lake's module graph, with both terms
 defined from the graph:
@@ -1216,7 +1217,7 @@ each one the host reaches and exits 1.
   the root `ConfigTest`, which imports the packages, and requires exit 1.
   A query Lake fails is exit 2, never 1, so a broken query cannot stand in
   for a finding.
-- **`Editor/PackageSet.lean` imports package modules and nothing else**,
+- **`PackageSet.lean` imports package modules and nothing else**,
   since its direct imports are what the check forbids a host.
 - **What it does not claim.** The core loop still imports feature code
   that defines no package, such as `Editor.Files` and `Editor.Ex`
@@ -1252,7 +1253,7 @@ it. It checks three rules, in order, and stops at the first that fails:
 | Rule | Exit when it fails |
 |---|---|
 | The root and the modules it imports, directly or through another, hold no moving module | 1, after printing each one found |
-| Every module named `Editor.…` that a root of the build reaches (`Main`, `ModelTest`, `ConfigTest`, `FfiTest`, `ContractTest`) is the root or one of the modules it imports, unless it is a moving module or the list of packages (`Editor.PackageSet`) | 3, after printing each one outside |
+| Every module named `Editor.…` that a root of the build reaches (`Main`, `ModelTest`, `ConfigTest`, `FfiTest`, `ContractTest`) is the root or one of the modules it imports, unless it is a moving module | 3, after printing each one outside |
 | A root of the build that reaches the elaborator adapter (`Editor.Config.Elaborate`) reaches the config base (`Editor`) | 4, after printing each root that does not |
 
 - **The second rule is what makes the first a statement about every core
@@ -1269,6 +1270,10 @@ it. It checks three rules, in order, and stops at the first that fails:
   this rule fails when one does not.
 - **The moving names are named, never derived.** "Every module the root
   does not reach" would pass whatever the core imported.
+- **No module is exempt by name.** The list of the packages that ship
+  imports the moving packages, and it is not a module of the editor:
+  `PackageSet` is outside `lean/Editor/` and the namespace `Editor`, so the
+  second rule, which is of the modules named `Editor.…`, does not meet it.
 - **It asks Lake and reads no source text** (`lake query
   +<module>:transImports`, one module a line), as the host imports check
   does, so it follows a module that is renamed or moved, and an import

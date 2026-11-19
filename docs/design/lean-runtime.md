@@ -553,7 +553,7 @@ elaborator.
 | Owners: who registered or started something | `lean/Editor/Config/Owner.lean` |
 | A package: a name and a `setup`, how a feature registers | `lean/Editor/Package.lean` |
 | Registering packages: a package's owner, what its `setup` means and what is refused, and the config state a host starts from | `lean/Editor/Config/Packages.lean` |
-| The packages that ship: the one hand-written list, which `Main.lean` passes to the hosts | `lean/Editor/PackageSet.lean` |
+| The packages that ship: the one hand-written list, which `Main.lean` passes to the hosts | `lean/PackageSet.lean` |
 | Faces: what a face looks like, as data, the built-in theme and a theme with its name | `lean/Editor/Face.lean` |
 | The registry of commands, of jobs, of key bindings, of modes, of ex bindings, of faces, of themes, of mode-line segments and of menus, replaced by owner, the keymap of the bindings, a mode line resolved from a listing, the menu bar, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
 | The mode line: segments, from what a window shows to status fields; the shipped ones and their default order; a listing resolved into a mode line; and the fields of a window, selected or not | `lean/Editor/ModeLine.lean` |
@@ -891,7 +891,10 @@ def package : Package :=
   (`Headless.Collaborators σ scheme`), an `InputScheme` is in `Type 1`, and
   a setup request is plain data in `Type`.
 - **The packages that ship are listed by hand in one module**,
-  `lean/Editor/PackageSet.lean` (`PackageSet.shipped`), 22 of them, each
+  `lean/PackageSet.lean` (`PackageSet.shipped`), which is the executable's
+  wiring and no module of the editor: it is outside `lean/Editor/` and the
+  namespace `Editor`, in a library of its own (`lean_lib PackageSet`). It
+  lists 22 packages, each
   defined in its feature's `Compiled.lean` but `shipped-themes`
   (`lean/Editor/Themes/Shipped.lean`): `completion`, `mode-line`,
   `files`, `minibuffer`, `evil`, `ex`, `buffers`, `frame-commands`, `menu`,

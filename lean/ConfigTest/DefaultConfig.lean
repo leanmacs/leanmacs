@@ -10,9 +10,9 @@ import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Headless
 import Editor.InputScheme.Vim.Default
-import Editor.PackageSet
 import Editor.Workspace.FindFile
 import Editor.Workspace.FindInProject
+import PackageSet
 
 /-!
 # Config tests: the default config

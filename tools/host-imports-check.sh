@@ -7,8 +7,8 @@
 #   tools/host-imports-check.sh [<root module> [<list module>]]
 #
 # Run it in `lean/`. The root module defaults to `Main`, the executable's,
-# and the list module to `Editor.PackageSet`, the module that lists the
-# packages.
+# and the list module to `PackageSet`, the module that lists the packages
+# (`lean/PackageSet.lean`, outside `Editor/`).
 #
 # - The host's modules are the modules the root imports, other than the
 #   list module, with everything they import inside the package.
@@ -41,7 +41,7 @@ if [ "$#" -gt 2 ]; then
   exit 2
 fi
 root=${1:-Main}
-list=${2:-Editor.PackageSet}
+list=${2:-PackageSet}
 
 # A query Lake fails is status 2, never 1: 1 says a feature module was found.
 asked() {

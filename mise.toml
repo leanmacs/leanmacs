@@ -167,8 +167,9 @@ run = [
   # The host's modules import no feature module, on Lake's module graph
   # (tools/host-imports-check.sh; docs/dev-practices/the-gate.md, "The host
   # imports check"): the modules `Main` imports, other than the module that
-  # lists the packages (`Editor.PackageSet`), reach neither that module nor a
-  # module it imports. Three `lake query` calls, about half a second each.
+  # lists the packages (`PackageSet`, lean/PackageSet.lean), reach neither
+  # that module nor a module it imports. Three `lake query` calls, about half
+  # a second each.
   "sh ../tools/host-imports-check.sh",
   # And the check bites: pointed at the root `ConfigTest`, which imports the
   # packages, it must find them and exit 1. Its output is shown only when it
@@ -179,7 +180,7 @@ run = [
   # "The core imports check"): the core's root, `Editor.Core`, and what it
   # imports hold neither the compile mode nor a shipped palette; every
   # `Editor.…` module the build reaches is among them, unless it is one of
-  # those or the list of packages; and every root that links the elaborator
+  # those; and every root that links the elaborator
   # links the config base. Six `lake query` calls, about half a second each.
   "sh ../tools/core-imports-check.sh",
   # And the check bites twice. Pointed at the root `Editor`, the config base,

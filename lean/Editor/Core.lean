@@ -49,9 +49,10 @@ through another, and declares nothing. The core is every module under
 `lean/Editor/` except the modules of the features that move out of it into
 packages of their own (the compile mode, `Editor/Compile.lean` and
 `Editor/Compile/`, and the shipped palettes, `Editor/Themes/Solarized.lean`,
-`Editor/Themes/FairyFloss.lean` and `Editor/Themes/Shipped.lean`) and the
-hand-written list of the packages that ship (`Editor/PackageSet.lean`).
-`docs/design/packages.md` says which modules those are, what a package may
+`Editor/Themes/FairyFloss.lean` and `Editor/Themes/Shipped.lean`). The
+hand-written list of the packages that ship is not under `lean/Editor/`
+(`PackageSet.lean`, a library of its own), and this module does not import
+it. `docs/design/packages.md` says which modules those are, what a package may
 import of the core, and what each feature still in the core would have to
 cross to move out.
 
@@ -78,7 +79,7 @@ base.
 `tools/core-imports-check.sh` checks, on Lake's module graph, in `mise run
 ffi-test`, that this module and what it imports hold no moving module, and
 that every module named `Editor.…` an executable or a test executable
-reaches is among them, unless it is moving or the list. So a new core
+reaches is among them, unless it is moving. So a new core
 module that nothing here reaches fails the gate until it is imported here,
 and a core module that comes to import a moving one fails it too. It also
 checks that an executable that links the elaborator links the config base

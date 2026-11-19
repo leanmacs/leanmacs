@@ -10,12 +10,12 @@ import Editor.Ffi.Window
 import Editor.FrameCommands.Compiled
 import Editor.Menu
 import Editor.Menu.Compiled
-import Editor.PackageSet
 import Editor.Process.Environment
 import Editor.ProjectMode
 import Editor.Window
 import Editor.Window.Real
 import Editor.Workspace
+import PackageSet
 
 /-!
 # FFI tests: `Editor/Window/Real.lean`
@@ -64,7 +64,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     Editor.Ffi.windowRequest .scripted .minimise
     Editor.Window.shutdown
   let status ←
-    Editor.Window.host Editor.PackageSet.shipped .scripted options (.skip none)
+    Editor.Window.host PackageSet.shipped .scripted options (.skip none)
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[] shutdown
         .headless
   unless status == 0 do
@@ -146,7 +146,7 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := oleanDir, composition := true }
   let status ←
-    Editor.Window.host Editor.PackageSet.shipped .scripted options (.load configDir)
+    Editor.Window.host PackageSet.shipped .scripted options (.load configDir)
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
         Editor.Window.shutdown .headless (patience := none)
   unless status == 0 do
@@ -173,7 +173,7 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
     { file := some file, config := none, configGiven := false, sysroot := none, oleans := ""
       composition := true }
   let status ←
-    Editor.Window.host Editor.PackageSet.shipped .scriptedUndrawn options (.skip none)
+    Editor.Window.host PackageSet.shipped .scriptedUndrawn options (.skip none)
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
         Editor.Window.shutdown .headless
   unless status == 1 do

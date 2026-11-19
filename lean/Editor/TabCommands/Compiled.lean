@@ -13,7 +13,7 @@ count the call carries, and the tab completion source. A host registers it
 for the owner `tab-commands` when its loop starts, before any config
 (`Editor/Config/Packages.lean`), so they hold when config fails to load,
 and config can call them and bind keys to them. Both of the executable's
-hosts are handed it (`Editor/PackageSet.lean`).
+hosts are handed it (`PackageSet.lean`).
 
 - **The commands**: every tab command, under its name. No binding
   comes with them here: the Vim scheme binds them under `C-w` with tmux's
