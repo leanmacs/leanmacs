@@ -195,8 +195,8 @@ structure Report where
   /-- What the reload has to say: the errors that rejected it, warnings, and
   the store values that were lost when it was installed. -/
   diagnostics : Array Diagnostic
-  /-- How many chunks the config that is now installed has. -/
-  chunks : Nat
+  /-- How many files the config that is now installed has. -/
+  files : Nat
   /-- How many commands the config that is now installed registers. -/
   commands : Nat
   /-- The theme the installed config named that no theme is registered
@@ -391,7 +391,7 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
   | none =>
     (state,
       { number := state.finished, installed := false, diagnostics := outcome.diagnostics,
-        chunks := state.chunks.size, commands := state.commands })
+        files := state.chunks.size, commands := state.commands })
   | some built =>
     -- A rule whose target the chosen layout lacks is left out, and said.
     let chosen := built.registrations.layout.getD Layout.default
@@ -434,7 +434,7 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
         layout := built.registrations.layout, tabBar := built.registrations.tabBar
         titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
-        chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments
+        files := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments
         unknownStyles, unknownDisplays, unknownAtPoints, unusableRules })
 
 /-- The appearance the window is to be asked for, and the state that

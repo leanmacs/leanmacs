@@ -92,7 +92,7 @@ def loaded (names : List String) : Array (Config.Chunk Elaborated) :=
 /-- An effect of the reload reducer, as a check compares it: a start with the
 base and the names of the chunks it carries, the cancelling of an owner's
 jobs with the owner's name, or a report with its number, whether it
-installed, the sources of its diagnostics, and its counts of chunks and
+installed, the sources of its diagnostics, and its counts of files and
 commands. -/
 inductive Seen where
   /-- A job was started. -/
@@ -100,7 +100,7 @@ inductive Seen where
   /-- The jobs of the owner called `owner` were cancelled. -/
   | cancelJobs (owner : String)
   /-- A reload was reported. -/
-  | report (number : Nat) (installed : Bool) (sources : Array String) (chunks commands : Nat)
+  | report (number : Nat) (installed : Bool) (sources : Array String) (files commands : Nat)
   /-- The theme in force was switched. -/
   | themed
   /-- The window was asked for this appearance. -/
@@ -112,7 +112,7 @@ def seen : Config.Effect Elaborated → Seen
   | .start base chunks => .start base (chunks.map (·.name))
   | .cancelJobs owner => .cancelJobs owner.name
   | .report report =>
-    .report report.number report.installed (report.diagnostics.map (·.source)) report.chunks
+    .report report.number report.installed (report.diagnostics.map (·.source)) report.files
       report.commands
   | .themed => .themed
   | .appearance appearance => .appearance appearance

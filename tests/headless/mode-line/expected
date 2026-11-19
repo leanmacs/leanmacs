@@ -1,4 +1,4 @@
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 segment: no segment is registered as `nope`
 key arrived: <F5> F5 -
 scene 0x0, focused 0, echo "reload: no segment is registered as `nope`", echo padding 8, preedit -, published 1, theme "default"

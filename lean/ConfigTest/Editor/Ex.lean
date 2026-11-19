@@ -92,8 +92,8 @@ def exChecks (context : Context) : List Check :=
             let second ← session.echo
             return first == "one".quote &&
                 reloaded ==
-                  #["reload 1: installed, 1 chunks, 2 commands",
-                    "reload 2: installed, 1 chunks, 2 commands"] &&
+                  #["reload 1: installed, 1 files, 2 commands",
+                    "reload 2: installed, 1 files, 2 commands"] &&
                 second == "two".quote)
           exCompiled },
     { name :=

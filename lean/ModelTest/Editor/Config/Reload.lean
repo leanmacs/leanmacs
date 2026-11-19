@@ -1044,7 +1044,7 @@ def reloadChecks : List Check :=
         let warning : Config.Diagnostic :=
           { source := "a.lean", line := 1, severity := .warning, message := "unused" }
         let report (installed : Bool) (diagnostics : Array Config.Diagnostic) : Config.Report :=
-          { number := 2, installed, diagnostics, chunks := 1, commands := 1 }
+          { number := 2, installed, diagnostics, files := 1, commands := 1 }
         let one := report false #[warning, error "30-broken.lean" 1 20 "type mismatch\n  \"x\""]
         let three :=
           report false

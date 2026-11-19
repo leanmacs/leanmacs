@@ -330,8 +330,8 @@ def hostChecks (context : Context) : List Check :=
          session.ask [.reload]
          session.ask [.run "greet", .show]
          return (← session.lines) ==
-             #["reload 1: installed, 2 chunks, 1 commands", "run greet: ok", "commands: greet",
-               "text 0: \"\"", "text 1: \"v1\"", "reload 2: installed, 2 chunks, 1 commands",
+             #["reload 1: installed, 2 files, 1 commands", "run greet: ok", "commands: greet",
+               "text 0: \"\"", "text 1: \"v1\"", "reload 2: installed, 2 files, 1 commands",
                "run greet: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\"",
                "text 2: \"v2\""] },
     { name :=
@@ -369,7 +369,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.run "greet", .show]
           return (← session.lines) ==
-              #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
+              #["reload 1: installed, 2 files, 1 commands", "reload 2: rejected",
                 "diagnostic: 10-greet.lean: error", "run greet: ok", "commands: greet",
                 "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a throwing setup keeps the old config"
@@ -382,7 +382,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.run "other", .show]
           -- The message is the one config threw, so the whole line is ours.
           return (← session.output.get) ==
-              #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
+              #["reload 1: installed, 2 files, 1 commands", "reload 2: rejected",
                 "diagnostic: setup:0:0: error: no thanks", "run other: no such command",
                 "commands: greet", "text 0: \"\""] },
     { name :=
@@ -396,7 +396,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.run "greet", .show]
           -- The message is the editor's own, so the whole line is pinned.
           return (← session.output.get) ==
-              #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
+              #["reload 1: installed, 2 files, 1 commands", "reload 2: rejected",
                 "diagnostic: setup:0:0: error: the command `greet` is registered twice",
                 "run greet: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a reload does not double-register"
@@ -408,9 +408,9 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.run "greet", .show]
           return (← session.lines) ==
-              #["reload 1: installed, 2 chunks, 1 commands",
-                "reload 2: installed, 2 chunks, 1 commands",
-                "reload 3: installed, 2 chunks, 1 commands", "run greet: ok", "commands: greet",
+              #["reload 1: installed, 2 files, 1 commands",
+                "reload 2: installed, 2 files, 1 commands",
+                "reload 3: installed, 2 files, 1 commands", "run greet: ok", "commands: greet",
                 "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a store value survives a reload"
       run :=
@@ -421,9 +421,9 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.show, .run "bump", .show]
           return (← session.lines) ==
-              #["reload 1: installed, 1 chunks, 1 commands", "run bump: ok", "run bump: ok",
+              #["reload 1: installed, 1 files, 1 commands", "run bump: ok", "run bump: ok",
                 "commands: bump", "text 0: \"\"", "store counter v1: 2",
-                "reload 2: installed, 1 chunks, 1 commands", "commands: bump", "text 0: \"\"",
+                "reload 2: installed, 1 files, 1 commands", "commands: bump", "text 0: \"\"",
                 "store counter v1: 2", "run bump: ok", "commands: bump", "text 0: \"\"",
                 "store counter v1: 12"] },
     { name := "a store migrates when a reload changes its type and raises its version"
@@ -435,8 +435,8 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.show, .run "bump", .show]
           return (← session.lines) ==
-              #["reload 1: installed, 1 chunks, 1 commands", "run bump: ok", "run bump: ok",
-                "reload 2: installed, 1 chunks, 1 commands", "commands: bump", "text 0: \"\"",
+              #["reload 1: installed, 1 files, 1 commands", "run bump: ok", "run bump: ok",
+                "reload 2: installed, 1 files, 1 commands", "commands: bump", "text 0: \"\"",
                 "store counter v2: {n: 2, label: \"migrated\"}", "run bump: ok", "commands: bump",
                 "text 0: \"\"", "store counter v2: {n: 3, label: \"migrated\"}"] },
     { name :=
@@ -449,8 +449,8 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.show]
           return (← session.lines) ==
-              #["reload 1: installed, 1 chunks, 1 commands", "run bump: ok",
-                "reload 2: installed, 1 chunks, 1 commands", "diagnostic: config.lean: warning",
+              #["reload 1: installed, 1 files, 1 commands", "run bump: ok",
+                "reload 2: installed, 1 files, 1 commands", "diagnostic: config.lean: warning",
                 "diagnostic: store counter: warning", "commands: bump", "text 0: \"\"",
                 "store counter v2: 0"] },
     { name := "a chunk that declares initialize keeps the old config"
@@ -463,7 +463,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.run "greet", .show]
           return (← session.lines) ==
-              #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
+              #["reload 1: installed, 2 files, 1 commands", "reload 2: rejected",
                 "diagnostic: 15-state.lean: error", "run greet: ok", "commands: greet",
                 "text 0: \"\"", "text 1: \"v1\""] },
     { name :=
@@ -473,7 +473,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.run "bump", .run "broken", .show]
           return (← session.lines) ==
-              #["reload 1: installed, 1 chunks, 2 commands", "run bump: ok",
+              #["reload 1: installed, 1 files, 2 commands", "run bump: ok",
                 "run broken: refused: no such text", "commands: bump broken", "text 0: \"\"",
                 "text 1: \"made before the refusal\"", "store counter v1: 1"] },
     { name :=
@@ -483,7 +483,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.run "drop", .show]
           return (← session.lines) ==
-              #["reload 1: installed, 1 chunks, 3 commands", "run drop: ok",
+              #["reload 1: installed, 1 files, 3 commands", "run drop: ok",
                 "commands: drop inside stale", "text 0: \"\"", "text 1: \"before\"",
                 "text 3: \"after\""] },
     { name :=
@@ -493,7 +493,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.run "inside", .run "stale"]
           return (← session.lines) ==
-              #["reload 1: installed, 1 chunks, 3 commands", "run inside: refused: bad position",
+              #["reload 1: installed, 1 files, 3 commands", "run inside: refused: bad position",
                 "run stale: refused: no such snapshot"] },
     { name :=
         "a command whose transaction's changes do not fit, and one whose transaction's selection does not, are each reported with that refusal's name"
@@ -502,7 +502,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.run "short", .run "astray"]
           return (← session.lines) ==
-              #["reload 1: installed, 1 chunks, 2 commands", "run short: refused: bad change",
+              #["reload 1: installed, 1 files, 2 commands", "run short: refused: bad change",
                 "run astray: refused: bad selection"] },
     { name :=
         "a command that asks a text's log about a revision it has not reached, and one that asks about a revision it has forgotten, are each reported with that refusal's name"
@@ -511,7 +511,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.run "ahead", .run "behind"]
           return (← session.lines) ==
-              #["reload 1: installed, 1 chunks, 2 commands", "run ahead: refused: unknown revision",
+              #["reload 1: installed, 1 files, 2 commands", "run ahead: refused: unknown revision",
                 "run behind: refused: forgotten revision"] },
     { name :=
         "a command that marks a text reads its marker back where an edit moved it, and one that asks for a marker it gave up is reported with that refusal's name"
@@ -520,7 +520,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.run "kept", .run "lost"]
           return (← session.lines) ==
-              #["reload 1: installed, 1 chunks, 2 commands", "run kept: ok",
+              #["reload 1: installed, 1 files, 2 commands", "run kept: ok",
                 "run lost: refused: no such marker"] },
     { name :=
         "a command that applies the inverse of its edit reads the text as it was, and one that asks for an inverse it dropped, and one whose text is not where the edit left it, are each reported with that refusal's name"
@@ -529,7 +529,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.reload]
           session.ask [.run "undone", .run "dropped", .run "elsewhere"]
           return (← session.lines) ==
-              #["reload 1: installed, 1 chunks, 3 commands", "run undone: ok",
+              #["reload 1: installed, 1 files, 3 commands", "run undone: ok",
                 "run dropped: refused: no inverse", "run elsewhere: refused: not in state"] },
     { name :=
         "a config directory that does not exist is a rejected reload whose one diagnostic line names the directory"
@@ -555,8 +555,7 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.run "greet"]
           let lines ← session.output.get
           let diagnostic := lines.getD 2 ""
-          return lines.size == 4 &&
-              lines.getD 0 "" == "reload 1: installed, 2 chunks, 1 commands" &&
+          return lines.size == 4 && lines.getD 0 "" == "reload 1: installed, 2 files, 1 commands" &&
               lines.getD 1 "" == "reload 2: rejected" &&
               diagnostic.startsWith "diagnostic: config:0:0: error: " &&
               namesOnOneLine diagnostic (session.directory / "15-bad.lean") &&
@@ -663,10 +662,10 @@ def threadChecks (context : Context) : List Check :=
               session.ask []
               let after ← session.output.get
               return answered && held &&
-                  lines.extract 0 1 == #["reload 1: installed, 2 chunks, 1 commands"] &&
+                  lines.extract 0 1 == #["reload 1: installed, 2 files, 1 commands"] &&
                   (lines.filter (·.startsWith "event ")) == eventLines 77 100 &&
                   !lines.any (·.startsWith "reload 2") &&
-                  after.extract 102 after.size == #["reload 2: installed, 3 chunks, 1 commands"]
+                  after.extract 102 after.size == #["reload 2: installed, 3 files, 1 commands"]
             finally
               gate.open },
     { name :=
@@ -694,8 +693,8 @@ def threadChecks (context : Context) : List Check :=
               session.ask [.run "greet", .show]
               return (← reads.get) == 2 && (← gate.most.get) == 1 &&
                   (← session.lines) ==
-                    #["reload 1: installed, 3 chunks, 1 commands",
-                      "reload 2: installed, 3 chunks, 1 commands", "run greet: ok",
+                    #["reload 1: installed, 3 files, 1 commands",
+                      "reload 2: installed, 3 files, 1 commands", "run greet: ok",
                       "commands: greet", "text 0: \"\"", "text 1: \"v2\""]
             finally
               gate.open },
@@ -844,8 +843,8 @@ def jobChecks (context : Context) : List Check :=
           let command ← session.threadOf "run greet: ok"
           let handler ← session.threadOf "job 1 count: ok"
           return waiting ==
-                #["reload 1: installed, 2 chunks, 1 commands", "run greet: ok",
-                  "spawn count: job 1", "run greet: ok"] &&
+                #["reload 1: installed, 2 files, 1 commands", "run greet: ok", "spawn count: job 1",
+                  "run greet: ok"] &&
               joined == .settled &&
               (← session.output.get) ==
                 waiting ++
@@ -871,8 +870,8 @@ def jobChecks (context : Context) : List Check :=
           session.ask [.show]
           return withdrawn.size == 1 && (← session.clock.waiting) == 0 &&
               (← session.output.get) ==
-                #["reload 1: installed, 2 chunks, 1 commands", "spawn count: job 1",
-                  "job 1 count: cancelled", "reload 2: installed, 2 chunks, 1 commands",
+                #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1",
+                  "job 1 count: cancelled", "reload 2: installed, 2 files, 1 commands",
                   "commands: greet"] },
     { name :=
         "a rejected reload cancels nothing: the old config's job runs on, and its handler runs when it finishes"
@@ -889,7 +888,7 @@ def jobChecks (context : Context) : List Check :=
           let joined ← session.host.join patience
           return stillWaiting && joined == .settled &&
               (← session.lines) ==
-                #["reload 1: installed, 2 chunks, 1 commands", "spawn count: job 1",
+                #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1",
                   "reload 2: rejected", "diagnostic: 10-greet.lean: error", "job 1 count: ok"] },
     { name :=
         "a job that throws is reported as failed with its message, a handler whose command the library refuses as refused, and a name that is not registered as no such job"
@@ -905,7 +904,7 @@ def jobChecks (context : Context) : List Check :=
           -- The two jobs end at one instant, in either order.
           let ended := ((← session.output.get).extract spawned.size).qsort (· < ·)
           return spawned ==
-                #["reload 1: installed, 2 chunks, 1 commands", "spawn boom: job 1",
+                #["reload 1: installed, 2 files, 1 commands", "spawn boom: job 1",
                   "spawn bad: job 2", "spawn nope: no such job"] &&
               joined == .settled &&
               ended == #["job 1 boom: failed: no thanks", "job 2 bad: refused: no such text"] },
@@ -926,7 +925,7 @@ def jobChecks (context : Context) : List Check :=
           let cancelled ← eventually (return (← stage.clock.withdrawn).size == 1)
           return failure == some (.working (some 5)) && cancelled && (← stage.clock.waiting) == 0 &&
               (← stage.output.get) ==
-                #["reload 1: installed, 2 chunks, 1 commands", "spawn count: job 1"] },
+                #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"] },
     { name :=
         "spawn and join are directives of a script, a spawn with no name is refused, and a join that ran out is described with its line"
       run :=
@@ -1179,7 +1178,7 @@ def scriptChecks (context : Context) : List Check :=
                 patience
           return failure == none &&
               (← stage.output.get) ==
-                #["reload 1: installed, 2 chunks, 1 commands", "key arrived: a KeyA shift+control",
+                #["reload 1: installed, 2 files, 1 commands", "key arrived: a KeyA shift+control",
                   "run greet: ok", "key arrived: <Escape> - -"] },
     { name :=
         "a real config that defines a segment and lists the mode line installs: the reload prints a line for the segment nobody registered, the echo area says it, and each status line is the listing's, in its order and on its sides"
@@ -1196,7 +1195,7 @@ def scriptChecks (context : Context) : List Check :=
           let output ← stage.output.get
           return failure == none &&
               output.filter (fun line => !line.startsWith "scene " && !line.startsWith "view ") ==
-                #["reload 1: installed, 1 chunks, 0 commands",
+                #["reload 1: installed, 1 files, 0 commands",
                   "segment: no segment is registered as `nope`",
                   "status 0 in mode-line.active: mode-line.buffer \"scratch\" +4 | mode-line.secondary \"hi\" +4, mode-line.secondary \"1:3\" +4"] &&
               output.any fun line =>
@@ -1217,7 +1216,7 @@ def scriptChecks (context : Context) : List Check :=
                 patience
           return failure == none &&
               (← stage.output.get) ==
-                #["reload 1: installed, 2 chunks, 1 commands", "run greet: ok", "commands: greet",
+                #["reload 1: installed, 2 files, 1 commands", "run greet: ok", "commands: greet",
                   "text 0: \"\"", "text 1: \"v1\""] },
     { name :=
         "a script whose settle cannot be satisfied fails, it does not hang, and the failure names the settle's line and says a reload was still running"
@@ -1420,11 +1419,11 @@ def scriptChecks (context : Context) : List Check :=
           -- the four markers the waits posted. Had the job's command or the
           -- reload's install published nothing, the count would be short.
           return (← session.lines) ==
-              #["reload 1: installed, 2 chunks, 1 commands",
+              #["reload 1: installed, 2 files, 1 commands",
                 "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
                 "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4, padding 8 8",
                 statusOf (modified := true) (cursor := ⟨0, 4⟩), "spawn count: job 1",
-                "job 1 count: ok", "reload 2: installed, 2 chunks, 1 commands",
+                "job 1 count: ok", "reload 2: installed, 2 files, 1 commands",
                 "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 10, theme \"default\"",
                 "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4, padding 8 8",
                 statusOf (modified := true) (cursor := ⟨0, 4⟩)] },
@@ -1444,7 +1443,7 @@ def scriptChecks (context : Context) : List Check :=
           -- run, the marker of the wait and the commit. Had the scenes
           -- after the release been refused, the count would be short.
           return (← session.lines) ==
-              #["reload 1: installed, 1 chunks, 1 commands",
+              #["reload 1: installed, 1 files, 1 commands",
                 "scene 0x0, focused 0, echo \"\", echo padding 8, preedit -, published 1, theme \"default\"",
                 "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1, padding 8 8",
                 statusOf (modified := true) (cursor := ⟨0, 1⟩), "run forget: ok",
@@ -1607,7 +1606,7 @@ def hostLoopChecks (context : Context) : List Check :=
             return false
           session.ask [.run "quitter"]
           return (← session.lines) ==
-                #["reload 1: installed, 1 chunks, 1 commands", "run quitter: gave up: no can do"] &&
+                #["reload 1: installed, 1 files, 1 commands", "run quitter: gave up: no can do"] &&
               (← session.scene) == ("quitter: no can do".quote, #[viewLine "abcd" 4]) },
     { name :=
         "the driver's run of a command of config's that breaks off keeps what the command did and is printed so: the output says it broke off, with its reason, the scene's echo is its name and the reason with no refused, and the view's text holds what the command inserted"
@@ -1618,7 +1617,7 @@ def hostLoopChecks (context : Context) : List Check :=
             return false
           session.ask [.run "stopper"]
           return (← session.lines) ==
-                #["reload 1: installed, 1 chunks, 1 commands",
+                #["reload 1: installed, 1 files, 1 commands",
                   "run stopper: broke off: far enough"] &&
               (← session.scene) == ("stopper: far enough".quote, #[viewLine "abcdtyped" 9]) },
     { name :=
@@ -1777,7 +1776,7 @@ def hostLoopChecks (context : Context) : List Check :=
                   #["commands: a shared b", "run shared: ok", "commands: a shared b",
                     "text 0: \"\"", "text 1: \"second's shared\""] &&
                 (← session.lines).extract started.size ==
-                  #["reload 1: installed, 2 chunks, 1 commands", "commands: a shared b greet",
+                  #["reload 1: installed, 2 files, 1 commands", "commands: a shared b greet",
                     "text 0: \"\"", "text 1: \"second's shared\""])
           { packages := #[making "first" ["a", "shared"], making "second" ["shared", "b"]] } },
     { name :=
@@ -1794,7 +1793,7 @@ def hostLoopChecks (context : Context) : List Check :=
             let joined ← session.host.join patience
             return reloaded ==
                   #["run rest: ok", "job 1 nap: started",
-                    "reload 1: installed, 1 chunks, 0 commands"] &&
+                    "reload 1: installed, 1 files, 0 commands"] &&
                 joined == .settled &&
                 (← session.output.get).extract reloaded.size == #["job 1 nap: ok"] &&
                 (← session.scene) == ("".quote, #[viewLine "napped" 6]))
@@ -1981,7 +1980,7 @@ def reloadEchoChecks (context : Context) : List Check :=
               after == "\"hello\"" &&
               lines.contains "reload 2: rejected" &&
               lines.contains "diagnostic: 10-greet.lean: error" &&
-              lines.contains "reload 4: installed, 2 chunks, 1 commands" &&
+              lines.contains "reload 4: installed, 2 files, 1 commands" &&
               (lines.filter (· == "run greet: ok")).size == 3 },
     { name :=
         "a reload rejected before the frame is made is said in the echo area once the frame is made"
@@ -2289,8 +2288,8 @@ def watchReloadChecks (context : Context) : List Check :=
           let later := lines.extract afterReload.size lines.size
           return oldEnded && joined == .settled &&
               afterReload ==
-                #["reload 1: installed, 2 chunks, 1 commands", "spawn follow: job 1",
-                  "job 1 follow: cancelled", "reload 2: installed, 2 chunks, 1 commands"] &&
+                #["reload 1: installed, 2 files, 1 commands", "spawn follow: job 1",
+                  "job 1 follow: cancelled", "reload 2: installed, 2 files, 1 commands"] &&
               later.contains "job 2 follow: ok" &&
               later.contains "text 1: \"v2\"" &&
               !later.any (·.startsWith "job 1") },

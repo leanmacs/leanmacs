@@ -1,4 +1,4 @@
-reload 1: installed, 1 chunks, 1 commands
+reload 1: installed, 1 files, 1 commands
 rule: display rule 1 is left out: the layout has no right edge
 scene 640x480, focused 0, echo "reload: display rule 1 is left out: the layout has no right edge", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8

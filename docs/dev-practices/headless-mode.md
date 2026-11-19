@@ -476,7 +476,7 @@ With the fixture the gate uses (`tests/headless`):
 ```console
 $ cd lean
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/script
-reload 1: installed, 2 chunks, 1 commands
+reload 1: installed, 2 files, 1 commands
 run greet: ok
 run missing: no such command
 commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme execute-command search-bindings workspace-current greet
@@ -527,7 +527,7 @@ key arrived: i KeyI -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 2, theme "default"
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5, padding 8 8
 status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
-reload 1: installed, 2 chunks, 1 commands
+reload 1: installed, 2 files, 1 commands
 spawn count: job 1
 job 1 count: ok
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 9, theme "default"
@@ -552,7 +552,7 @@ not stopped, the gate's time limit would end the run:
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script
-reload 1: installed, 1 chunks, 3 commands
+reload 1: installed, 1 files, 3 commands
 key arrived: c KeyC control
 key arrived: s KeyS -
 key arrived: g KeyG control
@@ -596,7 +596,7 @@ output must be exactly `tests/headless/files/expected`:
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/files/config ../tests/headless/files/script
-reload 1: installed, 1 chunks, 1 commands
+reload 1: installed, 1 files, 1 commands
 run save-buffer: ok
 scene 0x0, focused 0, echo "scratch has no file to save to", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
@@ -643,7 +643,7 @@ area. Its output must be exactly `tests/headless/prompt/expected`:
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/prompt/config ../tests/headless/prompt/script
-reload 1: installed, 1 chunks, 2 commands
+reload 1: installed, 1 files, 2 commands
 run ask-name: ok
 key arrived: ! Digit1 shift
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 2, theme "default"
@@ -776,7 +776,7 @@ end and the prompt still open, and `<Enter>` gives `picked` that text. Its outpu
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script
-reload 1: installed, 1 chunks, 2 commands
+reload 1: installed, 1 files, 2 commands
 run pick: ok
 key arrived: w KeyW -
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 2, theme "default"
@@ -850,7 +850,7 @@ way, and the next scene is drawn in it. Its output must be exactly
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../packages/shipped-themes/tests/headless/themes/config ../packages/shipped-themes/tests/headless/themes/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "first"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
@@ -886,7 +886,7 @@ from a staged bundle too:
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../packages/shipped-themes/tests/headless/shipped-themes/config ../packages/shipped-themes/tests/headless/shipped-themes/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "solarized-light"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
@@ -912,7 +912,7 @@ offers and in what order. Its output must be exactly `load-theme/expected`:
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../packages/shipped-themes/tests/headless/load-theme/config ../packages/shipped-themes/tests/headless/load-theme/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
@@ -944,7 +944,7 @@ exactly `tests/headless/core-themes/expected`:
 
 ```console
 $ ../tests/empty-set/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/core-themes/config ../tests/headless/core-themes/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
@@ -982,7 +982,7 @@ ex names. Its output must be exactly
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/mode-line/config ../tests/headless/mode-line/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 segment: no segment is registered as `nope`
 key arrived: <F5> F5 -
 scene 0x0, focused 0, echo "reload: no segment is registered as `nope`", echo padding 8, preedit -, published 1, theme "default"
@@ -1021,7 +1021,7 @@ exactly `tests/headless/padding/expected`:
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/padding/config ../tests/headless/padding/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 scene 640x480, focused 0, echo "", echo padding 12, preedit -, published 1, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 12 12
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
@@ -1049,7 +1049,7 @@ candidate list's ten rows, `640x160`, and the minibuffer's view. Its output must
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/monocle/config ../tests/headless/monocle/script
-reload 1: installed, 1 chunks, 2 commands
+reload 1: installed, 1 files, 2 commands
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
@@ -1090,7 +1090,7 @@ each moved by the edit. Its output must be exactly
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/two-windows/config ../tests/headless/two-windows/script
-reload 1: installed, 1 chunks, 2 commands
+reload 1: installed, 1 files, 2 commands
 key arrived: i KeyI -
 key arrived: <Enter> Enter -
 key arrived: <Enter> Enter -
@@ -1145,7 +1145,7 @@ output must be exactly `tests/headless/manual-splits/expected`:
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/manual-splits/config ../tests/headless/manual-splits/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 key arrived: w KeyW control
 key arrived: s KeyS -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
@@ -1216,7 +1216,7 @@ exactly `tests/headless/insert-window-keys/expected`:
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/insert-window-keys/config ../tests/headless/insert-window-keys/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 key arrived: w KeyW control
 key arrived: v KeyV -
 key arrived: i KeyI -
@@ -1253,7 +1253,7 @@ the `l` pressed after it is text, `hello l`. Its output must be exactly
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/insert-word-delete/config ../tests/headless/insert-word-delete/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 key arrived: i KeyI -
 key arrived: w KeyW control
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 4, theme "default"
@@ -1281,7 +1281,7 @@ minibuffer's, which the `:` prompt took. Its output must be exactly
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/display-rules/config ../tests/headless/display-rules/script
-reload 1: installed, 1 chunks, 1 commands
+reload 1: installed, 1 files, 1 commands
 rule: display rule 1 is left out: the layout has no right edge
 scene 640x480, focused 0, echo "reload: display rule 1 is left out: the layout has no right edge", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
@@ -1337,7 +1337,7 @@ reason in the echo area. Its output must be exactly
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/edge-sidebar/config ../tests/headless/edge-sidebar/script
-reload 1: installed, 1 chunks, 1 commands
+reload 1: installed, 1 files, 1 commands
 key arrived: c KeyC control
 key arrived: n KeyN -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
@@ -1416,7 +1416,7 @@ beside main. Its output must be exactly
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/float-rule/config ../tests/headless/float-rule/script
-reload 1: installed, 1 chunks, 2 commands
+reload 1: installed, 1 files, 2 commands
 key arrived: c KeyC control
 key arrived: n KeyN -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
@@ -1471,7 +1471,7 @@ output must be exactly `tests/headless/float-anchor/expected`:
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/float-anchor/config ../tests/headless/float-anchor/script
-reload 1: installed, 1 chunks, 2 commands
+reload 1: installed, 1 files, 2 commands
 key arrived: c KeyC control
 key arrived: f KeyF -
 key arrived: g KeyG -
@@ -1524,7 +1524,7 @@ exactly `tests/headless/tabs/expected`:
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/tabs/config ../tests/headless/tabs/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 key arrived: w KeyW control
 key arrived: s KeyS -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
@@ -1634,7 +1634,7 @@ them. The selected window's status line says `in mode-line.active`, and
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/window-dividers/config ../tests/headless/window-dividers/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 key arrived: w KeyW control
 key arrived: v KeyV -
 scene 640x480, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
@@ -1683,7 +1683,7 @@ gone and the window full height again. Its output must be exactly
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/at-point/script
-reload 1: installed, 2 chunks, 1 commands
+reload 1: installed, 2 files, 1 commands
 key arrived: i KeyI -
 key arrived: <Enter> Enter -
 key arrived: a KeyA -
@@ -1944,7 +1944,7 @@ and printed, `job <id> <name>: started`; a command that fails starts none.
 The lines it can print:
 
 ```
-reload <n>: installed, <c> chunks, <k> commands
+reload <n>: installed, <c> files, <k> commands
 reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
 theme: no theme is registered as `<name>`
@@ -2070,7 +2070,7 @@ must print exactly `expected`:
 ```console
 $ cd lean
 $ ../tests/packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/packages/greeting/tests/headless/hello/config ../tests/packages/greeting/tests/headless/hello/script
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 run greeting-hello: ok
 scene 0x0, focused 0, echo "hello from the greeting package", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8

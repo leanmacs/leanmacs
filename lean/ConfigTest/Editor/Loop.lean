@@ -171,8 +171,8 @@ def dispatchChecks (context : Context) : List Check :=
                   #["commands: stamp", "text 0: \"\"", "text 1: \"config\"",
                     "text 2: \"compiled\""] &&
                 ((← session.lines).filter (·.startsWith "reload ")) ==
-                  #["reload 1: installed, 1 chunks, 1 commands",
-                    "reload 2: installed, 1 chunks, 0 commands"])
+                  #["reload 1: installed, 1 files, 1 commands",
+                    "reload 2: installed, 1 files, 0 commands"])
           stampCompiled },
     { name :=
         "a reload binds a key to a different command: the key then runs the new command, and the old one does not run again"

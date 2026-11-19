@@ -1,4 +1,4 @@
-reload 1: installed, 1 chunks, 0 commands
+reload 1: installed, 1 files, 0 commands
 key arrived: i KeyI -
 key arrived: w KeyW control
 scene 640x480, focused 0, echo "", echo padding 8, preedit -, published 4, theme "default"

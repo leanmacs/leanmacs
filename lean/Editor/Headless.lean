@@ -341,7 +341,7 @@ dropped. `stop` ends this loop only; quitting the queues is for the process
 ## What it prints
 
 ```
-reload <n>: installed, <c> chunks, <k> commands
+reload <n>: installed, <c> files, <k> commands
 reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
 theme: no theme is registered as `<name>`
@@ -975,7 +975,7 @@ for each display rule left out because its target does not exist
 def reportLines (report : Config.Report) : Array String :=
   let outcome :=
     if report.installed then
-      s!"reload {report.number}: installed, {report.chunks} chunks, {report.commands} commands"
+      s!"reload {report.number}: installed, {report.files} files, {report.commands} commands"
     else s!"reload {report.number}: rejected"
   let diagnostics :=
     report.diagnostics.map fun diagnostic =>

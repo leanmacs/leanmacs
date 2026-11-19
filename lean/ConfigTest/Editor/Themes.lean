@@ -131,7 +131,7 @@ def themeChecks (context : Context) : List Check :=
                       after.endsWith ", theme \"second\""),
                     ("there was one reload",
                       (lines.filter (·.startsWith "reload ")) ==
-                        #["reload 1: installed, 1 chunks, 0 commands"])]
+                        #["reload 1: installed, 1 files, 0 commands"])]
               return true },
     { name :=
         "criterion 6: a config that names a theme nobody registered says so in the echo area, naming the theme, before the frame is made and after, and its report says so; the theme in force stays"

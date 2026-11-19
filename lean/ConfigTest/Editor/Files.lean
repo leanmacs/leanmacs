@@ -332,7 +332,7 @@ def fileChecks (context : Context) : List Check :=
               return opened == .settled && missed == .settled && freed && stopped &&
                   (← stage.collaborators.held.size) == 0 &&
                   (← stage.output.get) ==
-                    #["reload 1: installed, 1 chunks, 0 commands", "spawn open: job 1",
+                    #["reload 1: installed, 1 files, 0 commands", "spawn open: job 1",
                       "job 1 open: ok", "spawn missing: job 2",
                       "job 2 missing: failed: nothing is at the path", "commands:", "text 0: \"\"",
                       "text 1: \"héllo\\n\""]

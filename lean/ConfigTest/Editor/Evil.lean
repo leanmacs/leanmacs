@@ -121,7 +121,7 @@ def evilChecks (context : Context) : List Check :=
           return committed == ("".quote, #[viewLine "hello" 5]) &&
               own == ("".quote, #[viewLine "hello" 1]) &&
               echo == "".quote &&
-              lines.contains "reload 1: installed, 1 chunks, 2 commands" &&
+              lines.contains "reload 1: installed, 1 files, 2 commands" &&
               lines.contains "run own: ok" &&
               lines.contains "run first-shipped: ok" },
     { name :=
