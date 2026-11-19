@@ -29,6 +29,16 @@ not an excerpt buffer:
 4. **Lines**: the line of every lowercase mark left is read, with the
    text's revision, for the next publish.
 
+The four steps are one function of a buffer (`Buffer.followedMarks`), and
+each step of an undo or a redo runs them too, on its buffer, as the step is
+taken (`BufferId.followMarks`, `Editor/Api.lean`): so a counted undo or
+redo puts the marks back step by step, as Vim's `u_undoredo` does, and the
+publish after it finds no move left to follow. The markers of the marks a
+step erased or replaced are given up by the loop once its command has run
+to its end, as a command's are (`Loop.gaveUp`); those of marks a later step
+of the same command replaced again are not, as no marker a command made and
+the state it left does not hold is.
+
 The markers of the marks erased, and of those a mark put back replaced,
 are given up here, since no command is running to give them up, by the
 rule a finished command's are given up by (`EditorState.givenUpPlaces`).
@@ -42,10 +52,10 @@ namespace Editor
 
 open Marks
 
-/-- `state` with the marks of the buffer `id`, which is `buffer`, followed
-through the event just handled (steps 1 to 4 of the module docs). -/
-private def EditorState.followMarksOf (state : EditorState) (id : BufferId) (buffer : Buffer) :
-    TextM EditorState := do
+/-- The marks of `buffer` and what it keeps beside them, followed through
+what changed since its history last looked (steps 1 to 4 of the module
+docs). -/
+def Buffer.followedMarks (buffer : Buffer) : TextM (Array (Char × MarkerId) × History) := do
   let text := buffer.text
   let history := buffer.markHistory
   -- 1. Erase.
@@ -77,6 +87,13 @@ private def EditorState.followMarksOf (state : EditorState) (id : BufferId) (buf
       pure
           { history with
             lines := ← markers.mapM lineOf, revision := ← text.revision }
+  return (marks, history)
+
+/-- `state` with the marks of the buffer `id`, which is `buffer`, followed
+through the event just handled (`Buffer.followedMarks`). -/
+private def EditorState.followMarksOf (state : EditorState) (id : BufferId) (buffer : Buffer) :
+    TextM EditorState := do
+  let (marks, history) ← buffer.followedMarks
   return { state with
       buffers :=
         state.buffers.set! id.index

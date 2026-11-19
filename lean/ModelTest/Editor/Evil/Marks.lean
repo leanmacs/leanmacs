@@ -86,7 +86,16 @@ def markUndoRows : List (String × String × String) :=
     -- step an insert session makes keeps the marks as they were before the
     -- session, those its linewise change erased and those its typing moved.
     ("j m b g g 3 c c <Escape> u ` b", "|ab\ncd\nef\ngh", "ab\n|cd\nef\ngh"),
-    ("m a i x y <Escape> u G ` a", "ab\nc|def\ngh", "ab\nc|def\ngh")]
+    ("m a i x y <Escape> u G ` a", "ab\nc|def\ngh", "ab\nc|def\ngh"),
+    -- A counted undo or redo puts the marks back step by step, as one step
+    -- at a time does: each step puts back what it kept and keeps the marks
+    -- as the step before left them, so a later step puts back the right
+    -- line.
+    ("m a d d j x 2 u ` a", "ab\nc|d\nef\ngh", "ab\nc|d\nef\ngh"),
+    ("m a d d j x u u G ` a", "ab\nc|d\nef\ngh", "ab\nc|d\nef\ngh"),
+    ("m a d d j x 2 u 2 C-r 2 u G ` a", "ab\nc|d\nef\ngh", "ab\nc|d\nef\ngh"),
+    ("o x <Escape> m a k x 2 u 2 C-r ` a", "|ab", "b\n|x"),
+    ("j m a O x <Escape> G x 2 u C-r ` a", "|ab\ncd", "ab\nx\n|cd")]
 
 /-- The jobs of the mark checks, by name: those compiled code registers for
 files. -/
@@ -180,12 +189,6 @@ def evilMarkChecks : List Check :=
     { name :=
         "a lowercase mark whose line is deleted is erased and a global mark stays, and one of a line deleted in part keeps the column the deletion left; undo puts a lowercase mark back where it was before the step, and redo erases it again; the step an insert session makes keeps the marks from before the session"
       run := evilRows markUndoRows },
-    { name :=
-        "recorded departure (task marks-counted-undo-redo-restore): a counted undo crosses more than one edge of the undo tree and puts back no lowercase mark, so m a, dd, x elsewhere and 2u leave ` a saying E20, where Vim puts the mark back; undoing one step at a time puts it back"
-      run :=
-        evilRows
-          [("m a d d j x 2 u ` a", "ab\nc|d\nef\ngh", Evil.markNotSet),
-            ("m a d d j x u u G ` a", "ab\nc|d\nef\ngh", "ab\nc|d\nef\ngh")] },
     { name :=
         "recorded departure (task marks-erase-by-command-not-edit-shape): outside the linewise delete and change a line's marks are erased by the edit's shape, so a backspace or C-w at a line's start that joins away the empty line above erases its mark, and so does v j $ d from a line's start, where Vim keeps both on the joined line; a redo of 3cc keeps its last line's mark on the line left, where Vim erases it"
       run :=

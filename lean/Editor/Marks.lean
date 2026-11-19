@@ -56,10 +56,12 @@ the loop runs them once an event has been handled
   marks the node kept are put back, and the node keeps the marks as they
   were before the move, which the move back puts back in turn
   (`History.follow`). A mark the node did not keep stays where its marker
-  took it. A move across more than one edge puts back nothing: a counted
-  undo or redo (`2u`, `3 C-r`) makes one in a single publish, so it leaves
-  erased the marks its steps erased, where Vim's puts them back (a
-  recorded departure, task `marks-counted-undo-redo-restore`).
+  took it. A counted undo or redo (`2u`, `3 C-r`) crosses one edge a
+  step, and each step follows the marks as it is taken
+  (`BufferId.followMarks`, `Editor/Api.lean`), as Vim's `u_undoredo` puts
+  them back step by step: each step's erasures are its own, and each node
+  crossed keeps the marks the step before it left. A move across more
+  than one edge at once, which no undo or redo makes, puts back nothing.
 - **A tree with fewer nodes** than the history last saw is another tree,
   and what the history kept is dropped.
 - **A place's marker** (`placeMarker`) is an anchor with the bias `after`,

@@ -156,6 +156,21 @@ def placeChecks : List Check :=
               replied astray == .inl .markerOfAnotherText &&
               same2 == state },
     { name :=
+        "what a buffer keeps beside its marks is set, the other buffer's left as it was, and a buffer there is none of is refused"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let history : Marks.History :=
+              { nodes := 2, boundary := #[{ char := 'a', row := 1, column := 0 }] }
+            let (set, kept) := state.setMarkHistory ⟨1⟩ history
+            let (absent, same) := state.setMarkHistory ⟨9⟩ history
+            replied set == .inr () && (kept.buffer? ⟨1⟩).map (·.markHistory) == some history &&
+              (kept.buffer? ⟨0⟩).map (·.markHistory) == some {} &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
         "a global mark is set at a held place or a file, replaced, read and unset, and a held place of a buffer there is none of or of another text is refused"
       run :=
         pure <|

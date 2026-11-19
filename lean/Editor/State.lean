@@ -1101,6 +1101,9 @@ and moving are `Editor/JumpList.lean`'s and `Editor/Jumps.lean`'s.
   (`EditorState.followMarks`, `Editor/Marks/Follow.lean`): it erases a
   mark whose line was deleted, puts lowercase marks back after an undo or
   a redo, and gives up the markers of the marks it erased or replaced.
+  Each step of an undo or a redo follows them too, as it is taken
+  (`BufferId.moved`, `Editor/Api.lean`), setting it by `setMarkHistory`
+  and the marks by `setLocalMark`.
 
 ## Where a new field goes
 
@@ -3675,6 +3678,13 @@ def setLocalMark (id : BufferId) (char : Char) (marker : Option MarkerId) (state
           buffers :=
             state.buffers.set! id.index
               (some { buffer with marks := setMarkIn buffer.marks char marker }) })
+
+/-- Has the buffer `id` keep `history` beside its marks
+(`Buffer.markHistory`), in place of what it kept. Refused, with the state
+unchanged, with `noSuchBuffer` for a buffer there is none of. -/
+def setMarkHistory (id : BufferId) (history : Marks.History) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with markHistory := history })) state
 
 /-- Sets the global mark `char` at `place`, in place of the place it had,
 or unsets it for none ("The jump list and marks", in the module docs).

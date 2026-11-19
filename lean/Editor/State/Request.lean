@@ -346,6 +346,9 @@ inductive StateRequest where
   /-- Have the buffer `id` hold its mark `char` by `marker`, or no longer
   hold it for none. -/
   | setLocalMark (id : BufferId) (char : Char) (marker : Option MarkerId)
+  /-- Have the buffer `id` keep `history` beside its marks, in place of what
+  it kept. -/
+  | setMarkHistory (id : BufferId) (history : Marks.History)
   /-- Set the global mark `char` at `place`, or unset it for none. -/
   | setGlobalMark (char : Char) (place : Option Place)
   /-- Have the theme called `name` loaded once this command has run to its
@@ -440,6 +443,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setWanted .. => Except LayoutRefusal Unit
   | .setJumps .. => Except LayoutRefusal Unit
   | .setLocalMark .. => Except BufferRefusal Unit
+  | .setMarkHistory .. => Except BufferRefusal Unit
   | .setGlobalMark .. => Except BufferRefusal Unit
   | .loadTheme _ => Except ThemeRefusal Unit
   | .invoke _ => Unit
@@ -550,6 +554,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setWanted view wanted, state => state.setWanted view wanted
   | .setJumps view jumps, state => state.setJumps view jumps
   | .setLocalMark id char marker, state => state.setLocalMark id char marker
+  | .setMarkHistory id history, state => state.setMarkHistory id history
   | .setGlobalMark char place, state => state.setGlobalMark char place
   | .loadTheme name, state => (.ok (), { state with outbox.theme := some name })
   | .invoke invocation, state =>

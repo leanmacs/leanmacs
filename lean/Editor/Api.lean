@@ -1,5 +1,6 @@
 import Editor.Completion
 import Editor.ExcerptView
+import Editor.Marks.Follow
 import Editor.Scroll
 import Editor.Store
 
@@ -170,7 +171,10 @@ at, does its part, and records the tree that comes back as the buffer's
   origin, and hand back the selection to place (`Undone`): the selection
   before the step's first edit for an undo, and the one after its last for
   a redo. `none` is the tree's "there is nothing to do": an undo at the
-  root, a redo with no step to go to or with an edit pending.
+  root, a redo with no step to go to or with an edit pending. Each step
+  follows the buffer's lowercase marks as it is taken
+  (`BufferId.followMarks`), as Vim's `u_undoredo` puts them back step by
+  step, so a counted undo or redo puts back what each of its steps kept.
 - **The selection is handed back, not placed.** Placing it is the
   caller's: which view it belongs to, and what its cursor's shape becomes,
   are the input scheme's to say. The store hands back a selection only for
@@ -901,6 +905,25 @@ def BufferId.setMark (id : BufferId) (char : Char) (marker : Option MarkerId) :
     EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.setLocalMark id char marker)
 
+/-- Follows the marks of the buffer `id` through what changed since its
+history last looked (`Buffer.followedMarks`, `Editor/Marks/Follow.lean`), as
+the loop follows every buffer's once an event has been handled: the marks
+it erased are unset, those it put back set, and what it keeps beside them
+kept. Nothing for an excerpt buffer, or a buffer there is none of. The
+markers of the marks it unset or replaced are the loop's to give up. -/
+def BufferId.followMarks (id : BufferId) : EditorM Unit := do
+  let some buffer := (← editorState).buffer? id | return
+  if buffer.excerpts.isSome then
+    return
+  let (marks, history) ← buffer.followedMarks
+  for (char, _) in buffer.marks do
+    unless marks.any (·.1 == char) do
+      discard <| id.setMark char none
+  for (char, marker) in marks do
+    unless buffer.marks.contains (char, marker) do
+      discard <| id.setMark char (some marker)
+  discard <| EditorState.ask (.setMarkHistory id history)
+
 /-- Sets the global mark `char` at `place`, or unsets it for none
 (`Editor/State.lean`, "The jump list and marks"). It makes one request of
 the editor state and none of the library. Refused with `noSuchBuffer` and
@@ -1587,9 +1610,11 @@ def closeGroup (id : BufferId) : EditorM (Except BufferRefusal Unit) := do
     id.closeOwnGroup
 
 /-- Makes `move` in the buffer `id`'s history, on its tree once told the
-revision its text is at, and records the tree the move returns as the
-buffer's: what the move handed back, or `none` when the tree had nothing
-to do. Refused with `noSuchBuffer` for a buffer there is none of. -/
+revision its text is at, records the tree the move returns as the
+buffer's, and follows the buffer's marks through the move
+(`BufferId.followMarks`): what the move handed back, or `none` when the
+tree had nothing to do. Refused with `noSuchBuffer` for a buffer there is
+none of. -/
 def moved (id : BufferId) (move : UndoTree → TextM (Option UndoTree.Moved)) :
     EditorM (Except BufferRefusal (Option Undone)) := do
   match ← id.synced with
@@ -1599,6 +1624,7 @@ def moved (id : BufferId) (move : UndoTree → TextM (Option UndoTree.Moved)) :
     let some moved ← move buffer.history | return .ok none
     match ← EditorState.ask (.setHistory id moved.tree) with
     | .ok () =>
+      id.followMarks
       return .ok (some ⟨moved.selection⟩)
     | .error refusal =>
       return .error refusal

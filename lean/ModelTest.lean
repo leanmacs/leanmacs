@@ -321,7 +321,8 @@ the layout's above the minibuffer's strip, and the layout operations, each refus
 was when it would break an invariant. The places of jump lists and marks
 (`placeChecks`, part of `stateChecks`): the defaults, each set and read and
 refused, a split's copy of the jumps, a removed buffer's places dropped,
-the place markers listed once, and those a state after no longer holds
+what a buffer keeps beside its marks set, the place markers listed
+once, and those a state after no longer holds
 given up (`givenUpPlaces`). The invariants themselves are checked
 to refuse: states built in code that each break one (`spoilings`) are not
 well formed, so `EditorState.wellFormed` is seen to answer false for every
@@ -860,9 +861,10 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   above an empty line, erased by `3dd` on every line, by `dd` on
   a text's only line and by `3cc` on the lines after the first, kept by
   `cc` on the only line and by a redo of its `dd`, put back by undo at its line and column,
-  erased again by redo and put back again by undo (`markUndoRows`); and
-  the recorded departures, one check each named for its task: a counted
-  undo, a line's marks erased by the edit's shape, text typed at a mark, a
+  erased again by redo and put back again by undo, and put back step by
+  step by a counted undo and redo (`markUndoRows`); and
+  the recorded departures, one check each named for its task: a line's
+  marks erased by the edit's shape, text typed at a mark, a
   global mark's column on a deleted line, the numbered marks, the change
   marks, the visual marks, the marks of the last change and insert, the
   mark of the last exit, a lowercase mark with its buffer closed, and

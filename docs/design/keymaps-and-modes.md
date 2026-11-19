@@ -3014,7 +3014,11 @@ builds one sets `jumps` on its entry.
   row and column, and an undo or a redo across the step sets those marks
   again while the step keeps the marks from before the move. So `m a`,
   `dd`, `u` and `` `a `` lands on the mark's line and column, and `C-r`
-  erases it again. Global marks are not put back, as in Vim.
+  erases it again. A counted undo or redo (`2u`, `3 C-r`) does this step
+  by step, as `u_undoredo` does: each step erases the marks of the lines
+  it deletes, puts back what its step kept, and leaves the step the marks
+  the step before left (`BufferId.followMarks`, run by each undo and redo
+  step). Global marks are not put back, as in Vim.
 
 **Not built**: `:marks`, `:jumps`, `:delmarks` and `:keepjumps`;
 `jumpoptions=stack`; `g;` and `g,`, the change list; keeping marks across
@@ -3054,13 +3058,6 @@ matches Vim changes that check deliberately:
   ends at the end of that text. The loop restores the windows' selection
   and scroll markers alone ([concurrency.md](concurrency.md), "Rollback").
   Task `places-restore-on-rollback`.
-- **A counted undo or redo puts back no lowercase mark**: `2u` and
-  `3 C-r` move across more than one step of the undo tree in one publish,
-  and only a move across one step puts its marks back
-  (`Marks.History.follow`), so `m a`, `dd`, `x` on another line and `2u`
-  leave `` `a `` saying E20, where Vim's `u_undoredo` puts back the marks
-  of each step it undoes. Undoing one step at a time puts them back. Task
-  `marks-counted-undo-redo-restore`.
 - **A global mark whose line is deleted keeps its line but not its
   column**: its marker stays where the deletion left it, the start of the
   line that takes the deleted line's place, so on `ab`, `c|d`, `ef`,
