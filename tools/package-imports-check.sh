@@ -2,9 +2,10 @@
 # Checks that the packages of a package set import only what a package may
 # import of the core, on Lake's module graph (docs/design/packages.md,
 # "What a package may import"): a package's library imports modules of the
-# core's API alone; its tests may also import the core's test doubles; and
-# the root of its linked test may also import what an executable linked as
-# the editor is needs.
+# core's API alone; its tests may also import the core's test doubles; its
+# linked test, the root and the modules under it, may also import the
+# linked test kit; and the root of its linked test may also import what an
+# executable linked as the editor is needs.
 #
 #   tools/package-imports-check.sh <set dir>
 #   tools/package-imports-check.sh --lines <file>
@@ -17,8 +18,11 @@
 #
 #   <package>	<importing module>	<kind>	<imported module>
 #
-# The kind is `library`, `test` (a module under `<P>Test`) or `linked` (the
-# module `<P>Test.Linked`, the root of the package's linked test). Lake
+# The kind is `library`, `test` (a module under `<P>Test`), `linked` (the
+# module `<P>Test.Linked`, the root of the package's linked test) or
+# `linked-test` (a module under `<P>Test.Linked`, which that root imports,
+# so it is linked with the Rust library and nothing else of the package's
+# tests is). Lake
 # resolves the imports from the modules' headers and builds nothing, so the
 # check follows a module that is renamed or moved, and an import written in
 # any form. With `--lines`, the lines are read from a file instead: the
@@ -39,11 +43,17 @@
 # - A test double (`is_double`): the pure models of the ports, the
 #   contracts and cases, the fakes, the test scheme, the loop's driver, the
 #   reading of what a package registers (`Editor.Config.Packages`), the
-#   theme picture check (`Editor.Themes.Picture`) and the core's test kit,
-#   `Editor.Test` and everything under it: the support its own model tests
-#   are written on (`Editor.Test.…`) and the rig of its checks over the
-#   real services (`Editor.Test.Linked.…`). A test module and the linked
-#   test may import one; a library module may not.
+#   theme picture check (`Editor.Themes.Picture`) and the core's model test
+#   kit, `Editor.Test` and everything under it but `Editor.Test.Linked`:
+#   the support its own model tests are written on. A test module, of any
+#   of the three test kinds, may import one; a library module may not.
+# - The linked test kit (`is_linked_kit`): `Editor.Test.Linked` and
+#   everything under it, the rig of the core's checks over the real
+#   services. It runs over the Rust library and hands over the loop, the
+#   real bindings and the raw bindings, so only the linked test may import
+#   it: its root (`linked`) and the modules under it (`linked-test`). A
+#   plain test module, which the package's test driver links with no Rust
+#   library, may not, and a library module may not.
 # - An internal module (`internal_reason`): the hosts and the executable's
 #   modules, the loop and its dispatch, the config session, the raw
 #   bindings, the real bindings of the ports and what runs them, the
@@ -52,12 +62,14 @@
 #   package that is not named `Editor.…`: the config base, `Editor`, the
 #   core's entry module and the core's own test modules. No library module
 #   and no test module may import one.
-# - What the linked test may import beyond the test doubles
-#   (`linked_may`): the real bindings of the ports (`….Real`), the headless
-#   host (`Editor.Headless`), the config base and the core's entry module.
-#   It is an executable's root, linked as the editor is, and running a port
-#   against the library or a host over a set is what it is for. The raw
-#   bindings, the loop and the config session stay refused.
+# - What the root of the linked test may import beyond the test doubles
+#   and the linked kit (`linked_may`): the real bindings of the ports
+#   (`….Real`), the headless host (`Editor.Headless`), the config base and
+#   the core's entry module. It is an executable's root, linked as the
+#   editor is, and running a port against the library or a host over a set
+#   is what it is for. The raw bindings, the loop and the config session
+#   stay refused by name. A module under the root (`linked-test`) has none
+#   of this: beyond the linked kit it may import what a test may.
 #
 # It prints nothing and exits 0 when every import is allowed. Otherwise it
 # prints each refused import, one a line, with its package, the importing
@@ -118,6 +130,15 @@ is_double() {
   return 1
 }
 
+# Whether the module `$1` is of the core's linked test kit. It is asked
+# about before `is_double`, whose pattern for the kit would take it.
+is_linked_kit() {
+  case $1 in
+    Editor.Test.Linked | Editor.Test.Linked.*) return 0 ;;
+  esac
+  return 1
+}
+
 # Why the module `$1` is internal, as a phrase; nothing, with status 1,
 # when it is not. A test double is asked about first, so `Editor.Loop.Driver`
 # and `Editor.Config.Packages` never reach here.
@@ -167,14 +188,19 @@ while IFS=$tab read -r package module kind imported rest <&3; do
     exit 2
   fi
   case $kind in
-    library | test | linked) ;;
+    library | test | linked | linked-test) ;;
     *)
-      echo "package-imports-check: $module of $package has the kind \`$kind\`, which is not library, test or linked" >&2
+      echo "package-imports-check: $module of $package has the kind \`$kind\`, which is not library, test, linked or linked-test" >&2
       exit 2
       ;;
   esac
   reason=
-  if is_double "$imported"; then
+  if is_linked_kit "$imported"; then
+    case $kind in
+      linked | linked-test) ;;
+      *) reason="a module of the linked test kit, which only a package's linked test and the modules under it may import" ;;
+    esac
+  elif is_double "$imported"; then
     if [ "$kind" = library ]; then
       reason="a test double, which only a package's tests may import"
     fi

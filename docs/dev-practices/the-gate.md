@@ -1428,14 +1428,17 @@ graph.
   :editorPackageImports`, a facet the core's lakefile defines, prints one
   line for each direct import of a module of the core's Lake package by a
   module of a package the gate's steps run over: the package, the
-  importing module, its kind (`library`, `test`, `linked`) and the module
+  importing module, its kind (`library`; `test`; `linked`, the root of the
+  package's linked test; `linked-test`, a module under that root) and the module
   imported. Lake reads the modules' headers and builds nothing. It lists
   the modules of each of the package's libraries, so a library whose root
   does not import every module of it declares `globs` that hold them all,
   as `compile`'s does.
 - **The lists are in the script**, as names and patterns: the test
-  doubles, the internal modules, each with the reason printed for it, and
-  what the linked test may import beyond the doubles. They are named,
+  doubles, the linked test kit (`Editor.Test.Linked.…`, which only the
+  linked test's root and the modules under it may import), the internal
+  modules, each with the reason printed for it, and what the linked
+  test's root may import beyond the doubles. They are named,
   never derived, as the core imports check's moving names are.
 - **It is about direct imports.** A module an importable module imports is
   visible to a package's code; the rule limits what a package depends on
@@ -1452,8 +1455,12 @@ graph.
   importing a model, a contract, the loop's driver beside the loop, and
   `Editor.Config.Packages` beside another module of the config session; a
   linked test importing a real binding, the headless host, the base and
-  the entry module; a test importing a module of the test kit and of the
-  linked test kit, which a library importing one is refused). So a change
+  the entry module; a test importing a module of the model test kit; the
+  linked test's root and a module under it importing a module of the
+  linked test kit). Among the refused: a plain test module and a library
+  importing the linked test kit, and a module under the linked test's
+  root importing the headless host, a real binding or a raw binding,
+  which only the root may, or none may. So a change
   to a list that lets an internal module through, or refuses an allowed
   one, fails the gate.
 - **The sets it is run over**: the fixture set, `tests/packages/`, which

@@ -26,10 +26,11 @@ one's completions. A process that has a host already
 its checks' services over the host's table (`Services.over`); one with no
 host starts them (`Services.start`), as `contract-test` does.
 
-Published for a package's tests: it is a module of the core's linked test
-kit, a test double in the namespace `Editor.Test.Linked`, which a package's
-test modules may import and its library may not
-(`docs/design/packages.md`, "What a package may import"). It names the raw
+Published for a package's linked test: it is a module of the core's linked
+test kit, in the namespace `Editor.Test.Linked`, which the root of a
+package's linked test and the modules under it may import, and no other
+module of a package may (`docs/design/packages.md`, "What a package may
+import"). It names the raw
 bindings and the real job services so that a package's linked test need
 not.
 -/

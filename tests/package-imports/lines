@@ -3,6 +3,7 @@ demo	Demo	library	Editor.Themes.Check
 demo	Demo	library	Editor.Loop
 demo	Demo	library	Editor.Text.Model
 demo	Demo	library	Editor.Test.Keys
+demo	Demo	library	Editor.Test.Linked.Rig
 demo	Demo	library	EditorCore.EditorPackage
 demo	Demo.Commands	library	Editor.Shell.Compiled
 demo	DemoTest.Demo	test	Editor.Text.Model
@@ -19,6 +20,13 @@ demo	DemoTest.Demo	test	Editor
 demo	DemoTest.Demo	test	Editor.Internal.Thing
 demo	DemoTest.Demo	test	ModelTest.Check
 demo	DemoTest.Demo	test	Editor.Core
+demo	DemoTest.Linked.Demo	linked-test	Editor.Test.Linked.Rig
+demo	DemoTest.Linked.Demo	linked-test	Editor.Test.Driver
+demo	DemoTest.Linked.Demo	linked-test	Editor.Text.Model
+demo	DemoTest.Linked.Demo	linked-test	Editor.Headless
+demo	DemoTest.Linked.Demo	linked-test	Editor.Text.Real
+demo	DemoTest.Linked.Demo	linked-test	Editor.Ffi.Processes
+demo	DemoTest.Linked	linked	Editor.Test.Linked.Services
 demo	DemoTest.Linked	linked	Editor.Text.Real
 demo	DemoTest.Linked	linked	Editor.Headless
 demo	DemoTest.Linked	linked	Editor

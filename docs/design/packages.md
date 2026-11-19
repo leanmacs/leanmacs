@@ -134,7 +134,7 @@ built from one:
 | `editorRootImports`, `editorRootTransImports` | a package, the set | For `lake query`: the generated root's direct and transitive imports, one module a line |
 | `editorBase` | a package, the set | For `lake query`: the set's config base, one module a line: `Editor`, then the entry module of each package of the set outside the core |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
-| `editorPackageImports` | a package, the set | For `lake query`: each direct import of a core module by a module of those packages, one a line, with the module's kind (`library`, `test`, `linked`); what the package imports check reads |
+| `editorPackageImports` | a package, the set | For `lake query`: each direct import of a core module by a module of those packages, one a line, with the module's kind (`library`, `test`, `linked`, `linked-test`); what the package imports check reads |
 
 `linkAsEditor` is the one link: a root module's object and those of every
 module it imports, with their symbols exported (`-rdynamic`), then the glue
@@ -733,20 +733,29 @@ says which side of the rule its modules are on.
   (`Editor.Loop.Driver`), the reading of what a package registers
   (`Editor.Config.Packages`: `Package.registered`,
   `Config.State.ofPackages`), the theme picture check
-  (`Editor.Themes.Picture`), and the core's test kit, `Editor.Test` and
-  every module under it: the support the core's own model tests are
-  written on (`Editor.Test.…`, 14 modules) and the rig of its checks over
-  the real services (`Editor.Test.Linked.…`, 4 modules). A package's tests
-  are the modules under `<P>Test`.
+  (`Editor.Themes.Picture`), and the core's model test kit, `Editor.Test`
+  and every module under it but `Editor.Test.Linked`: the support the
+  core's own model tests are written on (`Editor.Test.…`, 14 modules). A
+  package's tests are the modules under `<P>Test`.
+- **A package's linked test may also import the linked test kit, and only
+  it**: `Editor.Test.Linked` and every module under it (4 modules), the
+  rig of the core's checks over the real services. The linked test is the
+  root `<P>Test.Linked` and the modules under it, `<P>Test.Linked.…`,
+  which that root imports and no other part of the package's tests does.
+  A plain test module is refused the linked kit, and so is a library: the
+  kit runs over the Rust library, which the package's test driver does
+  not link, and it hands over the loop, the real bindings of the ports and
+  the raw bindings, which the rule refuses a test by name. So what reaches
+  a package's model tests through a kit module is the models and the
+  loop's driver, and what reaches the real library is confined to the one
+  executable linked with it.
 - **The kit is the core's test support as it is, published.** A test
-  written on it uses the loop's key table, the registry's types and the
-  real services, which the kit's modules hand it by importing them: the
-  package names none of them in an `import` line, which is what the rule
-  limits. A kit with a surface that hides them is later work, filed as the
-  task `package-test-kit-surface`. The linked kit runs over the Rust
-  library, so only a test linked as the editor is can use it; the rule
-  does not say so, and the link does: the model test driver links no Rust
-  library.
+  written on it uses the loop's key table and the registry's types, and a
+  linked test the real services, which the kit's modules hand it by
+  importing them: the package names none of them in an `import` line,
+  which is what the rule limits. A kit with a surface that hides them, and
+  that exposes no raw binding and no real binding's name to a package, is
+  later work, filed as the task `package-test-kit-surface`.
 - **The root of a package's linked test may import a little more, and
   only it**: the real bindings of the ports (`….Real`), the headless host
   (`Editor.Headless`), the config base (`Editor`) and the core's entry
@@ -756,9 +765,9 @@ says which side of the rule its modules are on.
   bindings (`Editor.Ffi…`), the loop and the rest of the config session
   stay refused to it, as do the window hosts' real modules. A harness that
   hid the host from the linked test would be a new mechanism; none is
-  built. **A module under `<P>Test.Linked` is a test module, not the
-  root**: it has a test's allowance and no more, so a check that starts a
-  host is written in the root (`GreetingTest.Linked`,
+  built. **A module under `<P>Test.Linked` is not the root**: beyond the
+  linked test kit it has a test's allowance and no more, so a check that
+  starts a host is written in the root (`GreetingTest.Linked`,
   `CompileTest.Linked`).
 - **Internal modules** are those that exist to run the editor and not to be
   written against:
@@ -802,14 +811,15 @@ says which side of the rule its modules are on.
   [the-gate.md](../dev-practices/the-gate.md), "The package imports
   check"). It asks Lake for each direct import of a core module by a
   module of a set's packages, with whether the importing module is the
-  package's library's, a test's or the linked test's root
-  (`lake -d <set dir> query :editorPackageImports`), and refuses the ones
+  package's library's, a test's, the linked test's root or a module under
+  that root (the kinds `library`, `test`, `linked` and `linked-test`;
+  `lake -d <set dir> query :editorPackageImports`), and refuses the ones
   the rule does not allow, each with its reason. It lists the modules of
   each of a package's libraries, so a library's globs must hold every
   module of it ("A package's tests and the gate's steps over them",
-  above). **The lists are in the script**: the test doubles, the internal
-  modules, and what the linked test may import beyond them, as names and
-  patterns. No module lists the
+  above). **The lists are in the script**: the test doubles, the linked
+  test kit, the internal modules, and what the linked test's root may
+  import beyond them, as names and patterns. No module lists the
   API: a core module that is neither internal nor a test double is part
   of it. A change to the rule changes the script, this section and the
   lines the gate holds the script to (`tests/package-imports/`).
@@ -922,7 +932,7 @@ query :editorPackageImports`, in `lean/`):
 | Addition | What it is | Who may import it | Why the move needed it |
 |---|---|---|---|
 | `Editor.Test.…`, 14 modules under `lean/Editor/Test/` | The support the core's model tests are written on, moved from `lean/ModelTest/Support/` into the core's library and the namespace `Editor.Test`: test doubles | A package's tests | The compile mode's ten model lists run the loop's driver over the editor's models, in the worlds of files, workspaces and the shell the core's own tests use. As core tests they imported that support by name (`ModelTest.Support.…`), which is no module of the editor |
-| `Editor.Test.Linked.…`, 4 modules under `lean/Editor/Test/Linked/` | The rig of the core's checks over the real services, moved from `lean/ContractTest/Support/`, with a new module for the services themselves: test doubles | A package's tests; in practice its linked test, since they run over the Rust library | The compile mode's two lists over the real process service drive the loop over the real text binding and the library's job services. As core tests they imported that rig (`ContractTest.Support.…`) and the raw bindings |
+| `Editor.Test.Linked.…`, 4 modules under `lean/Editor/Test/Linked/` | The rig of the core's checks over the real services, moved from `lean/ContractTest/Support/`, with a new module for the services themselves: the linked test kit | A package's linked test alone: the root `<P>Test.Linked` and the modules under it. A plain test module and a library are refused it | The compile mode's two lists over the real process service drive the loop over the real text binding and the library's job services. As core tests they imported that rig (`ContractTest.Support.…`) and the raw bindings |
 | A library's globs | Not a module: a package's library must hold every module of it, by `globs` when its root does not import them all | A package's lakefile | The facet that lists a package's imports reads each library's modules. Declared by name alone, `Compile` did not hold `Compile.Compiled`, `Compile.Shipped` or `Compile.EditorPackage`, and their imports were not checked |
 
 The model kit, each module with what it holds. The compile package's tests

@@ -319,8 +319,10 @@ run = [
   # module graph (tools/package-imports-check.sh;
   # docs/dev-practices/the-gate.md, "The package imports check"): a
   # package's library names modules of the core's API alone, its tests may
-  # also name the core's test doubles, and the root of its linked test what
-  # an executable linked as the editor is needs. First the rule itself, on
+  # also name the core's test doubles, its linked test (the root and the
+  # modules under it) also the linked test kit, which runs over the Rust
+  # library, and the root of its linked test what an executable linked as
+  # the editor is needs. First the rule itself, on
   # lines written by hand (tests/package-imports/lines), one for each
   # branch of it: it must exit 1 and print exactly
   # tests/package-imports/expected, each refused import with its reason

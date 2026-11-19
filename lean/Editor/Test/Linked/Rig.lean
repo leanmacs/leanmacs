@@ -63,10 +63,11 @@ checks theirs (`ContractTest/Support/VersionControl.lean`), and the compile
 mode's, in its package, the compile mode's commands and jobs and the
 shipped contributions (`packages/compile/CompileTest/Linked/Compile/Shipped.lean`).
 
-Published for a package's tests: it is a module of the core's linked test
-kit, a test double in the namespace `Editor.Test.Linked`, which a package's
-test modules may import and its library may not
-(`docs/design/packages.md`, "What a package may import"). It runs over the
+Published for a package's linked test: it is a module of the core's linked
+test kit, in the namespace `Editor.Test.Linked`, which the root of a
+package's linked test and the modules under it may import, and no other
+module of a package may (`docs/design/packages.md`, "What a package may
+import"). It runs over the
 Rust library, so only a test linked as the editor is can use it: a
 package's linked test (`<P>Test.Linked` and the modules under it), as the
 core's `contract-test` does.

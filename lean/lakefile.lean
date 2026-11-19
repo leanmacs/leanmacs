@@ -476,7 +476,9 @@ each module it imports directly that is a module of this Lake package, the
 core's, one line, its fields separated by tabs: the package's name, the
 importing module, that module's kind and the module imported. The kind is
 `linked` for the root of the package's linked test (`linkedTestModule?`),
-`test` for any other module under `<P>Test`, and `library` for the rest.
+`linked-test` for a module under that root (`<P>Test.Linked.…`), which the
+linked test imports and so is linked with the Rust library, `test` for any
+other module under `<P>Test`, and `library` for the rest.
 It reads each module's header, as Lake does to resolve imports, and builds
 nothing. -/
 package_facet editorPackageImports pkg : Array String := do
@@ -490,8 +492,10 @@ package_facet editorPackageImports pkg : Array String := do
       match toUpperCamelCase dep.baseName with
       | .str namespace_ base => .str namespace_ (base ++ "Test")
       | other => other
+    let linkedRoot : Name := .str testRoot "Linked"
     let kindOf (mod : Module) : String :=
-      if mod.name == .str testRoot "Linked" then "linked"
+      if mod.name == linkedRoot then "linked"
+      else if linkedRoot.isPrefixOf mod.name then "linked-test"
       else if testRoot.isPrefixOf mod.name then "test"
       else "library"
     for lib in dep.leanLibs do
