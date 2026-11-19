@@ -2,7 +2,9 @@ import ConfigTest.Check
 import ConfigTest.Support.Configs
 import ConfigTest.Support.Hosts
 import Editor.Config.Directory
+import Editor.Config.Elaborator.Model
 import Editor.Config.Session
+import Editor.InputScheme.Test
 
 /-!
 # Config tests: `Editor/Config/Directory.lean`
@@ -64,6 +66,16 @@ def directoryChecks (_ : Unit) : List Check :=
                   { module := "Config.Evil.Keys", path := "Config/Evil/Keys.lean",
                     text := "evil" } &&
               (← source.file "Config.Evil.Other") == .absent },
+    { name :=
+        "a directory that holds Init.lean and no init.lean is rejected as a misspelt root, naming Init.lean and init.lean, and not as the old form: the root is not found, and Init.lean is the stray file that names it, whether or not the file system ignores case"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory [("Init.lean", "import Editor\n")]
+          let outcome ←
+            Config.build TestScheme.scheme (Config.Elaborator.Model.elaborator)
+                (Config.Directory.source directory) Config.PackageFiles.none none none #[]
+          return outcome.built.isNone &&
+              outcome.diagnostics == #[Config.misspeltRoot "Init.lean"] },
     { name :=
         "the stray files are the .lean files directly in the directory other than the root, in the byte order of their names: no other file, no directory, and nothing below one"
       run :=

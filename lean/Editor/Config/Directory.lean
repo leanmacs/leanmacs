@@ -27,7 +27,8 @@ lean-toolchain
   on a file system that ignores case, `Config/keys.lean` exists when
   `Config/Keys.lean` does. A name that is a file's but for case is
   misspelt, with the module that file is, and a file `Init.lean` is no
-  root.
+  root: it is a stray file, which the session core names as the root
+  misspelt (`misspeltRoot`).
 - **The stray files** are the `.lean` files directly in the directory
   other than the root, in the byte order of their names: what a config in
   the old form, byte-ordered chunks with no header, is made of. A

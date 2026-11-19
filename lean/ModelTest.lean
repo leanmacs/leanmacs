@@ -660,7 +660,8 @@ The config session's decisions are tested here too, with no elaborator:
   module a file imports, what is refused before anything is elaborated (a
   module that is not linked, with what the config's lakefile says of it, in
   a host with no package port and in one with no generator too; a config
-  file that is not there; a cycle; a config in the old form), the generated
+  file that is not there; a cycle; a config in the old form; a root spelt
+  `Init.lean`, which is a misspelt root and not the old form), the generated
   lakefile and toolchain file, and what an outcome carries;
 - `lakePackageChecks`: the config directory as a Lake package
   (`Editor/Config/LakePackage.lean`): the generated lakefile's text, and

@@ -63,6 +63,12 @@ The decisions are here, in plain Lean with no elaborator in it:
   no header. It is rejected with one diagnostic that names the files and
   the command that converts them (`oldForm`). A directory with no root and
   no such file is an empty config.
+- **A misspelt root is not the old form.** The root is found by exactly
+  its name, so on a file system that ignores case a directory holding
+  `Init.lean` has no root. When one of the files directly in it is
+  `init.lean` but for case, the reload is rejected with one diagnostic that
+  names that file and says to rename it to `init.lean` (`misspeltRoot`),
+  and not with the old form's, whose command would refuse it.
 - **Failure is data.** A rejected outcome carries diagnostics. A port that
   throws is a rejected outcome too, with a diagnostic that names what was
   being done.
@@ -319,6 +325,20 @@ names the files and the command that converts them. -/
 def oldForm (stray : Array String) : Diagnostic :=
   failure "config"
     s!"the config directory holds {", ".intercalate stray.toList} and no {rootPath}: config is a root, {rootPath}, and the modules under Config/ it imports, each with its own header, and files in byte order with no header are no longer loaded; run `{migrate}` to convert the directory"
+
+/-- The diagnostic that rejects a directory with no root that holds `file`,
+whose name is the root's, `init.lean`, but for the case of its letters. A
+root is found by exactly its name, on every file system, so this is a
+misspelt root and not the old form. It is one line, and names the file
+found and the name to give it. -/
+def misspeltRoot (file : String) : Diagnostic :=
+  failure "config"
+    s!"the config directory holds {file} and no {rootPath}: the root's name is exact about the case of its letters, on every file system, so rename {file} to {rootPath}"
+
+/-- The first of the files `stray` whose name is the root's but for the
+case of its letters, in their order, if any: the root, misspelt. -/
+def misspeltRootIn? (stray : Array String) : Option String :=
+  stray.find? fun name => name != rootPath && name.toLower == rootPath.toLower
 
 /-- Visits the node of `module` after the nodes it imports, with `fuel` to
 spend, `path` the modules being visited, innermost first, and `done` the
@@ -596,6 +616,8 @@ def build {β σ : Type} (scheme : InputScheme) (elaborator : Elaborator β σ) 
     if stray.isEmpty then
       return { base := some base, diagnostics := #[],
                built := some { files := #[], registrations := {} } }
+    if let some file := misspeltRootIn? stray then
+      return rejected #[misspeltRoot file]
     return rejected #[oldForm stray]
   let headers ← readHeaders elaborator source package base root
   let ordered ←

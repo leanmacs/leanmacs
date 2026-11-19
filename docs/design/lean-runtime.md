@@ -719,6 +719,15 @@ lean-toolchain       generated when absent
     `mutual` block open at its end. In the old form that ended with the
     chunk; in one file it would swallow the files after it, and the script
     cannot name what to close.
+  - A file that already starts with an import header is refused by name
+    too: it is no chunk of the old form, and a second header before its
+    text would leave its own after a command.
+- **A misspelt root is not the old form.** The root is found by exactly
+  its name, so a directory that holds `Init.lean` and no `init.lean` has no
+  root, on a file system that ignores case as on one that does not. Rather
+  than the old form's diagnostic, whose command would refuse the file, the
+  reload is rejected with one that names the file and says to rename it to
+  `init.lean`.
 - **The editor generates the two other files when they are absent, and
   never rewrites one that is there** (`lean/Editor/Config/LakePackage.lean`).
   The lakefile requires the package set the editor was built from, by its

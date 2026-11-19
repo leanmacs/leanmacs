@@ -382,6 +382,26 @@ def moduleSessionChecks : List Check :=
             (message.splitOn "mise run config-migrate").length == 2 &&
             (message.splitOn "\n").length == 1 },
     { name :=
+        "a directory with no root that holds init.lean spelt in another case is a misspelt root, not the old form: the reload is rejected with one diagnostic tagged config that names the file found and says to rename it to init.lean, and nothing is elaborated or generated"
+      run := do
+        let (outcome, calls, files) ←
+          firstBuild (configOf [] ["Init.lean"]) (generate := true) (set := some set)
+        let message := ((outcome.diagnostics.map (·.message))[0]?).getD ""
+        return calls == #[.base false #[]] && outcome.built.isNone && files.isEmpty &&
+            said outcome == #[("config", .error)] &&
+            outcome.diagnostics == #[misspeltRoot "Init.lean"] &&
+            (message.splitOn "rename Init.lean to init.lean").length == 2 &&
+            (message.splitOn "config-migrate").length == 1 &&
+            (message.splitOn "\n").length == 1 },
+    { name :=
+        "a root spelt in another case beside other .lean files directly in the directory is still a misspelt root, and of two such spellings the first in byte order is named"
+      run := do
+        let (beside, _, _) ← firstBuild (configOf [] ["05-leader.lean", "INIT.lean"])
+        let (two, _, _) ← firstBuild (configOf [] ["INIT.lean", "Init.lean"])
+        return beside.built.isNone && beside.diagnostics == #[misspeltRoot "INIT.lean"] &&
+            two.built.isNone &&
+            two.diagnostics == #[misspeltRoot "INIT.lean"] },
+    { name :=
         "a directory with no root and no .lean file is an empty config: it is built with nothing registered, no setup is asked for, and nothing is generated"
       run := do
         let (outcome, calls, files) ←

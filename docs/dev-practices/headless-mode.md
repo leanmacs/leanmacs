@@ -168,8 +168,10 @@ or through others, each a Lean module under `Config/`
 - A directory with no `init.lean` that holds `.lean` files directly in it is
   a config in the old form, files in byte order with no header. It is
   rejected with one diagnostic that names the files and
-  `mise run config-migrate`, which converts it. A directory with neither is
-  an empty config.
+  `mise run config-migrate`, which converts it. When one of those files is
+  `init.lean` but for case (`Init.lean`), the diagnostic instead names it
+  and says to rename it to `init.lean`. A directory with neither is an
+  empty config.
 
 **`--generate`** lets the headless mode write into the config directory, as
 the window mode does: before it elaborates anything, a reload creates the
