@@ -145,6 +145,7 @@ import ModelTest.Editor.WindowCommands
 import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
 import ModelTest.Editor.Workspace.Contract
+import ModelTest.Editor.Workspace.FindFile
 import ModelTest.Editor.Workspace.Lister
 
 /-!
@@ -945,7 +946,15 @@ Listing a workspace's files is checked in Lean alone too:
   (`Editor/Workspace/Lister.lean`), pure: config's lister for the root,
   then for the project, then git's for a workspace git found, then the
   fallback; their exact command lines, the fallback's records without
-  `./`, and a lister as plain arguments.
+  `./`, and a lister as plain arguments;
+- `findFileChecks`: `find-file-in-workspace`
+  (`Editor/Workspace/FindFile.lean`) on the loop's driver over the
+  editor's models and the job model of the workspace driver's world, each
+  lister and filter scripted by its exact command line: the eight criteria
+  of project navigation's phase 2, the lister run in the buffer's workspace
+  alone, config's listers, the fallback, the accept through `open-file`,
+  the label, the working directory of a buffer with no workspace, the
+  refusals, and that no step runs a process.
 -/
 
 namespace ModelTest
@@ -1126,6 +1135,7 @@ def checks : List Check :=
     workspaceStateChecks ++
     workspaceChecks ++
     workspaceListerChecks ++
+    findFileChecks ++
     modeMarkerChecks ++
     shellChecks ++
     readOnlyChecks ++

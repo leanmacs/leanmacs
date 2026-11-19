@@ -211,7 +211,11 @@ as before, so reload and job completion work as they did.
   no answer is cached, so a script that opens a file has that job too; and
   `find-mode-markers`, which gives a buffer the minor modes the compile
   contributions' markers turn on, and which every file's open starts once
-  its workspace is known, since contributions ship. And it is handed the
+  its workspace is known, since contributions ship. With them come
+  `find-file-in-workspace`, its source `workspace-files` in the category
+  `workspace-file` (`Workspace.sources`) and the source's job
+  `workspace-files`, which lists the workspace's files with its lister and
+  filters them with fzf (`Editor/Workspace/FindFile.lean`). And it is handed the
   status buffer's commands, jobs and mode (`VersionControl.commands`,
   `VersionControl.jobs`, `VersionControl.modes`,
   `Editor/VersionControl/Compiled.lean`): `vc-status` and the commands of
@@ -2692,7 +2696,8 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         ExecuteCommand.sources ++
         BindingSearch.sources ++
         Completion.Words.shipped ++
-        Files.sources
+        Files.sources ++
+        Workspace.sources
     styleDefaults := Files.styleDefaults
     atPoints := Completion.AtPoint.shipped, atPointUses := #[(none, "words")]
     log := IO.eprintln }

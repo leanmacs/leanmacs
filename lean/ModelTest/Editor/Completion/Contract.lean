@@ -27,6 +27,7 @@ import Editor.Text
 import Editor.Text.Model
 import Editor.Themes
 import Editor.Workspace
+import Editor.Workspace.FindFile
 import ModelTest.Check
 import ModelTest.Support.Completion
 import ModelTest.Support.Keys
@@ -81,6 +82,7 @@ def sourceContractChecks : List Check :=
     [.fixed "fixed" "test" (offered #["wq", "w"]), Completion.Fake.echo "echo" "test",
       Ex.historySource, Ex.namesSource, Buffers.source, TabCommands.source, Themes.source,
       ExecuteCommand.source, BindingSearch.source, Completion.Paths.source,
+      Workspace.FindFile.source,
       Completion.Keys.source
         #[{ key := "s", leads := .binding (some "Save") }, { key := "f", leads := .prefix none 2 }]]
   let writes : Completion.Source :=
