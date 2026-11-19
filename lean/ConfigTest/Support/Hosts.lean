@@ -6,6 +6,7 @@ import Editor.Completion.Compiled
 import Editor.Config.Diagnostic
 import Editor.Config.Directory
 import Editor.Config.Elaborate
+import Editor.Config.Modules
 import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Session
@@ -62,6 +63,35 @@ def rejected (name : String) (result : Config.ChunkResult Config.Elaborate.State
   result.state.isNone &&
     result.diagnostics.any fun diagnostic =>
       diagnostic.source == name && diagnostic.severity == .error
+
+/-- What a config file starts with: the import of the editor's base, and
+the `open` that lets it name the base's declarations with no prefix. A
+check writes the rest of the file after it, so a line of the rest is two
+lines further down in the file. -/
+def configHeader : String :=
+  "import Editor\nopen Editor\n"
+
+/-- A source of config as modules over `files` held in memory, each a
+module name and a text: the root is the module `init`, and nothing is
+stray. -/
+def memoryModules (files : List (String × String)) : Config.Modules.Source :=
+  let find (module : String) : Option Config.Modules.SourceFile :=
+    (files.find? (·.1 == module)).map fun (_, text) =>
+      { module
+        path :=
+          if module == Config.Modules.rootModule then Config.Modules.rootPath
+          else Config.Modules.pathOf module
+        text }
+  { root := pure (find Config.Modules.rootModule), file := fun module => pure (find module),
+    stray := pure #[] }
+
+/-- One reload of the config `files` hold in memory (`memoryModules`), on
+the real elaborator and the base the checks share, with nothing loaded and
+no package port. -/
+def buildModules (context : Context) (files : List (String × String)) :
+    IO (Config.Modules.Outcome Config.Elaborate.Base Config.Elaborate.Handle) :=
+  Config.Modules.build TestScheme.scheme context.modules (memoryModules files)
+    Config.Modules.Package.none none none #[]
 
 /-- Writes each of `files`, a name and a text, into `directory`. -/
 def writeFiles (directory : System.FilePath) (files : List (String × String)) : IO Unit :=

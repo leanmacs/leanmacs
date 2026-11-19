@@ -1,3 +1,4 @@
+import Editor.Config.Modules
 import Editor.Config.Session
 
 /-!
@@ -63,5 +64,77 @@ def source (directory : System.FilePath) : Source :=
       (names.qsort (· < ·)).mapM fun (name : String) => do
           let text ← chunkText (directory / name)
           return { name, text } }
+
+/-! ## Config as modules
+
+What follows answers the ports of the session over modules
+(`Editor/Config/Modules.lean`), which stands beside the chunk session
+until the hosts are switched to it. -/
+
+/-- Whether `path` is a file: it is there, and it is not a directory. -/
+def isFile (path : System.FilePath) : IO Bool :=
+  return (← path.pathExists) && !(← path.isDir)
+
+/-- Throws that `directory` cannot be read unless it is a directory that is
+there. -/
+def demand (directory : System.FilePath) : IO Unit := do
+  let isDirectory ←
+    try
+      discard <| directory.metadata
+      directory.isDir
+    catch error =>
+      throw (unreadable "directory" directory (toString error))
+  unless isDirectory do
+    throw (unreadable "directory" directory "it is not a directory")
+
+/-- The source of config as modules whose files are in `directory`: the
+root is `init.lean`, the config file of a module is at the path its name
+gives (`Modules.pathOf`), and the stray files are the `.lean` files
+directly in the directory other than the root, in the byte order of their
+names. A file that is not there is none; a directory that is not there, and
+a file that cannot be read or is not UTF-8, throw one line that names the
+path. -/
+def modules (directory : System.FilePath) : Modules.Source :=
+  let fileAt (module path : String) : IO (Option Modules.SourceFile) := do
+    unless ← isFile (directory / path) do
+      return none
+    return some { module, path, text := ← chunkText (directory / path) }
+  {
+    root := do
+      demand directory
+      fileAt Modules.rootModule Modules.rootPath,
+    file := fun module => fileAt module (Modules.pathOf module),
+    stray := do
+      let entries ←
+        try
+          directory.readDir
+        catch error =>
+          throw (unreadable "directory" directory (toString error))
+      let files ← entries.filterM fun entry => return !(← entry.path.isDir)
+      let names : Array String :=
+        (files.map (·.fileName)).filter fun name =>
+          name.endsWith ".lean" && name != Modules.rootPath
+      -- `<` on strings compares code points, which is the order of their
+      -- UTF-8 bytes.
+      return names.qsort (· < ·) }
+
+/-- The text of the file of `directory` called `name`, or none when there
+is no such file: the read half of the directory as a Lake package
+(`Modules.Package.read`). -/
+def read (directory : System.FilePath) (name : String) : IO (Option String) := do
+  unless ← isFile (directory / name) do
+    return none
+  return some (← chunkText (directory / name))
+
+/-- Creates the file of `directory` called `name` holding `text`, unless a
+file of that name is there, which is left as it is: the write half of the
+directory as a Lake package (`Modules.Generator.create`). The file is
+opened to be created, never to be replaced, so one that appears in between
+is not overwritten either. -/
+def create (directory : System.FilePath) (name text : String) : IO Unit := do
+  if ← (directory / name).pathExists then
+    return
+  let handle ← IO.FS.Handle.mk (directory / name) .writeNew
+  handle.putStr text
 
 end Editor.Config.Directory

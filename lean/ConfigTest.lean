@@ -5,6 +5,8 @@ import ConfigTest.Editor.AtPoint
 import ConfigTest.Editor.Completion.Keys
 import ConfigTest.Editor.Config.Directory
 import ConfigTest.Editor.Config.Elaborate
+import ConfigTest.Editor.Config.Elaborator.Contract
+import ConfigTest.Editor.Config.Lakefile.Toml
 import ConfigTest.Editor.Evil
 import ConfigTest.Editor.Evil.TreeObjects
 import ConfigTest.Editor.Ex
@@ -56,8 +58,24 @@ show:
 - `elaboratorChecks`: the real elaborator behaves as the fake of its port
   assumes, compiled code and config share state, and the base's modules are
   looked for in every directory it is given, in order;
+- `moduleElaboratorChecks`: the real elaborator of config as modules,
+  which stands beside the chunk one until the hosts are switched: a file
+  that imports `Lean`, a module of the base and a config file sees each; a
+  program a config file exports takes effect when the root's `setup` calls
+  it, and a `setup` defined outside the root is not run; a diagnostic is at
+  the file's own line; `module` and `initialize` are refused; which modules
+  are linked; and each version of a config file has module data of its own;
+- `elaboratorContractChecks`: the elaborator port's contract
+  (`Editor/Config/Elaborator/Contract.lean`) held of that real elaborator,
+  as `model-test` holds it of the port's model;
+- `lakefileChecks`: a lakefile's requires read with Lake's TOML loader, the
+  generated lakefile read back, and the core's copy of Lake's casing rule
+  against Lake's own;
 - `directoryChecks`: the directory source, each check in a temporary
-  directory of its own;
+  directory of its own; `moduleDirectoryChecks`: the directory as a source
+  of modules (the root, a config file by its module name, the stray files)
+  and as a Lake package (a file read by name, and a file created only when
+  it is not there);
 - `hostChecks`: the phase's acceptance tests through the headless host, with
   the real elaborator, the real queue and the real text binding, asserted on
   the lines the host prints; and what a host starts from: handed no
@@ -263,7 +281,12 @@ open Editor
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
-  elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
+  elaboratorChecks context ++ moduleElaboratorChecks context ++ elaboratorContractChecks context ++
+    lakefileChecks () ++
+    directoryChecks () ++
+    moduleDirectoryChecks () ++
+    hostChecks context ++
+    threadChecks context ++
     jobChecks context ++
     treeObjectChecks context ++
     indentChecks context ++

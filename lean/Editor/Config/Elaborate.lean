@@ -1,5 +1,7 @@
+import Editor.Config.Modules
 import Editor.Config.Session
 import Lean
+import Std
 
 /-!
 # The elaborator port, answered by Lean's elaborator
@@ -254,6 +256,256 @@ def elaborator (settings : Settings) : Elaborator State :=
                      messages := {}, scopes := before.scopes } },
     setup := fun state => do
       let after ← elaborate state "setup" trailer
+      if after.messages.hasErrors then
+        return .error (← diagnostics "setup" after.messages)
+      match evalSetup after.env with
+      | .error message =>
+        return .error #[failure "setup" message]
+      | .ok program =>
+        return .ok program }
+
+/-! ## Config as modules
+
+What follows answers the port of the session over modules
+(`Editor/Config/Modules.lean`), which stands beside the chunk session
+until the hosts are switched to it. -/
+
+/-- The base of the adapter: the import state every module read so far is
+kept in, the imports the environment was made from, and the environment a
+file with no config import is elaborated on. -/
+structure Base where
+  /-- Lean's import state: every module file read, each once. A base is
+  grown from it, and a file that imports config files gets an environment
+  made from it and their module files. -/
+  state : Lean.ImportState
+  /-- The modules the environment imports, in the order they were asked
+  for: the settings' first. -/
+  imports : Array Lean.Import
+  /-- The environment of those imports. -/
+  environment : Lean.Environment
+
+/-- The adapter's handle of a config file that elaborated. -/
+inductive Handle where
+  /-- A config file other than the root: its module name, and the file its
+  module data was written to. -/
+  | module (name : Lean.Name) (file : System.FilePath)
+  /-- The root: the environment after it. -/
+  | root (environment : Lean.Environment)
+
+/-- Where the module data of config files is written: each version of a
+file at a path of its own, never written twice, since an environment that
+imported an earlier version may still be alive and its file still mapped. -/
+structure ModuleFiles where
+  /-- The directory the files are written in, made when it is first asked
+  for. -/
+  directory : IO System.FilePath
+  /-- A number no file of the directory has been named with yet. -/
+  next : IO Nat
+
+/-- Module files in the directory `make` makes, which is called once, when
+the first file is written. -/
+def ModuleFiles.over (make : IO System.FilePath) : IO ModuleFiles := do
+  let made ← IO.mkRef (none : Option System.FilePath)
+  let count ← IO.mkRef 0
+  return {
+      directory := do
+        if let some directory← made.get then
+          return directory
+        let directory ← make
+        made.set (some directory)
+        return directory,
+      next := count.modifyGet fun count => (count, count + 1) }
+
+/-- The first components of the modules of the Lean toolchain that are
+linked into every executable that links this adapter: it imports `Lean` and
+`Std`, which import `Init`. -/
+def toolchainRoots : Array Lean.Name :=
+  #[`Init, `Std, `Lean]
+
+/-- Whether `base` holds `module`. -/
+def Base.holds (base : Base) (module : Lean.Name) : Bool :=
+  (base.environment.getModuleIdx? module).isSome
+
+/-- Whether a config file may import `module` on `base`: the base holds
+it, or it is a module of `Init`, `Std` or `Lean` (`toolchainRoots`) whose
+`.olean` file is in the toolchain. Every such module is linked into the
+executable, so reading it runs no initialiser. -/
+def isLinked (settings : Settings) (base : Base) (module : Lean.Name) : IO Bool := do
+  if base.holds module then
+    return true
+  unless toolchainRoots.contains module.getRoot do
+    return false
+  (Lean.modToFilePath (settings.sysroot / "lib" / "lean") module "olean").pathExists
+
+/-- Reads the modules `added`, and what they import, into `state`, each
+module file once, the ones `artifacts` names from the files it names, and
+makes the environment that imports `held` and then `added`. It turns on
+the execution of initialisers before each import, since Lean turns it off
+when an import ends. It is `unsafe` because Lean's
+`enableInitializersExecution` is: the modules read are linked into the
+executable, whose native initialisers have already run and are not run
+again, or are config files, which declare none (see the module docs). -/
+unsafe def importOnUnsafe (state : Lean.ImportState) (held added : Array Lean.Import)
+    (artifacts : Lean.NameMap Lean.ImportArtifacts) : IO (Lean.ImportState × Lean.Environment) := do
+  Lean.enableInitializersExecution
+  Lean.withImporting do
+      let (_, state) ← (Lean.importModulesCore added (arts := artifacts)).run state
+      let environment ←
+        Lean.finalizeImport state (held ++ added) options (leakEnv := false) (loadExts := true)
+      return (state, environment)
+
+/-- The import state after reading `added` into `state`, and the
+environment that imports `held` and then `added`. -/
+@[implemented_by importOnUnsafe]
+opaque importOn (state : Lean.ImportState) (held added : Array Lean.Import)
+    (artifacts : Lean.NameMap Lean.ImportArtifacts) : IO (Lean.ImportState × Lean.Environment)
+
+/-- The base that holds the settings' modules and `modules`, grown from
+`earlier` when there is one: only the modules it does not hold are read. The
+search path is set when the first base is made. -/
+def grow (settings : Settings) (earlier : Option Base) (modules : Array Lean.Name) : IO Base := do
+  let base ←
+    match earlier with
+    | some base =>
+      pure base
+    | none =>
+      Lean.searchPathRef.set settings.searched
+      let imports : Array Lean.Import := settings.imports.map fun module => { module }
+      let (state, environment) ←
+        try
+          importOn default #[] imports {}
+        catch error =>
+          throw (IO.userError (notImported settings (← missing settings) (toString error)))
+      pure { state, imports, environment }
+  let added := modules.filter fun module => !base.holds module
+  if added.isEmpty then
+    return base
+  for module in added do
+    unless ← isLinked settings base module do
+      throw (IO.userError s!"module `{module}` is not linked into this editor")
+  let imports : Array Lean.Import := added.map fun module => { module }
+  let (state, environment) ← importOn base.state base.imports imports {}
+  return { state, imports := base.imports ++ imports, environment }
+
+/-- The imports of the header of the file at `path` whose text is `text`,
+each with the line and column it starts at, or why the header cannot be
+read: Lean's messages, or that the file starts with `module`, which config
+files may not: they are plain modules. -/
+def headerImports (path text : String) : IO (Except (Array Diagnostic) (Array Modules.Import)) := do
+  let input := Lean.Parser.mkInputContext text path
+  let (header, _, messages) ← Lean.Parser.parseHeader input
+  if messages.hasErrors then
+    return .error (← diagnostics path messages)
+  let placed (syntaxNode : Lean.Syntax) : Lean.Position :=
+    input.fileMap.toPosition (syntaxNode.getPos?.getD 0)
+  match header with
+  | `(Lean.Parser.Module.header| $[module%$moduleToken?]? $[prelude]? $imports*) =>
+    if let some token := moduleToken? then
+      let position := placed token
+      return .error
+          #[{ source := path, line := position.line, column := position.column, severity := .error,
+              message :=
+                "a config file may not start with `module`: config files are plain modules, which the editor elaborates each on its own" }]
+    return .ok
+        (imports.filterMap fun «import» =>
+          match «import» with
+          | `(Lean.Parser.Module.import| $[public]? $[meta]? import $[all]? $module) =>
+            let position := placed «import»
+            some
+              { module := module.getId.toString, line := position.line, column := position.column }
+          | _ => none)
+  | _ =>
+    return .ok #[]
+
+/-- The environment the file called `module` is elaborated on: the base's
+when it is handed no config file, and otherwise one made from the base's
+import state and the module files of `handles`, which are read each time,
+since each is one version of a file. A root's handle among them is left
+out: nothing imports a root. -/
+def environmentOver (base : Base) (handles : Array Handle) (module : Lean.Name) :
+    IO Lean.Environment := do
+  let files :=
+    handles.filterMap fun handle =>
+      match handle with
+      | .module name file => some (name, file)
+      | .root _ => none
+  if files.isEmpty then
+    return base.environment.setMainModule module
+  let artifacts : Lean.NameMap Lean.ImportArtifacts :=
+    files.foldl (fun artifacts (name, file) => artifacts.insert name (.ofArrays #[#[file]])) {}
+  let imports : Array Lean.Import := files.map fun (name, _) => { module := name }
+  let (_, environment) ← importOn base.state base.imports imports artifacts
+  return environment.setMainModule module
+
+/-- Elaborates the file `file` as a module on `base` over `handles`: the
+diagnostics, and the environment after it unless a diagnostic is an error
+or it declares `initialize`. The parser starts after the header, whose
+imports the session core has already acted on, and messages carry the
+file's own lines. -/
+def elaborateFile (base : Base) (handles : Array Handle) (file : Modules.SourceFile) :
+    IO (Array Diagnostic × Option Lean.Environment) := do
+  let environment ← environmentOver base handles file.module.toName
+  let input := Lean.Parser.mkInputContext file.text file.path
+  let (_, parserState, messages) ← Lean.Parser.parseHeader input
+  let frontend ←
+    Lean.Elab.IO.processCommands input parserState
+        (Lean.Elab.Command.mkState environment messages options)
+  let after := frontend.commandState
+  let found ← diagnostics file.path after.messages
+  if after.messages.hasErrors then
+    return (found, none)
+  let refused :=
+    (initialised after.env).map fun name =>
+      failure file.path
+        s!"`{name}` is declared with `initialize`, which config may not use: keep state that must outlive a reload in a store (`Editor.Store`)"
+  unless refused.isEmpty do
+    return (found ++ refused, none)
+  return (found, some after.env)
+
+/-- The name of the constant the editor runs: the root's own `setup`. -/
+def setupName : Lean.Name :=
+  `setup
+
+/-- What is elaborated after the root: the root's own `setup`, at the type
+the editor runs. -/
+def rootTrailer : String :=
+  "def «editor.setup» : Editor.SetupM Unit := _root_.setup"
+
+/-- What is said of a root that declares no `setup` itself: the rule, and,
+when a module it imports declares one, whose that is. -/
+def noSetup (environment : Lean.Environment) : String :=
+  let elsewhere :=
+    match environment.getModuleIdxFor? setupName with
+    | some index =>
+      match environment.header.moduleNames[index.toNat]? with
+      | some module => s!" (the `setup` it can see is the one of `{module}`, which is not run)"
+      | none => ""
+    | none => ""
+  s!"{Modules.rootPath} defines no `setup`: the editor runs the `setup` the root itself defines, at the type `Editor.SetupM Unit`, and no other{elsewhere}; a config file the root imports exports its programs under other names, and the root's `setup` calls them"
+
+/-- The real elaborator of config as modules, over `settings`, which
+writes the module data of config files through `files`. -/
+def moduleElaborator (settings : Settings) (files : ModuleFiles) : Modules.Elaborator Base Handle :=
+  { imports := fun file => headerImports file.path file.text,
+    base := fun earlier modules => grow settings earlier (modules.map String.toName),
+    linked := fun base module => isLinked settings base module.toName,
+    file := fun base handles file => do
+      let (found, environment) ← elaborateFile base handles file
+      let some environment := environment | return { diagnostics := found, handle := none }
+      let name := file.module.toName
+      let directory ← files.directory
+      let written := directory / s!"{← files.next}-{file.module}.olean"
+      Lean.writeModule environment written
+      return { diagnostics := found, handle := some (.module name written) },
+    root := fun base handles file => do
+      let (found, environment) ← elaborateFile base handles file
+      return { diagnostics := found, handle := environment.map .root },
+    setup := fun handle => do
+      let .root environment := handle
+        | return .error #[failure "setup" "only a root has a `setup` the editor runs"]
+      unless environment.constants.map₂.contains setupName do
+        return .error #[failure "setup" (noSetup environment)]
+      let after ← elaborate (Lean.Elab.Command.mkState environment {} options) "setup" rootTrailer
       if after.messages.hasErrors then
         return .error (← diagnostics "setup" after.messages)
       match evalSetup after.env with

@@ -1,6 +1,7 @@
 import ConfigFixture
 import Editor
 import Editor.Config.Elaborate
+import Editor.Config.Modules
 import Editor.Config.Session
 import Editor.Job.Real
 import Editor.Job.Runner
@@ -40,6 +41,9 @@ structure Context where
   elaborator : Config.Elaborator Config.Elaborate.State
   /-- The base: the state after importing `Editor` and `ConfigFixture`. -/
   base : Config.Elaborate.State
+  /-- The real elaborator of config as modules, whose `base` hands back, and
+  grows, the one base the checks share (`sharing`). -/
+  modules : Config.Modules.Elaborator Config.Elaborate.Base Config.Elaborate.Handle
   /-- What `ConfigFixture.bump` returned to compiled code before the base was
   imported. -/
   bumped : Nat
@@ -90,6 +94,21 @@ several joined with `:`, as the editor reads its own
 def oleanDirs (argument : String) : List System.FilePath :=
   (ModuleLookup.searchPath argument).map System.FilePath.mk
 
+/-- `real` with one base shared by every caller, kept in `latest`: whatever
+base a caller hands in, `base` grows the one in `latest` to hold the
+modules asked for, keeps it and returns it. A module of the toolchain is
+then read once in the process, whichever check first imports it: a second
+read of a module file about doubles its memory. A base holds at least what
+was asked for, which is all the port says of it. -/
+def sharing (latest : IO.Ref (Option Config.Elaborate.Base))
+    (real : Config.Modules.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) :
+    Config.Modules.Elaborator Config.Elaborate.Base Config.Elaborate.Handle :=
+  { real with
+    base := fun _ modules => do
+      let base ← real.base (← latest.get) modules
+      latest.set (some base)
+      return base }
+
 /-- Imports the base once and runs every check: names on stderr the ones that
 failed, and returns the exit status, 0 when all hold and 1 otherwise.
 
@@ -104,18 +123,28 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
   -- Compiled code writes to the fixture's cell before the base is imported.
   let bumped ← ConfigFixture.bump
   let base ← real.base
-  let context : Context :=
-    { elaborator := { real with base := pure base }, base, bumped, ids := ← IO.mkRef 100
-      waits := ← IO.mkRef none, sysroot, oleanDirs := oleanDirs oleanDir, syntaxFixtures
-      defaultConfig }
-  let checks := checks context
-  let failed ← failures checks
-  for name in failed do
-    IO.eprintln s!"FAILED: {name}"
-  unless failed.isEmpty do
-    return 1
-  IO.println s!"config-test: {checks.length} checks passed"
-  return 0
+  -- The module data of the config files the checks elaborate is written in
+  -- a temporary directory of this run, removed when it ends.
+  IO.FS.withTempDir fun scratch => do
+      let files ← Config.Elaborate.ModuleFiles.over (pure scratch)
+      let modules :=
+        sharing (← IO.mkRef none)
+          (Config.Elaborate.moduleElaborator
+            { sysroot, oleanDirs := oleanDirs oleanDir, imports := #[`Editor, `ConfigFixture] }
+            files)
+      let context : Context :=
+        { elaborator := { real with base := pure base }, base, modules, bumped,
+          ids := ← IO.mkRef 100
+          waits := ← IO.mkRef none, sysroot, oleanDirs := oleanDirs oleanDir, syntaxFixtures
+          defaultConfig }
+      let checks := checks context
+      let failed ← failures checks
+      for name in failed do
+        IO.eprintln s!"FAILED: {name}"
+      unless failed.isEmpty do
+        return 1
+      IO.println s!"config-test: {checks.length} checks passed"
+      return 0
 
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
