@@ -1348,6 +1348,7 @@ text requests. Config sees it through
 | The snapshots a job's loads made | The job runner, off the editor thread, until the job's command adopts one or the job is settled | A reload that installs cancels the old config's jobs, which releases them | Lost |
 | Processes, terminals | Rust, behind handles | Untouched | Lost |
 | Closures registered by config | Compiled Lean, tagged with their owner | Replaced by the new config's | Re-registered by `setup` |
+| A workspace's working sets: each range's stored form and where it is held, what is known of the file on disk, the last set used | Compiled Lean, the workspace's store `working-sets` (`lean/Editor/WorkingSet/Places.lean`), its ranges held by anchor markers of their files' buffers | Untouched | Kept: written by jobs to `<state>/workspaces/<key>/working-sets.json` under the state directory, read lazily the first time a working-set command needs them, each range found again in its file's text or shown drifted (`lean/Editor/WorkingSet/Disk.lean`) |
 | Values of types that config defines | See below | Converted or dropped | As for a reload |
 
 Compiled state needs no special mechanism. That is the main simplification
@@ -1397,6 +1398,33 @@ editor's port:
 **Persistence** is a library feature in Lean: a store or a compiled table
 can be marked persistent, and is then written to disk and read back at
 start-up through the same encoding. Agent records are the first user.
+
+**As built, the state directory** (navigation-and-windows phase 5) is where
+what is kept across a restart lives: `--state <dir>`, or `leanmacs` under
+`$XDG_STATE_HOME`, or under `$HOME/.local/state`, and none when neither is
+set (`Window.defaultState`). The host hands it to the loop's first state
+(`EditorState.stateDirectory`, through `EditorState.hostedBy`, with the
+working and home directories); the headless host's is none, so a headless
+run keeps nothing. Working sets are the first state kept there, per
+workspace ([projects.md](projects.md), "What lives where"); session restore
+and the review record on disk are to reuse it. Its rules, which a later
+user follows:
+
+- **Only jobs touch it**, through the job port's file request: a load
+  (`File.load`), a directory made with its parents (`File.makeDirectory`,
+  added for it down the file port), and the file service's atomic
+  temporary-and-rename save of a snapshot, so a reader never sees a torn
+  file.
+- **It is read lazily**, the first time a command needs it, by a job whose
+  command runs the asking command again: a start waits on no disk.
+- **A version rule**: a missing file is empty; one that does not parse, or
+  whose version is newer than the editor's, is left as it is for the run,
+  said once, and never written over. Never fail to start, never lose what
+  is not understood.
+- **No state directory** keeps everything in memory, said once.
+- **Writes are keyed by the workspace's root**, so a newer write cancels an
+  older one still in flight; two editors writing one workspace's file:
+  the last writer wins.
 
 ## Events and reducers
 

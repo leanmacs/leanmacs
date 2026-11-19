@@ -1310,6 +1310,70 @@ Pinned by `ModelTest.projectSearchChecks` (the pure decisions),
 the models) and `ContractTest.projectSearchChecks` (over the real
 bindings).
 
+### As built: the working set buffer
+
+Navigation-and-windows phase 5 built working sets
+(`lean/Editor/WorkingSet.lean` and `lean/Editor/WorkingSet/`), the third
+user of excerpt buffers: a named list of ranges of a workspace's files,
+each with a note, shown as code and kept across a restart. It changed
+nothing of the excerpt text.
+
+- **Adding** (`working-set-add`, `SPC k a` in the default config): the
+  calling window's primary selection, its extent under the selection's
+  shape, or a cursor's whole row with its line break. In an excerpt buffer
+  (project search's results, a set's own buffer) each end is located in
+  its source (`TextId.locate`), so the range recorded is the file's, held
+  by markers of the file's buffer: a row of the results pins the file's
+  line. Ends in two files, a source with no file (a review's old side, a
+  drifted quote) and a file in no workspace are refused with a sentence.
+  The name is an argument or asked for, the workspace's sets the last used
+  first; a range already in the set is not added again.
+- **One buffer a set**, `*working-set: <name> in <label>*` (`working-set-open`,
+  `SPC k o` and `SPC RET`), made or emptied and filled again, with the mode
+  `working-set`. Opened from an excerpt buffer with no workspace of its
+  own (project search's results), the set is of the workspace of the
+  buffer under the cursor's excerpt.
+- **Its excerpts** are each placed range's lines, from the start of its
+  first row to the end of its last with the line break; ranges are grouped
+  by file in the order of each file's first range, and those of one file
+  whose rows overlap or touch are one excerpt, as project search merges, so
+  no two excerpts are over one source byte. The header is
+  `<path>:<line>`, ` · changed` for a range found with errors, and each
+  note. A file of the set no buffer holds is loaded and taken into a
+  buffer shown nowhere (the job `working-set-files`), and the buffer is
+  filled again when it arrives.
+- **A drifted range** follows the placed ones, in the set's order: a
+  read-only buffer `<path>@drifted` holding its stored quote, given the
+  workspace, its own spans covering its text in the face
+  `working-set-drifted`, which the loop draws in the set's buffer through
+  the excerpt translation with no change to the loop; its header
+  `<path>:<line> · drifted since <first 8 of the commit>` and its note. An
+  edit typed in it is refused as in any read-only buffer, and its stored
+  form is never changed: the next open, or `working-set-refresh`, tries
+  again. The quotes' buffers are removed when the set's buffer is filled
+  again or closed.
+- **In the set's buffer**: `RET` visits the range under the cursor,
+  recording a jump (`Jumps.visitLocated`, lifted from
+  `project-search-visit`); the refresh key fills it again; the local `d`
+  removes the range under the cursor, asking which by note where several
+  share the excerpt, and `n` sets its note. A note's header is rewritten by
+  filling the excerpts again with the cursors kept, not by
+  `BufferId.setExcerptHeaders`: one place makes headers.
+- **When ranges are found again**: when the set is opened or a file of it
+  is opened (`Files.adopt`'s hook), never at start-up, so a start waits on
+  nothing; "still there after a restart" is seen by opening the set.
+- **Not built**: deleting or renaming a set; reordering ranges; tours (the
+  same stored form, read with `fileAt` at the commit); watching the store
+  for another instance's writes (the last writer wins, the save being
+  atomic); a set across workspaces; closing the buffers an open loaded.
+
+Pinned by `ModelTest.workingSetChecks` (the stored form, pure),
+`ModelTest.workingSetRefindChecks` (the ladder),
+`ModelTest.workingSetPlaceChecks`, `ModelTest.workingSetRunChecks` and
+`ModelTest.workingSetDiskChecks` (on the loop's driver over the models), and
+`ContractTest.workingSetChecks` (over the real bindings and real git,
+through a restart).
+
 ## Decorations
 
 Lean describes how text should look; the library merges and draws it.
