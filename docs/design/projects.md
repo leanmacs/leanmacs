@@ -185,8 +185,9 @@ root.
   argument (`Location.arguments`) names the workspace the table has there;
   otherwise it is the workspace of the focused buffer. A buffer with no
   workspace is searched in its file's directory, or for a buffer with no
-  file in the editor's working directory, as `:!` runs there
-  (`BufferId.workingDirectory`), with the fallback lister. Arguments that
+  file in the editor's working directory, as `:!` runs there: both ask
+  the state's one rule (`EditorState.commandDirectoryOf`), with the
+  fallback lister. Arguments that
   name no location, a count or a register a key hands, are ignored, and
   what follows a location is left for the typed text a later phase hands.
 - **The label** names what is searched: `Find file in r@feature: `, the
@@ -282,11 +283,15 @@ identity from config's latest as the loop is told it, so a reload's change
 is read at once.
 
 A command run for a buffer runs in its workspace's root, or, with no
-workspace, in its file's directory (`BufferId.workingDirectory`). A
+workspace, in its file's directory, with no separator at its end. A
 buffer with neither runs in the editor's working directory
 (`EditorState.workingDirectory`), which each host sets once from its own
 process's working directory: the window mode's and the headless mode's
-alike. It is `/` until a host sets it. A feature declares a
+alike. It is `/` until a host sets it. The rule is decided once, on the
+state (`EditorState.workingDirectoryOf`, which `BufferId.workingDirectory`
+forwards to, and `EditorState.commandDirectoryOf`, the directory it comes
+to on this machine), and every command that runs something for a buffer,
+`:!` and `find-file-in-workspace` among them, asks it. A feature declares a
 `Store α` (`lean/Editor/Store.lean`) and reads and writes it through
 `Workspace.Table.get` and `Workspace.set`, or `getOfProject` and
 `Project.set`. They are compiled state that follows `Store`'s encoding, not

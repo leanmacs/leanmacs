@@ -1050,10 +1050,16 @@ leaves them.
 - **The editor's working directory** (`workingDirectory`) is where a
   command run for a buffer with no workspace and no file runs. A host sets
   it once, when its loop's frame is made, from its own working directory
-  (`Headless.Collaborators.workingDirectory`); it is `/` until then. A
-  buffer's own answer (`BufferId.workingDirectory`, `Editor/Api.lean`)
-  is still `none` for such a buffer: the command that runs something
-  falls back to this.
+  (`Headless.Collaborators.workingDirectory`); it is `/` until then.
+- **Where a command run for a buffer runs** is decided here, once, for
+  every command that runs one (`:!`, `find-file-in-workspace`).
+  `workingDirectoryOf` is the buffer's own answer, to which
+  `BufferId.workingDirectory` (`Editor/Api.lean`) forwards: its
+  workspace's root on this machine, its workspace's location when that is
+  elsewhere, its file's directory with no separator at its end
+  (`Process.trimmed`, so a file `/x//a` runs in `/x`), or `none`.
+  `commandDirectoryOf` is the directory on this machine that comes to:
+  that root or that directory, else the editor's working directory.
 - **The directory a view reads names from** (`directoryOf`) is Emacs's
   `default-directory` for `find-file`: the directory of its buffer's file,
   else the root of its buffer's workspace when that is on this machine,
@@ -3513,6 +3519,31 @@ def workspaceOf? (state : EditorState) (id : BufferId) : Option (Workspace × Pr
   let location ← Location.decode? (← state.value? id Workspace.bufferLocal)
   let workspace ← state.workspaces.workspace? location
   return (workspace, (← state.workspaces.project? workspace.project.identity))
+
+/-- Where a command run for the buffer `id` runs ("Workspaces", in the module
+docs): its workspace's root on this machine, its workspace's location when
+that is elsewhere, the directory of its file, with no separator at its end,
+when it has no workspace, or none. -/
+def workingDirectoryOf (state : EditorState) (id : BufferId) : Workspace.WorkingDirectory :=
+  match state.workspaceOf? id with
+  | some (workspace, _) =>
+    match workspace.location with
+    | .local root => .workspace root
+    | location => .elsewhere location
+  | none =>
+    match ((state.buffer? id).bind (·.file)).bind (·.path.parent) with
+    | some directory => .fileDirectory (Process.trimmed directory)
+    | none => .none
+
+/-- The directory on this machine a command run for the buffer `id` runs in
+("Workspaces", in the module docs): `workingDirectoryOf`'s root or file
+directory, else, for a workspace elsewhere and for none, the editor's working
+directory. -/
+def commandDirectoryOf (state : EditorState) (id : BufferId) : System.FilePath :=
+  match state.workingDirectoryOf id with
+  | .workspace root => root
+  | .fileDirectory directory => directory
+  | .elsewhere _ | .none => state.workingDirectory
 
 /-- The directory the view `view` reads names from ("Workspaces", in the
 module docs): the directory of its buffer's file, else the root of its

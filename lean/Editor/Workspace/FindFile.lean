@@ -32,9 +32,9 @@ settings and the call:
 - **Otherwise its root** is searched, its label (`Workspace.label`,
   `name@branch`) names it, and its lister is `Workspace.lister`'s.
 - **A buffer with no workspace** is searched in the directory a command
-  run for it would use (`BufferId.workingDirectory`): its file's
-  directory, or the editor's working directory for a buffer with no file,
-  as `:!` does (`Editor/Shell.lean`). The directory is its label, and the
+  run for it would use, which the state decides for `:!` too
+  (`EditorState.commandDirectoryOf`, `Editor/State.lean`): its file's
+  directory, or the editor's working directory for a buffer with no file. The directory is its label, and the
   fallback lists it.
 - **Other arguments**, such as a count and a register a Vim key hands a
   command, are ignored.
@@ -152,10 +152,7 @@ def searched (state : EditorState) (settings : Settings) (call : Call) : Except 
     match state.workspaceOf? buffer with
     | some (workspace, _) => ofWorkspace settings workspace
     | none =>
-      let directory :=
-        match ((state.buffer? buffer).bind (·.file)).bind (·.path.parent) with
-        | some directory => Process.trimmed directory
-        | none => state.workingDirectory
+      let directory := state.commandDirectoryOf buffer
       .ok { root := directory, label := directory.toString, lister := lister settings none }
 
 /-- The prompt's label for a search labelled `label`. -/

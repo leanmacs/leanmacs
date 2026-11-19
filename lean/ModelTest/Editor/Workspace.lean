@@ -174,6 +174,38 @@ def workspaceStateChecks : List Check :=
               state.placeOf ⟨0⟩ == { directory := some "/work", home := some "/home/me" } &&
               EditorState.none.home == none },
     { name :=
+        "where a command run for a buffer runs is decided on the state: its local workspace's root, its workspace's location when that is elsewhere, its file's directory with no separator at its end and / kept, or none; on this machine it runs there, and in the editor's working directory for a workspace elsewhere and for none"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let state := { state with workingDirectory := "/work" }
+            let withFile (path : System.FilePath) : EditorState :=
+              { state with
+                buffers :=
+                  state.buffers.modify 1 fun buffer =>
+                    buffer.map fun (buffer : Buffer) =>
+                      { buffer with
+                        file :=
+                          some { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 } } } }
+            let inWorkspace :=
+              request (request state (.recordWorkspace "/r/src" 0 (some main)))
+                (.setValue ⟨0⟩ Workspace.bufferLocal (Location.local "/r").encode)
+            let reachable := Location.reachable "kube" "pod/dev" "/src"
+            let elsewhere :=
+              request (request state (.registerWorkspace reachable origin none))
+                (.setValue ⟨0⟩ Workspace.bufferLocal reachable.encode)
+            (withFile "/w/src//a.lean").workingDirectoryOf ⟨1⟩ == .fileDirectory "/w/src" &&
+              (withFile "/a.lean").workingDirectoryOf ⟨1⟩ == .fileDirectory "/" &&
+              (withFile "/w/src//a.lean").commandDirectoryOf ⟨1⟩ == ("/w/src" : System.FilePath) &&
+              state.workingDirectoryOf ⟨0⟩ == .none &&
+              state.commandDirectoryOf ⟨0⟩ == ("/work" : System.FilePath) &&
+              inWorkspace.workingDirectoryOf ⟨0⟩ == .workspace "/r" &&
+              inWorkspace.commandDirectoryOf ⟨0⟩ == ("/r" : System.FilePath) &&
+              elsewhere.workingDirectoryOf ⟨0⟩ == .elsewhere reachable &&
+              elsewhere.commandDirectoryOf ⟨0⟩ == ("/work" : System.FilePath) },
+    { name :=
         "a workspace registered with a location known only by its branch and one reachable through kube belong to the project of their remote, whichever form it is in, and neither can run commands or read files; registering a local location is refused, with the state as it was"
       run :=
         let branchOnly := Location.branchOnly origin "agent/x"

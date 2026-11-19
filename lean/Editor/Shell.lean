@@ -50,7 +50,9 @@ ex line, in that order:
    anything is recorded or started (`cannotRun`).
 2. **The directory** is the workspace's root; with no workspace, the
    directory of the buffer's file; with neither, the editor's working
-   directory (`EditorState.workingDirectory`), which the host set.
+   directory (`EditorState.workingDirectory`), which the host set. The
+   state decides it (`EditorState.commandDirectoryOf`), as it does for
+   every command that runs something for a buffer.
 3. **The time limit** is config's (`shellTimeLimit`, `Editor/Setup.lean`), or
    `defaultTimeLimit`, 30 seconds.
 4. **The job is started** (`runJob`) with an order (`Order`), under the
@@ -453,11 +455,7 @@ def start (target : Target) (line text : String) (filter : Option Filter := none
     unless found.location.can.runCommands do
       message (cannotRun found)
       return
-  let directory :=
-    match ← buffer.workingDirectory with
-    | .workspace root => root
-    | .fileDirectory directory => directory
-    | .elsewhere _ | .none => state.workingDirectory
+  let directory := state.commandDirectoryOf buffer
   let time := (← RegistryRequest.ask .shellTimeLimit).getD defaultTimeLimit
   let order : Order :=
     { line, text, directory, time, buffer, view := target.window.id, scope := scope.location?

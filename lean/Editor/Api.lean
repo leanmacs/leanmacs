@@ -794,6 +794,8 @@ is one read of the state or one state request (`Editor/State.lean`,
 - `BufferId.workingDirectory` is where a command run for a buffer runs: its
   workspace's root on this machine, its workspace's location when that is
   elsewhere, the directory of its file when it has no workspace, or none.
+  It forwards to the state's one rule (`EditorState.workingDirectoryOf`,
+  `Editor/State.lean`, "Workspaces").
 - `Workspace.register` makes a workspace that is not on this machine, for
   a remote agent session or a later remote adapter; a local location is
   refused, since local workspaces are found.
@@ -2224,22 +2226,10 @@ def inheritWorkspace (id source : BufferId) : EditorM (Except BufferRefusal Unit
 
 /-- Where a command run for the buffer `id` runs: its workspace's root on
 this machine, its workspace's location when that is elsewhere, the
-directory of its file when it has no workspace, or none. -/
-def workingDirectory (id : BufferId) : EditorM Workspace.WorkingDirectory := do
-  let state ← editorState
-  match state.workspaceOf? id with
-  | some (workspace, _) =>
-    match workspace.location with
-    | .local root =>
-      return .workspace root
-    | location =>
-      return .elsewhere location
-  | none =>
-    match ((state.buffer? id).bind (·.file)).bind (·.path.parent) with
-    | some directory =>
-      return .fileDirectory directory
-    | none =>
-      return .none
+directory of its file when it has no workspace, or none; the state decides
+it (`EditorState.workingDirectoryOf`). -/
+def workingDirectory (id : BufferId) : EditorM Workspace.WorkingDirectory :=
+  return (← editorState).workingDirectoryOf id
 
 end BufferId
 
