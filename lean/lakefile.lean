@@ -3,6 +3,13 @@ import Lake
 open Lake DSL System
 open Lean (Name)
 
+/-- The core's Lean options: every Lean linter on, and a warning an error.
+They are the package's, below, and those of the root module the
+package-set build generates in another package (`setRoot`), which is
+compiled as the core is. -/
+def coreLeanOptions : Array LeanOption :=
+  #[⟨`linter.all, true⟩, ⟨`warningAsError, true⟩]
+
 /-- The editor's core, as a Lake package. Its name is what a package set
 and a package `require`, and what the staged core of the user-side link is
 called (`tools/user-link/core/lakefile.toml`).
@@ -16,13 +23,7 @@ Lake would fetch every git dependency of it into each set's own
 `.lake/packages`, so the Lean formatter is the `require` of a package of
 its own, `tools/lean-fmt/lakefile.toml`, which nothing requires
 (`docs/design/packages.md`, "The package set and its build"). -/
-package «editor-core» where leanOptions := #[⟨`linter.all, true⟩, ⟨`warningAsError, true⟩]
-
-/-- The Lean options of this package, for a module the package-set build
-generates in another package (`setRoot`). They must equal the package's
-`leanOptions` above. -/
-def coreLeanOptions : Array LeanOption :=
-  #[⟨`linter.all, true⟩, ⟨`warningAsError, true⟩]
+package «editor-core» where leanOptions := coreLeanOptions
 
 /-- The editor's modules. Its root `Editor` is what user config is elaborated
 on at runtime, and the build makes its `.olean` files for that. Its second
