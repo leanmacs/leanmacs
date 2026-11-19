@@ -9,6 +9,8 @@ import Editor.Completion.Contract
 import Editor.Completion.DisplayContract
 import Editor.Completion.Fake
 import Editor.Completion.StyleContract
+import Editor.Config.Elaborator.Contract
+import Editor.Config.Elaborator.Model
 import Editor.Display.Contract
 import Editor.Evil.Compiled
 import Editor.Evil.Theorems
@@ -61,7 +63,9 @@ imports check (`tools/host-imports-check.sh`) does not meet it.
 
 The core modules no other core module imports: the modules that define
 the packages still in the core (`….Compiled`), the contracts, fakes, cases
-and theorems, the executable's entry (`Editor.Main`, which brings the
+and theorems, the elaborator port's model
+(`Editor.Config.Elaborator.Model`), which brings the session over modules
+until the hosts import it, the executable's entry (`Editor.Main`, which brings the
 hosts, the executable's modes and `Editor.Command.Append`), `Editor.Json`,
 and the test kit the core publishes for a package's tests: the model
 tests' (`Editor.Test.…`, `Editor/Test/`: `Editor.Test.Listing` and

@@ -37,6 +37,10 @@ import ModelTest.Editor.Completion.Paths
 import ModelTest.Editor.Completion.Style
 import ModelTest.Editor.Completion.StyleContract
 import ModelTest.Editor.Completion.Words
+import ModelTest.Editor.Config.Elaborator.Model
+import ModelTest.Editor.Config.LakePackage
+import ModelTest.Editor.Config.Lakefile
+import ModelTest.Editor.Config.Modules
 import ModelTest.Editor.Config.Packages
 import ModelTest.Editor.Config.Registry
 import ModelTest.Editor.Config.Reload
@@ -651,6 +655,25 @@ The config session's decisions are tested here too, with no elaborator:
   there are, one check for each case;
 - `sessionChecks`: one reload (`Config.build`), on a fake elaborator that
   records every call and a fake source, built for the test scheme;
+- `lakePackageChecks`: the config directory as a Lake package
+  (`Editor/Config/LakePackage.lean`): the generated lakefile's text, and
+  what is done about the lakefile and the toolchain file given what the
+  directory holds;
+- `lakefileChecks`: the library a package's modules are under, and which
+  of a lakefile's requires a module belongs to
+  (`Editor/Config/Lakefile.lean`);
+- `elaboratorContractChecks`: the elaborator port's contract
+  (`Editor/Config/Elaborator/Contract.lean`) held of its model, which
+  `config-test` holds of the real adapter; `elaboratorModelChecks`: the
+  edges of the model's language, and a base asked to hold a module that is
+  not linked;
+- `modulesChecks`: the session over modules (`Editor/Config/Modules.lean`),
+  which stands beside the chunk session until the hosts are switched to
+  it, on the elaborator's model: the order a config's files are elaborated
+  in and what each is handed, which files a reload keeps, what is refused
+  before anything is elaborated (a module that is not linked, with what the
+  config's lakefile says of it, a config file that is not there, a cycle,
+  the old form), the generated files, and what an outcome carries;
 - `reloadChecks`: the reducer that serialises reloads, with outcomes built
   by hand. The phase's acceptance tests are here on fakes (reload replaces a
   command, a rejected reload keeps the old config, a reload does not
@@ -1093,6 +1116,11 @@ def checks : List Check :=
     registryHintChecks ++
     storeChecks ++
     sessionChecks ++
+    lakePackageChecks ++
+    lakefileChecks ++
+    elaboratorContractChecks ++
+    elaboratorModelChecks ++
+    modulesChecks ++
     reloadChecks ++
     reloadHintChecks ++
     packageChecks ++
