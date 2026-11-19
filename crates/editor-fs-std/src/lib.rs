@@ -34,6 +34,12 @@
 //!   the path as the link holds it. The system refuses a path that is no
 //!   link as an invalid argument, and one where nothing is as not found:
 //!   both are `None`.
+//! - **`make_directory`** is `fs::create_dir_all`, which makes every
+//!   directory on the way and takes one already there as done. Where a
+//!   file is at the path the system says it exists; the port's word for
+//!   that, when making a directory, is `NotAFile`, so `AlreadyExists` is
+//!   answered as `NotAFile` here. Under a file the system says not a
+//!   directory, which is `NotAFile` as for every operation.
 //! - **`list`** is `fs::read_dir`, with `fs::metadata` of each entry for
 //!   its kind, which follows links: a link whose metadata cannot be read,
 //!   one that names nothing included, is `Other`. The system refuses a
@@ -208,6 +214,19 @@ impl Fs for StdFs {
             }
             Err(error) => Err(refusal(&error)),
         }
+    }
+
+    fn make_directory(&self, path: &Path) -> Result<(), FsError> {
+        fs::create_dir_all(path).map_err(|error| {
+            // Something that is not a directory is at the path: the system
+            // says it exists, and `create_dir_all` has found it is no
+            // directory.
+            if error.kind() == io::ErrorKind::AlreadyExists {
+                FsError::new(FsErrorKind::NotAFile, error.to_string())
+            } else {
+                refusal(&error)
+            }
+        })
     }
 
     fn list(&self, path: &Path) -> Result<Vec<Entry>, FsError> {

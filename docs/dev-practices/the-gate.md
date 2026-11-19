@@ -151,13 +151,15 @@ fixed seed and write no file. What a motion and a read of one row or a
 range allocate on a megabyte of text is counted there too, in bytes
 (`crates/editor-text/tests/snapshot_cost.rs`).
 
-Loading and saving a file are tested there too, and make no real file: the
+Loading and saving a file, listing a directory and making one are tested
+there too, and make no real file: the
 logic (`crates/editor-text/src/file.rs`) reaches a file system only through
 a port the crate defines, and its tests run on the port's published fake,
 which `mise run lint` holds them to (`crates/editor-text/clippy.toml`). The
 port's real adapter, over `std::fs`, is a crate of its own
 (`crates/editor-fs-std`) whose tests hold it to the port's contract in a
-temporary directory they make and remove. One test runs the logic over the
+temporary directory they make and remove: a directory made with its
+parents, made again, and refused where a file is, among its rules. One test runs the logic over the
 real adapter, the file service's wiring test
 (`crates/editor-ffi/tests/files.rs`), also in a temporary directory of its
 own.

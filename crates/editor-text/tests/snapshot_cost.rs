@@ -621,6 +621,10 @@ impl Fs for Discard {
     fn list(&self, _: &Path) -> Result<Vec<Entry>, FsError> {
         Err(FsError::new(FsErrorKind::NotFound, "nothing is kept"))
     }
+
+    fn make_directory(&self, _: &Path) -> Result<(), FsError> {
+        Ok(())
+    }
 }
 
 #[test]

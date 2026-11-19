@@ -307,7 +307,7 @@ reloads a buffer whose file changed on disk, and nothing follows a buffer's
 file with a watch yet: a change is found when a save is asked for.
 
 - **The port.** `editor_text::fs::Fs`, defined by `editor-text` in its own
-  terms, with seven methods. `stat` says what is at a path, following links,
+  terms, with nine methods. `stat` says what is at a path, following links,
   and is none for nothing; it is the one way time and metadata reach the
   core, which reads no clock. `read` gives a file's bytes whole. `write`
   makes a *new* file from pieces, with exactly the permissions given
@@ -324,7 +324,11 @@ file with a watch yet: a change is found when a save is asked for.
   there is refused as not found, and what is not a directory as not a file,
   the port's kind for "not what was asked for", which every operation
   already used for a path through something that is not a directory, so
-  no kind was added and no existing refusal changed. An error is a kind
+  no kind was added and no existing refusal changed. `make_directory`
+  (navigation-and-windows phase 5, for a workspace's working sets kept
+  under the state directory, which need not be there) makes a directory
+  and every directory on the way to it; one already there is no error, and
+  a file at the path or on the way is refused as not a file. An error is a kind
   the core decides on (not found, denied, exists, not a file, other) and
   the platform's words.
 - **The fake.** `editor_text::fs::FakeFs`, published and not test-only: a
@@ -343,8 +347,11 @@ file with a watch yet: a change is found when a save is asked for.
   what a save's stamp rests on: a renamed file keeps its modification time
   and its size. So is a listing: a directory holding a file, a directory, a
   link to a file and a link to nothing lists each once, with the kinds
-  file, directory, file and other, and nothing and a file are refused. The
-  check is shown to bite by eighteen fakes written to break one rule each.
+  file, directory, file and other, and nothing and a file are refused. So
+  is a directory made: two levels made at once, each a directory, made
+  again with no error and written in, and refused where a file is and
+  under one. The check is shown to bite by twenty-one fakes written to
+  break one rule each.
 - **The adapter.** `editor-fs-std`, a crate of its own: `StdFs` over
   `std::fs`, Unix only, made by the one constructor `StdFs::system()`. A
   write is `create_new` with the permissions set on the open file, then
@@ -401,6 +408,13 @@ file with a watch yet: a change is found when a save is asked for.
   deterministic and the Lean model answers the same. `std::fs::read_dir`
   is the library, behind the port, with `std::fs::metadata` of each entry
   for its kind.
+- **A directory made** (`editor_text::file::make_directory`,
+  navigation-and-windows phase 5): a path that is not absolute is refused
+  before the file system is asked; the port's not a file becomes not a
+  directory, and anything else is handed on. `std::fs::create_dir_all` is
+  the library, behind the port; where a file is at the path it says the
+  path exists, which the adapter answers as not a file. A save makes no
+  directory: a caller that saves where one may be missing makes it first.
 - **A stamp alone** (`editor_text::file::stamp`): the stamp of the file at
   a path, or none when nothing is there, from one stat, with nothing read;
   a path that is not absolute is refused before the file system is asked,

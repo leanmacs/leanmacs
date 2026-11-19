@@ -56,6 +56,8 @@ pub enum Op {
     ReadLink,
     /// [`Fs::list`].
     List,
+    /// [`Fs::make_directory`].
+    MakeDirectory,
 }
 
 /// A call the fake received ([`FakeFs::calls`]), with what it was asked.
@@ -77,6 +79,8 @@ pub enum Call {
     ReadLink(PathBuf),
     /// [`Fs::list`] of this path.
     List(PathBuf),
+    /// [`Fs::make_directory`] of this path.
+    MakeDirectory(PathBuf),
 }
 
 impl Call {
@@ -91,6 +95,7 @@ impl Call {
             Self::Resolve(_) => Op::Resolve,
             Self::ReadLink(_) => Op::ReadLink,
             Self::List(_) => Op::List,
+            Self::MakeDirectory(_) => Op::MakeDirectory,
         }
     }
 }
@@ -593,6 +598,37 @@ impl State {
         Ok(entries)
     }
 
+    /// [`Fs::make_directory`]. Every path from the root down to `path` is
+    /// made a directory where nothing is; a file or anything else on the
+    /// way is refused. The fake follows no link on the way.
+    fn make_directory(&mut self, path: &Path) -> Result<(), FsError> {
+        let mut on_the_way: Vec<&Path> = path.ancestors().collect();
+        on_the_way.reverse();
+        for at in &on_the_way {
+            // The root has no parent, and is always there.
+            if at.parent().is_none() {
+                continue;
+            }
+            match self.nodes.get(*at) {
+                Some(Node::Directory(_)) | None => {}
+                Some(Node::File { .. } | Node::Other(_)) => {
+                    return Err(refused(FsErrorKind::NotAFile, at));
+                }
+                Some(Node::Link(_)) => {
+                    return Err(FsError::new(
+                        FsErrorKind::Other,
+                        format!(
+                            "the fake follows no link to make a directory: {}",
+                            at.display()
+                        ),
+                    ));
+                }
+            }
+        }
+        self.make_directories(path);
+        Ok(())
+    }
+
     /// [`Fs::read_link`].
     fn read_link(&self, path: &Path) -> Option<PathBuf> {
         match self.nodes.get(path) {
@@ -652,6 +688,12 @@ impl Fs for FakeFs {
 
     fn list(&self, path: &Path) -> Result<Vec<Entry>, FsError> {
         self.call(Call::List(path.to_path_buf()), |state| state.list(path))
+    }
+
+    fn make_directory(&self, path: &Path) -> Result<(), FsError> {
+        self.call(Call::MakeDirectory(path.to_path_buf()), |state| {
+            state.make_directory(path)
+        })
     }
 }
 
@@ -1163,6 +1205,60 @@ mod tests {
             fs.calls().last(),
             Some(&Call::List(PathBuf::from("/w/pipe")))
         );
+    }
+
+    #[test]
+    fn a_directory_is_made_with_its_parents_and_one_already_there_is_no_error() {
+        let fs = FakeFs::new();
+        fs.directory("/w");
+
+        assert_eq!(fs.make_directory(Path::new("/w/a/b/c")), Ok(()));
+        for path in ["/w/a", "/w/a/b", "/w/a/b/c"] {
+            assert_eq!(
+                fs.stat(Path::new(path))
+                    .ok()
+                    .flatten()
+                    .map(|stat| stat.kind),
+                Some(Kind::Directory),
+                "{path}"
+            );
+        }
+        assert_eq!(fs.make_directory(Path::new("/w/a/b")), Ok(()));
+        assert_eq!(fs.make_directory(Path::new("/")), Ok(()));
+        assert_eq!(
+            fs.calls().last(),
+            Some(&Call::MakeDirectory(PathBuf::from("/")))
+        );
+    }
+
+    #[test]
+    fn a_directory_where_a_file_is_or_under_one_is_refused_and_nothing_is_made() {
+        let fs = FakeFs::new();
+        fs.file("/w/a.txt", b"a");
+        fs.other("/w/pipe");
+        let kind = |path: &str| {
+            fs.make_directory(Path::new(path))
+                .map_err(|error| error.kind)
+        };
+
+        assert_eq!(kind("/w/a.txt"), Err(FsErrorKind::NotAFile));
+        assert_eq!(kind("/w/a.txt/under/deeper"), Err(FsErrorKind::NotAFile));
+        assert_eq!(kind("/w/pipe"), Err(FsErrorKind::NotAFile));
+        assert_eq!(fs.bytes("/w/a.txt").as_deref(), Some(&b"a"[..]));
+        assert_eq!(fs.stat(Path::new("/w/a.txt/under")), Ok(None));
+    }
+
+    #[test]
+    fn fail_fails_the_next_directory_made() {
+        let fs = FakeFs::new();
+        fs.fail(Op::MakeDirectory, refusal(FsErrorKind::Denied));
+
+        assert_eq!(
+            fs.make_directory(Path::new("/w")),
+            Err(refusal(FsErrorKind::Denied))
+        );
+        assert_eq!(fs.stat(Path::new("/w")), Ok(None));
+        assert_eq!(fs.make_directory(Path::new("/w")), Ok(()));
     }
 
     #[test]
