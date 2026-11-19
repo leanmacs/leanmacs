@@ -13,8 +13,10 @@ Built in `lean/Editor/Workspace.lean` (the data and the table),
 (its model and its contract), `lean/Editor/Workspace/Attach.lean` (a
 buffer's workspace and `workspace-current`),
 `lean/Editor/Workspace/Lister.lean` (which command lists a workspace's
-files), `lean/Editor/Workspace/FindFile.lean` (`find-file-in-workspace`)
-and `lean/Editor/Workspace/Compiled.lean` (their registrations).
+files), `lean/Editor/Workspace/FindFile.lean` (`find-file-in-workspace`),
+`lean/Editor/Workspace/Projects.lean` (the project's workspaces),
+`lean/Editor/Workspace/FindInProject.lean` (`find-file-in-project`) and
+`lean/Editor/Workspace/Compiled.lean` (their registrations).
 
 ## Three layers
 
@@ -222,6 +224,62 @@ root.
 
 Keys come with project navigation's phase 5; until then it runs by name.
 
+## The project's workspaces and `find-file-in-project`
+
+The table knows only the checkouts in which a file has been opened.
+`find-file-in-project` is a picker over every checkout of the focused
+buffer's project, whose continuation is `find-file-in-workspace` rooted at
+the one chosen.
+
+- **The project's workspaces** (`Workspace.Projects.entries`, pure) are
+  the union of the version-control interface's `worktrees` for the focused
+  workspace's repository ([version-control.md](version-control.md)) and
+  the table's workspaces of the same project, de-duplicated by location.
+  The worktrees come first, in the reply's order, the main one first; then
+  each workspace of the table no worktree matched, in table order: a
+  registered workspace that is not local, or a separate clone of the same
+  origin.
+- **Labels.** A worktree the table knows takes the table's label. Any
+  other is labelled by the same rule a workspace is, `Workspace.labelOf`,
+  with the project's name and its head as the branch, so a detached
+  worktree is `name@<directory>`. Each is annotated with its root, or
+  `Location.describe` for a location with none, and the current workspace
+  is listed last. Where two share a label, as a session registered on
+  `main` beside the local `r@main` does, each is listed as `<label>
+  (<annotation>)`, so every one can be chosen.
+- **Git only for a workspace git found** (`Workspace.foundByGit`): a
+  project found by config or by markers, or a focused workspace that is
+  not local, lists the table's workspaces of the project and runs no git.
+  A project known only by its root lists its one workspace.
+- **The source**, `project-workspaces` in the category
+  `project-workspace`, answers later, once, from its job, which runs
+  `git worktree list`; a failure is said as `project-workspaces: <why>`.
+  No key waits on git.
+- **Accepting** lists the worktrees again in the job
+  `project-workspace-choose`, since the answer is a label and the closed
+  prompt's candidates are gone; it is resolved as `search-bindings`
+  resolves its answer, the entry of that exact text, else the first hit of
+  the category's style. It is the same pure list, so it matches what was
+  shown unless git changed in between. A blank answer runs nothing.
+- **A workspace the table has** runs `find-file-in-workspace` there, by
+  name, with its location as the argument, so a registered workspace that
+  cannot read files reaches that command's refusal. **A worktree the
+  table does not know** is found by the job `project-workspace-find`,
+  which runs the finder on its path; its answer is recorded as a file's
+  open records it (`recordWorkspace`), so its identity, branch and store
+  are the finder's and nothing builds a workspace a second way. A cached
+  answer is used without a find. A worktree whose directory is gone says
+  `find-file-in-project: <path> is not a repository any more`. A worktree
+  that config roots under a declared project is found into that project,
+  not the one it was listed under, and recorded as the finder answers it.
+- **A buffer with no workspace** has no project: the command says
+  `find-file-in-project: <buffer> is in no project` and opens nothing.
+
+Keys come with project navigation's phase 5, and stepping out of the file
+finder into this picker with the typed text with phase 4; the arguments
+`find-file-in-workspace` is handed after the location are where that text
+goes.
+
 ## A buffer's workspace
 
 - **On open.** When a file opens into a buffer (`Files.opened`), the buffer
@@ -375,6 +433,10 @@ open when the table has it: found or registered this session.
   the focused buffer's workspace's files with the lister chosen for it,
   config's, git's or the fallback, and refuses a location that cannot read
   files (above).
+- `project-navigation` phase 3 (built): `find-file-in-project` lists the
+  project's workspaces, the repository's worktrees and the table's, finds
+  a worktree not yet found when it is chosen, and runs
+  `find-file-in-workspace` there (above).
 - Tasks `project-scoped-buffers-and-pickers` (scoping pickers by workspace)
   and `remote-workspace-execution` (running in a `reachable` location).
 
@@ -390,5 +452,6 @@ open when the table has it: found or registered this session.
   spelling, while git prints the real top level; two spellings of one
   directory ask git twice and agree on the workspace.
 - **What "open" means.** `workspace-current` lists every workspace found or
-  registered this session. Scoping by the workspaces with a live buffer is
+  registered this session. `find-file-in-project` lists more: every
+  worktree of the repository, found or not. Scoping by the workspaces with a live buffer is
   `project-scoped-buffers-and-pickers`.

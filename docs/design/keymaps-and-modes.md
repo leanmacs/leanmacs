@@ -4113,7 +4113,9 @@ and orderless choose it.
   "workspace-file" …` and its style with `useStyleFor "workspace-file" …`,
   as for any category, and since its source is filtered (fzf has already
   chosen and ordered the candidates) the style only marks the ranges it
-  matches.
+  matches. `find-file-in-project`'s category, `project-workspace`, has none
+  either; its source is not filtered, so the style chosen for it matches
+  the labels as the text changes, and resolves a typed answer on accept.
   Styles are held by owner and replaced as a set, latest entry of a name
   wins; the choices are config's alone, set at each install
   (`Config.Registry.styleChoices`). `Registry.styleEntry` resolves them

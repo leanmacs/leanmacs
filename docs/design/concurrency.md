@@ -1789,6 +1789,14 @@ runs
 fzf in its job; the answer, a path under the root, is opened through
 `open-file` run by name, so config's override of it applies
 ([projects.md](projects.md), "`find-file-in-workspace`").
+`find-file-in-project` asks `Find file in a workspace of <name>: ` with
+itself, `true` and what it asked as the continuation, over the source
+`project-workspaces`, whose job runs `git worktree list`; the answer, a
+label, is resolved by the job `project-workspace-choose`, which lists the
+worktrees again, and its finishing command runs `find-file-in-workspace`
+by name, finding a worktree not yet found in a third job first
+([projects.md](projects.md), "The project's workspaces and
+`find-file-in-project`").
 `save-buffer` does not ask: a buffer with a file needs no
 name, and one with no file needs a file that is not there yet, which is
 more than a prompt. Config asks with `prompt`, and registers the command

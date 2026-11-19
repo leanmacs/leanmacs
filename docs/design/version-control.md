@@ -793,6 +793,12 @@ row, in a read-only buffer `*vc-worktrees: <label>*` in the mode
   a file in that worktree gives. A worktree whose directory is gone says
   `<path> is not a repository any more`. `refresh` reads the list again.
 
+`worktrees` has a second user: `find-file-in-project` lists the
+repository's worktrees, with the table's other workspaces of the project,
+to find files in one, and finds a worktree not yet found as
+`vc-worktrees-visit` does ([projects.md](projects.md), "The project's
+workspaces and `find-file-in-project`").
+
 Pinned by `ModelTest.worktreeViewChecks` and `ModelTest.worktreeBufferChecks`
 on the models, and `ContractTest.statusBufferChecks` over real git: the
 list of a repository with a worktree on `feature` holding a changed file,

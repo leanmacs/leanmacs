@@ -31,8 +31,9 @@ import ModelTest.Support.Workspace
 The driver of the workspace finder checks: its listers' scripts and
 records, its jobs, commands and keys, and how a check drains it and reads
 the prompt it opened. Shared by the checks of `find-file-in-workspace`
-(`ModelTest/Editor/Workspace/FindFile.lean`) and the checks that build on
-its driver; it holds no checks of its own.
+(`ModelTest/Editor/Workspace/FindFile.lean`) and of `find-file-in-project`
+(`ModelTest/Editor/Workspace/FindInProject.lean`), which builds on its
+driver; it holds no checks of its own.
 -/
 
 namespace ModelTest
