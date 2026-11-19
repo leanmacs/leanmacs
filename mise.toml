@@ -227,6 +227,11 @@ run = [
   # that imports the packages, it must find them and exit 1. Its output is
   # shown only when it does not.
   "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The same check on the root generated for the fixture set
+  # (tests/packages/), with `--set`: that root imports three entry modules,
+  # the core's and the two fixture packages', and the host's modules must
+  # reach none of them, nor `Greeting` or `GreetingLoud`, which they import.
+  "sh ../tools/host-imports-check.sh --set ../tests/packages",
   # The core imports no module of a feature that moves out of it, on Lake's
   # module graph (tools/core-imports-check.sh; docs/dev-practices/the-gate.md,
   # "The core imports check"): the core's root, `Editor.Core`, and what it

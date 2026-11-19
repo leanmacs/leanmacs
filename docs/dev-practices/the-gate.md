@@ -1229,7 +1229,11 @@ each one the host reaches and exits 1.
   +<module>:imports` and `+<module>:transImports`, one module a line), so
   it follows a module that is renamed or moved, and an import written in
   any form. The queries build nothing and write nothing under `lean/`.
-- **The gate sees it bite.** `ffi-test` runs it a second time in its
+- **The gate runs it on the fixture set too**
+  (`host-imports-check.sh --set ../tests/packages`), whose root imports
+  three entry modules, the core's and the two fixture packages': the form
+  a set with packages outside the core takes.
+- **The gate sees it bite.** `ffi-test` runs it another time in its
   module form (`host-imports-check.sh <root module> [<list module>]`),
   pointed at the core's module `ConfigTest`, a root that imports the
   packages, with the core's entry module as the list, and requires exit 1.
