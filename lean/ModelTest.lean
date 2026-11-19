@@ -149,6 +149,7 @@ import ModelTest.Editor.Workspace.FindFile
 import ModelTest.Editor.Workspace.FindInProject
 import ModelTest.Editor.Workspace.Lister
 import ModelTest.Editor.Workspace.Projects
+import ModelTest.Editor.Workspace.Reach
 
 /-!
 # The model tests
@@ -976,7 +977,13 @@ Listing a workspace's files is checked in Lean alone too:
   a worktree first reached added with the finder's identity and branch
   and found once, a gone worktree said, a registered workspace listed and
   refused, two of one label told apart, no project said, a project with
-  no git, and a failing worktree list said.
+  no git, and a failing worktree list said;
+- `reachChecks`: reaching the workspace at a path the table has no
+  answer for (`Editor/Workspace/Reach.lean`), with a probe continuation,
+  on the workspace driver: the find job started and its answer recorded
+  and handed on, a cached answer handed on with no job, a path in no
+  repository said by the gone sentence and cached, an unregistered job
+  said under the continuation's name, and the order's round trip.
 -/
 
 namespace ModelTest
@@ -1160,6 +1167,7 @@ def checks : List Check :=
     findFileChecks ++
     projectWorkspaceChecks ++
     findInProjectChecks ++
+    reachChecks ++
     modeMarkerChecks ++
     shellChecks ++
     readOnlyChecks ++

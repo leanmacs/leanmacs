@@ -3,7 +3,7 @@ import Editor.Command.Call
 import Editor.Mode
 import Editor.VersionControl.Status
 import Editor.VersionControl.Views
-import Editor.Workspace.Attach
+import Editor.Workspace.Reach
 
 /-!
 # The worktree list: `vc-worktrees`
@@ -65,14 +65,14 @@ worktree from.
   - a row with no worktree says `vc-worktrees: no worktree on this line`;
   - the asking workspace's own root starts the status read for it, shown
     (`startRead`);
-  - a path whose answer the table caches under the current generation
-    (`Workspace.Table.cached?`) starts the status read of that workspace,
-    with its label;
-  - otherwise it starts the unkeyed job `vc-worktree-find`, which runs the
-    finder (`Workspace.find`) with the workspace settings on that path. Its
-    command (`visitFound`) records the answer (`recordWorkspace`), as a
-    file's open would, then starts the status read of the workspace found,
-    with its label, shown from the asking view. Local workspaces are found,
+  - any other path is reached (`Editor/Workspace/Reach.lean`) with
+    `visitContinuation`: an answer the table caches under the current
+    generation (`Workspace.Table.cached?`) at once, otherwise through the
+    unkeyed job `vc-worktree-find` (`visitFindWork`), which runs the finder
+    (`Workspace.find`) with the workspace settings on that path and records
+    the answer (`recordWorkspace`), as a file's open would. Then the status
+    read of the workspace reached starts, with its label, shown from the
+    asking view. Local workspaces are found,
     never registered, so the status buffer opened is the one opening a file
     in that worktree would give.
   - A path with no answer, a worktree whose directory is gone, says
@@ -288,32 +288,6 @@ def worktreesRefreshCommand (call : Call) : EditorM Unit := do
   let some (order, _) ← worktreesOf call worktreesRefreshName | return
   startList order
 
-/-- What a visit's find is started with: the worktree's directory, the git
-program, config's roots, the config generation and the asking view. -/
-structure VisitOrder where
-  /-- The worktree's directory. -/
-  path : System.FilePath
-  /-- The git program. -/
-  git : String
-  /-- Config's workspace roots. -/
-  roots : Array Workspace.ConfigRoot := #[]
-  /-- The config generation the answer is found under. -/
-  generation : Nat
-  /-- The view that asked. -/
-  view : ViewId
-  deriving DecidableEq, Repr
-
-/-- The order as the arguments a job is started with. -/
-def VisitOrder.arguments (order : VisitOrder) : List Argument :=
-  [.str order.path.toString, .str order.git, .nat order.generation, .nat order.view.index] ++
-    order.roots.toList.flatMap Workspace.rootArguments
-
-/-- The order `arguments` are, if they are one (`VisitOrder.arguments`). -/
-def VisitOrder.ofArguments? : List Argument → Option VisitOrder
-  | .str path :: .str git :: .nat generation :: .nat view :: roots =>
-    (Workspace.rootsOf? roots).map fun roots => { path, git, roots, generation, view := ⟨view⟩ }
-  | _ => none
-
 /-- What a visit says of a worktree whose directory is in no repository any
 more. -/
 def goneSentence (path : System.FilePath) : String :=
@@ -330,25 +304,17 @@ def readWorkspace (location : Location) (path : System.FilePath) (git : String) 
   | _, _ =>
     message (goneSentence path)
 
-/-- The command a finished visit's find hands the loop ("The commands", in the
-module docs): the answer recorded, then the status read of the workspace
-found started, or the worktree said to be gone. -/
-def visitFound (order : VisitOrder) (answer : Option Workspace.Found) : EditorM Unit := do
-  discard <| EditorState.ask (.recordWorkspace order.path order.generation answer)
-  match answer with
-  | some found =>
-    readWorkspace (.local found.root) order.path order.git order.view
-  | none =>
-    message (goneSentence order.path)
+/-- What reaching a worktree a visit names comes to ("The commands", in the
+module docs): the status read of its workspace started, or the worktree said
+to be gone; its find runs under `vc-worktree-find`. -/
+def visitContinuation : Workspace.Reach.Continuation :=
+  { job := worktreeFindJob, name := worktreesName, gone := goneSentence
+    reached := fun order location => readWorkspace location order.path order.git order.view }
 
-/-- The visit's find job: runs the finder on its order's path with its
-order's settings, and finishes with what the answer becomes
-(`visitFound`). It fails only for arguments that are not a visit order. -/
-def visitFindWork (arguments : List Argument) : Work := fun _ => do
-  let some order :=
-    VisitOrder.ofArguments?
-      arguments | throw s!"{worktreeFindJob}: its arguments are not a visit order"
-  return visitFound order (← Workspace.find { roots := order.roots, git := order.git } order.path)
+/-- The visit's find job: `Workspace.Reach.work` handing on to
+`visitContinuation`. -/
+def visitFindWork : List Argument → Work :=
+  Workspace.Reach.work visitContinuation
 
 /-- `vc-worktrees-visit` ("The commands", in the module docs). -/
 def worktreesVisitCommand (call : Call) : EditorM Unit := do
@@ -359,18 +325,7 @@ def worktreesVisitCommand (call : Call) : EditorM Unit := do
   if worktree.path == order.root then
     startRead { order with shows := true }
     return
-  let (settings, generation) ← RegistryRequest.ask .workspaceSettings
-  match (← editorState).workspaces.cached? worktree.path generation with
-  | some (some location) =>
-    readWorkspace location worktree.path order.git order.view
-  | some none =>
-    message (goneSentence worktree.path)
-  | none =>
-    let visit : VisitOrder :=
-      { path := worktree.path, git := order.git, roots := settings.roots, generation
-        view := order.view }
-    if let .error refusal← startJob worktreeFindJob visit.arguments then
-      message s!"{worktreesName}: {refusal.describe}"
+  Workspace.Reach.reach visitContinuation worktree.path order.git order.view
 
 /-- The `vc-worktrees` mode ("The mode", in the module docs). -/
 def worktreesMode : Mode :=

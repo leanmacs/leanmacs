@@ -2,9 +2,9 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.Job
 import Editor.VersionControl.Git
-import Editor.Workspace.Attach
 import Editor.Workspace.FindFile
 import Editor.Workspace.Projects
+import Editor.Workspace.Reach
 
 /-!
 # `find-file-in-project`
@@ -49,15 +49,14 @@ settings and the call:
   `search-bindings` resolves its answer. None is said (`noMatch`).
   - A workspace the table has: `find-file-in-workspace` runs there. A
     registered workspace that is not local reaches its refusal so.
-  - A worktree whose answer the table caches under the config generation:
-    its workspace's, or `gone` when the cache says it is none.
-  - Otherwise the unkeyed job `project-workspace-find` (`findWork`) runs the
-    finder on the worktree's path, and its command (`found`) records the
-    answer (`recordWorkspace`), as a file's open records it, so the
-    workspace's identity, branch and store are the finder's. Then
+  - Any other worktree is reached (`Editor/Workspace/Reach.lean`) with
+    `continuation`: a cached answer at once, otherwise through the unkeyed
+    job `project-workspace-find` (`findWork`), which runs the finder and
+    records its answer, as a file's open records it, so the workspace's
+    identity, branch and store are the finder's. Then
     `find-file-in-workspace` runs at the root found, or the worktree is
     said to be gone: `find-file-in-project: <path> is not a repository any
-    more`.
+    more` (`gone`).
 - **Running `find-file-in-workspace`** (`openAt`) goes by name
   (`runCommand`), with the location's arguments, in the window of the view
   that asked, so config's command in its place runs. A view that is gone
@@ -208,33 +207,6 @@ def ChooseOrder.ofArguments? : List Argument → Option ChooseOrder
     (Projects.Asked.ofArguments? rest).map fun asked => { answer, view := ⟨view⟩, asked }
   | _ => none
 
-/-- What the find of a worktree not yet found is started with: its directory,
-the git program, config's roots, the config generation and the asking
-view. -/
-structure FindOrder where
-  /-- The worktree's directory. -/
-  path : System.FilePath
-  /-- The git program. -/
-  git : String
-  /-- Config's workspace roots. -/
-  roots : Array ConfigRoot := #[]
-  /-- The config generation the answer is found under. -/
-  generation : Nat
-  /-- The view that asked. -/
-  view : ViewId
-  deriving DecidableEq, Repr
-
-/-- The order as the arguments a job is started with. -/
-def FindOrder.arguments (order : FindOrder) : List Argument :=
-  [.str order.path.toString, .str order.git, .nat order.generation, .nat order.view.index] ++
-    order.roots.toList.flatMap rootArguments
-
-/-- The order `arguments` are, if they are one (`FindOrder.arguments`). -/
-def FindOrder.ofArguments? : List Argument → Option FindOrder
-  | .str path :: .str git :: .nat generation :: .nat view :: roots =>
-    (rootsOf? roots).map fun roots => { path, git, roots, generation, view := ⟨view⟩ }
-  | _ => none
-
 /-- Runs `find-file-in-workspace` by name at `location`, in the window of
 `view`; nothing when the view is gone, and said when no command has the
 name. -/
@@ -242,6 +214,12 @@ def openAt (view : ViewId) (location : Location) : EditorM Unit := do
   let .ok target ← view.target | return
   unless ← runCommand FindFile.name { target, arguments := location.arguments } do
     message s!"{FindFile.name}: no such command"
+
+/-- What reaching a worktree not yet found comes to ("Choosing", in the module
+docs): `find-file-in-workspace` run at the workspace's root, or the worktree
+said to be gone; its find runs under `project-workspace-find`. -/
+def continuation : Reach.Continuation :=
+  { job := findJob, name, gone, reached := fun order location => openAt order.view location }
 
 /-- What an accept comes to ("Choosing", in the module docs), over the
 project's workspaces `entries` listed again. -/
@@ -259,17 +237,7 @@ def chosen (order : ChooseOrder) (entries : Array Projects.Entry) : EditorM Unit
     openAt order.view entry.location
     return
   let .local path := entry.location | openAt order.view entry.location
-  let (settings, generation) ← RegistryRequest.ask .workspaceSettings
-  match state.workspaces.cached? path generation with
-  | some (some location) =>
-    openAt order.view location
-  | some none =>
-    message (gone path)
-  | none =>
-    let find : FindOrder :=
-      { path, git := order.asked.git, roots := settings.roots, generation, view := order.view }
-    if let .error refusal← startJob findJob find.arguments then
-      message s!"{name}: {refusal.describe}"
+  Reach.reach continuation path order.asked.git order.view
 
 /-- The accept's job: lists the project's workspaces again, as the source
 did, and finishes with what the answer chooses (`chosen`), or says why git
@@ -283,24 +251,10 @@ def chooseWork (arguments : List Argument) : Work := fun _ => do
   | .ok worktrees =>
     return chosen order (Projects.entries order.asked worktrees)
 
-/-- The command a finished find hands the loop: the answer recorded, as a
-file's open records it, then `find-file-in-workspace` run at the root found,
-or the worktree said to be gone. -/
-def found (order : FindOrder) (answer : Option Found) : EditorM Unit := do
-  discard <| EditorState.ask (.recordWorkspace order.path order.generation answer)
-  match answer with
-  | some found =>
-    openAt order.view (.local found.root)
-  | none =>
-    message (gone order.path)
-
-/-- The find job: runs the finder on its order's path with its order's
-settings, and finishes with `found`. It fails only for arguments that are
-not a find order. -/
-def findWork (arguments : List Argument) : Work := fun _ => do
-  let some order :=
-    FindOrder.ofArguments? arguments | throw s!"{findJob}: its arguments are not a find order"
-  return found order (← find { roots := order.roots, git := order.git } order.path)
+/-- The find job of a worktree not yet found: `Reach.work` handing on to
+`continuation`. -/
+def findWork : List Argument → Work :=
+  Reach.work continuation
 
 /-- `find-file-in-project` ("The command", in the module docs): with an
 answer, `true` and what was asked, it chooses; otherwise it asks, or says

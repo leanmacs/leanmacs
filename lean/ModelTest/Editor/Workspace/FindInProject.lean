@@ -300,7 +300,7 @@ def findInProjectChecks : List Check :=
             asked.loop.state.echo.startsWith s!"{Workspace.FindInProject.sourceName}: " &&
               listedTexts asked == some #[] },
     { name :=
-        "the source's job asked with nothing in its query's context fails, saying so; the orders survive their arguments' round trips"
+        "the source's job asked with nothing in its query's context fails, saying so; the choose order survives its arguments' round trip"
       run :=
         pure <|
           let failed :=
@@ -315,12 +315,7 @@ def findInProjectChecks : List Check :=
               known := #[{ location := .local "/r", label := "r@main" }] }
           let choose : Workspace.FindInProject.ChooseOrder :=
             { answer := "r@fix", view := ⟨2⟩, asked }
-          let find : Workspace.FindInProject.FindOrder :=
-            { path := "/u", git := "git",
-              roots := #[{ root := "/c", project := some "c" }, { root := "/e" }]
-              generation := 3, view := ⟨2⟩ }
           failed == some Workspace.FindInProject.noProjectAsked &&
-            Workspace.FindInProject.ChooseOrder.ofArguments? choose.arguments == some choose &&
-            Workspace.FindInProject.FindOrder.ofArguments? find.arguments == some find }]
+            Workspace.FindInProject.ChooseOrder.ofArguments? choose.arguments == some choose }]
 
 end ModelTest

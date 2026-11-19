@@ -787,16 +787,20 @@ row, in a read-only buffer `*vc-worktrees: <label>*` in the mode
   worktree on the cursor's row: the asking workspace's own row reads its
   status at once; a path the table has a cached answer for under the
   current generation reads that workspace's; any other runs the workspace
-  finder on the path as a job, records its answer as a file's open would,
-  and then reads the status of the workspace found. Local workspaces are
+  finder on the path as a job (`vc-worktree-find`), records its answer as a
+  file's open would, and then reads the status of the workspace found.
+  That reach, cached answer or find, is the workspace layer's
+  (`Editor/Workspace/Reach.lean`, [projects.md](projects.md), "Reaching a
+  workspace not yet found"), which this command hands its status read as
+  the continuation. Local workspaces are
   found, never registered, so the status buffer opened is the one opening
   a file in that worktree gives. A worktree whose directory is gone says
   `<path> is not a repository any more`. `refresh` reads the list again.
 
 `worktrees` has a second user: `find-file-in-project` lists the
 repository's worktrees, with the table's other workspaces of the project,
-to find files in one, and finds a worktree not yet found as
-`vc-worktrees-visit` does ([projects.md](projects.md), "The project's
+to find files in one, and reaches a worktree not yet found through the same
+helper `vc-worktrees-visit` does ([projects.md](projects.md), "The project's
 workspaces and `find-file-in-project`").
 
 Pinned by `ModelTest.worktreeViewChecks` and `ModelTest.worktreeBufferChecks`

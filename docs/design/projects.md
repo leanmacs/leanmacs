@@ -264,11 +264,9 @@ the one chosen.
 - **A workspace the table has** runs `find-file-in-workspace` there, by
   name, with its location as the argument, so a registered workspace that
   cannot read files reaches that command's refusal. **A worktree the
-  table does not know** is found by the job `project-workspace-find`,
-  which runs the finder on its path; its answer is recorded as a file's
-  open records it (`recordWorkspace`), so its identity, branch and store
-  are the finder's and nothing builds a workspace a second way. A cached
-  answer is used without a find. A worktree whose directory is gone says
+  table does not know** is reached as below ("Reaching a workspace not yet
+  found"), with `find-file-in-workspace` as the continuation and
+  `project-workspace-find` as its job. A worktree whose directory is gone says
   `find-file-in-project: <path> is not a repository any more`. A worktree
   that config roots under a declared project is found into that project,
   not the one it was listed under, and recorded as the finder answers it.
@@ -279,6 +277,30 @@ Keys come with project navigation's phase 5, and stepping out of the file
 finder into this picker with the typed text with phase 4; the arguments
 `find-file-in-workspace` is handed after the location are where that text
 goes.
+
+### Reaching a workspace not yet found
+
+`vc-worktrees-visit` and `find-file-in-project` both name a worktree the
+table may not know yet and then act on its workspace. The shared part is
+the workspace layer's (`Editor/Workspace/Reach.lean`); each command
+supplies only a continuation: what it does with the workspace's location,
+the job name its find runs under, the name a refused start is said under,
+and its sentence for a directory in no repository.
+
+- **A cached answer** under the current config generation is handed to the
+  continuation at once; a cached miss says the gone sentence. Neither
+  starts a job.
+- **Otherwise** the continuation's job runs the finder on the path with the
+  workspace settings, and its command records the answer as a file's open
+  records it (`recordWorkspace`), so the workspace's identity, branch and
+  store are the finder's and nothing builds a workspace a second way. Then
+  the continuation is handed the root found, or the gone sentence is said.
+- **Two job names, one work.** `vc-worktree-find` and
+  `project-workspace-find` register the same work over different
+  continuations. A job is started by name with plain arguments and the
+  continuation is code, which the arguments cannot carry; one name would
+  need the workspace layer to know version control, or the continuation to
+  become a command run by name.
 
 ## A buffer's workspace
 
