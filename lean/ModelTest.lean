@@ -318,8 +318,13 @@ another tree puts back nothing. The loop's following of the editor
 state's marks (`Editor/Marks/Follow.lean`) is checked on the text model
 (`markFollowChecks`): a mark whose line an edit removed is erased, and one
 a command decided about is not; the marker a mark put back replaced is
-given up; and, through the loop, a mark's marker is given up once the mark
-is erased by a charwise delete or by `dd`, or put back by an undo.
+given up; an excerpt buffer's marks are not followed; a buffer whose text
+refuses is left as it was, the others followed and the refusal handed
+back; `BufferId.followMarks` erases, leaves an excerpt buffer alone and is
+refused by a text that refuses; and, through the loop, a mark's marker is
+given up once the mark is erased by a charwise delete or by `dd`, or put
+back by an undo, and `m a` on an excerpt buffer sets a mark a charwise
+delete across its line keeps.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that the rectangles of its views are
