@@ -271,11 +271,24 @@ mode, which the base imported, left the core.
   among them (`ShippedThemes.themes`), which it could not before:
   a side effect of the rule, pinned by the fixture
   `packages/shipped-themes/tests/headless/package-names`.
-- **A linked test's host has `Editor` alone by default.**
-  `Headless.shipped` takes the base as an argument that defaults to
-  `Editor`, so a package's linked test whose config names no declaration
-  of a package needs only the core's `.olean` directory, which is what
-  the package steps hand it.
+- **Every host is told its base; none defaults to one.** `Headless.shipped`,
+  `Headless.shippedOver` and `Window.host` take the base as a required
+  argument, after the packages, so a caller that leaves it out does not
+  build, and none falls back to `Editor` without a word. The editor's two
+  `main`s hand on the set's. A package's linked test whose config names no
+  declaration of a package writes `Editor` alone, and then needs only the
+  core's `.olean` directory, which is what the package steps hand it.
+- **Both hosts are shown to hand the base to the elaborator.** The
+  headless mode by the packages' fixtures, whose configs name a package's
+  declarations (`package-names` of `shipped-themes`, `config` of
+  `compile`), run on the editor and from a staged bundle. The window mode
+  by `ffi-test window-host-base`: the scripted window host, handed
+  `Editor` and a module `Editor` does not import (`ConfigFixture`), loads
+  a config that names that module's declaration
+  (`tests/window/base/config`), which is rejected on `Editor` alone. What
+  the gate does not run is the window mode's `main` itself, which opens
+  the system's window; `mise run app-check` runs the shipped bundle's
+  headless mode.
 - **Phase 7 builds on two things this leaves**: the list of base modules,
   and a search path of several directories. Config files with real import
   lines, and a base of everything linked, are that phase's.

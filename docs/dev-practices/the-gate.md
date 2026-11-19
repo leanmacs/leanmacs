@@ -1048,6 +1048,17 @@ loaded at start from the fixture `tests/window/title-bar/config`, whose
 reload with no bound, so the result does not race the clock, and the
 scenario must exit 0, which it does only when the scripted window was
 opened with the standard title bar.
+`ffi-test window-host-base <sysroot> <olean dir> <config dir>` runs it
+again with a config base that is not `Editor` alone, as the editor's
+`main` hands the window mode its package set's: `Editor` and
+`ConfigFixture`, a module linked into `ffi-test` that `Editor` does not
+import, on the fixture `tests/window/base/config`, which names a
+declaration of that module and keeps the standard title bar. It exits 0
+only when the window was opened with that title bar, so only when the
+window mode elaborated config on the base it was handed: on `Editor`
+alone the reload is rejected with `Unknown identifier`. The base is an
+argument of `Window.host` and `Headless.shipped` with no default, so a
+caller that leaves it out does not build.
 `ffi-test window-host-direct <editor> <sysroot> <config dir>` runs that
 again as the editor at `<editor>` starts when run directly with
 `--sysroot` and `--config` and no `--oleans`: the command line is read for

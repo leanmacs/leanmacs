@@ -57,8 +57,8 @@ It imports the config base, `Editor`, for the link alone, as every root
 that links the elaborator does: the elaborator imports the base's modules
 from their `.olean` files at runtime, and each must already be linked into
 the executable. The config the host loads registers nothing and names no
-declaration of this package, so it is elaborated on `Editor` alone, found
-in the core's `.olean` directory.
+declaration of this package, so the host is told to elaborate it on
+`Editor` alone, found in the core's `.olean` directory.
 -/
 
 /-- The packages a set that holds this Lake package hands its editor: the
@@ -138,7 +138,7 @@ def main (arguments : List String) : IO UInt32 := do
     -- The host first: it makes the process's one table of waits and starts
     -- its one pump, which the services of the other checks then share.
     let host ←
-      Editor.Headless.shipped setPackages sysroot [oleans] hostConfigDirectory
+      Editor.Headless.shipped setPackages #[`Editor] sysroot [oleans] hostConfigDirectory
           (fun line => printed.modify (·.push line)) .headless (fakeClock := true)
     let services ← Editor.Test.Linked.Services.over host.services.completions
     let checks :=

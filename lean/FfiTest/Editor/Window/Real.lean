@@ -1,3 +1,4 @@
+import ConfigFixture
 import Editor
 import Editor.Clipboard.InProcess
 import Editor.Config.Owner
@@ -21,9 +22,9 @@ import EditorCore.EditorPackage
 # FFI tests: `Editor/Window/Real.lean`
 
 The tests of `Editor/Window/Real.lean`: the `window-host`, `window-host-config`,
-`window-host-direct` and `window-host-undrawn` scenarios (`windowHostScenario`,
-`windowHostConfigScenario`, `windowHostDirectScenario`,
-`windowHostUndrawnScenario`), of `Window.host`. The
+`window-host-base`, `window-host-direct` and `window-host-undrawn` scenarios
+(`windowHostScenario`, `windowHostConfigScenario`, `windowHostBaseScenario`,
+`windowHostDirectScenario`, `windowHostUndrawnScenario`), of `Window.host`. The
 root module `FfiTest` runs them, and each scenario's own doc says what it shows.
 
 It imports the config base, `Editor`, for the link alone: the window host
@@ -31,7 +32,10 @@ elaborates config on that base (`Editor/Config/Elaborate.lean`, "The
 base"), whose import of the base at runtime needs every module of it linked
 into this executable. The adapter does not import the base itself, so this
 module, which runs the host, does, and `tools/core-imports-check.sh` checks
-it.
+it. It imports `ConfigFixture` for the link too: `window-host-base` hands
+the window mode a base that holds that module, which `Editor` does not
+import, as an editor's generated root hands it the entry modules of its
+set's packages.
 -/
 
 namespace FfiTest
@@ -65,7 +69,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     Editor.Ffi.windowRequest .scripted .minimise
     Editor.Window.shutdown
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages .scripted options (.skip none)
+    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options (.skip none)
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[] shutdown
         .headless
   unless status == 0 do
@@ -147,9 +151,10 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := [oleanDir], composition := true }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages .scripted options (.load configDir)
-        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
-        Editor.Window.shutdown .headless (patience := none)
+    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
+        (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
+        none)
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host-config: the window mode ended with status {status}"
     return 1
@@ -160,6 +165,39 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
     return 1
   IO.println
       "ffi-test window-host-config: the window opened with the title bar the start-up config chose"
+  return 0
+
+/-- The window mode's wiring (`Editor.Window.host`) handed a config base
+that is not `Editor` alone, as the editor's `main` hands it its package
+set's (`Editor/Main.lean`, "The base"): `Editor` and `ConfigFixture`, a
+module linked into this executable that `Editor` does not import. Config is
+loaded at start from `configDir`, the fixture `tests/window/base/config`,
+which names a declaration of that module and keeps the standard title bar.
+So the config elaborates only if the window mode handed the elaborator the
+base it was handed: on `Editor` alone the start-up reload is rejected with
+an unknown identifier, and the window opens with the themed title bar. The
+host waits for the start-up reload with no bound. 0 when the window mode
+ended with status 0 and the scripted window was opened with the standard
+title bar; 1 otherwise, saying why on stderr. -/
+def windowHostBaseScenario (sysroot oleanDir configDir : String) : IO UInt8 := do
+  let options : Editor.Window.Options :=
+    { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
+      oleans := [oleanDir], composition := true }
+  let status ←
+    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor, `ConfigFixture] .scripted
+        options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
+        none)
+  unless status == 0 do
+    IO.eprintln s!"ffi-test window-host-base: the window mode ended with status {status}"
+    return 1
+  let opened ← Editor.Ffi.windowOpenedWith .scripted
+  unless opened == some (true, .standard) do
+    IO.eprintln
+        s!"ffi-test window-host-base: the window was opened with {repr opened}, not the standard title bar: the config, which names a declaration of a base module outside Editor, was not installed, so the window mode did not elaborate it on the base it was handed"
+    return 1
+  IO.println
+      "ffi-test window-host-base: config that names a module of the base outside Editor loaded: the window mode elaborated it on the base it was handed"
   return 0
 
 /-- The window mode as the editor at `editorPath` starts it when run
@@ -185,7 +223,7 @@ def windowHostDirectScenario (editorPath sysroot configDir : String) : IO UInt8 
       return 1
   let plan := options.configPlan false
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages .scripted options plan
+    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options plan
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
         Editor.Window.shutdown .headless (patience := none)
   unless status == 0 do
@@ -212,9 +250,9 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
     { file := some file, config := none, configGiven := false, sysroot := none, oleans := []
       composition := true }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages .scriptedUndrawn options (.skip none)
-        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
-        Editor.Window.shutdown .headless
+    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scriptedUndrawn options
+        (.skip none) (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle
+        #[] Editor.Window.shutdown .headless
   unless status == 1 do
     IO.eprintln s!"ffi-test window-host-undrawn: the window mode ended with status {status}, not 1"
     return 1

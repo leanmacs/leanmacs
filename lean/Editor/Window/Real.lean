@@ -236,16 +236,17 @@ it could not be opened, when nothing could draw in it (`nothingDrew`, said
 on stderr, and in the echo area while the loop still runs), or when the loop
 ended with an error. The editor's working directory is `workingDirectory`
 (`Headless.Collaborators.workingDirectory`): the process's, which `main`
-read at the edge. Config is elaborated on `base`, `Editor` alone unless
-`main` hands on its package set's (`Editor/Main.lean`, "The base"). -/
-def host (packages : Array Package) (platform : Ffi.Platform) (options : Options)
-    (plan : ConfigPlan) (display : Ffi.Display) (clipboard : ClipboardHandler) (said : Array String)
-    (shutdown : IO Unit) (processes : Process.Host) (patience : Option Nat := some configPatience)
-    (workingDirectory : System.FilePath := "/") (base : Array Lean.Name := #[`Editor]) :
+read at the edge. Config is elaborated on `base`, which every caller
+names: `main` hands on its package set's (`Editor/Main.lean`, "The base"),
+and a test with no set `Editor` alone. -/
+def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Platform)
+    (options : Options) (plan : ConfigPlan) (display : Ffi.Display) (clipboard : ClipboardHandler)
+    (said : Array String) (shutdown : IO Unit) (processes : Process.Host)
+    (patience : Option Nat := some configPatience) (workingDirectory : System.FilePath := "/") :
     IO UInt32 := do
   let shipped ←
-    Headless.shipped packages (options.sysroot.getD "") options.oleans (options.config.getD "")
-        IO.eprintln processes (base := base)
+    Headless.shipped packages base (options.sysroot.getD "") options.oleans (options.config.getD "")
+        IO.eprintln processes
   let collaborators :=
     { shipped with
       display := hostDisplay display platform
@@ -374,8 +375,8 @@ def main (packages : Array Package) (base : Array Lean.Name) (arguments : List S
   -- `auto` takes mise under the home directory first, when `HOME` names one.
   let home := environment.home.filter (!·.isEmpty) |>.map System.FilePath.mk
   let status ←
-    host packages .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
-        (.window home) (workingDirectory := environment.workingDirectory) (base := base)
+    host packages base .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
+        (.window home) (workingDirectory := environment.workingDirectory)
   IO.Process.exit status.toUInt8
 
 end Editor.Window

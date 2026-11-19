@@ -2533,9 +2533,12 @@ def drawnDisplay (snapshots : SnapshotReader) : IO Host.Display := do
 toolchain in `sysroot` and the editor's `.olean` files in the directories
 `oleans`, searched in order, the config directory `configDir` as the
 source, `emit` as the output and stderr as the log. Config is elaborated on
-`base`, the modules it names: `Editor` alone unless the caller hands the
-base of its package set (`Editor/Main.lean`, "The base"), each module of
-which must be linked into the executable and found in `oleans`. Its input scheme is the Vim scheme's default
+`base`, the modules it names: the base of the caller's package set
+(`Editor/Main.lean`, "The base"), or `Editor` alone, the core's, for a
+caller with no set. Each module of it must be linked into the executable
+and found in `oleans`. It is an argument every caller writes, with no
+default: a host that fell back to `Editor` without a word would reject
+config that names a package's declarations. Its input scheme is the Vim scheme's default
 (`Vim.Default.scheme`), which is the host's type and no package's. Its
 display is the recorder and its clipboard its own, as a host's are by
 default.
@@ -2546,9 +2549,9 @@ register is said there and in each package's module.
 
 It is apart from `shipped`, which makes what it is over, so that the
 collaborators can be made with no pump started. -/
-def shippedOver (packages : Array Package) (sysroot : String) (oleans : List String)
-    (configDir : String) (emit : String → IO Unit) (services : Job.Services) (published : Snapshots)
-    (held : Job.HeldSnapshots) (base : Array Lean.Name := #[`Editor]) :
+def shippedOver (packages : Array Package) (base : Array Lean.Name) (sysroot : String)
+    (oleans : List String) (configDir : String) (emit : String → IO Unit) (services : Job.Services)
+    (published : Snapshots) (held : Job.HeldSnapshots) :
     Collaborators Config.Elaborate.State Vim.Default.scheme :=
   { elaborator :=
       Config.Elaborate.elaborator
@@ -2572,15 +2575,14 @@ registers: `shippedOver` the library's timer service,
 file service, process service, watch service and diff service for the
 jobs, the library's matcher (`Fuzzy.real`), which the loop's match jobs ask,
 and the environments they share for the mode `host` (`reportedEnvironments`).
-Config is elaborated on `base`, `Editor` alone by default (`shippedOver`).
+Config is elaborated on `base`, which every caller names (`shippedOver`).
 
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
 queues ends. -/
-def shipped (packages : Array Package) (sysroot : String) (oleans : List String)
-    (configDir : String) (emit : String → IO Unit) (host : Process.Host) (fakeClock : Bool := false)
-    (base : Array Lean.Name := #[`Editor]) :
-    IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
+def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : String)
+    (oleans : List String) (configDir : String) (emit : String → IO Unit) (host : Process.Host)
+    (fakeClock : Bool := false) : IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
@@ -2601,14 +2603,14 @@ def shipped (packages : Array Package) (sysroot : String) (oleans : List String)
   let timers := (clock.map (·.timers)).getD (Job.realTimers completions)
   let environments ← IO.mkRef ({ host } : Process.Environments)
   let collaborators :=
-    shippedOver packages sysroot oleans configDir emit
+    shippedOver packages base sysroot oleans configDir emit
       { completions, timers
         files := Job.realFiles completions published.reader held
         processes := Job.realProcesses completions refused timers timed
         fileWatches := Job.realFileWatches completions watches
         diffs := Job.realDiffs completions published.reader held refusedDiffs
         environments := reportedEnvironments environments 4, fuzzy := Fuzzy.real
-        snapshots := Job.realSnapshots published.reader } published held base
+        snapshots := Job.realSnapshots published.reader } published held
   return { collaborators with clock }
 
 /-- The headless mode of the executable, handed the packages its host
@@ -2682,7 +2684,7 @@ def main (packages : Array Package) (base : Array Lean.Name) (arguments : List S
       IO.eprintln s!"editor: the headless render session could not be started: {reason}"
       return 1
   let shipped ←
-    shipped packages sysroot oleans configDir IO.println .headless (fakeClock := true) base
+    shipped packages base sysroot oleans configDir IO.println .headless (fakeClock := true)
   let workingDirectory ← IO.currentDir
   let failure ←
     run

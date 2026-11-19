@@ -41,7 +41,7 @@ def run (scenario : String) (checks : List Check) : IO UInt8 := do
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | theme-pictures <dir> <font> [--write] | window-host [<file>] | window-host-config <sysroot> <olean dir> <config dir> | window-host-direct <editor> <sysroot> <config dir> | window-host-undrawn <file>]"
+      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | theme-pictures <dir> <font> [--write] | window-host [<file>] | window-host-config <sysroot> <olean dir> <config dir> | window-host-base <sysroot> <olean dir> <config dir> | window-host-direct <editor> <sysroot> <config dir> | window-host-undrawn <file>]"
   return 2
 
 end FfiTest

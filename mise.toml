@@ -720,6 +720,19 @@ run = [
   # bar. The toolchain's directory and the `.olean` directory are passed in,
   # as for config-test. It touches no file.
   ".lake/build/bin/ffi-test window-host-config \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
+  # The same wiring handed a config base that is not `Editor` alone, as the
+  # editor's `main` hands the window mode its package set's (`Editor`, then
+  # the entry module of each package of the set; lean/Editor/Main.lean,
+  # "The base"): here `Editor` and `ConfigFixture`, a module linked into
+  # ffi-test that `Editor` does not import. The fixture
+  # tests/window/base/config names a declaration of that module and keeps
+  # the standard title bar, so the scripted window is opened with it only
+  # if the window mode handed the elaborator the base it was handed: on
+  # `Editor` alone the start-up reload is rejected with an unknown
+  # identifier. The headless mode's handing on of the set's base is the
+  # package fixtures' (`package-names` of shipped-themes, `config` of
+  # compile); this is the window mode's.
+  ".lake/build/bin/ffi-test window-host-base \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/base/config",
   # The same wiring as the editor starts it when run directly, with
   # `--sysroot` and no `--oleans`: the command line is read for the default
   # set's editor, so the `.olean` directory is the one that executable

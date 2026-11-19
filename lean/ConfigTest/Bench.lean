@@ -685,8 +685,8 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
               #[{ name := "noop", action := .plain (pure ()) },
                 { name := "make-buffers", action := .plain makeWordBuffers }] })
     let shipped :=
-      Headless.shippedOver packages sysroot (ModuleLookup.searchPath oleanDir) "" emit services
-        published (← Job.HeldSnapshots.new)
+      Headless.shippedOver packages #[`Editor] sysroot (ModuleLookup.searchPath oleanDir) "" emit
+        services published (← Job.HeldSnapshots.new)
     let host ←
       Headless.start
           { shipped with
