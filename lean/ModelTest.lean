@@ -153,6 +153,7 @@ import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.WindowCommands
 import ModelTest.Editor.WorkingSet
+import ModelTest.Editor.WorkingSet.Places
 import ModelTest.Editor.WorkingSet.Refind
 import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
@@ -1062,7 +1063,14 @@ alone too:
   nearer one and the nearer of two alike, changed with one character
   edited, drifted when deleted and when a short quote was edited, a long
   quote found by its ends or drifted without its last lines, text that is
-  not ASCII, and a stored point past the text's end.
+  not ASCII, and a stored point past the text's end;
+- `workingSetPlaceChecks`: where a range is held while the editor runs
+  (`Editor/WorkingSet/Places.lean`), on the loop's driver over the models
+  with a workspace at `/r`: a held range follows edits through its
+  markers, closing its buffer detaches it as edited, opening the file
+  again holds it again, or leaves it drifted when another program removed
+  its text, and nothing is attached while the workspace's sets are not
+  read.
 
 Listing a workspace's files is checked in Lean alone too:
 
@@ -1234,6 +1242,7 @@ def checks : List Check :=
     projectSearchRunChecks ++
     workingSetChecks ++
     workingSetRefindChecks ++
+    workingSetPlaceChecks ++
     driverChecks ++
     promptChecks ++
     candidateChecks ++

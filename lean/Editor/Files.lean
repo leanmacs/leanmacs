@@ -1,6 +1,7 @@
 import Editor.Completion.Paths
 import Editor.Jumps
 import Editor.Language
+import Editor.WorkingSet.Places
 import Editor.Workspace.Attach
 
 /-!
@@ -114,7 +115,10 @@ are in `Editor/Files/Compiled.lean`.
   path and otherwise when the load is delivered. A visit made by a jump
   command records none (`LoadOrder.record`, `visit`'s `record`). Once a
   loaded file's buffer holds it, the places a closed buffer of that file
-  left are held in it again (`Jumps.attach`).
+  left are held in it again (`Jumps.attach`), and so are the working sets'
+  ranges of the file, found again in its text, or drifted
+  (`WorkingSet.attach`, `Editor/WorkingSet/Places.lean`), once its
+  workspace is attached.
 - **A visit** (`Files.visit view path point focus`) is an open that, once
   the buffer is shown, puts one cursor of the view at a point and, with
   `focus`, focuses the view: at once when a buffer holds the path, and
@@ -539,6 +543,7 @@ def adopt (path : System.FilePath) (loaded : File.Loaded) (view : Option ViewId 
   -- The places of the file a closed buffer left are held in it again.
   Jumps.attach buffer path
   Workspace.attach buffer path
+  WorkingSet.attach buffer path
   if let some view := view then
     let .ok () ← view.show buffer | return none
   -- The language is recorded before the mode is set, so the mode's entry

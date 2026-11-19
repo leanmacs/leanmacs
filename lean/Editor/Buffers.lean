@@ -1,6 +1,7 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Files
+import Editor.WorkingSet.Places
 
 /-!
 # Buffers: switching a window to another buffer, listing them, closing one
@@ -90,7 +91,10 @@ checks compare the echo area with that function, never with a sentence.
 - **The places held in a closed buffer's text outlive it**: before the
   windows show another buffer, every jump list entry and global mark held
   in it is detached into its file's path, row and column, or dropped when
-  it has no file (`Jumps.detach`); its own marks go with it.
+  it has no file (`Jumps.detach`); its own marks go with it. So do the
+  working sets' ranges held in it: each is detached into its stored form,
+  refreshed from the text as it is (`WorkingSet.detach`,
+  `Editor/WorkingSet/Places.lean`).
 - **The buffer closed** (`closeCommand`) is the one a string first argument
   names, exactly, and otherwise the buffer of the window the command was
   called with. A name no buffer has is said (`noBuffer`). The minibuffer's
@@ -333,6 +337,7 @@ window of every tab that shows it, tiled, docked or floating
 def closeInto (id fallback : BufferId) : EditorM Unit := do
   -- The places held in its text outlive it, in its file.
   Jumps.detach id
+  discard <| WorkingSet.detach id
   let state ← editorState
   for view in state.frame.everyWindow do
     if (state.window? view).any (·.buffer == id) then
