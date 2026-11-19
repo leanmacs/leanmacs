@@ -954,6 +954,7 @@ Listing a workspace's files is checked in Lean alone too:
   lister and filter scripted by its exact command line: the eight criteria
   of project navigation's phase 2, the lister run in the buffer's workspace
   alone, config's listers, the fallback, the accept through `open-file`,
+  an absolute typed answer opened as it is, a refused prompt said,
   the label, the working directory of a buffer with no workspace, the
   refusals, that no step runs a process, and a fallback that exits 1
   still listing what it printed.

@@ -321,6 +321,46 @@ def findFileChecks : List Check :=
             listedTexts asked == some #["etc/hosts"] &&
               accepted.loop.state.echo == s!"stand-in {[argumentText (.str "/etc/hosts")]}" },
     { name :=
+        "a typed answer that is absolute is opened as it is, not under the root: accepting /etc typed into the finder over /w, and into the finder over /, whose root ends in a separator, hands the stand-in open-file /etc"
+      run :=
+        pure <|
+          -- The stand-in says what it is handed, then opens it, so `C-o w`
+          -- still gives the window's buffer the workspace /w.
+          let standIn : Dispatched := fun call => do
+            message s!"stand-in {call.arguments.map argumentText}"
+            Files.openCommand call
+            return none
+          match driver (commands := (Files.openName, standIn) :: commands) with
+          | none => false
+          | some driver =>
+            let accepted (asked : TestDriver) : TestDriver :=
+              (fedTo asked (presses "/ e t c C-o y")).1
+            let overW := drainedAfter (settledAfter driver "C-o w") "C-o f"
+            -- A buffer with no file: the finder searches the editor's
+            -- working directory, `/`.
+            let overRoot := drainedAfter driver "C-o f"
+            let said := s!"stand-in {[argumentText (.str "/etc")]}"
+            labelOf overW == some "Find file in r@feature: " &&
+              labelOf overRoot == some "Find file in /: " &&
+              (accepted overW).loop.state.prompt.isNone &&
+              (accepted overW).loop.state.echo == said &&
+              (accepted overRoot).loop.state.echo == said },
+    { name :=
+        "a prompt the finder cannot open is said in the echo area, naming the command and why: asked again while its own prompt is open, it is refused as a prompt open already, and that prompt stays"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some driver =>
+            let asked := drainedAfter (settledAfter driver "C-o w") "C-o f"
+            let (again, _) := fedTo asked (presses "C-o f")
+            match asked.loop.state.minibufferView? with
+            | none => false
+            | some view =>
+              again.loop.state.echo ==
+                  s!"{Workspace.FindFile.name}: {(PromptRefusal.alreadyOpen view).describe}" &&
+                labelOf again == some "Find file in r@feature: " },
+    { name :=
         "criterion 5 on the models: the prompt's label names the workspace searched, Find file in r@feature: in /w and Find file in r@main: in /r"
       run :=
         pure <|
