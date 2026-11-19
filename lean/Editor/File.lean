@@ -58,6 +58,12 @@ names a snapshot.
   directory), `denied`. The entries are sorted by name in byte order, which
   is the library's order and the model's. A name that is not UTF-8 is left
   out, since a path here is a Lean string.
+- **A directory made** (`FileRequest.makeDirectory`) makes the directory at
+  a path and every directory on the way to it; one already there is no
+  error. It is refused in the order `relativePath`, `notADirectory` (a file,
+  or anything else that is not a directory, at the path or on the way to
+  it). A save makes no directory, so a job that saves where one may be
+  missing makes it first.
 - **A stamp** (`File.Stamp`) is when a file was last modified and how long it
   is. Two stamps are compared for equality and never ordered: a file put
   back from a backup has changed.
@@ -265,7 +271,8 @@ inductive FileError where
   | notFound
   /-- What is at the path is not a file. -/
   | notAFile
-  /-- What is at the path is not a directory: a listing's refusal. -/
+  /-- What is at the path, or on the way to it, is not a directory: a
+  listing's refusal, and a directory made's. -/
   | notADirectory
   /-- The file system does not allow it. -/
   | denied
@@ -314,6 +321,8 @@ inductive FileRequest where
   | stamp (path : System.FilePath)
   /-- What the directory at `path` holds, sorted by name. -/
   | list (path : System.FilePath)
+  /-- Make the directory at `path`, and every directory on the way to it. -/
+  | makeDirectory (path : System.FilePath)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each file request: a refusal or the result. A
@@ -323,5 +332,6 @@ def FileRequest.Reply : FileRequest → Type
   | .save .. => Except FileError File.Stamp
   | .stamp _ => Except FileError (Option File.Stamp)
   | .list _ => Except FileError (Array File.Entry)
+  | .makeDirectory _ => Except FileError Unit
 
 end Editor

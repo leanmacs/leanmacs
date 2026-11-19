@@ -110,6 +110,29 @@ def fileModelChecks : List Check :=
         let (_, model) := model.list (modelRoot / "missing")
         let (_, model) := model.list (modelRoot / "sub")
         pure (model.listed == #[modelRoot, modelRoot / "missing", modelRoot / "sub"]) },
+    { name :=
+        "a directory made adds it and every directory on the way to it, the root included, once each; one there already changes nothing"
+      run :=
+        let (made, model) := ({} : FileModel).makeDirectory "/state/workspaces/k"
+        let (again, after) := model.makeDirectory "/state/workspaces"
+        pure
+          (made matches .ok () && again matches .ok () &&
+            ["/", "/state", "/state/workspaces", "/state/workspaces/k"].all
+              (fun (path : String) => model.directories.contains (System.FilePath.mk path)) &&
+            model.directories.size == 4 &&
+            after.directories == model.directories) },
+    { name :=
+        "a directory made is refused relativePath for a relative path, and notADirectory where a file is at the path or on the way to it, and the model is as it was"
+      run :=
+        let (relative, afterRelative) := modelWithFile.makeDirectory "state"
+        let (atFile, afterFile) := modelWithFile.makeDirectory (modelRoot / "mixed.txt")
+        let (underFile, afterUnder) :=
+          modelWithFile.makeDirectory (modelRoot / "mixed.txt" / "a" / "b")
+        pure
+          (relative matches .error .relativePath && atFile matches .error .notADirectory &&
+            underFile matches .error .notADirectory &&
+            [afterRelative, afterFile, afterUnder].all
+              (·.directories == modelWithFile.directories)) },
     { name := "a listing names only the directory's own children"
       run :=
         let model :=

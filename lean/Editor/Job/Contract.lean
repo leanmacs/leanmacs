@@ -479,7 +479,32 @@ def fileProperties : List FileProperty :=
             match relative with
             | .error .relativePath => true
             | _ => false
-      after := #[("a.txt", rawFile), ("B.txt", otherFile), ("sub", ByteArray.empty)] }]
+      after := #[("a.txt", rawFile), ("B.txt", otherFile), ("sub", ByteArray.empty)] },
+    { name :=
+        "a directory made makes every directory on the way to it, and one there already is no error; a save in it then succeeds; a file at the path or on the way to it is refused notADirectory, and a relative path relativePath"
+      files := #[("a.txt", rawFile)]
+      holds := fun root => do
+        let deep := root / "made" / "deep"
+        let made ← File.makeDirectory deep
+        let again ← File.makeDirectory deep
+        let file ← loaded (root / "a.txt")
+        let savedIn ← File.save (.held file.snapshot) (deep / "c.txt") .absent
+        let listed ← File.list (root / "made")
+        let atFile ← File.makeDirectory (root / "a.txt")
+        let underFile ← File.makeDirectory (root / "a.txt" / "sub")
+        let relative ← File.makeDirectory "relative"
+        let refusedAs (reply : Except FileError Unit) (error : FileError) : Bool :=
+          match reply with
+          | .error refusal => refusal == error
+          | .ok () => false
+        return made.isOk && again.isOk && savedIn.isOk &&
+            (match listed with
+            | .ok entries => entries == #[{ name := "deep", kind := .directory }]
+            | .error _ => false) &&
+            refusedAs atFile .notADirectory &&
+            refusedAs underFile .notADirectory &&
+            refusedAs relative .relativePath
+      after := #[("a.txt", rawFile), ("made", ByteArray.empty)] }]
 
 /-- `files` in the order of their names, to compare two sets of files. -/
 def byName (files : Array (String × ByteArray)) : Array (String × ByteArray) :=
