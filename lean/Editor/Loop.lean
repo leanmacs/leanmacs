@@ -1560,6 +1560,14 @@ structure Loop.Keys (scheme : InputScheme) where
   written (`Restore.journalOrders`): `Restore.bound` unless a test hands a
   smaller one. -/
   journalBound : Nat := Restore.bound
+  /-- The declared stores' cells the host holds, as the session index keeps
+  them (`Restore.StoresNow`): a revision, and the cells made only when the
+  reconciler forces them. None for a host that holds no cells. -/
+  stores : Restore.StoresNow := {}
+  /-- The reported jobs running now (`workJob … (reported := true)`), each
+  its owner, name and key: what the session index lists, which the next
+  start's restore reports as stopped. -/
+  running : Array Restore.RunningJob := #[]
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -1666,6 +1674,11 @@ structure Loop.Stepped (scheme : InputScheme) where
   its file service in order, unobserved, and then to release the snapshots
   they name. -/
   journal : Array Restore.Order := #[]
+  /-- The declared stores' cells a session restore read
+  (`restoreCells`, `Editor/Api.lean`), for the host that holds the cells
+  to take in (`Config.State.restoreCells`). None for a step that ran no
+  command, and for one whose command did not run to its end. -/
+  restoredCells : Array KeptCell := #[]
 
 namespace EditorState
 
@@ -2476,7 +2489,9 @@ session (`sessions`), withdraws a quit that cannot go ahead
 with the style `matching` chooses for its category (`listed`) and shows it
 with the display `displaying` chooses (`EditorState.displayed`), has the
 frame choose `layout` when one is handed that is not
-the one it last chose (`Frame.choose`), sets when the tab bar is shown
+the one it last chose (`Frame.choose`), unless a restore holds the layout
+it put back at the config generation `generation`
+(`Restore.Kept.heldLayout`), sets when the tab bar is shown
 from `tabBar` when one is handed, has
 each view but the floats follow its cursor (`followed`), places the floats
 anchored at a position where the display drew it and closes a transient
@@ -2496,7 +2511,7 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
     (layout : Option Layout := none) (tabBar : Option TabBar.Shown := none)
     (matching : Completion.Matching := .standard) (inlineMatches : Nat := Loop.inlineMatches)
     (displaying : Completion.Displaying := .standard) (now : Nat := 0)
-    (keyHints : Array KeyHint := #[]) : EditorM (Loop scheme) := do
+    (keyHints : Array KeyHint := #[]) (generation : Nat := 0) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The marks follow the event's line deletions and undo, now that the
   -- histories know where their texts are.
@@ -2528,11 +2543,14 @@ def publish (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) (pad
   -- The padding the views are laid out with is the one handed in, and so
   -- is the layout, when one is.
   -- Config's layout is applied when it is not the one last applied, so a
-  -- command's change to the layout lasts until config chooses another.
+  -- command's change to the layout lasts until config chooses another. A
+  -- layout a restore put back is held until config has installed past the
+  -- generation it was restored at: the host hands the default until then.
+  let held := state.restore.heldLayout == some generation
   let frame :=
     match layout with
     | some chosen =>
-      if state.frame.chosen == some chosen then state.frame else state.frame.choose chosen
+      if held || state.frame.chosen == some chosen then state.frame else state.frame.choose chosen
     | none => state.frame
   let state :=
     { state with
@@ -3013,7 +3031,8 @@ def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
     reload := ran.outbox.reload
     theme := ran.outbox.theme
     ended := some ran.ending
-    cancels := ran.outbox.cancels }
+    cancels := ran.outbox.cancels
+    restoredCells := ran.outbox.restoredCells }
 
 /-- One key through the scheme, for the focused view, and the invocation it
 yields, if it yields one, run (`run`): what the step hands back, with the
@@ -3336,6 +3355,7 @@ def publishHinted (keys : Keys scheme) (loop : Loop scheme) :
   let published ←
     hinted.publish keys.modeLine keys.padding keys.layout keys.tabBar keys.matching
         keys.inlineMatches keys.displaying keys.now (keyHints := hinted.shownHints keys)
+        (generation := keys.registered.generation)
   return (published, change)
 
 /-- `stepped`, a step whose scene is not yet published, once it is
@@ -3366,8 +3386,9 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
   let loop := { loop with state }
   let reconciled ←
     Restore.journalOrders loop.state (keys.registered.jobs Restore.restoreJob)
-        (nextOf loop == .stop) (fun name => (keys.registered.entering name).isSome)
-        keys.registered.generation keys.journalBound
+        (nextOf loop == .stop)
+        { registered := keys.registered, configGeneration := keys.registered.generation
+          limit := keys.journalBound, stores := keys.stores, running := keys.running }
   let loop := { loop with state := reconciled.state }
   -- What the key asks of completion at point, from the state the scene
   -- shows: a trigger's command to run next, and the pause.

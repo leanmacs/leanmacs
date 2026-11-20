@@ -463,6 +463,18 @@ so `closePrompt` never focuses a window that is not shown.
   dropped (`dropAnchors`), and the zipper moves back.
 - **The other operations stay with the tab in view.** For a hidden tab's
   window `removeWindow`, `splitWindow` and `arrange` answer `noSuchWindow`.
+- **A restore puts the whole frame back by one operation**,
+  `restoreFrame`, with a record of the tabs (`Frame.Record`,
+  `Editor/Restore/Records.lean`, its views already given this run's ids)
+  and every window of them, made by the asking command with their markers
+  (`Editor/Restore/Run.lean`). It replaces every tab and every window but
+  the minibuffer's, keeps what is frame-wide (the size, the focus,
+  fullscreen, the insets), sets the layout config chose (`Frame.chosen`),
+  the next view's id and the most recent buffer, the focused window's. The
+  windows that left are no longer in `windows`, so the loop gives up their
+  markers, as for `close`. It is refused with `promptOpen` while a prompt
+  is open, and with `malformed`, saying why, when the state it would make
+  is not `wellFormed`; each leaves the state as it was.
 
 ## The wanted column
 
@@ -774,6 +786,10 @@ candidate list with no typed text (`EditorState.keyHints`, a
   the last one is closed is called `scratchName`, the name the initial
   buffer has, which is free only once the closed buffer is removed, and a
   shown buffer cannot be removed (`Editor/Buffers.lean`, "Close").
+- `markRestored` marks a buffer as made or reopened by a session restore
+  (`Buffer.historyRestored`): its undo tree starts at the restore, and
+  evil's `u` at its root says so (`Editor/Evil/Undo.lean`). It refuses
+  `noSuchBuffer`.
 - `scratchName` is the editor's one name for its empty buffer with no file:
   the initial state's, and the one left after the last buffer is closed.
 - A buffer may be **read-only** (`Buffer.readOnly`, set by `setReadOnly`,
@@ -1050,6 +1066,14 @@ leaves them.
   a project's store; they refuse `noSuchWorkspace` and `noSuchProject`.
 - `setUnscopedValue` sets a value in the store of the buffers outside any
   workspace (`Workspace.Table.unscoped`); it is never refused.
+- `restoreWorkspaces` takes in a table a restore made
+  (`Editor/Restore/Workspaces.lean`), its cells already met: each
+  workspace is put as `recordWorkspace` puts one, so one there already
+  keeps its store, then given the restored cells; each project is added
+  with its cells; and the unscoped cells are set. It is never refused.
+- **Every change of the table bumps `workspacesRevision`**, so the
+  session's reconciler mirrors the table's kept cells only when it moved
+  (`Editor/Restore.lean`).
 - **The editor's working directory** (`workingDirectory`) is where a
   command run for a buffer with no workspace and no file runs. A host sets
   it once, when its loop's frame is made, from its own working directory
@@ -1300,6 +1324,9 @@ structure Buffer where
   it were on, its lowercase marks at the last boundary of its history, and
   those each node of its history keeps. -/
   markHistory : Marks.History := {}
+  /-- Whether a session restore made or reopened it (`markRestored`): its
+  history starts at the restore, and nothing before it can be undone. -/
+  historyRestored : Bool := false
   deriving BEq, Repr
 
 /-- Whether the buffer's text is in another state than the one last saved,
@@ -2187,6 +2214,9 @@ structure EditorState where
   /-- The workspaces and projects of the session, with their stores, and
   each directory's cached answer ("Workspaces", in the module docs). -/
   workspaces : Workspace.Table := {}
+  /-- How many times the workspace table has changed: bumped by every
+  operation that changes it ("Workspaces", in the module docs). -/
+  workspacesRevision : Nat := 0
   /-- The editor's working directory: where a command run for a buffer with
   no workspace and no file runs ("Workspaces", in the module docs). A host
   sets it once, from its own; `/` until it does. -/
@@ -2336,6 +2366,9 @@ inductive LayoutRefusal where
   /-- It would change the tab in view while a prompt is open: the prompt's
   asker must stay a window of the tab in view. -/
   | promptOpen
+  /-- The frame it would put in place breaks what a state keeps, for
+  `why` (`EditorState.wellFormed`). -/
+  | malformed (why : String)
   deriving DecidableEq, Repr
 
 /-- What a refusal of the layout says, as one sentence the echo area can
@@ -2358,6 +2391,7 @@ def LayoutRefusal.describe : LayoutRefusal → String
   | .onlyTab => "the last tab cannot be closed"
   | .noSuchTab index => s!"there is no tab {index + 1}"
   | .promptOpen => "the tab in view cannot change while a prompt is open"
+  | .malformed why => s!"the frame would be malformed: {why}"
 
 /-- Why an operation on the prompt was refused. -/
 inductive PromptRefusal where
@@ -3044,6 +3078,61 @@ def selectTab (index : Nat) (state : EditorState) : EditorState :=
   let left := state.closeFloats transient
   { left with frame := left.frame.selected index }.touchFocused
 
+/-- The tab `record` stands for, its views as they are numbered there, and a
+float anchored at a position held by the marker `anchors` gives its view,
+or anchored to its window when it gives none. -/
+def tabOfRecord (anchors : Array (Nat × MarkerId)) (record : Restore.Tab.Record) : Tab :=
+  let floatOf (float : Restore.Float.Record) : Floating :=
+    { view := ⟨float.view⟩, share := float.share, pinned := float.pinned
+      anchor :=
+        match float.anchor with
+        | .frame => .frame
+        | .window view => .window ⟨view⟩
+        | .position view _ =>
+          match anchors.find? (·.1 == float.view) with
+          | some (_, marker) => .position ⟨view⟩ marker
+          | none => .window ⟨view⟩ }
+  { windows := record.windows.map (⟨·⟩),
+    docked := record.docked.map fun (view, side) => (⟨view⟩, side)
+    floats := record.floats.map floatOf, layout := record.layout, focused := ⟨record.focused⟩
+    zoomedFrom := record.zoomedFrom, lastFocused := record.lastFocused.map (⟨·⟩),
+    name := record.name }
+
+/-- Puts back the frame a session restore recorded ("Tabs", in the module
+docs): `record`'s tabs, its views already this run's ids, the one it
+selects in view, and `windows`, every window of them with its markers, in
+place of every tab and window but the minibuffer's; the frame's size, focus,
+fullscreen and insets kept, its chosen layout `record.chosen`, the next
+view's id at least `next`, and the focused window's buffer the most
+recently used. A float anchored at a position is held by the marker
+`anchors` gives its view. Refused, with the state unchanged, with
+`promptOpen` while a prompt is open, and with `malformed` when the state it
+would make is not `wellFormed`. -/
+def restoreFrame (record : Restore.Frame.Record) (windows : Array Window)
+    (anchors : Array (Nat × MarkerId)) (next : Nat) (state : EditorState) :
+    Except LayoutRefusal Unit × EditorState :=
+  if state.prompt.isSome then (.error .promptOpen, state)
+  else
+    let tabs := record.tabs.map (tabOfRecord anchors)
+    match tabs[record.selected]? with
+    | none => (.error (.malformed s!"it has no tab {record.selected + 1}"), state)
+    | some inView =>
+      let kept := state.windows.filter fun window => state.minibufferView? == some window.id
+      let frame := { state.frame.withTabs tabs record.selected with chosen := record.chosen }
+      let recent :=
+        match windows.find? (·.id == inView.focused) with
+        | some window => Recent.touch state.recent window.buffer
+        | none => state.recent
+      let restored :=
+        { state with
+          windows := windows ++ kept, frame, recent, nextView := max state.nextView next }
+      if restored.wellFormed then (.ok (), restored)
+      else
+        (.error
+            (.malformed
+              "a tab's windows, layouts, floats or markers are not as a state keeps them"),
+          state)
+
 /-- Makes `change` on the frame's tabs (`TabChange`):
 
 - `select index` brings the tab at `index` into view (`selectTab`); the tab
@@ -3450,6 +3539,12 @@ def setReadOnly (id : BufferId) (on : Bool) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with readOnly := on })) state
 
+/-- Marks the buffer `id` as made or reopened by a session restore
+(`Buffer.historyRestored`; "Buffers", in the module docs). Refused, with the
+state unchanged, with `noSuchBuffer` for a buffer there is none of. -/
+def markRestored (id : BufferId) (state : EditorState) : Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with historyRestored := true })) state
+
 /-- Sets the spans of the buffer `id` to `spans`, in place of those it had
 ("Buffers", in the module docs). Refused, with the state unchanged, with
 `noSuchBuffer` for a buffer there is none of. -/
@@ -3819,14 +3914,19 @@ def placeOf (state : EditorState) (view : ViewId) : Completion.Place :=
 generation `generation` (`Workspace.Table.record`). Never refused. -/
 def recordWorkspace (directory : System.FilePath) (generation : Nat)
     (found : Option Workspace.Found) (state : EditorState) : EditorState :=
-  { state with workspaces := state.workspaces.record directory generation found }
+  { state with
+    workspaces := state.workspaces.record directory generation found
+    workspacesRevision := state.workspacesRevision + 1 }
 
 /-- `state` with the result of `change` on its table, or the refusal with
 the state as it was. -/
 def changeWorkspaces (change : Workspace.Table → Except WorkspaceRefusal Workspace.Table)
     (state : EditorState) : Except WorkspaceRefusal Unit × EditorState :=
   match change state.workspaces with
-  | .ok workspaces => (.ok (), { state with workspaces })
+  | .ok workspaces =>
+    (.ok (),
+      { state with
+        workspaces, workspacesRevision := state.workspacesRevision + 1 })
   | .error refusal => (.error refusal, state)
 
 /-- Registers a workspace at `location`, not on this machine, of the project
@@ -3847,6 +3947,46 @@ def setWorkspaceValue (location : Location) (name : String) (value : Value) (sta
 def setProjectValue (identity : Project.Identity) (name : String) (value : Value)
     (state : EditorState) : Except WorkspaceRefusal Unit × EditorState :=
   state.changeWorkspaces (·.setProjectValue identity name value)
+
+/-- Has the unscoped store keep `value` under `name`. Never refused. -/
+def setUnscopedValue (name : String) (value : Value) (state : EditorState) : EditorState :=
+  { state with
+    workspaces := state.workspaces.setUnscopedValue name value
+    workspacesRevision := state.workspacesRevision + 1 }
+
+/-- Takes in `restored`, a table a restore made ("Workspaces", in the module
+docs): each workspace put (`Workspace.Table.put`), one there already keeping
+its store, then given its restored cells; each project added, if it is not
+there, and given its cells; the unscoped cells set. Never refused. -/
+def restoreWorkspaces (restored : Workspace.Table) (state : EditorState) : EditorState :=
+  let setAll (cells : Array (String × Value)) (into : Array (String × Value)) :
+    Array (String × Value) :=
+    cells.foldl (fun into (name, value) => Workspace.setCell into name value) into
+  let table :=
+    restored.workspaces.foldl
+      (fun table (workspace, cells) =>
+        let put := table.put workspace
+        { put with
+          workspaces :=
+            put.workspaces.map fun (kept, held) =>
+              if kept.location == workspace.location then (kept, setAll cells held)
+              else (kept, held) })
+      state.workspaces
+  let table :=
+    restored.projects.foldl
+      (fun table (project, cells) =>
+        let projects :=
+          if (table.project? project.identity).isSome then table.projects
+          else table.projects.push (project, #[])
+        { table with
+          projects :=
+            projects.map fun (kept, held) =>
+              if kept.identity == project.identity then (kept, setAll cells held)
+              else (kept, held) })
+      table
+  { state with
+    workspaces := { table with unscoped := setAll restored.unscoped table.unscoped }
+    workspacesRevision := state.workspacesRevision + 1 }
 
 /-- Adds a buffer called `name` over `text`, whose history is `history`, in
 the next slot, and hands back its id. It is the least recently used buffer

@@ -99,6 +99,35 @@ asks the text store nothing, so a marker's id is written out by hand. -/
 def stateRequestChecks : List Check :=
   let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
   [{  name :=
+        "the restore's requests are their operations: restoreFrame puts a frame back, restoreWorkspaces takes in a table, markRestored marks a buffer, and restoreCells keeps the cells in the outbox, in order"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            match state.window? ⟨0⟩ with
+            | none => false
+            | some start =>
+              let record : Restore.Frame.Record :=
+                { tabs := #[{ windows := #[0], focused := 0 }, { windows := #[3], focused := 3 }] }
+              let made : Window :=
+                { start with
+                  id := ⟨3⟩, scroll := marker 0 30, selection := marker 0 31 }
+              let (framed, withFrame) := state.handle (.restoreFrame record #[start, made] #[] 4)
+              let (_, withTable) :=
+                state.handle (.restoreWorkspaces { unscoped := #[("n", .nat 1)] })
+              let (marked, withMark) := state.handle (.markRestored ⟨0⟩)
+              let cell (name : String) : KeptCell :=
+                { owner := "config", name, version := 1, value := .nat 0 }
+              let (_, once) := state.handle (.restoreCells #[cell "a"])
+              let (_, twice) := once.handle (.restoreCells #[cell "b"])
+              framed matches .ok () && withFrame.frame.tabsAfter.size == 1 &&
+                withFrame.nextView == 4 &&
+                withTable.workspaces.unscopedValue? "n" == some (.nat 1) &&
+                marked matches .ok () &&
+                (withMark.buffer? ⟨0⟩).map (·.historyRestored) == some true &&
+                twice.outbox.restoredCells.map (·.name) == #["a", "b"] },
+    { name :=
         "the at-point requests are their operations: open, choose, retype, retake and close a session, and retype pushes onto what commands typed"
       run :=
         pure <|

@@ -1,5 +1,6 @@
 import Editor.Ex.Compiled
 import Editor.Restore.Compiled
+import Editor.TabCommands.Compiled
 import Editor.WindowCommands.Compiled
 import ModelTest.Support.WorkingSet
 
@@ -9,8 +10,8 @@ import ModelTest.Support.WorkingSet
 The session restore checks' world and driver: the working set checks' world
 (evil's keys over the editor's models, the files of the checks under `/r`,
 the file, buffer and workspace commands and jobs), with the `restore`
-package's commands, mode and jobs, the ex commands and the window commands,
-and the state directory `/state`. Shared by the test modules of
+package's commands, mode and jobs, the ex commands, the window commands and
+the tab commands, and the state directory `/state`. Shared by the test modules of
 `Editor/Restore.lean` and `Editor/Restore/Run.lean`; it holds no checks of
 its own.
 -/
@@ -36,7 +37,8 @@ def restoreDriver (files : Option FileModel := none)
     (modes : Array Mode := #[]) (generation : Nat := 0) : Option EvilDriver :=
   (driverWith
         (Restore.package.registered.commands ++ Ex.package.registered.commands ++
-          WindowCommands.package.registered.commands)
+          WindowCommands.package.registered.commands ++
+          TabCommands.package.registered.commands)
         (Restore.package.registered.modes ++ modes) Restore.package.registered.jobs).map
     fun driver =>
     { driver with

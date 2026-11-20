@@ -23,7 +23,14 @@ its command, since only a command can read what a job loaded.
   file there (`File.load`, under `Files.limit`).
 - **Its command** (`read`) reads the indexes by the version rule and
   chooses the one restored (`Document.choose`), gives this run its number
-  (`nextRun`), and reads each log. Per buffer of a run, the live journal is
+  (`nextRun`), and reads each log. Before any buffer is made it restores
+  the workspace table (`Workspaces.restore`, `Editor/Restore/Workspaces.lean`):
+  each cell whose store has a codec registered now, a package's, is met
+  with it, the codec asked of the registry (`RegistryRequest.storeCodec`),
+  and the table, its cells met, handed to the state as plain data
+  (`StateRequest.restoreWorkspaces`); every other cell, config's, is
+  parked (`Kept.parked`, through `setRestore` with the rest of what the
+  restore keeps) for the reconciler to meet once config installs. Per buffer of a run, the live journal is
   the highest generation whose log has a header; with none, the highest
   with a base, restored as a buffer with no file. Each live journal is
   restored at once: its base taken in (`JobSnapshotId.toText`), its log
@@ -32,7 +39,9 @@ its command, since only a command can read what a job loaded.
   saved nowhere, so it is modified; it holds the header's file at the
   header's stamp and line ending (`attachFile`), so a save expects the old
   stamp. A no-file text called `scratch` goes into the scratch buffer when
-  that is untouched. Its modes are set by name, language before major, as
+  that is untouched. Each buffer it makes is marked as having no history
+  before the restore (`markRestored`), and one that holds a file is
+  attached to its workspace (`Workspace.attach`), as an open does. Its modes are set by name, language before major, as
   `Files.adopt` orders them; a major mode no one has registered yet is
   deferred (`Kept.deferred`, `Editor/Restore.lean`, "Modes a restore
   deferred"). Then it starts `restore-files` for the second half, keeping
@@ -46,14 +55,34 @@ its command, since only a command can read what a job loaded.
   reopens each unmodified file (`Files.adopt`) with its modes; one that is
   gone is said and not restored. It shows the buffer the focused view
   showed in the window focused now, with its recorded selection and scroll
-  top, clamped to the text. The other windows' places are kept
-  (`Kept.places`) for phase 2's layouts, and written again in the index
-  while their buffer's text does not move. It gives the run its number,
-  which starts the journal (`Kept.run`), and the files it took in to
-  remove (`Kept.stale`, `Kept.staleIndexes`).
+  top, clamped to the text, in bytes as they were recorded
+  (`Restore.offsetOf`). Each buffer it reopens is marked as having no
+  history before the restore. With the index's frame
+  (`Editor/Restore/Frame.lean`) it then puts every window of every tab
+  back: the record renumbered (`Frame.Record.renumber`) so that the window
+  focused now keeps its id as the focused window of the tab in view, every
+  other view made on its buffer at its recorded place with markers of its
+  own, a view whose buffer is not kept on `scratch` (said, unless it showed
+  `scratch`), each window's jump list put back (a kept buffer's entry held
+  by a new marker, a path's as a file place, attached once its buffer is
+  restored, and an entry of no restored buffer dropped), a float at a
+  position held by a new marker, and the frame asked for
+  (`StateRequest.restoreFrame`). The layout it put back is held until config
+  installs (`Kept.heldLayout`). A record `check` refuses, a prompt open,
+  or a refusal of the state falls back to the placement above, said, every
+  marker made for it given up. With no frame (a format-1 index) the other
+  windows' places are kept (`Kept.places`), and written again in the index
+  while their buffer's text does not move. It hands the host the index's
+  declared stores' cells (`restoreCells`): config's as they are, to be
+  parked until config installs, a package's met with its codec, and any
+  other's dropped, said. Each reported job the index says was running is
+  said stopped by the restart. It gives the run its number, which starts
+  the journal (`Kept.run`), and the files it took in to remove
+  (`Kept.stale`, `Kept.staleIndexes`).
 - **What is said**: a line in the echo area, `restore: N buffers, M with
-  unsaved text`, then `; K changed on disk` when there are, and `; see
-  *restore*` when the report has more; the whole report in the read-only
+  unsaved text`, then `; K changed on disk` when there are, `; J jobs
+  stopped` when a reported job was running, and `; see *restore*` when the
+  report has more; the whole report in the read-only
   buffer `*restore*`, shown nowhere.
 - **A restore never fails to start the editor.** Every problem is a line
   of the report: a file of the session that cannot be loaded, an index or
@@ -183,6 +212,28 @@ def intoScratch (text : TextId) : EditorM (Option BufferId) := do
   ((TextSource.text text).release : TextM Unit)
   return some id
 
+/-- The names of the stores whose cells `recorded` holds, each once. -/
+def cellNames (recorded : Document.Workspaces) : Array String :=
+  let cells :=
+    recorded.workspaces.flatMap (·.cells) ++ recorded.projects.flatMap (·.cells) ++
+      recorded.unscoped
+  cells.foldl (fun names cell => if names.contains cell.name then names else names.push cell.name)
+    #[]
+
+/-- The codecs registered now for the stores called `names`
+(`RegistryRequest.storeCodec`), as a lookup: plain data a pure restore of
+the table can take. -/
+def codecsOf (names : Array String) : EditorM (String → Option (String × StoreCodec)) := do
+  let mut found : Array (String × String × StoreCodec) := #[]
+  for name in names do
+    if let some (owner, codec)← storeCodec? name then
+      found := found.push (name, owner, codec)
+  return fun name => (found.find? (·.1 == name)).map (·.2)
+
+/-- The config generation now: how many configs have installed. -/
+def generationNow : EditorM Nat := do
+  return (← RegistryRequest.ask .workspaceSettings).2
+
 /-- The first half's command ("Restoring", in the module docs): what the job
 `restore` loaded, read, the indexes chosen among, each live journal restored,
 and `restore-files` started for the rest. -/
@@ -213,7 +264,18 @@ def read (loaded : Loaded) : EditorM Unit := do
       if document.run == journalRun then document.buffers.find? (·.key == key) else none
   let focused := choice.restored.bind (·.focused)
   let mut pending : Kept.Pending :=
-    { run, staleIndexes := choice.remove.map (indexPath loaded.directory) }
+    { run, staleIndexes := choice.remove.map (indexPath loaded.directory)
+      frame := choice.restored.bind (·.frame), jobs := (choice.restored.map (·.jobs)).getD #[]
+      stores := (choice.restored.map (·.stores)).getD #[] }
+  -- The workspace table, before any buffer is attached, so that attaching
+  -- finds its workspaces: each cell met with the codec registered now (a
+  -- package's), and the others parked for config's.
+  let mut parked := #[]
+  if let some recorded := choice.restored.bind (·.workspaces) then
+    let (table, waiting, lines) := Workspaces.restore recorded (← codecsOf (cellNames recorded))
+    Workspace.restoreTable table
+    parked := waiting
+    report := report ++ lines
   let mut restoredKeys : Array Nat := #[]
   let mut statArguments : List Argument := []
   for group in groups loaded do
@@ -277,13 +339,15 @@ def read (loaded : Loaded) : EditorM Unit := do
     let some id := id |
       report := report.push s!"journal {stem}: no buffer could be made for it: it is left as it is"
       continue
-    -- Modified: a new tree, saved nowhere.
+    -- Modified: a new tree, saved nowhere, which starts at the restore.
     let some buffer := (← editorState).buffer? id | continue
     let history ← (UndoTree.over buffer.text : TextM UndoTree)
     discard <| EditorState.ask (.setHistory id { history with saved := none })
+    discard <| id.markRestored
     if let (some path, some first) := (path, header) then
       if let some stamp := first.stamp then
         discard <| id.attachFile path stamp first.lineEnding
+        Workspace.attach id path
         statArguments := statArguments ++ [.nat id.index, .str path]
     if let some entry := entry then
       pending :=
@@ -298,6 +362,7 @@ def read (loaded : Loaded) : EditorM Unit := do
       if let some place := entry.views.find? (some ·.view == focused) then
         pending := { pending with focusBuffer := some (id.index, place) }
       restoredKeys := restoredKeys.push entry.key
+      pending := { pending with keys := pending.keys.push (entry.key, id.index) }
     pending := { pending with unsaved := pending.unsaved + 1 }
     if understood then
       let files :=
@@ -316,12 +381,14 @@ def read (loaded : Loaded) : EditorM Unit := do
       { pending with
         reopen :=
           pending.reopen.push
-            { path := file.path, major := entry.major, minors := entry.minors
+            { key := entry.key, path := file.path, major := entry.major, minors := entry.minors
               language := entry.language
               places := entry.views.filter fun place => some place.view != focused } }
     loads := loads ++ [.str file.path]
   pending := { pending with report := report }
-  setKept { (← editorState).restore with pending := some pending }
+  setKept
+      { (← editorState).restore with
+        pending := some pending, parked, parkedAt := ← generationNow }
   let arguments :=
     [.str loaded.directory.toString, .nat (statArguments.length / 2)] ++ statArguments ++ loads
   if let .error refusal← startJob filesJob arguments then
@@ -397,6 +464,183 @@ def writeReport (lines : Array String) : EditorM Unit := do
   discard <| id.setReadOnly true
   discard <| id.setMajorMode reportMode
 
+/-- The name of config's owner (`Config.Owner.config`), whose cells a
+restore hands on as they are, to be parked until config installs. -/
+def configOwner : String :=
+  "config"
+
+/-- What the report says of the reported job `job` that was running. -/
+def stoppedLine (job : RunningJob) : String :=
+  let key := (job.key.map fun key => s!" ({key})").getD ""
+  s!"the job {job.name}{key} of {job.owner} was running: the restart stopped it"
+
+/-- The declared stores' cells of the index to hand the host
+("Restoring", in the module docs), and what the report says: config's as
+they are, to be parked until config installs; a package's met with the
+codec registered now, which packages register before the restore; any
+other not handed, and said. -/
+def storesOf (cells : Array KeptCell) : EditorM (Array KeptCell × Array String) := do
+  let mut handed := #[]
+  let mut report := #[]
+  for cell in cells do
+    if cell.owner == configOwner then
+      handed := handed.push cell
+      continue
+    match ← storeCodec? cell.name with
+    | some (owner, codec) =>
+      if owner == cell.owner then
+        let met := codec.declaration.meet (some (cell.version, cell.value))
+        handed :=
+          handed.push
+            { cell with
+              version := met.version, value := met.value }
+        if let some why := met.lost then
+          report := report.push s!"store {cell.name} of {cell.owner}: {why}"
+      else
+        report :=
+          report.push
+            s!"store {cell.name} of {cell.owner}: {cell.owner} keeps no such store now: it is dropped"
+    | none =>
+      report :=
+        report.push
+          s!"store {cell.name} of {cell.owner}: {cell.owner} keeps no such store now: it is dropped"
+  return (handed, report)
+
+/-- The jump `jump` recorded, as a place of this run: held by a new marker
+in the buffer restored for its key (`keys`), at its row and column in
+characters, or in the file at its path; `none` for a key no buffer was
+restored for. With it, the marker made, if one was. -/
+def placeOfJump (keys : Array (Nat × Nat)) (jump : Jump) :
+    EditorM (Option (Editor.Place × Option MarkerId)) := do
+  match jump with
+  | .file path row column =>
+    return some (.file path row column, none)
+  | .kept key row column =>
+    let some (_, index) := keys.find? (·.1 == key) | return none
+    let some buffer := (← editorState).buffer? ⟨index⟩ | return none
+    let marker ←
+      (do
+          Marks.placeMarker buffer.text (← Marks.offsetAt buffer.text row column) : TextM MarkerId)
+    return some (.held ⟨index⟩ marker, some marker)
+
+/-- A window's jumps as recorded, as this run's (`placeOfJump`): an entry
+of no restored buffer dropped, the index moved back past it. With them,
+the markers made. -/
+def jumpsOfRecord (keys : Array (Nat × Nat)) (record : Jumps.Record) :
+    EditorM (Editor.Jumps × Array MarkerId) := do
+  let mut entries := #[]
+  let mut index := 0
+  let mut made := #[]
+  for position in [0:record.entries.size] do
+    let some jump := record.entries[position]? | continue
+    if let some (place, marker)← placeOfJump keys jump then
+      entries := entries.push place
+      made := made ++ marker.toArray
+      if position < record.index then
+        index := index + 1
+  if record.index ≥ record.entries.size then
+    index := entries.size
+  let mut previous := none
+  if let some jump := record.previous then
+    if let some (place, marker)← placeOfJump keys jump then
+      previous := some place
+      made := made ++ marker.toArray
+  return ({ list := { entries, index }, previous }, made)
+
+/-- Puts back the frame `record` recorded ("Restoring", in the module docs):
+renumbered from the window focused now, which keeps its id and is the
+focused view of the tab in view; every other view made on its buffer at its
+place (`placed`, by the record's view ids) with markers of its own, or on
+`scratch` for a view whose buffer is not kept; its jumps put back by
+`keys`; and the frame asked for (`restoreFrame`). The report's lines, or
+why it is not restored, every marker it made then given up. -/
+def restoreFrameOf (record : Frame.Record) (placed : Array (Nat × BufferId × Place))
+    (keys : Array (Nat × Nat)) : EditorM (Except String (Array String)) := do
+  if let some why := record.check then
+    return .error why
+  let state ← editorState
+  if state.prompt.isSome then
+    return .error LayoutRefusal.promptOpen.describe
+  let start := state.frame.focused
+  let some startWindow := state.window? start | return .error s!"there is no window {start.index}"
+  let shape ←
+    match ← (startWindow.selection.text.marker startWindow.selection : TextM Marker) with
+    | .selection selection =>
+      pure selection.shape
+    | _ =>
+      pure Shape.exclusive
+  let scratch := state.findBuffer EditorState.scratchName
+  let (renumbered, map, next) := record.renumber start.index state.nextView
+  let mut windows : Array Window := #[]
+  let mut made : Array MarkerId := #[]
+  let mut lines := #[]
+  for (old, new) in map do
+    let target := (placed.find? (·.1 == old)).map (·.2)
+    if target.isNone then
+      if let some (_, name) := record.elsewhere.find? (·.1 == old) then
+        if name != EditorState.scratchName then
+          lines :=
+            lines.push
+              s!"window {old} showed {name}, which is not kept: it shows {EditorState.scratchName}"
+    if new == start.index then
+      let mut window := startWindow
+      if let some (_, place) := target then
+        if let some jumps := place.jumps then
+          let (restored, markers) ← jumpsOfRecord keys jumps
+          window := { window with jumps := restored }
+          made := made ++ markers
+      windows := windows.push window
+      continue
+    let shown : Option (BufferId × Option Place) :=
+      match target with
+      | some (buffer, place) => some (buffer, some place)
+      | none => (scratch <|> some startWindow.buffer).map (·, none)
+    let some (buffer, place) := shown | continue
+    let some held := (← editorState).buffer? buffer | continue
+    let (anchor, head, top) ←
+      match place with
+      | some place =>
+        (do
+            return (← offsetOf held.text place.anchor, ← offsetOf held.text place.head,
+                ← offsetOf held.text ⟨place.top, 0⟩) :
+            TextM (Nat × Nat × Nat))
+      | none =>
+        pure (0, 0, 0)
+    let scroll ← (held.text.mark (.anchor { offset := top, bias := .before }) : TextM MarkerId)
+    let selection ←
+      (held.text.mark (.selection { ranges := #[⟨anchor, head⟩], shape }) : TextM MarkerId)
+    made := made ++ #[scroll, selection]
+    let mut jumps := {}
+    if let some jumped := place.bind (·.jumps) then
+      let (restored, markers) ← jumpsOfRecord keys jumped
+      jumps := restored
+      made := made ++ markers
+    windows := windows.push { id := ⟨new⟩, buffer, scroll, selection, jumps }
+  -- A float anchored at a position, held by a marker of its window's
+  -- buffer at the recorded spot.
+  let mut anchors := #[]
+  for tab in renumbered.tabs do
+    for float in tab.floats do
+      let .position view spot := float.anchor | continue
+      let some window := windows.find? (·.id == ⟨view⟩) | continue
+      let some held := (← editorState).buffer? window.buffer | continue
+      let marker ←
+        (do
+            Marks.placeMarker held.text (← offsetOf held.text spot) : TextM MarkerId)
+      made := made.push marker
+      anchors := anchors.push (float.view, marker)
+  match ← restoreFrame renumbered windows anchors next with
+  | .ok () =>
+    -- A place in the file of a buffer restored is held in it again.
+    for (_, index) in keys do
+      if let some file := ((← editorState).buffer? ⟨index⟩).bind (·.file) then
+        Jumps.attach ⟨index⟩ file.path
+    return .ok lines
+  | .error refusal =>
+    for marker in made do
+      discard <| (observing (marker.text.unmark marker) : TextM _)
+    return .error refusal.describe
+
 /-- The second half's command ("Restoring", in the module docs): each
 restored buffer whose file changed or is gone marked, untold; each file with
 no unsaved text reopened; the focused place put back; the report said; and
@@ -422,6 +666,7 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
           s!"{file.path}: changed on disk since; restored with its unsaved text and marked"
   let mut deferred := pending.deferred
   let mut places := pending.places
+  let mut keys := pending.keys
   let mut reopened : Array (Option BufferId) := #[]
   for entry in pending.reopen do
     let reply := ((loads.find? (·.1 == entry.path)).map (·.2)).getD (.error .notFound)
@@ -430,6 +675,8 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
       let id ← Files.adopt entry.path loaded
       reopened := reopened.push id
       if let some id := id then
+        discard <| id.markRestored
+        keys := keys.push (entry.key, id.index)
         deferred := deferred ++ (← setModes id entry.major entry.minors entry.language)
         if !entry.places.isEmpty then
           let some buffer := (← editorState).buffer? id | continue
@@ -454,20 +701,54 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
     let view := (← editorState).frame.focused
     if let .ok ()← view.show buffer then
       placeIn view buffer place
+  -- The frame, every window of every tab: each view's buffer and place are
+  -- its buffer's in the index.
+  let placed : Array (Nat × BufferId × Place) :=
+    pending.places.flatMap
+        (fun entry => entry.places.map fun place => (place.view, ⟨entry.buffer⟩, place)) ++
+      ((pending.reopen.zip reopened).flatMap fun (entry, id) =>
+        match id with
+        | some id => entry.places.map fun place => (place.view, id, place)
+        | none => #[]) ++
+      (focus.map fun (buffer, place) => #[(place.view, buffer, place)]).getD #[]
+  let mut frameRestored := false
+  if let some record := pending.frame then
+    match ← restoreFrameOf record placed keys with
+    | .ok lines =>
+      report := report ++ lines
+      frameRestored := true
+    | .error why =>
+      report :=
+        report.push s!"the windows are not restored ({why}): the focused buffer is shown as before"
+  -- The places a restore read are put back with the frame; without it they
+  -- are kept, as phase 1 kept them, for the next index.
+  if frameRestored then
+    places := #[]
+  -- The declared stores' cells, for the host that holds them.
+  let (cells, lines) ← storesOf pending.stores
+  report := report ++ lines
+  if !cells.isEmpty then
+    restoreCells cells
+  -- The reported jobs that were running: the restart stopped them.
+  report := report ++ pending.jobs.map stoppedLine
   let buffers := pending.unsaved + (reopened.filter (·.isSome)).size
   let mut summary := s!"restore: {buffers} buffers, {pending.unsaved} with unsaved text"
   if changed > 0 then
     summary := summary ++ s!"; {changed} changed on disk"
+  if !pending.jobs.isEmpty then
+    summary := summary ++ s!"; {pending.jobs.size} jobs stopped"
   let problems := report.size > changed
   if problems then
     summary := summary ++ s!"; see {reportName}"
   if buffers > 0 || !report.isEmpty then
     writeReport (#[summary] ++ report)
     message summary
+  let generation ← generationNow
   setKept
       { (← editorState).restore with
         run := some pending.run, stale := pending.stale, staleIndexes := pending.staleIndexes
-        places, deferred, pending := none, restored := true }
+        places, deferred, pending := none, restored := true
+        heldLayout := if frameRestored then some generation else none }
 
 /-- The job `restore-files` ("Restoring", in the module docs): each restored
 buffer's file stated, and each file to reopen loaded. -/

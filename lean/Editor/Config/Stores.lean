@@ -64,6 +64,12 @@ def meet (owner : Owner) (declaration : StoreDeclaration) (old : Option Cell) :
   ({ owner, name := declaration.name, version := met.version, value := met.value },
     met.lost.map (lost declaration.name))
 
+/-- What the reload's report says of the store called `name`, kept by the
+session and parked until config installed, when the config that installed
+registers no codec for it. -/
+def unclaimed (name : String) : Diagnostic :=
+  lost name "the session kept a value, but config registers no codec for it now; dropped"
+
 /-- The cells once `owner` has declared exactly `declarations`, and a
 diagnostic for each value that was lost on the way.
 
@@ -72,8 +78,15 @@ none, a cell is made from the initial value; a cell at the declared version
 is kept if the store accepts its tree; a cell at another version becomes the
 store's migration of it; and a cell the store does not accept, or does not
 migrate, is reset to the initial value. A cell of `owner` that is no longer
-declared is removed. Other owners' cells are left alone, and come first. -/
-def install (cells : Cells) (owner : Owner) (declarations : Array StoreDeclaration) :
+declared is removed. Other owners' cells are left alone, and come first.
+
+`parked` are the cells a session restore kept for the owner, parked until
+it installs (`State.parked`, `Editor/Config/Reload.lean`): a declaration
+with no cell meets the parked cell of its name, as a cell there was, when
+`codecs`, the codecs the same `setup` registered, keep its store across a
+restart. Every other parked cell is dropped, and said (`unclaimed`). -/
+def install (cells : Cells) (owner : Owner) (declarations : Array StoreDeclaration)
+    (parked : Array KeptCell := #[]) (codecs : Array StoreCodec := #[]) :
     Cells × Array Diagnostic :=
   let others := cells.cells.filter (·.owner != owner)
   let dropped :=
@@ -81,9 +94,17 @@ def install (cells : Cells) (owner : Owner) (declarations : Array StoreDeclarati
           cell.owner == owner && !declarations.any (·.name == cell.name)).map
       fun cell =>
       lost cell.name "the new config no longer declares the store, and its value was dropped"
-  let met :=
-    declarations.map fun declaration => meet owner declaration (cells.find? owner declaration.name)
-  ({ cells := others ++ met.map (·.1) }, dropped ++ met.filterMap (·.2))
+  let claimable (name : String) : Option KeptCell :=
+    if codecs.any (·.name == name) then parked.find? (·.name == name) else none
+  let previous (name : String) : Option Cell :=
+    (cells.find? owner name) <|>
+      (claimable name).map fun kept => { owner, name, version := kept.version, value := kept.value }
+  let claimed (kept : KeptCell) : Bool :=
+    (cells.find? owner kept.name).isNone && declarations.any (·.name == kept.name) &&
+      (claimable kept.name).isSome
+  let unclaimedCells := (parked.filter (!claimed ·)).map (unclaimed ·.name)
+  let met := declarations.map fun declaration => meet owner declaration (previous declaration.name)
+  ({ cells := others ++ met.map (·.1) }, dropped ++ met.filterMap (·.2) ++ unclaimedCells)
 
 end Cells
 

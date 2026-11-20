@@ -12,6 +12,7 @@ import Editor.Completion.Words
 import Editor.Config.Diagnostic
 import Editor.Config.Display
 import Editor.Config.Owner
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Config.Session
@@ -169,7 +170,77 @@ def reportFrom (state : ModelState) (outcome : ModelOutcome) : Config.Report :=
 /-- The checks of the reload reducer (`Editor/Config/Reload.lean`), with
 outcomes built by hand. -/
 def reloadChecks : List Check :=
+  let kept (owner name : String) (version : Nat) (value : Value) : KeptCell :=
+    { owner, name, version, value }
+  -- A store at version 2 whose migration doubles a version-1 count.
+  let doubled : Store Nat :=
+    { counter with
+      version := 2
+      migrate := fun version tree =>
+        match version, tree with
+        | 1, .nat n => some (.nat (2 * n))
+        | _, _ => none }
   [{  name :=
+        "the cells a restore kept for config are parked, then met at config's first install that declares them with a codec: kept at their version, migrated from another, reset with a warning; and dropped with a warning when undeclared or declared with no codec"
+      run :=
+        pure <|
+          let parked :=
+            ({} : ModelState).restoreCells
+              #[kept "config" "counter" 2 (.nat 7), kept "config" "migrated" 1 (.nat 4),
+                kept "config" "refused" 2 (.str "x"), kept "config" "undeclared" 1 (.nat 1),
+                kept "config" "uncoded" 2 (.nat 1)]
+          let setup : SetupM Unit := do
+            for name in ["counter", "migrated", "refused"] do
+              ({ doubled with name } : Store Nat).declare
+              ({ doubled with name } : Store Nat).keptAcrossRestart
+            ({ doubled with name := "uncoded" } : Store Nat).declare
+          let (installed, effects) :=
+            reduceFrom parked [.requested, .finished (accepted ["a"] setup)]
+          let warned :=
+            effects.filterMap fun
+              | .report _ _ sources _ _ => some sources
+              | _ => none
+          parked.parked.size == 5 && installed.parked.isEmpty &&
+            stored installed "counter" == some (.nat 7) &&
+            stored installed "migrated" == some (.nat 8) &&
+            stored installed "refused" == some (.nat 0) &&
+            stored installed "uncoded" == some (.nat 0) &&
+            warned == #[#["store refused", "store undeclared", "store uncoded"]] },
+    { name :=
+        "the cells' revision moves with each writer: a command's write, an install, a package's registration and the cells a restore hands"
+      run :=
+        pure <|
+          let (installed, _) := reduce [.requested, .finished (accepted ["a"] (bumps 1))]
+          let bumped := ((runs installed "bump").map (·.1)).getD installed
+          let restored := bumped.restoreCells #[kept "config" "x" 1 (.nat 1)]
+          let (packaged, _) :=
+            Config.State.ofPackages (β := ModelBase) (σ := ModelHandle)
+              #[{ name := "pkg", setup := counter.declare }]
+          ({} : ModelState).cellsRevision == 0 && installed.cellsRevision == 1 &&
+            bumped.cellsRevision == 2 &&
+            restored.cellsRevision == 3 &&
+            packaged.cellsRevision == 1 },
+    { name :=
+        "a package's declared store through the host's half: the restore's cell set as the package's, config's parked, an unknown owner's dropped; the cells kept list the package's through its keep, beside the parked one"
+      run :=
+        pure <|
+          let package : Package :=
+            { name := "counter-pkg"
+              setup := do
+                doubled.declare
+                doubled.keptAcrossRestart (keep := fun n => n + 100) }
+          let (state, _) := Config.State.ofPackages (β := ModelBase) (σ := ModelHandle) #[package]
+          let restored :=
+            state.restoreCells
+              #[kept "counter-pkg" "counter" 2 (.nat 5), kept "config" "mine" 1 (.nat 1),
+                kept "gone" "lost" 1 (.nat 1)]
+          (restored.cells.find? { name := "counter-pkg" } "counter").map (·.value) ==
+              some (.nat 5) &&
+            restored.parked == #[kept "config" "mine" 1 (.nat 1)] &&
+            restored.cellsRevision == state.cellsRevision + 1 &&
+            restored.keptCells ==
+              #[kept "counter-pkg" "counter" 2 (.nat 105), kept "config" "mine" 1 (.nat 1)] },
+    { name :=
         "an install replaces config's at-point sources and uses; its report names each at-point source a use names that nobody registered, which the echo area says after the displays' sentences; a later install that makes none clears them"
       run :=
         let shown : ModelState :=

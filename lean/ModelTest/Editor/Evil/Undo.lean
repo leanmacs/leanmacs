@@ -110,6 +110,21 @@ def evilUndoChecks : List Check :=
               evilShown redone == "a|bc" &&
               (evilFed (evilFed driver "x u") "u").loop.state.echo == Evil.nothingToUndo },
     { name :=
+        "u at the root of a buffer a restore made says its history starts at the restore, after undoing what was done since, and changes nothing"
+      run :=
+        pure <|
+          match evilDriver "a|bc" with
+          | none => false
+          | some driver =>
+            let state := driver.loop.state
+            let marked : EvilDriver :=
+              { driver with loop := { driver.loop with state := (state.markRestored ⟨0⟩).2 } }
+            let undone := evilFed marked "u"
+            let again := evilFed (evilFed marked "x") "u u"
+            undone.loop.state.echo == Evil.nothingBeforeRestore && evilShown undone == "a|bc" &&
+              again.loop.state.echo == Evil.nothingBeforeRestore &&
+              evilShown again == "a|bc" },
+    { name :=
         "u after a visual deletion leaves one range with equal ends at the selection's head, in normal state's shape"
       run :=
         pure <|

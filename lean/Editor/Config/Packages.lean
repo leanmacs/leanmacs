@@ -198,7 +198,8 @@ def register (state : State β σ) (package : Package) : Except String (State β
       packages := state.packages.push package.name
       registry :=
         { registry with styleDefaults := registry.styleDefaults ++ collected.styleDefaults }
-      cells := (state.cells.install package.owner collected.stores).1 }
+      cells := (state.cells.install package.owner collected.stores).1
+      cellsRevision := state.cellsRevision + 1 }
 
 /-- The config state a host handed `packages` starts from: each registered
 in the array's order (`register`), from nothing, before any config; and the

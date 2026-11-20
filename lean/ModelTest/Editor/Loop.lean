@@ -210,6 +210,20 @@ def switched (start : TextM EditorState) (text : String) (events : List Event :=
 each event does to the state, and the scene it publishes. -/
 def loopChecks : List Check :=
   [{  name :=
+        "a layout a restore holds is not chosen while the config generation is the restore's, and is once config has installed past it; with no hold, a handed layout is chosen as before"
+      run :=
+        pure <|
+          let program : EditorM (Layout × Layout × Layout) := do
+            let state ← windowsUnder 2 Layout.default
+            let held : Loop Vim.Default.scheme :=
+              { state := { state with restore := { heldLayout := some 0 } } }
+            let same ← held.publish (layout := some .monocle) (generation := 0)
+            let after ← held.publish (layout := some .monocle) (generation := 1)
+            let unheld ← ({ state } : Loop Vim.Default.scheme).publish (layout := some .monocle)
+            return (same.state.frame.layout, after.state.frame.layout, unheld.state.frame.layout)
+          (program.runModel editorModel).1.toOption ==
+            some (Layout.default.fits 2, .monocle, .monocle) },
+    { name :=
         "a resize to 641 by 479 of a frame of three windows publishes a scene whose views' rectangles and dividers tile 641 by 479 above its bottom row"
       run :=
         pure <|

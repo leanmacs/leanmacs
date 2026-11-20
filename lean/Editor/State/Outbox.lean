@@ -1,4 +1,5 @@
 import Editor.Invocation
+import Editor.Store.Codec
 
 /-!
 # The outbox
@@ -8,15 +9,16 @@ has run to its end (`EditorState.Outbox`, the state's `outbox`): the jobs
 to start and the keys of the jobs to cancel (`Editor/Loop.lean`, "Jobs
 from commands"), the invocations to run next, a prompt's continuation with
 its answer among them ("Prompts"), whether the config is to be reloaded
-("Reload from a command") and the theme to load ("A theme switch from a
-command").
+("Reload from a command"), the theme to load ("A theme switch from a
+command") and the declared stores' cells a session restore read, for the
+host that holds the cells ("Restoring", `Editor/Restore/Run.lean`).
 
 ## The rules
 
 - **Each entry is set by one state request** (`Editor/State/Request.lean`):
   `starts` by `startJob`, `cancels` by `cancelJob`, `answered` by `invoke`
-  and by `closePrompt` (`EditorState.closePrompt`), `reload` by `reload`
-  and `theme` by `loadTheme`. Each of the first three appends in order;
+  and by `closePrompt` (`EditorState.closePrompt`), `reload` by `reload`,
+  `theme` by `loadTheme` and `restoredCells` by `restoreCells`. Each of the first three appends in order;
   `reload` and `theme` are set in place of what was there, so the latest
   wins.
 - The jobs a command asked to be started are kept in order, a `JobStart`
@@ -93,6 +95,10 @@ structure EditorState.Outbox where
   /-- The theme a command asked to be loaded, the latest if it asked more
   than once. -/
   theme : Option String := none
-  deriving DecidableEq, Repr
+  /-- The declared stores' cells a session restore read, a package's met
+  with its codec and config's as they were, for the host that holds the
+  cells (`Config.State.restoreCells`), in order. -/
+  restoredCells : Array KeptCell := #[]
+  deriving BEq, Repr
 
 end Editor

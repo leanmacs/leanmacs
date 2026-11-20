@@ -105,12 +105,67 @@ def driver (state : Option System.FilePath := some stateDirectory) (limit : Nat 
                   return none
               | _ => driver.keys.command? name } }
 
+/-- `driver` handed the host's cells `cells` at the revision `revision`. -/
+def withStores (revision : Nat) (cells : Array KeptCell) (driver : EvilDriver) : EvilDriver :=
+  { driver with keys := { driver.keys with stores := { revision, cells := Thunk.pure cells } } }
+
+/-- `driver` handed `running` as the reported jobs running. -/
+def withRunning (running : Array RunningJob) (driver : EvilDriver) : EvilDriver :=
+  { driver with keys := { driver.keys with running } }
+
+/-- A config cell kept across a restart. -/
+def keptOf (name : String) (value : Nat) : KeptCell :=
+  { owner := "config", name, version := 1, value := .nat value }
+
 end JournalReconcileTest
 
 open JournalReconcileTest in
 /-- The checks of the journal's reconciler (`Editor/Restore.lean`). -/
 def journalReconcileChecks : List Check :=
   [{  name :=
+        "the index written after a split, a new tab and a jump carries the frame, both tabs and the jumps, decoded"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let lines := evilFed begun "i o n e RET t w o <Escape> g g"
+            let quiet := drained (ran (ran lines WindowCommands.splitName) TabCommands.newName)
+            match indexOf quiet 1 with
+            | none => false
+            | some document =>
+              (document.frame.map (·.tabs.size)) == some 2 &&
+                (document.frame.map (·.tabs.map (·.windows.size))) == some #[2, 1] &&
+                document.buffers.any fun buffer =>
+                  buffer.views.any fun place => place.jumps.any (!·.entries.isEmpty) },
+    { name :=
+        "a change of the host's cells, a new revision, is mirrored and makes one debounced write, which lists them; an unchanged revision reads nothing"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let written := drained begun
+            let changed := evilFed (withStores 1 #[keptOf "kept" 2] written) "l"
+            let quiet := drained changed
+            let unchanged := drained (evilFed (withStores 1 #[keptOf "other" 9] quiet) "l")
+            pendingNamed changed writeJob == 1 &&
+              (indexOf quiet 1).map (·.stores) == some #[keptOf "kept" 2] &&
+              quiet.loop.state.restore.stores == #[keptOf "kept" 2] &&
+              unchanged.loop.state.restore.stores == #[keptOf "kept" 2] &&
+              (indexOf unchanged 1).map (·.stores) == some #[keptOf "kept" 2] },
+    { name := "a reported job's start and its end each change the jobs the index lists"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let job : RunningJob := { owner := "shell", name := "shell-run", key := some "k" }
+            let started := drained (evilFed (withRunning #[job] (drained begun)) "l")
+            let ended := drained (evilFed (withRunning #[] started) "l")
+            (indexOf started 1).map (·.jobs) == some #[job] &&
+              (indexOf ended 1).map (·.jobs) == some #[] },
+    { name :=
         "from an empty state directory the restore makes session/journals/, and typing gives a base at the first edit and then one record per event, which replay to the text"
       run :=
         pure <|

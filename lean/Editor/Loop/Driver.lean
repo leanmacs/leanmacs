@@ -228,6 +228,10 @@ structure Loop.Driver (scheme : InputScheme) where
   /-- What the journal's orders that failed said, each its path and why, in
   order (`journaled`). -/
   journalFailures : Array String := #[]
+  /-- The declared stores' cells the steps it took in handed back
+  (`Loop.Stepped.restoredCells`), in order. The driver holds no cells: a
+  host takes them in (`Config.State.restoreCells`). -/
+  restoredCells : Array KeptCell := #[]
 
 namespace Loop.Driver
 
@@ -246,12 +250,26 @@ def over (keys : Loop.Keys scheme) (registered : String → Option (List Argumen
     .ok { loop := { state }, model, keys, registered }
   | (.error refusal, _) => .error refusal
 
+/-- The jobs started and not yet delivered, each its name and key: those
+parked at a watch, those at a post, and those ended and not delivered. -/
+def startedJobs (driver : Loop.Driver scheme) : Array (String × Option String) :=
+  driver.parked.map (fun job => (job.name, job.key)) ++
+    driver.posting.map (fun job => (job.name, job.key)) ++
+    driver.pending.map fun job => (job.name, job.key)
+
 /-- What a step of the driver's loop is handed: its `keys`, told which names
-a job is registered under. -/
+a job is registered under, and, after the running jobs its keys hold, each
+job started and not delivered that the registry says is reported, as the
+compiled owner's: the driver keeps no owners. -/
 def handed (driver : Loop.Driver scheme) : Loop.Keys scheme :=
+  let reported := driver.keys.registered.reported
   { driver.keys with
     registered :=
-      { driver.keys.registered with jobs := fun name => (driver.registered name).isSome } }
+      { driver.keys.registered with jobs := fun name => (driver.registered name).isSome }
+    running :=
+      driver.keys.running ++
+        (driver.startedJobs.filter (reported ·.1)).map fun (name, key) =>
+          { owner := Config.Owner.compiled.name, name, key } }
 
 /-- The job model with each of the job snapshots `held` released. -/
 def releasing (jobs : JobModel) (held : Array JobSnapshotId) : JobModel :=
@@ -490,6 +508,7 @@ partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
                 stopped := driver.stopped || stepped.next == Loop.Next.stop
                 reloads := driver.reloads + if stepped.reload then 1 else 0
                 themes := driver.themes ++ stepped.theme.toArray
+                restoredCells := driver.restoredCells ++ stepped.restoredCells
                 armed :=
                   match stepped.pause with
                   | .keep => driver.armed

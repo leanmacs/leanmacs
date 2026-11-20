@@ -182,6 +182,15 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   read of the state (`EditorState.workspaceOf?`, `workspaces`).
 - **A buffer's language is recorded by name**, `setLanguage`, as its major
   mode is: any name is taken, and refused `noSuchBuffer` alone.
+- **A session restore puts back what it read by four requests**
+  (`Editor/Restore/Run.lean`), each plain data: `restoreFrame`, the
+  frame's tabs and every window of them, refused `promptOpen` and
+  `malformed` (`Editor/State.lean`, "Tabs"); `restoreWorkspaces`, a table
+  whose cells the restore's command already met with their codecs, which it
+  asked the registry for (`RegistryRequest.storeCodec`), never refused;
+  `markRestored`, a buffer made or reopened, refused `noSuchBuffer`; and
+  `restoreCells`, the declared stores' cells, kept in the outbox
+  (`EditorState.Outbox.restoredCells`) for the host that holds the cells.
 
 ## Where an addition goes
 
@@ -287,6 +296,21 @@ inductive StateRequest where
   /-- Set what the session's reconciler keeps (`Editor/Restore.lean`), in
   place of what it kept. -/
   | setRestore (kept : Restore.Kept)
+  /-- Put back the frame a session restore recorded: `record`'s tabs, its
+  views this run's ids, with `windows`, every window of them, a float
+  anchored at a position held by the marker `anchors` gives its view, and
+  the next view's id at least `next`. -/
+  |
+  restoreFrame (record : Restore.Frame.Record) (windows : Array Window)
+    (anchors : Array (Nat × MarkerId)) (next : Nat)
+  /-- Take in `table`, a workspace table a session restore made, its cells
+  already met. -/
+  | restoreWorkspaces (table : Workspace.Table)
+  /-- Mark the buffer `id` as made or reopened by a session restore. -/
+  | markRestored (id : BufferId)
+  /-- Hand the host `cells`, the declared stores' cells a session restore
+  read. -/
+  | restoreCells (cells : Array KeptCell)
   /-- Choose auto-reload on or off, for as long as the editor runs. -/
   | setAutoReload (on : Bool)
   /-- Stop following the buffer `id` for auto-reload: its follow job ended. -/
@@ -426,6 +450,10 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setGutter .. => Except BufferRefusal Unit
   | .gutter _ => Unit
   | .setRestore _ => Unit
+  | .restoreFrame .. => Except LayoutRefusal Unit
+  | .restoreWorkspaces _ => Unit
+  | .markRestored _ => Except BufferRefusal Unit
+  | .restoreCells _ => Unit
   | .setAutoReload _ => Unit
   | .unfollow _ => Unit
   | .refuseFollow _ => Unit
@@ -528,6 +556,12 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setGutter id gutter, state => state.setGutter id gutter
   | .gutter change, state => ((), state.changeGutter change)
   | .setRestore kept, state => ((), { state with restore := kept })
+  | .restoreFrame record windows anchors next, state =>
+    state.restoreFrame record windows anchors next
+  | .restoreWorkspaces table, state => ((), state.restoreWorkspaces table)
+  | .markRestored id, state => state.markRestored id
+  | .restoreCells cells, state =>
+    ((), { state with outbox.restoredCells := state.outbox.restoredCells ++ cells })
   | .setAutoReload on, state => ((), { state with autoReload := some on })
   | .unfollow id, state => ((), { state with following := state.following.filter (·.buffer != id) })
   | .refuseFollow id, state =>
@@ -576,8 +610,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
     state.registerWorkspace location remote branch
   | .setWorkspaceValue location name value, state => state.setWorkspaceValue location name value
   | .setProjectValue identity name value, state => state.setProjectValue identity name value
-  | .setUnscopedValue name value, state =>
-    ((), { state with workspaces := state.workspaces.setUnscopedValue name value })
+  | .setUnscopedValue name value, state => ((), state.setUnscopedValue name value)
   | .setLanguage id name, state => state.setLanguage id name
 
 end EditorState

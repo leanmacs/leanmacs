@@ -271,6 +271,13 @@ structure State (β σ : Type) where
   registry : Registry := {}
   /-- The cells of the stores. -/
   cells : Cells := {}
+  /-- The cells of config's stores a session restore kept, parked until a
+  config installs (`restoreCells`, `install`). -/
+  parked : Array KeptCell := #[]
+  /-- How many times the cells or the parked ones changed: bumped by
+  `written`, `install`, `restoreCells` and a package's registration, so the
+  session's reconciler reads them (`keptCells`) only when they moved. -/
+  cellsRevision : Nat := 0
   /-- The names of the packages registered, in the order they were
   (`State.register`, `Editor/Config/Packages.lean`): set when a host starts,
   and never by an install. -/
@@ -401,7 +408,8 @@ def install (state : State β σ) (outcome : Outcome β σ) : State β σ × Rep
         (rule, (rule.target.missing? chosen).map (Report.leftOut (index + 1)))
     let displayRules := (checked.filter (·.2.isNone)).map (·.1)
     let unusableRules := checked.filterMap (·.2)
-    let (cells, lost) := state.cells.install .config built.registrations.stores
+    let (cells, lost) :=
+      state.cells.install .config built.registrations.stores state.parked built.registrations.codecs
     let state :=
       { state with
         files := built.files,
@@ -421,7 +429,7 @@ def install (state : State β σ) (outcome : Outcome β σ) : State β σ × Rep
             localLeader := built.registrations.localLeader
             syntaxRefreshDelay := built.registrations.syntaxRefreshDelay
             projectCommands := built.registrations.projectCommands },
-        cells }
+        cells, parked := #[], cellsRevision := state.cellsRevision + 1 }
     let (themeName, unknownTheme) :=
       chooseAt state.registry state.themeName built.registrations.theme
     let modeLine := built.registrations.modeLine
@@ -545,7 +553,51 @@ def program? (state : State β σ) (name : String) (target : Option Target := no
 /-- The state once what a command wrote is written back. -/
 def written (state : State β σ) : Option Write → State β σ
   | none => state
-  | some write => { state with cells := state.cells.set write.owner write.store write.value }
+  | some write =>
+    { state with
+      cells := state.cells.set write.owner write.store write.value
+      cellsRevision := state.cellsRevision + 1 }
+
+/-- The state once it takes in the declared stores' cells a session restore
+read (`Loop.Stepped.restoredCells`): a package's, which the restore met
+with the package's codec, set as the package's cell; config's parked until
+a config installs (`install`); any other's dropped, as the restore said. -/
+def restoreCells (state : State β σ) (cells : Array KeptCell) : State β σ :=
+  if cells.isEmpty then state
+  else
+    let (held, parked) :=
+      cells.foldl
+        (fun (held, parked) cell =>
+          let owner : Owner := { name := cell.owner }
+          if owner == .config then (held, parked.push cell)
+          else
+            match held.find? owner cell.name with
+            | some _ =>
+              ({
+                  cells :=
+                    held.cells.map fun kept =>
+                      if kept.owner == owner && kept.name == cell.name then
+                        { kept with
+                          version := cell.version, value := cell.value }
+                      else kept },
+                parked)
+            | none => (held, parked))
+        (state.cells, state.parked)
+    { state with
+      cells := held, parked, cellsRevision := state.cellsRevision + 1 }
+
+/-- The declared stores' cells kept across a restart, as the session index
+lists them: each cell whose store's codec (`Registry.codec?`) is its owner's,
+through the codec's `keep`, then the cells parked for config. -/
+def keptCells (state : State β σ) : Array KeptCell :=
+  let kept :=
+    state.cells.cells.filterMap fun cell => do
+      let (owner, codec) ← state.registry.codec? cell.name
+      if owner != cell.owner then
+        none
+      let value ← codec.keep cell.value
+      return { owner := cell.owner.name, name := cell.name, version := cell.version, value }
+  kept ++ state.parked
 
 /-- The job registered under `name`, to be started with `arguments`, and the
 owner the runtime is to start it for; `none` if there is no such job. -/

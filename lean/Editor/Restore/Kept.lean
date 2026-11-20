@@ -98,6 +98,8 @@ structure Kept.Deferred where
 /-- A buffer of the index restored that held a file with no unsaved text:
 reopened from its file (`Restore.restored`). -/
 structure Kept.Reopen where
+  /-- Its key in the index. -/
+  key : Nat := 0
   /-- Its file's path. -/
   path : System.FilePath
   /-- Its major mode's name. -/

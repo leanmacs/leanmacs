@@ -35,6 +35,26 @@ def modesCommandForTest : Config.Registration :=
         discard <| call.target.window.id.setMajorMode major
         discard <| call.target.window.buffer.addMinorMode minor }
 
+/-- A command that names the tab in view after its first argument. -/
+def renameCommandForTest : Config.Registration :=
+  { name := "test-rename"
+    action :=
+      .call fun call => do
+        let .str name :: _ := call.arguments | return
+        discard <| changeTab (.rename (← editorState).frame.tabIndex (some name)) }
+
+/-- A command that has the workspace of its window's buffer keep the number
+of its second argument under the name of its first, and the unscoped store
+too. -/
+def cellCommandForTest : Config.Registration :=
+  { name := "test-cell"
+    action :=
+      .call fun call => do
+        let .str name :: .nat value :: _ := call.arguments | return
+        if let some (workspace, _) := (← editorState).workspaceOf? call.target.window.buffer then
+          discard <| Workspace.setValue workspace.location name (.nat value)
+        Workspace.setUnscopedValue name (.nat value) }
+
 /-- `driver` with the checks' commands: the reconcile checks' and
 `test-modes`. -/
 def withCommands (driver : EvilDriver) : EvilDriver :=
@@ -43,7 +63,8 @@ def withCommands (driver : EvilDriver) : EvilDriver :=
       { driver.keys with
         command? := fun name =>
           match
-            [noteCommand, ownedCommand, placeCommand, modesCommandForTest].find?
+            [noteCommand, ownedCommand, placeCommand, modesCommandForTest, renameCommandForTest,
+                  cellCommandForTest].find?
               (·.name == name) with
           | some { action := .call run, .. } =>
             some fun call => do
@@ -98,12 +119,317 @@ def reportOf (driver : EvilDriver) : String :=
 def focusedShown (driver : EvilDriver) : String :=
   evilShown driver driver.loop.state.frame.focused
 
+/-- The frame `driver`'s state records (`Frame.Record.of`), on its models. -/
+def frameOf (driver : EvilDriver) : Option Frame.Record :=
+  ((Frame.Record.of driver.loop.state).runModel driver.model.texts).1.toOption
+
+/-- `record` with its views given ids in its order, the tab in view's focused
+one 0 and the others from 1000: two records of one frame are equal so,
+whatever ids each run gave. -/
+def canonical (record : Frame.Record) : Frame.Record :=
+  (record.renumber 0 1000).1
+
+/-- Each view of `driver`'s frame, in its record's order, with its buffer's
+name and its place: the anchor and the head of its selection and its top
+row. -/
+def viewsOf (driver : EvilDriver) : Option (Array (String × Option (Spot × Spot × Nat))) := do
+  let record ← frameOf driver
+  let state := driver.loop.state
+  record.views.mapM fun view => do
+      let window ← state.window? ⟨view⟩
+      let buffer ← state.buffer? window.buffer
+      let place := ((placeOf state buffer.text window).runModel driver.model.texts).1.toOption.join
+      return (buffer.name, place.map fun place => (place.anchor, place.head, place.top))
+
+/-- `driver` handed a layout of manual splits inside a left edge, as config
+would hand it. -/
+def edged (driver : EvilDriver) : EvilDriver :=
+  { driver with keys := { driver.keys with layout := some (.edge .left 25 Layout.manual) } }
+
+/-- A first loop's frame of two tabs: `a.txt` edited, with jumps recorded by
+`G` and `g g`; in the first tab four windows under manual splits at a left
+edge, one widened, one docked at the edge and one floating; a second tab
+named `notes`, split and zoomed; the first tab in view. -/
+def framed : Option EvilDriver :=
+  (first
+        (some
+          ((world fun files => files.withFile "/r/a.txt" "one\ntwo\nthree\nfour\n".toUTF8).getD
+            {}))).map
+    fun begun =>
+    let edited := evilFed (opened (edged begun) "a.txt") "G g g j x"
+    let tiled :=
+      [WindowCommands.splitName, WindowCommands.splitVerticallyName, WindowCommands.splitName,
+            WindowCommands.widerName, WindowCommands.edgeLeftName, WindowCommands.nextName,
+            WindowCommands.floatName].foldl
+        (fun driver name => ran driver name) edited
+    let tabbed := ran (ran tiled TabCommands.newName) "test-rename" [.str "notes"]
+    let zoomed := ran (ran tabbed WindowCommands.splitName) WindowCommands.zoomName
+    drained (ran zoomed TabCommands.previousName)
+
+/-- A second loop over the world `driver` left, with `change` made to its
+driver before its restore runs, and the checks' commands. -/
+def secondWith (driver : EvilDriver) (change : EvilDriver → EvilDriver)
+    (files : FileModel → FileModel := id) : Option EvilDriver :=
+  (restoreDriver (some (files driver.jobs.files))).map fun fresh =>
+    begun (withCommands (change fresh))
+
+/-- A store of a count at version 2, which migrates a version-1 count by
+doubling it. -/
+def counted : Store Nat :=
+  { name := "counted", version := 2, initial := 0, encode := .nat
+    decode := fun
+      | .nat n => some n
+      | _ => none
+    migrate := fun version tree =>
+      match version, tree with
+      | 1, .nat n => some (.nat (2 * n))
+      | _, _ => none }
+
+/-- `driver` told of the codecs of `names` among `tally` and `later`, counts
+both, of the package `pkg`, and of `counted`, of the package `counter`. -/
+def withCodecs (names : List String) (driver : EvilDriver) : EvilDriver :=
+  let count (name : String) : Store Nat :=
+    { counted with
+      name, version := 1, migrate := fun _ _ => none }
+  let codec? (name : String) : Option (String × StoreCodec) :=
+    if !names.contains name then none
+    else
+      if name == "counted" then some ("counter", counted.codec)
+      else some ("pkg", (count name).codec)
+  { driver with keys := { driver.keys with registered := { driver.keys.registered with codec? } } }
+
+/-- A cell of a store kept by the session. -/
+def keptCell (owner name : String) (version : Nat) (value : Value) : KeptCell :=
+  { owner, name, version, value }
+
 end RestoreRunTest
 
 open RestoreRunTest in
 /-- The checks of restoring a session (`Editor/Restore/Run.lean`). -/
 def restoreChecks : List Check :=
   [{  name :=
+        "(a) windows and layouts, (b) tabs: two tabs with manual splits at an edge, a resize, a docked window, a float, a named and zoomed hidden tab come back as they were, up to the views' ids; the start window keeps id 0 and is focused; each view's buffer, selection and scroll match; tab-next shows the hidden tab as it was"
+      run :=
+        pure <|
+          match framed with
+          | none => false
+          | some before =>
+            match second before with
+            | none => false
+            | some again =>
+              let hidden := ran again TabCommands.nextName
+              (frameOf before).map canonical == (frameOf again).map canonical &&
+                (frameOf before).isSome &&
+                viewsOf before == viewsOf again &&
+                again.loop.state.wellFormed &&
+                again.loop.state.frame.focused == ⟨0⟩ &&
+                again.loop.state.frame.tabs.size == 2 &&
+                again.loop.state.frame.docked.size == 1 &&
+                again.loop.state.frame.floats.size == 1 &&
+                hidden.loop.state.frame.name == some "notes" &&
+                hidden.loop.state.frame.layout == .monocle &&
+                hidden.loop.state.frame.zoomedFrom.isSome &&
+                again.loop.state.echo == "restore: 1 buffers, 1 with unsaved text" },
+    { name :=
+        "(c) the jump list: the restored window's C-o goes where the first loop's went, and the list's entries, its index and the previous-context mark come back; an entry of a buffer that is not kept is dropped"
+      run :=
+        pure <|
+          match framed with
+          | none => false
+          | some before =>
+            match second before with
+            | none => false
+            | some again =>
+              let jumpsOf (driver : EvilDriver) : Option (Nat × Nat × Bool) :=
+                (driver.loop.state.window? driver.loop.state.frame.focused).map
+                  fun (window : Window) =>
+                  (window.jumps.list.entries.size, window.jumps.list.index,
+                    window.jumps.previous.isSome)
+              -- The first loop's first entry is in the scratch buffer, which
+              -- is not kept: it is dropped, and the index with it.
+              focusedShown (evilFed before "C-o") == focusedShown (evilFed again "C-o") &&
+                jumpsOf before == some (3, 3, true) &&
+                jumpsOf again == some (2, 2, true) &&
+                focusedShown (evilFed before "C-o") != focusedShown before },
+    { name :=
+        "(d) undo: every restored buffer is marked as having no history before the restore, and u at its root says so"
+      run :=
+        pure <|
+          match framed with
+          | none => false
+          | some before =>
+            match second before with
+            | none => false
+            | some again =>
+              (bufferNamed again "a.txt").map (·.historyRestored) == some true &&
+                (evilFed again "u").loop.state.echo == Evil.nothingBeforeRestore },
+    { name :=
+        "(h) a frame the restore refuses falls back to phase 1's placement and says so: a record check refuses, and a prompt open at the restore"
+      run :=
+        pure <|
+          match framed with
+          | none => false
+          | some before =>
+            let broken (files : FileModel) : FileModel :=
+              match indexOf before 1 with
+              | some document =>
+                withIndex files (indexName 1)
+                  ({ document with
+                        frame := document.frame.map fun frame => { frame with selected := 9 } } :
+                      Document).render
+              | none => files
+            let prompted :=
+              (restoreDriver (some before.jobs.files)).bind fun fresh =>
+                let started :=
+                  (withCommands fresh).started
+                    #[{ name := restoreJob, arguments := [.str stateDirectory.toString] }]
+                match started.pending[0]? with
+                | none => none
+                | some job => some (drained (evilFed (started.finish job.id).1 ":"))
+            match second before broken, prompted with
+            | some refused, some asked =>
+              refused.loop.state.frame.tabs.size == 1 &&
+                refused.loop.state.frame.windows.size == 1 &&
+                ((reportOf refused).splitOn
+                      "the windows are not restored (the tab in view, 10, is past the 2 tabs)").length ==
+                  2 &&
+                refused.loop.state.restore.places.size > 0 &&
+                ((reportOf asked).splitOn
+                      s!"the windows are not restored ({LayoutRefusal.promptOpen.describe})").length ==
+                  2 &&
+                asked.loop.state.frame.tabs.size == 1
+            | _, _ => false },
+    { name :=
+        "(i) a window whose buffer is not kept shows scratch after the restore, and the report says so"
+      run :=
+        pure <|
+          match first with
+          | none => false
+          | some begun =>
+            let noted :=
+              drained
+                (ran (ran (evilFed begun (typing "kept")) WindowCommands.splitName) "test-note")
+            match second noted with
+            | none => false
+            | some again =>
+              let shown :=
+                again.loop.state.windows.filterMap fun window =>
+                  (again.loop.state.buffer? window.buffer).map (·.name)
+              shown == #[EditorState.scratchName, EditorState.scratchName] &&
+                ((reportOf again).splitOn
+                      "showed note, which is not kept: it shows scratch").length ==
+                  2 &&
+                again.loop.state.echo ==
+                  s!"restore: 1 buffers, 1 with unsaved text; see {reportName}" },
+    { name :=
+        "(e) workspaces and (f) their stores: the table's workspace and project come back with a restored file buffer attached; a cell with a package's codec comes back, one with none is never written, and one whose codec is registered later is parked, written meanwhile, and claimed after an install"
+      run :=
+        pure <|
+          match (first).map (withCodecs ["tally", "later"]) with
+          | none => false
+          | some begun =>
+            let celled :=
+              drained
+                ([("tally", 7), ("private", 3), ("later", 5)].foldl
+                  (fun driver (name, value) => ran driver "test-cell" [.str name, .nat value])
+                  (evilFed (opened begun "a.txt") "x"))
+            let written := (indexOf celled 1).bind (·.workspaces)
+            let names := (written.map fun record => record.unscoped.map (·.name)).getD #[]
+            match secondWith celled (withCodecs ["tally"]) with
+            | none => false
+            | some again =>
+              let state := again.loop.state
+              let location := (state.workspaces.workspaces[0]?).map (·.1.location)
+              let valueOf (name : String) (driver : EvilDriver) : Option Value :=
+                location.bind (driver.loop.state.workspaces.workspaceValue? · name)
+              let meanwhile :=
+                ((indexOf again 2).bind (·.workspaces)).map fun record =>
+                  record.unscoped.map (·.name)
+              let installed :=
+                drained
+                  (ran
+                    (withCodecs ["tally", "later"]
+                      { again with
+                        keys :=
+                          { again.keys with
+                            registered := { again.keys.registered with generation := 1 } } })
+                    "test-place" [.nat 0, .nat 0, .nat 0, .nat 0, .nat 0, .nat 0])
+              names == #["tally", "later"] &&
+                state.workspaces.workspaces.size == celled.loop.state.workspaces.workspaces.size &&
+                state.workspaces.projects.map (·.1) ==
+                  celled.loop.state.workspaces.projects.map (·.1) &&
+                (state.workspaces.workspaces.map (·.1.branch)) ==
+                  celled.loop.state.workspaces.workspaces.map (·.1.branch) &&
+                ((state.findBuffer "a.txt").bind (state.workspaceOf? ·)).isSome &&
+                valueOf "tally" again == some (.nat 7) &&
+                valueOf "private" again == none &&
+                valueOf "later" again == none &&
+                state.restore.parked.size == 2 &&
+                meanwhile == some #["tally", "later"] &&
+                valueOf "later" installed == some (.nat 5) &&
+                installed.loop.state.workspaces.unscopedValue? "later" == some (.nat 5) &&
+                installed.loop.state.restore.parked.isEmpty },
+    { name :=
+        "(g) a reported job running at the write is named in *restore* as stopped by the restart, and the summary counts it; a job the registry does not report is not handed"
+      run :=
+        pure <|
+          match first with
+          | none => false
+          | some begun =>
+            let running : EvilDriver :=
+              { begun with
+                keys :=
+                  { begun.keys with
+                    running :=
+                      #[{ owner := "shell", name := "shell-run", key := some "shell outside" }] } }
+            let typed := drained (evilFed running (typing "kept"))
+            let pendingJob (name : String) : Loop.Driver.Pending :=
+              { id := 9, name, outcome := .cancelled, key := some name }
+            let handedJobs :=
+              ({ begun with
+                    pending := #[pendingJob "waited", pendingJob "watched"]
+                    keys :=
+                      { begun.keys with
+                        registered :=
+                          { begun.keys.registered with reported := (· == "waited") } } } :
+                  EvilDriver).handed.running
+            match second typed with
+            | none => false
+            | some again =>
+              ((reportOf again).splitOn
+                      "the job shell-run (shell outside) of shell was running: the restart stopped it").length ==
+                  2 &&
+                again.loop.state.echo ==
+                  s!"restore: 1 buffers, 1 with unsaved text; 1 jobs stopped; see {reportName}" &&
+                handedJobs.map (·.name) == #["waited"] },
+    { name :=
+        "(j) a package's declared store: an entry at its version is handed on as it is, one at an older version migrated, one decode refuses as the initial value with a report line; config's is handed on as it is, and an unknown owner's is not, and is said"
+      run :=
+        pure <|
+          let entries :=
+            #[keptCell "counter" "counted" 2 (.nat 4), keptCell "counter" "counted" 1 (.nat 4),
+              keptCell "counter" "counted" 2 (.str "bad"), keptCell "config" "kept" 1 (.nat 9),
+              keptCell "gone" "lost" 1 (.nat 1)]
+          let text := ({ run := 5, stores := entries } : Document).render
+          match world (fun files => withIndex files (indexName 5) text) with
+          | none => false
+          | some files =>
+            match
+              (restoreDriver (some files)).map fun fresh =>
+                begun (withCommands (withCodecs ["counted"] fresh)) with
+            | none => false
+            | some again =>
+              again.restoredCells ==
+                  #[keptCell "counter" "counted" 2 (.nat 4),
+                    keptCell "counter" "counted" 2 (.nat 8),
+                    keptCell "counter" "counted" 2 (.nat 0), keptCell "config" "kept" 1 (.nat 9)] &&
+                ((reportOf again).splitOn
+                      "store counted of counter: the new config cannot decode").length ==
+                  2 &&
+                ((reportOf again).splitOn
+                      "store lost of gone: gone keeps no such store now: it is dropped").length ==
+                  2 },
+    { name :=
         "a cursor after a multi-byte character comes back where it was: its column is recorded in bytes and put back in bytes"
       run :=
         pure <|
@@ -250,7 +576,7 @@ def restoreChecks : List Check :=
                     journalFiles finished == filesOf' 2 0 1
                 | _ => false },
     { name :=
-        "the other windows' places are kept: after a two-window index is restored, the next index this run writes carries both places"
+        "the other windows come back with the frame, and the next index carries both places; from the same index with no frame, format 1's, the other window's place is kept, as phase 1 keeps it, and the next index carries both"
       run :=
         pure <|
           match first with
@@ -269,17 +595,30 @@ def restoreChecks : List Check :=
                     "test-place" [.nat other.index, .nat 2, .nat 0, .nat 2, .nat 3, .nat 1])
               let before :=
                 (indexOf placed 1).bind (·.buffers.find? (·.name == EditorState.scratchName))
-              match second placed with
-              | none => false
-              | some again =>
+              let spots (buffer : Option Document.Buffer) : Array (Spot × Spot) :=
+                ((buffer.map (·.views.map fun place => (place.anchor, place.head))).getD #[]).qsort
+                  fun a b => a.1.row < b.1.row
+              let unframed (files : FileModel) : FileModel :=
+                match indexOf placed 1 with
+                | some document =>
+                  withIndex files (indexName 1)
+                    { document with
+                        format := 1, frame := none }.render
+                | none => files
+              match second placed, second placed unframed with
+              | some again, some phaseOne =>
                 let after :=
                   (indexOf again 2).bind (·.buffers.find? (·.name == EditorState.scratchName))
-                let spots (buffer : Option Document.Buffer) : Array (Spot × Spot) :=
-                  ((buffer.map (·.views.map fun place => (place.anchor, place.head))).getD
-                        #[]).qsort
-                    fun a b => a.1.row < b.1.row
-                again.loop.state.restore.places.size == 1 && spots before == spots after &&
-                  (spots after).size == 2
+                let kept :=
+                  (indexOf phaseOne 2).bind (·.buffers.find? (·.name == EditorState.scratchName))
+                again.loop.state.frame.windows.size == 2 &&
+                  again.loop.state.restore.places.isEmpty &&
+                  spots before == spots after &&
+                  (spots after).size == 2 &&
+                  phaseOne.loop.state.frame.windows.size == 1 &&
+                  phaseOne.loop.state.restore.places.size == 1 &&
+                  spots before == spots kept
+              | _, _ => false
             | _, _ => false },
     { name :=
         "the version rule end to end: an index of a newer format with unknown keys and a journal with a record of an unknown kind restore what is known, report the rest, and are left byte for byte"

@@ -90,6 +90,21 @@ def storeChecks : List Check :=
               (#[theirs, cell "counter" 1 (.nat 0)], #[]) &&
             installed #[theirs] #[] == (#[theirs], #[])) },
     { name :=
+        "an install with parked cells: a declaration with no cell and a codec meets its parked cell, and every other parked cell is dropped, said"
+      run :=
+        pure <|
+          let parked : Array KeptCell :=
+            #[{ owner := "config", name := "counter", version := 1, value := .nat 7 },
+              { owner := "config", name := "other", version := 1, value := .nat 1 }]
+          let codec : StoreCodec := { declaration := numbers "counter" 2, keep := some }
+          let (after, said) :=
+            ({} : Config.Cells).install .config #[numbers "counter" 2] parked #[codec]
+          let (without, unsaid) := ({} : Config.Cells).install .config #[numbers "counter" 2] parked
+          after.cells == #[cell "counter" 2 (.nat 107)] &&
+            said.map (·.source) == #["store other"] &&
+            without.cells == #[cell "counter" 2 (.nat 0)] &&
+            unsaid.map (·.source) == #["store counter", "store other"] },
+    { name :=
         "a cell meets a declaration as the install rule says, the owner and the name filled in: what `StoreDeclaration.meet` gives, its lost value a warning"
       run :=
         pure <|

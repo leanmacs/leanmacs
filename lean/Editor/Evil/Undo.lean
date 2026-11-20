@@ -33,7 +33,10 @@ place nothing. Placing it is these commands'.
   cursor rests where the window's selection marker is, which the text
   moved with the edit.
 - **With no step to take** the command says so in the echo area
-  (`nothingToUndo`, `nothingToRedo`) and changes nothing. It does not give
+  (`nothingToUndo`, `nothingToRedo`) and changes nothing. In a buffer a
+  session restore made or reopened (`Buffer.historyRestored`), whose
+  history starts at the restore, `undo` at the root says that instead
+  (`nothingBeforeRestore`). It does not give
   up: nothing is rolled back, and nothing was done.
 - **In an excerpt buffer** a step is one in each source buffer the step
   edited (`Editor/Api.lean`, "Undo"). When a source buffer moved since, the
@@ -58,6 +61,12 @@ namespace Editor.Evil
 undo. -/
 def nothingToUndo : String :=
   "nothing to undo"
+
+/-- What `undo` says in the echo area when the history has no step to undo
+in a buffer a session restore made or reopened: its history starts at the
+restore. -/
+def nothingBeforeRestore : String :=
+  "nothing to undo: no history before the restore"
 
 /-- What `redo` says in the echo area when the history has no step to
 redo. -/
@@ -125,11 +134,14 @@ def headOf (call : Call) (handed : Option Selection) : TextM Nat := do
 `count` steps of the target's buffer's history are undone, and the cursor
 is put where the last of them says it was before the step, rested by the
 rule of the call's report. With no step to undo it says so
-(`nothingToUndo`). -/
+(`nothingToUndo`), or, in a buffer a restore made, that its history starts
+there (`nothingBeforeRestore`). -/
 def undo (call : Call) : EditorM Unit := do
   let (made, handed, refused) ← moves call.target.window.buffer.undo (countOf call)
   if made == 0 then
-    message (← unmovedSays nothingToUndo refused)
+    let nothing :=
+      if call.target.buffer.historyRestored then nothingBeforeRestore else nothingToUndo
+    message (← unmovedSays nothing refused)
   else
     settle call (← headOf call handed)
     discard <| call.target.window.id.setWanted none

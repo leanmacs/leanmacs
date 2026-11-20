@@ -1,3 +1,4 @@
+import Editor.Command.Dispatch
 import Editor.Restore.Document
 import Editor.Restore.Indexed
 
@@ -62,9 +63,39 @@ then renders the index then and saves it over this run's file
 
 The index holds, for each buffer that holds a file and each buffer
 journalled, its file, line ending, modes, live journal and the place of
-each window on it (`Restore.Place`); and the places a restore read that it
-did not put back, while the buffer's text has not moved since
-(`Kept.places`).
+each window on it (`Restore.Place`), with its jump list; and the places a
+restore read that it did not put back, while the buffer's text has not
+moved since (`Kept.places`). Beside the buffers it holds the frame's tabs
+and windows (`Frame.Record.of`, `Editor/Restore/Frame.lean`), and what the
+reconciler mirrors: the workspace table's cells kept across a restart with
+the parked ones (`Kept.table`, `Kept.parked`), the declared stores' cells
+(`Kept.stores`) and the reported jobs running (`Kept.jobs`).
+
+## Mirroring
+
+The reconciler is handed a context (`Restore.Context`) built from what the
+host told the loop (`Loop.Keys`): the registry, the config generation, the
+log's bound, the host's declared cells (`StoresNow`) and the reported jobs
+running. What the index keeps of stores costs nothing on a key that moves
+none:
+
+- **Only when a revision moved.** The host's cells' revision, the table's
+  (`EditorState.workspacesRevision`) and the config generation are compared
+  with the ones last mirrored (`Kept.mirrored`). Only when one moved are
+  the host's cells forced (`StoresNow.cells`, a thunk) into `Kept.stores`
+  and the table's cells recorded through their codecs into `Kept.table`
+  (`Workspaces.record`). A store's value is rendered to JSON only by the
+  debounced write.
+- **Parked cells** (`Kept.parked`, table cells a restore read that no codec
+  met) are met once config has installed past the generation they were
+  parked at: each whose codec is registered now is met
+  (`StoreDeclaration.meet`) and put in its store, and the rest are
+  dropped and said once in the echo area. Until then they are carried into
+  every index written.
+- **The jobs** are the reported jobs running, as the host last handed them.
+- **The held layout** (`Kept.heldLayout`), which a restore sets so that the
+  host's default does not rearrange the layout it put back, is let go once
+  the config generation is past it (`Loop.publish`, `Editor/Loop.lean`).
 
 ## Modes a restore deferred
 
@@ -74,7 +105,8 @@ config has installed, a mode now registered is set through the command
 `restore-modes`, which the reconciler hands back to run, so its `onEnter`
 runs; a mode still not registered is said, and not set.
 
-Pinned by `ModelTest.journalReconcileChecks`.
+Pinned by `ModelTest.journalReconcileChecks`, and the held layout by
+`ModelTest.loopChecks`.
 -/
 
 namespace Editor.Restore
@@ -139,15 +171,16 @@ structure Order where
   release : Option SnapshotId := none
   deriving DecidableEq, Repr
 
-/-- The place of `window`, whose buffer's text is `text`. -/
-def placeOf (text : TextId) (window : Window) : TextM (Option Place) := do
+/-- The place of `window` of `state`, whose buffer's text is `text`: its
+selection, its scroll's top row and its jump list (`jumpsOf`). -/
+def placeOf (state : EditorState) (text : TextId) (window : Window) : TextM (Option Place) := do
   let .selection selection ← text.marker window.selection | return none
   let some range := selection.ranges[selection.primary]? | return none
   let .anchor scroll ← text.marker window.scroll | return none
   return some
       { view := window.id.index, anchor := ← spotOf text range.anchor,
         head := ← spotOf text range.head
-        top := (← spotOf text scroll.offset).row }
+        top := (← spotOf text scroll.offset).row, jumps := ← jumpsOf state window }
 
 /-- The index of `state` now, for the run `run` ("The index", in the module
 docs). The focused view is the selected one (`EditorState.selectedView`): a
@@ -164,7 +197,7 @@ def Document.of (state : EditorState) (run : Nat) (ended : Bool := false) : Text
     let mut views := #[]
     for window in state.windows do
       if window.buffer == id then
-        if let .ok (some place)← observing (placeOf buffer.text window) then
+        if let .ok (some place)← observing (placeOf state buffer.text window) then
           views := views.push place
     -- The places a restore read and did not put back, as they were read:
     -- their views' ids are the earlier run's.
@@ -181,7 +214,86 @@ def Document.of (state : EditorState) (run : Nat) (ended : Bool := false) : Text
             (kept.journals.find? (·.buffer == index)).map fun journal =>
               { key := index, generation := journal.generation }
           views }
-  return { run, ended, focused := some state.selectedView.index, buffers }
+  return {
+      run, ended, focused := some state.selectedView.index, buffers
+      frame := some (← Frame.Record.of state)
+      workspaces := kept.table.map (·.withParked kept.parked), stores := kept.stores
+      jobs := kept.jobs }
+
+/-- What the host holds of the declared stores' cells for the index: a
+revision it bumps whenever they change, and the cells kept across a
+restart, codec applied, with the entries of config parked until it
+installs, made only when forced (`Config.State.keptCells`). The reconciler
+forces them only when the revision moved ("Mirroring", in the module
+docs). -/
+structure StoresNow where
+  /-- The cells' revision. -/
+  revision : Nat := 0
+  /-- The cells kept across a restart, made when forced. -/
+  cells : Thunk (Array KeptCell) := Thunk.pure #[]
+
+/-- What the reconciler is handed beside the state, by the loop
+(`Loop.Stepped.published`, `Editor/Loop.lean`), from what the host told it
+(`Loop.Keys`). -/
+structure Context where
+  /-- What the loop was told of the registry: whether a mode of a name is
+  registered, the codecs stores are kept across a restart with. -/
+  registered : Loop.Registered := {}
+  /-- How many configs have installed. -/
+  configGeneration : Nat := 0
+  /-- How long a log may grow before a new base is written. -/
+  limit : Nat := bound
+  /-- The host's declared stores' cells. -/
+  stores : StoresNow := {}
+  /-- The reported jobs running now. -/
+  running : Array RunningJob := #[]
+
+/-- The table's kept cells and the parked ones mirrored into `kept` from
+`state` and `context` ("Mirroring", in the module docs), when the revisions
+moved since the last mirror: the host's cells forced, a parked cell met
+with a codec once an install registers one, and dropped, said once, after
+an install that does not. The state, with each claimed cell in its store,
+and the sentence to say, if any. -/
+def mirrored (state : EditorState) (context : Context) : EditorState × Option String :=
+  Id.run do
+    let kept := state.restore
+    let revisions := (context.stores.revision, state.workspacesRevision, context.configGeneration)
+    if kept.mirrored == some revisions then
+      return (state, none)
+    let mut state := state
+    let mut parked := kept.parked
+    let mut said := none
+    if !parked.isEmpty && context.configGeneration > kept.parkedAt then
+      let mut table := state.workspaces
+      let mut dropped := #[]
+      for (scope, cell) in parked do
+        match context.registered.codec? cell.name with
+        | some (_, codec) =>
+          let met := codec.declaration.meet (some (cell.version, cell.value))
+          table :=
+            match scope with
+            | .workspace location =>
+              (table.setWorkspaceValue location cell.name met.value).toOption.getD table
+            | .project identity =>
+              (table.setProjectValue identity cell.name met.value).toOption.getD table
+            | .unscoped => table.setUnscopedValue cell.name met.value
+        | none =>
+          dropped := dropped.push cell.name
+      parked := #[]
+      if !dropped.isEmpty then
+        said :=
+          some
+            s!"restore: the session kept {", ".intercalate dropped.toList}, but no codec is registered for it now; dropped"
+      state :=
+        { state with
+          workspaces := table, workspacesRevision := state.workspacesRevision + 1 }
+    let record := Workspaces.record state.workspaces context.registered.codec?
+    let restore :=
+      { state.restore with
+        stores := context.stores.cells.get, table := some record, parked
+        mirrored :=
+          some (context.stores.revision, state.workspacesRevision, context.configGeneration) }
+    return ({ state with restore }, said)
 
 /-- What the reconciler hands back: the state with what it keeps, the
 journal's orders, the jobs to start and the invocations to run. -/
@@ -223,17 +335,27 @@ def generation (directory : System.FilePath) (run index number : Nat) (buffer : 
 
 /-- The reconciler ("The journal reconciler", in the module docs) of
 `state`: `enabled` when the `restore` package's jobs are registered, and
-`leaving` when the loop stops because the editor leaves. `registered` says
-whether a mode of a name is registered, and `configGeneration` how many
-configs have installed. `limit` is the bound a log may grow to. -/
-def journalOrders (state : EditorState) (enabled leaving : Bool)
-    (registered : String → Bool := fun _ => false) (configGeneration : Nat := 0)
-    (limit : Nat := bound) : TextM Reconciled := do
-  let kept := state.restore
+`leaving` when the loop stops because the editor leaves; the rest it is
+handed is `context`'s. -/
+def journalOrders (state : EditorState) (enabled leaving : Bool) (context : Context := {}) :
+    TextM Reconciled := do
+  let registered (name : String) : Bool := (context.registered.entering name).isSome
+  let configGeneration := context.configGeneration
+  let limit := context.limit
   let some directory := state.stateDirectory | return { state }
-  let some run := kept.run | return { state }
-  unless enabled && !kept.ended do
+  let some _ := state.restore.run | return { state }
+  unless enabled && !state.restore.ended do
     return { state }
+  -- What the index keeps beside the buffers, mirrored only when it moved.
+  let (state, unclaimed) := mirrored state context
+  let state :=
+    { state with
+      restore :=
+        { state.restore with
+          jobs := context.running
+          heldLayout := state.restore.heldLayout.filter (configGeneration ≤ ·) } }
+  let kept := state.restore
+  let some run := kept.run | return { state }
   if leaving then
     let orders := kept.journals.flatMap (removing directory run)
     let document ← Document.of state run (ended := true)
@@ -338,7 +460,7 @@ def journalOrders (state : EditorState) (enabled leaving : Bool)
           (state.buffer? ⟨entry.buffer⟩).any (·.history.head == entry.revision) }
   let state :=
     { state with
-      restore := kept, echo := said.getD state.echo }
+      restore := kept, echo := (said <|> unclaimed).getD state.echo }
   -- The index, once it differs from the last written and no write is
   -- pending: while one is, the index is not even made, since the write
   -- renders the index as it is when it fires.

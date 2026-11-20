@@ -1004,6 +1004,22 @@ buffer there is none of. -/
 def BufferId.setReadOnly (id : BufferId) (on : Bool) : EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.setReadOnly id on)
 
+/-- Marks the buffer `id` as made or reopened by a session restore: its
+history starts there (`Buffer.historyRestored`). Refused with `noSuchBuffer`
+for a buffer there is none of. -/
+def BufferId.markRestored (id : BufferId) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.markRestored id)
+
+/-- Puts back the frame a session restore recorded (`EditorState.restoreFrame`):
+`record`'s tabs, its views already this run's ids, with `windows`, every
+window of them, a float anchored at a position held by the marker `anchors`
+gives its view, and the next view's id at least `next`. Refused with
+`promptOpen` while a prompt is open and `malformed` for a frame a state
+does not keep. -/
+def restoreFrame (record : Restore.Frame.Record) (windows : Array Window)
+    (anchors : Array (Nat × MarkerId)) (next : Nat) : EditorM (Except LayoutRefusal Unit) :=
+  EditorState.ask (.restoreFrame record windows anchors next)
+
 /-- Records `name` as the language of the buffer `id`, or, with `none`,
 that it has none (`Editor/Language.lean`): the `code` mode's text is then
 parsed and drawn as that language says, from the next time a major mode is
@@ -2357,6 +2373,16 @@ def setUnscopedValue (name : String) (value : Value) : EditorM Unit :=
 store's encoding. Never refused. -/
 def setUnscoped {α : Type} (store : Store α) (value : α) : EditorM Unit :=
   setUnscopedValue store.name (store.encode value)
+
+/-- Takes in `table`, a workspace table a session restore made, its cells
+already met (`EditorState.restoreWorkspaces`). Never refused. -/
+def restoreTable (table : Table) : EditorM Unit :=
+  EditorState.ask (.restoreWorkspaces table)
+
+/-- Hands the host `cells`, the declared stores' cells a session restore
+read, once this command has run to its end (`EditorState.Outbox.restoredCells`). -/
+def _root_.Editor.restoreCells (cells : Array KeptCell) : EditorM Unit :=
+  EditorState.ask (.restoreCells cells)
 
 /-- The value of `store` in the unscoped store: what its cell decodes to, or
 the store's initial value when it has no cell or one the store does not

@@ -706,6 +706,9 @@ inductive Request where
   start the job `restore`, and hold the requests that follow until it has
   finished ("Restoring a session", in the module docs). -/
   | restore
+  /-- Print the workspace table: each workspace, each project and the
+  unscoped store, with their values. -/
+  | workspaces
   deriving DecidableEq, Repr
 
 /-- The render loop a host's frames are drawn by, as its driver reads it:
@@ -1027,6 +1030,7 @@ def Signal.encode : Signal → UInt64 × String
   | .request (.open path) => (8, path)
   | .request (.say text) => (9, text)
   | .request .restore => (10, "")
+  | .request .workspaces => (11, "")
 
 /-- The signal an event's code and text stand for, if they stand for one. -/
 def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
@@ -1042,6 +1046,7 @@ def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
   | 8 => some (.request (.open text))
   | 9 => some (.request (.say text))
   | 10 => some (.request .restore)
+  | 11 => some (.request .workspaces)
   | _ => none
 
 mutual
@@ -1458,6 +1463,14 @@ def attempt {α : Type} (collaborators : Collaborators β σ scheme) (running : 
     collaborators.emit s!"loop: refused: {refusal.describe}"
     return (none, { running with texts })
 
+/-- The jobs running that the registry says are reported
+(`Config.Registry.reported`), each its owner, name and key, for the session
+index (`Loop.Keys.running`). -/
+def reported (running : Running β σ scheme) : Array Restore.RunningJob :=
+  (running.jobs.table.entries.filter (running.config.registry.reported ·.name)).map fun entry =>
+    { owner := entry.owner.name, name := entry.name
+      key := (running.keyed.find? (·.2 == entry.id)).map (·.1) }
+
 /-- What a step of the loop is handed, from the registry as it is now: the
 active keymaps of each view (`Config.Registry.activeMaps`: the modes of the
 view's buffer, then every owner's key bindings), which the loop applies to
@@ -1493,7 +1506,11 @@ def keys (collaborators : Collaborators β σ scheme) (running : Running β σ s
     matching := running.config.registry.matching, inlineMatches := collaborators.inlineMatches
     displaying := running.config.registry.displaying
     prefixNames := running.config.registry.prefixName? scheme
-    keyHintDelay := running.config.keyHintDelay.getD (.after Loop.keyHintDelay), now }
+    keyHintDelay := running.config.keyHintDelay.getD (.after Loop.keyHintDelay), now
+    stores :=
+      { revision := running.config.cellsRevision
+        cells := Thunk.mk fun _ => running.config.keptCells }
+    running := running.reported }
 
 /-- Publishes a scene of the frame's state, if there is a frame, its status
 lines drawn by the mode line the registry and config make (`keys`): what
@@ -1635,7 +1652,7 @@ partial def took (collaborators : Collaborators β σ scheme) (running : Running
   let mut running ←
     ({ running with
             frame := some stepped.loop, stepped := true
-            config := running.config.written stepped.write
+            config := (running.config.written stepped.write).restoreCells stepped.restoredCells
             stopped := running.stopped || stepped.next == Loop.Next.stop }).launch
         collaborators stepped.starts stepped.cancels stepped.spawns
   running ← running.pause collaborators stepped.pause
@@ -1979,6 +1996,26 @@ def «show» (collaborators : Collaborators β σ scheme) (running : Running β 
   for cell in running.config.cells.cells do
     collaborators.emit s!"store {cell.name} v{cell.version}: {render cell.value}"
 
+/-- The values of a store as `workspaces` prints them: each `<name>=<value>`,
+in order. -/
+def cellsLine (cells : Array (String × Value)) : String :=
+  " ".intercalate (cells.toList.map fun (name, value) => s!"{name}={render value}")
+
+/-- Prints the workspace table of the frame's state (`Workspace.Table`): a
+line for each workspace, `workspace <label> at <location>: <name>=<value> …`,
+then for each project, `project <name>: …`, then `unscoped: …`. With no
+frame, nothing. -/
+def workspaces (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    IO Unit := do
+  let some frame := running.frame | return
+  let table := frame.state.workspaces
+  for (workspace, cells) in table.workspaces do
+    collaborators.emit
+        s!"workspace {workspace.label} at {workspace.location.describe}: {cellsLine cells}"
+  for (project, cells) in table.projects do
+    collaborators.emit s!"project {project.name}: {cellsLine cells}"
+  collaborators.emit s!"unscoped: {cellsLine table.unscoped}"
+
 /-- Whether the editor loop takes `event` (`input`): an event from the
 window input, and the library's report that a parse of a highlighted text
 was delivered (`Event.parsed`), which the loop answers with a scene laid
@@ -2000,6 +2037,9 @@ def request (collaborators : Collaborators β σ scheme) (running : Running β �
   | .spawn name => running.spawn collaborators name
   | .show => do
     running.show collaborators
+    return running
+  | .workspaces => do
+    running.workspaces collaborators
     return running
   | .scene => running.scene collaborators
   | .agree => running.agree collaborators
@@ -2113,6 +2153,10 @@ structure Progress where
   /-- How many jobs are running: started, and neither dealt with nor
   cancelled with their owner. -/
   jobs : Nat := 0
+  /-- Whether the session index is being written: its write or its save is
+  running, or a write was started and has not rendered the index
+  (`Restore.Kept.writing`). -/
+  indexing : Bool := false
   /-- The title bar the installed config chose (`Config.State.titleBar`),
   or none: what the window mode opens its window with once the start-up
   reload has finished (`Window.titleBarAtOpen`). -/
@@ -2166,7 +2210,11 @@ def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β
     progress.set
         { markers := running.markers, reloading := running.config.running,
           restoring := running.restoring.isSome, jobs := running.jobs.running
-          titleBar := running.config.titleBar }
+          titleBar := running.config.titleBar
+          indexing :=
+            running.frame.any (·.state.restore.writing) ||
+              running.jobs.table.entries.any fun entry =>
+                entry.name == Restore.writeJob || entry.name == Restore.saveJob }
   -- Nothing will deal with a result any more: no job runs on unowned, and
   -- no pause waits.
   running.jobs.cancelAll
@@ -2387,6 +2435,11 @@ inductive Directive where
   handed to it, the session journal's orders among them. The driver's
   own. -/
   | journalled
+  /-- Settle, then wait until the session index is written: no write or
+  save of it running, none pending, and the file service holding no
+  request. It needs no `join`, so a script with a long job running can
+  wait for the index. The driver's own. -/
+  | indexed
   /-- End the process at once, with the status 134 and no shutdown, as an
   abort would: what the journal handed the system survives it. The
   driver's own. -/
@@ -2492,24 +2545,28 @@ def directive? (line : String) : Except String (Option Directive) :=
                           else
                             if line == "journalled" then .ok (some .journalled)
                             else
-                              if line == "abort" then .ok (some .abort)
+                              if line == "indexed" then .ok (some .indexed)
                               else
-                                if line == "idle" || line.startsWith "idle " then
-                                  match (named line 4).bind String.toNat? with
-                                  | some milliseconds => .ok (some (.idle milliseconds))
-                                  | none =>
-                                    .error
-                                      s!"`{line}` is not an idle: expected idle <milliseconds>, one number"
+                                if line == "workspaces" then .ok (some (.request .workspaces))
                                 else
-                                  if line == "advance" || line.startsWith "advance " then
-                                    match (named line 7).bind String.toNat? with
-                                    | some milliseconds => .ok (some (.advance milliseconds))
-                                    | none =>
-                                      .error
-                                        s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
+                                  if line == "abort" then .ok (some .abort)
                                   else
-                                    .error
-                                      s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, agree, settle, join, idle <milliseconds>, advance <milliseconds>, journal, journalled, abort, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
+                                    if line == "idle" || line.startsWith "idle " then
+                                      match (named line 4).bind String.toNat? with
+                                      | some milliseconds => .ok (some (.idle milliseconds))
+                                      | none =>
+                                        .error
+                                          s!"`{line}` is not an idle: expected idle <milliseconds>, one number"
+                                    else
+                                      if line == "advance" || line.startsWith "advance " then
+                                        match (named line 7).bind String.toNat? with
+                                        | some milliseconds => .ok (some (.advance milliseconds))
+                                        | none =>
+                                          .error
+                                            s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
+                                      else
+                                        .error
+                                          s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, agree, settle, join, idle <milliseconds>, advance <milliseconds>, journal, journalled, indexed, abort, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -2705,6 +2762,16 @@ def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β 
         pure wait
       | .journalled =>
         let wait ← host.await patience
+        if wait == .settled then
+          unless ← within patience (return (← collaborators.journal.pending) == 0) do
+            discard <| host.halt patience
+            return some (.unanswered (some line.number))
+        pure wait
+      | .indexed =>
+        let wait ←
+          host.waitWhile patience
+              (fun progress => progress.reloading || progress.restoring || progress.indexing)
+              .working
         if wait == .settled then
           unless ← within patience (return (← collaborators.journal.pending) == 0) do
             discard <| host.halt patience

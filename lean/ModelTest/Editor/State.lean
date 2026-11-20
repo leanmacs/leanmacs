@@ -1779,6 +1779,67 @@ def floatingWindowChecks : List Check :=
 (`Editor/State.lean`), on the text model. -/
 def stateChecks : List Check :=
   [{        name :=
+              "a new buffer's history is not restored, and marking it restored says it is, refused for a buffer there is none of"
+            run :=
+              pure <|
+                match onTextModel twoBuffers with
+                | none => false
+                | some state =>
+                  let (marked, after) := state.markRestored ⟨1⟩
+                  let (refused, _) := state.markRestored ⟨9⟩
+                  (state.buffer? ⟨1⟩).map (·.historyRestored) == some false &&
+                    marked matches .ok () &&
+                    (after.buffer? ⟨1⟩).map (·.historyRestored) == some true &&
+                    (after.buffer? ⟨0⟩).map (·.historyRestored) == some false &&
+                    refused matches .error (.noSuchBuffer ⟨9⟩) },
+          { name :=
+              "every change of the workspace table bumps its revision: a finder's answer, a registered workspace, a workspace's, a project's and the unscoped store's value, and a restored table; a refused change does not"
+            run :=
+              pure <|
+                match onTextModel twoBuffers with
+                | none => false
+                | some state =>
+                  let found : Workspace.Found :=
+                    { root := "/w", project := { identity := .root "/w", name := "w" } }
+                  let recorded := state.recordWorkspace "/w/src" 0 (some found)
+                  let (_, registered) := recorded.registerWorkspace (.branchOnly "r" "b") "r" none
+                  let (_, valued) := registered.setWorkspaceValue (.local "/w") "n" (.nat 1)
+                  let (_, projected) := valued.setProjectValue (.root "/w") "n" (.nat 2)
+                  let unscoped := projected.setUnscopedValue "n" (.nat 3)
+                  let restored := unscoped.restoreWorkspaces { unscoped := #[("m", .nat 4)] }
+                  let (_, refused) := restored.setWorkspaceValue (.local "/nowhere") "n" (.nat 5)
+                  [state, recorded, registered, valued, projected, unscoped, restored].map
+                        (·.workspacesRevision) ==
+                      [0, 1, 2, 3, 4, 5, 6] &&
+                    refused.workspacesRevision == 6 &&
+                    restored.workspaces.unscopedValue? "m" == some (.nat 4) &&
+                    restored.workspaces.unscopedValue? "n" == some (.nat 3) },
+          { name :=
+              "a restored table keeps a workspace already there with its store, gives it the restored cells, and adds the projects and workspaces it did not have"
+            run :=
+              pure <|
+                match onTextModel twoBuffers with
+                | none => false
+                | some state =>
+                  let project : Project := { identity := .root "/w", name := "w" }
+                  let found : Workspace.Found := { root := "/w", project }
+                  let (_, before) :=
+                    (state.recordWorkspace "/w" 0 (some found)).setWorkspaceValue (.local "/w")
+                      "own" (.nat 1)
+                  let after :=
+                    before.restoreWorkspaces
+                      { workspaces :=
+                          #[({ location := .local "/w", project }, #[("kept", .nat 2)]),
+                            ({ location := .local "/v",
+                               project := { identity := .root "/v", name := "v" } },
+                              #[("kept", .nat 3)])]
+                        projects := #[({ identity := .root "/v", name := "v" }, #[("p", .nat 4)])] }
+                  after.workspaces.workspaceValue? (.local "/w") "own" == some (.nat 1) &&
+                    after.workspaces.workspaceValue? (.local "/w") "kept" == some (.nat 2) &&
+                    after.workspaces.workspaceValue? (.local "/v") "kept" == some (.nat 3) &&
+                    after.workspaces.projectValue? (.root "/v") "p" == some (.nat 4) &&
+                    after.workspaces.projects.size == 2 },
+          { name :=
               "the initial state is well formed: one scratch buffer, one window on it, the only one of the frame's list, the default layout, and the focus on view 0"
             run :=
               pure <|
@@ -2724,6 +2785,115 @@ def stateChecks : List Check :=
                     state.rect? ⟨9⟩ == none &&
                     asking.minibufferView?.map state.rect? == some none }] ++
         placeChecks ++ windowOperationChecks ++ floatingWindowChecks
+
+/-- A record of two tabs over the views 0, 5 and 6 of `twoBuffers`' kind: the
+first, in view, views 0 and 5 under the default layout with 5 focused after
+0; the second, named, view 6 alone. -/
+def restoredRecord : Restore.Frame.Record :=
+  { selected := 0, chosen := some .monocle
+    tabs :=
+      #[{ windows := #[0, 5], layout := Layout.default.fits 2, focused := 5,
+          lastFocused := some 0 },
+        { name := some "two", windows := #[6], focused := 6 }] }
+
+/-- The windows of `restoredRecord` over `state`: view 0 as it is, view 5 on
+buffer 1 and view 6 on buffer 0, with made-up markers of their texts. -/
+def restoredWindows (state : EditorState) : Array Window :=
+  let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
+  let textOf (buffer : Nat) : Nat := ((state.buffer? ⟨buffer⟩).map (·.text.index)).getD 99
+  (state.window? ⟨0⟩).toArray ++
+    #[{ id := ⟨5⟩, buffer := ⟨1⟩, scroll := marker (textOf 1) 50,
+        selection := marker (textOf 1) 51 },
+      { id := ⟨6⟩, buffer := ⟨0⟩, scroll := marker (textOf 0) 60,
+        selection := marker (textOf 0) 61 }]
+
+/-- The checks of putting a restored frame back
+(`EditorState.restoreFrame`, `Editor/State.lean`, "Tabs"). -/
+def restoreFrameStateChecks : List Check :=
+  [{  name :=
+        "a restored frame replaces every tab and window: the record's tabs, the one it selects in view, its windows, the next view's id, the chosen layout and the focused window's buffer the most recent; what is frame-wide is kept, and a window that left is no longer held"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let state :=
+              { state with
+                frame :=
+                  { state.frame with
+                    hasFocus := false, fullscreen := true, top := 28 } }
+            match state.restoreFrame restoredRecord (restoredWindows state) #[] 7 with
+            | (.ok (), restored) =>
+              restored.wellFormed && restored.frame.windows == #[⟨0⟩, ⟨5⟩] &&
+                restored.frame.focused == ⟨5⟩ &&
+                restored.frame.lastFocused == some ⟨0⟩ &&
+                restored.frame.tabsAfter ==
+                  #[{ windows := #[⟨6⟩], focused := ⟨6⟩, name := some "two" }] &&
+                restored.frame.chosen == some .monocle &&
+                restored.windows.map (·.id) == #[⟨0⟩, ⟨5⟩, ⟨6⟩] &&
+                (restored.window? ⟨1⟩).isNone &&
+                restored.nextView == 7 &&
+                restored.recent[0]? == some ⟨1⟩ &&
+                restored.frame.size == state.frame.size &&
+                !restored.frame.hasFocus &&
+                restored.frame.fullscreen &&
+                restored.frame.top == 28
+            | _ => false },
+    { name :=
+        "a restored frame selects the tab its record says, and a float at a position is held by the marker handed for it"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let text := ((state.buffer? ⟨0⟩).map (·.text)).getD ⟨0⟩
+            let record : Restore.Frame.Record :=
+              { selected := 1
+                tabs :=
+                  #[{ windows := #[0], focused := 0 },
+                    { windows := #[6]
+                      floats := #[{ view := 5, anchor := .position 6 ⟨0, 0⟩, pinned := true }]
+                      focused := 6 }] }
+            let windows := restoredWindows state
+            match state.restoreFrame record windows #[(5, ⟨text, 70⟩)] 7 with
+            | (.ok (), restored) =>
+              restored.frame.tabIndex == 1 && restored.frame.focused == ⟨6⟩ &&
+                (restored.frame.floats.map (·.anchor)) == #[.position ⟨6⟩ ⟨text, 70⟩] &&
+                restored.wellFormed
+            | _ => false },
+    { name :=
+        "a restored frame is refused, the state unchanged, with malformed for each break of what a state keeps, and with promptOpen while a prompt is open"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let windows := restoredWindows state
+            let first : Restore.Tab.Record :=
+              { windows := #[0, 5], layout := Layout.default.fits 2, focused := 5 }
+            let other := ((state.buffer? ⟨1⟩).map (·.text)).getD ⟨1⟩
+            let breaks : List (Restore.Frame.Record × Array (Nat × MarkerId)) :=
+              [({ tabs := #[{ first with windows := #[] }, { windows := #[6], focused := 6 }] },
+                  #[]),
+                ({ tabs := #[first, { windows := #[6, 5], focused := 6 }] }, #[]),
+                ({ tabs := #[{ first with floats := #[{ view := 6, anchor := .window 9 }] }] },
+                  #[]),
+                ({
+                    tabs :=
+                      #[{ first with floats := #[{ view := 6, anchor := .position 0 ⟨0, 0⟩ }] }] },
+                  #[(6, ⟨other, 80⟩)]),
+                ({ selected := 4, tabs := #[first] }, #[])]
+            let malformed :=
+              breaks.all fun (record, anchors) =>
+                match state.restoreFrame record windows anchors 7 with
+                | (.error (.malformed _), after) => after == state
+                | _ => false
+            let (_, prompting) := prompted state
+            let refused :=
+              match prompting.restoreFrame restoredRecord windows #[] 7 with
+              | (.error .promptOpen, after) => after == prompting
+              | _ => false
+            malformed && refused }]
 
 /-- The checks of tabs on the state's model (`TabChange`,
 `EditorState.changeTab`, `WindowSpot.tab`, `Editor/State.lean`, "Tabs").

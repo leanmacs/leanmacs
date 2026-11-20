@@ -382,6 +382,8 @@ what happens when an anchor goes, a float opened at each anchor and its
 refusals, the floats' rectangles, and the spots a publish sets; the
 direction property runs over states with none to two floats. The loop's
 placing of floats (`floatViewChecks`) is checked on its driver.
+`stateChecks` also checks a buffer marked as restored, and that every change
+of the workspace table bumps its revision, a restored table among them.
 
 Display rules (`Editor/DisplayRules.lean`) are checked by
 `displayRuleChecks`: which rule a buffer's facts choose, which targets a
@@ -403,7 +405,11 @@ Tabs (`Editor/State.lean`, "Tabs") are checked on the state's model
 (`tabChecks`): a new tab, selecting, closing, renaming and moving one, the
 refusals, a tab left closing its transient floats, focusing and showing a
 buffer in a hidden tab's window, and config's layout rearranging the tab in
-view alone. The tab commands (`Editor/TabCommands.lean`) are checked by
+view alone. A restored frame (`restoreFrameStateChecks`): its tabs, windows,
+next view, chosen layout and most recent buffer set, what is frame-wide
+kept, a float at a position held by the marker handed, and each refusal,
+`malformed` for each break of `wellFormed` and `promptOpen`, leaving the
+state as it was. The tab commands (`Editor/TabCommands.lean`) are checked by
 key under the Vim scheme that ships (`tabCommandChecks`): tmux's keys under
 `C-w`, the prompts of `tab-switch` and `tab-rename`, each command acting on
 the tab of its call's window, and a publish's layout reaching the tab in
@@ -412,6 +418,8 @@ its line, its strip, and the view a publish draws it in.
 
 The command loop (`Editor/Loop.lean`) is checked on the editor's models
 (`loopChecks`): events fed to `Loop.step` one by one, the state each leaves
+(a layout a restore holds passed over until config installs past it among
+them)
 and the scenes the display model records. Among them is what the loop does
 when publishing is refused, with a text or a snapshot released behind it:
 the scene is published all the same, with the refusal in its echo.
@@ -732,7 +740,8 @@ The config session's decisions are tested here too, with no elaborator:
   and two names a scheme's leaders make one prefix, which are refused;
 - `storeChecks`: the rule that meets a new config's stores with the cells
   there are, one check for each case, and that it is the install rule
-  `StoreDeclaration.meet` with the owner and name filled in;
+  `StoreDeclaration.meet` with the owner and name filled in; and an install
+  with cells a restore parked;
 - `storeCodecDeclarationChecks`: that install rule over a version and a
   tree (`Editor/Store/Codec.lean`), pure, one check for each case;
 - `storeCodecChecks`: a store's codec across a restart (`Store.codec`),
@@ -771,7 +780,11 @@ The config session's decisions are tested here too, with no elaborator:
   installed config's faces, replaced as a set by an install and kept by a
   rejected reload. An install replaces config's key bindings, modes and ex
   bindings and keeps the compiled ones, and replaces config's menus and
-  keeps another owner's;
+  keeps another owner's. The cells a restore kept for config are parked and
+  met at its first install that declares them with a codec, or dropped and
+  said; the cells' revision moves with each writer; and a package's
+  declared store goes through the host's half (`restoreCells`,
+  `keptCells`);
 - `reloadHintChecks`: an install replaces config's descriptions and prefix
   names with its bindings, so a later config without them clears them;
 - `packageChecks`: packages (`Editor/Package.lean`) and registering them
@@ -942,7 +955,8 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   while the tree is not delivered, and as before this phase with neither;
 - `evilUndoChecks`: `u` and `C-r` after one change of each kind
   (`undoRows`): the text and the cursor from before the change, and those
-  the change left. They are the phase's rule and are not compared with
+  the change left; and `u` at the root of a buffer a restore made, which
+  says its history starts there. They are the phase's rule and are not compared with
   Vim, which leaves the cursor at the start of the changed text;
 - `evilRepeatChecks`: `.` after a change of each kind (`repeatRows`), a
   count before it, a change with an insert session and its typed and
@@ -1251,17 +1265,29 @@ Session restore is checked in Lean alone too:
   while modified gives a new header stamp; read-only, excerpt and
   minibuffer buffers are never journalled; no state directory journals
   nothing; a leave removes everything and saves the index ended; the index
-  write fires once for a burst; and every window's place is recorded.
+  write fires once for a burst; every window's place is recorded; the
+  index after a split, a tab and a jump carries the frame and the jumps;
+  a change of the host's cells is mirrored and written once, and an
+  unchanged revision reads nothing; and a reported job's start and end
+  each change the jobs listed.
 - `restoreChecks`: restoring a session (`Editor/Restore/Run.lean`) on that
   driver, from what a first loop wrote or a check wrote by hand: buffers,
   texts, line endings, modes and the focused cursor come back; a file
   changed on disk is restored marked, its first edit and its save refused;
   an unmodified file reopened and a gone one said; journals of a run with no
   index, one with no header, and two of one name; the new bases before the
-  stale files' removal; the other windows' places kept and written again;
-  the version rule end to end; and a mode only config registers deferred
-  until it installs, or said when it does not register it; and a cursor
-  after a multi-byte character put back where it was.
+  stale files' removal; the other windows put back with the frame, or,
+  from an index with none, their places kept and written again; the
+  version rule end to end; a mode only config registers deferred until it
+  installs, or said when it does not register it; a cursor after a
+  multi-byte character put back where it was; and phase 2's: (a) windows
+  and layouts and (b) tabs back as they were up to their ids, (c) the jump
+  list, (d) every restored buffer marked with no history before the
+  restore, (h) a frame refused falling back to phase 1's placement, (i) a
+  window of a buffer not kept showing scratch, said, (e) the workspace
+  table and (f) its stores, met, never written or parked and claimed, (g)
+  a reported job said stopped, and (j) a package's declared store met with
+  its codec.
 
 Listing a workspace's files is checked in Lean alone too:
 
@@ -1402,6 +1428,7 @@ def checks : List Check :=
     markFollowChecks ++
     stateChecks ++
     tabChecks ++
+    restoreFrameStateChecks ++
     displayRuleChecks ++
     stateRequestChecks ++
     loopChecks ++
