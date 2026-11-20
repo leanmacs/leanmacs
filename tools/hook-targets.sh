@@ -34,9 +34,12 @@
 # - A path inside a package's directory (the longest that holds it, so a
 #   package nested in another's directory is found) reaches that package;
 #   if it is an interface package, also every package that requires it,
-#   and, through an interface package that requires it, every package that
-#   requires that one in turn. An implementation package passes nothing on:
-#   no package imports one (the layer imports check), so a change to one
+#   directly or through any other package: Lake puts every package a
+#   package requires, directly or not, in its workspace, so a package can
+#   import an interface package it reaches only through an implementation
+#   package's `require`, and the layer imports check allows that import. A
+#   change to an implementation package reaches that package alone: no
+#   package imports one (the layer imports check), so a change to one
 #   cannot break another's build.
 # - Any other path reaches the core, and so everything: the core's sources,
 #   a set's own lakefile and manifest, the core's fixtures under `tests/`,
@@ -142,14 +145,13 @@ printf '%s\n' "$graph" | HOOK_PATHS=$relevant awk -F "$tab" -v root="$root" '
     requires[$1] = $4
   }
 
-  # Marks `pkg` reached and, for an interface package, every package that
-  # requires it.
-  function reach(pkg,    k, by, j) {
+  # Marks `pkg` reached and every package that requires it, directly or
+  # through another.
+  function reachRequirers(pkg,    k, by, j) {
     if (pkg in reached) return
     reached[pkg] = 1
-    if (layer[pkg] != "interface") return
     k = split(requirers[pkg], by, " ")
-    for (j = 1; j <= k; j++) reach(by[j])
+    for (j = 1; j <= k; j++) reachRequirers(by[j])
   }
 
   END {
@@ -182,7 +184,8 @@ printf '%s\n' "$graph" | HOOK_PATHS=$relevant awk -F "$tab" -v root="$root" '
         if (substr(paths[p], 1, length(r)) == r && (best == "" || length(r) > length(rel[best]))) best = name[i]
       }
       if (best == "") core = 1
-      else reach(best)
+      else if (layer[best] == "interface") reachRequirers(best)
+      else reached[best] = 1
     }
     if (core) {
       print "core"

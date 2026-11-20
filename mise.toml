@@ -135,7 +135,7 @@ run = [
   # under /repo): for each case under tests/hook-targets/cases/, the
   # decision for the staged paths `paths` must be exactly `expected`: a
   # package's own checks, those of an interface package and every package
-  # that requires it through interface packages, the core's for any other
+  # that requires it, directly or not, the core's for any other
   # Lean-relevant path, or nothing for a change no Lean step reads. Lake is
   # not asked and nothing is built.
   "for case in impl-only interface prefix nested core core-wins docs-only set-files set-manifest core-fixture tooling rust-outside rust-inside new-package two-packages; do c=../tests/hook-targets/cases/$case; out=$(sh ../tools/hook-targets.sh --lines ../tests/hook-targets/graph --root /repo $(cat \"$c/paths\")) || { echo \"lean-test: hook-targets failed on the case $case\"; exit 1; }; { if [ -n \"$out\" ]; then printf '%s\\n' \"$out\"; fi; } | diff \"$c/expected\" - || { echo \"lean-test: hook-targets decided otherwise on the case $case\"; exit 1; }; done",
