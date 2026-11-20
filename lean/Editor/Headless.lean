@@ -176,7 +176,7 @@ as before, so reload and job completion work as they did.
     set, which the executable's generated root passes through
     `Editor.Main.run` to `main` here and to the window mode's
     (`docs/design/packages.md`, "The package set and its build"). The
-    core's are 22, each in
+    core's are 23, each in
     its feature's `Compiled.lean`, which says what it registers. Among
     them: the file commands and their jobs, the first commands `show`
     lists (`files`); the minibuffer's commands and its mode, which the Vim
@@ -193,7 +193,9 @@ as before, so reload and job completion work as they did.
     workspace (`workspace`); project search's commands, its results
     buffer's mode and its jobs (`project-search`); the working sets'
     commands, a set's buffer's mode and the jobs that read and write a
-    workspace's sets under the state directory (`working-set`); the status
+    workspace's sets under the state directory (`working-set`); the
+    session restore's jobs, which restore a session at start-up and write
+    its index, and its command and mode (`restore`); the status
     buffer's commands, jobs and modes,
     and the gutter's (`version-control`, `version-control-gutter`); and
     the `code` mode with the languages that ship (`languages`). The ex
@@ -338,6 +340,32 @@ the arguments the command gave. `setup` starts none.
   mode is this host, so there is no other publish path.
 - **The loop cancels every job when it ends**: nothing would deal with their
   results.
+
+## Restoring a session
+
+With a state directory (`Collaborators.stateDirectory`: the window mode's,
+or the headless mode's `--state`), the host's first request is `restore`
+(`Request.restore`; `run` sends it before the script, the window mode as its
+first start). It starts the job `restore` with the state directory, printed
+`job <id> restore: started`, and holds every request of the driver that
+follows (`Running.heldRequests`) until the restore has finished: its second
+half's command has run (`Restore.Kept.restored`, `Editor/Restore/Run.lean`),
+or neither of its jobs is in the table any more (`settleRestore`). Then it
+handles them in order. Window events, markers and the jobs' wake-ups are
+handled meanwhile, and `Host.await` waits while a restore is in flight
+(`Progress.restoring`), so a wait for the start-up reload waits for it too.
+With no `restore` job registered, the request does nothing.
+
+**The journal.** Each step's journal orders (`Loop.Stepped.journal`,
+`Editor/Restore.lean`) are handed to the file service through
+`Collaborators.journal`, unobserved (`Journal.real`, the library's), and
+the snapshots they name released after (`journaled`); what failed is said
+once for each path, in the echo area and to the log (`journalFailed`). A
+host's end waits, at most `drainPatience`, until the service holds no
+request. The script's `journalled` waits until it holds none; `abort` ends
+the process at once with the status 134 and no shutdown
+(`IO.Process.exit`): not the signal, which on a macOS desktop raises the
+crash reporter.
 
 ## One loop at a time
 

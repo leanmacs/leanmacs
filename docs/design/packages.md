@@ -168,7 +168,7 @@ end Greeting.EditorPackage
 - **The module declares `packages : Array Editor.Package`** in the
   namespace of its own name. A Lake package may hold several `Package`
   values, which register in the order the array lists them; the core's
-  holds 22, and `shipped-themes`' and `compile`'s one each.
+  holds 23, and `shipped-themes`' and `compile`'s one each.
 - **A Lake package with no such module contributes nothing.** The build
   asks Lake whether a library of the package holds a module of that name
   (`Package.findModule?`) and whether its source file exists. It reads no
@@ -400,7 +400,7 @@ globs = ["Config.+"]
   Lake packages of a set: the set's lakefile is the one place, and the
   root is generated from it. Each Lake package's entry module still lists
   its own `Package` values, which is what the root reads. The core's lists
-  22, and fewer as features move out.
+  23, and fewer as features move out.
 - **No root is written by hand, the user-side link's included.** That
   check ([lean-runtime.md](lean-runtime.md), "A link on the user's
   machine, measured") links an editor against a staged core of prebuilt
@@ -966,7 +966,7 @@ fixture themes made with `Palette.theme` from palettes written in
 `lean/ConfigTest/Support/Themes.lean`, and the appearance checks define
 theirs. No copy of a palette's values is kept in the core, so no licence
 notice is either. `ConfigTest.shippedChecks` and
-`ModelTest.packageSetChecks` state the core's list alone: 22 packages, the
+`ModelTest.packageSetChecks` state the core's list alone: 23 packages, the
 one theme `default`, and nothing of the compile mode.
 
 ## What moving the shipped themes added to the core's API
@@ -1267,8 +1267,8 @@ up to 291: 200 core and 91 in 21 features.
   any module a core module imports for a type it carries (`Editor.Ex.Line`,
   `Editor.Menu`, `Editor.ModeLine`, `Editor.Language`, `Editor.Workspace`,
   the three `Editor.ProjectMode` modules).
-- **A feature** is code reached through a package's registrations: the 22
-  packages of the core's list, as 21 features (the two version-control packages are
+- **A feature** is code reached through a package's registrations: the 23
+  packages of the core's list, as 22 features (the two version-control packages are
   one), with the Vim scheme counted with evil.
 - **Every feature here is in the core's Lake package**,
   and is a core module in the sense of the section above and of the gate's
@@ -1747,11 +1747,11 @@ so it is part of what the fixtures pin:
 - **The ex candidates for `e`** in `tests/headless/ex/expected` are the ex
   names in the order they were first bound (`Registry.exNames`), which the
   fuzzy rank keeps among equal scores. The names are bound by `ex`, then
-  `version-control`, the sixth and the twentieth packages of the core's
-  list, then by `compile`, which registers after the core's twenty-two.
+  `version-control`, the sixth and the twenty-first packages of the core's
+  list, then by `compile`, which registers after the core's twenty-three.
 
 `ModelTest.packageSetChecks` pins what a model test can see of the core's
-list: its 22 names in order, with no package of the palettes or of the
+list: its 23 names in order, with no package of the palettes or of the
 compile mode among them; the ex names in bound order, the `ex` package's
 and then version control's twelve; and that the one theme it registers is
 `default`. It is the test of the core's entry module
@@ -1760,7 +1760,7 @@ and then version control's twelve; and that the one theme it registers is
 
 **Packages register by dependency, which puts a default package after the
 core's.** The default set holds two, so the generated root registers the
-core's 22, then `shipped-themes`, then `compile`.
+core's 23, then `shipped-themes`, then `compile`.
 
 - **No fixture line changed when the palettes moved.** The package was
   thirteenth of the core's 22, directly after `themes`, and registered

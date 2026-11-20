@@ -656,8 +656,8 @@ run = [
   # hold the bytes of `session/verse-expected`.
   "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/session/verse.txt \"$dir/verse.txt\" && sed \"s|@FILE@|$dir/verse.txt|\" ../tests/headless/session/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/session/expected - && cmp \"$dir/verse.txt\" ../tests/headless/session/verse-expected",
   # Session restore, as a process, with `--state` naming a directory of
-  # the step's (tests/headless/restore; docs/dev-practices/the-gate.md, "The
-  # session restore steps"). Each run's output has the temporary
+  # the step's (tests/headless/restore; docs/dev-practices/the-gate.md, the
+  # session restore entries). Each run's output has the temporary
   # directory's path written `@DIR@`, a stamp's time `@TIME@`, and its job
   # lines and command list dropped: what a job came to is printed when its
   # wake-up arrives, which the other events do not wait for. An abort: the

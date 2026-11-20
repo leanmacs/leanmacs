@@ -1338,6 +1338,33 @@ not what a window costs.
 asked for and is at rest, so that no key's frame is replaced in the
 mailbox before it is drawn.
 
+**The session journal's cost** (session-restore phase 1). Then
+`milestone-bench` runs `type-insert`: 200 characters typed in insert state
+at the end of the 10 MiB file and of the small file, each paced by
+`idle 0`, once with `--state` and once without. Each prints its
+`journal` lines and its `real`, `user` and `sys` times, and a run with a
+state directory the bytes left under its journals. The expectation, never
+gating: the median `present - input` with a state directory within 5% of
+the run without. On an Apple M5 Max, macOS 27.2.1, headless:
+
+| Run | Median present - input | p99 | Journals left |
+|---|---|---|---|
+| `type-insert-ten-state` | 17242 µs | 18310 µs | 10,496,179 bytes |
+| `type-insert-ten-none` | 17189 µs | 18268 µs | |
+| `type-insert-small-state` | 17423 µs | 18307 µs | 9,969 bytes |
+| `type-insert-small-none` | 17434 µs | 18250 µs | |
+
+**`mise run journal-bench`** (`config-test bench-journal`,
+`lean/ConfigTest/Bench.lean`) times the editor thread's share alone: the
+reconciler and the hand-off of its orders to the library's file service
+for 10,000 one-character inserts into a file buffer of 4 KiB, 1 MiB and
+10 MiB, at its start, middle and end, each row
+`journal_order/<size>/<position>` with its median, 99th percentile and
+maximum in µs. The expectation is under 20 µs a key at 10 MiB. On the same
+machine every row's median was 3.1 to 3.5 µs and its 99th percentile 4.4
+to 6.9 µs (`journal_order/10MiB/end`: 3.5 / 4.4 / 25.8). perf-suite is to
+adopt the rows once its harness exists.
+
 `mise run edit -- --report <file>` prints a window's figures from the
 frame journal when the window closes ("The present mode, measured on a
 window", below).

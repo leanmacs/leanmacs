@@ -411,6 +411,29 @@ What was not tried:
 Shutdown posts a quit event, unblocks every dedicated task, and calls exit.
 Returning from `main` while a task is blocked in Rust hangs.
 
+**Session restore at start-up, as built** (session-restore phase 1;
+`lean/Editor/Restore.lean`, `lean/Editor/Restore/Run.lean`). With a state
+directory a host's first request is `restore`: the window mode's first
+start (`Window.Options.starts`), and the headless mode's when it is given
+`--state`. It starts the job `restore`, which makes
+`<state>/session/journals/`, lists the session's files and loads them; its
+command restores each buffer with unsaved text, and its second half,
+`restore-files`, stats their files and reopens the files with none. **The
+host holds the driver's requests that follow** (the command-line file's
+open, what is said, the start-up reload) and handles them in order once the
+restore has finished (`Restore.Kept.restored`) or its jobs have failed;
+window events are handled meanwhile, and `Host.await` waits while it is in
+flight, so the window mode's wait for the start-up reload waits for it too.
+So packages register first (`Running.new`), the restore runs next, and
+config's `setup` runs in the reload after it. A major mode only config
+registers is deferred until a config has installed, and set then, or said
+when that config does not register it.
+
+**Shutdown waits for the journal.** Once the loop has ended, a host waits,
+for at most 2 s (`Headless.drainPatience`), until the file service holds no
+request, so the journal's last orders (a clean end's removes and its ended
+index) are written, then quits the queues.
+
 **`editor [<file>]`, as built** (the display pipeline's last phase;
 `lean/Editor/Window.lean`, `lean/Editor/Window/Real.lean`). The window mode
 is the headless host's editor loop handed real collaborators: the real
@@ -1229,12 +1252,12 @@ def package : Package :=
   (`EditorCore.EditorPackage.packages`), which is no module of the editor:
   it is outside `lean/Editor/` and the namespace `Editor`, in a library of
   its own (`lean_lib EditorCore`). It
-  lists 22 packages, each
+  lists 23 packages, each
   defined in its feature's `Compiled.lean`: `completion`, `mode-line`,
   `files`, `minibuffer`, `evil`, `ex`, `buffers`, `frame-commands`, `menu`,
   `window-commands`, `tab-commands`, `themes`,
   `execute-command`, `binding-search`, `workspace`, `project-search`,
-  `working-set`, `shell`,
+  `working-set`, `restore`, `shell`,
   `at-point`, `version-control`, `version-control-gutter` and `languages`,
   in that order, which keeps each kind of entry where the hosts registered
   it before there were packages. `themes` keeps
@@ -1243,7 +1266,7 @@ def package : Package :=
   `fairy-floss`, are the package `shipped-themes`, which is no package of
   the core's Lake package: it is a Lake package of its own, a default
   package (`packages/shipped-themes/`; [packages.md](packages.md), "The
-  first default package"), and registers after the core's 22, so the theme
+  first default package"), and registers after the core's 23, so the theme
   names read `default`, then the three. The compile mode is the package
   `compile`, the second default package (`packages/compile/`;
   [packages.md](packages.md), "The default package `compile`"): it was
@@ -2049,7 +2072,9 @@ text requests. Config sees it through
 
 | State | Held by | Across a reload | Across a restart |
 |---|---|---|---|
-| Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's window list and layout, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds and is the one writer of: a command changes it by requests the loop answers. Buffers are kept in slots, so a buffer's id is never used again, and neither is a view's | Untouched | Lost unless its owner persists it |
+| Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's window list and layout, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds and is the one writer of: a command changes it by requests the loop answers. Buffers are kept in slots, so a buffer's id is never used again, and neither is a view's | Untouched | Buffers are restored after a run that did not end cleanly: each one's file, line ending, modes and unsaved text, and the focused window's place (`lean/Editor/Restore.lean`); the other windows' places are kept in the session index for phase 2. The rest is lost unless its owner persists it |
+| The session index: each buffer's file, line ending, modes and live journal, the place of every window on it, and the focused view | Compiled Lean keeps what it last wrote (`EditorState.restore`, `Restore.Kept`); the job `restore-write` writes it, debounced, to `<state>/session/session-<run>.json`, one file a run, written only by that run (`lean/Editor/Restore/Document.lean`) | Untouched | Kept: read by the next start; a clean end writes it saying `ended`, and then nothing is restored |
+| Unsaved text: the journal of each buffer with unsaved changes | A base, the text whole, and a log of JSON lines, one record of edits per event, under `<state>/session/journals/` (`lean/Editor/Restore/Journal.lean`), written by the file service from the orders the loop hands it after each publish | Untouched | Kept: replayed at start-up after a run that did not end cleanly; removed when its buffer is saved or closed, and at a clean end |
 | A buffer's local values: plain trees by name (`Value`), as a store's cell holds | Compiled Lean, a field of the buffer in the editor state, set and read by a command (`BufferId.setValue`, `BufferId.value?`) | Untouched: a tree names no type of config's | Lost |
 | A buffer's changed-on-disk mark: what the last check of its file found that is not the file it holds, and whether the user was told (`Buffer.File.changed`) | Compiled Lean, a field of the buffer's file in the editor state, set by the command a check finishes with (`BufferId.markChanged`, `BufferId.tellChanged`) and cleared by a load, a reload or a save | Untouched | Lost: a check after a restart finds the file as it is |
 | What the loop saw at its last publish (`Loop.seen`): the focus, the buffers shown, modified and open, which decide the files due a check | Compiled Lean, a field of the loop | Untouched | Lost |
@@ -2133,23 +2158,39 @@ what is kept across a restart lives: `--state <dir>`, or `leanmacs` under
 `$XDG_STATE_HOME`, or under `$HOME/.local/state`, and none when neither is
 set (`Window.defaultState`). The host hands it to the loop's first state
 (`EditorState.stateDirectory`, through `EditorState.hostedBy`, with the
-working and home directories); the headless host's is none, so a headless
-run keeps nothing. Working sets are the first state kept there, per
-workspace ([projects.md](projects.md), "What lives where"); session restore
-and the review record on disk are to reuse it. Its rules, which a later
-user follows:
+working and home directories); the headless host's is none unless it is
+given `--state <dir>`, so by default a headless run keeps nothing and every
+fixture without `--state` is unchanged. Working sets are the first state
+kept there, per workspace ([projects.md](projects.md), "What lives where");
+session restore is the second (`<state>/session/`, `lean/Editor/Restore.lean`);
+the review record on disk is to reuse it. Its rules, which a later user
+follows:
 
 - **Only jobs touch it**, through the job port's file request: a load
   (`File.load`), a directory made with its parents (`File.makeDirectory`,
   added for it down the file port), and the file service's atomic
   temporary-and-rename save of a snapshot, so a reader never sees a torn
   file.
+- **The journal's writes are the one exception** to "only jobs touch it"
+  (session-restore phase 1, decision 5): they are fire-and-forget file
+  requests, unobserved, which the loop hands the file service after each
+  publish (`Loop.Stepped.journal`). Nothing awaits them; they run in order
+  with the jobs' file requests on the service's one thread; a failure is
+  kept by the service and said in the echo area once per path.
 - **It is read lazily**, the first time a command needs it, by a job whose
-  command runs the asking command again: a start waits on no disk.
+  command runs the asking command again: a start waits on no disk. **Session
+  restore is the amendment**: its job reads `session/` at start-up, since it
+  must run before config's `setup`. What the rule protects still holds: the
+  read is a job's, the editor thread never waits on disk, and window events
+  are handled meanwhile; only the driver's start-up requests wait for it.
 - **A version rule**: a missing file is empty; one that does not parse, or
   whose version is newer than the editor's, is left as it is for the run,
   said once, and never written over. Never fail to start, never lose what
-  is not understood.
+  is not understood. Session restore keeps it by writing **one index file
+  a run**, `session-<run>.json`, and no other: it restores the index of the
+  highest run, reading a newer format leniently, and removes only earlier
+  indexes of a format it understands, once its own first index is
+  written.
 - **No state directory** keeps everything in memory, said once.
 - **Writes are keyed by the workspace's root**, so a newer write cancels an
   older one still in flight; two editors writing one workspace's file:

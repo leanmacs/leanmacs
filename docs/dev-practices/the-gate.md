@@ -1040,6 +1040,36 @@ temporary directory's path written `@DIR@`, must be exactly `expected`,
 which shows the text, the cursor, the selection, the state and the echo
 of every scene; and the copy must hold the bytes of `verse-expected`.
 
+`ffi-test` runs **session restore** as processes (`tests/headless/restore/`),
+four entries of the session check's form, each with `--state` naming a
+directory of its temporary directory. Each run's output is compared with
+the temporary directory's path written `@DIR@`, a stamp's time written
+`@TIME@`, and its `job` lines and its `commands:` line dropped: what a job
+came to is printed when its wake-up arrives, which the driver's other
+requests do not wait for, and the command list grows with every package.
+
+- **An abort**: `abort-script` opens `note.txt` with `:e`, types `xy` in
+  insert state, waits until the journal is written (`journalled`) and
+  aborts (`abort`): the editor must exit with the status 134, with no
+  shutdown. A second run with the same state directory, `restore-script`,
+  must print exactly `restore-expected`: the file's buffer with the text
+  typed, modified.
+- **Changed on disk**: the same abort, then `note.txt` rewritten; the
+  second run, `changed-script`, must print exactly `changed-expected`: the
+  buffer marked `[changed on disk]`, and `:w` refused as changed; and the
+  file must still hold what was written over it.
+- **A clean quit**: `quit-script` edits, saves with `:w` and quits with
+  `:q`; its output must be exactly `quit-expected`, the journals' directory
+  must then be empty and `session-1.json` must say `"ended":true`; a run of
+  `restore-script` after it must print exactly `quit-restore-expected`,
+  which restores nothing.
+- **Another version**: the state directory is a copy of `newer/`: an index
+  of format 99 with keys this editor does not know, and a journal whose log
+  has a record of a kind it does not know. `newer-script` must print
+  exactly `newer-expected`, with what is known restored and the report's
+  lines in `*restore*`'s text; afterwards `cmp` must find the index and the
+  journal's two files byte for byte as they were.
+
 `ffi-test` runs **a view that follows its cursor**, as a process, the same
 way (`tests/headless/view/`). The entry copies `lines.txt`, 120 lines
 `000` to `119`, each ended by a line feed, so that line n starts at byte

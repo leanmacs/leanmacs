@@ -1,8 +1,17 @@
 # The headless mode
 
 ```sh
-editor headless [--render] [--generate] [<sysroot> <olean dir>] <config dir> <script file>
+editor headless [--render] [--generate] [--state <dir>] [<sysroot> <olean dir>] <config dir> <script file>
 ```
+
+**`--state <dir>`** names the state directory (`docs/design/lean-runtime.md`,
+"As built, the state directory"): the run restores the session of the last
+run that did not end cleanly from it before anything of the script, holding
+the script's requests until the restore has finished, and journals unsaved
+text to it as it changes (`lean/Editor/Restore.lean`). Without it the run
+has none and keeps nothing. With one, a change to the session index waits
+on the job clock to be written (`restore-write`), so a `join` after it is
+preceded by an `advance` that fires the write.
 
 This is the editor with no window. It loads the config in a directory, runs
 a script against it and prints what happened. It writes nothing into the
@@ -528,6 +537,8 @@ timers.
 | `join` | Waits, for up to 30 seconds, until everything asked so far has been handled and no job is running. |
 | `advance <milliseconds>` | Moves the headless mode's job clock on by that many milliseconds, once it holds a wait due within them (for up to 30 seconds), completing every wait then due: a job's sleep, a time limit, the pause of completion at point. It sends nothing to the editor thread and prints nothing, so a scene count is unchanged by it. One with no wait due within the time runs out, saying `the advance on line N found no wait due within M ms on the clock within the patience`. Anything but one number is refused. |
 | `show` | Prints the commands, the texts and the stores. |
+| `journalled` | Waits as `settle` does, then, for up to 30 seconds, until the library's file service holds no request: the session journal's writes, which nothing else waits for, are then on disk. |
+| `abort` | Ends the process at once with the status 134 and no shutdown, as an abort would, once what was printed is flushed: no job is cancelled and no file request waited for. It is not the signal SIGABRT, which on a macOS desktop raises the crash reporter. |
 | `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. The editor loop steps the key through its input scheme, and runs the command a completed sequence is bound to. |
 | `commit <text>` | Sends the rest of the line, trimmed, as an input method's composition would end with it, the same way as `key`. The editor loop inserts it at the focused window's cursors where the view takes typed text: under the Vim scheme, in insert state and in the minibuffer. In normal state it is dropped. A `commit` with no text is refused. |
 | `resize <width> <height>` | Sends a resize of the frame to that many physical pixels across and down, at a scale of 1, the same way as `key`. The next scene's frame has that size and its views are laid out in it. Anything but two numbers is refused. Until a script resizes, the frame is 0 by 0, no view shows a row, and nothing scrolls (above). |

@@ -2069,6 +2069,46 @@ runner goes on in a loop on that thread until the job waits or ends. So
 with as many such jobs as the pool has threads, a further job waits in the
 pool's queue until one of them waits, ends or is cancelled.
 
+## The session journal
+
+Unsaved text is journalled as it changes, so that it is on disk when the
+process aborts (session-restore phase 1; `lean/Editor/Restore.lean`).
+
+- **Granularity: once per event, coalesced per buffer.** After each
+  publish the loop's reconciler (`Restore.journalOrders`) hands the file
+  service one record for each buffer whose text moved since its last: every
+  edit since then composed into one patch (`TextId.changesSince`, the
+  inserted bytes read by `slice`). Not on idle and a bound: a config command
+  that aborts the process usually runs right after typing, so an idle
+  window would lose the last keys, and a bound that rewrites the whole text
+  costs O(size). Not a job per event: each job's end is another event and
+  another publish.
+- **The path off the editor thread.** The records are orders
+  (`Restore.Order`), plain data on the step (`Loop.Stepped.journal`), which
+  the host hands the library's file service as unobserved requests: no id,
+  never completed, no result kept, worked in order with every other file
+  request on the service's one thread (`crates/editor-ffi/src/files.rs`).
+  An append is one `write(2)` with no fsync. The editor thread pays for one
+  `changesSince` and one `slice` per moved buffer, a small JSON encode and
+  one non-blocking enqueue; a buffer that did not move costs no text
+  request. A failure is kept by the service and said once per path.
+- **What an abort loses**: only what is queued and not yet written. Bytes
+  handed to the kernel outlive the process; they need not outlive a power
+  loss, which is not a goal.
+- **Compaction**: past max(1 MiB, the base's size), or when the log was
+  forgotten past the record's revision, a new base generation is written
+  (an atomic save of a snapshot), then the old one's files removed.
+
+**Measured** (`mise run journal-bench`, `mise run milestone-bench`'s
+`type-insert`; [on-demand-checks.md](../dev-practices/on-demand-checks.md),
+"Milestone 1, measured"), on an Apple M5 Max, macOS 27.2.1: the reconciler
+and the hand-off cost a median of 3.1 to 3.5 µs a key and a 99th percentile
+under 7 µs at 4 KiB, 1 MiB and 10 MiB, at the start, middle and end
+(`journal_order/<size>/<position>`), under the 20 µs expected; and typing
+200 characters at the end of the 10 MiB file, headless, had a median key to
+frame of 17242 µs with the journal and 17189 µs without (0.3%), and 17423
+against 17434 µs in the small file, within the 5% expected.
+
 ## Events
 
 The Rust library delivers events as plain data: a key was pressed, a
