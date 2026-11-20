@@ -19,3 +19,5 @@
 /infra/github/.terraform.tfstate.lock.info
 /infra/github/crash*.log
 /dist
+# macOS Finder metadata, in any directory.
+.DS_Store
