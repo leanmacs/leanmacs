@@ -157,12 +157,26 @@
 //! - **An id in use** is one of a run's, a streaming child's or a wait's:
 //!   an open, a read, a write or a close naming it as its own id is
 //!   refused, as a start is.
+//! - **A flush is a barrier** ([`Service::flush`]): a wait of the
+//!   caller's, completed once every run started before it has ended (its
+//!   result kept, or cancelled and its child reaped), every open asked
+//!   before it answered, and every streaming child cancelled or forgotten
+//!   before it reaped; at once, on the caller's thread, when there is
+//!   nothing to wait for. A run's thread, after its own completion, and a
+//!   streaming child's waiter, once its child is reaped, completes each
+//!   flush it was the last thing for, in the order they were asked;
+//!   shutdown completes the rest once every child is reaped. A live
+//!   streaming child, its pending read and a write held by a full pipe are
+//!   not covered: they wait on the child, not on the service, and would
+//!   never let a flush complete. A flush keeps no reply, its id is in use
+//!   while it waits, and a cancel withdraws it.
 //! - **[`Service::pending`]** counts the runs and the streaming children
 //!   not over, a cancelled one being over once its child is reaped, the
 //!   results not taken, and the waits on streaming children not answered
-//!   or not taken: a readout for tests.
+//!   or not taken, and the flushes waiting: a readout for tests. A test
+//!   that needs the service to have finished waits on a flush.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 
@@ -403,6 +417,14 @@ enum Wait {
     Writing(u64),
     /// This reply, kept.
     Kept(StreamReply),
+    /// A flush ([`Service::flush`]), the `order`th asked, waiting for the
+    /// runs and children `awaited` to be done.
+    Flush {
+        /// How many flushes were asked before it.
+        order: u64,
+        /// The runs and children it still waits for.
+        awaited: HashSet<u64>,
+    },
 }
 
 /// What the service holds.
@@ -415,12 +437,56 @@ struct State<C> {
     waits: HashMap<u64, Wait>,
     /// How many runs' threads have not finished.
     active: usize,
+    /// How many flushes have been asked: the next one's order.
+    flushes: u64,
 }
 
 impl<C> State<C> {
     /// Whether `id` names a run, a child or a wait.
     fn in_use(&self, id: u64) -> bool {
         self.runs.contains_key(&id) || self.waits.contains_key(&id)
+    }
+
+    /// Marks the run or child `id` done for every flush, and removes and
+    /// returns the flushes it was the last thing for, in the order they
+    /// were asked: for the caller to complete with no lock held.
+    fn settle(&mut self, id: u64) -> Vec<u64> {
+        let mut done = Vec::new();
+        for (&wait, kept) in &mut self.waits {
+            if let Wait::Flush { order, awaited } = kept
+                && awaited.remove(&id)
+                && awaited.is_empty()
+            {
+                done.push((*order, wait));
+            }
+        }
+        self.take_flushes(done)
+    }
+
+    /// Removes the flushes `done`, each with its order, and returns their
+    /// ids in that order.
+    fn take_flushes(&mut self, mut done: Vec<(u64, u64)>) -> Vec<u64> {
+        done.sort_unstable();
+        done.into_iter()
+            .map(|(_, wait)| {
+                self.waits.remove(&wait);
+                wait
+            })
+            .collect()
+    }
+
+    /// Removes and returns every flush waiting, in the order they were
+    /// asked.
+    fn take_every_flush(&mut self) -> Vec<u64> {
+        let every = self
+            .waits
+            .iter()
+            .filter_map(|(&wait, kept)| match kept {
+                Wait::Flush { order, .. } => Some((*order, wait)),
+                _ => None,
+            })
+            .collect();
+        self.take_flushes(every)
     }
 }
 
@@ -564,6 +630,7 @@ impl<P: Processes + 'static> Service<P> {
                     runs: HashMap::new(),
                     waits: HashMap::new(),
                     active: 0,
+                    flushes: 0,
                 }),
                 finished: Condvar::new(),
             }),
@@ -660,8 +727,10 @@ impl<P: Processes + 'static> Service<P> {
             let mut state = self.inner.state();
             state.runs.remove(&id);
             state.active -= 1;
+            let flushed = state.settle(id);
             drop(state);
             self.inner.finished.notify_all();
+            self.inner.complete_all(flushed);
         }
         started
     }
@@ -773,7 +842,10 @@ impl<P: Processes + 'static> Service<P> {
                 !*reaped
             }
         });
-        state.waits.clear();
+        // A flush is kept: it is completed once everything has been reaped.
+        state
+            .waits
+            .retain(|_, kept| matches!(kept, Wait::Flush { .. }));
         drop(state);
         for (child, reads) in children {
             child.kill();
@@ -783,12 +855,54 @@ impl<P: Processes + 'static> Service<P> {
             child.kill();
         }
         let state = self.inner.state();
-        drop(
-            self.inner
-                .finished
-                .wait_while(state, |state| state.active > 0)
-                .unwrap_or_else(PoisonError::into_inner),
-        );
+        let mut state = self
+            .inner
+            .finished
+            .wait_while(state, |state| state.active > 0)
+            .unwrap_or_else(PoisonError::into_inner);
+        // Every child the service started has been reaped, so whatever a
+        // flush still waits for has ended.
+        let flushed = state.take_every_flush();
+        drop(state);
+        self.inner.complete_all(flushed);
+    }
+
+    /// Asks for the wait `id` to be completed once every run started before
+    /// this call has ended (its result kept, or it was cancelled and its
+    /// child reaped), every open asked before it has been answered, and
+    /// every streaming child cancelled or forgotten before it has been
+    /// reaped. A live streaming child, its pending read and a write held by
+    /// a full pipe are not waited for: they wait on the child, not on the
+    /// service. It returns at once and keeps no reply. An id in use is
+    /// refused; one with nothing to wait for is completed at once, on the
+    /// caller's thread. It is counted in [`pending`](Self::pending) while
+    /// it waits, and a cancel withdraws it.
+    pub fn flush(&self, id: u64) -> bool {
+        let mut state = self.inner.state();
+        if state.in_use(id) {
+            return false;
+        }
+        let awaited: HashSet<u64> = state
+            .runs
+            .iter()
+            .filter(|(_, run)| match run {
+                Run::Starting { .. } | Run::Running { .. } => true,
+                Run::Streaming {
+                    cancelled, reaped, ..
+                } => *cancelled && !*reaped,
+                Run::Kept(_) => false,
+            })
+            .map(|(&run, _)| run)
+            .collect();
+        if awaited.is_empty() {
+            drop(state);
+            (self.inner.complete)(id);
+            return true;
+        }
+        let order = state.flushes;
+        state.flushes += 1;
+        state.waits.insert(id, Wait::Flush { order, awaited });
+        true
     }
 
     /// The runs and the streaming children not over, a cancelled one being
@@ -839,8 +953,10 @@ impl<P: Processes + 'static> Service<P> {
             let mut state = self.inner.state();
             state.runs.remove(&id);
             state.active -= 1;
+            let flushed = state.settle(id);
             drop(state);
             self.inner.finished.notify_all();
+            self.inner.complete_all(flushed);
         }
         started
     }
@@ -892,7 +1008,7 @@ impl<P: Processes + 'static> Service<P> {
                 };
                 return Some(reply);
             }
-            Wait::Writing(_) => return None,
+            Wait::Writing(_) | Wait::Flush { .. } => return None,
             Wait::Reading(child) => *child,
         };
         let Some(Run::Streaming { stream, .. }) = state.runs.get(&child) else {
@@ -1012,7 +1128,7 @@ impl<P: Processes + 'static> Service<P> {
             return false;
         };
         let child = match wait {
-            Wait::Kept(_) => return true,
+            Wait::Kept(_) | Wait::Flush { .. } => return true,
             Wait::Reading(child) | Wait::Writing(child) => child,
         };
         if let Some(Run::Streaming { stream, .. }) = state.runs.get(&child) {
@@ -1190,8 +1306,16 @@ impl<P: Processes + 'static> Inner<P> {
         })
     }
 
+    /// Completes each of `waits`, in order, with no lock held.
+    fn complete_all(&self, waits: Vec<u64>) {
+        for wait in waits {
+            (self.complete)(wait);
+        }
+    }
+
     /// Ends the run `id` as `result`: kept and completed, or dropped if it
     /// was cancelled. `None` is a run cancelled before it came to anything.
+    /// A flush it was the last thing for is completed after it.
     fn finish(&self, id: u64, result: Option<RunResult>) {
         let mut state = self.state();
         let cancelled = match state.runs.remove(&id) {
@@ -1204,11 +1328,13 @@ impl<P: Processes + 'static> Inner<P> {
             state.runs.insert(id, Run::Kept(result));
         }
         state.active -= 1;
+        let flushed = state.settle(id);
         drop(state);
         self.finished.notify_all();
         if !cancelled {
             (self.complete)(id);
         }
+        self.complete_all(flushed);
     }
 
     /// The streaming child `id`'s thread, its waiter: the module docs'
@@ -1272,9 +1398,14 @@ impl<P: Processes + 'static> Inner<P> {
                 reaped: false,
             },
         );
-        if !cancelled {
+        // A live child's open is answered here, so a flush waits for it no
+        // longer; a cancelled one's waits for its reap.
+        let flushed = if cancelled {
+            Vec::new()
+        } else {
             state.waits.insert(id, Wait::Kept(StreamReply::Opened));
-        }
+            state.settle(id)
+        };
         drop(state);
         if cancelled {
             // Outside the state lock: a read refuses a cancelled child, so
@@ -1283,6 +1414,7 @@ impl<P: Processes + 'static> Inner<P> {
             stream.abandon();
         } else {
             (inner.complete)(id);
+            inner.complete_all(flushed);
         }
         for (output, which) in outputs.into_iter().zip([Stream::Out, Stream::Err]) {
             let Some(output) = output else {
@@ -1341,8 +1473,10 @@ impl<P: Processes + 'static> Inner<P> {
             }
         }
         state.active -= 1;
+        let flushed = state.settle(id);
         drop(state);
         inner.finished.notify_all();
+        inner.complete_all(flushed);
     }
 
     /// Keeps `reply` under the wait `wait` and completes it, unless the
@@ -1371,11 +1505,13 @@ impl<P: Processes + 'static> Inner<P> {
                 .insert(id, Wait::Kept(StreamReply::Refused(refusal)));
         }
         state.active -= 1;
+        let flushed = state.settle(id);
         drop(state);
         self.finished.notify_all();
         if !cancelled {
             (self.complete)(id);
         }
+        self.complete_all(flushed);
     }
 }
 
@@ -1619,17 +1755,18 @@ mod tests {
         (service, completed)
     }
 
-    /// Waits for `pending` to come to `count`.
-    fn pending_comes_to(service: &Service<FakeProcesses>, count: usize) -> bool {
-        let end = std::time::Instant::now() + DEADLINE;
-        while std::time::Instant::now() < end {
-            if service.pending() == count {
-                return true;
-            }
-            thread::yield_now();
-        }
-        false
+    /// Flushes `service` and waits for the flush's completion, which must
+    /// be the next on `completed`; then says whether nothing is pending.
+    /// The flush is completed once every run before it has ended and every
+    /// child cancelled or forgotten before it has been reaped.
+    fn flushed(service: &Service<FakeProcesses>, completed: &Receiver<u64>) -> bool {
+        assert!(service.flush(FLUSH), "the flush's id is free");
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(FLUSH));
+        service.pending() == 0
     }
+
+    /// The id of [`flushed`]'s flush: one no test names otherwise.
+    const FLUSH: u64 = u64::MAX;
 
     fn ran(exit: Exit, stdout: &[u8], stderr: &[u8]) -> RunResult {
         RunResult::Ran {
@@ -1637,6 +1774,63 @@ mod tests {
             stdout: stdout.to_vec(),
             stderr: stderr.to_vec(),
         }
+    }
+
+    #[test]
+    fn a_flush_with_nothing_to_wait_for_is_completed_at_once_and_keeps_nothing() {
+        let fake = FakeProcesses::new();
+        let (service, completed) = service(&fake);
+
+        assert!(service.flush(1));
+
+        assert_eq!(completed.try_recv(), Ok(1));
+        assert_eq!(service.pending(), 0);
+        assert!(service.take(1).is_none() && service.take_stream(1).is_none());
+    }
+
+    #[test]
+    fn a_flush_waits_for_a_held_run_counts_while_it_does_and_a_cancel_withdraws_it() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilLetGo)),
+        )]);
+        let (service, completed) = service(&fake);
+        assert!(service.start(1, command("x"), ROOMY));
+        assert!(fake.until(DEADLINE, |record| record.waiting.len() == 1));
+
+        assert!(service.flush(2));
+        assert!(!service.flush(2), "its id is in use");
+        assert!(!service.start(2, command("x"), ROOMY));
+        assert!(service.flush(3));
+        assert_eq!(service.pending(), 3);
+        assert!(service.cancel(2));
+        assert!(!service.cancel(2));
+        fake.let_go_all();
+
+        // The run's completion, then the flush left.
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(3));
+        assert!(service.take(1).is_some());
+        assert!(flushed(&service, &completed));
+    }
+
+    #[test]
+    fn shutdown_completes_a_waiting_flush_once_every_child_is_reaped() {
+        let fake = FakeProcesses::scripted([(
+            command("held"),
+            Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilKilled)),
+        )]);
+        let (service, completed) = service(&fake);
+        assert!(service.start(1, command("held"), ROOMY));
+        assert!(fake.until(DEADLINE, |record| record.waiting.len() == 1));
+        assert!(service.flush(2));
+
+        service.shutdown();
+
+        assert_eq!(completed.try_recv(), Ok(2));
+        let child = fake.record().spawned[0].0;
+        assert!(!fake.alive(child));
+        assert_eq!(service.pending(), 0);
     }
 
     #[test]
@@ -1769,7 +1963,7 @@ mod tests {
 
         assert_eq!(completed.recv_timeout(DEADLINE), Ok(3));
         assert_eq!(service.take(3), Some(ran(Exit::Code(0), b"done", b"")));
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
     }
 
     #[test]
@@ -1819,7 +2013,7 @@ mod tests {
 
         assert!(service.cancel(6));
 
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
         assert!(!fake.alive(child) && !fake.alive(child + 1));
         assert_eq!(fake.record().killed, [child]);
         assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
@@ -1954,14 +2148,14 @@ mod tests {
 
         assert!(service.cancel(1));
 
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
         assert!(!fake.alive(child));
         assert!(
             service.start(1, command("held"), ROOMY),
             "the id is free again"
         );
         assert!(service.cancel(1));
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
         assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
         fake.end(child + 1);
         fake.end(fake.record().spawned[1].0 + 1);
@@ -2122,7 +2316,7 @@ mod tests {
         let child = fake.record().spawned[0].0;
         assert_eq!(fake.record().killed, [child]);
         assert!(!fake.alive(child) && !fake.alive(child + 1));
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
     }
 
     #[test]
@@ -2178,7 +2372,7 @@ mod tests {
 
         assert!(service.cancel(6));
 
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
         assert!(!fake.alive(child) && !fake.alive(child + 1));
         assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
         assert_eq!(service.take(6), None);
@@ -2516,7 +2710,7 @@ mod streaming {
             }
         }
         assert_eq!(got, [b"x".to_vec(), b"y".to_vec()]);
-        assert!(pending_comes_to(&service, 0), "both are forgotten");
+        assert!(flushed(&service, &completed), "both are forgotten");
     }
 
     #[test]
@@ -2543,7 +2737,7 @@ mod streaming {
         assert_eq!(all_bytes(&deliveries, Stream::Out), b"a\nb\n");
         assert_eq!(all_bytes(&deliveries, Stream::Err), b"e\n");
         assert!(!service.read(1, 100), "the child is forgotten");
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
         assert_eq!(service.held(1), None);
     }
 
@@ -2601,7 +2795,7 @@ mod streaming {
             last.last().and_then(|delivered| delivered.ended.clone()),
             Some(End::Exited(Exit::Code(0)))
         );
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
     }
 
     // Seen to bite once by hand, on 2026-11-15: with `write_all` writing
@@ -2650,7 +2844,7 @@ mod streaming {
             all.last().and_then(|delivered| delivered.ended.clone()),
             Some(End::Exited(Exit::Code(0)))
         );
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
     }
 
     #[test]
@@ -2922,7 +3116,7 @@ mod streaming {
         let child = fake.record().spawned[0].0;
         assert!(fake.until(DEADLINE, |record| record.reaped == [child]));
         assert!(!fake.alive(child) && !fake.alive(child + 1));
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
     }
 
     #[test]
@@ -3044,19 +3238,21 @@ mod streaming {
         assert!(fake.until(DEADLINE, |record| record.reaped == [child]));
         assert_eq!(fake.record().killed, [child]);
         assert!(!fake.alive(child) && !fake.alive(child + 1));
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
     }
 
-    fn pending_comes_to(service: &Service<FakeProcesses>, count: usize) -> bool {
-        let end = std::time::Instant::now() + DEADLINE;
-        while std::time::Instant::now() < end {
-            if service.pending() == count {
-                return true;
-            }
-            thread::yield_now();
-        }
-        false
+    /// Flushes `service` and waits for the flush's completion, which must
+    /// be the next on `completed`; then says whether nothing is pending. A
+    /// live streaming child is not waited for, but a cancelled or forgotten
+    /// one is, until it is reaped.
+    fn flushed(service: &Service<FakeProcesses>, completed: &Receiver<u64>) -> bool {
+        assert!(service.flush(FLUSH), "the flush's id is free");
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(FLUSH));
+        service.pending() == 0
     }
+
+    /// The id of [`flushed`]'s flush: one no test names otherwise.
+    const FLUSH: u64 = u64::MAX;
 
     /// Whether both readers of the child `child` come to let go of its
     /// streams. A reader completes a read before it lets go, so after this
@@ -3090,7 +3286,7 @@ mod streaming {
 
         assert!(service.cancel(1));
 
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
         assert!(!fake.alive(child) && !fake.alive(child + 1));
         assert_eq!(
             fake.record().children[&child].read[0],
@@ -3120,7 +3316,7 @@ mod streaming {
 
         assert!(service.cancel(1));
 
-        assert!(pending_comes_to(&service, 0), "its waiter is done");
+        assert!(flushed(&service, &completed), "its waiter is done");
         assert!(readers_done(&fake, child));
         assert_eq!(completed.try_recv(), Err(TryRecvError::Empty));
         assert_eq!(service.take_stream(2), None);
@@ -3148,7 +3344,7 @@ mod streaming {
         assert!(service.cancel(1));
         fake.release_reads();
 
-        assert!(pending_comes_to(&service, 0), "its waiter is done");
+        assert!(flushed(&service, &completed), "its waiter is done");
         assert!(readers_done(&fake, child));
         assert_eq!(completed.try_recv(), Err(TryRecvError::Empty));
         assert_eq!(service.take_stream(2), None);
@@ -3193,7 +3389,7 @@ mod streaming {
             );
         });
 
-        assert!(pending_comes_to(&service, 0), "its waiter is done");
+        assert!(flushed(&service, &completed), "its waiter is done");
         assert!(readers_done(&fake, child));
         assert_eq!(completed.try_recv(), Err(TryRecvError::Empty));
         assert_eq!(service.take_stream(2), None);
@@ -3252,7 +3448,7 @@ mod streaming {
         assert_eq!(delivery(&service, &completed, 1, 4).out, lines(&["x"]));
         assert!(completed.try_recv().is_err(), "the cancelled read never is");
         assert!(service.cancel(1));
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
     }
 
     #[test]
@@ -3278,7 +3474,7 @@ mod streaming {
         assert_eq!(service.pending(), 1, "the child alone");
         assert!(service.cancel(1));
 
-        assert!(pending_comes_to(&service, 0));
+        assert!(flushed(&service, &completed));
         assert!(fake.until(DEADLINE, |record| record.writes_blocked == 0));
         assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
     }

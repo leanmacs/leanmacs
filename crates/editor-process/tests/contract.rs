@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use editor_process::contract::{
-    self, AFTER_REAP, CANCEL, ESCAPED, INPUT, INPUT_CLOSED, KILL, RUN, RUN_HEAD, RUN_INPUT,
+    self, AFTER_REAP, CANCEL, ESCAPED, FLUSH, INPUT, INPUT_CLOSED, KILL, RUN, RUN_HEAD, RUN_INPUT,
     SHUTDOWN, SIGNAL, STRAGGLERS, STREAM_CANCEL, STREAM_LINE_TOO_LONG, STREAM_LINES,
     STREAM_SHUTDOWN, TOO_LARGE,
 };
@@ -85,7 +85,8 @@ fn a_fake_whose_wait_does_not_reap_is_reported() {
             RUN_HEAD,
             STREAM_LINE_TOO_LONG,
             STREAM_CANCEL,
-            STREAM_SHUTDOWN
+            STREAM_SHUTDOWN,
+            FLUSH
         ]
     );
 }

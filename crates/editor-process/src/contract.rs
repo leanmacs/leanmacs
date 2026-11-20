@@ -11,7 +11,8 @@
 //! The port's properties are [`RUN`] to [`AFTER_REAP`], and [`INPUT`] to
 //! [`NO_INPUT`] for a child's standard input; the service's, [`CANCEL`] to
 //! [`RUN_INPUT_IGNORED`] for runs and [`STREAM_LINES`] to
-//! [`STREAM_SHUTDOWN`] for streaming children, run [`Service`] over the processes the check is
+//! [`STREAM_SHUTDOWN`] for streaming children, and [`FLUSH`] and
+//! [`FLUSH_LIVE_STREAM`] for the flush, run [`Service`] over the processes the check is
 //! given, so a real adapter shows them on real processes. A child that
 //! starts a grandchild (`/bin/sleep 600 &`) is how the group's rules are
 //! seen: the script writes its own id (`$$`) and the grandchild's (`$!`) to
@@ -25,6 +26,10 @@
 //! property fails on the fake (`tests/contract.rs`) and on real processes
 //! (`editor-process-std`'s `tests/contract.rs`), the cancelled run never
 //! leaving `pending` and shutdown not returning within the deadline.
+//!
+//! A property that needs the service to have finished what it was handed,
+//! a cancelled run reaped among it, waits on a flush ([`Service::flush`]),
+//! never on the pending count.
 //!
 //! The streaming properties wait on what the child shows, never for a
 //! fixed time: a marker file it makes (`: > written`), read with
@@ -222,6 +227,18 @@ pub const STREAM_CANCEL: &str =
 /// input.
 pub const STREAM_SHUTDOWN: &str =
     "after shutdown a held streaming child and one waiting for input are reaped";
+/// A flush asked while a run's child is held until it is cancelled is not
+/// completed; once the run is cancelled, the flush's is the next
+/// completion, and by then the child has been reaped and nothing is
+/// pending. The held child forces the order: a flush completed at its call
+/// is seen every time.
+pub const FLUSH: &str =
+    "a flush is completed once the run before it has ended and its child is reaped";
+/// A flush does not wait for a live streaming child or its pending read,
+/// which wait on the child and not on the service: it is completed with
+/// the child still alive.
+pub const FLUSH_LIVE_STREAM: &str =
+    "a flush is completed with a streaming child alive and its read pending";
 
 /// The program with which a child of the check's starts a process outside
 /// its group: Perl's `setpgrp`, which puts it in a group of its own, then
@@ -231,7 +248,7 @@ pub const STREAM_SHUTDOWN: &str =
 pub const ESCAPE: &str = "/usr/bin/perl";
 
 /// Every property, by name, in the order [`check`] runs them.
-pub const PROPERTIES: [&str; 29] = [
+pub const PROPERTIES: [&str; 31] = [
     RUN,
     SIGNAL,
     DIRECTORY,
@@ -261,6 +278,8 @@ pub const PROPERTIES: [&str; 29] = [
     STREAM_LINE_AT_BOUND,
     STREAM_CANCEL,
     STREAM_SHUTDOWN,
+    FLUSH,
+    FLUSH_LIVE_STREAM,
 ];
 
 /// The script of [`RUN`]: `out` and a line feed on standard output, `err`
@@ -616,8 +635,32 @@ fn stream_scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
                 .step(Step::AwaitInputClosed)
                 .writes(at("w-child"), Writer::Child)),
         ),
+        (
+            sh(dir, FLUSH_SCRIPT),
+            Ok(Script::ends(Exit::Code(0))
+                .hold(Hold::UntilKilled)
+                .writes(at("fl-child"), Writer::Child)),
+        ),
+        (
+            sh(dir, FLUSH_STREAM_SCRIPT),
+            Ok(Script::ends(Exit::Code(0))
+                .hold(Hold::UntilKilled)
+                .step(Step::AwaitInputClosed)
+                .writes(at("fs-child"), Writer::Child)),
+        ),
     ]
 }
+
+/// The wait id of the flush a property waits on to know the service has
+/// finished what it was handed: one no property names otherwise.
+const FLUSHED: u64 = u64::MAX;
+
+/// The script of [`FLUSH`]'s run: a child that writes its id and is held
+/// until it is killed.
+const FLUSH_SCRIPT: &str = "echo $$ > fl-child; /bin/sleep 600";
+/// The script of [`FLUSH_LIVE_STREAM`]'s streaming child: one that writes
+/// its id and waits for input it is never given.
+const FLUSH_STREAM_SCRIPT: &str = "echo $$ > fs-child; read x";
 
 /// Holds `processes` to the contract in `dir`, a directory that exists, is
 /// empty and is the caller's, written with every link in its path
@@ -659,6 +702,8 @@ pub fn check<P: Processes + Clone + 'static>(
         (STREAM_LINE_AT_BOUND, check.stream_line_at_bound(processes)),
         (STREAM_CANCEL, check.stream_cancel(processes)),
         (STREAM_SHUTDOWN, check.stream_shutdown(processes)),
+        (FLUSH, check.flush(processes)),
+        (FLUSH_LIVE_STREAM, check.flush_live_stream(processes)),
     ];
     results
         .into_iter()
@@ -930,6 +975,19 @@ impl<G: Ground> Check<'_, G> {
         (service, completions)
     }
 
+    /// Flushes `service` as the wait [`FLUSHED`], and says whether its
+    /// completion arrives within the deadline with nothing pending then:
+    /// the service has finished what was handed to it before.
+    fn flushed<P: Processes + 'static>(
+        &self,
+        service: &Service<P>,
+        completions: &Completions,
+    ) -> bool {
+        service.flush(FLUSHED)
+            && completions.arrives(FLUSHED, self.ground.deadline())
+            && service.pending() == 0
+    }
+
     /// Shuts `service` down, and says whether that returned within the
     /// deadline: a service whose children are not all reaped would hold the
     /// check for ever.
@@ -966,12 +1024,12 @@ impl<G: Ground> Check<'_, G> {
             return false;
         };
         let cancelled = service.cancel(1);
-        let reaped = self.soon(|| service.pending() == 0);
+        let reaped = self.flushed(&service, &completions);
         cancelled
             && reaped
             && !self.ground.alive(child)
             && self.soon(|| !self.ground.alive(grandchild))
-            && completions.ids().is_empty()
+            && completions.ids() == [FLUSHED]
     }
 
     /// [`SHUTDOWN`].
@@ -1091,7 +1149,7 @@ impl<G: Ground> Check<'_, G> {
             self.ground.alive(child)
                 && self.ground.alive(escaped)
                 && service.cancel(1)
-                && self.soon(|| service.pending() == 0)
+                && self.flushed(&service, &completions)
                 && !self.ground.alive(child)
         });
         let second = self.start_escaping(&service, 2, "e2");
@@ -1116,7 +1174,7 @@ impl<G: Ground> Check<'_, G> {
             && reaped
             && held
             && service.pending() == 0
-            && completions.ids().is_empty()
+            && completions.ids() == [FLUSHED]
     }
 
     /// What the run of `command`, fed `input`, comes to on a service of its
@@ -1137,7 +1195,7 @@ impl<G: Ground> Check<'_, G> {
             return None;
         }
         let result = service.take(1)?;
-        (completions.ids() == [1] && self.soon(|| service.pending() == 0)).then_some(result)
+        (completions.ids() == [1] && self.flushed(&service, &completions)).then_some(result)
     }
 
     /// [`RUN_INPUT`].
@@ -1543,7 +1601,7 @@ impl<G: Ground> Check<'_, G> {
             })
             && self.soon(|| !self.ground.alive(child))
             && self.soon(|| !self.ground.alive(grandchild))
-            && self.soon(|| service.0.pending() == 0);
+            && self.flushed(&service.0, &service.1);
         self.done(&service, held)
     }
 
@@ -1599,11 +1657,54 @@ impl<G: Ground> Check<'_, G> {
         let cancelled = streams.cancel(1);
         let ended = held
             && cancelled
-            && self.soon(|| streams.pending() == 0)
+            && self.flushed(streams, completions)
             && !self.ground.alive(child)
             && self.soon(|| !self.ground.alive(grandchild))
-            && completions.ids() == [1];
+            && completions.ids() == [1, FLUSHED];
         self.done(&service, ended)
+    }
+
+    /// [`FLUSH`].
+    fn flush<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let (service, completions) = Self::service(processes);
+        if !service.start(1, sh(self.dir, FLUSH_SCRIPT), ROOMY) {
+            return false;
+        }
+        let Some(child) = self.ground.written(&self.at("fl-child")) else {
+            self.shut(&service);
+            return false;
+        };
+        let asked = service.flush(2);
+        // The child cannot end until it is cancelled, so nothing the flush
+        // waits for is done: a flush completed at its call is here now.
+        let waited = asked && completions.ids().is_empty() && self.ground.alive(child);
+        let cancelled = service.cancel(1);
+        let flushed = completions.arrives(2, self.ground.deadline());
+        let then = flushed && !self.ground.alive(child) && service.pending() == 0;
+        let shut = self.shut(&service);
+        waited && cancelled && then && shut && completions.ids() == [2]
+    }
+
+    /// [`FLUSH_LIVE_STREAM`].
+    fn flush_live_stream<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let service = Self::service(processes);
+        if !self.open(
+            &service,
+            1,
+            sh(self.dir, FLUSH_STREAM_SCRIPT),
+            lines(Input::Pipe, ROOMY),
+        ) {
+            return self.done(&service, false);
+        }
+        let (streams, completions) = &service;
+        let Some(child) = self.ground.written(&self.at("fs-child")) else {
+            return self.done(&service, false);
+        };
+        let reading = streams.read(1, 2);
+        let flushed = streams.flush(3) && completions.arrives(3, self.ground.deadline());
+        let alive = flushed && self.ground.alive(child) && completions.ids() == [1, 3];
+        streams.cancel(1);
+        self.done(&service, reading && alive)
     }
 
     /// [`STREAM_SHUTDOWN`].
@@ -1702,10 +1803,10 @@ mod tests {
     use super::PROPERTIES;
 
     #[test]
-    fn the_properties_are_twenty_nine_and_each_is_named_once() {
+    fn the_properties_are_thirty_one_and_each_is_named_once() {
         let mut names = PROPERTIES.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 29);
+        assert_eq!(names.len(), 31);
     }
 }

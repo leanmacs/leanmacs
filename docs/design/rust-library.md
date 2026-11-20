@@ -209,7 +209,26 @@ job reads as it comes and whose standard input it writes to (phase 2;
   group of a running child, drops its result and never completes it.
   Shutdown refuses every later start (as shut down, completed at once),
   cancels every run, kills every group and blocks until every child is
-  reaped; it does not wait for a stream to close.
+  reaped; it does not wait for a stream to close. **A flush**
+  (`Service::flush`, deterministic-test-concurrency phase 1) is a wait of
+  the caller's, completed once every run started before it has ended (its
+  result kept, or cancelled and its child reaped), every open asked before
+  it has been answered, and every streaming child cancelled or forgotten
+  before it has been reaped; with nothing to wait for it is completed at
+  once. Each run's thread, after its own completion, and each streaming
+  child's waiter, once its child is reaped, removes its id from every
+  flush and completes those it was the last thing for, in the order they
+  were asked; shutdown completes the rest once every child is reaped. **A
+  live streaming child, its pending read and a write held by a full pipe
+  are not covered**: they wait on the child, not on the service, and a
+  flush that waited for them would never be completed. The contract holds
+  it to two more properties, `FLUSH` (a run held until it is cancelled
+  keeps a flush from completing; cancelled, the flush's is the next
+  completion and the child has been reaped by then; a wait that does not
+  reap fails it) and `FLUSH_LIVE_STREAM` (a flush completes beside a live
+  streaming child whose read is pending). The contract's own properties
+  wait on a flush, never on the pending count, to know a cancelled run is
+  over.
 - **The adapter** (`editor-process-std`) starts a child with
   `std::process` and `process_group(0)`. Its wait sees the exit with
   `waitid(P_PID, pid, WEXITED | WNOWAIT)`, which leaves the child unreaped,
