@@ -37,7 +37,8 @@ Rust indent fixture the indent checks read, and the directory of the
 default config `mise run install` ships (`config/default`), which
 `defaultConfigChecks` read. It reads nothing from the
 environment or the working directory. It runs every check in `checks`, names
-the ones that failed, and exits non-zero if any did.
+the ones that failed, each with what it saw when it says (`saw`), and exits
+non-zero if any did.
 
 The checks themselves live in test modules that mirror the module they
 test, where ModelTest keeps the model counterpart where there is one: the
@@ -48,9 +49,10 @@ default config (`config/default`) is no Lean module, so its checks are in
 `ConfigTest/DefaultConfig.lean`, which mirrors none. A test module keeps the helpers only its checks use. Helpers that several test
 modules use are in small support modules under `ConfigTest/Support/`, each
 of one kind of fixture, and `ConfigTest.Check` holds the `Check` type, the
-`Context` every check is given, `failures`, `run` (handed `checks` by
-`main`) and `usage`. Everything is in the namespace `ConfigTest`, so a list
-is `ConfigTest.<name>Checks` whichever module holds it. This module keeps
+`Context` every check is given, `failures`, `saw`, their own checks
+(`checkChecks`), `run` (handed `checks` by `main`) and `usage`. Everything
+is in the namespace `ConfigTest`, so a list is `ConfigTest.<name>Checks`
+whichever module holds it. This module keeps
 only `checks`, which runs them in order, and `main`.
 
 The model tests (`ModelTest.lean` and `ModelTest/`) pin the decisions of the
@@ -326,7 +328,8 @@ open Editor
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
-  lakefileChecks () ++ directoryChecks () ++ moduleFilesChecks () ++ hostChecks context ++
+  checkChecks () ++ lakefileChecks () ++ directoryChecks () ++ moduleFilesChecks () ++
+    hostChecks context ++
     threadChecks context ++
     jobChecks context ++
     treeObjectChecks context ++
