@@ -59,6 +59,22 @@ def windowOptionChecks : List Check :=
           (again full && again ["f"] && again [] && again ["--no-ime", "f"] &&
             (parsed full).map (·.restartArguments.contains "f") == some false) },
     { name :=
+        "the word a restart drops is the one the parser read as the file: each option's value is kept, wherever the file is, even a value spelled as the file is"
+      run :=
+        let handed (arguments : List String) : Option (List String) :=
+          (parsed arguments).map (·.restartArguments)
+        let valued :=
+          [("--config", "c"), ("--state", "st"), ("--sysroot", "/s"), ("--oleans", "/o"),
+            ("--present-mode", "fifo"), ("--frame-latency", "3")]
+        pure
+          (valued.all
+              (fun (option, value) =>
+                handed [option, value, "f"] == some [option, value] &&
+                  handed ["f", option, value] == some [option, value]) &&
+            handed ["--config", "f", "f"] == some ["--config", "f"] &&
+            handed ["f", "--state", "f"] == some ["--state", "f"] &&
+            handed ["--no-ime", "f", "--report"] == some ["--no-ime", "--report"]) },
+    { name :=
         "a run a restart started with --restore restores that index first; without one the restore names none"
       run :=
         let named : Window.Options → Window.Options := fun options =>

@@ -49,7 +49,9 @@ before the first event (`Options.starts`). It reads nothing itself, so
 - **A restart** (`Editor/Restore/Restart.lean`) hands the next run the
   options as given, the file dropped (`Options.restartArguments`): the
   restored session reopens the file, and every other option means the same
-  to the next run. The launch flags are not among them
+  to the next run. The word dropped is the one the parser read as the file
+  (`Read.withoutFile`), so a new option is handed on as it is read, with no
+  second list of the options that take a value. The launch flags are not among them
   (`Editor/Restart/Launch.lean`): the launcher gives the next run its own.
   A run a restart started restores the index it was handed (`Start.restore`).
 
@@ -244,6 +246,9 @@ structure Read where
   presentMode : Option PresentMode := none
   /-- `--frame-latency`'s number. -/
   frameLatency : Option Nat := none
+  /-- How many words of the command line follow the file, once it is read:
+  where the file is among them (`withoutFile`). -/
+  afterFile : Nat := 0
 
 /-- Reads `arguments` into `read`, or says what is wrong. -/
 def readAll (read : Read) : List String → Except String Read
@@ -273,22 +278,22 @@ def readAll (read : Read) : List String → Except String Read
     else
       match read.file with
       | some _ => .error "only one file is opened"
-      | none => readAll { read with file := some argument } rest
+      | none =>
+        readAll
+          { read with
+            file := some argument, afterFile := rest.length }
+          rest
 
-/-- `arguments` with the file among them dropped: every word that is not an
-option or an option's value. -/
-def withoutFile : List String → List String
-  | option :: value :: rest =>
-    if
-        ["--config", "--state", "--sysroot", "--oleans", "--present-mode",
-              "--frame-latency"].contains
-          option then
-      option :: value :: withoutFile rest
-    else
-      if option.startsWith "-" then option :: withoutFile (value :: rest)
-      else withoutFile (value :: rest)
-  | [option] => if option.startsWith "-" then [option] else []
-  | [] => []
+/-- `arguments`, the command line `read` was read from, with the word read
+as the file dropped, and every other word, an option or an option's value,
+kept: the parser alone decides which word is the file, so no list of the
+options that take a value is kept beside it. -/
+def Read.withoutFile (read : Read) (arguments : List String) : List String :=
+  match read.file with
+  | none => arguments
+  | some _ =>
+    let at_ := arguments.length - read.afterFile - 1
+    arguments.take at_ ++ arguments.drop (at_ + 1)
 
 /-- What `arguments`, the command line, asks for, given `environment`; or
 why it is refused, followed by a line of the usage. -/
@@ -312,7 +317,7 @@ def parse (environment : Environment) (arguments : List String) : Except String 
         report := read.report
         presentMode := read.presentMode
         frameLatency := read.frameLatency
-        given := withoutFile arguments }
+        given := read.withoutFile arguments }
 
 /-- The command line a restart hands the next run: every option given, the
 file dropped, no launch flag ("A restart", in the module docs). -/
