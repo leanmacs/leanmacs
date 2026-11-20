@@ -149,8 +149,11 @@ needs for the system's frameworks. What ships of the set is what
 stages ([`headless-mode.md`](headless-mode.md), "From an app bundle").
 Config may import any module of `Init`, `Std` and `Lean` the toolchain
 holds. Its size is in [`lean-runtime.md`](../design/lean-runtime.md),
-"Memory and size": about 3.9 GB, where it was 1,995 MB with the module
-files of config's imports alone (2026-11-19). `Info.plist` names the
+"Memory and size": 3,848.6 MB in 21,854 files on 2026-11-20, four fifths
+of it the toolchain, where it was 1,995 MB with the module files of
+config's imports alone (2026-11-19); its disk image is about 1.2 GB.
+`editorApp` stages and signs it in about 18 s when the editor is up to
+date. `Info.plist` names the
 bundle identifier `io.github.leanmacs.Leanmacs`, the executable `editor`,
 the icon, `NSHighResolutionCapable`, `LSArchitecturePriority` arm64 and
 `LSMinimumSystemVersion`, the lowest macOS the bundle has been run on:

@@ -187,12 +187,18 @@ Builds are kept under `~/.local/share/leanmacs/editors` (or
 `$XDG_DATA_HOME/leanmacs`), and the app starts the newest one, falling back
 to the one before it, then to the editor it shipped with.
 
-A git or Reservoir package needs `git` (`xcode-select --install` on macOS,
-or https://git-scm.com). A package that brings native code through C (C
-sources, or a system C library) needs nothing more; one with a Rust crate
-needs Cargo, installed with rustup (https://rustup.rs). The editor ships
-neither git nor Cargo, and says when one is needed. A set with no Rust
-needs no Cargo.
+The app builds a package set itself, from the Lean toolchain it ships: a
+set of pure-Lean packages needs nothing installed. A git or Reservoir
+package needs `git` (`xcode-select --install` on macOS, or
+https://git-scm.com); a path package needs nothing more. The app ships no
+C library headers, no macOS SDK and no Cargo, so a package with native code
+needs your own tooling (the Xcode command line tools for C that includes
+the system's headers; Cargo, installed with rustup from https://rustup.rs,
+for Rust, which builds only from a checkout) or a prebuilt binary its
+lakefile fetches, and its documentation says which. A small C binding that
+includes only `lean/lean.h` builds from the app. When a build fails for
+want of git, Cargo, a header or a system library, the build buffer and the
+echo area say which and how to install it.
 
 If the config directory is a git repository, ignore its `.lake/`.
 

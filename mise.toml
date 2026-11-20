@@ -1423,6 +1423,18 @@ run = [
 # `bench-start`, and of the staged bundle's headless mode for `Editor`. The
 # figures are in docs/design/lean-runtime.md, "What config may import,
 # measured". It takes a minute or two and needs a few GB of temporary disk.
+# Opt-in, never part of `ci`; macOS on arm64 only, after `app` and `dmg`:
+# the app bundle with the toolchain, measured (tools/bundle-bench.sh;
+# docs/design/lean-runtime.md, "The bundle with the toolchain, measured";
+# docs/dev-practices/on-demand-checks.md, "The bundle, measured on
+# demand"): the bundle's bytes and files by part, the image's share of
+# GitHub's 2 GiB asset limit, the bundled editor's start-up and resident
+# memory, and the time of builds of a user's set from the bundle. It
+# asserts nothing but that each run it times did what it times.
+[tasks.bundle-bench]
+description = "Opt-in, never part of ci; macOS on arm64 only: measure the built Leanmacs.app and its disk image: bytes by part, the image's share of GitHub's 2 GiB asset limit, start-up and resident memory, and the time of a user's set built from the bundle (tools/bundle-bench.sh)"
+run = 'id=$(cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- build-id) && sh tools/bundle-bench.sh packages/.lake/build/Leanmacs.app "dist/Leanmacs-$id.dmg"'
+
 [tasks.module-bench]
 description = "Opt-in, never part of ci; macOS only: measure what each import set config may use needs to ship (file kinds, bytes) and costs at start-up (time, memory), from a staged bundle, and what the bundle of the default set's config base holds and costs (tools/module-bench.sh). It asserts only that the headless runs it times installed their config"
 depends = ["lean"]

@@ -122,12 +122,15 @@ directories in a temporary directory with `tools/stage-bundle.sh` with
 `olean`, then `olean olean.server`, then `olean olean.server
 olean.private`, then that with `ir ir.sig`, and importing from each; and,
 with the closure staged with the kinds it needs, five runs of `bench-start`
-under `/usr/bin/time -l`. Then, once, the bundle as it is shipped: the
-editor is the default package set's, which elaborates config on the set's
-base (`Editor`, then the entry module of each default package), and a
-config file may import `Std` and `Lean`, so the script stages the closure
-of that base with `Std` and `Lean` from the directories the build recorded
-beside the editor, as `bundle-test` does, prints its modules and bytes,
+under `/usr/bin/time -l`. Then, once, the bundle as it was shipped until
+the app carried the whole toolchain (packages phase 9): the editor is the
+default package set's, which elaborates config on the set's base
+(`Editor`, then the entry module of each default package), and a config
+file may import `Std` and `Lean`, so the script stages the closure of that
+base with `Std` and `Lean` from the directories the build recorded beside
+the editor into one directory, `lean/editor`, which `tools/stage-bundle.sh`'s
+`--closure` form names in the bundle's record, so the staged editor finds
+it with no directory argument, prints its modules and bytes,
 and times five runs of that bundle's headless mode with an empty
 environment on each of two configs: `tests/headless/generate`, whose root
 imports `Editor` alone, and `tests/headless/bundle`, whose root imports
@@ -136,6 +139,29 @@ directory is removed by a trap. It takes about two minutes and a few GB of
 temporary disk. The figures, and what they decided, are in
 [`lean-runtime.md`](../design/lean-runtime.md), "What config may import,
 measured". Run it again when the Lean toolchain's pin moves.
+
+## The bundle, measured on demand
+
+```sh
+mise run app && mise run dmg && mise run bundle-bench
+```
+
+`tools/bundle-bench.sh`, macOS on arm64 only, measures the built
+`Leanmacs.app` and this build's disk image, and asserts nothing but that
+each run it times did what it times: the bundle's bytes and files by part
+(the toolchain, the core and the default packages, the editor and the
+launcher, the Rust archive, the link stubs, the whole); the image's bytes
+and its share of GitHub's 2 GiB release-asset limit; the median real time
+of 5 headless runs of the bundle's launcher with `env -i`, and the
+largest maximum resident set (`/usr/bin/time -l`), on
+`tests/headless/generate` (a config of `Editor` alone) and on
+`tests/headless/bundle` (a config that imports `Lean`); the time of the
+unchanged default set's build from the bundle, the first (which
+elaborates the core's lakefile) and a second; and the time of the build
+that installs `hello-init`. Everything it writes is in a temporary
+directory. It takes about 40 s; its figures of 2026-11-20 are in
+[`lean-runtime.md`](../design/lean-runtime.md), "The bundle with the
+toolchain, measured".
 
 ## The user-side link, on demand
 

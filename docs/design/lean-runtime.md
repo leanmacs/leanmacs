@@ -232,9 +232,11 @@ checkout, where the facet is, for that set's root and nothing else
 links nothing), and stages the file as `EditorSetRoot.lean` beside the
 package's sources and the lakefile of the user's side of the link
 (`tools/user-link/package/lakefile.lean`). The staged `lake` compiles that
-root and links it. What a later phase still owes is the generator on the
-user's machine, where there is no checkout to ask: a prebuilt core that
-supplies the facets is the packages roadmap's phase 9. The
+root and links it. The generator on the user's machine, where there is no
+checkout to ask, came with the packages roadmap's phase 9: the app ships
+the core built, whose lakefile supplies the facets, and links a user's set
+with the same stubs ("The app ships the toolchain", above;
+`bundle-test` and `app-check` build one from the bundle alone). The
 check reads the pieces from the default set's editor
 (`packages/.lake/build/bin/editor` and its `editor.rsp`), and the object it
 leaves out is that editor's generated root's, where it was `Main`'s. The
@@ -308,8 +310,8 @@ is the one more. The relinked editor's config base is its set's, `Editor`
 and then the entry modules of the default packages and of the fixture
 package, and it has no record, so the check's run step gives it two
 `.olean` directories joined with `:`, the staged pieces' and the one the
-package's build wrote. Shipping the default packages as prebuilt pieces of
-their own is phase 9's.
+package's build wrote. The app ships the default packages as prebuilt
+pieces of their own since phase 9, each in its own build directory.
 The toolchain is staged whole, so the set is sufficient and not shown
 minimal: what `lake`, `lean` and `clang` read of it was not measured, only
 what the linker opened.
@@ -1019,10 +1021,12 @@ lean-toolchain       generated when absent
   - **An editor run from a checkout writes both.** It finds its set's
     directory in `<executable>.set`, which the build writes beside it
     ("Start-up and shutdown").
-  - **The app writes `lean-toolchain` alone**, and says as information that
-    no lakefile is generated, in the report of every reload that finds the
-    directory without one: a bundle holds no package set to name until the
-    packages roadmap's phase 9. It is said each time, not once: nothing
+  - **The app writes both too since the packages roadmap's phase 9**: the
+    lakefile requires the set the bundle ships,
+    `Contents/Resources/lean/set`. An editor that knows no set directory
+    writes `lean-toolchain` alone, and says as information that no
+    lakefile is generated, in the report of every reload that finds the
+    directory without one. It is said each time, not once: nothing
     then has to remember that it was said, and a first reload that is
     rejected before the files are generated cannot swallow it. An
     installed reload's information is in its report and not in the echo
@@ -2614,8 +2618,9 @@ What the figures show:
   memory 2.2 times those of `Editor` alone.** The closure saves little
   there: `Lean` reaches all of `Std` and all of `Init`.
 
-**The bundle ships the closure of the set's base with `Std` and `Lean`**
-(decided 2026-11-19, with config as modules). Config is elaborated on the
+**The bundle shipped the closure of the set's base with `Std` and `Lean`**
+(decided 2026-11-19, with config as modules; superseded on 2026-11-20 by
+the whole toolchain, "The bundle with the toolchain, measured", below). Config is elaborated on the
 set's base, `Editor` and then the entry module of each package of the
 editor's set outside the core ([packages.md](packages.md), "The config base
 of a set"): for the default set, `Editor`, `ShippedThemes.EditorPackage`
@@ -2646,6 +2651,64 @@ default package's, and stage it into the bundle's one directory
   never twice in a process**: growing the base read what the two add in
   165 ms and made the new environment in 154 ms in a prototype, with no
   doubling of memory, and the environment it grew from stayed usable.
+
+### The bundle with the toolchain, measured
+
+Since the packages roadmap's phase 9 the app ships the whole Lean
+toolchain, the core and the default packages built, the Rust archive and
+the link stubs, so a user's package set builds from the app alone ("The app
+ships the toolchain"). That supersedes the closure-only bundle above, which
+shipped the module files config's imports read and nothing a build needs:
+a set's build needs `lake`, the linker, all of `Init`, `Std`, `Lean` and
+`Lake` and the built core, so the closure no longer saves anything worth
+its own staging. Measured on 2026-11-20, on an Apple M5 Max, macOS 27.2,
+Lean 4.35.0, with
+
+```sh
+mise run app && mise run dmg && mise run bundle-bench
+```
+
+(`tools/bundle-bench.sh`; [on-demand-checks.md](../dev-practices/on-demand-checks.md),
+"The bundle, measured on demand"). MB are 10⁶ bytes of apparent size. The
+headless runs are the bundle's launcher with `env -i`, median of 5 and the
+largest maximum resident set of 5, run twice; the same day `mise run
+module-bench`'s staged closure-only bundle measured the same two configs
+on the same editor, so the two columns differ by the layout alone, while
+2026-11-19's figures are on the editor of that day.
+
+| | With the toolchain (2026-11-20) | Closure only, same day (`module-bench`) | Closure only, 2026-11-19 |
+|---|---|---|---|
+| The toolchain (`lean/toolchain`) | 3,131.0 MB, 17,901 files | | |
+| The core and the default packages, sources and build output (`lean/lean`, `lean/set`) | 385.5 MB, 3,928 files | | |
+| The editor and the launcher (`Contents/MacOS`) | 239.6 MB | | |
+| The Rust archive (`lean/target`) | 85.5 MB | | |
+| The link stubs | 15 files, under 0.1 MB | | |
+| The whole bundle | 3,848.6 MB, 21,854 files | not measured | 1,995 MB (module files 1,760.1 MB) |
+| The disk image (`UDZO`) | 1,216,458,264 bytes, 56.6% of GitHub's 2 GiB asset limit | | |
+| Headless start, a config of `Editor` alone (`tests/headless/generate`): real time, maximum resident set | 0.41 to 0.47 s, 609.8 MB | 0.39 s, 572.3 MB | 0.24 s, 561.4 MB |
+| The same, a config that imports `Lean` (`tests/headless/bundle`) | 1.49 to 1.54 s, 1,452.1 MB | 1.16 s, 1,305.2 MB | 0.71 s, 1,294.0 MB |
+| The unchanged default set's build from the bundle (`lake build :editorInstall`): first, with the core's lakefile elaborated; second | 10.6 to 11.8 s; 0.8 to 0.9 s | | |
+| The build that installs `hello-init` from the bundle | 3.4 to 3.5 s | | |
+
+What the figures show:
+
+- **The image is well under the release-asset limit.** The toolchain is
+  four fifths of the bundle, but packs to about a third of its size; the
+  nightly refuses an image of 2 GiB or more (`ASSET_LIMIT` in
+  `crates/editor-release`), and three levers remain if a later change
+  needs room: `lib/` holds three identical copies of `libLLVM` and two of
+  `libclang-cpp` (218 MB), `ULMO` packs tighter than `UDZO`, and the
+  toolchain's `.ilean` and `src/` (117 MB) are not needed to build.
+- **A build from the app compiles nothing it ships.** The unchanged set's
+  first build is the elaboration of the core's lakefile into the config's
+  `.lake`, the generated root's compile and the link; the second only
+  links. A small package costs a few seconds more.
+- **Start-up and memory are a little higher than the closure's**, the same
+  day: about 0.05 s and 38 MB for `Editor` alone, 0.35 s and 147 MB for a
+  config that imports `Lean`. The modules imported are the same files; the
+  cause was not looked into. The day's start-up times are all higher than
+  2026-11-19's, the closure's too, so most of that change is the day's, not
+  the layout's.
 
 **A dynamically linked build saves disk and nothing else**, so there is none.
 Lake has no option for one outside Windows; it would be link arguments of

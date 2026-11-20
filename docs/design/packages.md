@@ -459,9 +459,10 @@ globs = ["Config.+"]
   (`lake -d ../tests/user-link query :editorRoot`). The check stages that
   file as the relinked editor's root. So the one generator writes every
   root, and the gate shows that set's root generates and lists the
-  package after the core (`ffi-test`). What is left for a later phase is
-  shipping the generator: on a user's machine there is no checkout to ask,
-  so the prebuilt core must carry the facets (phase 9).
+  package after the core (`ffi-test`). On a user's machine there is no
+  checkout to ask, so the app ships the core built with its lakefile,
+  which carries the facets (phase 9; [lean-runtime.md](lean-runtime.md),
+  "The app ships the toolchain").
 
 ### A package's tests and the gate's steps over them
 
@@ -852,7 +853,12 @@ tracked copy differs from the pin, naming it. A bump of the pin
 
 A user's config directory is a Lake package, and its lakefile is the
 source of truth for the user's package set (packages phase 8). This
-section is how a set the user names becomes the editor they run.
+section is how a set the user names becomes the editor they run. The app
+builds it itself, from the Lean toolchain, the core and the default
+packages it ships, with no Lean, compiler or Cargo of the user's (phase 9;
+[lean-runtime.md](lean-runtime.md), "The app ships the toolchain");
+`bundle-test` and `app-check` build one from a bundle alone, read-only,
+with decoys of every tool first on the `PATH`.
 
 ### The records beside a set's editor
 
@@ -1615,7 +1621,14 @@ the protocol again in Lean.
 ### Who can build it
 
 **Decided by the owner, 2026-11-20 (packages phase 8): the app never ships
-Cargo.**
+Cargo. And (phase 9): the app ships the Lean toolchain only, with no macOS
+SDK and no C library headers.** A set of pure-Lean packages builds from the
+app alone ([lean-runtime.md](lean-runtime.md), "The app ships the
+toolchain"). A package with native code needs the user's own tooling (the
+Xcode command line tools for C headers or the SDK, rustup's Cargo for
+Rust) or a prebuilt binary its lakefile fetches with the system's `git` or
+`curl`, and says so in its own documentation, the way an Emacs package with
+a native module either compiles it or fetches a prebuilt one.
 
 - **A C FFI is the preferred way for a package to bring native code**: C or
   C++ sources the toolchain's compiler builds, as Lake builds the core's
@@ -1623,7 +1636,18 @@ Cargo.**
   nothing beyond the bundled toolchain. A package's object reaches the
   editor's link through its library's `moreLinkObjs`. The fixture package
   `tests/user-sets/c-glue` is one: its `c/cglue.c` is bound by an
-  `@[extern]` declaration and answers its command.
+  `@[extern]` declaration and answers its command. From the app, the
+  bundled `clang` compiles C that includes `lean/lean.h` alone (`c-glue`
+  does, in `bundle-test` and `app-check`), and its linker links what the
+  link stubs hold, the system's functions the shipped editor itself
+  imports. C that includes a header of the system's C library
+  (`<stdio.h>`), or calls a system function the stubs lack, needs the
+  user's own Xcode command line tools, which the package's own build must
+  use. When such a build fails, the build buffer's failure line and the
+  echo area say which header, framework or library is missing, and to
+  install the Xcode command line tools (`xcode-select --install`) or use
+  the package's prebuilt binary (`missingTooling?`,
+  `lean/Editor/PackageSet/Build.lean`).
 - **A user's set with no Rust crate never runs Cargo.** It links the core's
   Rust archive as it is already built (`libeditor_rust.a`, with its record
   of system libraries `target/editor-rust/core/native-static-libs`): no
@@ -1650,6 +1674,11 @@ Cargo.**
   run time was refused earlier (`@[extern]` binds at link time). So a
   package's Rust reaches an editor only by compiling the generated crate
   on the user's machine, with Cargo.
+
+**From the app, no Rust package builds.** A package crate is outside the
+bundle's "repository", `Contents/Resources/lean`, so the refusal below
+applies: a Rust package builds only from a checkout, with the user's own
+Cargo.
 
 **Built, and refused.** A user's set builds the package crates the editor's
 own Cargo workspace holds: every package crate under the repository, such
