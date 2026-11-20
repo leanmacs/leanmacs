@@ -226,8 +226,10 @@ show:
   restore's second half runs, and its buffer is there, before reload 1 is
   installed; over a fake file service whose takes are held, a reload sent
   while the restore is in flight is held, and `await` does not answer
-  settled, until it has finished. They run after `fileChecks`, whose table
-  of waits the first shares;
+  settled, until it has finished; and a restore whose job fails releases
+  what it held (the file given opened, the text said, reload 1 installed)
+  and `await` answers settled. They run after `fileChecks`, whose table of
+  waits the first and the last share;
 - `journalFailureChecks`: the journal's failures in the host, over a
   journal whose failures the check puts there: they are taken after each
   step, and said once for each path, in the echo area and to the log;

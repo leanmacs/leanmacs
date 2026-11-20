@@ -2663,11 +2663,13 @@ def withRestoreHost (context : Context) (files : List (String × String))
     onStage stage fun host stage => check host stage.output fake
 
 /-- Runs `check` against a host over a config directory holding `files`,
-with the real elaborator, the packages `files` and `restore`, the library's
-file service (`Stage.overFiles`) and journal, and a temporary state
-directory holding that journal on disk; and stops the host. -/
+with the real elaborator, the package `files` and the package `restore`
+(or the one the check hands in its place), the library's file service
+(`Stage.overFiles`) and journal, and a temporary state directory holding
+that journal on disk, which the check is handed; and stops the host. -/
 def withRestoreFiles (context : Context) (files : List (String × String))
-    (check : Headless.Host → IO.Ref (Array String) → IO Bool) : IO Bool :=
+    (check : Headless.Host → IO.Ref (Array String) → System.FilePath → IO Bool)
+    (restore : Package := Restore.package) : IO Bool :=
   IO.FS.withTempDir fun directory =>
     IO.FS.withTempDir fun state => do
       writeConfig directory files
@@ -2676,29 +2678,39 @@ def withRestoreFiles (context : Context) (files : List (String × String))
       IO.FS.writeBinFile (Restore.logPath state 1 0 1) journalledLog
       let stage ←
         Stage.overFiles context (Config.Directory.source directory)
-            { packages := #[Files.package, Restore.package] }
+            { packages := #[Files.package, restore] }
       let stage :=
         { stage with
           collaborators :=
             { stage.collaborators with
               stateDirectory := some state
               journal := Headless.Journal.real stage.collaborators.published.reader } }
-      onStage stage fun host stage => check host stage.output
+      onStage stage fun host stage => check host stage.output state
 
 /-- The index of the first line of `lines` that `holds`, if one does. -/
 def firstLine? (lines : Array String) (holds : String → Bool) : Option Nat :=
   lines.findIdx? holds
 
+/-- A package that stands in for `restore`: its job `restore` fails at once,
+as a restore that cannot go on might. -/
+def failingRestore : Package :=
+  { name := "failing-restore"
+    setup := workJob Restore.restoreJob fun _ _ => throw "the session cannot be read" }
+
+/-- Whether `line` is a scene's line whose echo area says `text`. -/
+def echoes (text : String) (line : String) : Bool :=
+  line.startsWith "scene " && (line.splitOn s!", echo {text.quote}, echo padding ").length == 2
+
 /-- The checks of the restore at start-up in the host (`Editor/Headless.lean`,
 "Restoring a session"), on the real elaborator: it runs before the start-up
-reload, which it holds, and `await` waits for it. The first is over the
-library's file service and shares `fileChecks`' table of waits, so these
-run after them. -/
+reload, which it holds, and `await` waits for it; a restore whose job fails
+releases what it held. The first and the last are over the library's file
+service and share `fileChecks`' table of waits, so these run after them. -/
 def restoreOrderChecks (context : Context) : List Check :=
   [{  name :=
         "a host with a session and a config restores first: the restore's second half has run, and the buffer it restored is there, before reload 1 is installed"
       run :=
-        withRestoreFiles context greetConfig fun host output => do
+        withRestoreFiles context greetConfig fun host output _ => do
           host.send .restore
           host.send .reload
           unless ← host.settle patience do
@@ -2727,7 +2739,37 @@ def restoreOrderChecks (context : Context) : List Check :=
           hold.resolve ()
           let settled ← host.settle patience
           let late := (← output.get).any (·.startsWith "reload 1: installed")
-          return waited == .reloading && !early && settled && late }]
+          return waited == .reloading && !early && settled && late },
+    { name :=
+        "a restore whose job fails releases the requests it held, in order: the file given is opened, the text said, and reload 1 installed, so setup has run; and await answers settled"
+      run :=
+        withRestoreFiles context helloConfig (restore := failingRestore) fun host output state => do
+          let notes := state / "notes.txt"
+          IO.FS.writeFile notes "notes"
+          host.send .restore
+          host.send (.open notes.toString)
+          host.send (.say "held words")
+          host.send .reload
+          let waited ← host.await patience
+          let joined ← host.join patience
+          host.send .scene
+          host.send .show
+          unless ← host.settle patience do
+            return false
+          let lines ← output.get
+          let failed :=
+            firstLine? lines fun line =>
+              line.startsWith "job " && (line.splitOn s!" {Restore.restoreJob}: failed").length == 2
+          let installed := firstLine? lines (·.startsWith "reload 1: installed")
+          let opened :=
+            lines.any fun line => line.startsWith "text " && line.endsWith s!": {"notes".quote}"
+          let said := lines.any (echoes "held words")
+          let registered :=
+            lines.any fun line => line.startsWith "commands:" && (line.splitOn " ").contains "greet"
+          return waited == .settled && joined == .settled && opened && said && registered &&
+              match failed, installed with
+              | some failed, some installed => failed < installed
+              | _, _ => false }]
 
 /-- A journal (`Headless.Journal`) whose orders do nothing and whose
 failures are what the check put in `failed` since the host last took them,
