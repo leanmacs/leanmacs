@@ -1,14 +1,17 @@
-//! The hand-over record, `<state>/session/handover`: what a restart hands
-//! the launcher. The editor (Lean, `Editor.Restart.Handover.encode`) writes
-//! it once; only the launcher and its watcher read or rewrite it, to add a
-//! `failed` line.
+//! The hand-over record: what the launcher is handed when an editor is to
+//! be started with a fallback. A restart writes it at
+//! `<state>/session/handover` (Lean, `Editor.Restart.Handover.encode`),
+//! once, naming the session the new run restores; a cold start that picks
+//! a per-user editor writes it at `<data>/launch/cold-<pid>`
+//! ([`crate::launch`], [`crate::editors`]), with no session. Only the
+//! launcher and its watcher read or rewrite it, to add a `failed` line.
 //!
 //! The record is UTF-8 text, one field per line, each line ending in a
 //! newline:
 //!
 //! ```text
 //! leanmacs-handover 1
-//! session <the index the new run restores>
+//! session <the index the new run restores>   (only a restart's)
 //! shipped <the shipped default executable>
 //! candidate <path>        (repeated, in the order they are tried)
 //! argument <arg>          (repeated: the editor's own arguments)
@@ -20,12 +23,18 @@
 //! record of a later version is refused with [`Refused::Newer`], so a
 //! launcher never half-reads a format it does not know.
 //!
+//! A record with no `session` line is a cold start's. It is still format
+//! 1: only the launcher that wrote it reads it back (its watcher's fallback
+//! runs the same binary), and Lean only encodes, always with a session.
+//!
 //! # Where an addition goes
 //!
 //! A new field is a new line kind here, in [`decode`] and [`encode`], in
 //! Lean's encoder (`lean/Editor/Restart/Handover.lean`) and in the fixture
-//! both read, `tests/launch/handover-v1`. A field an older launcher must
-//! not skip raises [`VERSION`].
+//! both read, `tests/launch/handover-v1`; a field only the launcher writes
+//! is in the cold fixture, `tests/launch/handover-cold`, which only the
+//! Rust tests read. A field an older launcher must not skip raises
+//! [`VERSION`].
 
 use std::fmt;
 use std::path::PathBuf;
@@ -39,8 +48,9 @@ pub const MAGIC: &str = "leanmacs-handover";
 /// A decoded record.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Handover {
-    /// The session index the new run restores.
-    pub session: PathBuf,
+    /// The session index the new run restores: a restart's. A cold
+    /// start's record has none, and its editor restores as any start does.
+    pub session: Option<PathBuf>,
     /// The shipped default executable.
     pub shipped: PathBuf,
     /// The executables to try, in order.
@@ -128,11 +138,13 @@ fn path_text(path: &std::path::Path) -> String {
     escape(&path.to_string_lossy())
 }
 
-/// The record's text.
+/// The record's text; a record with no session has no `session` line.
 #[must_use]
 pub fn encode(handover: &Handover) -> String {
     let mut out = format!("{MAGIC} {VERSION}\n");
-    out.push_str(&format!("session {}\n", path_text(&handover.session)));
+    if let Some(session) = &handover.session {
+        out.push_str(&format!("session {}\n", path_text(session)));
+    }
     out.push_str(&format!("shipped {}\n", path_text(&handover.shipped)));
     for c in &handover.candidates {
         out.push_str(&format!("candidate {}\n", path_text(c)));
@@ -153,8 +165,8 @@ pub fn encode(handover: &Handover) -> String {
 /// [`Refused::Newer`] for a later version, and [`Refused::Malformed`] for
 /// anything else this launcher cannot read: bytes that are not UTF-8, a
 /// first line that is not the magic and a version, a field it does not
-/// know, a bad escape, a missing `session` or `shipped`, or a last line
-/// with no newline.
+/// know, a bad escape, a missing `shipped`, or a last line with no newline.
+/// A missing `session` is a cold start's record, and no fault.
 pub fn decode(bytes: &[u8]) -> Result<Handover, Refused> {
     let malformed = |why: &str| Refused::Malformed(why.to_owned());
     let text = std::str::from_utf8(bytes).map_err(|_| malformed("it is not UTF-8"))?;
@@ -171,7 +183,6 @@ pub fn decode(bytes: &[u8]) -> Result<Handover, Refused> {
     if version > VERSION {
         return Err(Refused::Newer(version));
     }
-    let mut session = None;
     let mut shipped = None;
     let mut handover = Handover::default();
     for (n, line) in lines.enumerate() {
@@ -181,7 +192,7 @@ pub fn decode(bytes: &[u8]) -> Result<Handover, Refused> {
         let value =
             unescape(field).map_err(|why| Refused::Malformed(format!("line {}: {why}", n + 2)))?;
         match key {
-            "session" => session = Some(PathBuf::from(value)),
+            "session" => handover.session = Some(PathBuf::from(value)),
             "shipped" => shipped = Some(PathBuf::from(value)),
             "candidate" => handover.candidates.push(PathBuf::from(value)),
             "argument" => handover.arguments.push(value),
@@ -194,7 +205,6 @@ pub fn decode(bytes: &[u8]) -> Result<Handover, Refused> {
             }
         }
     }
-    handover.session = session.ok_or_else(|| malformed("it names no session"))?;
     handover.shipped = shipped.ok_or_else(|| malformed("it names no shipped executable"))?;
     Ok(handover)
 }
@@ -207,7 +217,9 @@ mod tests {
     /// byte (`ModelTest.restartHandoverChecks`).
     fn fixture() -> Handover {
         Handover {
-            session: "/Users/a/Library/Application Support/Leanmacs/session/session-3.json".into(),
+            session: Some(
+                "/Users/a/Library/Application Support/Leanmacs/session/session-3.json".into(),
+            ),
             shipped: "/Applications/Leanmacs.app/Contents/MacOS/editor".into(),
             candidates: vec![
                 "/Users/a/Library/Application Support/Leanmacs/executables/7/editor".into(),
@@ -227,6 +239,32 @@ mod tests {
         let bytes = include_bytes!("../../../tests/launch/handover-v1");
         assert_eq!(decode(bytes), Ok(fixture()));
         assert_eq!(encode(&fixture()).as_bytes(), bytes);
+    }
+
+    /// The cold fixture's value: what a cold start writes
+    /// (`crate::launch`), with no session.
+    fn cold_fixture() -> Handover {
+        Handover {
+            session: None,
+            shipped: "/Applications/Leanmacs.app/Contents/MacOS/editor".into(),
+            candidates: vec![
+                "/Users/a/.local/share/leanmacs/editors/3f9a0c/10/editor".into(),
+                "/Users/a/.local/share/leanmacs/editors/3f9a0c/2/editor".into(),
+                "/Applications/Leanmacs.app/Contents/MacOS/editor".into(),
+            ],
+            arguments: vec!["--state".into(), "/tmp/two words".into()],
+            failed: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_checked_in_cold_fixture_has_no_session_and_encodes_back() {
+        let bytes = include_bytes!("../../../tests/launch/handover-cold");
+        assert_eq!(decode(bytes), Ok(cold_fixture()));
+        assert_eq!(encode(&cold_fixture()).as_bytes(), bytes);
+        let mut failed = cold_fixture();
+        failed.mark_failed(&failed.candidates[0].clone());
+        assert_eq!(decode(encode(&failed).as_bytes()), Ok(failed));
     }
 
     #[test]
@@ -264,8 +302,8 @@ mod tests {
             b"leanmacs-handover 1",
             b"something else 1\n",
             b"leanmacs-handover x\n",
-            b"leanmacs-handover 1\nshipped /e\n",
             b"leanmacs-handover 1\nsession /s\n",
+            b"leanmacs-handover 1\ncandidate /c\n",
             b"leanmacs-handover 1\nsession /s\nshipped /e\nnew /x\n",
             b"leanmacs-handover 1\nsession /s\nshipped /e\ncandidate\n",
             b"leanmacs-handover 1\nsession /s\\q\nshipped /e\n",

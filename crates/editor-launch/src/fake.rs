@@ -2,17 +2,29 @@
 //! that drives the core: files that are a map ([`FakeFiles`]), a clock
 //! that moves only when waited on ([`FakeClock`]), processes that end on a
 //! script ([`FakePids`]), starts and execs that are recorded
-//! ([`FakeSpawn`], [`FakeExec`]) and a platform that keeps what it was told
-//! to say ([`FakePlatform`]). [`FakeWorld`] holds one of each.
+//! ([`FakeSpawn`], [`FakeExec`]) and a platform with the variables it was
+//! given that keeps what it was told to say ([`FakePlatform`]).
+//! [`FakeWorld`] holds one of each.
 //!
 //! The clock's time is shared: [`FakePids`] and [`FakeFiles`] made from a
 //! clock read and move the same time, so a wait on a process that ends at
 //! 300 ms leaves the clock at 300 ms, and a file scripted to go at 200 ms is
 //! gone once the clock has passed it.
+//!
+//! So is a journal ([`FakeJournal`]): the files, starts and execs of a
+//! [`FakeWorld`] write each change and start into one, in order, so a test
+//! can tell that a record was written before the watcher was started.
+//!
+//! The files' directories are those made ([`Files::make_dir_all`],
+//! [`FakeFiles::with_dir`]) and every parent of a file or a directory there,
+//! the root always among them; a directory stays when its files are
+//! removed. A write into a directory that is not there fails, as the
+//! system's does.
 
-use std::cell::Cell;
-use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 
 use crate::ports::{
@@ -49,15 +61,60 @@ impl Clock for FakeClock {
     }
 }
 
+/// One change or start the fakes saw, in [`FakeJournal`]'s order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Happened {
+    /// A file was written ([`Files::write_atomic`]).
+    Wrote(PathBuf),
+    /// A file was moved ([`Files::rename`]): from, to.
+    Renamed(PathBuf, PathBuf),
+    /// A file that was there was removed ([`Files::remove`]).
+    Removed(PathBuf),
+    /// A directory was made ([`Files::make_dir_all`]).
+    MadeDir(PathBuf),
+    /// A program was started detached ([`Spawn::spawn_detached`]).
+    Spawned(PathBuf),
+    /// A program was exec'd ([`Exec::exec`]), whether or not it was refused.
+    Execed(PathBuf),
+}
+
+/// What the fakes it is given saw happen, in order; clones share one
+/// journal. Only what succeeded is written in it.
+#[derive(Debug, Clone, Default)]
+pub struct FakeJournal(Rc<RefCell<Vec<Happened>>>);
+
+impl FakeJournal {
+    /// An empty journal.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Writes `happened` at its end.
+    pub fn record(&self, happened: Happened) {
+        self.0.borrow_mut().push(happened);
+    }
+
+    /// Everything written, in order.
+    #[must_use]
+    pub fn entries(&self) -> Vec<Happened> {
+        self.0.borrow().clone()
+    }
+}
+
 /// Files that are a map of paths to bytes, read at the shared clock's
 /// time: a removal scripted with [`FakeFiles::remove_at`] has happened once
-/// the clock has reached it.
+/// the clock has reached it. Its directories are as the module docs say.
 #[derive(Debug, Clone, Default)]
 pub struct FakeFiles {
     /// Every file and its bytes.
     pub files: BTreeMap<PathBuf, Vec<u8>>,
+    /// The directories made, and those kept when their last file went;
+    /// every parent of a file or of one of these is a directory too.
+    pub dirs: BTreeSet<PathBuf>,
     clock: FakeClock,
     removals: Vec<(u64, PathBuf)>,
+    journal: FakeJournal,
 }
 
 impl FakeFiles {
@@ -70,10 +127,25 @@ impl FakeFiles {
         }
     }
 
-    /// These files with `path` holding `bytes`.
+    /// These files with `path` holding `bytes`, and its parents
+    /// directories.
     #[must_use]
     pub fn with(mut self, path: impl Into<PathBuf>, bytes: impl Into<Vec<u8>>) -> Self {
         self.files.insert(path.into(), bytes.into());
+        self
+    }
+
+    /// These files with the directory `dir`, and its parents.
+    #[must_use]
+    pub fn with_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.dirs.insert(dir.into());
+        self
+    }
+
+    /// These files writing what they change in `journal`.
+    #[must_use]
+    pub fn journaled(mut self, journal: &FakeJournal) -> Self {
+        self.journal = journal.clone();
         self
     }
 
@@ -94,6 +166,32 @@ impl FakeFiles {
         let now = self.clock.now_ms();
         self.removals.iter().any(|(at, p)| *at <= now && p == path)
     }
+
+    fn is_file(&self, path: &Path) -> bool {
+        !self.removed(path) && self.files.contains_key(path)
+    }
+
+    /// Whether `path` is a directory: the root, one made or kept, or a
+    /// parent of a file or of one of those.
+    fn is_dir(&self, path: &Path) -> bool {
+        if self.files.contains_key(path) {
+            return false;
+        }
+        path.parent().is_none()
+            || self
+                .files
+                .keys()
+                .chain(&self.dirs)
+                .any(|p| p.starts_with(path))
+    }
+
+    /// Keeps the directory `path` was in, as the system does when the file
+    /// goes.
+    fn keep_parent(&mut self, path: &Path) {
+        if let Some(parent) = path.parent() {
+            self.dirs.insert(parent.to_owned());
+        }
+    }
 }
 
 impl Files for FakeFiles {
@@ -105,25 +203,75 @@ impl Files for FakeFiles {
     }
 
     fn write_atomic(&mut self, path: &Path, bytes: &[u8]) -> Result<(), FileError> {
+        if let Some(parent) = path.parent()
+            && !self.is_dir(parent)
+        {
+            return Err(if self.is_file(parent) {
+                FileError::Other(format!("{} is not a directory", parent.display()))
+            } else {
+                FileError::NotFound
+            });
+        }
         self.removals.retain(|(_, p)| p != path);
         self.files.insert(path.to_owned(), bytes.to_vec());
+        self.journal.record(Happened::Wrote(path.to_owned()));
         Ok(())
     }
 
     fn rename(&mut self, from: &Path, to: &Path) -> Result<(), FileError> {
         let bytes = self.read(from)?;
+        self.keep_parent(from);
         self.files.remove(from);
         self.files.insert(to.to_owned(), bytes);
+        self.journal
+            .record(Happened::Renamed(from.to_owned(), to.to_owned()));
         Ok(())
     }
 
     fn remove(&mut self, path: &Path) -> Result<(), FileError> {
+        if self.is_file(path) {
+            self.keep_parent(path);
+            self.journal.record(Happened::Removed(path.to_owned()));
+        }
         self.files.remove(path);
         Ok(())
     }
 
     fn exists(&self, path: &Path) -> bool {
-        !self.removed(path) && self.files.contains_key(path)
+        self.is_file(path) || self.is_dir(path)
+    }
+
+    fn list(&self, dir: &Path) -> Result<Vec<OsString>, FileError> {
+        if self.is_file(dir) {
+            return Err(FileError::Other(format!(
+                "{} is not a directory",
+                dir.display()
+            )));
+        }
+        if !self.is_dir(dir) {
+            return Err(FileError::NotFound);
+        }
+        let files = self
+            .files
+            .keys()
+            .filter_map(|p| if self.removed(p) { p.parent() } else { Some(p) });
+        let names: BTreeSet<OsString> = files
+            .chain(self.dirs.iter().map(PathBuf::as_path))
+            .filter_map(|p| match p.strip_prefix(dir).ok()?.components().next()? {
+                Component::Normal(name) => Some(name.to_owned()),
+                _ => None,
+            })
+            .collect();
+        Ok(names.into_iter().collect())
+    }
+
+    fn make_dir_all(&mut self, dir: &Path) -> Result<(), FileError> {
+        if let Some(file) = dir.ancestors().find(|p| self.is_file(p)) {
+            return Err(FileError::Other(format!("{} is a file", file.display())));
+        }
+        self.dirs.insert(dir.to_owned());
+        self.journal.record(Happened::MadeDir(dir.to_owned()));
+        Ok(())
     }
 }
 
@@ -194,6 +342,16 @@ pub struct FakeSpawn {
     pub spawned: Vec<Invocation>,
     /// Refuses every start with this reason, when set.
     pub refuse: Option<String>,
+    journal: FakeJournal,
+}
+
+impl FakeSpawn {
+    /// These starts writing each start in `journal`.
+    #[must_use]
+    pub fn journaled(mut self, journal: &FakeJournal) -> Self {
+        self.journal = journal.clone();
+        self
+    }
 }
 
 impl Spawn for FakeSpawn {
@@ -202,6 +360,8 @@ impl Spawn for FakeSpawn {
             return Err(reason.clone());
         }
         self.spawned.push(invocation.clone());
+        self.journal
+            .record(Happened::Spawned(invocation.program.clone()));
         Ok(Pid(1000
             + u32::try_from(self.spawned.len())
                 .unwrap_or(u32::MAX - 1000)))
@@ -217,9 +377,17 @@ pub struct FakeExec {
     pub execs: Vec<Invocation>,
     /// The programs the exec refuses, and how.
     pub refusals: HashMap<PathBuf, Refusal>,
+    journal: FakeJournal,
 }
 
 impl FakeExec {
+    /// These execs writing each exec in `journal`.
+    #[must_use]
+    pub fn journaled(mut self, journal: &FakeJournal) -> Self {
+        self.journal = journal.clone();
+        self
+    }
+
     /// These execs refusing `program` with `refusal`.
     #[must_use]
     pub fn refusing(mut self, program: impl Into<PathBuf>, refusal: Refusal) -> Self {
@@ -231,6 +399,8 @@ impl FakeExec {
 impl Exec for FakeExec {
     fn exec(&mut self, invocation: &Invocation) -> Refusal {
         self.execs.push(invocation.clone());
+        self.journal
+            .record(Happened::Execed(invocation.program.clone()));
         self.refusals
             .get(&invocation.program)
             .cloned()
@@ -238,15 +408,25 @@ impl Exec for FakeExec {
     }
 }
 
-/// The launcher's facts, as given, and every line it said.
+/// The launcher's facts and environment, as given, and every line it
+/// said.
 #[derive(Debug, Clone, Default)]
 pub struct FakePlatform {
     /// Its own path.
     pub own_path: PathBuf,
     /// Whether it is macOS.
     pub macos: bool,
+    /// Its environment: every variable set, and its value.
+    pub vars: BTreeMap<String, OsString>,
     /// Every line said, in order.
     pub said: Vec<String>,
+}
+
+impl FakePlatform {
+    /// Sets the variable `name` to `value`.
+    pub fn set_var(&mut self, name: impl Into<String>, value: impl Into<OsString>) {
+        self.vars.insert(name.into(), value.into());
+    }
 }
 
 impl Platform for FakePlatform {
@@ -256,6 +436,10 @@ impl Platform for FakePlatform {
 
     fn is_macos(&self) -> bool {
         self.macos
+    }
+
+    fn var(&self, name: &str) -> Option<OsString> {
+        self.vars.get(name).cloned()
     }
 
     fn say(&mut self, line: &str) {
@@ -278,25 +462,30 @@ pub struct FakeWorld {
     pub exec: FakeExec,
     /// The platform.
     pub platform: FakePlatform,
+    /// The journal the files, the starts and the execs write in.
+    pub journal: FakeJournal,
 }
 
 impl FakeWorld {
-    /// A launcher at `own_path`, on macOS or not, with no file, as pid
-    /// 100 at time 0.
+    /// A launcher at `own_path`, on macOS or not, with no file and no
+    /// variable, as pid 100 at time 0.
     #[must_use]
     pub fn new(own_path: impl Into<PathBuf>, macos: bool) -> Self {
         let clock = FakeClock::new();
+        let journal = FakeJournal::new();
         Self {
-            files: FakeFiles::new(&clock),
+            files: FakeFiles::new(&clock).journaled(&journal),
             pids: FakePids::new(&clock, Pid(100)),
             clock,
-            spawn: FakeSpawn::default(),
-            exec: FakeExec::default(),
+            spawn: FakeSpawn::default().journaled(&journal),
+            exec: FakeExec::default().journaled(&journal),
             platform: FakePlatform {
                 own_path: own_path.into(),
                 macos,
+                vars: BTreeMap::new(),
                 said: Vec::new(),
             },
+            journal,
         }
     }
 
@@ -361,6 +550,74 @@ mod tests {
         files.remove(Path::new("/b")).unwrap();
         files.remove(Path::new("/b")).unwrap();
         assert!(files.files.is_empty());
+    }
+
+    #[test]
+    fn a_directory_is_made_or_a_files_parent_and_stays_when_its_files_go() {
+        let mut clock = FakeClock::new();
+        let mut files = FakeFiles::new(&clock).with("/a/b/f", "x").with_dir("/e");
+        files.remove_at(100, "/a/b/g");
+        files = files.with("/a/b/g", "y");
+        assert_eq!(files.list(Path::new("/")), Ok(vec!["a".into(), "e".into()]));
+        assert_eq!(
+            files.list(Path::new("/a/b")),
+            Ok(vec!["f".into(), "g".into()])
+        );
+        clock.sleep_ms(100);
+        assert_eq!(files.list(Path::new("/a/b")), Ok(vec!["f".into()]));
+        files.remove(Path::new("/a/b/f")).unwrap();
+        assert_eq!(files.list(Path::new("/a/b")), Ok(Vec::new()));
+        assert!(files.exists(Path::new("/a/b")));
+        assert_eq!(files.list(Path::new("/x")), Err(FileError::NotFound));
+        assert!(matches!(
+            files.list(Path::new("/a/b/g")),
+            Err(FileError::NotFound)
+        ));
+        assert_eq!(
+            files.write_atomic(Path::new("/x/y"), b"z"),
+            Err(FileError::NotFound)
+        );
+        let mut with_file = FakeFiles::new(&clock).with("/f", "x");
+        assert!(matches!(
+            with_file.list(Path::new("/f")),
+            Err(FileError::Other(_))
+        ));
+        assert!(matches!(
+            with_file.make_dir_all(Path::new("/f/g")),
+            Err(FileError::Other(_))
+        ));
+        assert!(matches!(
+            with_file.write_atomic(Path::new("/f/g"), b"z"),
+            Err(FileError::Other(_))
+        ));
+    }
+
+    #[test]
+    fn a_worlds_journal_keeps_its_writes_starts_and_execs_in_order() {
+        let mut fake = FakeWorld::new("/l", false);
+        let world = fake.world();
+        world.files.make_dir_all(Path::new("/d")).unwrap();
+        world.files.write_atomic(Path::new("/d/r"), b"x").unwrap();
+        assert!(world.files.write_atomic(Path::new("/no/r"), b"x").is_err());
+        world.spawn.spawn_detached(&Invocation::new("/w")).unwrap();
+        world.exec.exec(&Invocation::new("/e"));
+        world
+            .files
+            .rename(Path::new("/d/r"), Path::new("/d/s"))
+            .unwrap();
+        world.files.remove(Path::new("/d/s")).unwrap();
+        world.files.remove(Path::new("/d/s")).unwrap();
+        assert_eq!(
+            fake.journal.entries(),
+            [
+                Happened::MadeDir("/d".into()),
+                Happened::Wrote("/d/r".into()),
+                Happened::Spawned("/w".into()),
+                Happened::Execed("/e".into()),
+                Happened::Renamed("/d/r".into(), "/d/s".into()),
+                Happened::Removed("/d/s".into()),
+            ]
+        );
     }
 
     #[test]

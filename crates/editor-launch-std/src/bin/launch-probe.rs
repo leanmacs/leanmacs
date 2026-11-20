@@ -10,16 +10,20 @@
 //! - **As the contract's helper** (`--contract …`), it does what
 //!   `editor_launch::contract`'s module docs say, through the real
 //!   adapters.
+//! - **As the variable contract's helper** (`--contract-var`), it runs
+//!   `editor_launch::contract::check_var` on `StdPlatform` in the
+//!   environment it was started with, and prints the name of each
+//!   property that fails, one per line.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use editor_launch::contract::{REPORTED, Report, refused, report};
+use editor_launch::contract::{REPORTED, Report, check_var, refused, report};
 use editor_launch::handover::escape;
 use editor_launch::launch::CF_PROCESS_PATH;
 use editor_launch::ports::{Exec, Files, Invocation};
-use editor_launch_std::{StdExec, StdFiles, identity};
+use editor_launch_std::{StdExec, StdFiles, StdPlatform, identity};
 
 fn strings(args: &[OsString]) -> Vec<String> {
     args.iter()
@@ -137,11 +141,27 @@ fn contract(args: &[OsString]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The variable property on this process's own environment: prints the
+/// name of each property that fails, one per line.
+fn contract_var() -> ExitCode {
+    let platform = match StdPlatform::new() {
+        Ok(platform) => platform,
+        Err(e) => {
+            eprintln!("launch-probe: cannot tell where this probe is: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    for failed in check_var(&platform) {
+        println!("{failed}");
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    if args.first().is_some_and(|a| a == "--contract") {
-        contract(&args)
-    } else {
-        probe(&args)
+    match args.first().and_then(|a| a.to_str()) {
+        Some("--contract") => contract(&args),
+        Some("--contract-var") => contract_var(),
+        _ => probe(&args),
     }
 }

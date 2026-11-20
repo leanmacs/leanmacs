@@ -5,6 +5,14 @@
 //!   to what the core assumes. They run on the fakes (this module's tests)
 //!   and on the real adapters (`editor-launch-std`'s `tests/contract.rs`),
 //!   so the fakes cannot drift from the system.
+//! - [`check_var`] holds a [`Platform`]'s environment variables to what
+//!   the core assumes, in an environment that has [`VAR_SET`] set to
+//!   [`VAR_VALUE`], [`VAR_EMPTY`] set and empty, and [`VAR_UNSET`] not set.
+//!   It runs on the fake platform given those variables (this module's
+//!   tests), and on the real one in a helper started with them
+//!   (`launch-probe --contract-var`, which prints the names of the
+//!   properties that fail), so no test changes its own process's
+//!   environment.
 //! - [`check_processes`] holds [`Pids`](crate::ports::Pids), [`Spawn`](crate::ports::Spawn) and the real `Exec` to
 //!   theirs on real processes, with a helper program: a process that is
 //!   not the caller's child is waited on and killed, a detached start has
@@ -28,7 +36,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::handover::{escape, unescape};
-use crate::ports::{Clock, FileError, Files, Invocation, Pid, Refusal, Waited, World};
+use crate::ports::{Clock, FileError, Files, Invocation, Pid, Platform, Refusal, Waited, World};
 
 /// `write_atomic` then `read` gives the bytes back.
 pub const FILES_ROUND_TRIP: &str = "a file written is read back whole";
@@ -40,6 +48,22 @@ pub const FILES_MISSING: &str = "a missing file is NotFound and does not exist";
 pub const FILES_RENAME: &str = "a rename moves the file over what is there";
 /// `remove` of nothing is no error.
 pub const FILES_REMOVE_NOTHING: &str = "removing nothing is no error";
+/// `write_atomic` into a directory that is not there fails, and leaves
+/// nothing.
+pub const FILES_WRITE_NO_DIRECTORY: &str = "a write into a missing directory fails";
+/// `make_dir_all` makes a directory and its parents, empty, and making it
+/// again is no error.
+pub const FILES_MAKE_DIRECTORY: &str =
+    "making a directory makes it and its parents, empty, and making it again is no error";
+/// `list` names each entry of a directory once, files and directories
+/// alike.
+pub const FILES_LIST: &str =
+    "a listing names each entry of a directory once, files and directories alike";
+/// `list` of a directory that is not there is `NotFound`.
+pub const FILES_LIST_MISSING: &str = "a listing of a missing directory is NotFound";
+/// A variable is read as it is set.
+pub const PLATFORM_VAR: &str =
+    "a variable is read as it is set, an empty one as empty, and one not set as none";
 /// The clock moves forward by at least a sleep.
 pub const CLOCK_SLEEPS: &str = "the clock moves forward by at least what was slept";
 /// A detached process reports a parent other than the caller.
@@ -61,6 +85,15 @@ pub const EXEC_ENVIRONMENT: &str = "an exec applies its set and its unset";
 /// An exec of a missing program is `NotFound`, and the process carries on.
 pub const EXEC_NOT_FOUND: &str =
     "an exec of a missing program is NotFound and the process carries on";
+
+/// The variable [`check_var`] expects set, to [`VAR_VALUE`].
+pub const VAR_SET: &str = "LEANMACS_LAUNCH_CONTRACT_VAR";
+/// [`VAR_SET`]'s value: spaces and a letter that is not ASCII.
+pub const VAR_VALUE: &str = "a value, ü";
+/// The variable [`check_var`] expects set and empty.
+pub const VAR_EMPTY: &str = "LEANMACS_LAUNCH_CONTRACT_VAR_EMPTY";
+/// The variable [`check_var`] expects not set.
+pub const VAR_UNSET: &str = "LEANMACS_LAUNCH_CONTRACT_VAR_UNSET";
 
 /// The variable the exec property sets.
 pub const SET: &str = "LEANMACS_LAUNCH_CONTRACT_SET";
@@ -175,7 +208,43 @@ pub fn check_files(files: &mut dyn Files, dir: &Path) -> Vec<&'static str> {
     if files.remove(&b).is_err() || files.remove(&b).is_err() || files.exists(&b) {
         failed.push(FILES_REMOVE_NOTHING);
     }
+    let absent = dir.join("absent");
+    let stray = absent.join("x");
+    if files.write_atomic(&stray, b"x").is_ok() || files.exists(&stray) || files.exists(&absent) {
+        failed.push(FILES_WRITE_NO_DIRECTORY);
+    }
+    let made = dir.join("made");
+    let deeper = made.join("deeper");
+    let made_twice = files.make_dir_all(&deeper).is_ok()
+        && files.make_dir_all(&deeper).is_ok()
+        && files.exists(&made)
+        && files.exists(&deeper)
+        && files.list(&deeper) == Ok(Vec::new());
+    if !made_twice {
+        failed.push(FILES_MAKE_DIRECTORY);
+    }
+    let listed = files.write_atomic(&made.join("file"), b"x").is_ok()
+        && files.list(&made).map(|mut names| {
+            names.sort();
+            names
+        }) == Ok(vec!["deeper".into(), "file".into()]);
+    if !listed {
+        failed.push(FILES_LIST);
+    }
+    if files.list(&absent) != Err(FileError::NotFound) {
+        failed.push(FILES_LIST_MISSING);
+    }
     failed
+}
+
+/// Runs the variable property on `platform`, which must run where
+/// [`VAR_SET`] is [`VAR_VALUE`], [`VAR_EMPTY`] is empty and [`VAR_UNSET`]
+/// is not set, and returns its name when it fails.
+pub fn check_var(platform: &dyn Platform) -> Vec<&'static str> {
+    let read = platform.var(VAR_SET) == Some(VAR_VALUE.into())
+        && platform.var(VAR_EMPTY) == Some("".into())
+        && platform.var(VAR_UNSET).is_none();
+    if read { Vec::new() } else { vec![PLATFORM_VAR] }
 }
 
 /// Runs the clock's property and returns its name when it fails.
@@ -321,15 +390,28 @@ pub fn check_processes(world: &mut World<'_>, helper: &Path, dir: &Path) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake::{FakeClock, FakeFiles};
+    use std::ffi::OsString;
+
+    use crate::fake::{FakeClock, FakeFiles, FakePlatform};
 
     #[test]
     fn the_fake_files_and_clock_keep_the_contract() {
         let clock = FakeClock::new();
-        let mut files = FakeFiles::new(&clock);
+        let mut files = FakeFiles::new(&clock).with_dir("/d");
         assert_eq!(check_files(&mut files, Path::new("/d")), Vec::<&str>::new());
         let mut clock = clock;
         assert_eq!(check_clock(&mut clock), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn the_fake_platform_given_the_variables_keeps_the_contract() {
+        let mut platform = FakePlatform::default();
+        assert_eq!(check_var(&platform), vec![PLATFORM_VAR]);
+        platform.set_var(VAR_SET, VAR_VALUE);
+        platform.set_var(VAR_EMPTY, "");
+        assert_eq!(check_var(&platform), Vec::<&str>::new());
+        platform.set_var(VAR_UNSET, "x");
+        assert_eq!(check_var(&platform), vec![PLATFORM_VAR]);
     }
 
     #[test]
@@ -351,6 +433,12 @@ mod tests {
             fn exists(&self, _: &Path) -> bool {
                 true
             }
+            fn list(&self, _: &Path) -> Result<Vec<OsString>, FileError> {
+                Ok(Vec::new())
+            }
+            fn make_dir_all(&mut self, _: &Path) -> Result<(), FileError> {
+                Ok(())
+            }
         }
         assert_eq!(
             check_files(&mut Forgetful, Path::new("/d")),
@@ -359,7 +447,10 @@ mod tests {
                 FILES_REPLACE,
                 FILES_MISSING,
                 FILES_RENAME,
-                FILES_REMOVE_NOTHING
+                FILES_REMOVE_NOTHING,
+                FILES_WRITE_NO_DIRECTORY,
+                FILES_LIST,
+                FILES_LIST_MISSING
             ]
         );
     }

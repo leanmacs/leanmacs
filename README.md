@@ -266,8 +266,9 @@ Use `mise run lean` in place of a bare `lake build`
 
 `mise run edit` builds first, then opens `<file>`, relative to the
 directory you ran it from, in the editor's window, or an empty buffer when
-no file is given. It hands the editor the pinned Lean toolchain, so config
-loads. Options go before the file:
+no file is given. It starts the editor through the app's launcher, so the
+newest build of your own package set (see "Packages") is the one that
+runs. It hands the editor the pinned Lean toolchain, so config loads. Options go before the file:
 
 - `--config <dir>`: the config directory, in place of the default
   ([Config](#config)).

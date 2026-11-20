@@ -509,9 +509,41 @@ process first). An exec that is refused marks the candidate failed and the
 next is tried in the same process. With none left the record is renamed
 `handover.failed` and the launcher exits 1: the index is not ended, so the
 next start restores it by phase 1's rule. A record of a later format is
-left as it is and the default started with no hand-over. The whole decision
+left as it is and the launcher starts cold. The whole decision
 is `editor-launch`'s core, on ports, pinned on fakes; the real adapters are
 held to the ports' contract and run end to end in `tests/fallback.rs`.
+
+**A cold start picks the newest per-user editor** (packages phase 8;
+[packages.md](packages.md), "User package sets"). The launcher reads the
+core's identity beside the default (`<default>.core`) and lists
+`<data>/editors/<core>/`, `<data>` being `--data`, else `leanmacs` under
+`$XDG_DATA_HOME`, else under `$HOME/.local/share` (an empty variable is
+unset; neither set, no per-user choice). It considers only numeric
+directories that hold `editor`, so a staging directory and another core's
+editors are never started (`crates/editor-launch/src/editors.rs`). With
+none, or no `.core` record, it execs the shipped default as before.
+Otherwise it writes a **cold record**, `<data>/launch/cold-<pid>`: the
+hand-over record with no `session` line, its candidates the newest, the
+one before it and the shipped default, and the editor's arguments; then it
+goes down the hand-over path, spawning the watcher and exec'ing the newest
+with `--launched-by`, `--shipped` and `--handed-over <record>`, and no
+`--restore`. A run handed a record with no `--restore` is a cold start
+under watch: it removes the record at its restore's hand-shake, at once
+when it has no state directory, and in `--probe` once `main` is reached
+(`Restart.Launch.removedAtStart`, `probeRemoves`). So when the newest ends
+before that, the watcher starts the previous one, then the shipped
+default. The record's format stays 1: only the launcher writes and reads a
+cold one, and the Lean encoder always writes `session`. A per-user editor
+started outside a bundle with `--shipped <bundle>/Contents/MacOS/editor`
+takes that bundle's toolchain as its default sysroot
+(`ModuleLookup.resolve`).
+
+**The first launch after an editor update** finds every per-user editor
+under the old core's identity, so the launcher starts the shipped default;
+its start-up reload sees the lakefile differs from its own fingerprint and
+builds the set against the new core, then restarts into it. When that
+build fails, the shipped default keeps running with the errors in
+`*package-build*`. No per-user editor is started before the rebuild.
 
 **The window closes and reopens.** It is not handed across the exec: the
 window mode closes it once its loop has ended for the hand-over, and the
@@ -2255,6 +2287,8 @@ text requests. Config sees it through
 | Processes, terminals | Rust, behind handles | Untouched | Lost |
 | Closures registered by config | Compiled Lean, tagged with their owner | Replaced by the new config's | Re-registered by `setup` |
 | A workspace's working sets: each range's stored form and where it is held, what is known of the file on disk, the last set used | Compiled Lean, the workspace's store `working-sets` (`lean/Editor/WorkingSet/Places.lean`), its ranges held by anchor markers of their files' buffers | Untouched | Kept: written by jobs to `<state>/workspaces/<key>/working-sets.json` under the state directory, read lazily the first time a working-set command needs them, each range found again in its file's text or shown drifted (`lean/Editor/WorkingSet/Disk.lean`) |
+| A user's package-set editors: `<data>/editors/<core>/<n>/`, each an executable with its records and its modules, and `<data>/editors/staging-<k>/` while a build installs ([packages.md](packages.md), "User package sets") | Files under the data directory (`--data`, else `$XDG_DATA_HOME/leanmacs` or `~/.local/share/leanmacs`), written by the job `package-build` and pruned after each publish to two versions of the current core | Untouched; a reload whose set differs starts a build | Kept: the launcher starts the newest of the shipped default's core at a cold start |
+| A cold start's record: `<data>/launch/cold-<pid>`, the hand-over record with no session | Written by the launcher before it starts a per-user editor, read and rewritten by its watcher, removed by the editor at its hand-shake | Untouched | Removed by the run it started; when every candidate failed, renamed `.failed` |
 | Values of types that config defines | See below | Converted or dropped | As for a reload |
 
 Compiled state needs no special mechanism. That is the main simplification

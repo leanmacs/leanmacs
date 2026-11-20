@@ -40,7 +40,8 @@ fn file_error(e: &io::Error) -> FileError {
 }
 
 /// Files over `std::fs`. A write goes to a temporary file beside the
-/// target, named for this process, which is then renamed over it.
+/// target, named for this process, which is then renamed over it; a
+/// listing is `read_dir`'s, and a missing directory `NotFound`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StdFiles;
 
@@ -75,6 +76,16 @@ impl Files for StdFiles {
 
     fn exists(&self, path: &Path) -> bool {
         path.exists()
+    }
+
+    fn list(&self, dir: &Path) -> Result<Vec<OsString>, FileError> {
+        std::fs::read_dir(dir)
+            .and_then(|entries| entries.map(|entry| entry.map(|e| e.file_name())).collect())
+            .map_err(|e| file_error(&e))
+    }
+
+    fn make_dir_all(&mut self, dir: &Path) -> Result<(), FileError> {
+        std::fs::create_dir_all(dir).map_err(|e| file_error(&e))
     }
 }
 
@@ -322,7 +333,8 @@ impl Exec for StdExec {
     }
 }
 
-/// The launcher's own path, from `std::env::current_exe`, read once.
+/// The launcher's own path, from `std::env::current_exe`, read once, and
+/// its environment, read at each ask from `std::env::var_os`.
 #[derive(Debug, Clone)]
 pub struct StdPlatform {
     own: PathBuf,
@@ -348,6 +360,10 @@ impl Platform for StdPlatform {
 
     fn is_macos(&self) -> bool {
         cfg!(target_os = "macos")
+    }
+
+    fn var(&self, name: &str) -> Option<OsString> {
+        std::env::var_os(name)
     }
 
     fn say(&mut self, line: &str) {

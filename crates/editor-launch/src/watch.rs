@@ -2,6 +2,11 @@
 //! from a hand-over, and starts the fallback when that editor ends before
 //! it has restored the session.
 //!
+//! A cold start of a per-user editor is watched the same way, on its cold
+//! record ([`crate::launch`]): that record names no session, so the
+//! fallback the watcher starts is given none, and the record goes at the
+//! editor's hand-shake as a restart's does.
+//!
 //! The launcher spawns it detached ([`crate::ports::Spawn`]) just before
 //! each exec, as `leanmacs --watch <pid> --candidate <exe> --handover
 //! <record> --patience <ms>`. It waits for one of three things:
@@ -137,7 +142,7 @@ mod tests {
     fn watched(patience_ms: u64) -> (FakeWorld, Watch) {
         let mut fake = FakeWorld::new(LAUNCHER, true);
         let handover = Handover {
-            session: "/s/session/session-2.json".into(),
+            session: Some("/s/session/session-2.json".into()),
             shipped: "/A.app/Contents/MacOS/editor".into(),
             candidates: vec!["/new/editor".into(), "/A.app/Contents/MacOS/editor".into()],
             arguments: Vec::new(),

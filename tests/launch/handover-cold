@@ -1,0 +1,7 @@
+leanmacs-handover 1
+shipped /Applications/Leanmacs.app/Contents/MacOS/editor
+candidate /Users/a/.local/share/leanmacs/editors/3f9a0c/10/editor
+candidate /Users/a/.local/share/leanmacs/editors/3f9a0c/2/editor
+candidate /Applications/Leanmacs.app/Contents/MacOS/editor
+argument --state
+argument /tmp/two words

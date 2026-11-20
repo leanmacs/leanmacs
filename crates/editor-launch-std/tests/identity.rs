@@ -111,7 +111,7 @@ fn an_editor_outside_the_bundle_handed_over_to_is_the_app_in_the_launchers_proce
     let elsewhere = fixture.root.join("elsewhere/editor");
     let record = fixture.root.join("handover");
     let handover = Handover {
-        session: fixture.root.join("session-1.json"),
+        session: Some(fixture.root.join("session-1.json")),
         shipped: fixture.bundle.join("Contents/MacOS/editor"),
         candidates: vec![elsewhere.clone()],
         arguments: Vec::new(),

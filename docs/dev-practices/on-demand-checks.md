@@ -1365,8 +1365,13 @@ again.
 ## The editor on a file, on demand
 
 `mise run edit -- <file>` (`lean/Editor/Window/Real.lean`) opens the
-editor on a file, in a window, to use: the editor `mise run lean` links
-from the default package set, `packages/.lake/build/bin/editor`. The gate runs the same wiring on
+editor on a file, in a window, to use, through the app's launcher
+(`target/release/leanmacs --default packages/.lake/build/bin/editor`): it
+starts the newest per-user build of your package set under
+`~/.local/share/leanmacs/editors/<core>/` when there is one for the
+checkout's core, and otherwise the editor `mise run lean` links from the
+default package set, `packages/.lake/build/bin/editor`
+(`docs/design/packages.md`, "User package sets"). The gate runs the same wiring on
 the library's scripted platform (`ffi-test window-host`), and `mise run
 linux-window` runs it on a real window under Xvfb with xdotool typing
 (its seventh part).

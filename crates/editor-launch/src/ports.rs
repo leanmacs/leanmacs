@@ -1,8 +1,9 @@
 //! The ports the launcher's core reaches the world through: files
 //! ([`Files`]), the time ([`Clock`]), other processes by their id
 //! ([`Pids`]), starting a process that is nobody's child ([`Spawn`]),
-//! replacing this process ([`Exec`]) and the launcher's own facts
-//! ([`Platform`]). [`World`] lends one of each to the core for a call.
+//! replacing this process ([`Exec`]) and the launcher's own facts and
+//! environment ([`Platform`]). [`World`] lends one of each to the core for
+//! a call.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -126,11 +127,13 @@ pub trait Files {
     /// [`FileError::NotFound`] when nothing is there.
     fn read(&self, path: &Path) -> Result<Vec<u8>, FileError>;
     /// Replaces the file's bytes so that a reader sees the old bytes or the
-    /// new ones, never a part.
+    /// new ones, never a part. Its directory must be there already
+    /// ([`Files::make_dir_all`]).
     ///
     /// # Errors
     ///
-    /// The system's reason.
+    /// The system's reason, and [`FileError::NotFound`] when the file's
+    /// directory is not there.
     fn write_atomic(&mut self, path: &Path, bytes: &[u8]) -> Result<(), FileError>;
     /// Moves `from` to `to`, replacing what is there.
     ///
@@ -144,8 +147,24 @@ pub trait Files {
     ///
     /// The system's reason.
     fn remove(&mut self, path: &Path) -> Result<(), FileError>;
-    /// Whether anything is at the path.
+    /// Whether anything is at the path, a file or a directory.
     fn exists(&self, path: &Path) -> bool;
+    /// The names of the entries of the directory `dir`, files and
+    /// directories alike, each once, in no particular order; not `.` or
+    /// `..`.
+    ///
+    /// # Errors
+    ///
+    /// [`FileError::NotFound`] when no directory is at `dir`, and the
+    /// system's reason for anything else, a file at `dir` among them.
+    fn list(&self, dir: &Path) -> Result<Vec<OsString>, FileError>;
+    /// Makes the directory `dir` and each of its parents that is missing;
+    /// a directory already there is no error.
+    ///
+    /// # Errors
+    ///
+    /// The system's reason, a file in the way among them.
+    fn make_dir_all(&mut self, dir: &Path) -> Result<(), FileError>;
 }
 
 /// Port: the time, in milliseconds from an arbitrary start.
@@ -196,13 +215,16 @@ pub trait Exec {
     fn exec(&mut self, invocation: &Invocation) -> Refusal;
 }
 
-/// Port: the launcher's own facts and its voice.
+/// Port: the launcher's own facts, its environment and its voice.
 pub trait Platform {
     /// The launcher's own executable.
     fn own_path(&self) -> PathBuf;
     /// Whether this is macOS, where every exec points CoreFoundation at
     /// the bundle (`CFProcessPath`).
     fn is_macos(&self) -> bool;
+    /// The launcher's environment variable `name`: `None` when it is not
+    /// set, and its value, empty or not, when it is.
+    fn var(&self, name: &str) -> Option<OsString>;
     /// Says one line on standard error.
     fn say(&mut self, line: &str);
 }
