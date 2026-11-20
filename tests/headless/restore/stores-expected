@@ -1,0 +1,12 @@
+reload 1: installed, 1 files, 2 commands
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+run bump-kept: ok
+run bump-kept: ok
+run bump-unkept: ok
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+spawn hold: job 17
+key arrived: i KeyI -
+key arrived: x KeyX -
+key arrived: <Escape> Escape -

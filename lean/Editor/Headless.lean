@@ -362,10 +362,21 @@ With no `restore` job registered, the request does nothing.
 the snapshots they name released after (`journaled`); what failed is said
 once for each path, in the echo area and to the log (`journalFailed`). A
 host's end waits, at most `drainPatience`, until the service holds no
-request. The script's `journalled` waits until it holds none; `abort` ends
-the process at once with the status 134 and no shutdown
-(`IO.Process.exit`): not the signal, which on a macOS desktop raises the
-crash reporter.
+request. The script's `journalled` waits until it holds none; `indexed`
+waits until the session index is written, moving the fake clock past each
+write's delay (`Progress.indexing`), and until no job runs but those the
+script spawned (`Progress.background`); `abort` ends the process at once
+with the status 134 and no shutdown (`IO.Process.exit`): not the signal,
+which on a macOS desktop raises the crash reporter.
+
+**What the session index is handed.** The reported jobs running
+(`Running.reported`, each with its owner and key) and the config state's
+cells kept across a restart (`Config.State.keptCells`, made only when the
+reconciler forces them, at its revision `cellsRevision`) are in the keys of
+every step (`Loop.Keys.running`, `Loop.Keys.stores`), and the cells a
+restore read (`Loop.Stepped.restoredCells`) are taken in with the write a
+step asked for (`Config.State.restoreCells`). The script's `workspaces`
+prints the workspace table.
 
 ## One loop at a time
 
@@ -1178,6 +1189,9 @@ structure Running (β σ : Type) (scheme : InputScheme) where
   /-- The driver's requests held while a restore is in flight, oldest
   first. -/
   heldRequests : Array Request := #[]
+  /-- The ids of the jobs the driver's `spawn` requests started: a script's
+  own jobs, which its `indexed` does not wait for. -/
+  spawned : Array Nat := #[]
   /-- The paths whose journal failures were said: each is said once. -/
   journalSaid : Array String := #[]
 
@@ -1426,9 +1440,10 @@ def spawn (collaborators : Collaborators β σ scheme) (running : Running β σ 
   match id? with
   | some id =>
     collaborators.emit s!"spawn {name}: job {id}"
+    return { running with spawned := running.spawned.push id }
   | none =>
     collaborators.emit s!"spawn {name}: no such job"
-  return running
+    return running
 
 /-- What the loop's programs watch: the library's interrupt flag, and the
 clock the host's jobs wait on, so a test moves one clock for both. -/
@@ -1996,10 +2011,10 @@ def «show» (collaborators : Collaborators β σ scheme) (running : Running β 
   for cell in running.config.cells.cells do
     collaborators.emit s!"store {cell.name} v{cell.version}: {render cell.value}"
 
-/-- The values of a store as `workspaces` prints them: each `<name>=<value>`,
-in order. -/
+/-- The values of a store as `workspaces` prints them, after a colon: each
+` <name>=<value>`, in order; nothing for none. -/
 def cellsLine (cells : Array (String × Value)) : String :=
-  " ".intercalate (cells.toList.map fun (name, value) => s!"{name}={render value}")
+  String.join (cells.toList.map fun (name, value) => s!" {name}={render value}")
 
 /-- Prints the workspace table of the frame's state (`Workspace.Table`): a
 line for each workspace, `workspace <label> at <location>: <name>=<value> …`,
@@ -2011,10 +2026,10 @@ def workspaces (collaborators : Collaborators β σ scheme) (running : Running �
   let table := frame.state.workspaces
   for (workspace, cells) in table.workspaces do
     collaborators.emit
-        s!"workspace {workspace.label} at {workspace.location.describe}: {cellsLine cells}"
+        s!"workspace {workspace.label} at {workspace.location.describe}:{cellsLine cells}"
   for (project, cells) in table.projects do
-    collaborators.emit s!"project {project.name}: {cellsLine cells}"
-  collaborators.emit s!"unscoped: {cellsLine table.unscoped}"
+    collaborators.emit s!"project {project.name}:{cellsLine cells}"
+  collaborators.emit s!"unscoped:{cellsLine table.unscoped}"
 
 /-- Whether the editor loop takes `event` (`input`): an event from the
 window input, and the library's report that a parse of a highlighted text
@@ -2157,6 +2172,10 @@ structure Progress where
   running, or a write was started and has not rendered the index
   (`Restore.Kept.writing`). -/
   indexing : Bool := false
+  /-- How many jobs are running that are neither the index's write or save
+  nor jobs the driver spawned (`Request.spawn`): what the script's `indexed`
+  waits for beside the index. -/
+  background : Nat := 0
   /-- The title bar the installed config chose (`Config.State.titleBar`),
   or none: what the window mode opens its window with once the start-up
   reload has finished (`Window.titleBarAtOpen`). -/
@@ -2214,7 +2233,11 @@ def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β
           indexing :=
             running.frame.any (·.state.restore.writing) ||
               running.jobs.table.entries.any fun entry =>
-                entry.name == Restore.writeJob || entry.name == Restore.saveJob }
+                entry.name == Restore.writeJob || entry.name == Restore.saveJob
+          background :=
+            (running.jobs.table.entries.filter fun entry =>
+                entry.name != Restore.writeJob && entry.name != Restore.saveJob &&
+                  !running.spawned.contains entry.id).size }
   -- Nothing will deal with a result any more: no job runs on unowned, and
   -- no pause waits.
   running.jobs.cancelAll
@@ -2436,9 +2459,12 @@ inductive Directive where
   own. -/
   | journalled
   /-- Settle, then wait until the session index is written: no write or
-  save of it running, none pending, and the file service holding no
-  request. It needs no `join`, so a script with a long job running can
-  wait for the index. The driver's own. -/
+  save of it running, none pending, no job running but those the script
+  spawned, and the file service holding no request. On a fake clock it
+  moves the clock past each write's delay as it comes, so a write a
+  finished job started is written too. It needs no `join`, so a script
+  with a long job of its own running can wait for the index. The driver's
+  own. -/
   | indexed
   /-- End the process at once, with the status 134 and no shutdown, as an
   abort would: what the journal handed the system survives it. The
@@ -2768,12 +2794,21 @@ def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β 
             return some (.unanswered (some line.number))
         pure wait
       | .indexed =>
-        let wait ←
-          host.waitWhile patience
-              (fun progress => progress.reloading || progress.restoring || progress.indexing)
-              .working
+        let wait ← host.await patience
         if wait == .settled then
-          unless ← within patience (return (← collaborators.journal.pending) == 0) do
+          let written ←
+            within patience do
+                let progress ← host.progress.get
+                if
+                    !progress.indexing && progress.background == 0 &&
+                      (← collaborators.journal.pending) == 0 then
+                  return true
+                -- A write sleeps on the clock: it is moved past the delay.
+                if let some clock := collaborators.clock then
+                  if progress.indexing && (← clock.dueWithin Restore.writeDelay) then
+                    clock.advance Restore.writeDelay
+                return false
+          unless written do
             discard <| host.halt patience
             return some (.unanswered (some line.number))
         pure wait

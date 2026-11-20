@@ -1,0 +1,41 @@
+reload 1: installed, 1 files, 0 commands
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+run window-split-vertically: ok
+run window-split: ok
+run window-wider: ok
+run window-split: ok
+run window-edge-left: ok
+run window-focus-next: ok
+run window-float: ok
+key arrived: G KeyG shift
+key arrived: g KeyG -
+key arrived: g KeyG -
+key arrived: w KeyW control
+key arrived: c KeyC -
+key arrived: c KeyC control
+key arrived: r KeyR -
+key arrived: <Enter> Enter -
+key arrived: w KeyW control
+key arrived: s KeyS -
+key arrived: w KeyW control
+key arrived: z KeyZ -
+key arrived: w KeyW control
+key arrived: p KeyP -
+key arrived: i KeyI -
+key arrived: x KeyX -
+key arrived: <Escape> Escape -
+scene 640x480, focused 4, echo "", echo padding 8, preedit -, published 46, theme "default"
+view 3 160,0 262x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
+status 3 in mode-line.inactive: mode-line.inactive "note.txt" +4, mode-line.inactive "●" +4, mode-line.inactive "@DIR@" +4 | mode-line.inactive "1:2" +4, mode-line.inactive "Top" +4
+view 0 424,0 216x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "note.txt" +4, mode-line.inactive "●" +4, mode-line.inactive "@DIR@" +4 | mode-line.inactive "1:2" +4, mode-line.inactive "Top" +4
+view 5 0,0 158x448: "xfirst line\nsecond line\n", scroll 0, selections 1..1, padding 8 8
+status 5 in mode-line.inactive: mode-line.inactive "note.txt" +4, mode-line.inactive "●" +4, mode-line.inactive "@DIR@" +4 | mode-line.inactive "1:2" +4, mode-line.inactive "Top" +4
+view 4 128,112 384x224: "xfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
+view 7 0,448 640x16: " 1 note.txt   2 notes ", scroll 0, selections , padding 8 0
+decorations 7: tab-bar.selected 0..12 tab-bar 13..22
+status 7: -
+divider 422,0 2x448 in window-divider
+divider 158,0 2x448 in window-divider

@@ -679,6 +679,27 @@ run = [
   # says the rest and the editor starts; afterwards both files are as they
   # were, byte for byte.
   "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/headless/restore && cp -R $f/newer \"$dir/state\" && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config $f/newer-script) && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/newer-expected - && cmp \"$dir/state/session/session-5.json\" $f/newer/session/session-5.json && cmp \"$dir/state/session/journals/5-1-1.log\" $f/newer/session/journals/5-1-1.log && cmp \"$dir/state/session/journals/5-1-1.base\" $f/newer/session/journals/5-1-1.base",
+  # Phase 2 of session restore: windows, layouts, tabs and the jump list
+  # (tests/headless/restore/layout-*). The save run, against `layout-config`,
+  # makes two tabs of manual splits at a left edge with a docked window, a
+  # float and a named, zoomed tab, records jumps, types, waits for the index
+  # (`indexed`) and the journal, and aborts (`layout-expected`); the restore
+  # run puts them back as they were, held before config installs and kept
+  # after, `C-w n` shows the hidden tab, `C-o` the recorded jump, and `u`
+  # says the history starts at the restore (`layout-restore-expected`). The
+  # index it writes is of format 2.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/headless/restore && cp $f/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" $f/layout-script > \"$dir/layout\" && status=0 && { out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean $f/layout-config \"$dir/layout\") || status=$?; } && test \"$status\" -eq 134 && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/layout-expected - && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean $f/layout-config $f/layout-restore-script) && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/layout-restore-expected - && grep -q '\"format\":2' \"$dir/state/session/session-2.json\"",
+  # Phase 2 of session restore: stores, workspaces and jobs
+  # (tests/headless/restore/stores-*). A `.project` marker beside the file
+  # makes its directory a workspace without git. The save run, against
+  # `stores-config`, bumps a store kept across a restart and one that is
+  # not, runs `:!true` into the project's history, starts the job `hold`,
+  # which a person waits on, and aborts with it running (`stores-expected`);
+  # the restore run shows the workspace table with the history, then, once
+  # config installs, `kept` back and `unkept` at its initial value, and the
+  # summary and `*restore*` naming the stopped job
+  # (`stores-restore-expected`).
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/headless/restore && mkdir \"$dir/work\" && cp $f/note.txt \"$dir/work/note.txt\" && touch \"$dir/work/.project\" && sed \"s|@FILE@|$dir/work/note.txt|\" $f/stores-script > \"$dir/stores\" && status=0 && { out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean $f/stores-config \"$dir/stores\") || status=$?; } && test \"$status\" -eq 134 && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/stores-expected - && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean $f/stores-config $f/stores-restore-script) && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/stores-restore-expected -",
   # `open-file`'s prompt over real files, as a process, with no config
   # (tests/headless/open-file): the file source lists the directory typed so
   # far through the library's file service, directories first with

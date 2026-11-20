@@ -1,8 +1,8 @@
-scene 0x0, focused 0, echo "restore: 1 buffers, 1 with unsaved text; 1 changed on disk", echo padding 8, preedit -, published 7, theme "default"
+scene 0x0, focused 0, echo "restore: 1 buffers, 1 with unsaved text; 1 changed on disk", echo padding 8, preedit -, published 9, theme "default"
 view 0 0,0 0x0: "xyfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.changed "[changed on disk]" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
-scene 0x0, focused 0, echo "cannot save @DIR@/note.txt: the file on disk is not the one that was expected: it is 10 bytes long and was modified at @TIME@", echo padding 8, preedit -, published 15, theme "default"
+scene 0x0, focused 0, echo "cannot save @DIR@/note.txt: the file on disk is not the one that was expected: it is 10 bytes long and was modified at @TIME@", echo padding 8, preedit -, published 17, theme "default"
 view 0 0,0 0x0: "xyfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.changed "[changed on disk]" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4

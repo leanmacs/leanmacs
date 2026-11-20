@@ -1,0 +1,47 @@
+# A template of a script: `mise run ffi-test` copies `note.txt` into a
+# temporary directory with a `.project` marker beside it, so the marker
+# adapter finds a workspace there without git, writes this file there with
+# `@FILE@` replaced by the copy's absolute path, and runs it against
+# `stores-config/` with `--state` naming a fresh directory beside it. It
+# bumps a store kept across a restart and one that is not, runs `:!true` in
+# the file's workspace, starts the job `hold`, which a person waits on and
+# which is still running, types, waits until the session index and the
+# journal are written (`indexed`, `journalled`) and aborts: the process
+# ends with the status 134 and no shutdown. `stores-restore-script`, run
+# next with the same `--state`, restores them. What it prints must be
+# exactly `stores-expected`, the temporary directory read as `@DIR@`.
+
+reload
+settle
+
+# `:e` opens the file; its load and its workspace's finder are jobs, and
+# each change they make starts a write of the index: `indexed` waits for
+# them all.
+key : Semicolon shift
+commit e @FILE@
+key <Enter> Enter -
+indexed
+
+# `kept` is bumped twice and `unkept` once.
+run bump-kept
+run bump-kept
+run bump-unkept
+
+# `:!true` runs in the file's workspace and is remembered in its project's
+# history (`shell-history`).
+key : Semicolon shift
+commit !true
+key <Enter> Enter -
+indexed
+
+# `hold` sleeps a minute on the job clock: it is running when the process
+# ends.
+spawn hold
+
+# Typed in insert state, so the file's text is unsaved.
+key i KeyI -
+key x KeyX -
+key <Escape> Escape -
+indexed
+journalled
+abort

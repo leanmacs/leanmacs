@@ -1041,7 +1041,7 @@ which shows the text, the cursor, the selection, the state and the echo
 of every scene; and the copy must hold the bytes of `verse-expected`.
 
 `ffi-test` runs **session restore** as processes (`tests/headless/restore/`),
-four entries of the session check's form, each with `--state` naming a
+six entries of the session check's form, each with `--state` naming a
 directory of its temporary directory. Each run's output is compared with
 the temporary directory's path written `@DIR@`, a stamp's time written
 `@TIME@`, and its `job` lines and its `commands:` line dropped: what a job
@@ -1069,6 +1069,30 @@ requests do not wait for, and the command list grows with every package.
   exactly `newer-expected`, with what is known restored and the report's
   lines in `*restore*`'s text; afterwards `cmp` must find the index and the
   journal's two files byte for byte as they were.
+- **Windows, layouts, tabs and the jump list**: against `layout-config`,
+  which chooses manual splits inside a left edge and binds `tab-rename`,
+  `layout-script` makes two tabs: in the first, tiles under manual splits,
+  one resized, a docked window and a float; the second named `notes`,
+  split and zoomed. It records jumps with `G` and `gg`, types, waits until
+  the index and the journal are written (`indexed`, `journalled`) and
+  aborts with the status 134, printing exactly `layout-expected`. The
+  second run, `layout-restore-script`, must print exactly
+  `layout-restore-expected`: every window back where it was before config
+  installs (the layout held) and after (config chose the same one), `C-w n`
+  showing the hidden tab named and zoomed, `C-o` the recorded jump, and `u`
+  saying `nothing to undo: no history before the restore`; and the index
+  it writes must be of format 2.
+- **Stores, workspaces and jobs**: the file is copied beside a `.project`
+  marker, so its directory is a workspace without git. Against
+  `stores-config`, which declares `kept`, kept across a restart, and
+  `unkept`, which is not, and a reported job `hold` that sleeps a minute,
+  `stores-script` bumps both stores, runs `:!true`, starts `hold`, types
+  and aborts with the status 134 while `hold` runs, printing exactly
+  `stores-expected`. `stores-restore-script` must print exactly
+  `stores-restore-expected`: before config installs no config cell, the
+  workspace table (`workspaces`) with the project's `shell-history`; after
+  it `kept` back at 2 and `unkept` at 0; and the summary and `*restore*`
+  saying the restart stopped `hold`.
 
 `ffi-test` runs **a view that follows its cursor**, as a process, the same
 way (`tests/headless/view/`). The entry copies `lines.txt`, 120 lines

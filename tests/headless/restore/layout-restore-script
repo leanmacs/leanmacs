@@ -1,0 +1,38 @@
+# Run after `layout-script` with the same `--state` and `layout-config/`:
+# the restore runs first and the requests below wait for it. The windows
+# come back as they were: two tabs, manual splits inside a left edge with a
+# resized split, a docked window and a float in the first; the second
+# named `notes` and zoomed. The restore's index writes wait on the clock:
+# `indexed` moves it past each and waits for them. What it prints must be
+# exactly `layout-restore-expected`, the temporary directory read as
+# `@DIR@`.
+
+settle
+resize 640 480
+indexed
+
+# Before config installs, the host hands the default layout: the layout the
+# restore put back is held, so nothing moves.
+scene
+
+# Config chooses the layout the session recorded: every tree, share and zoom
+# stays.
+reload
+settle
+scene
+
+# `C-w n` shows the hidden tab: named `notes`, zoomed.
+key w KeyW control
+key n KeyN -
+scene
+
+# `C-w p` goes back, and `C-o` jumps back to the place the jump list
+# recorded.
+key w KeyW control
+key p KeyP -
+key o KeyO control
+scene
+
+# `u` at the root of the restored buffer: its history starts at the restore.
+key u KeyU -
+scene

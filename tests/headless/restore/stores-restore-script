@@ -1,0 +1,33 @@
+# Run after `stores-script` with the same `--state` and `stores-config/`: the
+# restore runs first and the requests below wait for it. What it prints
+# must be exactly `stores-restore-expected`, the temporary directory read as
+# `@DIR@`.
+
+settle
+indexed
+
+# Before config installs, config's cells are not there yet: its store's
+# value is parked until it declares the store.
+show
+
+# The workspace table came back: the file's workspace at its marker's root,
+# its project, and the project's `shell-history`, which the shell keeps
+# across a restart.
+workspaces
+
+# Config installs: `kept` is back at 2, and `unkept`, which has no codec,
+# starts at its initial value.
+reload
+settle
+indexed
+show
+
+# The restore said so: one job was running and the restart stopped it.
+scene
+
+# The report names it.
+run switch-buffer
+commit *restore*
+key <Enter> Enter -
+indexed
+scene

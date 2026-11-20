@@ -1,0 +1,20 @@
+text 0: ""
+text 3: "xfirst line\nsecond line\n"
+text 4: "restore: 1 buffers, 1 with unsaved text; 1 jobs stopped; see *restore*\nthe job hold of config was running: the restart stopped it\n"
+workspace work@work at local @DIR@/work:
+project work: shell-history=["!true"]
+unscoped:
+reload 1: installed, 1 files, 2 commands
+text 0: ""
+text 3: "xfirst line\nsecond line\n"
+text 4: "restore: 1 buffers, 1 with unsaved text; 1 jobs stopped; see *restore*\nthe job hold of config was running: the restart stopped it\n"
+store kept v1: 2
+store unkept v1: 0
+scene 0x0, focused 0, echo "restore: 1 buffers, 1 with unsaved text; 1 jobs stopped; see *restore*", echo padding 8, preedit -, published 16, theme "default"
+view 0 0,0 0x0: "xfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@/work" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
+run switch-buffer: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 24, theme "default"
+view 0 0,0 0x0: "restore: 1 buffers, 1 with unsaved text; 1 jobs stopped; see *restore*\nthe job hold of config was running: the restart stopped it\n", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*restore*" +4, mode-line.modified "●" +4 | mode-line.secondary "restore-report" +4, mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
