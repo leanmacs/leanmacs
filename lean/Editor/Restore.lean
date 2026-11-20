@@ -339,9 +339,12 @@ def journalOrders (state : EditorState) (enabled leaving : Bool)
           (state.buffer? ⟨entry.buffer⟩).any (·.history.head == entry.revision) }
   let state := { state with restore := kept, echo := said.getD state.echo }
   -- The index, once it differs from the last written and no write is
-  -- pending.
+  -- pending: while one is, the index is not even made, since the write
+  -- renders the index as it is when it fires.
+  if kept.writing then
+    return { state, orders, answered }
   let document ← Document.of state run
-  if kept.writing || some document.render == kept.written then
+  if some document.render == kept.written then
     return { state, orders, answered }
   return {
       state := { state with restore := { kept with writing := true } }, orders, answered

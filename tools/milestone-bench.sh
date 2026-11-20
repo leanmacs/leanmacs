@@ -7,7 +7,12 @@
 # gives: start (a frame of 1280 by 800, no file), open (`:e` on a generated
 # 10 MiB file), scroll (300 `C-f` on it, then `G`), type (200 `l` and `h`
 # in a 640 by 480 view of a small file), each key paced by `idle 0`,
-# and idle (`idle 30000` against `idle 0`). It asserts nothing: its figures
+# and idle (`idle 30000` against `idle 0`). Then type-insert: 200
+# characters typed in insert state at the end of the 10 MiB file and of the
+# small file, each paced by `idle 0`, once with `--state` (the session
+# journal written as they are typed, docs/design/concurrency.md, "The
+# session journal") and once without, with the bytes the run left under the
+# state directory's journals. It asserts nothing: its figures
 # are handed back with the command and the machine line it prints. They are
 # headless figures: the cell shaper, the CPU renderer, and no glyphs drawn.
 #
@@ -99,4 +104,51 @@ measure() {
 
 for name in start open scroll type idle-0 idle-30000; do
   measure "$name"
+done
+
+# type-insert: with a state directory a run restores first, and a change to
+# the session index waits on the clock to be written, so each `join` there
+# is preceded by `advance`, which fires the write.
+for file in ten small; do
+  for kept in state none; do
+    {
+      printf 'resize 1280 800\n'
+      # The restore writes the first index: fired and waited for first, so
+      # the open's write is the one fired next.
+      if [ "$kept" = state ]; then printf 'advance 500\njoin\n'; fi
+      printf 'key : Semicolon shift\ncommit e %s\nkey <Enter> Enter -\n' "$dir/$file.txt"
+      if [ "$kept" = state ]; then printf 'advance 500\n'; fi
+      printf 'join\nsettle\nkey G KeyG shift\nidle 0\nkey A KeyA shift\nidle 0\njournal\n'
+      for _ in $(seq 200); do printf 'key x KeyX -\nidle 0\n'; done
+      printf 'journal\n'
+      if [ "$kept" = state ]; then printf 'journalled\n'; fi
+    } >"$dir/type-insert-$file-$kept"
+  done
+done
+
+# Runs the script `type-insert-$1-$2`, with a state directory of its own
+# when `$2` is `state`, and prints its figures as `measure` does, then the
+# bytes left under the state directory's journals.
+measure_insert() {
+  local name=type-insert-$1-$2 out=$dir/type-insert-$1-$2.out times=$dir/type-insert-$1-$2.time
+  local state=()
+  if [ "$2" = state ]; then state=(--state "$dir/state-$1"); fi
+  if ! "${timed[@]}" "$editor" headless --render ${state[@]+"${state[@]}"} "$sysroot" "$oleans" "$config" "$dir/$name" >"$out" 2>"$times"; then
+    echo "$name: the run failed: $(grep '^editor:' "$times" | head -n 1)"
+  fi
+  grep -E '^journal' "$out" | sed "s|^|$name: |" || true
+  if [ "$(uname -s)" = Darwin ]; then
+    awk -v name="$name" '/ real / { printf "%s: real %s s, user %s s, sys %s s\n", name, $1, $3, $5 }' "$times"
+  else
+    grep -E 'Elapsed|User time|System time' "$times" | sed "s|^[[:space:]]*|$name: |"
+  fi
+  if [ "$2" = state ]; then
+    echo "$name: journals hold $(find "$dir/state-$1/session/journals" -type f -exec cat {} + | wc -c | tr -d ' ') bytes"
+  fi
+}
+
+for file in ten small; do
+  for kept in state none; do
+    measure_insert "$file" "$kept"
+  done
 done

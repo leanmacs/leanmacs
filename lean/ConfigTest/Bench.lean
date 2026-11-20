@@ -1109,6 +1109,95 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
   finally
     discard <| host.halt patience
 
+/-- A text of about `size` bytes in lines of 52, as `milestone-bench`
+generates its file: `%07d the quick brown fox jumps over the lazy dog`. -/
+def journalText (size : Nat) : String := Id.run do
+  let mut text := ""
+  let mut line := 0
+  while text.utf8ByteSize < size do
+    let number := toString line
+    text := text ++ "".pushn '0' (7 - number.length) ++ number ++ " the quick brown fox jumps over the lazy dog\n"
+    line := line + 1
+  return text
+
+/-- The times of `inserts` one-character inserts into a file buffer of
+`size` bytes at `position` (`start`, `middle` or `end`), each timed from
+the reconciler (`Restore.journalOrders`) through handing its orders to the
+library's file service (`Headless.Journal.real`), in nanoseconds: the
+editor thread's share of the journal. The buffer's journal is under
+`directory`; the loop's own work around an insert, its scene and its
+history, is not timed. -/
+def journalTimes (directory : System.FilePath) (size : Nat) (position : String) (inserts : Nat) :
+    IO (Array Nat) := do
+  let published ← Snapshots.new
+  let journal := Headless.Journal.real published.reader
+  IO.FS.createDirAll (Restore.journalsDirectory directory)
+  let path := directory / s!"{size}-{position}.txt"
+  let made : TextM EditorState := do
+    let initial ← EditorState.initial ⟨640, 480⟩
+    let text ← createText (journalText size)
+    let history := { (← UndoTree.over text) with saved := none }
+    let (_, state) := initial.addBuffer path.toString text history
+    let (_, state) := state.attachFile ⟨1⟩ path { seconds := 0, nanoseconds := 0, size } .lf
+    return { state with
+        stateDirectory := some directory, restore := { run := some 1, restored := true } }
+  let (made, texts) ← made.runReal (RealTexts.over published)
+  let .ok first := made | throw (IO.userError "bench-journal: the state could not be made")
+  let mut state := first
+  let mut texts := texts
+  let perform (orders : Array Restore.Order) (texts : RealTexts) : IO RealTexts := do
+    for order in orders do
+      journal.perform order
+    let mut texts := texts
+    for id in orders.filterMap (·.release) do
+      texts := (← ((TextSource.snapshot id).release : TextM Unit).runReal texts).2
+    return texts
+  -- The first reconcile writes the base and the header.
+  let (reconciled, after) ← (Restore.journalOrders state true false).runReal texts
+  let .ok reconciled := reconciled | throw (IO.userError "bench-journal: the first reconcile was refused")
+  state := reconciled.state
+  texts ← perform reconciled.orders after
+  let mut times := #[]
+  for _ in [0:inserts] do
+    let some buffer := state.buffer? ⟨1⟩ | throw (IO.userError "bench-journal: no buffer")
+    let edit : TextM UndoTree := do
+      let length ← buffer.text.byteLength
+      let offset :=
+        match position with
+        | "start" => 0
+        | "middle" => length / 2
+        | _ => length
+      buffer.text.insert offset "x"
+      return buffer.history.record (← buffer.text.revision)
+    let (history, after) ← edit.runReal texts
+    let .ok history := history | throw (IO.userError "bench-journal: an insert was refused")
+    texts := after
+    state := (state.setHistory ⟨1⟩ history).2
+    let began ← IO.monoNanosNow
+    let (reconciled, after) ← (Restore.journalOrders state true false).runReal texts
+    let .ok reconciled := reconciled | throw (IO.userError "bench-journal: a reconcile was refused")
+    texts ← perform reconciled.orders after
+    times := times.push ((← IO.monoNanosNow) - began)
+    state := reconciled.state
+  -- What was handed is written before the next row starts.
+  discard <| Headless.within 30000 (return (← Ffi.filesPending) == 0)
+  return times
+
+/-- `bench-journal`: the session journal's cost on the editor thread, for
+10,000 one-character inserts into a buffer of 4 KiB, 1 MiB and 10 MiB at its
+start, middle and end (`journalTimes`), each row
+`journal_order/<size>/<position>` with its median, 99th percentile and
+maximum in µs. It asserts nothing; `mise run journal-bench` runs it, and
+the gate never does. -/
+def journal : IO UInt8 := do
+  IO.println "bench-journal: median / p99 / max, µs per insert"
+  IO.FS.withTempDir fun directory => do
+    for (size, label) in [(4096, "4KiB"), (1048576, "1MiB"), (10485760, "10MiB")] do
+      for position in ["start", "middle", "end"] do
+        let times ← journalTimes directory size position 10000
+        IO.println (Row.of s!"journal_order/{label}/{position}" times).line
+  return 0
+
 end Bench
 
 end ConfigTest

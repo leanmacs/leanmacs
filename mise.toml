@@ -1314,6 +1314,19 @@ depends = ["lean"]
 dir = "lean"
 run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-jobs \"$(lean --print-prefix)\" .lake/build/lib/lean 10000"
 
+# Opt-in: do not add it to `ci` or to hk.pkl. It measures the session
+# journal's cost on the editor thread (docs/design/concurrency.md, "The
+# session journal"): the reconciler and the hand-off of its orders to the
+# library's file service, for 10,000 one-character inserts into a buffer of
+# 4 KiB, 1 MiB and 10 MiB, at its start, middle and end, each row named
+# `journal_order/<size>/<position>`, for perf-suite to adopt once its
+# harness exists. It asserts nothing.
+[tasks.journal-bench]
+description = "Opt-in, never part of ci: measure the session journal's cost on the editor thread, the reconciler and the hand-off to the file service for 10,000 one-character inserts at 4 KiB, 1 MiB and 10 MiB, at the start, middle and end (lean/ConfigTest/Bench.lean, `bench-journal`). It asserts nothing"
+depends = ["lean"]
+dir = "lean"
+run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-journal"
+
 # Opt-in: run it by hand on a quiet machine, and do not add it to `ci` or to
 # hk.pkl. It asserts nothing: its numbers depend on the machine and on what
 # else the machine is doing. The gate still builds the subcommand, under

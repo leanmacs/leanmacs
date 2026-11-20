@@ -372,7 +372,9 @@ never runs.
 `bench-prompt`, the prompt benchmark (`ConfigTest.Bench.prompt`;
 `mise run prompt-bench`), and `bench-workspace-files`, the workspace
 finder's (`ConfigTest.Bench.workspaceFiles`; `mise run find-file-bench`),
-handed the repository it searches.
+handed the repository it searches, and `bench-journal`, the session
+journal's cost on the editor thread (`ConfigTest.Bench.journal`;
+`mise run journal-bench`).
 
 Any other command line is reported, with the exit status 2.
 
@@ -385,6 +387,8 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit (← ConfigTest.Bench.start sysroot oleanDir (module :: modules))
   | "bench-modules" :: sysroot :: oleanDir :: module :: modules =>
     IO.Process.exit (← ConfigTest.Bench.modules sysroot oleanDir (module :: modules))
+  | ["bench-journal"] =>
+    IO.Process.exit (← ConfigTest.Bench.journal)
   | ["bench-reload", sysroot, oleanDir] =>
     IO.Process.exit (← ConfigTest.Bench.reload sysroot oleanDir)
   | ["bench-reload-directory", sysroot, oleanDir] =>
