@@ -240,7 +240,7 @@ description = "Build the app's launcher and its test helper, release (crates/edi
 run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
 
 [tasks.ffi-test]
-description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh) and that a package imports only the core's API (tools/package-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, its restart through the launcher (tests/headless/restart), and the linked test and headless fixtures of each package of the fixture set and of the default set (tools/package-set.sh)"
+description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), that a package imports only the core's API (tools/package-imports-check.sh) and that the core imports no package and no package imports an implementation package (tools/layer-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, its restart through the launcher (tests/headless/restart), and the linked test and headless fixtures of each package of the fixture set and of the default set (tools/package-set.sh)"
 depends = ["lean", "launcher"]
 dir = "lean"
 timeout = "180s"
@@ -384,6 +384,39 @@ run = [
   # package, so there is no line to check and it must exit 2, saying so.
   # Its output is shown only when it does not.
   "status=0; out=$(sh ../tools/package-imports-check.sh ../tests/empty-set 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -q 'so there is nothing to check'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The three-layer import rule, on Lake's module graph
+  # (tools/layer-imports-check.sh; docs/dev-practices/the-gate.md, "The
+  # layer imports check"; docs/design/extension-points.md, "Three layers"):
+  # the core imports no package, and no package imports a module of an
+  # implementation package, a package whose lakefile does not declare
+  # `keywords = ["editor-interface"]`. First the rule itself, on lines
+  # written by hand (tests/layer-imports/lines), one for each branch of it:
+  # it must exit 1 and print exactly tests/layer-imports/expected, each
+  # refused import with its reason and no allowed one. Among the refused
+  # are a core module importing a module of `shipped-themes` and one of
+  # `compile`: the core's lakefile requires no package, so no real graph
+  # can show that refusal.
+  "status=0; out=$(sh ../tools/layer-imports-check.sh --lines ../tests/layer-imports/lines 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/layer-imports/expected -; } || { echo \"ffi-test: the layer imports check exited $status on tests/layer-imports/lines\"; exit 1; }",
+  # A layer it does not know is exit 2, and so is input in which no module
+  # of the core is an importer: the core's half of the rule would then hold
+  # of nothing. Their output is shown only when it is not that.
+  "status=0; out=$(sh ../tools/layer-imports-check.sh --lines ../tests/layer-imports/bad-layer 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'in the layer `plugin`'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  "status=0; out=$(sh ../tools/layer-imports-check.sh --lines ../tests/layer-imports/no-core 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'no module of the core is an importer'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The facet the check reads walks the core's modules: on the default
+  # set's real graph, some of its lines have a module of the core as the
+  # importer. A facet that skipped the core would give none, and every run
+  # below would then exit 2.
+  "n=$(lake -d ../packages query :editorLayerImports | awk -F '\t' '$2 == \"core\" { n++ } END { print n + 0 }') && test \"$n\" -gt 0 || { echo 'ffi-test: editorLayerImports lists no import by a module of the core'; exit 1; }",
+  # Then real sets. The default set (packages/): `shipped-themes` and
+  # `compile`, implementation packages, import only the core. The user-side
+  # link's set (tests/user-link/), whose package imports only the core. And
+  # the set with no package (tests/empty-set/): the core alone, so only the
+  # core's own imports are checked. One `lake query` each, about two and a
+  # half seconds on a developer's Mac, most of it reading the core's
+  # headers; the script's own pass is a tenth of a second.
+  "sh ../tools/layer-imports-check.sh ../packages",
+  "sh ../tools/layer-imports-check.sh ../tests/user-link",
+  "sh ../tools/layer-imports-check.sh ../tests/empty-set",
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
   # developer's shell must not reach it.

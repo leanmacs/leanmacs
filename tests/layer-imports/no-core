@@ -1,0 +1,2 @@
+compile	implementation	Compile	editor-core	core	Editor.Api
+greeting	implementation	Greeting	greeting-api	interface	GreetingApi
