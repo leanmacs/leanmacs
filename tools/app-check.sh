@@ -499,11 +499,17 @@ step "building editorApp again copied and signed nothing"
 
 # 7. A rebuild that fails leaves the old bundle, never a half-built one.
 clone="$dir/clone"
-mkdir -p "$clone/tools" "$clone/target/release" "$clone/bin"
+mkdir -p "$clone/tools" "$clone/target/release" "$clone/target/editor-rust" "$clone/bin"
 cp -Rpc "$lean_dir" "$clone/lean"
 cp -Rpc "$set_dir" "$clone/packages"
 cp -p "$lean_dir/../tools/stage-bundle.sh" "$clone/tools/stage-bundle.real"
-cp -pc "$lean_dir/../target/release/libeditor_ffi.a" "$clone/target/release/libeditor_ffi.a"
+# The default set's Rust archive and the crate generated for it, with the
+# system libraries it needs and the root lock it is seeded from: the fake
+# `cargo` below builds nothing, so they must be there already.
+cp -pc "$lean_dir/../target/release/libeditor_rust.a" "$clone/target/release/libeditor_rust.a"
+cp -Rpc "$lean_dir/../target/editor-rust/core" "$clone/target/editor-rust/core"
+cp -p "$lean_dir/../Cargo.lock" "$clone/Cargo.lock"
+mkdir -p "$clone/crates/editor-ffi"
 cp -pc "$lean_dir/../target/release/leanmacs" "$clone/target/release/leanmacs"
 printf '#!/bin/sh\nexit 0\n' >"$clone/bin/cargo"
 printf '#!/usr/bin/env bash\n"$(dirname "$0")/stage-bundle.real" "$@"\nexit 1\n' >"$clone/tools/stage-bundle.sh"

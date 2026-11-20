@@ -25,6 +25,14 @@ name = "fixture-set"
 name = "greeting-loud"
 path = "greeting-loud"
 
+# `echo` holds Rust: a crate of its own and the glue that binds it, which
+# the package-set build links into this set's editor through the one Rust
+# archive it generates from the set (docs/design/packages.md, "Rust in a
+# package").
+[[require]]
+name = "echo"
+path = "echo"
+
 # The default set, and through it the core and the default packages
 # (packages/shipped-themes/, packages/compile/): the gate's package steps
 # reach those through this set.

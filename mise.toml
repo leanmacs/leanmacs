@@ -256,11 +256,11 @@ run = [
   # shown only when it does not.
   "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
   # The same check on the root generated for the fixture set
-  # (tests/packages/), with `--set`: that root imports five entry modules,
-  # the core's, the two fixture packages', the shipped themes' and the
+  # (tests/packages/), with `--set`: that root imports six entry modules,
+  # the core's, the three fixture packages', the shipped themes' and the
   # compile mode's, and the host's modules must reach none of them, nor
-  # `Greeting`, `GreetingLoud`, `ShippedThemes` or `Compile.Compiled`,
-  # which they import.
+  # `Greeting`, `GreetingLoud`, `Echo.Packages`, `ShippedThemes` or
+  # `Compile.Compiled`, which they import.
   "sh ../tools/host-imports-check.sh --set ../tests/packages",
   # The root of the user-side link's fixture set (tests/user-link/): the
   # check that links an editor as a user's Mac would (`mise run
@@ -295,6 +295,17 @@ run = [
   # editor without the packages still loads config.
   "test \"$(lake -d ../packages query :editorBase | tr '\\n' ' ')\" = 'Editor ShippedThemes.EditorPackage Compile.EditorPackage '",
   "test \"$(lake -d ../tests/empty-set query :editorBase | tr '\\n' ' ')\" = 'Editor '",
+  # The Rust crates of a set (the facet `editorRustCrates`;
+  # docs/design/packages.md, "Rust in a package"): the package-set build
+  # finds a package's crate through the target `editorRustCrate` its
+  # lakefile declares, with no list kept by hand. The fixture set holds one,
+  # the fixture package `echo`'s crate `echo-service`, so its editor links
+  # the archive generated from `editor-ffi` and that crate
+  # (target/release/libeditor_rust_echo.a); the default set holds none, so
+  # its editor links the core's (libeditor_rust.a), as `tests/empty-set`'s
+  # and the core's own executables do.
+  "test \"$(lake -d ../tests/packages query :editorRustCrates | cut -f1,2)\" = \"$(printf 'echo\\techo-service')\"",
+  "test -z \"$(lake -d ../packages query :editorRustCrates)\"",
   # The core's root holds the whole core, on Lake's module graph
   # (tools/core-imports-check.sh; docs/dev-practices/the-gate.md, "The core
   # imports check"): every `Editor.…` module the build reaches is the
@@ -901,11 +912,11 @@ run = [
   ".lake/build/bin/ffi-test window-host-direct ../tests/packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
   # And the record of the fixture set's editor names the `.olean` directory
   # of each of the set's Lake packages that holds a library, one a line,
-  # the core's first and each package after the ones it requires: five
-  # directories and no more, each holding its package's modules, the last
-  # two the shipped themes' and the compile mode's, which the set reaches
-  # through the default set.
-  "{ IFS= read -r core && IFS= read -r first && IFS= read -r second && IFS= read -r third && IFS= read -r fourth && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$first/Greeting/EditorPackage.olean\" && test -f \"$second/GreetingLoud/EditorPackage.olean\" && test -f \"$third/ShippedThemes/EditorPackage.olean\" && test -f \"$fourth/Compile/EditorPackage.olean\"",
+  # the core's first and each package after the ones it requires: six
+  # directories and no more, each holding its package's modules, the third
+  # `echo`'s, the last two the shipped themes' and the compile mode's,
+  # which the set reaches through the default set.
+  "{ IFS= read -r core && IFS= read -r first && IFS= read -r second && IFS= read -r echo && IFS= read -r third && IFS= read -r fourth && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans && test -f \"$core/Editor.olean\" && test -f \"$first/Greeting/EditorPackage.olean\" && test -f \"$second/GreetingLoud/EditorPackage.olean\" && test -f \"$echo/Echo/EditorPackage.olean\" && test -f \"$third/ShippedThemes/EditorPackage.olean\" && test -f \"$fourth/Compile/EditorPackage.olean\"",
   # The same wiring on the library's scripted platform whose renderer cannot
   # be made, as a machine with no usable GPU gives: the window runs with
   # nothing drawing in it. The scenario must exit 0, which it does only when
@@ -943,7 +954,11 @@ run = [
   # The step's exit status says nothing failed, not that anything ran, so
   # its output is kept and must hold the line of each thing it is here to
   # run: the fixture package's linked test, its fixture `hello`, the
-  # fixture `reply` of the package that requires it, the linked test of
+  # fixture `reply` of the package that requires it, the linked test of the
+  # fixture package `echo` with the line it prints (the contract of its port
+  # against its crate's service, each request completed through the
+  # completion queue and the editor's pump; tests/packages/echo/), the
+  # linked test of
   # the shipped themes' package, which the set reaches through the default
   # set, its four fixtures `load-theme`, `package-names`, `shipped-themes`
   # and `themes`, the linked test of the compile mode's package with the
@@ -970,7 +985,7 @@ run = [
   # turns a canned task list into commands, with no process and no path of
   # the machine; what it prints was compared with what an editor built at
   # the commit before the move prints for it.
-  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture shipped-formats of compile' 'package-set: ran 3 linked tests and 9 headless fixtures over 4 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
+  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test EchoTest.Linked of echo' \"echo linked test: the contract's 7 properties hold on the Rust-backed binding, each request completed through the completion queue\" 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture shipped-formats of compile' 'package-set: ran 4 linked tests and 9 headless fixtures over 5 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
   # The same step over the default set (packages/): the linked test and
   # the fixtures of the default packages, on the editor built from the
   # default set, the one that is shipped. So the compile mode's linked test

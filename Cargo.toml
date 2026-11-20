@@ -1,8 +1,18 @@
 # The Rust library, linked into the Lean executable that Lake builds in
 # `lean/` (README.md, "Building"). Every crate is ordinary Rust, built and
-# tested with Cargo alone; only `editor-ffi` knows about Lean.
+# tested with Cargo alone; only `editor-ffi` and the crates of packages,
+# through their C functions, know about Lean.
 [workspace]
-members = ["crates/*"]
+# The crates of the editor, then the crate of each package that holds Rust
+# (docs/design/packages.md, "Rust in a package"): a package's crate is a
+# member so that the root lock holds its versions, which the crate the
+# package-set build generates is built against, and so that the gate's
+# fmt, clippy, doc, test and cargo-deny cover it. Only the fixture set's
+# packages hold Rust yet. A glob that matches nothing fails to load, so a
+# default package (`packages/`) that comes to hold a crate adds
+# `"packages/*/rust"` here. The crates of `tests/rust-bans/` are not
+# members: their edges are the ones the bans refuse.
+members = ["crates/*", "tests/packages/*/rust"]
 # A vendored crate (vendor/README.md) is a path dependency, not a member: its
 # dev-dependencies never enter the lock (the Lean grammar's `tree-sitter 0.25`
 # would conflict with the pinned library's `links`), and the gate's clippy, doc

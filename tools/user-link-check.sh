@@ -34,8 +34,14 @@
 #      The generated root's, the one object the link names outside every
 #      package's build directory, is left out because the package brings
 #      the root, and two `main` symbols cannot link;
-#    - `core/glue.o` and `core/libeditor_ffi.a`: the glue object and the
-#      Rust archive, prebuilt;
+#    - `core/glue.o` and `core/libeditor_rust.a`: the glue object and the
+#      Rust archive, prebuilt: the archive the package-set build generated
+#      for the default set, which holds no package crate, so it is the
+#      core's (lean/lakefile.lean, `editorRust`);
+#    - `core/native-static-libs`: the system libraries that archive needs,
+#      as rustc printed them beside its generated crate
+#      (`target/editor-rust/core/`), which the fixture's link passes when it
+#      links against an SDK;
 #    - `core/lakefile.toml` and `core/lake-manifest.json`
 #      (`tools/user-link/core`): they make `core/` a Lake package with no
 #      target, which the fixture requires by path, so its modules can
@@ -376,11 +382,14 @@ done <"$work/dev-objects"
 
 # The glue object and the Rust archive, as that link names them.
 dev_glue=$(dev_link_names '/glue\.o')
-dev_archive=$(dev_link_names '/libeditor_ffi\.a')
+dev_archive=$(dev_link_names '/libeditor_rust[^/]*\.a')
 [ -f "$dev_glue" ] || fail "the built editor's link names no glue object"
 [ -f "$dev_archive" ] || fail "the built editor's link names no Rust archive"
 cp -c "$dev_glue" "$stage/core/glue.o"
-cp -c "$dev_archive" "$stage/core/libeditor_ffi.a"
+[ "${dev_archive##*/}" = libeditor_rust.a ] ||
+  fail "the built editor links $dev_archive, not the core's Rust archive, libeditor_rust.a"
+cp -c "$dev_archive" "$stage/core/libeditor_rust.a"
+cp "$repo/target/editor-rust/core/native-static-libs" "$stage/core/native-static-libs"
 
 # What makes `core/` a package the fixture can require: its config, which
 # names no target, and an empty manifest.
@@ -670,7 +679,7 @@ fi
 piece "core/lib (the editor's and the default packages' modules, .olean)" "$stage/core/lib"
 piece "core/obj (the editor's and the default packages' modules, .c.o.export)" "$stage/core/obj"
 piece "core/glue.o (the glue object)" "$stage/core/glue.o"
-piece "core/libeditor_ffi.a (the Rust archive)" "$stage/core/libeditor_ffi.a"
+piece "core/libeditor_rust.a (the Rust archive)" "$stage/core/libeditor_rust.a"
 piece "core/lakefile.toml, core/lake-manifest.json (the package config)" "$stage/core/lakefile.toml" "$stage/core/lake-manifest.json"
 if [ "$linker" = bundled ]; then
   piece "stubs (link stubs, .tbd, and platform-version)" "$stage/stubs"

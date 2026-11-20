@@ -1,8 +1,11 @@
 //! The C functions the Lean editor binds to.
 //!
 //! Lean owns the process and is the editor; this crate is the one place in
-//! the Rust library that knows so. It is built as a static library, which
-//! Lake links into the Lean executables (`lean/lakefile.lean`). Every function
+//! the Rust library that knows so. It is linked into the one static library
+//! Lake links into the Lean executables: a crate the package-set build
+//! generates from the set, which depends on this crate and on the crate of
+//! each package of the set that holds Rust (`lean/lakefile.lean`, the facet
+//! `editorRust`; docs/design/packages.md, "Rust in a package"). Every function
 //! here is called by Lean, directly or through the C glue in
 //! `lean/ffi/glue.c`. Nothing here calls Lean.
 //!

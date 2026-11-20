@@ -7,9 +7,12 @@ license.workspace = true
 publish = false
 
 [lib]
-# `staticlib` is what Lake links into the Lean executables. `rlib` is only so
-# the integration tests under `tests/` can link the crate.
-crate-type = ["staticlib", "rlib"]
+# An `rlib` only: the static library Lake links into the Lean executables is
+# a crate the package-set build generates from the set, which depends on this
+# one and on each package's crate (lean/lakefile.lean, `editorRust`;
+# docs/design/packages.md, "Rust in a package"). The integration tests under
+# `tests/` link it too.
+crate-type = ["rlib"]
 
 [dependencies]
 # The conventions every service keeps, which the crate of every package

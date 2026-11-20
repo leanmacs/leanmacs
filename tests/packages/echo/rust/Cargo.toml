@@ -1,0 +1,20 @@
+[package]
+name = "echo-service"
+version = "0.1.0"
+description = "The fixture package echo's service: it answers each request with its text, on a thread of its own, and completes it on the completion queue"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# The package-set build links it into the one archive it generates from
+# the set (lean/lakefile.lean, `editorRust`); `rlib` is what that crate
+# depends on, and what the tests link.
+crate-type = ["rlib"]
+
+# The conventions every service keeps, and nothing else of the editor's: a
+# package's crate depends on `editor-service` alone (docs/design/packages.md,
+# "Rust in a package"), which the generated crate's cargo-deny bans hold
+# (tools/rust-bans-check.sh).
+[dependencies]
+editor-service = { path = "../../../../crates/editor-service" }

@@ -70,9 +70,11 @@ names exactly what the stage ships a stub for, no SDK is read, and the
 executable records the SDK version the editor's own build recorded, where a
 linker with no SDK would record the minimum macOS in its place.
 
-With none: the frameworks and the two libraries the editor's own link names
-(`linkArgs` in `lean/lakefile.lean`), for a linker that finds them in an
-SDK, which is the check's `--linker system`. -/
+With none: the system libraries the Rust archive needs, as rustc printed
+them beside the crate the package-set build generated
+(`<stage>/core/native-static-libs`, which the editor's own link passes
+too; `linkAsEditor` in `lean/lakefile.lean`), for a linker that finds them
+in an SDK, which is the check's `--linker system`. -/
 def systemLibraryArgs (stage : FilePath) : IO (Array String) := do
   let stubs := stage / "stubs"
   if ← stubs.isDir then
@@ -90,10 +92,8 @@ def systemLibraryArgs (stage : FilePath) : IO (Array String) := do
     return #["-F", stubs.toString, "-L", stubs.toString] ++ named ++
         #[s!"-Wl,-platform_version,macos,{minos},{sdk}"]
   else
-    return #["-framework", "ApplicationServices", "-framework", "CoreGraphics", "-framework",
-      "CoreVideo", "-framework", "Carbon", "-framework", "CoreFoundation", "-framework", "AppKit",
-      "-framework", "Foundation", "-framework", "Metal", "-framework", "QuartzCore", "-framework",
-      "CoreText", "-liconv", "-lobjc"]
+    let line ← IO.FS.readFile (stage / "core" / "native-static-libs")
+    return ((line.split Char.isWhitespace).filter (!·.isEmpty)).toArray.map (·.toString)
 
 /-- What the link of `editor` names beyond this package's own objects, all
 of it under the stage:
@@ -116,7 +116,7 @@ def stagedLinkArgs : Array String :=
     let objects ← filesEnding (core / "obj") ".c.o.export"
     let libraries ← systemLibraryArgs stage
     let report := __dir__ / ".lake" / "build" / "link.dependency-info"
-    return objects ++ #[(core / "glue.o").toString, (core / "libeditor_ffi.a").toString, "-L",
+    return objects ++ #[(core / "glue.o").toString, (core / "libeditor_rust.a").toString, "-L",
           (stage / "toolchain" / "lib").toString, "-Wl,-e,_editor_entry"] ++
         libraries ++
         #[s!"-Wl,-dependency_info,{report}"]
