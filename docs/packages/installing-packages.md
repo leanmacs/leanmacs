@@ -12,7 +12,8 @@ sets"](../design/packages.md#user-package-sets). To write a package, see
 
 Your config directory (`~/.config/leanmacs`, or `$XDG_CONFIG_HOME/leanmacs`)
 is a Lake package. When it has no lakefile, the editor writes this one,
-which requires the package set the editor was built from:
+which requires the package set the editor was built from, then the
+editor's own core:
 
 ```toml
 name = "config"
@@ -21,14 +22,25 @@ name = "config"
 name = "default-set"
 path = "/Applications/Leanmacs.app/Contents/Resources/lean/set"
 
+[[require]]
+name = "editor-core"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/lean"
+
 [[lean_lib]]
 name = "Config"
 globs = ["Config.+"]
 ```
 
-`path` is where the editor's own set is: in the app, its
+The first `path` is where the editor's own set is: in the app, its
 `Contents/Resources/lean/set`; built from a checkout, the checkout's
-`packages/`. The editor never rewrites a lakefile that is there.
+`packages/`. The second is the core the editor is linked from: in the app,
+`Contents/Resources/lean/lean`; built from a checkout, its `lean/`. The
+core comes last on purpose: Lake takes the last require of a name over any
+a package makes, so every package builds against the editor's own core,
+even one that names the core from git, and no core is downloaded. The
+editor never rewrites a lakefile that is there, but each package command
+writes the core's require back as the last one (see "Editing the lakefile
+by hand").
 
 The default set requires the core, `editor-core`, and the default packages:
 
@@ -51,8 +63,9 @@ those the running editor was built from, it builds a new editor.
 
 The first form requires a package in a directory on this machine, the
 second a git repository, at `<rev>` if given, and the third a package from
-the Reservoir registry. Each adds a `[[require]]` table after the last one
-in `lakefile.toml`, then reloads. The same by hand:
+the Reservoir registry. Each adds a `[[require]]` table after the last
+package's in `lakefile.toml`, ahead of the core's, then reloads. The same by
+hand, before the `editor-core` table:
 
 ```toml
 [[require]]
@@ -102,18 +115,19 @@ not pin is fetched, pinned and built.
 It takes the package's `[[require]]` table out and reloads. A default
 package is removed the same way. Your lakefile requires the default set, not
 `compile`, so `:package-remove compile` replaces the default set's table
-with a table for each of the set's own requires but `compile`:
+with a table for each of the set's own requires but `compile` and the core,
+which the lakefile already requires:
 
 ```toml
 name = "config"
 
 [[require]]
-name = "editor-core"
-path = "/Applications/Leanmacs.app/Contents/Resources/lean/lean"
-
-[[require]]
 name = "shipped-themes"
 path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/shipped-themes"
+
+[[require]]
+name = "editor-core"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/lean"
 
 [[lean_lib]]
 name = "Config"
@@ -132,6 +146,12 @@ make the same edit and `:reload`.
   edit it by hand.
 - **A command refuses a lakefile that changed since the last reload**:
   `:reload` and try again.
+- **Every command writes the core's require last.** `:package-install`,
+  `:package-remove` and `:package-update <name> <rev>` take any
+  `editor-core` table out, whatever it says, and add `editor-core` by the
+  running editor's core directory after the last require. So a lakefile an
+  older editor wrote, which requires the default set alone, or one you
+  edited, is repaired by the next command. A `:reload` never rewrites it.
 - **A `lakefile.lean` is never edited.** The commands say they edit
   `lakefile.toml` only. Any change to a `lakefile.lean` starts a build,
   since it is a program and is not read.
@@ -161,6 +181,20 @@ A failure for want of a tool says which tool and how to get it:
 A new editor that is built but does not start, because its link is bad or a
 package's `initialize` throws, is caught before the restart: nothing is
 published and the running editor keeps running.
+
+**A set that would build another core** is refused before anything is
+linked. If the lakefile does not require `editor-core` last, by the running
+editor's core, Lake may take a package's own require of the core instead,
+clone it and build it from source: an editor that is not the one you run.
+The build stops after Lake resolves the set, and says so:
+
+```
+packages: the package set resolves editor-core to git <url> at <rev>, not this editor's core <core>; require it at the root of <config>/lakefile.toml with path = "<core>", as its last require, after every other (:package-install and :package-remove write it), then :reload; this editor keeps running
+```
+
+To fix it, run any package command (`:package-remove` of a package and
+`:package-install` it again, say), which writes the core's require back as
+the last one, or add it by hand as the message says, and `:reload`.
 
 ## When the editor updates
 

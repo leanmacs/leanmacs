@@ -396,11 +396,38 @@ A user's set can require a package in three ways
   and Reservoir packages need the system `git`.
 - **Reservoir**: `:package-install <scope>/word-count [<version>]`.
 
-Whatever the source, the package's `editor-core` require must reach the
-core of the editor it is installed into. Today that is a path: in a
-checkout, its `lean/`; with the app,
-`/Applications/Leanmacs.app/Contents/Resources/lean/lean`. A package
-fetched from git names it the same way, by an absolute path on the
-machine that builds it, as the git package of `tools/user-sets-check.sh`
-does. Naming the core from git, with no local path, is coming
-(packages phase 12), and this guide will say how when it is built.
+A published package names the core from git, by this repository, its
+core in the `lean/` directory, at the tag of a nightly build:
+
+```toml
+[[require]]
+name = "editor-core"
+git = "https://github.com/leanmacs/leanmacs"
+subDir = "lean"
+rev = "nightly-<build id>"
+```
+
+- **Pin a nightly's own tag**, never the moving `nightly`. Each nightly
+  build has a tag `nightly-<build id>` that stays where it is: `editor
+  --version` prints it on its `core` line, and the nightly release's
+  `build.json` holds it as `"tag"`. Pin the one of the editor you develop
+  against.
+- **In a user's set it is only a name.** The lakefile of a user's config
+  requires `editor-core` itself, by the running editor's own core
+  directory, as its last require, and Lake takes that one over the
+  package's: the package builds against the user's core, and nothing is
+  cloned ([installing-packages.md](installing-packages.md)). So the `rev`
+  says which core the package was written against, not which it gets.
+- **On its own**, when you run `lake build` or `lake test` in the
+  package's directory, Lake clones this repository at that `rev` and
+  builds the core from source, so the package needs no checkout of the
+  editor.
+- **A package written against a newer core than the user's fails to
+  build.** The build buffer shows Lean's errors, an unknown identifier or a
+  type mismatch in the package's own modules, and the editor keeps running
+  on the editor it had. There is no version constraint, so say in the
+  package's README which core it needs: the tag it pins.
+
+The example `word-count` requires the core by path, `../../../lean`,
+because it builds in this repository against the checkout's core; a
+published copy of it would use the git form above.
