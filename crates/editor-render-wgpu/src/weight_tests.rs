@@ -352,6 +352,7 @@ fn masks(hint: bool, growth: f32) -> Vec<GlyphImage> {
                 glyph,
                 bin: 0,
                 subpixel: false,
+                bucket: 0,
             };
             rasterizer
                 .rasterize(&GlyphRequest {

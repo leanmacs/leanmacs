@@ -27,8 +27,9 @@ use editor_render::port::{DrawRequest, Renderer, Target};
 
 use super::{Device, INSTANCE_BYTES, Run, Window, globals, instances};
 use crate::atlas::Atlas;
+use editor_raster::fake::FakeRasterizer;
+
 use crate::glyphs::Kind;
-use crate::glyphs::fake::FakeRasterizer;
 use crate::painter::Painter;
 use crate::quads::{Quad, QuadKind};
 use crate::surface::handles;

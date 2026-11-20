@@ -8,9 +8,15 @@
 //! # What an image is kept by
 //!
 //! Its [`GlyphKey`]: the resolved font's id, the glyph's id in that font,
-//! the subpixel bin it is drawn at, and the kind that was asked for. A
+//! the subpixel bin it is drawn at, the kind that was asked for, and the
+//! luminance bucket of its run's colour, which is 0 unless the rasteriser
+//! says its images depend on it ([`Rasterize::by_luminance`]). A
 //! resolved font's size, variation coordinates and synthesis are fixed for
 //! a generation of the frame's fonts, so the font's id stands for them.
+//!
+//! The key, the request, the image and the [`Rasterize`] trait are the
+//! rasteriser port's, owned by `editor-raster` and re-exported here; the
+//! rounding of a place to a bin ([`bin_of`]) is the painter's, and stays.
 //!
 //! # Positions
 //!
@@ -65,48 +71,10 @@
 
 use std::collections::HashMap;
 
-use editor_layout::shaper::{ResolvedFont, ResolvedFontId};
+use editor_raster::ResolvedFont;
+pub use editor_raster::{GlyphImage, GlyphKey, GlyphRequest, Kind, Rasterize, SUBPIXEL_BINS};
 
 use crate::atlas::{Atlas, Slot};
-
-/// How many places across a pixel a glyph is rasterised at.
-pub const SUBPIXEL_BINS: u8 = 4;
-
-/// What a glyph image holds for each pixel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Kind {
-    /// One byte: how much of the pixel the glyph covers.
-    Mask,
-    /// Four bytes: how much of the pixel's red, green and blue stripes
-    /// the glyph covers, and a fourth that is not read.
-    Subpixel,
-    /// Four bytes: red, green, blue and alpha, the colours multiplied by
-    /// the alpha.
-    Color,
-}
-
-impl Kind {
-    /// How many bytes a pixel of this kind takes.
-    pub const fn bytes(self) -> u32 {
-        match self {
-            Self::Mask => 1,
-            Self::Subpixel | Self::Color => 4,
-        }
-    }
-}
-
-/// What a glyph image is kept by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GlyphKey {
-    /// The font it is drawn in.
-    pub font: ResolvedFontId,
-    /// The glyph's id in that font.
-    pub glyph: u32,
-    /// Which quarter of a pixel it is drawn at, from 0.
-    pub bin: u8,
-    /// Whether a subpixel mask was asked for, and not a plain one.
-    pub subpixel: bool,
-}
 
 /// The whole pixel and the bin of a place `x` pixels across: `x` rounded
 /// to the nearest quarter of a pixel, as the pixel it falls in and how
@@ -115,44 +83,6 @@ pub fn bin_of(x: f32) -> (i32, u8) {
     let bins = i32::from(SUBPIXEL_BINS);
     let quarters = (x * f32::from(SUBPIXEL_BINS)).round() as i32;
     (quarters.div_euclid(bins), quarters.rem_euclid(bins) as u8)
-}
-
-/// One glyph to rasterise.
-#[derive(Debug, Clone, Copy)]
-pub struct GlyphRequest<'a> {
-    /// The font: its bytes, its face, its size and its synthesis.
-    pub font: &'a ResolvedFont,
-    /// What the image will be kept by: the glyph, the bin and the kind
-    /// asked for.
-    pub key: GlyphKey,
-    /// Whether the outline is fitted to the pixel grid.
-    pub hint: bool,
-}
-
-/// A rasterised glyph.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GlyphImage {
-    /// What it holds for each pixel.
-    pub kind: Kind,
-    /// How far across it is, in pixels; 0 for a glyph that draws nothing.
-    pub width: u32,
-    /// How far down.
-    pub height: u32,
-    /// How far right of the glyph's whole-pixel place its left edge is.
-    pub left: i32,
-    /// How far above the baseline its top edge is.
-    pub top: i32,
-    /// Its pixels, row by row from the top: `width * height` times the
-    /// kind's bytes.
-    pub data: Vec<u8>,
-}
-
-/// What makes a glyph's image. The real one is over a font rasteriser;
-/// the cache's and the painter's tests run on a fake.
-pub trait Rasterize {
-    /// The image of the glyph `request` names; `None` when there is none
-    /// to make: the font has no bytes, or no such glyph.
-    fn rasterize(&mut self, request: &GlyphRequest<'_>) -> Option<GlyphImage>;
 }
 
 /// A glyph image the cache holds, as what draws it needs it.
@@ -425,13 +355,10 @@ impl GlyphCache {
 }
 
 #[cfg(test)]
-pub(crate) mod fake;
-
-#[cfg(test)]
 mod tests {
-    use editor_layout::shaper::ResolvedFontId;
+    use editor_raster::ResolvedFontId;
+    use editor_raster::fake::{FakeRasterizer, font};
 
-    use super::fake::{FakeRasterizer, font};
     use super::{GlyphCache, GlyphKey, Kind, Placed, SUBPIXEL_BINS, Stats, bin_of};
 
     /// A page size for the tests: small, so a page fills quickly.
@@ -457,6 +384,7 @@ mod tests {
             glyph,
             bin: 0,
             subpixel: false,
+            bucket: 0,
         }
     }
 
@@ -852,6 +780,7 @@ mod tests {
             glyph: 9,
             bin: 2,
             subpixel: true,
+            bucket: 0,
         };
         cache.get(asked, &font, false, &mut rasterizer);
         assert_eq!(rasterizer.asked, vec![(asked, 24.0, false)]);

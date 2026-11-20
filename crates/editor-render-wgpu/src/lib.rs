@@ -7,9 +7,12 @@
 //! which glyph images are kept and for how long (the module `glyphs`) and
 //! where (`atlas`), what a frame comes to as rectangles (`painter`,
 //! `quads`), and how a rectangle's pixel is laid over what is under it
-//! (`blend`). Glyph images are made by `swash` (`raster`) and packed by
-//! `etagere` (`atlas`); no type of either is public here. Those modules
-//! are private, and their docs say what each decides.
+//! (`blend`). Glyph images are made through the rasteriser port, which
+//! `editor-raster` owns: by `swash` (`raster`) unless the program hands a
+//! renderer another rasteriser, and by swash for every glyph that one
+//! declines. They are packed by `etagere` (`atlas`); no type of either
+//! library is public here. Those modules are private, and their docs say
+//! what each decides.
 //!
 //! [`HeadlessRenderer`] lays the quads over a pixel buffer on the CPU
 //! (`cpu`): it needs no GPU, and every test of it runs in the gate.

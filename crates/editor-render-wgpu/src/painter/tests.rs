@@ -21,7 +21,8 @@ use editor_layout::shaper::{Glyph, ResolvedFontId, VisualLine};
 use editor_render::port::Target;
 
 use super::{Painter, thickness};
-use crate::glyphs::fake::{FakeRasterizer, font};
+use editor_raster::fake::{FakeRasterizer, font};
+
 use crate::glyphs::{GlyphKey, bin_of};
 use crate::quads::{Quad, QuadKind};
 use crate::{Antialiasing, Masks, Settings, SubpixelOrder};
@@ -244,8 +245,8 @@ fn a_glyphs_quad_is_at_the_frames_own_x_plus_dx_and_baseline_plus_dy() {
             (20 + 13, top(10), GLYPH.0, GLYPH.1),
             (20 + 20, top(12), GLYPH.0, GLYPH.1),
             // 25.5 across: the pixel 25, and the image of its second
-            // quarter.
-            (20 + 25, top(17), GLYPH.0, GLYPH.1),
+            // quarter, which the fake draws a column wider.
+            (20 + 25, top(17), GLYPH.0 + 1, GLYPH.1),
         ]
     );
     let bins: Vec<u8> = painter
@@ -1042,6 +1043,7 @@ fn mask_key(glyph: u32) -> GlyphKey {
         glyph,
         bin: 0,
         subpixel: false,
+        bucket: 0,
     }
 }
 
@@ -1257,6 +1259,49 @@ fn glyphs_are_asked_for_fitted_to_the_pixel_grid_or_not_as_the_settings_say() {
     };
     assert_eq!(asked(false), vec![false, false]);
     assert_eq!(asked(true), vec![true, true]);
+}
+
+/// A row of the glyph 7 twice, the first in a black run and the second
+/// in a white one, on a grey ground.
+fn black_and_white() -> Frame {
+    let glyphs = vec![glyph(7, 0, 0.0), glyph(7, 1, 10.0)];
+    let on_grey = |foreground: Color| Paint {
+        foreground,
+        background: GREY,
+        ..Paint::default()
+    };
+    let runs = vec![(0..1, on_grey(BLACK)), (1..2, on_grey(WHITE))];
+    frame_of(vec![row(0.0, glyphs, runs, 1)])
+}
+
+/// The keys `painter` asked its rasteriser for, in order.
+fn asked_keys(painter: &Painter<FakeRasterizer>) -> Vec<GlyphKey> {
+    let asked = &painter.rasterizer().asked;
+    asked.iter().map(|(key, _, _)| *key).collect()
+}
+
+#[test]
+fn a_glyph_in_two_luminance_buckets_is_two_images_for_a_rasteriser_that_reads_luminance() {
+    let mut painter = painter_over(FakeRasterizer {
+        tinted: true,
+        ..FakeRasterizer::new()
+    });
+    painter.paint(&black_and_white(), target(1.0));
+    let buckets: Vec<u8> = asked_keys(&painter).iter().map(|key| key.bucket).collect();
+    assert_eq!(buckets, vec![0, 4]);
+    // And each is drawn from its own image.
+    let black = quads_of(&painter, QuadKind::Mask, BLACK);
+    let white = quads_of(&painter, QuadKind::Mask, WHITE);
+    assert_eq!((black.len(), white.len()), (1, 1));
+    assert_ne!(read(&painter, &black[0]), read(&painter, &white[0]));
+}
+
+#[test]
+fn a_rasteriser_that_does_not_read_luminance_keeps_one_image_whatever_the_colour() {
+    let mut painter = painter();
+    let drawn = painter.paint(&black_and_white(), target(1.0));
+    assert_eq!(asked_keys(&painter), vec![mask_key(7)]);
+    assert_eq!((drawn.glyphs_rasterised, drawn.glyphs_reused), (1, 1));
 }
 
 #[test]

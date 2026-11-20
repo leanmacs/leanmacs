@@ -583,6 +583,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-raster"
+version = "0.1.0"
+dependencies = [
+ "editor-layout",
+]
+
+[[package]]
 name = "editor-release"
 version = "0.1.0"
 
@@ -607,6 +614,7 @@ version = "0.1.0"
 dependencies = [
  "editor-layout",
  "editor-platform",
+ "editor-raster",
  "editor-render",
  "editor-shape-parley",
  "etagere",

@@ -1,4 +1,5 @@
-//! The real [`Rasterize`]: glyph images made by `swash`.
+//! The rasteriser port's swash adapter: glyph images made by `swash`, on
+//! every platform, and the fallback for what another rasteriser declines.
 //!
 //! One glyph of one resolved font, by its id in the font, at the font's
 //! size and variation coordinates, moved right by its subpixel bin's
@@ -27,7 +28,7 @@
 //! cache, the painter and the compositor are tested for colour on images
 //! their tests make.
 
-use editor_layout::shaper::ResolvedFont;
+use editor_raster::ResolvedFont;
 use swash::FontRef;
 use swash::scale::image::Content;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
@@ -183,11 +184,11 @@ mod tests {
 
     use std::sync::Arc;
 
-    use editor_layout::shaper::{ResolvedFont, ResolvedFontId};
+    use editor_raster::fake::font;
+    use editor_raster::{ResolvedFont, ResolvedFontId};
     use swash::FontRef;
 
     use super::SwashRasterizer;
-    use crate::glyphs::fake::font;
     use crate::glyphs::{GlyphImage, GlyphKey, GlyphRequest, Kind, Rasterize};
 
     /// Noto Sans.
@@ -226,6 +227,7 @@ mod tests {
             glyph,
             bin: 0,
             subpixel: false,
+            bucket: 0,
         }
     }
 
@@ -451,6 +453,27 @@ mod tests {
         let middle = image.height as usize / 2;
         let row = &image.data[middle * width..(middle + 1) * width];
         row.iter().map(|byte| f32::from(*byte)).sum::<f32>() / 255.0
+    }
+
+    #[test]
+    fn the_swash_rasteriser_holds_to_the_rasteriser_contract() {
+        use editor_raster::contract::{Fixture, check};
+        for size in [16.0, 28.0] {
+            for hint in [true, false] {
+                let fixture = Fixture {
+                    font: ResolvedFont {
+                        size,
+                        ..resolved(MONO)
+                    },
+                    h: glyph_of(MONO, 'H'),
+                    i: glyph_of(MONO, 'I'),
+                    space: glyph_of(MONO, ' '),
+                    hint,
+                };
+                let failures = check(&mut || Box::new(SwashRasterizer::new()), &fixture);
+                assert!(failures.is_empty(), "{size} px, hint {hint}: {failures:#?}");
+            }
+        }
     }
 
     #[test]

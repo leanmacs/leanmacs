@@ -1,0 +1,67 @@
+# What no line of `editor-raster` may name, its tests included: a real file,
+# a directory of the machine, a process or a clock. The rasteriser port is
+# handed a font as the bytes a frame carries, and its fake and its contract
+# read no font at all; the contract's callers hand it a fixture font of
+# their own, compiled in.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none, so this file governs
+# every target of this crate and no other. `disallowed_methods` and
+# `disallowed_types` are on by default at `warn`, and `mise run lint` denies
+# warnings, so a line that names one of these fails the gate.
+#
+# The list is `crates/editor-render-wgpu/clippy.toml`'s for files, the
+# environment, processes and clocks; `crates/editor-text/clippy.toml`'s
+# header says what a list of names does not hold.
+
+disallowed-methods = [
+  # Every free function of `std::fs`.
+  { path = "std::fs::canonicalize", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::copy", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::create_dir", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::create_dir_all", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::exists", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::hard_link", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::metadata", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::read", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::read_dir", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::read_link", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::read_to_string", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::remove_dir", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::remove_dir_all", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::remove_file", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::rename", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::set_permissions", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::symlink_metadata", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::write", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  # The methods of `Path` that ask the disk.
+  { path = "std::path::Path::canonicalize", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::exists", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::is_dir", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::is_file", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::is_symlink", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::metadata", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::read_dir", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::read_link", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::symlink_metadata", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::path::Path::try_exists", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  # The directories of the machine.
+  { path = "std::env::current_dir", reason = "a rasteriser has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::set_current_dir", reason = "a rasteriser has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::temp_dir", reason = "a rasteriser has no directory of the machine, and a test leaves the process as it found it" },
+  # Processes.
+  { path = "std::process::Command::new", reason = "a rasteriser starts no process" },
+  # The clocks.
+  { path = "std::time::SystemTime::now", reason = "a rasteriser reads no clock" },
+  { path = "std::time::Instant::now", reason = "a rasteriser reads no clock" },
+  # The file port's real adapter, which this crate does not depend on.
+  { path = "editor_fs_std::StdFs::system", reason = "a rasteriser touches no file system, real or fake" },
+]
+
+disallowed-types = [
+  { path = "std::fs::File", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::OpenOptions", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::DirBuilder", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::ReadDir", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+  { path = "std::fs::DirEntry", reason = "a rasteriser touches no file: a font reaches it as the bytes a frame carries" },
+]

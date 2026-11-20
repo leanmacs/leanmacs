@@ -104,6 +104,7 @@ use editor_layout::face::{Color, Paint, UnderlineStyle};
 use editor_layout::frame::{CursorBox, Frame, ViewFrame};
 use editor_layout::scene::CursorShape;
 use editor_layout::shaper::ResolvedFont;
+use editor_raster::luminance_bucket;
 use editor_render::port::{Drawn, Target};
 use editor_render::rows::{RowCache, RowRef, shown};
 
@@ -153,6 +154,10 @@ impl<Z: Rasterize> Rasterize for Ordered<'_, Z> {
             }
         }
         Some(image)
+    }
+
+    fn by_luminance(&self) -> bool {
+        self.inner.by_luminance()
     }
 }
 
@@ -270,6 +275,7 @@ impl<Z: Rasterize> Painter<Z> {
             order,
         };
         let (hint, subpixel) = (self.hint, order.is_some());
+        let tinted = ordered.by_luminance();
         let line = thickness(target.scale);
         let reuse = self.rows.update(frame, target.scale, |row| {
             built.insert(row.hash);
@@ -278,7 +284,7 @@ impl<Z: Rasterize> Painter<Z> {
                 &frame.fonts,
                 line,
                 &mut |key, font| glyphs.get(key, font, hint, &mut ordered),
-                subpixel,
+                Asked { subpixel, tinted },
                 unknown,
             )
         });
@@ -388,6 +394,16 @@ fn paint_at(row: &RowRef<'_>, cluster: usize) -> Paint {
         .map_or_else(Paint::default, |(_, paint)| *paint)
 }
 
+/// How a row's glyph images are asked for.
+#[derive(Debug, Clone, Copy)]
+struct Asked {
+    /// As subpixel masks, and not plain ones.
+    subpixel: bool,
+    /// In the luminance bucket of each glyph's run, for a rasteriser whose
+    /// images depend on it; in bucket 0 otherwise.
+    tinted: bool,
+}
+
 /// Builds the quads of `row`, relative to its start, taking its glyph
 /// images through `image`.
 fn build_row(
@@ -395,7 +411,7 @@ fn build_row(
     fonts: &[ResolvedFont],
     line: u32,
     image: &mut dyn FnMut(GlyphKey, &ResolvedFont) -> Option<crate::glyphs::Placed>,
-    subpixel: bool,
+    asked: Asked,
     unknown: &mut u64,
 ) -> RowQuads {
     let mut built = RowQuads::default();
@@ -424,7 +440,12 @@ fn build_row(
             font: glyph.font,
             glyph: glyph.id,
             bin,
-            subpixel,
+            subpixel: asked.subpixel,
+            bucket: if asked.tinted {
+                luminance_bucket(paint.foreground)
+            } else {
+                0
+            },
         };
         let Some(placed) = image(key, font) else {
             continue;
