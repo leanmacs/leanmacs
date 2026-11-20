@@ -16,7 +16,9 @@
 //! - [`decline`]: which fonts are left to swash;
 //! - [`fill`]: the grey a luminance bucket is drawn in.
 //!
-//! Its Core Text module and its real adapters are macOS only.
+//! Its Core Text module and its real adapters are macOS only:
+//! `CoreTextRasterizer`, the rasteriser, and `SystemDefaults`, the
+//! `FontDefaults` that reads the user's preference.
 //!
 //! # What runs where
 //!
@@ -40,3 +42,8 @@ pub mod bounds;
 pub mod decline;
 pub mod defaults;
 pub mod fill;
+
+#[cfg(target_os = "macos")]
+mod coretext;
+#[cfg(target_os = "macos")]
+pub use coretext::{CoreTextRasterizer, SystemDefaults, glyphs_of};

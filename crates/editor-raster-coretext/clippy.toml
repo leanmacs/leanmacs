@@ -15,7 +15,10 @@
 # `AppleFontSmoothing`. No test calls it. The example `check`, which runs on
 # demand on macOS (`mise run coretext-check`), calls it at one call site
 # under its own `#[expect(clippy::disallowed_methods, reason = "…")]`, as
-# `crates/editor-render-wgpu/clippy.toml` says of its examples.
+# `crates/editor-render-wgpu/clippy.toml` says of its examples. Seen to
+# bite once by hand, on 2026-11-20: with that `expect` taken off,
+# `mise run lint` fails with "use of a disallowed method
+# `editor_raster_coretext::SystemDefaults::new`".
 
 disallowed-methods = [
   # Every free function of `std::fs`.
