@@ -180,10 +180,11 @@ def Document.of (state : EditorState) (run : Nat) (ended : Bool := false) : Text
       if window.buffer == id then
         if let .ok (some place) ← observing (placeOf buffer.text window) then
           views := views.push place
-    let shown := views.map (·.view)
+    -- The places a restore read and did not put back, as they were read:
+    -- their views' ids are the earlier run's.
     for entry in kept.places do
       if entry.buffer == index && entry.revision == buffer.history.head then
-        views := views ++ entry.places.filter (!shown.contains ·.view)
+        views := views ++ entry.places
     buffers :=
       buffers.push
         { key := index, name := buffer.name

@@ -166,6 +166,7 @@ import ModelTest.Editor.WorkingSet.Run
 import ModelTest.Editor.Restore
 import ModelTest.Editor.Restore.Document
 import ModelTest.Editor.Restore.Journal
+import ModelTest.Editor.Restore.Run
 import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
 import ModelTest.Editor.Workspace.Contract
@@ -1210,6 +1211,15 @@ Session restore is checked in Lean alone too:
   minibuffer buffers are never journalled; no state directory journals
   nothing; a leave removes everything and saves the index ended; the index
   write fires once for a burst; and every window's place is recorded.
+- `restoreChecks`: restoring a session (`Editor/Restore/Run.lean`) on that
+  driver, from what a first loop wrote or a check wrote by hand: buffers,
+  texts, line endings, modes and the focused cursor come back; a file
+  changed on disk is restored marked, its first edit and its save refused;
+  an unmodified file reopened and a gone one said; journals of a run with no
+  index, one with no header, and two of one name; the new bases before the
+  stale files' removal; the other windows' places kept and written again;
+  the version rule end to end; and a mode only config registers deferred
+  until it installs, or said when it does not register it.
 
 Listing a workspace's files is checked in Lean alone too:
 
@@ -1398,6 +1408,7 @@ def checks : List Check :=
     journalFormatChecks ++
     restoreDocumentChecks ++
     journalReconcileChecks ++
+    restoreChecks ++
     driverChecks ++
     promptChecks ++
     candidateChecks ++
