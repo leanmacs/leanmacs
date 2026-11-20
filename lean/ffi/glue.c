@@ -1390,9 +1390,9 @@ lean_obj_res editor_glue_files_take(uint64_t id) {
 // `Editor.Ffi.filesAppend : UInt64 → @& String → @& ByteArray → IO Bool`
 lean_obj_res editor_glue_files_append(uint64_t id, b_lean_obj_arg path,
                                       b_lean_obj_arg bytes) {
-  return lean_io_result_mk_ok(lean_box(editor_ffi_files_append(
-      id, string_bytes(path), string_len(path), byte_array_bytes(bytes),
-      byte_array_len(bytes))));
+  return lean_io_result_mk_ok(lean_box(
+      editor_ffi_files_append(id, string_bytes(path), string_len(path),
+                              byte_array_bytes(bytes), byte_array_len(bytes))));
 }
 
 // `Editor.Ffi.filesRemove : UInt64 → @& String → IO Bool`
@@ -1431,10 +1431,11 @@ lean_obj_res editor_glue_files_failure(void) {
     return lean_io_result_mk_ok(lean_box(0)); // `none`
   }
   lean_object *pair = lean_alloc_ctor(0, 2, 0);
-  lean_ctor_set(pair, 0,
-                lean_mk_string_from_bytes((const char *)raw.path, raw.path_len));
-  lean_ctor_set(pair, 1, lean_mk_string_from_bytes((const char *)raw.detail,
-                                                   raw.detail_len));
+  lean_ctor_set(
+      pair, 0, lean_mk_string_from_bytes((const char *)raw.path, raw.path_len));
+  lean_ctor_set(
+      pair, 1,
+      lean_mk_string_from_bytes((const char *)raw.detail, raw.detail_len));
   editor_ffi_text_free(raw.path, raw.path_len);
   editor_ffi_text_free(raw.detail, raw.detail_len);
   return lean_io_result_mk_ok(option_some(pair));
