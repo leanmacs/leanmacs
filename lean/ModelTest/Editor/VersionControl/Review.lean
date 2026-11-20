@@ -11,9 +11,9 @@ import Editor.Test.Keys
 import Editor.Text
 import Editor.Text.Model
 import Editor.VersionControl
+import Editor.VersionControl.Compiled
 import Editor.VersionControl.Contract
 import Editor.VersionControl.Model
-import Editor.VersionControl.Compiled
 import Editor.VersionControl.Review
 import Editor.VersionControl.ReviewHunks
 import ModelTest.Check
