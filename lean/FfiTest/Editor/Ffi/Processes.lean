@@ -107,7 +107,10 @@ def processChecks (_ : Unit) : List Check :=
                   10 do
             return false
           let cancelled ← Editor.Ffi.processesCancel 1130
-          let reaped ← eventually (return (← Editor.Ffi.processesPending) == before)
+          -- A flush is completed once the cancelled run's child is reaped.
+          let flushed ← Editor.Ffi.processesFlush 1133
+          let reaped :=
+            flushed && (← processCompleted 1133) && (← Editor.Ffi.processesPending) == before
           let never ← Editor.Ffi.processesCancel 1131
           -- The next completion is the marker's, started after the cancel.
           let marker ← processResult 1132 "exit 0" directory
@@ -196,7 +199,10 @@ def processChecks (_ : Unit) : List Check :=
           let held ← eventually (return (← Editor.Ffi.processesHeld 1170) == 1)
           let unknown ← Editor.Ffi.processesHeld 1171
           let cancelled ← Editor.Ffi.processesCancel 1170
-          let reaped ← eventually (return (← Editor.Ffi.processesPending) == before)
+          -- A flush is completed once the cancelled child is reaped.
+          let flushed ← Editor.Ffi.processesFlush 1172
+          let reaped :=
+            flushed && (← processCompleted 1172) && (← Editor.Ffi.processesPending) == before
           let forgotten ← Editor.Ffi.processesHeld 1170
           return opened == some .opened && held && unknown == 2 && cancelled && reaped &&
               forgotten == 2 },

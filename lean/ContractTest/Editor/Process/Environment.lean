@@ -9,6 +9,7 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Program
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 
 /-!
 # Contract tests: `Editor/Process/Environment.lean`
@@ -91,7 +92,7 @@ def environmentChecks (services : Job.Services) (fixtures : System.FilePath) : L
                   let bare ←
                     [first, second].mapM fun directory => outputOf (printenv directory "printenv")
                   return byPath == [firstPath ++ "\n", secondPath ++ "\n"] && bare == byPath
-            let reaped ← eventually (return (← Ffi.processesPending) == before)
+            let reaped ← Editor.Test.Linked.childrenReapedTo services before
             return outcome == .finished true && (← said.get).isEmpty && reaped },
     { name :=
         "with a mise that sleeps past a limit of 1 s, the lookup is killed within 2 s of its start, its group reaped, the child gets the inherited environment, and the timeout is reported once"
@@ -108,7 +109,7 @@ def environmentChecks (services : Job.Services) (fixtures : System.FilePath) : L
                 let path ← outputOf (printenv directory)
                 let ended ← now
                 return ended - start < 2000 && path == inherited
-          let reaped ← eventually (return (← Ffi.processesPending) == before)
+          let reaped ← Editor.Test.Linked.childrenReapedTo services before
           return outcome == .finished true &&
               (← said.get) == #[Process.failureMessage directory (.timedOut 1000)] &&
               reaped }]

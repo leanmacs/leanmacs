@@ -16,6 +16,7 @@ import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.SyntaxTree
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.Text
 import Editor.Text.Real
 import Editor.Watch
@@ -96,9 +97,15 @@ def caseFailures (completions : Job.Completions) : IO (List String) := do
     FileCases.cases.filterMapM fun case => do
         return (← playOnLibrary completions case).map fun reason =>
             s!"the real text binding and the file service: {case.name} ({reason})"
+  -- The file service has worked what it was handed once a flush of it is
+  -- completed, and its count is read once then. The live documents and
+  -- snapshots are not a service's queue: their poll is phase 6's.
+  let flushed ← Editor.Test.Linked.filesFlushed completions
+  let requests ← Ffi.filesPending
   let freed ←
     eventually do
-        return (← Ffi.Document.live, ← Ffi.Snapshot.live, ← Ffi.filesPending) == before
+        return (← Ffi.Document.live, ← Ffi.Snapshot.live) == (before.1, before.2.1)
+  let freed := flushed && freed && requests == before.2.2
   return failed ++ if freed then [] else [caseLeakName]
 
 end ContractTest

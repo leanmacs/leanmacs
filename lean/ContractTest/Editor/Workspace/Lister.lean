@@ -5,6 +5,7 @@ import Editor.Job
 import Editor.Job.Runner
 import Editor.Process
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
 import Editor.Workspace.FindFile
 import Editor.Workspace.Lister
@@ -49,7 +50,7 @@ def listsAt (services : Job.Services) (fixtures : System.FilePath) (lister : Wor
           return records.qsort (· < ·) == expected.qsort (· < ·)
         | .error _ =>
           return false
-  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  let reaped ← Editor.Test.Linked.childrenReapedTo services before
   return outcome == .finished true && reaped
 
 /-- The global git config of the checks, at `home/config`: its excludes file

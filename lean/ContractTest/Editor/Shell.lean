@@ -40,6 +40,7 @@ import Editor.State
 import Editor.SyntaxTree
 import Editor.TabBar
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.Text
 import Editor.Text.Real
 import Editor.Value
@@ -140,14 +141,14 @@ def shellChecks (services : Job.Services) (fixtures : System.FilePath) : List Ch
       run := do
         let before ← Ffi.processesPending
         let said ← ran s!"!'{fixtures / "hello"}'" ""
-        let reaped ← eventually (return (← Ffi.processesPending) == before)
+        let reaped ← Editor.Test.Linked.childrenReapedTo services before
         return said == some ("hello", "") && reaped },
     { name :=
         "criterion 17: over the real process service, `:%!/usr/bin/sort` over the lines b, c and a leaves a, b and c, and its child is reaped"
       run := do
         let before ← Ffi.processesPending
         let said ← ran "%!/usr/bin/sort" "b\nc\na\n"
-        let reaped ← eventually (return (← Ffi.processesPending) == before)
+        let reaped ← Editor.Test.Linked.childrenReapedTo services before
         return said == some ("3 lines filtered", "a\nb\nc\n") && reaped }]
 
 end ContractTest

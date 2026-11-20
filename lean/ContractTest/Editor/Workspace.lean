@@ -4,6 +4,7 @@ import Editor.Job
 import Editor.Job.Runner
 import Editor.Program
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
 import Editor.Workspace
 import Editor.Workspace.Finder
@@ -33,7 +34,7 @@ def findsThrough (services : Job.Services) (fixtures : System.FilePath)
           asked.mapM fun (directory, _) =>
               Workspace.find { git := (fixtures / "git").toString } directory
         return found == asked.map (·.2)
-  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  let reaped ← Editor.Test.Linked.childrenReapedTo services before
   return outcome == .finished true && reaped
 
 /-- The tree of the workspace checks under `base`: a main checkout `main`,

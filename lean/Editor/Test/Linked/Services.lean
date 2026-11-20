@@ -16,7 +16,8 @@ table with the completion pump running over it (`Services.start`); the
 shutdown that ends the pump (`Services.stop`), and the one a process that
 held a host ends with (`shutdown`); and how many children the process
 service has started and not yet reaped (`pendingChildren`), which a check
-of a feature that runs processes compares before and after.
+of a feature that runs processes compares before and after, once the
+service has been flushed (`childrenReapedTo`).
 
 **One table and one pump a process.** The library has one completion queue,
 and a pump ends the wait each completion names in the one table it is given
@@ -117,5 +118,35 @@ reaped. A check reads it before it starts a child and requires it again
 afterwards. -/
 def pendingChildren : IO UInt64 :=
   Ffi.processesPending
+
+/-- How long `childrenReapedTo` waits for its flush: a guard against a hang,
+never a result. -/
+def reapPatience : Nat :=
+  10000
+
+/-- Whether a flush of each of `targets` among `jobs`, asked in turn, is
+completed: each service has then finished the work handed to it before. -/
+def flushedAll (jobs : Job.Services) (targets : List Job.Service) : IO Bool :=
+  targets.allM fun target => do
+    return (← Job.awaitWithin reapPatience (← jobs.flushed target)) == some .completed
+
+/-- Whether a flush of the library's file service, through the table
+`completions`, whose pump runs, is completed: every file request handed to
+it before has been worked. For a check that has the table and no
+`Job.Services`. -/
+def filesFlushed (completions : Job.Completions) : IO Bool := do
+  let (id, wait) ← completions.register
+  Job.flushThrough completions Ffi.filesFlush id
+  return (← Job.awaitWithin reapPatience (wait.resultD .cancelled)) == some .completed
+
+/-- Whether the library's process service, flushed through `jobs`, is back to
+`before` children: the flush (`Job.Services.flushed .processes`) is
+completed once every run started before it has ended and every child
+cancelled before it has been reaped, and `pendingChildren` is then read
+once. It replaces a poll of the count: a check reads `pendingChildren`
+before it starts a child and asks this afterwards. -/
+def childrenReapedTo (jobs : Job.Services) (before : UInt64) : IO Bool := do
+  let flushed ← Job.awaitWithin reapPatience (← jobs.flushed .processes)
+  return flushed == some .completed && (← pendingChildren) == before
 
 end Editor.Test.Linked

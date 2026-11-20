@@ -5,6 +5,7 @@ import Editor.Job
 import Editor.Job.Runner
 import Editor.Program
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.VersionControl
 import Editor.VersionControl.Contract
 import Editor.VersionControl.Git
@@ -119,7 +120,7 @@ def versionControlFailures (services : Job.Services) : IO (List String) := do
           catch error =>
             return some s!"{property.name} (writing its repository: {error})"
   let failed := outcomes.filterMap id
-  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  let reaped ← Editor.Test.Linked.childrenReapedTo services before
   return failed.map (s!"the version-control interface over git: {·}") ++
       if reaped then [] else ["every child the git implementation ran is reaped"]
 

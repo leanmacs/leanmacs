@@ -2,6 +2,7 @@ import Editor.Ffi.Processes
 import Editor.Job
 import Editor.Job.Runner
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
 import Editor.Workspace
 import Editor.Workspace.Contract
@@ -65,7 +66,7 @@ def workspaceFailures (services : Job.Services) (fixtures : System.FilePath) : I
           let outcome ← runOnTimers services (property.holds (gitOf property.world fixtures base))
           return if outcome == .finished true then none
             else some s!"{property.name} ({repr outcome})"
-  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  let reaped ← Editor.Test.Linked.childrenReapedTo services before
   return failed.map (s!"the workspace finder over the process and file services: {·}") ++
       if reaped then [] else ["every child the workspace finder ran is reaped"]
 

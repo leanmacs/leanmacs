@@ -14,6 +14,7 @@ import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.Program
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.Text
 import Editor.Text.Real
 
@@ -118,10 +119,18 @@ def fileFailures (services : Job.Services) (held : Job.HeldSnapshots) : IO (List
   let failed ←
     JobContract.fileFailures (runFilesOnService services)
         (JobContract.fileProperties ++ JobContract.diffProperties ++ JobContract.grepProperties)
+  -- The file and the diff services have worked what they were handed once a
+  -- flush of each is completed; a search's count is final once its job has
+  -- ended, since `Handle.conclude` ends the job's searches before it
+  -- resolves the outcome. So the requests are read once, after the flushes.
+  let flushed ← Editor.Test.Linked.flushedAll services [.files, .diffs]
+  let requests ← pending
+  -- The live snapshots are not a service's queue: their poll is phase 6's.
   let freed ←
     eventually do
-        return (← Ffi.Snapshot.live, ← pending) == before && (← held.size) == 0
-  let after := (← Ffi.Snapshot.live, ← pending, ← held.size)
+        return (← Ffi.Snapshot.live) == before.1 && (← held.size) == 0
+  let freed := flushed && freed && requests == before.2
+  let after := (← Ffi.Snapshot.live, requests, ← held.size)
   return failed.map (s!"the job runner over the file service: {·}") ++
       if freed then []
       else
@@ -157,7 +166,7 @@ def processFailures (services : Job.Services) : IO (List String) := do
   let before ← Ffi.processesPending
   let failed ←
     JobContract.processFailures (runProcessesOnService services) JobContract.processProperties
-  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  let reaped ← Editor.Test.Linked.childrenReapedTo services before
   let after ← Ffi.processesPending
   return failed.map (s!"the job runner over the process service: {·}") ++
       if reaped then [] else [s!"{processLeakName} ({before} before, {after} after)"]
@@ -192,7 +201,8 @@ def fileWatchFailures (services : Job.Services) : IO (List String) := do
   let before ← Ffi.watchesPending
   let failed ←
     JobContract.fileWatchFailures (runWatchesOnService services) JobContract.fileWatchProperties
-  let ended ← eventually (return (← Ffi.watchesPending) == before)
+  let ended :=
+    (← Editor.Test.Linked.flushedAll services [.fileWatches]) && (← Ffi.watchesPending) == before
   let after ← Ffi.watchesPending
   return failed.map (s!"the job runner over the watch service: {·}") ++
       if ended then [] else [s!"{watchLeakName} ({before} before, {after} after)"]

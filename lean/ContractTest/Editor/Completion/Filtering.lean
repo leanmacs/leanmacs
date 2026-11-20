@@ -4,6 +4,7 @@ import Editor.Ffi.Processes
 import Editor.Job
 import Editor.Job.Runner
 import Editor.Test.Linked.Jobs
+import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
 
 /-!
@@ -46,7 +47,7 @@ def foundThrough (services : Job.Services) (filtering : Completion.Filtering) (t
           return expected (.inr records)
         | .error message =>
           return expected (.inl message)
-  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  let reaped ← Editor.Test.Linked.childrenReapedTo services before
   return outcome == .finished true && reaped
 
 /-- What a source a command filters shows over the real process service,
