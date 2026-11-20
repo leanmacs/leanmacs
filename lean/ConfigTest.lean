@@ -102,8 +102,11 @@ show:
   result on the editor thread, a reload that installs cancels the old
   config's jobs and a rejected one does not, how each ending of a job is
   reported, and a join that cannot finish running out as working when the
-  reload before it, or the editor thread's answer, is slower than its
-  patience;
+  editor thread's answer is slower than its patience; and, a guard on how
+  a script with a short patience is written rather than on the driver,
+  that such a script settles a real reload with a patience of its own,
+  so a reload slower than the join's patience still leaves the join to
+  run out as working;
 - `shippedChecks`: what the executable's hosts start with, the registry the
   packages of the core's Lake package make
   (`EditorCore.EditorPackage.packages`), each entry for the owner named

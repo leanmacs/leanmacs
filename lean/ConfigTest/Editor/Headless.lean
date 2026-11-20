@@ -1113,14 +1113,19 @@ def jobChecks (context : Context) : List Check :=
                 output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"])
               s!"failure={repr failure} cancelled={cancelled} waiting={waiting} output={output}" },
     { name :=
-        "a join that cannot finish fails as working even when the reload before it is slower than the join's patience"
+        "the shape of a short-patience script: the settle after a real reload has a patience of its own, so a reload slower than the join's patience still leaves the join to run out as working"
       run := do
+        -- A guard on how the checks write their scripts, not on the driver.
         -- The reload is held at the gate for twice the join's patience, as
-        -- a loaded runner's elaboration can be: the sleep forces that
-        -- interleaving, it is not what makes the check pass. The settle
-        -- after the reload has the long patience, as the join check's has,
-        -- so the reload's being slow does not turn the join's failure into
-        -- the settle's.
+        -- a loaded runner's elaboration can be. Under a plain `settle`,
+        -- which keeps the run's 200 ms, that fails the settle as reloading
+        -- (`.reloading (some 2)`, seen with this check's first script); the
+        -- driver does not and need not tell a slow reload from a stuck one.
+        -- So a script that runs its waits on a short patience settles a
+        -- real reload with a patience of its own (`settle <milliseconds>`),
+        -- as this one and the join and dispose checks do. The fix is that
+        -- shape, not the driver's: the driver as it was before a run had
+        -- an `answer` passes this script too.
         let gate ← Gate.new (module := "Config.Greet")
         IO.FS.withTempDir fun directory => do
             writeConfig directory jobsConfig
