@@ -4110,9 +4110,11 @@ frame journal and the renderer's counters.
   row, as in Vim and Emacs (the owner's decision, 2026-11-15). With no
   prompt open, the minibuffer's place is one `message` row at the frame's
   bottom and holds no view, and layout ends the frame with one more view
-  frame there when the scene's echo is not empty and no view's rectangle
-  overlaps that row: id `u64::MAX`, which the wire never sends, no text
-  rows and no cursor, and one status row of the echo in face `echo-area`.
+  frame there whenever no view's rectangle overlaps that row: id
+  `u64::MAX`, which the wire never sends, no text rows and no cursor, and
+  one status row of the echo in face `echo-area`. An empty echo gives the
+  same row with no glyphs, so the row is painted in the theme, not left
+  the target's clear colour (the owner's report, 2026-11-19).
   With a prompt open, the minibuffer's view covers the row and its status
   row, the prompt, is drawn there. Opening a prompt clears the echo, as
   Vim does (`EditorState.openPrompt`), so the row is empty when the prompt

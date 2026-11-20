@@ -10,7 +10,7 @@
 
 use editor_layout::Layout;
 use editor_layout::face::{Face, FaceDef};
-use editor_layout::frame::{Frame, Heights, ViewFrame};
+use editor_layout::frame::{ECHO_VIEW, Frame, Heights, ViewFrame};
 use editor_layout::scene::{
     Padding, Rect, Scene, Size, StatusField, TextKey, TextRef, View, ViewId,
 };
@@ -65,7 +65,7 @@ fn lines() -> TextRef {
 }
 
 /// A frame 640 wide and `frame_height` tall, of one view of [`lines`] in
-/// `rect` from `anchor`, with one status field; and no echo.
+/// `rect` from `anchor`, with one status field; and an empty echo.
 fn scene(frame_height: u32, rect: Rect, anchor: usize) -> Scene {
     Scene {
         size: Size {
@@ -88,10 +88,16 @@ fn scene(frame_height: u32, rect: Rect, anchor: usize) -> Scene {
     }
 }
 
-/// The one view of `frame`.
+/// The one view of `frame` other than the echo's, which fills the bottom
+/// row whenever no view covers it.
 fn view(frame: &Frame) -> &ViewFrame {
-    assert_eq!(frame.views.len(), 1, "{}", frame.describe());
-    &frame.views[0]
+    let views: Vec<&ViewFrame> = frame
+        .views
+        .iter()
+        .filter(|view| view.id != ECHO_VIEW)
+        .collect();
+    assert_eq!(views.len(), 1, "{}", frame.describe());
+    views[0]
 }
 
 /// The bytes each row of `view` starts and stops at.

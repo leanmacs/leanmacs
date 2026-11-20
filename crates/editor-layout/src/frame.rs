@@ -163,7 +163,7 @@
 //! the bottom edge, is answered with exactly the rows its frame shows.
 //!
 //! The scene's echo is drawn in the bottom row when nothing else is: when
-//! the echo is not empty and no view's rectangle has a pixel in common
+//! no view's rectangle has a pixel in common
 //! with the frame's bottom [`Heights::message`] pixels (the frame's height
 //! when it is less), the frame ends with one more view frame, of the id
 //! [`ECHO_VIEW`]. Its rectangle is that row across the scene's width, it
@@ -171,10 +171,11 @@
 //! the echo, shaped as a status row is, in the face `echo-area` over the
 //! default face, not `mode-line`, its line below the echo area's vertical
 //! padding, and its text inset [`Scene::echo_padding`] from the frame's
-//! left and right edges ("The padding", below). An empty echo, a frame of no width or no
-//! height, and a bottom row any view covers any of, give no such view: the
-//! row then shows what the views there draw, or the target's clear
-//! colour.
+//! left and right edges ("The padding", below). An empty echo gives the
+//! same view with a row of no glyphs, so the row is painted in the theme
+//! whether or not there is a message. A frame of no width or no height, and
+//! a bottom row any view covers any of, give no such view: the row then
+//! shows what the views there draw, or the target's clear colour.
 //!
 //! **Every value is resolved.** A frame names no face: a run carries the
 //! [`Paint`] its faces come to ([`face`](crate::face), "The precedence":
@@ -788,17 +789,14 @@ impl<S: Shaper> Layout<S> {
         frame
     }
 
-    /// The echo's view frame (module docs, "The bottom row"): when the
-    /// scene's echo is not empty and no view of it covers any pixel of the
+    /// The echo's view frame (module docs, "The bottom row"): when no
+    /// view of the scene covers any pixel of the
     /// frame's bottom row, a view frame [`ECHO_VIEW`] that is that row
     /// across the frame, with no text and one status row of the echo in
     /// the face `echo-area` over the default face. The row is
     /// [`Heights::message`] tall, or the frame's height when that is less;
     /// a frame of no width or no height has none.
     fn echo_frame(&mut self, scene: &Scene) -> Option<ViewFrame> {
-        if scene.echo.is_empty() {
-            return None;
-        }
         let Size { width, height } = scene.size;
         let tall = self.heights().message.min(height);
         let row = Rect {

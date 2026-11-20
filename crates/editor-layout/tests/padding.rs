@@ -101,10 +101,16 @@ fn scene(views: Vec<View>) -> Scene {
     }
 }
 
-/// The one view of `frame`.
+/// The one view of `frame` other than the echo's, which fills the bottom
+/// row whenever no view covers it.
 fn only(frame: &Frame) -> &ViewFrame {
-    assert_eq!(frame.views.len(), 1, "{}", frame.describe());
-    &frame.views[0]
+    let views: Vec<&ViewFrame> = frame
+        .views
+        .iter()
+        .filter(|view| view.id != ECHO_VIEW)
+        .collect();
+    assert_eq!(views.len(), 1, "{}", frame.describe());
+    views[0]
 }
 
 /// The bytes each row of `view` starts and stops at.
