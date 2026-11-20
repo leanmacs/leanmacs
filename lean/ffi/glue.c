@@ -1302,6 +1302,23 @@ bool editor_ffi_files_make_directory(uint64_t id, const uint8_t *path,
 bool editor_ffi_files_take(uint64_t id, editor_ffi_raw_file_result *out);
 bool editor_ffi_files_cancel(uint64_t id);
 uint64_t editor_ffi_files_pending(void);
+bool editor_ffi_files_append(uint64_t id, const uint8_t *path, size_t path_len,
+                             const uint8_t *bytes, size_t bytes_len);
+bool editor_ffi_files_remove(uint64_t id, const uint8_t *path, size_t path_len);
+bool editor_ffi_files_append_unobserved(const uint8_t *path, size_t path_len,
+                                        const uint8_t *bytes, size_t bytes_len);
+bool editor_ffi_files_remove_unobserved(const uint8_t *path, size_t path_len);
+bool editor_ffi_files_save_unobserved(const editor_ffi_snapshot *snapshot,
+                                      const uint8_t *path, size_t path_len);
+// The library's `RawFileFailure`: a failure of an unobserved request, its
+// path's bytes and its detail, each a buffer the caller hands back.
+typedef struct {
+  uint8_t *path;
+  size_t path_len;
+  uint8_t *detail;
+  size_t detail_len;
+} editor_ffi_file_failure;
+bool editor_ffi_files_failure(editor_ffi_file_failure *out);
 
 // `Editor.Ffi.filesLoad : UInt64 → @& String → UInt64 → IO Bool`
 lean_obj_res editor_glue_files_load(uint64_t id, b_lean_obj_arg path,
@@ -1368,6 +1385,59 @@ lean_obj_res editor_glue_files_take(uint64_t id) {
   editor_ffi_text_free(raw.words, raw.words_len);
   editor_ffi_text_free(raw.detail, raw.detail_len);
   return lean_io_result_mk_ok(option_some(result));
+}
+
+// `Editor.Ffi.filesAppend : UInt64 → @& String → @& ByteArray → IO Bool`
+lean_obj_res editor_glue_files_append(uint64_t id, b_lean_obj_arg path,
+                                      b_lean_obj_arg bytes) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_files_append(
+      id, string_bytes(path), string_len(path), byte_array_bytes(bytes),
+      byte_array_len(bytes))));
+}
+
+// `Editor.Ffi.filesRemove : UInt64 → @& String → IO Bool`
+lean_obj_res editor_glue_files_remove(uint64_t id, b_lean_obj_arg path) {
+  return lean_io_result_mk_ok(lean_box(
+      editor_ffi_files_remove(id, string_bytes(path), string_len(path))));
+}
+
+// `Editor.Ffi.filesAppendUnobserved : @& String → @& ByteArray → IO Bool`
+lean_obj_res editor_glue_files_append_unobserved(b_lean_obj_arg path,
+                                                 b_lean_obj_arg bytes) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_files_append_unobserved(
+      string_bytes(path), string_len(path), byte_array_bytes(bytes),
+      byte_array_len(bytes))));
+}
+
+// `Editor.Ffi.filesRemoveUnobserved : @& String → IO Bool`
+lean_obj_res editor_glue_files_remove_unobserved(b_lean_obj_arg path) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_files_remove_unobserved(
+      string_bytes(path), string_len(path))));
+}
+
+// `Editor.Ffi.filesSaveUnobserved : @& Snapshot → @& String → IO Bool`
+lean_obj_res editor_glue_files_save_unobserved(b_lean_obj_arg snapshot,
+                                               b_lean_obj_arg path) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_files_save_unobserved(
+      lean_get_external_data(snapshot), string_bytes(path), string_len(path))));
+}
+
+// `Editor.Ffi.filesFailure : IO (Option (String × String))`. `none` when
+// the service keeps no failure. The path crosses as the bytes it was given,
+// which were a Lean string's, and both buffers are handed back.
+lean_obj_res editor_glue_files_failure(void) {
+  editor_ffi_file_failure raw;
+  if (!editor_ffi_files_failure(&raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *pair = lean_alloc_ctor(0, 2, 0);
+  lean_ctor_set(pair, 0,
+                lean_mk_string_from_bytes((const char *)raw.path, raw.path_len));
+  lean_ctor_set(pair, 1, lean_mk_string_from_bytes((const char *)raw.detail,
+                                                   raw.detail_len));
+  editor_ffi_text_free(raw.path, raw.path_len);
+  editor_ffi_text_free(raw.detail, raw.detail_len);
+  return lean_io_result_mk_ok(option_some(pair));
 }
 
 // `Editor.Ffi.filesCancel : UInt64 → IO Bool`

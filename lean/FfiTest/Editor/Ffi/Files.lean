@@ -291,6 +291,64 @@ def fileChecks (_ : Unit) : List Check :=
             | _ => false
           return (← deep.isDir) && refused == some .notADirectory && madeDecoded },
     { name :=
+        "an append through the file service makes the file and then extends it, a remove removes it and one of nothing is done, each crossing as made; an append into a directory that is not there is refused as not found"
+      run :=
+        inOwnDirectory fun directory => do
+          let log := directory / "j.log"
+          let done (id : UInt64) : IO Bool := do
+            unless ← fileCompleted id do
+              return false
+            match ← Editor.Ffi.filesTake id with
+            | some .made => return true
+            | _ => return false
+          unless ← Editor.Ffi.filesAppend 1060 log.toString "one\n".toUTF8 do
+            return false
+          let first ← done 1060
+          unless ← Editor.Ffi.filesAppend 1061 log.toString mixedBytes do
+            return false
+          let second ← done 1061
+          let held ← IO.FS.readBinFile log
+          unless ← Editor.Ffi.filesRemove 1062 log.toString do
+            return false
+          let removed ← done 1062
+          unless ← Editor.Ffi.filesRemove 1063 log.toString do
+            return false
+          let again ← done 1063
+          unless ← Editor.Ffi.filesAppend 1064 (directory / "none" / "j.log").toString "x".toUTF8 do
+            return false
+          unless ← fileCompleted 1064 do
+            return false
+          let refused := (← Editor.Ffi.filesTake 1064).bind refusalOf
+          return first && second && held == "one\n".toUTF8 ++ mixedBytes && removed && again &&
+              !(← log.pathExists) && refused == some .notFound },
+    { name :=
+        "unobserved appends, a save and a remove are worked in order and never completed; a failure is kept with its path and taken once; pending falls to 0"
+      run :=
+        inOwnDirectory fun directory => do
+          let source := directory / "mixed.txt"
+          IO.FS.writeBinFile source mixedBytes
+          let some (.loaded snapshot _ _ _) ← loadResult 1070 source 1000 | return false
+          let log := directory / "j.log"
+          let base := directory / "j.base"
+          let missing := directory / "none" / "j.log"
+          let started :=
+            [← Editor.Ffi.filesSaveUnobserved snapshot base.toString,
+              ← Editor.Ffi.filesAppendUnobserved log.toString "a".toUTF8,
+              ← Editor.Ffi.filesAppendUnobserved log.toString "b".toUTF8,
+              ← Editor.Ffi.filesAppendUnobserved missing.toString "c".toUTF8,
+              ← Editor.Ffi.filesRemoveUnobserved source.toString]
+          let mut drained := false
+          for _ in [0:5000] do
+            if (← Editor.Ffi.filesPending) == 0 then
+              drained := true
+              break
+            IO.sleep 1
+          let failure ← Editor.Ffi.filesFailure
+          let once := (← Editor.Ffi.filesFailure).isNone
+          return once && started.all id && drained && (← IO.FS.readBinFile log) == "ab".toUTF8 &&
+              (← IO.FS.readBinFile base) == mixedBytes && !(← source.pathExists) &&
+              (failure.map (·.1)) == some missing.toString },
+    { name :=
         "a file result the bindings cannot read is an error: a status the table does not have, words that are not the status's, and a load with no snapshot"
       run :=
         pure
