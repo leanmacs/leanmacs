@@ -210,7 +210,7 @@ owner like a theme, in a `SegmentEntry`, and replaced as a set
 (`replaceSegments`). The latest entry of a name is the one found
 (`segment?`), so config's segment of a shipped segment's name is drawn in
 its place until a reload drops it. The `mode-line` package registers the
-shipped segments (`ModeLine.shipped`, `Editor/ModeLine/Compiled.lean`);
+shipped segments (`ModeLine.shipped`; the default package `mode-line`, `packages/mode-line/`);
 `setup` registers more with `defineSegment` (`Editor/Setup.lean`).
 `resolve` turns a listing (`ModeLine.Order`) into the mode line and the
 names nobody registered. Which listing is in force is not the registry's

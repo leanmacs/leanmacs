@@ -200,7 +200,7 @@ run = [
   # (packages/shipped-themes/ShippedThemesTest/ShippedThemes.lean), and the
   # compile mode's model checks, which were the core's until it moved out,
   # hold on the core's test kit (packages/compile/CompileTest/Model.lean).
-  "out=$(PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh test ../tests/packages 2>&1) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for name in shipped-themes compile languages word-count; do printf '%s\\n' \"$out\" | grep -qF \"package-set: test $name (\" || { echo \"lean-test: the package steps did not test $name\"; exit 1; }; done",
+  "out=$(PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh test ../tests/packages 2>&1) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for name in mode-line shipped-themes compile languages word-count; do printf '%s\\n' \"$out\" | grep -qF \"package-set: test $name (\" || { echo \"lean-test: the package steps did not test $name\"; exit 1; }; done",
   # And a step refuses a set it would run over nothing of: the fixture set
   # tests/empty-set requires the core alone, so it holds no package and the
   # step must exit 2, saying so. Its output is shown only when it does not.
@@ -379,7 +379,7 @@ run = [
   # then the fixture package's: the root the check compiles is generated,
   # lists the fixture package after the core and the default set's
   # packages, and its modules are found.
-  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage Compile.EditorPackage Languages.EditorPackage UserLink.EditorPackage '",
+  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ModeLine.EditorPackage ShippedThemes.EditorPackage Compile.EditorPackage Languages.EditorPackage UserLink.EditorPackage '",
   # The core's lakefile is elaborated against the toolchain of the `lake`
   # that runs it, never a `lean` found on the PATH (`leanSystemLibDir` in
   # lean/lakefile.lean; docs/design/lean-runtime.md, "Build"): an app
@@ -401,8 +401,8 @@ run = [
   # module. That the core's own list holds no palette and no package of the
   # compile mode is `ModelTest.packageSetChecks`', and that the core's hosts
   # start with nothing of the compile mode `ConfigTest.shippedChecks`'.
-  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage Compile.EditorPackage Languages.EditorPackage '",
-  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/languages:Languages/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the default set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans",
+  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ModeLine.EditorPackage ShippedThemes.EditorPackage Compile.EditorPackage Languages.EditorPackage '",
+  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../packages/mode-line:ModeLine/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/languages:Languages/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the default set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans",
   # The two records the package-set build writes beside a set's editor for
   # a user's set build (docs/design/packages.md, "User package sets"):
   # `editor.core`, the core's identity, one line of hex, which is the same
@@ -464,7 +464,7 @@ run = [
   # `Editor`, the shipped themes' entry module and the compile mode's, and
   # that of the set with no package (tests/empty-set) `Editor` alone: an
   # editor without the packages still loads config.
-  "test \"$(lake -d ../packages query :editorBase | tr '\\n' ' ')\" = 'Editor ShippedThemes.EditorPackage Compile.EditorPackage Languages.EditorPackage '",
+  "test \"$(lake -d ../packages query :editorBase | tr '\\n' ' ')\" = 'Editor ModeLine.EditorPackage ShippedThemes.EditorPackage Compile.EditorPackage Languages.EditorPackage '",
   "test \"$(lake -d ../tests/empty-set query :editorBase | tr '\\n' ' ')\" = 'Editor '",
   # The Rust crates of a set (the facet `editorRustCrates`;
   # docs/design/packages.md, "Rust in a package"): the package-set build
@@ -802,9 +802,11 @@ run = [
   # none, the first scene is drawn in `default`; `load-theme`'s prompt
   # lists `default` and `first` and no palette; `first` is loaded; and
   # `solarized-dark`, answered, is said in the echo area to be no
-  # registered theme (`core-themes/expected`). The default set's editor
-  # prints other lines for the same script: it lists the palettes and loads
-  # `solarized-dark`. It touches no file.
+  # registered theme (`core-themes/expected`). The mode line's segments
+  # are a default package too (packages/mode-line/), so each status line
+  # of its scenes is empty, `-`. The default set's editor prints other
+  # lines for the same script: it lists the palettes, loads
+  # `solarized-dark` and draws the shipped segments. It touches no file.
   "out=$(../tests/empty-set/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/core-themes/config ../tests/headless/core-themes/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/core-themes/expected -",
   # The ex names of the same editor (tests/headless/core-ex-names): the
   # compile mode is a default package too (packages/compile/), so the
@@ -812,18 +814,11 @@ run = [
   # on the base `Editor` alone, and `compile` typed on its ex line is
   # reported as `bogus` is, an ex name nobody bound: `compile: not an ex
   # command`, then `bogus: not an ex command`
-  # (`core-ex-names/expected`). The default set's editor opens the prompt
-  # `Compile command: ` for the first. It touches no file and starts no
-  # process.
+  # (`core-ex-names/expected`), each scene's status line empty, as no
+  # package of it registers a segment. The default set's editor opens the
+  # prompt `Compile command: ` for the first. It touches no file and starts
+  # no process.
   "out=$(../tests/empty-set/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/core-ex-names/config ../tests/headless/core-ex-names/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/core-ex-names/expected -",
-  # The segmented mode line, on a config of its own (tests/headless/
-  # mode-line) that defines a segment and lists the mode line for each side,
-  # one name nobody registered among them: the reload says that name, on a
-  # line of its own and in the echo area, and each scene's status line has
-  # its left fields, ` | ` and its right ones, in the listing's order, with
-  # their paddings, in insert state, in normal state and with the ex prompt
-  # open (`mode-line/expected`). It touches no file.
-  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/mode-line/config ../tests/headless/mode-line/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/mode-line/expected -",
   # The frame padding (tests/headless/padding): a config that sets it to 12
   # points; each scene prints the window's view padded 12 across and down,
   # the echo padded 12, and with the ex prompt open the minibuffer's view
@@ -1209,7 +1204,7 @@ run = [
   # mode's, which the set reaches through the default set, and last the
   # writing guide's example package `word-count`'s, which the set requires
   # after the default set.
-  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../tests/packages/greeting-api:GreetingApi ../tests/packages/greeting:Greeting/EditorPackage ../tests/packages/greeting-loud:GreetingLoud/EditorPackage ../tests/packages/echo:Echo/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/languages:Languages/EditorPackage ../docs/packages/word-count:WordCount/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the fixture set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans",
+  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../tests/packages/greeting-api:GreetingApi ../tests/packages/greeting:Greeting/EditorPackage ../tests/packages/greeting-loud:GreetingLoud/EditorPackage ../tests/packages/echo:Echo/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/languages:Languages/EditorPackage ../docs/packages/word-count:WordCount/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the fixture set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans",
   # The same wiring on the library's scripted platform whose renderer cannot
   # be made, as a machine with no usable GPU gives: the window runs with
   # nothing drawing in it. The scenario must exit 0, which it does only when
@@ -1282,7 +1277,7 @@ run = [
   # turns a canned task list into commands, with no process and no path of
   # the machine; what it prints was compared with what an editor built at
   # the commit before the move prints for it.
-  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test EchoTest.Linked of echo' \"echo linked test: the contract's 7 properties hold on the Rust-backed binding, each request completed through the completion queue\" 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture as-config of word-count' 'package-set: headless fixture count of word-count' 'package-set: headless fixture from-config of word-count' 'package-set: ran 4 linked tests and 12 headless fixtures over 8 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
+  "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test EchoTest.Linked of echo' \"echo linked test: the contract's 7 properties hold on the Rust-backed binding, each request completed through the completion queue\" 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture as-config of word-count' 'package-set: headless fixture count of word-count' 'package-set: headless fixture from-config of word-count' 'package-set: ran 4 linked tests and 13 headless fixtures over 9 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
   # With `--only`, `run` runs over the named packages alone, and still
   # refuses to run nothing: the interface package `greeting-api` has no
   # linked test and no headless fixture, so `--only greeting-api` is exit
@@ -1305,7 +1300,7 @@ run = [
   # lines do not give, is found through the record the build wrote beside
   # the editor. The lines of what it is here to run are required, as
   # above.
-  "out=$(sh ../tools/package-set.sh run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture shipped-formats of compile' 'package-set: ran 2 linked tests and 7 headless fixtures over 3 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps over the default set did not print: $line\"; exit 1; }; done",
+  "out=$(sh ../tools/package-set.sh run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture shipped-formats of compile' 'package-set: ran 2 linked tests and 8 headless fixtures over 4 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps over the default set did not print: $line\"; exit 1; }; done",
   # And the editor of the default set, which does not hold the fixture
   # package, has no such command: on the same config and script its
   # headless mode must print `run greeting-hello: no such command`. So the

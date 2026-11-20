@@ -52,7 +52,7 @@ default editor's root hands them: the core's Lake package's, then the
 kit's stand-ins for the default packages whose data the core keeps
 (`Editor.Test.Shipped`, `Editor/Test/Shipped.lean`). -/
 def shippedPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++ #[Editor.Test.Shipped.languages]
+  EditorCore.EditorPackage.packages ++ Editor.Test.Shipped.packages
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform, on the absolute path `file`, or with no file, on the

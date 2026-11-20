@@ -1,6 +1,10 @@
 name = "config"
 
 [[require]]
+name = "mode-line"
+path = "@REPO@/packages/mode-line"
+
+[[require]]
 name = "shipped-themes"
 path = "@REPO@/packages/shipped-themes"
 

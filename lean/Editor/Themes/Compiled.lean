@@ -33,8 +33,8 @@ This module is a core module and imports no palette
 (`docs/design/packages.md`), and a set without that package still has
 `load-theme` and `default`.
 
-The mode line's shipped segments are a package of their own, `mode-line`
-(`Editor/ModeLine/Compiled.lean`).
+The mode line's shipped segments are a package of their own, the default
+package `mode-line` (`packages/mode-line/`).
 
 This module is apart from `Editor/Themes.lean` because it is what a host is
 handed, not what config calls: `Editor.lean` imports the command, so that

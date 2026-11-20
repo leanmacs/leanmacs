@@ -5,6 +5,7 @@ import CompileTest.Linked.Compile.Shipped
 import Editor
 import Editor.Headless
 import Editor.Test.Linked.Services
+import Editor.Test.Shipped
 import EditorCore.EditorPackage
 
 /-!
@@ -62,10 +63,13 @@ declaration of this package, so the host is told to elaborate it on
 -/
 
 /-- The packages a set that holds this Lake package hands its editor: the
-core's, which this package requires, then its own, the order the
-package-set build registers them in. -/
+core's, which this package requires, the core's test kit's stand-in for
+the default package `mode-line` (`Editor.Test.Shipped.modeLine`), whose
+segments the host's status lines print, as the default editor's do, then
+its own, the order the package-set build registers them in. -/
 def setPackages : Array Editor.Package :=
-  EditorCore.EditorPackage.packages ++ Compile.EditorPackage.packages
+  EditorCore.EditorPackage.packages ++ #[Editor.Test.Shipped.modeLine] ++
+    Compile.EditorPackage.packages
 
 /-- The directory of the fixtures the checks over the real process service
 run, from the package's directory, where the gate runs this executable. -/

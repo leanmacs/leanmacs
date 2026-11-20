@@ -18,10 +18,10 @@ namespace ConfigTest
 
 open Editor
 
-/-- The packages of the core's Lake package, then the stand-in for the
-default package `languages`, which registers the `code` mode and the
-shipped languages. -/
+/-- The packages of the core's Lake package, then the stand-ins for the
+default packages `mode-line` and `languages`, which register the shipped
+segments, and the `code` mode and the shipped languages. -/
 def shippedPackages : Array Package :=
-  EditorCore.EditorPackage.packages ++ #[Test.Shipped.languages]
+  EditorCore.EditorPackage.packages ++ Test.Shipped.packages
 
 end ConfigTest

@@ -19,7 +19,6 @@ import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Contract
 import Editor.Main
 import Editor.Menu.Compiled
-import Editor.ModeLine.Compiled
 import Editor.PackageSet.Compiled
 import Editor.ProjectSearch.Compiled
 import Editor.Restore.Compiled

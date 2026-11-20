@@ -2682,6 +2682,11 @@ def shippedChecks (_ : Unit) : List Check :=
         let registry := shippedRegistry
         return (registry.mode? "code").isNone && registry.languages.isEmpty },
     { name :=
+        "the executable's hosts start with nothing of the mode-line package: of the segments the default listing names, the packages of the core's Lake package register version control's review alone, and none of state, buffer, modified, changed, directory, pending-keys, major-mode, line-column and position"
+      run := do
+        let registry := shippedRegistry
+        return registry.segments.map (·.segment.name) == #["review"] },
+    { name :=
         "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, the first two commands the frame-commands package's and quit the ex package's, and the three bindings the frame-commands package's; with switch-buffer, list-buffers and close-buffer registered by the buffers package, and the ex names b, ls and bd bound to them"
       run := do
         let registry := shippedRegistry

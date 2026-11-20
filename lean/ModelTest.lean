@@ -108,7 +108,6 @@ import ModelTest.Editor.Marks.Follow
 import ModelTest.Editor.Menu
 import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
-import ModelTest.Editor.ModeLine.Compiled
 import ModelTest.Editor.ModuleLookup
 import ModelTest.Editor.PackageSet.Build
 import ModelTest.Editor.PackageSet.Edit
@@ -831,12 +830,14 @@ The config session's decisions are tested here too, with no elaborator:
   nothing, bare too; a value is registered at its own type's point only;
   a reload replaces config's values and keeps a package's; and `named`
   finds the latest value of a name, config's over a package's;
-- `completionPackageChecks` and `modeLinePackageChecks`: the packages of
-  what ships in core modules register it, in order: the shipped styles and
-  displays (`Editor/Completion/Compiled.lean`) and the shipped segments
-  (`Editor/ModeLine/Compiled.lean`). The `code` mode with the shipped
-  languages is the default package `languages`' (`packages/languages/`),
-  whose own tests hold it (`LanguagesTest.languagePackageChecks`);
+- `completionPackageChecks`: the package of what ships in core modules
+  registers it, in order: the shipped styles and displays
+  (`Editor/Completion/Compiled.lean`). The shipped segments are the
+  default package `mode-line`'s (`packages/mode-line/`), and the `code`
+  mode with the shipped languages the default package `languages`'
+  (`packages/languages/`), whose own tests hold them
+  (`ModeLineTest.modeLinePackageChecks`,
+  `LanguagesTest.languagePackageChecks`);
 - `exPackageChecks` and `versionControlPackageChecks`: each package binds
   its own ex names, in order: the `ex` package the files', its own and the
   buffers' and no other (`Editor/Ex/Compiled.lean`), and the
@@ -1485,7 +1486,6 @@ def checks : List Check :=
     packageChecks ++
     extensionChecks ++
     completionPackageChecks ++
-    modeLinePackageChecks ++
     exPackageChecks ++
     versionControlPackageChecks ++
     filesPackageChecks ++

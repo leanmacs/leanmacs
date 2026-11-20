@@ -18,7 +18,10 @@ tests read. The Lake packages `mode-line` and `languages` (`packages/`)
 register exactly this, which their own tests pin; the core cannot import
 them, so a core test that hosts the core's list and is to show what the
 default editor draws appends these (`EditorCore.EditorPackage.packages ++
-Test.Shipped.packages`). They are no fake of another package's behaviour.
+Test.Shipped.packages`). A package's test that hosts the core's list and
+prints what the default editor prints, as the compile mode's linked test
+does, appends the one it needs, without requiring that package. They are
+no fake of another package's behaviour.
 
 Published for a package's tests: it is a module of the core's test kit, a
 test double in the namespace `Editor.Test`, which a package's test modules

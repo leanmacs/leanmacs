@@ -10,9 +10,10 @@
 # from it (`mise run app`).
 #
 # It requires the core and each default package. A default package has a
-# directory here and a `require` below: the shipped themes
-# (shipped-themes/), the compile mode (compile/), then the languages
-# (languages/). They register in that order, after the core's. Every other
+# directory here and a `require` below: the mode line's segments
+# (mode-line/), the shipped themes (shipped-themes/), the compile mode
+# (compile/), then the languages (languages/). They register in that
+# order, after the core's. Every other
 # feature is still a package of the core's Lake package
 # (lean/EditorCore/EditorPackage.lean). This is also the lakefile a user's
 # package set starts from.
@@ -28,18 +29,23 @@ name = "default-set"
 name = "editor-core"
 path = "../lean"
 
-# The shipped themes, Solarized and Fairy Floss: the first default package.
+# The segments of the mode line that ship: the first default package.
+[[require]]
+name = "mode-line"
+path = "mode-line"
+
+# The shipped themes, Solarized and Fairy Floss: the second default package.
 [[require]]
 name = "shipped-themes"
 path = "shipped-themes"
 
 # The compile mode, `compile` into a workspace's compilation buffer, with
-# the modes that ship (cargo, lake, mise): the second default package.
+# the modes that ship (cargo, lake, mise): the third default package.
 [[require]]
 name = "compile"
 path = "compile"
 
-# The languages that ship and the `code` mode: the third default package.
+# The languages that ship and the `code` mode: the fourth default package.
 [[require]]
 name = "languages"
 path = "languages"

@@ -1,24 +1,25 @@
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.ModeLine
-import Editor.ModeLine.Compiled
 import Editor.Package
 import Editor.Test.Config
-import ModelTest.Check
+import ModeLine.Compiled
+import ModeLineTest.Check
 
 /-!
-# Model tests: `Editor/ModeLine/Compiled.lean`
+# Model tests: `ModeLine/Compiled.lean`
 
-The model tests of `Editor/ModeLine/Compiled.lean`: `modeLinePackageChecks`.
-The root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `ModeLine/Compiled.lean`: `modeLinePackageChecks`. They
+were the core's (`ModelTest.modeLinePackageChecks`) while the package was a
+module of the core, and moved here with their sentence as it was. The test
+driver's root, `ModeLineTest/Model.lean`, runs them.
 -/
 
-namespace ModelTest
+namespace ModeLineTest
 
 open Editor
 open Editor.Test
 
-/-- The checks of the `mode-line` package (`Editor/ModeLine/Compiled.lean`):
+/-- The checks of the `mode-line` package (`ModeLine/Compiled.lean`):
 what it registers is the shipped segments. -/
 def modeLinePackageChecks : List Check :=
   [{  name :=
@@ -37,4 +38,4 @@ def modeLinePackageChecks : List Check :=
             registered.commands.isEmpty &&
             registered.modeLines.isEmpty) }]
 
-end ModelTest
+end ModeLineTest

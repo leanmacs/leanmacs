@@ -9,7 +9,6 @@ import Editor.Files.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
-import Editor.ModeLine.Compiled
 import Editor.PackageSet.Compiled
 import Editor.ProjectSearch.Compiled
 import Editor.Restore.Compiled
@@ -77,8 +76,7 @@ keeps each kind of entry in the order the hosts registered it before there
 were packages, so the command prompt, the keymaps, the mode line and the
 language table read as they did:
 
-- `completion` and `mode-line` come first: the shipped styles and displays,
-  and the shipped segments before version control's `review`;
+- `completion` comes first: the shipped styles and displays;
 - `menu` comes after `frame-commands` and before `workspace`: the key
   bindings are the frame's, then the menu's, then the workspace finder's;
 - `themes` defines the theme `default` and no package after it defines a
@@ -109,7 +107,10 @@ version control's (`docs/design/packages.md`, "Registration order is
 visible"). The languages' package, which was last here, is the default
 package `languages` (`packages/languages/`) now, and registers after the
 core's and the compile mode's: the `code` mode still follows version
-control's modes.
+control's modes. The mode line's package, which was second here, is the
+default package `mode-line` (`packages/mode-line/`), and registers its
+segments after version control's `review`: a listing names segments, and
+resolves them by name, so the order shows nowhere.
 -/
 
 namespace EditorCore.EditorPackage
@@ -119,8 +120,8 @@ open Editor
 /-- The packages of the core's Lake package, in the order a host registers
 them ("The order", in the module docs). -/
 def packages : Array Package :=
-  #[Completion.package, ModeLine.package, Files.package, Minibuffer.package, Evil.package,
-    Ex.package, Buffers.package, FrameCommands.package, Menu.package, WindowCommands.package,
+  #[Completion.package, Files.package, Minibuffer.package, Evil.package, Ex.package,
+    Buffers.package, FrameCommands.package, Menu.package, WindowCommands.package,
     TabCommands.package, Themes.package, ExecuteCommand.package, BindingSearch.package,
     Workspace.package, ProjectSearch.package, WorkingSet.package, Restore.package,
     PackageSet.package, Shell.package, AtPoint.package, VersionControl.package,
