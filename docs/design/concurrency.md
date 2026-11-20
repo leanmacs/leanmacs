@@ -2159,7 +2159,14 @@ process aborts (session-restore phase 1; `lean/Editor/Restore.lean`).
   request. A failure is kept by the service and said once per path.
 - **What an abort loses**: only what is queued and not yet written. Bytes
   handed to the kernel outlive the process; they need not outlive a power
-  loss, which is not a goal.
+  loss, which is not a goal. An end that is not an abort writes them: a
+  host's end, headless or windowed, waits for the journal's drain
+  (`Headless.Journal.drained`), a flush of the file service
+  (`Job.Services.flushed .files`, deterministic-test-concurrency phase 1)
+  completed once every order handed before it has been worked, and not for
+  a count. It waits at most `drainPatience`, on purpose in real time, so
+  quitting never hangs on a stuck file system. A script's `journalled`, and
+  `indexed` once the index is written, wait for the same drain.
 - **Compaction**: past max(1 MiB, the base's size), or when the log was
   forgotten past the record's revision, a new base generation is written
   (an atomic save of a snapshot), then the old one's files removed.
@@ -2205,7 +2212,11 @@ until its exec, or until the hand-over is given up (`Restore.Kept.handing`):
 - **Its saves follow the journal.** A step's journal orders are handed to
   the file service before the step's jobs are started, and the service
   works its one queue in order, so the index and the record are written
-  after every journal order handed before them.
+  after every journal order handed before them. A test that must know the
+  orders are worked, before its directory goes, waits on the journal's
+  drain, a flush of the file service, never on its pending count; its real
+  case holds the worker with the service's in-process hold and lets it go
+  only once the drain has asked for its flush.
 - **A journal write that failed since the hand-over began** gives it up: the
   host runs `restart-abandon` in place of the exec, which writes a new
   generation of every journalled buffer.

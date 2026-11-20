@@ -1133,10 +1133,9 @@ history, is not timed. The state is phase 2's: two tabs of five windows,
 four on the file, one of them with 100 jump entries, and an unscoped
 `shell-history` of 10,000 lines, whose codec the reconciler is handed, so
 what it keeps of the frame and the stores is there to cost. -/
-def journalTimes (directory : System.FilePath) (size : Nat) (position : String) (inserts : Nat) :
-    IO (Array Nat) := do
-  let published ← Snapshots.new
-  let journal := Headless.Journal.real published.reader
+def journalTimes (services : Job.Services) (published : Snapshots) (directory : System.FilePath)
+    (size : Nat) (position : String) (inserts : Nat) : IO (Array Nat) := do
+  let journal := Headless.Journal.real published.reader services
   IO.FS.createDirAll (Restore.journalsDirectory directory)
   let path := directory / s!"{size}-{position}.txt"
   let made : TextM EditorState := do
@@ -1217,8 +1216,9 @@ def journalTimes (directory : System.FilePath) (size : Nat) (position : String) 
     texts ← perform reconciled.orders after
     times := times.push ((← IO.monoNanosNow) - began)
     state := reconciled.state
-  -- What was handed is written before the next row starts.
-  discard <| Headless.within 30000 (return (← Ffi.filesPending) == 0)
+  -- What was handed is written before the next row starts: the journal's
+  -- drain, a flush of the file service, bounded only as a hang guard.
+  discard <| Job.awaitWithin 30000 (← journal.drained)
   return times
 
 /-- `bench-journal`: the session journal's cost on the editor thread, for
@@ -1229,10 +1229,19 @@ maximum in µs. It asserts nothing; `mise run journal-bench` runs it, and
 the gate never does. -/
 def journal : IO UInt8 := do
   IO.println "bench-journal: median / p99 / max, µs per insert"
+  -- One table of waits and its pump for the run, as the other benches have:
+  -- the journal's drain is a flush of the file service through it.
+  let completions ← Job.Completions.new
+  discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
+  let published ← Snapshots.new
+  let held ← Job.HeldSnapshots.new
+  let services : Job.Services :=
+    { completions, timers := Job.realTimers completions
+      files := Job.realFiles completions published.reader held }
   IO.FS.withTempDir fun directory => do
       for (size, label) in [(4096, "4KiB"), (1048576, "1MiB"), (10485760, "10MiB")] do
         for position in ["start", "middle", "end"] do
-          let times ← journalTimes directory size position 10000
+          let times ← journalTimes services published directory size position 10000
           IO.println (Row.of s!"journal_order/{label}/{position}" times).line
   return 0
 

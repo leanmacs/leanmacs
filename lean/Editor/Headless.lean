@@ -362,12 +362,15 @@ With no `restore` job registered, the request does nothing.
 `Editor/Restore.lean`) are handed to the file service through
 `Collaborators.journal`, unobserved (`Journal.real`, the library's), and
 the snapshots they name released after (`journaled`); what failed is said
-once for each path, in the echo area and to the log (`journalFailed`). A
-host's end waits, at most `drainPatience`, until the service holds no
-request. The script's `journalled` waits until it holds none; `indexed`
-waits until the session index is written, moving the fake clock past each
-write's delay (`Progress.indexing`), and until no job runs but those the
-script spawned (`Progress.background`); `abort` ends the process at once
+once for each path, in the echo area and to the log (`journalFailed`). The
+journal's drain (`Journal.drained`) is a flush of the file service
+(`Job.Services.flushed .files`), completed once every order handed before it
+has been worked; nothing polls the service's pending count. A host's end
+waits for it, at most `drainPatience`, on purpose in real time, so quitting
+never hangs on a stuck file system. The script's `journalled` waits for it;
+`indexed` waits until the session index is written, moving the fake clock
+past each write's delay (`Progress.indexing`), and until no job runs but
+those the script spawned (`Progress.background`), and then for the drain; `abort` ends the process at once
 with the status 134 and no shutdown (`IO.Process.exit`): not the signal,
 which on a macOS desktop raises the crash reporter.
 
@@ -908,15 +911,17 @@ structure Journal where
   /-- Takes what failed of the orders handed so far, each a path and why,
   oldest first, once. -/
   failures : IO (Array (String × String)) := pure #[]
-  /-- How many requests the file service has waiting or being worked: 0 once
-  every order handed is written. -/
-  pending : IO Nat := pure 0
+  /-- Flushes the file service: a task that ends `true` once every order
+  handed before it has been worked, and `false` if the service refused the
+  flush. The default has nothing to wait for. -/
+  drained : IO (Task Bool) := pure (.pure true)
 
 /-- The journal over the library's file service: each order an unobserved
 request (`Ffi.filesAppendUnobserved`, `Ffi.filesRemoveUnobserved`,
 `Ffi.filesSaveUnobserved` of the snapshot `published` holds), its failures
-taken with `Ffi.filesFailure`. -/
-def Journal.real (published : SnapshotReader) : Journal where
+taken with `Ffi.filesFailure`, and its drain a flush of the file service
+through `services` (`Job.Services.flushed`), whose table's pump must run. -/
+def Journal.real (published : SnapshotReader) (services : Job.Services) : Journal where
   perform order := do
     match order.request with
     | .append path bytes =>
@@ -934,7 +939,9 @@ def Journal.real (published : SnapshotReader) : Journal where
       let some failure ← Ffi.filesFailure | break
       taken := taken.push failure
     return taken
-  pending := return (← Ffi.filesPending).toNat
+  drained := do
+    let flushed ← services.flushed .files
+    return flushed.map (sync := true) (· == .completed)
 
 /-- What a host that runs the input scheme `scheme` needs from outside. The
 scheme is a parameter, as it is of the loop (`Loop`): it is in `Type 1`, and
@@ -3113,7 +3120,10 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
       | .journalled =>
         let wait ← host.await patience answer
         if wait == .settled then
-          unless ← within patience (return (← collaborators.journal.pending) == 0) do
+          -- The drain is a flush of the file service: bounded by `patience`
+          -- only as a guard against a stuck file system.
+          let drained ← Job.awaitWithin patience (← collaborators.journal.drained)
+          unless drained == some true do
             discard <| host.halt answer
             return (some (.unanswered (some line.number)), none)
         pure wait
@@ -3126,9 +3136,7 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
           let written ←
             within (own.getD patience) do
                 let progress ← host.progress.get
-                if
-                    !progress.indexing && progress.background == 0 &&
-                      (← collaborators.journal.pending) == 0 then
+                if !progress.indexing && progress.background == 0 then
                   return true
                 -- A write sleeps on the clock: once no other job is running,
                 -- so that what they change is in the one write, the clock
@@ -3139,7 +3147,14 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
                         (← clock.dueWithin Restore.writeDelay) then
                     clock.advance Restore.writeDelay
                 return false
-          unless written do
+          -- Then what the journal handed the file service is worked: a flush,
+          -- bounded by the line's own seconds only as a hang guard.
+          let drained ←
+            if written then
+              Job.awaitWithin (own.getD patience) (← collaborators.journal.drained)
+            else
+              pure none
+          unless drained == some true do
             discard <| host.halt answer
             return (some (Failure.ownedBy own (.unanswered (some line.number))), none)
         pure wait
@@ -3210,9 +3225,9 @@ def runAndDispose {β σ : Type} {scheme : InputScheme} (collaborators : Collabo
     catch _ =>
       pure ()
 
-/-- How long a host's end waits for the file service to work what it holds,
-the journal's last orders among them, before it quits the queues, in
-milliseconds. -/
+/-- How long a host's end waits for the journal's drain, a flush of the file
+service, before it quits the queues, in milliseconds: a guard against a
+stuck file system, never a result. -/
 def drainPatience : Nat :=
   2000
 
@@ -3297,7 +3312,7 @@ def shippedOver (packages : Array Package) (base : Array Lean.Name) (sysroot : S
     source := Config.Directory.source configDir, package := packageFilesOver configDir, emit,
     services, published, held, requests := 1, wakeups := 2, jobs := 3, environment := 4, posts := 5,
     pauseEvents := 6, packages, stateDirectory, log := IO.eprintln
-    journal := Journal.real published.reader
+    journal := Journal.real published.reader services
     dispose := files.remove }
 
 /-- The environments every job of a host shares, over `state`
@@ -3551,9 +3566,10 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   -- And every watch is ended, and every search.
   Ffi.watchesShutdown
   Ffi.grepShutdown
-  -- And what the journal handed the file service is written, for at most
-  -- `drainPatience`.
-  discard <| within drainPatience (return (← Ffi.filesPending) == 0)
+  -- And what the journal handed the file service is written: a flush of the
+  -- service, waited for at most `drainPatience`, on purpose real time, so
+  -- that quitting does not hang on a stuck file system.
+  discard <| Job.awaitWithin drainPatience (← collaborators.journal.drained)
   -- Shutdown: quit lets every task parked in a pull return, the pump among
   -- them, and the exit is explicit, because a task may still be blocked in
   -- the library.

@@ -1,4 +1,5 @@
 import ContractTest.Check
+import ContractTest.Support.FileHold
 import Editor.Api
 import Editor.Ffi.Files
 import Editor.Files.Compiled
@@ -23,11 +24,12 @@ unobserved, and nothing else waits for it, so without the drain that remove
 can land while the directory is being removed, which then fails. The first
 two checks run one contract of the port (`drainsBeforeRemoval`) on the
 journal that holds its orders (`HeldJournal`) and on the real one
-(`Journal.real`), whose drain is what keeps the race out; the real case holds
-the file service's worker on a gate until the drain first reads the service's
-pending count, so a drain that does not wait finds the remove unworked every
-time. The third pins the drain when the body throws; the fourth that a
-journal that does not drain fails the check.
+(`Journal.real`), whose drain, a flush of the file service, is what keeps the
+race out; the real case holds the file service's worker with its in-process
+hold (`FileHold`) and releases it right after the drain asks for its flush,
+so a drain that does not flush never releases it and finds the remove
+unworked every time. The third pins the drain when the body throws; the
+fourth that a journal that does not drain fails the check.
 -/
 
 namespace ContractTest
@@ -102,18 +104,21 @@ structure Journal where
   if that does not happen within `patience`. -/
   drained : IO Bool
 
-/-- Whether the library's file service holds no request within `patience`,
-reading how many it holds with `pending` (the service's own count, unless a
-check gates it): it works requests in order, so every order handed to it has
-been worked. -/
-def filesDrained (pending : IO UInt64 := Ffi.filesPending) : IO Bool :=
-  eventually (return (← pending) == 0)
+/-- Flushes the library's file service through `services`, runs `asked` once
+the flush is asked, and says whether the flush was completed: the service
+works requests in order, so every order handed to it before has been worked
+by then. The wait is bounded by `patience` only as a guard against a hang. -/
+def filesDrained (services : Job.Services) (asked : IO Unit := pure ()) : IO Bool := do
+  let flushed ← services.flushed .files
+  asked
+  return (← Job.awaitWithin patience flushed) == some .completed
 
 /-- The checks' journal over the library's file service, as a host's; its
-drain reads the service's pending count with `pending`. -/
-def Journal.real (rig : ProjectRig) (pending : IO UInt64 := Ffi.filesPending) : Journal :=
+drain is a flush of the service (`filesDrained`), and `asked` runs once the
+flush is asked. -/
+def Journal.real (rig : ProjectRig) (asked : IO Unit := pure ()) : Journal :=
   { perform := performOrder rig
-    drained := filesDrained pending }
+    drained := filesDrained rig.services asked }
 
 /-- A journal that holds every order handed to it until `drained`, which
 works them in order on the real filesystem, logging `worked <kind> <path>`
@@ -196,34 +201,6 @@ def drainsBeforeRemoval (journal : Journal) (hold : System.FilePath → IO Unit)
           s!"the scaffold returned {held}; when the drain returned the stale file was {if there then "there" else "gone"} and {count} orders were left; the directory was {if gone then "gone" else "there"} after"
   return true
 
-/-- A gate that holds the library's file service's worker: `hold` makes a
-named pipe in a directory and hands the service an append to it, which
-blocks the worker opening the pipe until `release` opens it to read. The
-service works in order, so nothing handed to it after `hold` is worked
-before `release`. `release` is idempotent. -/
-structure WorkerGate where
-  /-- Makes the pipe in the directory and blocks the worker on it. -/
-  hold : System.FilePath → IO Unit
-  /-- Lets the worker go, once; nothing when the gate is not held. -/
-  release : IO Unit
-
-/-- A worker gate, not yet held. -/
-def WorkerGate.new : IO WorkerGate := do
-  let pipe ← IO.mkRef (none : Option System.FilePath)
-  return {
-      hold := fun directory => do
-        let path := directory / "gate"
-        let made ← IO.Process.output { cmd := "mkfifo", args := #[path.toString] }
-        unless made.exitCode == 0 do
-          throw <| IO.userError s!"mkfifo exited {made.exitCode}: {made.stderr}"
-        unless ← Ffi.filesAppendUnobserved path.toString "gate".toUTF8 do
-          throw <| IO.userError "the file service has no thread"
-        pipe.set (some path)
-      release := do
-        if let some path← pipe.swap none then
-          let handle ← IO.FS.Handle.mk path .read
-          discard handle.readBinToEnd }
-
 /-- The loop of a host started fresh over `rig`, with `state` as its state
 directory, once each of `invocations` has run and settled, the journal's
 orders handed to the library's file service. -/
@@ -247,17 +224,19 @@ def restoreRunChecks (services : Job.Services) : List Check :=
         drainsBeforeRemoval journal.journal (fun _ => pure ()) (return (← journal.held.get).size)
             (pure ()) },
     { name :=
-        "a restore check's state directory is removed only once every order its journal handed out has been worked, on the real journal over the library's file service: with the service's worker held until the drain first reads the pending count, the stale index's remove is worked before the directory goes, and nothing is left pending"
+        "a restore check's state directory is removed only once every order its journal handed out has been worked, on the real journal over the library's file service: with the service's worker held until the drain has asked for its flush, the stale index's remove is worked before the directory goes, and nothing is left pending"
       run := do
         let rig ← ProjectRig.over services
-        let gate ← WorkerGate.new
-        let pending := do
-          gate.release
-          Ffi.filesPending
-        drainsBeforeRemoval (Journal.real rig pending) gate.hold (return (← Ffi.filesPending).toNat)
+        let held ← IO.mkRef (none : Option FileHold)
+        let release := do
+          if let some hold← held.get then
+            hold.release
+        let hold (_ : System.FilePath) := do
+          held.set (some (← FileHold.hold services.completions))
+        drainsBeforeRemoval (Journal.real rig release) hold (return (← Ffi.filesPending).toNat)
             (do
-              gate.release
-              discard <| filesDrained) },
+              release
+              discard <| filesDrained services) },
     { name :=
         "a restore check's journal is drained even when its body throws: the scaffold rethrows the body's error, and a remove the body handed out before throwing is worked"
       run := do
@@ -292,7 +271,7 @@ def restoreRunChecks (services : Job.Services) : List Check :=
     { name :=
         "typing in a file's buffer is journalled by the library's file service, the base and the log on disk replaying to the text; a second loop over the same state directory, with no shutdown between, restores the buffer modified, at its file"
       run :=
-        withJournalledDirectory filesDrained fun directory => do
+        withJournalledDirectory (filesDrained services) fun directory => do
           let state := directory / "state"
           let a := directory / "a.txt"
           IO.FS.writeFile a "first line\nsecond line\n"
@@ -302,9 +281,9 @@ def restoreRunChecks (services : Job.Services) : List Check :=
                 [{ command := "start-restore", arguments := [.str state.toString] }, openFile a,
                   { command := "type-text", arguments := [.str "typed "] },
                   { command := "type-text", arguments := [.str "more "] }] | return false
-          -- The journal's writes are unobserved: they are done once the
-          -- service holds no request.
-          unless ← eventually (return (← Ffi.filesPending) == 0) do
+          -- The journal's writes are unobserved: they are done once a flush
+          -- of the service asked after them is completed.
+          unless ← filesDrained services do
             return false
           let edited ← bufferText rig texts typed "a.txt"
           let some index := typed.state.findFile a | return false
@@ -332,7 +311,7 @@ def restoreRunChecks (services : Job.Services) : List Check :=
     { name :=
         "two tabs, the first split, are restored on the real text binding and file service: a second loop over the same state directory has both tabs, the split, the second tab's name, and every window on the file's buffer"
       run :=
-        withJournalledDirectory filesDrained fun directory => do
+        withJournalledDirectory (filesDrained services) fun directory => do
           let state := directory / "state"
           let a := directory / "a.txt"
           IO.FS.writeFile a "first line\nsecond line\n"
@@ -342,7 +321,7 @@ def restoreRunChecks (services : Job.Services) : List Check :=
                 [{ command := "start-restore", arguments := [.str state.toString] }, openFile a,
                   { command := "type-text", arguments := [.str "typed "] },
                   { command := "split-and-tab" }] | return false
-          unless ← eventually (return (← Ffi.filesPending) == 0) do
+          unless ← filesDrained services do
             return false
           let fresh ← ProjectRig.over services
           let some (restored, _) ←

@@ -3023,7 +3023,9 @@ def withRestoreFiles (context : Context) (files : List (String × String))
           collaborators :=
             { stage.collaborators with
               stateDirectory := some state
-              journal := Headless.Journal.real stage.collaborators.published.reader } }
+              journal :=
+                Headless.Journal.real stage.collaborators.published.reader
+                  stage.collaborators.services } }
       onStage stage fun host stage => check host stage.output state
 
 /-- A package that declares the store `counted` of a number, at `version`,
@@ -3084,7 +3086,9 @@ def withStateHost (context : Context) (state : System.FilePath) (files : List (S
         collaborators :=
           { stage.collaborators with
             stateDirectory := some state
-            journal := Headless.Journal.real stage.collaborators.published.reader } }
+            journal :=
+              Headless.Journal.real stage.collaborators.published.reader
+                stage.collaborators.services } }
     onStage stage fun host stage => check host stage
 
 /-- Waits until the host has written the session index: each write's delay
@@ -3146,7 +3150,8 @@ def withFailingJournal (context : Context) (files : List (String × String))
                     reply :=
                       .ok { exit := .code 0, stdout := "probe: ok\n".toUTF8, stderr := .empty } }] }
       let failing ← IO.mkRef false
-      let real := Headless.Journal.real stage.collaborators.published.reader
+      let real :=
+        Headless.Journal.real stage.collaborators.published.reader stage.collaborators.services
       let journal : Headless.Journal :=
         { real with
           failures := do

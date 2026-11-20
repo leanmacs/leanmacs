@@ -69,11 +69,11 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
   -- closed, so the record shows the shutdown ran before the close. It asks
   -- a moment later, by which a window closed first has ended its run.
   let shutdowns ← IO.mkRef 0
-  let shutdown := do
+  let shutdown drained := do
     shutdowns.modify (· + 1)
     IO.sleep 100
     Editor.Ffi.windowRequest .scripted .minimise
-    Editor.Window.shutdown
+    Editor.Window.shutdown drained
   let status ←
     Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options (.skip none)
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[] shutdown
@@ -352,11 +352,11 @@ def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 :
         oleans := [oleanDir], composition := true, state := some state.toString
         launch := { launchedBy := some launcher, running := some probe, shipped := some probe } }
     let shutdowns ← IO.mkRef 0
-    let shutdown := do
+    let shutdown drained := do
       shutdowns.modify (· + 1)
       IO.sleep 100
       Editor.Ffi.windowRequest .scripted .minimise
-      Editor.Window.shutdown
+      Editor.Window.shutdown drained
     -- What the exec was called with, and the shutdown count when it was.
     let replaced ← IO.mkRef (#[] : Array (Editor.Restart.Invocation × Nat))
     let replace (invocation : Editor.Restart.Invocation) : IO String := do

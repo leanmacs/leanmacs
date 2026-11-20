@@ -266,7 +266,7 @@ holds them until it has finished (`ffi-test window-host-restart` runs
 `restart` so). -/
 def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Platform)
     (options : Options) (plan : ConfigPlan) (display : Ffi.Display) (clipboard : ClipboardHandler)
-    (said : Array String) (shutdown : IO Unit) (processes : Process.Host)
+    (said : Array String) (shutdown : IO (Task Bool) → IO Unit) (processes : Process.Host)
     (patience : Option Nat := some configPatience) (workingDirectory : System.FilePath := "/")
     (generator : Option Config.Generator := none) (afterRestore : Array Headless.Request := #[])
     (replace : Restart.Invocation → IO String := Restart.noExec)
@@ -301,7 +301,7 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
       shipped.dispose
     catch _ =>
       pure ()
-    shutdown
+    shutdown collaborators.journal.drained
   let closer ← IO.asTask (prio := .dedicated) (closeOnceEnded platform host.thread ending say)
   -- The title bar is chosen as the window opens, so config loaded at start
   -- is waited for first (`awaitConfig`), for at most `patience`.
@@ -353,17 +353,19 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
     return 1
 
 /-- The window mode's shutdown, which `host` runs once the loop has ended
-and before it closes the window: every child the library started is killed
-and reaped, every watch and every search is ended, the file service is
-waited for, bounded, until it holds no request, so the journal's last orders
-are written, and then the queues are quit, as the headless mode does. -/
-def shutdown : IO Unit := do
+and before it closes the window, handed the journal's drain
+(`Headless.Journal.drained`): every child the library started is killed and
+reaped, every watch and every search is ended, the drain, a flush of the
+file service, is waited for, bounded, so the journal's last orders are
+written, and then the queues are quit, as the headless mode does. -/
+def shutdown (drained : IO (Task Bool)) : IO Unit := do
   Ffi.processesShutdown
   Ffi.watchesShutdown
   Ffi.grepShutdown
-  -- What the journal handed the file service is written first, for at most
-  -- `Headless.drainPatience`.
-  discard <| Headless.within Headless.drainPatience (return (← Ffi.filesPending) == 0)
+  -- What the journal handed the file service is written first: a flush,
+  -- waited for at most `Headless.drainPatience`, on purpose real time, so
+  -- that quitting does not hang on a stuck file system.
+  discard <| Job.awaitWithin Headless.drainPatience (← drained)
   Ffi.quit
 
 /-- What the window mode is told of the world, read at the edge, for the
