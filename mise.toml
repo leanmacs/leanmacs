@@ -225,6 +225,42 @@ run = [
   "sh ../tools/package-set.sh format ../tests/packages",
 ]
 
+# The Lean checks of some packages alone: what the pre-commit hook runs for
+# a staged change that reaches only those packages (tools/lean-hook.sh,
+# which sets LEAN_HOOK_PACKAGES to their names, separated by spaces, from
+# tools/hook-targets.sh; docs/dev-practices/the-gate.md, "The pre-commit
+# hook"). Never part of `ci`: the gate runs every package's checks and the
+# core's, and a commit's targeting never stands in for it.
+#
+# In order: the toolchain check; then each named package of the fixture
+# set (tools/package-set.sh --only): its Lake test driver, with the `cargo`
+# that fails first on the PATH, as `lean-test` runs it; the set's editor,
+# which compiles whatever of the core and of the other packages is stale
+# and links, then the package's default targets under its linters and its
+# linked test, as `lean` builds them; its format check, as `lean-fmt`; the
+# layer and package imports checks over the set, two Lake queries of about
+# a second, kept because the targeting is sound only while no package
+# imports an implementation package; and its linked test and headless
+# fixtures on the set's editor, as `ffi-test`, with `--allow-empty-run` so
+# an interface package, which holds neither, passes. Last, for the named
+# packages that are also packages of the default set (packages/), that
+# set's editor and the same `run` over it, as `ffi-test` does for every
+# default package.
+[tasks.lean-packages]
+description = "The Lean checks of the packages named in LEAN_HOOK_PACKAGES alone, over the fixture set and, for default packages, the default set: what pre-commit runs for a change that reaches only those packages (tools/lean-hook.sh); never part of ci"
+dir = "lean"
+run = [
+  "test -n \"${LEAN_HOOK_PACKAGES:-}\" || { echo 'lean-packages: LEAN_HOOK_PACKAGES names no package, so there is nothing to check' >&2; exit 2; }",
+  "sh ../tools/toolchain-check.sh",
+  "set --; for n in $LEAN_HOOK_PACKAGES; do set -- \"$@\" --only \"$n\"; done; PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh \"$@\" test ../tests/packages",
+  "set --; for n in $LEAN_HOOK_PACKAGES; do set -- \"$@\" --only \"$n\"; done; LEAN_CC=/usr/bin/cc sh ../tools/package-set.sh \"$@\" build ../tests/packages",
+  "set --; for n in $LEAN_HOOK_PACKAGES; do set -- \"$@\" --only \"$n\"; done; sh ../tools/package-set.sh \"$@\" fmt ../tests/packages",
+  "sh ../tools/layer-imports-check.sh ../tests/packages",
+  "sh ../tools/package-imports-check.sh ../tests/packages",
+  "set --; for n in $LEAN_HOOK_PACKAGES; do set -- \"$@\" --only \"$n\"; done; sh ../tools/package-set.sh \"$@\" --allow-empty-run run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
+  "defaults=$(lake -d ../packages query :editorPackages | cut -f1) || exit 2; set --; for n in $LEAN_HOOK_PACKAGES; do if printf '%s\\n' \"$defaults\" | grep -qxF \"$n\"; then set -- \"$@\" --only \"$n\"; fi; done; if [ \"$#\" -gt 0 ]; then LEAN_CC=/usr/bin/cc lake -d ../packages build --wfail :editor && sh ../tools/package-set.sh \"$@\" --allow-empty-run run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean; fi",
+]
+
 # Tracked files only, so Lake's fetched packages and build output are never
 # looked at. A new C file is checked once it is `git add`ed. Vendored C
 # (`vendor/`, vendor/README.md) is left out: it is upstream's generated code,
