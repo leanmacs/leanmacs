@@ -65,6 +65,7 @@ import ModelTest.Editor.Ex.Line
 import ModelTest.Editor.ExcerptView
 import ModelTest.Editor.Executable
 import ModelTest.Editor.ExecuteCommand
+import ModelTest.Editor.Extension
 import ModelTest.Editor.Face
 import ModelTest.Editor.Face.Vocabulary
 import ModelTest.Editor.File.Cases
@@ -806,6 +807,14 @@ The config session's decisions are tested here too, with no elaborator:
   `useStyleFor` is a default config's `useStyleFor` overrides; and of two
   packages that contribute one compile mode the later package's is the one
   listed, once, where the mode was first registered;
+- `extensionChecks`: extension points (`Editor/Extension.lean`), laid out
+  as an interface package, two implementation packages and a consumer:
+  values two packages register at a point come back typed, in
+  registration order, to a consumer that names neither; a value's fields
+  are programs over the editor's port; a point nobody registered at holds
+  nothing, bare too; a value is registered at its own type's point only;
+  a reload replaces config's values and keeps a package's; and `named`
+  finds the latest value of a name, config's over a package's;
 - `completionPackageChecks`, `modeLinePackageChecks` and
   `languagePackageChecks`: the packages of what ships in core modules
   register it, in order: the shipped styles and displays
@@ -1415,6 +1424,7 @@ def checks : List Check :=
     reloadChecks ++
     reloadHintChecks ++
     packageChecks ++
+    extensionChecks ++
     completionPackageChecks ++
     modeLinePackageChecks ++
     languagePackageChecks ++

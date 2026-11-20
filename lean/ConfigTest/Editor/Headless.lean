@@ -344,13 +344,13 @@ def hostChecks (context : Context) : List Check :=
                "run greet: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\"",
                "text 2: \"v2\""] },
     { name :=
-        "a host handed no packages starts with an empty registry and no menu bar: no command, job, binding, mode, ex name, theme, segment, language, contribution, source, style, display, at-point source or use, no style default, no store and no menu, and nothing is logged"
+        "a host handed no packages starts with an empty registry and no menu bar: no command, job, binding, mode, ex name, theme, segment, language, contribution, source, style, display, at-point source or use, no style default, no store, no menu and no extension, and nothing is logged"
       run := do
         let stage ← Stage.new context context.elaborator (Config.Directory.source "no-config")
         let collaborators := { stage.collaborators with packages := #[] }
         let running ← Headless.Running.new collaborators
         let registry := running.config.registry
-        return registry.ownersByKind.size == 18 && registry.ownersByKind.all (·.isEmpty) &&
+        return registry.ownersByKind.size == 19 && registry.ownersByKind.all (·.isEmpty) &&
             registry.styleDefaults.isEmpty &&
             registry.menuBar? == none &&
             (Headless.Running.keys collaborators running 0).menu == none &&

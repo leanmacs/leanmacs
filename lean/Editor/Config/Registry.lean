@@ -635,6 +635,17 @@ structure MenuEntry where
   menu : Submenu
   deriving DecidableEq, Repr
 
+/-- An extension entry of the registry: a value registered at an extension
+point, the point's key, and who registered it (`Editor/Extension.lean`). -/
+structure ExtensionEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The extension point's key: the name of the type the value was made
+  from. -/
+  key : Lean.Name
+  /-- The value, of the type `key` names. -/
+  value : Dynamic
+
 /-- A face entry of the registry: a definition of a face and who made it. -/
 structure FaceEntry where
   /-- Who set it. -/
@@ -743,6 +754,9 @@ it did not, which a host reads as `auto`. -/
   (`Store.keptAcrossRestart`, `Editor/Setup.lean`), each with its owner,
   oldest first. -/
   codecs : Array (Owner × StoreCodec) := #[]
+  /-- The values registered at extension points, in registration order
+  (`Editor/Extension.lean`). -/
+  extensions : Array ExtensionEntry := #[]
 
 namespace Registry
 
@@ -1152,6 +1166,21 @@ def replaceMenus (registry : Registry) (owner : Owner) (menus : Array Submenu) :
   { registry with
     menus := registry.menus.filter (·.owner != owner) ++ menus.map fun menu => { owner, menu } }
 
+/-- `registry` with every extension entry of `owner` removed and `values`,
+each a key and a value, added as its extension entries, in their order. -/
+def replaceExtensions (registry : Registry) (owner : Owner) (values : Array (Lean.Name × Dynamic)) :
+    Registry :=
+  { registry with
+    extensions :=
+      registry.extensions.filter (·.owner != owner) ++
+        values.map fun (key, value) => { owner, key, value } }
+
+/-- The values registered at the extension point `key`, in registration
+order: the owners' in the order they installed, so a package's come before
+config's. -/
+def extensionsAt (registry : Registry) (key : Lean.Name) : Array Dynamic :=
+  (registry.extensions.filter (·.key == key)).map (·.value)
+
 /-- The menu bar ("Menus", in the module docs): `none` when no menu is
 registered; otherwise each title once, at the place it was first
 registered, as its latest entry, with every command item's key filled from
@@ -1284,8 +1313,9 @@ def unknownAtPoints (registry : Registry) : Array String :=
 the jobs, of the key bindings, of the prefix names, of the modes, of the ex
 bindings, of the faces, of the themes, of the segments, of the languages,
 of the compile contributions, of the completion sources, styles and
-displays, of the at-point sources, of their uses, of the menus and of the
-store codecs, each in the entries' order. A registry nothing is registered in has none. -/
+displays, of the at-point sources, of their uses, of the menus, of the
+store codecs and of the values at extension points, each in the entries'
+order. A registry nothing is registered in has none. -/
 def ownersByKind (registry : Registry) : Array (Array Owner) :=
   #[registry.entries.map (·.owner), registry.jobs.map (·.owner), registry.bindings.map (·.owner),
     registry.prefixNames.map (·.owner), registry.modes.map (·.owner), registry.ex.map (·.owner),
@@ -1293,7 +1323,7 @@ def ownersByKind (registry : Registry) : Array (Array Owner) :=
     registry.languages.map (·.owner), registry.contributions.map (·.owner),
     registry.sources.map (·.owner), registry.styles.map (·.owner), registry.displays.map (·.owner),
     registry.atPoints.map (·.owner), registry.atPointUses.map (·.owner),
-    registry.menus.map (·.owner), registry.codecs.map (·.1)]
+    registry.menus.map (·.owner), registry.codecs.map (·.1), registry.extensions.map (·.owner)]
 
 /-- What the loop is told of the registry for a command's state requests,
 its questions to the registry and its control requests
@@ -1333,7 +1363,7 @@ def registered (registry : Registry) : Loop.Registered :=
     sources := registry.source?, categorySources := registry.sourcesIn
     atPoint := registry.atPoint?, atPointNames := registry.atPointNames
     codec? := fun name => (registry.codec? name).map fun (owner, codec) => (owner.name, codec)
-    reported := registry.reported }
+    reported := registry.reported, extensions := registry.extensionsAt }
 
 end Registry
 
@@ -1446,6 +1476,9 @@ they were made: one at most, in a `setup` that is not refused. -/
   /-- The menus of the menu bar (`defineMenu`), in the order they were
   defined. -/
   menus : Array Submenu := #[]
+  /-- The values registered at extension points (`Extension.add`), each with
+  its point's key, in the order they were registered. -/
+  extensions : Array (Lean.Name × Dynamic) := #[]
 
 namespace Registrations
 
@@ -1605,6 +1638,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .useAtPoint mode name, collected =>
     ((), { collected with atPointUses := collected.atPointUses.push (mode, name) })
   | .menu menu, collected => ((), { collected with menus := collected.menus.push menu })
+  | .extend key value, collected =>
+    ((), { collected with extensions := collected.extensions.push (key, value) })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
@@ -1899,7 +1934,8 @@ end Registrations
 holds of the kinds an owner holds: its commands, jobs, key bindings, prefix
 names, modes, ex bindings, faces, themes, segments, languages, compile
 contributions, completion sources, styles and displays, at-point sources
-and their uses, and menus. Every other owner's entries are left, and so is
+and their uses, menus, store codecs and values at extension points. Every
+other owner's entries are left, and so is
 what no owner holds: config's own settings, which an install sets
 (`Editor/Config/Reload.lean`), and the style defaults. It is the one
 definition of what an owner's registrations are: an install calls it for
@@ -1908,22 +1944,23 @@ definition of what an owner's registrations are: an install calls it for
 def Registry.replaceOwned (registry : Registry) (owner : Owner) (registrations : Registrations) :
     Registry :=
   registry.replace owner registrations.commands |>.replaceJobs owner
-                                    registrations.jobs |>.replaceBindings
-                                  owner registrations.bindings |>.replacePrefixNames
-                                owner registrations.prefixNames |>.replaceModes
-                              owner registrations.modes |>.replaceEx
-                            owner registrations.ex |>.replaceFaces
-                          owner registrations.faces |>.replaceThemes
-                        owner registrations.themes |>.replaceSegments
-                      owner registrations.segments |>.replaceLanguages
-                    owner registrations.languages |>.replaceContributions
-                  owner registrations.contributions |>.replaceSources
-                owner registrations.sources |>.replaceStyles
-              owner registrations.styles |>.replaceDisplays
-            owner registrations.displays |>.replaceAtPoints
-          owner registrations.atPoints |>.replaceAtPointUses
-        owner registrations.atPointUses |>.replaceMenus
-      owner registrations.menus |>.replaceCodecs
-    owner registrations.codecs
+                                      registrations.jobs |>.replaceBindings
+                                    owner registrations.bindings |>.replacePrefixNames
+                                  owner registrations.prefixNames |>.replaceModes
+                                owner registrations.modes |>.replaceEx
+                              owner registrations.ex |>.replaceFaces
+                            owner registrations.faces |>.replaceThemes
+                          owner registrations.themes |>.replaceSegments
+                        owner registrations.segments |>.replaceLanguages
+                      owner registrations.languages |>.replaceContributions
+                    owner registrations.contributions |>.replaceSources
+                  owner registrations.sources |>.replaceStyles
+                owner registrations.styles |>.replaceDisplays
+              owner registrations.displays |>.replaceAtPoints
+            owner registrations.atPoints |>.replaceAtPointUses
+          owner registrations.atPointUses |>.replaceMenus
+        owner registrations.menus |>.replaceCodecs
+      owner registrations.codecs |>.replaceExtensions
+    owner registrations.extensions
 
 end Editor.Config
