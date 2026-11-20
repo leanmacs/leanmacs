@@ -13,11 +13,11 @@ recorded for it. It reads nothing itself, so `model-test` pins it
 
 - **In a bundle**, an executable at `<bundle>/Contents/MacOS/<name>`, the
   toolchain is `<bundle>/Contents/Resources/lean/toolchain` and the editor's
-  `.olean` files are in `<bundle>/Contents/Resources/lean/editor`, one
-  directory that holds every module of the base, the packages' among them.
-  The bundle is known by that layout alone, not by a `.app` suffix, so a
-  renamed or copied bundle still finds its modules; the rule is the same on
-  every platform.
+  `.olean` files are in the directories the bundle's record names
+  ("The bundle's record"). A bundle with no record has the one directory
+  `<bundle>/Contents/Resources/lean/editor`. The bundle is known by that
+  layout alone, not by a `.app` suffix, so a renamed or copied bundle still
+  finds its modules; the rule is the same on every platform.
 - **Outside one** there is no toolchain unless one is given, and the
   `.olean` files are where the build that linked the executable recorded
   them: every directory of its record, in order. With no record there is no
@@ -55,8 +55,21 @@ elaborated on holds the entry module of each package of the set, whose
 names the core's directory, then that of each default package
 (`packages/`).
 
-The record is no part of a bundle: the bundle's layout is the rule there,
-and the record names directories of the machine that built it.
+The record beside an executable is never read in a bundle: it names
+directories of the machine that built it.
+
+## The bundle's record
+
+A bundle's `.olean` directories are the lines of
+`<bundle>/Contents/Resources/editor.oleans` (`bundleRecordPath`), each
+relative line resolved against `<bundle>/Contents/Resources` and an
+absolute one kept (`recordedInBundle`), in order: the staged core's, then
+each staged default package's (`tools/stage-bundle.sh`;
+`docs/design/lean-runtime.md`, "Build"). So the bundle ships each package's
+modules once, in that package's own build directory, where a user's
+package-set build reads them too. It is in `Contents/Resources`, beside
+the core's record, because `codesign` refuses a file in `Contents/MacOS`
+that is not code.
 
 ## The set
 
@@ -139,26 +152,42 @@ def recordedAt (appPath : String) (text : String) : List String :=
   (recordedIn text).map fun line =>
     if (System.FilePath.mk line).isAbsolute then line else (directory / line).toString
 
+/-- The bundle's record of its `.olean` directories ("The bundle's record",
+in the module docs): `<bundle>/Contents/Resources/editor.oleans`. -/
+def bundleRecordPath (bundle : System.FilePath) : System.FilePath :=
+  bundle / "Contents" / "Resources" / "editor.oleans"
+
+/-- The directories the text of the record of the bundle `bundle` names
+(`recordedIn`), a relative line resolved against the bundle's
+`Contents/Resources` and an absolute line kept as it is. -/
+def recordedInBundle (bundle : System.FilePath) (text : String) : List String :=
+  let resources := bundle / "Contents" / "Resources"
+  (recordedIn text).map fun line =>
+    if (System.FilePath.mk line).isAbsolute then line else (resources / line).toString
+
 /-- The directories recorded for the executable at `appPath`, read through
 `readFile`, the port, which answers a file's text or none when it cannot be
-read: those of the file `recordPath` names (`recordedAt`), and none when
-there is no such file. In a bundle nothing is read: the bundle's layout is
-the rule there. The edge passes the real file read, and the model tests a
-fake. -/
+read: in a bundle, those of the bundle's record (`bundleRecordPath`,
+`recordedInBundle`); outside one, those of the file `recordPath` names
+(`recordedAt`); none when there is no such file. The edge passes the real
+file read, and the model tests a fake. -/
 def recorded {m : Type → Type} [Monad m] (appPath : String)
     (readFile : System.FilePath → m (Option String)) : m (List String) := do
-  if (bundle? appPath).isSome then
-    return []
-  return ((← readFile (recordPath appPath)).map (recordedAt appPath)).getD []
+  match bundle? appPath with
+  | some bundle =>
+    return ((← readFile (bundleRecordPath bundle)).map (recordedInBundle bundle)).getD []
+  | none =>
+    return ((← readFile (recordPath appPath)).map (recordedAt appPath)).getD []
 
 /-- The directories for an executable at `appPath`, given `explicit`, the
-directories `recorded` for it by the build that linked it, and the shipped
+directories `recorded` for it (`recorded`), and the shipped
 default it was launched with (`--shipped`), if any: outside a bundle with
 no toolchain given, a shipped default in a bundle lends that bundle's
 toolchain, so a per-user editor the app's launcher started loads config. The
 toolchain is the one given, else the bundle's in a bundle, else none. The
 `.olean` directories are, in a bundle, the ones given (`searchPath`), else
-the bundle's one; outside a bundle, the ones given and then every recorded
+the ones its record names, else, with no record, the bundle's one
+`lean/editor`; outside a bundle, the ones given and then every recorded
 one, so none when nothing was given and nothing recorded. -/
 def resolve (appPath : String) (explicit : Given) (recorded : List String := [])
     (shipped : Option String := none) : Directories :=
@@ -166,8 +195,9 @@ def resolve (appPath : String) (explicit : Given) (recorded : List String := [])
   match bundle? appPath with
   | some bundle =>
     let resources := bundle / "Contents" / "Resources" / "lean"
+    let own := if recorded.isEmpty then [(resources / "editor").toString] else recorded
     { sysroot := explicit.sysroot <|> some (resources / "toolchain").toString
-      oleans := if explicit.oleans.isSome then given else [(resources / "editor").toString] }
+      oleans := if explicit.oleans.isSome then given else own }
   | none =>
     -- A per-user editor the app's launcher started: the shipped default's
     -- bundle holds the toolchain.

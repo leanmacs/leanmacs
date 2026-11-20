@@ -13,8 +13,9 @@ namespace ModelTest
 open Editor
 
 /-- The checks of where the editor's Lean modules are
-(`Editor/ModuleLookup.lean`): the bundle's two directories from an executable
-in a bundle; outside one no toolchain, and every `.olean` directory the build
+(`Editor/ModuleLookup.lean`): the bundle's toolchain from an executable in
+a bundle, and the `.olean` directories the bundle's record names, resolved
+against its `Contents/Resources`; outside one no toolchain, and every `.olean` directory the build
 recorded for the executable, or none; a directory argument read as
 directories joined with `:`, used before the recorded ones outside a bundle
 and in place of the bundle's in one; the record, read through a
@@ -51,9 +52,21 @@ def moduleLookupChecks : List Check :=
           (ModuleLookup.resolve built {} == { sysroot := none, oleans := [] } &&
             ModuleLookup.resolve "/opt/leanmacs/bin/editor" { sysroot := some "/s" } ==
               { sysroot := some "/s", oleans := [] }) },
-    { name := "an executable in a bundle uses the bundle's directories whatever a record says"
+    { name :=
+        "an executable in a bundle searches the directories its bundle's record names, in order, each relative line resolved against Contents/Resources and an absolute one kept; the toolchain stays the bundle's"
       run :=
-        pure (ModuleLookup.resolve installed {} recorded == bundled "/Applications/Leanmacs.app") },
+        let resources := "/Applications/Leanmacs.app/Contents/Resources"
+        let record :=
+          "lean/lean/.lake/build/lib/lean\nlean/set/compile/.lake/build/lib/lean\n/abs/lib\n"
+        let named :=
+          [s!"{resources}/lean/lean/.lake/build/lib/lean",
+            s!"{resources}/lean/set/compile/.lake/build/lib/lean", "/abs/lib"]
+        pure
+          (ModuleLookup.bundleRecordPath "/Applications/Leanmacs.app" ==
+              s!"{resources}/editor.oleans" &&
+            ModuleLookup.recordedInBundle "/Applications/Leanmacs.app" record == named &&
+            ModuleLookup.resolve installed {} named ==
+              { sysroot := some s!"{resources}/lean/toolchain", oleans := named }) },
     { name :=
         "a directory argument names the directories it joins with a colon, in order, and one directory when it holds no colon; an empty part names none"
       run :=
@@ -75,7 +88,7 @@ def moduleLookupChecks : List Check :=
             ModuleLookup.resolve built { sysroot := some "/s" } recorded ==
               { sysroot := some "/s", oleans := recorded }) },
     { name :=
-        "in a bundle the directories given are used in place of the bundle's, each on its own, and nothing recorded is added: a bundle's one directory holds every module"
+        "in a bundle the directories given are used in place of the bundle's, each on its own, and nothing its record names is added"
       run :=
         let both : ModuleLookup.Given := { sysroot := some "/s", oleans := some "/o:/p" }
         pure
@@ -95,20 +108,23 @@ def moduleLookupChecks : List Check :=
             ModuleLookup.recordedIn "\n/a/lib\n\n" == ["/a/lib"] &&
             ModuleLookup.recordedIn "" == []) },
     { name :=
-        "the record is read through the reader it is given: the file beside the executable outside a bundle, nothing when there is none, and no file at all in a bundle"
+        "the record is read through the reader it is given: the file beside the executable outside a bundle, nothing when there is none, and in a bundle the bundle's Contents/Resources/editor.oleans, never a file beside the executable"
       run :=
         let reader (files : List (String × String)) (path : System.FilePath) :
           StateM (List String) (Option String) := do
           modify (· ++ [path.toString])
           return (files.find? (·.1 == path.toString)).map (·.2)
         let record := [(s!"{built}.oleans", "/a/lib\n/b/lib\n")]
+        let bundleRecord := "/Applications/Leanmacs.app/Contents/Resources/editor.oleans"
         -- The directories read, and the paths the reader was asked for.
         let read (appPath : String) (files : List (String × String)) : List String × List String :=
           Id.run ((ModuleLookup.recorded appPath (reader files)).run [])
         pure
           (read built record == (["/a/lib", "/b/lib"], [s!"{built}.oleans"]) &&
             read built [] == ([], [s!"{built}.oleans"]) &&
-            read installed record == ([], [])) },
+            read installed (record ++ [(s!"{installed}.oleans", "/x\n")]) == ([], [bundleRecord]) &&
+            read installed [(bundleRecord, "lean/lean\n")] ==
+              (["/Applications/Leanmacs.app/Contents/Resources/lean/lean"], [bundleRecord])) },
     { name :=
         "an executable outside a bundle started with --shipped <bundle>/Contents/MacOS/editor takes that bundle's toolchain when none is given; a given one, or a shipped default outside a bundle, wins"
       run :=

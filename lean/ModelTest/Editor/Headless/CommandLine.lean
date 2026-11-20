@@ -45,7 +45,7 @@ def headlessCommandLineChecks : List Check :=
           (read outside ["/s", "/o", "/c", "/t"] == some (explicit false) &&
             read installed ["/s", "/o", "/c", "/t"] == some (explicit false)) },
     { name :=
-        "the .olean directory of four paths is a search path: the directories a colon joins, in order; outside a bundle the directories the build recorded for the executable follow them, and in a bundle nothing is added"
+        "the .olean directory of four paths is a search path: the directories a colon joins, in order; outside a bundle the directories the build recorded for the executable follow them; in a bundle nothing is added, and with two paths the bundle's record names its directories"
       run :=
         pure
           (read outside ["/s", "/o:/p", "/c", "/t"] ==
@@ -54,7 +54,8 @@ def headlessCommandLineChecks : List Check :=
               some { explicit false with oleans := "/o" :: recorded } &&
             read installed ["/s", "/o:/p", "/c", "/t"] recorded ==
               some { explicit false with oleans := ["/o", "/p"] } &&
-            read installed ["/c", "/t"] recorded == some (bundled false)) },
+            read installed ["/c", "/t"] recorded ==
+              some { bundled false with oleans := recorded }) },
     { name :=
         "two paths are the config directory and the script, and an executable in a bundle imports from the bundle's two directories"
       run := pure (read installed ["/c", "/t"] == some (bundled false)) },

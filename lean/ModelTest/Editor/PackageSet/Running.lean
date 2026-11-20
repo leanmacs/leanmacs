@@ -75,6 +75,19 @@ def packageSetRunningChecks : List Check :=
             coreRecordPath "/w/packages/.lake/build/bin/editor" ==
               "/w/packages/.lake/build/bin/editor.core") },
     { name :=
+        "the build record of an executable in an app bundle is the bundle's Contents/Resources/editor.build, and it is the one read; outside one it is beside the executable"
+      run :=
+        let exe := "/A.app/Contents/MacOS/editor"
+        let running :=
+          runningOver exe
+            [("/A.app/Contents/Resources/editor.build", "MACOSX_DEPLOYMENT_TARGET=26.0\n"),
+              (s!"{exe}.build", "LEAN_CC=/usr/bin/cc\n")]
+        pure
+          (buildRecordPath exe == "/A.app/Contents/Resources/editor.build" &&
+            buildRecordPath "/w/packages/.lake/build/bin/editor" ==
+              "/w/packages/.lake/build/bin/editor.build" &&
+            running.build == #[("MACOSX_DEPLOYMENT_TARGET", "26.0")]) },
+    { name :=
         "a .build record's lines are NAME=value, a value may hold =, and a line with none is left out"
       run :=
         pure

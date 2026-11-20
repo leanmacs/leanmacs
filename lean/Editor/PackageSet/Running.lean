@@ -23,9 +23,10 @@ changes them after, but what each reload reads of the config (`facts`).
   (`PackageSet.shipped`), when it knows the set's directory; with neither it
   has none, and never starts a build.
 
-In a bundle the core's record is `Contents/Resources/editor.core`
-(`coreRecordPath`): `codesign` refuses a file in `Contents/MacOS` that is
-not code.
+In a bundle the core's and the build's records are
+`Contents/Resources/editor.core` and `Contents/Resources/editor.build`
+(`coreRecordPath`, `buildRecordPath`): `codesign` refuses a file in
+`Contents/MacOS` that is not code.
 
 Pure over its two ports, so `model-test` pins it
 (`ModelTest.packageSetRunningChecks`).
@@ -61,6 +62,18 @@ structure Running where
   facts : Facts := {}
   deriving DecidableEq, Repr, BEq, Inhabited
 
+/-- The record `<name>.<kind>` of the executable at `appPath`: beside it;
+in an app bundle, in `<bundle>/Contents/Resources`, where `codesign` lets
+a file that is not code be. -/
+def recordPathOf (appPath : String) (kind : String) : String :=
+  let path := System.FilePath.mk appPath
+  match path.parent, path.parent.bind (·.parent), path.fileName with
+  | some macOS, some contents, some name =>
+    if macOS.fileName == some "MacOS" && contents.fileName == some "Contents" then
+      (contents / "Resources" / s!"{name}.{kind}").toString
+    else s!"{appPath}.{kind}"
+  | _, _, _ => s!"{appPath}.{kind}"
+
 /-- The record of the core's identity of the executable at `appPath`:
 beside it, `<executable>.core`, where the package-set build writes it; in
 an app bundle, `<bundle>/Contents/Resources/<name>.core`, where
@@ -68,18 +81,15 @@ an app bundle, `<bundle>/Contents/Resources/<name>.core`, where
 `Contents/MacOS` that is not code. The launcher reads it by the same rule
 (`crates/editor-launch/src/editors.rs`, `core_record`). -/
 def coreRecordPath (appPath : String) : String :=
-  let path := System.FilePath.mk appPath
-  match path.parent, path.parent.bind (·.parent), path.fileName with
-  | some macOS, some contents, some name =>
-    if macOS.fileName == some "MacOS" && contents.fileName == some "Contents" then
-      (contents / "Resources" / s!"{name}.core").toString
-    else appPath ++ ".core"
-  | _, _, _ => appPath ++ ".core"
+  recordPathOf appPath "core"
 
-/-- The record of the build environment beside the executable at
-`appPath`. -/
+/-- The record of the build environment of the executable at `appPath`
+(`recordPathOf`): beside it, `<executable>.build`, where the package-set
+build writes it; in an app bundle, `<bundle>/Contents/Resources/<name>.build`,
+which `tools/stage-bundle.sh` writes without `LEAN_CC`, so a build the app
+runs compiles with the bundled toolchain's own `clang`. -/
 def buildRecordPath (appPath : String) : String :=
-  appPath ++ ".build"
+  recordPathOf appPath "build"
 
 /-- The record of the fingerprint beside a per-user executable at
 `appPath`. -/

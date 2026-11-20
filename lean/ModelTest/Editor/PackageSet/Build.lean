@@ -277,6 +277,37 @@ def packageSetBuildChecks : List Check :=
                 (startedRuns done).contains ("/bin/rm", #["-rf", staging]) &&
                 !(startedRuns done).any (·.1 == "/bin/mv") &&
                 done.handOver.isNone) },
+    { name :=
+        "every command the build runs with the toolchain, git, lake update, lake query, cargo and lake build, has the user's Lean, Lake and compiler variables removed and then the build record set over them, LEAN_CC too when the record holds it"
+      run :=
+        let facts := lakefileWith #[gitPackage, hello]
+        match orderFor facts with
+        | none => pure false
+        | some order =>
+          let resolve :=
+            streaming (lakeCommand order (#["update", "--keep-toolchain"] ++ order.resolve)) #[]
+          let query :=
+            replied (lakeCommand order #["query", ":editorRustCrates"]) 0
+              "echo\techo-service\t/r/echo/rust/Cargo.toml\n"
+          let (scripts, streams) := succeeding order
+          match
+            buildDriver (runningWith facts)
+              (#[replied (tool order "git") 0 "git version 2.50.0", query] ++ scripts)
+              (streams.push resolve) with
+          | none => pure false
+          | some driver =>
+            let done := built driver order
+            let tools := done.jobs.processes.started.filter (·.directory.toString == "/c")
+            pure
+              (tools.map (·.program) ==
+                  #["git", "/t/bin/lake", "/t/bin/lake", "cargo", "/t/bin/lake"] &&
+                tools.all
+                  (fun command =>
+                    !command.environment.clear && command.environment.unset == clearedVariables &&
+                      command.environment.set.take 1 == #[("LEAN_CC", "/usr/bin/cc")]) &&
+                ["LEAN_CC", "LEAN_AR", "LEAN_SYSROOT", "LEAN", "LEAN_PATH", "LEAN_SRC_PATH",
+                      "LAKE_HOME", "LAKE_OVERRIDE_LEAN", "ELAN_TOOLCHAIN", "CC", "AR"].all
+                  clearedVariables.contains) },
     { name := "a probe that fails removes the staging directory and publishes nothing"
       run :=
         let facts := lakefileWith #[hello]

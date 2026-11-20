@@ -846,7 +846,7 @@ The config session's decisions are tested here too, with no elaborator:
   known by its hash;
 - `packageSetRunningChecks`: what the running editor knows of its own
   package set (`Editor/PackageSet/Running.lean`): the records beside it,
-  the shipped fingerprint with no `.packages` record and the recorded one
+  or in an app bundle's `Contents/Resources`, the shipped fingerprint with no `.packages` record and the recorded one
   with one, and the toolchain's `lake` only when it is there;
 - `packageSetEditChecks`: the edits of a config's `lakefile.toml`
   (`Editor/PackageSet/Edit.lean`), on exact texts: where each require's
@@ -856,7 +856,9 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetBuildChecks`: a user's package-set build and its commands
   (`Editor/PackageSet/Build.lean`, `Editor/PackageSet/Compiled.lean`):
   when a reload starts it and when it says it cannot; the order carried
-  as text; the requires resolved; git required and absent or failing, for
+  as text; the requires resolved; the user's Lean, Lake and compiler
+  variables removed from every command it runs, and the build record set
+  over them; git required and absent or failing, for
   a git and for a Reservoir dependency;
   Cargo required for a Rust crate and none run for a set with no crate; a
   failing build shown, its staging directory removed and nothing

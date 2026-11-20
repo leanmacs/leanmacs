@@ -204,17 +204,19 @@ def windowOptionChecks : List Check :=
                 (·.configPlan true) ==
               some (.skip none)) },
     { name :=
-        "an executable in a bundle, with no --sysroot or --oleans, loads config from the bundle's toolchain and .olean directories, and --sysroot and --oleans still override them there, --oleans with each directory a colon joins and none recorded added"
+        "an executable in a bundle, with no --sysroot or --oleans, loads config from the bundle's toolchain and the .olean directories its record names, and --sysroot and --oleans still override them there, --oleans with each directory a colon joins and none recorded added"
       run :=
         let installed :=
-          { windowEnvironment with appPath := "/Applications/Leanmacs.app/Contents/MacOS/editor" }
+          { windowEnvironment with
+            appPath := "/Applications/Leanmacs.app/Contents/MacOS/editor"
+            recordedOleans := ["/Applications/Leanmacs.app/Contents/Resources/lean/lean/lib"] }
         let directories (arguments : List String) : Option (Option String × List String) :=
           (parsed arguments installed).map fun options => (options.sysroot, options.oleans)
         pure
           (directories ["f"] ==
               some
                 (some "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain",
-                  ["/Applications/Leanmacs.app/Contents/Resources/lean/editor"]) &&
+                  ["/Applications/Leanmacs.app/Contents/Resources/lean/lean/lib"]) &&
             (parsed ["f"] installed).map (·.configPlan true) == some (.load "/xdg/leanmacs") &&
             directories ["--sysroot", "/s", "--oleans", "/o:/p", "f"] ==
               some (some "/s", ["/o", "/p"])) },

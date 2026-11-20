@@ -63,8 +63,11 @@ git, and the requires to resolve (`resolveNames`).
    directory, `packages: built <exe>; it starts at the next launch`.
 
 Every command of the build runs in the config directory with the editor's
-own environment and the build environment set over it, the probe and the
-file moves from `/`. **Every failure** removes the staging directory, ends
+own environment, less the variables that would choose another toolchain
+or compiler (`clearedVariables`: `LEAN_CC`, `LEAN_SYSROOT`, `CC` and the
+rest), and the build environment set over it, the probe and the file
+moves from `/`. So `lake` is the order's, by absolute path, and Lake finds
+`lean` and `clang` beside it, whatever the user's shell set. **Every failure** removes the staging directory, ends
 the buffer with `Package build failed: <how> after <t>`, says `packages:
 <how>; this editor keeps running` and publishes nothing.
 
@@ -251,10 +254,23 @@ def decide (running : Running) (facts : Facts) (inFlight : Bool) : Decision :=
 def startedLine : String :=
   s!"packages: the package set changed; building it (see {bufferName})"
 
-/-- The build environment of `order`, over the editor's own. -/
+/-- The variables removed from the environment of every command the build
+runs in the config directory, before the build record is set over it: what
+would make Lake, or the tools it runs, take another toolchain, compiler or
+search path than the running editor's own (`docs/design/packages.md`, "The
+build, as a job"). Lake finds `lean` and `clang` beside the `lake` the
+order names; `LEAN_CC` and the rest would override that from the user's
+shell. A record that holds one of them, a checkout's `LEAN_CC`, still sets
+it, since the record is set after. -/
+def clearedVariables : Array String :=
+  #["LEAN_CC", "LEAN_AR", "LEAN_SYSROOT", "LEAN", "LEAN_PATH", "LEAN_SRC_PATH", "LAKE_HOME",
+    "LAKE_OVERRIDE_LEAN", "ELAN_TOOLCHAIN", "CC", "AR"]
+
+/-- The build environment of `order`, over the editor's own, with
+`clearedVariables` removed first. -/
 def Order.environmentOf (order : Order) (more : Array (String × String) := #[]) :
     Process.Environment :=
-  { set := order.environment ++ more }
+  { unset := clearedVariables, set := order.environment ++ more }
 
 /-- `program --version`, in the config directory with the build
 environment: the check that a tool works. -/
