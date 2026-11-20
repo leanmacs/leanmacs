@@ -1,8 +1,17 @@
 # Extension points and interface packages
 
-Status: **proposal**, decided 2026-11-19; not built. A throwaway spike
-checked the mechanism ("Evidence", below). The `features-as-packages`
-roadmap builds it, and moves every feature out of the core on it.
+Status: decided 2026-11-19; **built** in the `features-as-packages`
+roadmap's phase 1, which moves no feature yet. Built: the mechanism
+(`lean/Editor/Extension.lean`, `SetupRequest.extend`,
+`RegistryRequest.extensions`, kept by owner in the registry); the layer
+imports check (`tools/layer-imports-check.sh`, over the facet
+`editorLayerImports`), with interface packages declared by
+`keywords = ["editor-interface"]` in their lakefile; the check that config
+elaborated at runtime registers at a compiled package's extension point
+(`config-test`); and the decision on reaches by name ("Reaches by name",
+below), with its first contract check in the fixture interface package
+`greeting-api`. No feature is on the mechanism yet: the roadmap's later
+phases move them out on it.
 
 This document says how one package uses what another provides without
 importing it, so that any feature moved out of the core can be written again
@@ -96,9 +105,24 @@ The import rule:
 
 So any implementation package can be left out of a set, or replaced by
 another that registers at the same extension points, and nothing else in
-the set has to change or be rebuilt against it. The gate checks the rule on
-Lake's module graph, as it checks what a package imports of the core today
-(`tools/package-imports-check.sh`).
+the set has to change or be rebuilt against it.
+
+- **A package declares its layer in its lakefile**, with Lake's own
+  package key `keywords`: an interface package declares
+  `keywords = ["editor-interface"]`. Every other package is an
+  implementation package, so a missing or misspelt keyword makes a package
+  more refused, never less. The core is the core's Lake package. No list
+  is kept by hand.
+- **The rule holds for every module of a package**, its test modules and
+  its linked test included. A test that imported another feature's
+  implementation would stop building when that feature is left out; it
+  uses the interface package's fake instead.
+- **The gate checks the rule on Lake's module graph**
+  (`tools/layer-imports-check.sh`; [the-gate.md](../dev-practices/the-gate.md),
+  "The layer imports check"), as it checks what a package imports of the
+  core (`tools/package-imports-check.sh`). It checks `import` lines; a
+  `require` of an implementation package, which only orders registration,
+  is not refused yet (the task `layer-requires-check`).
 
 ## How an interface is written in Lean
 
@@ -283,45 +307,106 @@ be left out:
 
 ## Evidence
 
-A throwaway spike, branch `spike/extension-points`, not landed, built the
-mechanism with points named by hand, the version since rejected. It added
-the generic registration (`SetupRequest.extend`, an owner-kept list in the
-registry, `RegistryRequest.extensions`) and a module of the three
-functions, about 60 lines of core. Its model tests are laid out as an
-interface package, two implementation packages and a consumer, and they
-show:
+The model tests (`ModelTest.extensionChecks`,
+`lean/ModelTest/Editor/Extension.lean`) are laid out as an interface
+package, two implementation packages and a consumer, and show:
 
 - values two packages register at an extension point come back typed, in
-  the packages' order, and a consumer that names neither package runs
-  them; swapping the packages' order changes which answers first;
-- a value's functions are programs over the editor's port: the requests a
+  registration order, to a consumer that names neither package; swapping
+  the packages swaps which answers first;
+- a value's fields are programs over the editor's port: the requests a
   consumer's call makes are the editor's;
-- with nothing registered, and where no loop dispatched the command, a
-  consumer reads no values;
-- a value of another type under the same key, and a value at another key,
-  are left out;
-- config registers at a package's extension point, `named` finds config's
-  value of a package's name, and a reload without config's value brings
-  the package's back.
+- with nothing registered, and run bare where no loop dispatched the
+  command, a point holds no value;
+- a value is registered at its own type's point: another type's value
+  does not come back from `Finder`'s, and does from its own;
+- a reload replaces config's values and keeps a package's, which come
+  first;
+- `named` finds config's value of a package's name, the package's again
+  after a reload without it, and nothing of a name nobody registered.
 
-Every model check of the spike's tree passed (2738). A scratch file
-showed that a structure of monadic functions derives `TypeName`, travels in
-a `Dynamic` both compiled and in Lean's interpreter, and that keying by the
-type turns a wrong type and a misspelt point into the build errors above.
+`config-test` (`ConfigTest.extensionChecks`,
+`lean/ConfigTest/Editor/Extension.lean`, over `lean/ExtensionFixture.lean`)
+shows a config elaborated by the running editor registering at a compiled
+package's extension point: the compiled package reads config's value typed,
+runs its interpreted program, and a reload without the registration leaves
+the package's value alone.
 
-Not shown: a config elaborated by the running editor (`config-test`)
-registering at a compiled package's extension point, and the rest of the
-gate.
+A throwaway spike, branch `spike/extension-points`, not landed, first
+checked the mechanism with points named by hand, the version rejected
+("What was not chosen"), and that a structure of monadic functions derives
+`TypeName` and travels in a `Dynamic` both compiled and in Lean's
+interpreter.
+
+## Reaches by name
+
+A command named in a key table, a menu, an ex name or the default config is
+reached by its name, not by an import. Decided in features-as-packages
+phase 1:
+
+**A name another package reaches is part of the contract a replacement must
+keep. It is declared in the interface package of the feature that owns it,
+and it is not routed through an extension point.**
+
+- **Why not an extension point.** The registry already looks up a command,
+  an ex name, a mode or a theme by name when it is used, at a key press, an
+  ex line's run or a menu choice, not when code is built. That is the same
+  late binding `Extension.named` gives. An extension point per reached
+  command would hold the command the registry already holds, and every key
+  table would have to name a type per command: two mechanisms for one job.
+- **Why it keeps replaceability.** A reach by name is not an import, so
+  leaving the package out fails no build. The reach answers as an unknown
+  name does today, an ordinary case like an empty hook.
+- **Where the contract is written.** An interface package declares each
+  name another package may reach as a constant (for example
+  `Files.Names.findFile`).
+- **How a reacher names it depends on where the reacher is.**
+  - **A reacher outside the core names the constant, never the text**: a
+    package, or an interface package's consumer. A misspelt name is then an
+    unknown identifier at build time, the property extension points are
+    keyed by type for.
+  - **A reacher still inside the core keeps naming the reached command as
+    text**: the Vim scheme's default tables
+    (`lean/Editor/InputScheme/Vim/Default.lean`), the menu, the ex names and
+    the core's default config (`config/default`). It cannot import the
+    interface package, because the core imports no package. **The core →
+    interface refusal of the layer imports check stays**: no exception is
+    made for name constants.
+  - **When a reacher moves out of the core** (evil and the Vim tables in
+    phase 7; the ex line, the menu and the default config's reaches in
+    phase 8), it switches from text to the constant in the same move. It
+    then requires and imports the interface package, which the rule
+    allows.
+- **How it is enforced.** The interface package publishes a contract check
+  (`AGENTS.md`: the owner of a port publishes its fake and its contract
+  check), which every implementation runs. It collects the
+  implementation's `setup` with the pure collector (`Package.registered`,
+  `lean/Editor/Config/Packages.lean`) and checks that the implementation's
+  registered names include every name the interface package declares.
+  Until the core's reachers move out, this check is what catches a missing
+  or renamed command: a command a core table names by text is declared by
+  the interface package, so an implementation that drops or renames it
+  fails its contract check, though the core's text is not checked at build
+  time.
+- **A name no interface package declares** is the implementation's own. A
+  replacement need not keep it.
+- **A user's config** is unaffected, and still names commands as text.
+- **Today.** No core module reaches `shipped-themes` or `compile` by name
+  (the default config binds `load-theme`, a core command). The fixture
+  interface package `greeting-api` (`tests/packages/greeting-api/`) is the
+  first to declare a reached name, `greeting-reply`
+  (`GreetingApi.replyName`, and every declared name in `GreetingApi.names`),
+  and the working example later interface packages follow: its fake
+  (`GreetingApiTest.fake`) and its contract check
+  (`GreetingApiTest.contractChecks`) are modules of its test library; the
+  implementation `greeting` runs the check; the consumer `greeting-loud`
+  reaches the name through the constant and tests against the fake; and
+  greeting-api's own tests pin the check's failure case, a package that
+  lacks the name or misspells it. Each feature's interface package builds
+  its own as the feature moves (phases 3 to 8).
 
 ## Open questions
 
-- **A config elaborated at runtime.** Both sides go through Lean's compiled
-  `Dynamic`, so it is expected to work. `config-test` must show it before
-  anything is built on it.
-- **Reaches by name.** A command named in a key table, a menu, an ex name or
-  the default config is reached by its name, not by an import. Whether a
-  command name is part of the contract a replacement must keep, or whether
-  such reaches go through extension points too, is still open.
 - **Order within a hook.** Values come in registration order, which is
   dependency order between Lake packages. Emacs lets a hook function ask to
   run early or late (`add-hook`'s depth). Whether a hook needs that is

@@ -1324,7 +1324,11 @@ anyone listing the Lake packages (a package set, a generated root, an
 entry-module convention, dependency order), what the core is, what a
 package may import of it and what each feature would have to cross to move
 out are in [packages.md](packages.md), from that roadmap's phases 3 and
-4.
+4. Beside the registrations of the kinds the core names, `Extension.add`
+(`lean/Editor/Extension.lean`) is one generic registration: it registers a
+value at the extension point of its type, which any package can declare,
+and `Extension.values` and `Extension.named` read the values back typed
+([extension-points.md](extension-points.md)).
 
 ```lean
 def package : Package :=

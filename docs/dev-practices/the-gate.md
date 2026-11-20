@@ -14,7 +14,9 @@ every package of the fixture set, the default packages among them ("The
 package steps", below); the check
 that the host's modules import no feature module, the
 check that the core imports no module of a feature that moves out of it,
-the check that a package imports only the core's API, the checks of the Lean/Rust boundary, the contract checks against
+the check that a package imports only the core's API, the check of the
+three-layer import rule (the core imports no package, and no package
+imports an implementation package), the checks of the Lean/Rust boundary, the contract checks against
 the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); the headless mode run from a staged app
 bundle (`mise run bundle-test`); the C format check; and the workflow lint
@@ -1769,8 +1771,84 @@ graph.
   `tests/empty-set` holds no package, and the check must exit 2 and say
   there is nothing to check.
 - **What it does not claim.** It checks imports of the core's modules. A
-  package's imports of another package's modules are Lake's to resolve
-  from the `require`s, and no rule limits them yet.
+  package's imports of another package's modules are the layer imports
+  check's (below).
+
+## The layer imports check
+
+```sh
+cd lean && sh ../tools/layer-imports-check.sh ../tests/packages
+```
+
+Part of `mise run ffi-test`, after the package imports check. It holds the
+three-layer rule of [extension-points.md](../design/extension-points.md),
+"Three layers", on Lake's module graph: anything moved out of the core can
+be left out of a set or replaced, so nothing imports an implementation
+package's modules.
+
+| Importing module | Imported module | |
+|---|---|---|
+| any | a module of its own package | allowed |
+| a module of the core | a module of any package | refused: `the core imports no package` |
+| a module of any package | a module of an implementation package | refused: `a module of an implementation package, which no package imports` |
+| a module of any package | a module of the core or of an interface package | allowed (what of the core is the package imports check's business) |
+
+- **A package declares its layer in its lakefile**, with Lake's package
+  key `keywords`: `keywords = ["editor-interface"]` makes it an interface
+  package. Every other package is an implementation package, so a missing
+  or misspelt keyword makes a package more refused, never less. The core
+  is the core's Lake package. No list is kept by hand.
+- **It asks Lake and reads no source text.** `lake -d <set dir> query
+  :editorLayerImports`, a facet the core's lakefile defines, prints one
+  line for each direct import, by a module of a library of the core or of
+  a package the gate's steps run over, of a module of a package of the
+  workspace, its own package's included: `<package> <layer> <module>
+  <imported package> <imported layer> <imported module>`, tab-separated.
+  Modules of the toolchain are no workspace modules and are not listed.
+  Lake reads the headers and builds nothing.
+- **It holds for every module of a package**, its tests and its linked
+  test included: a test uses the interface package's fake, never another
+  feature's implementation.
+- **Exit 0** when every import is allowed, printing nothing. **Exit 1**
+  after printing each refused import, one a line:
+  `layer-imports-check: <package> (<layer>): <module> imports <imported
+  module> of <imported package> (<imported layer>): <reason>`.
+- **It refuses to pass over nothing.** A command line it does not take, a
+  query Lake fails, a line that is not six fields, a layer it does not
+  know and no line at all are exit 2, and so is input in which no module
+  of the core is an importer: every set requires the core, so the facet
+  did not walk the core's modules, and the core's half of the rule would
+  hold of nothing. The within-package lines are listed for that reason:
+  every core module that imports another gives a line whose importer is
+  the core.
+- **The gate holds the rule itself to fixtures** (`tests/layer-imports/`).
+  `--lines lines`, written by hand with a line for each branch of the
+  rule, must exit 1 and print exactly `expected`. Among its refused lines
+  are a core module importing a module of `shipped-themes`, one of
+  `compile` and one of an interface package: the core's lakefile requires
+  no package, so no real graph can show that refusal. `--lines bad-layer`
+  must exit 2 naming the layer it does not know, and `--lines no-core`,
+  all allowed lines with no core importer, must exit 2 saying the core is
+  not checked. And on a real graph: the set `tests/layer-imports/` holds
+  the fixture set and the package `greeting-reach`, never built, whose one
+  module imports `GreetingApi` of the interface package `greeting-api` and
+  `Greeting` of the implementation package `greeting`. The check on it must
+  exit 1 and print exactly `graph-expected`, the one refused import.
+- **The facet is seen to walk the core.** `ffi-test` counts the lines of
+  `lake -d ../packages query :editorLayerImports` whose importer's layer
+  is `core`, and requires more than none.
+- **The sets it is run over**, each required to pass: the default set,
+  `packages/`, so `shipped-themes` and `compile` import only the core;
+  the fixture set, `tests/packages/`, where `greeting-loud` reaches
+  `greeting`'s command through `greeting-api`; the user-side link's set,
+  `tests/user-link/`; and `tests/empty-set/`, the core alone.
+- **Time.** About two and a half seconds a set on a developer's Mac, most
+  of it Lake reading the core's headers (some 5,700 lines are the core's
+  own imports); the script skips the imports within one package in one
+  `awk` pass, and its own time is a tenth of a second.
+- **What it does not claim.** It checks `import` lines. A `require` of an
+  implementation package, as `greeting-loud`'s of `greeting`, which orders
+  registration, is not refused yet (the task `layer-requires-check`).
 
 ## The package steps
 

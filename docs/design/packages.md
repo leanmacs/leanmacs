@@ -852,10 +852,16 @@ The core's API is the set of core modules a package may name in an `import`
 line. It is defined by a rule over the module map, and each row of the map
 says which side of the rule its modules are on.
 
-This is the rule as built. As the remaining features move out it becomes
-three layers, the core, interface packages and implementation packages,
-with no package importing an implementation package
-([extension-points.md](extension-points.md), "Three layers").
+This is the rule of what a package imports of the core. Beside it holds
+the three-layer rule ([extension-points.md](extension-points.md), "Three
+layers"), built in features-as-packages phase 1: the core imports no
+package, and no package, interface or implementation, imports a module of
+an implementation package; a package may import interface packages. A
+package is an interface package when its lakefile declares
+`keywords = ["editor-interface"]`, and an implementation package
+otherwise. The rule holds for every module of a package, its tests
+included. `shipped-themes` and `compile` are implementation packages and
+import the core alone.
 
 - **A package may import any core module that is not internal.** The rule
   is about `import` lines. Lean's imports are transitive, so a module an
@@ -959,6 +965,14 @@ with no package importing an implementation package
   API: a core module that is neither internal nor a test double is part
   of it. A change to the rule changes the script, this section and the
   lines the gate holds the script to (`tests/package-imports/`).
+- **The layer imports check enforces the three-layer rule**
+  (`tools/layer-imports-check.sh`, in `mise run ffi-test`;
+  [the-gate.md](../dev-practices/the-gate.md), "The layer imports check").
+  It asks Lake for each direct import between workspace modules by a
+  module of the core or of a set's packages, with the layer of each side
+  (`lake -d <set dir> query :editorLayerImports`), and refuses a core
+  module importing any package and a package importing an implementation
+  package.
 
 Checked against the graph at `6ba99de5`, before either feature moved:
 every core module the two features' modules imported directly was
@@ -1375,7 +1389,7 @@ toolchain (packages phases 8 and 9).
 
 ## The module map
 
-Every module under `lean/Editor/`, 303 of them
+Every module under `lean/Editor/`, 304 of them
 (`find lean/Editor -name '*.lean' | wc -l`; 254 at `6ba99de5`, phase 4
 added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
 the three modules of the shipped palettes out, phase 6 moved the five
@@ -1383,9 +1397,10 @@ of the compile mode out and added the 18 of the test kit, phase 7 added
 six to the config session, and the merge of
 `main` that brought the working sets, project search, the jump list and
 marks added 19, session-restore phase 1 added six, and phase 2 six more,
-the store codec and five of the reconciler's records and formats), is
+the store codec and five of the reconciler's records and formats, and
+features-as-packages phase 1 added `Editor.Extension`), is
 **core** or part of a **feature that could become a package**. The counts
-below add up to 303: 210 core and 93 in 22 features.
+below add up to 304: 211 core and 93 in 22 features.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -1426,7 +1441,7 @@ One row covers modules that share a class and a side of the import rule.
 | The editor API and what is proved of it: `Editor.Api`, `.Api.Theorems`, `Editor.UndoTree`, `.UndoTree.Theorems` | 4 | core | yes |
 | The composite port and a command: `Editor.Command`, `.Call`, `.Control`, `.Registry`, `.Append`, `Editor.Program` | 6 | core | yes |
 | The ports: `Editor.Clipboard`, `Editor.Diff`, `.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
-| The setup port, packages and stores: `Editor.Setup`, `Editor.Package`, `Editor.Store`, `.Store.Codec`, `Editor.Value`, `Editor.Json` | 6 | core | yes |
+| The setup port, packages, extension points and stores: `Editor.Setup`, `Editor.Package`, `Editor.Extension`, `Editor.Store`, `.Store.Codec`, `Editor.Value`, `Editor.Json` | 7 | core | yes |
 | The state: `Editor.State`, `.State.Request`, `Editor.Event`, `Editor.DisplayRules`, `Editor.Floating`, `Editor.Layout`, `Editor.GeneratedView`, `Editor.ExcerptView`, `Editor.Gutter`, `Editor.Workspace` | 10 | core | yes |
 | Places, jump lists and marks, which the state holds and the loop follows through edits: `Editor.JumpList`, `Editor.Marks`, `.Marks.Follow`, `Editor.Jumps` | 4 | core | yes |
 | The scene and display types: `Editor.Scene`, `Editor.Scroll`, `Editor.Face`, `.Face.Vocabulary`, `Editor.Appearance`, `Editor.Highlight`, `Editor.TabBar`, `Editor.ModeLine`, `Editor.Menu` | 9 | core | yes |
