@@ -121,6 +121,7 @@ import ModelTest.Editor.Restore
 import ModelTest.Editor.Restore.Document
 import ModelTest.Editor.Restore.Journal
 import ModelTest.Editor.Restore.Run
+import ModelTest.Editor.Restore.Value
 import ModelTest.Editor.Scene
 import ModelTest.Editor.Scroll
 import ModelTest.Editor.Setup
@@ -1213,6 +1214,12 @@ Session restore is checked in Lean alone too:
   file that is not JSON; which index is restored (the highest run, whatever
   its format, none when it ended) and which are removed or left; the next
   run's number; and the names of indexes and journals.
+- `restoreValueChecks`: a plain tree as the session index writes it
+  (`Editor/Restore/Value.lean`), pure: every kind round-trips through its
+  JSON, rendered and parsed, nested, a record's fields in order and a name
+  twice, negative integers and big naturals, a NUL, bytes that are not
+  UTF-8 and multi-byte characters; JSON that is no tree read as none; and
+  the shipped stores kept across a restart, initial and populated.
 - `restoreOffsetChecks`: where a recorded spot is put back
   (`Restore.offsetOf`, `Editor/Restore.lean`), on the text model: its
   column in bytes, after a multi-byte character, clamped past the row's
@@ -1428,6 +1435,7 @@ def checks : List Check :=
     journalFormatChecks ++
     restoreDocumentChecks ++
     restoreOffsetChecks ++
+    restoreValueChecks ++
     journalReconcileChecks ++
     restoreChecks ++
     driverChecks ++
