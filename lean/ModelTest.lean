@@ -110,6 +110,7 @@ import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
 import ModelTest.Editor.ModeLine.Compiled
 import ModelTest.Editor.ModuleLookup
+import ModelTest.Editor.PackageSet.Edit
 import ModelTest.Editor.PackageSet.Fingerprint
 import ModelTest.Editor.PackageSet.Running
 import ModelTest.Editor.Process.Environment
@@ -842,6 +843,11 @@ The config session's decisions are tested here too, with no elaborator:
   package set (`Editor/PackageSet/Running.lean`): the records beside it,
   the shipped fingerprint with no `.packages` record and the recorded one
   with one, and the toolchain's `lake` only when it is there;
+- `packageSetEditChecks`: the edits of a config's `lakefile.toml`
+  (`Editor/PackageSet/Edit.lean`), on exact texts: where each require's
+  table is, install of a path, a git and a Reservoir require, remove, the
+  default set expanded without one of its packages, a rev set, and each
+  refusal;
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
@@ -1448,6 +1454,7 @@ def checks : List Check :=
     moduleLookupChecks ++
     packageSetFingerprintChecks ++
     packageSetRunningChecks ++
+    packageSetEditChecks ++
     headlessCommandLineChecks ++
     executableModeChecks ++
     versionChecks ++

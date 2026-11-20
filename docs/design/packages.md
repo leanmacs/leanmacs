@@ -953,6 +953,30 @@ The running editor also reads `editor.core` and `editor.build` beside
 itself, and knows its toolchain's `lake` (`<sysroot>/bin/lake`, when it is
 there).
 
+### The lakefile's edits
+
+`:package-install`, `:package-remove` and `:package-update <name> <rev>`
+edit the config's `lakefile.toml` as text
+(`lean/Editor/PackageSet/Edit.lean`), from its text and its require tables
+as the last reload read them with Lake's loader:
+
+- **A table** runs from its `[[require]]` header to its last line before
+  the next header that is neither blank nor a comment. A lakefile whose
+  requires are not each a `[[require]]` table is refused: edit it by hand.
+- **Install** adds a table after the last require: `path`; `git` with an
+  optional `rev`; or `scope` with an optional `version`.
+- **Remove** takes a table out. When the lakefile requires the shipped
+  set (`default-set`) and the name is one of that set's own requires, the
+  set's table is replaced by a table for each of the set's requires but
+  that one, each path made absolute against the set's directory: the
+  default set expanded, minus the package. `editor-core` is refused ("the
+  core cannot be removed"), as is a package nothing requires.
+- **A rev** is written into a git require's table.
+- **A `lakefile.lean`** is never edited: the commands say they edit
+  `lakefile.toml` only.
+
+`config-test` reads every text these edits make back with Lake's loader.
+
 ## What a package may import
 
 The core's API is the set of core modules a package may name in an `import`
