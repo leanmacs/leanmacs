@@ -1,7 +1,7 @@
 import ContractTest.Check
 import Editor.Api
 import Editor.Files.Compiled
-import Editor.Headless
+import Editor.Ffi.Files
 import Editor.InputScheme.Test
 import Editor.Loop
 import Editor.Restore.Compiled
@@ -58,6 +58,21 @@ def restoreKeys : Loop.Keys TestScheme.scheme :=
         | _ => none
     registered := { jobs := fun name => restoreJobs.any (·.name == name) } }
 
+/-- Hands `order` to the library's file service, unobserved, as a host's
+journal does (`Headless.Journal.real`, which the host's checks run): the
+hosts' module reaches the elaborator, which this executable does not link. -/
+def performOrder (rig : ProjectRig) (order : Restore.Order) : IO Unit := do
+  match order.request with
+  | .append path bytes =>
+    discard <| Ffi.filesAppendUnobserved path.toString bytes
+  | .remove path =>
+    discard <| Ffi.filesRemoveUnobserved path.toString
+  | .save (.snapshot id) path _ =>
+    if let some snapshot ← rig.published.reader.find? id then
+      discard <| Ffi.filesSaveUnobserved snapshot path.toString
+  | _ =>
+    pure ()
+
 /-- The loop of a host started fresh over `rig`, with `state` as its state
 directory, once each of `invocations` has run and settled, the journal's
 orders handed to the library's file service. -/
@@ -69,7 +84,7 @@ def runRestoring (rig : ProjectRig) (state : System.FilePath) (invocations : Lis
   let (started, texts) ← begin.runReal (RealTexts.over rig.published) rig.display
   let .ok loop := started | return none
   runSettledFrom rig loop texts invocations restoreKeys restoreJobs
-    (journal := (Headless.Journal.real rig.published.reader).perform)
+    (journal := performOrder rig)
 
 /-- The checks of session restore over the real bindings, in a directory of
 their own, temporary. -/

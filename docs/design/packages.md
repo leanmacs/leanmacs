@@ -1250,16 +1250,16 @@ toolchain (packages phases 8 and 9).
 
 ## The module map
 
-Every module under `lean/Editor/`, 291 of them
+Every module under `lean/Editor/`, 297 of them
 (`find lean/Editor -name '*.lean' | wc -l`; 254 at `6ba99de5`, phase 4
 added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
 the three modules of the shipped palettes out, phase 6 moved the five
 of the compile mode out and added the 18 of the test kit, phase 7 added
 six to the config session, and the merge of
 `main` that brought the working sets, project search, the jump list and
-marks added 19), is **core** or
+marks added 19, and session-restore phase 1 added six), is **core** or
 part of a **feature that could become a package**. The counts below add
-up to 291: 200 core and 91 in 21 features.
+up to 297: 204 core and 93 in 22 features.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -1287,6 +1287,7 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Core` | 1 | core | no |
 | The hosts and the executable's modules: `Editor.Main`, `Editor.Headless`, `.Headless.CommandLine`, `Editor.Window`, `.Window.Real`, `Editor.WindowCheck`, `.WindowCheck.Real`, `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup` | 10 | core | no |
 | The loop and its dispatch: `Editor.Loop`, `Editor.Command.Dispatch`, `Editor.Event.Queue`, `Editor.State.Outbox` | 4 | core | no |
+| The session's journal reconciler, which the loop runs after each publish, and the data and formats it keeps: `Editor.Restore`, `.Restore.Kept`, `.Restore.Journal`, `.Restore.Document` | 4 | core | no |
 | The config session: `Editor.Config.Diagnostic`, `.Directory`, `.Display`, `.Elaborate`, `.ExactPath`, `.LakePackage`, `.Lakefile`, `.Lakefile.Toml`, `.Owner`, `.Registry`, `.Reload`, `.Session`, `.Stores` | 13 | core | no |
 | What a package registers, read by a test: `Editor.Config.Packages` | 1 | core | in tests |
 | The raw bindings: `Editor.Ffi` and the 27 modules under it | 28 | core | no |
@@ -1347,6 +1348,8 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.WindowCommands.Compiled` | 1 | feature: window-commands | no |
 | `Editor.WorkingSet`, `.WorkingSet.Disk`, `.WorkingSet.Places`, `.WorkingSet.Refind`, `.WorkingSet.Run` | 5 | feature: working-set | yes |
 | `Editor.WorkingSet.Compiled` | 1 | feature: working-set | no |
+| `Editor.Restore.Run` | 1 | feature: restore | yes |
+| `Editor.Restore.Compiled` | 1 | feature: restore | no |
 | `Editor.Workspace.Compiled` | 1 | feature: workspace | no |
 | `Editor.Workspace.Model`, `.Contract` | 2 | feature: workspace | in tests |
 | `Editor.Workspace.Attach`, `.Finder`, `.FindFile`, `.FindInProject`, `.Lister`, `.Modes`, `.Projects`, `.Reach` | 8 | feature: workspace | yes |
@@ -1653,6 +1656,18 @@ the user asks `load-theme` for one.
 - **Test modules outside its own tests that import it** (3): `ModelTest`: `Support.WorkingSet`; `ConfigTest`: `DefaultConfig`, `Headless`.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the default config binds `working-set-add` and `working-set-open`. Its ranges are held while the editor runs through `files` and `buffers`, which import `WorkingSet.Places` to hold them again when a file opens and detach them when its buffer closes: moving it out would need a hook the core offers for both, where the import is now.
+
+#### `restore`
+
+- **Modules** (2): `Restore.Compiled`, `Restore.Run`. The journal's reconciler, `Restore`, with `Restore.Kept`, `Restore.Journal` and `Restore.Document`, is core: the loop runs it after each publish and the state holds what it keeps.
+- **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
+- **Other features' modules that import it**: none.
+- **Other features it imports**: files (`Files`, for `Files.adopt` and `Files.limit`).
+- **Modules of packages outside the core that import it**: none.
+- **Test modules outside its own tests that import it** (2): `ConfigTest`: `Headless`, `Bench` (through `EditorCore.EditorPackage`); `ContractTest`: `Restore.Run`.
+- **The config base imports**: none of its modules directly.
+- **Reaches by name** (not exhaustive): the hosts start its job `restore` by name (`Headless.Request.restore`), and the loop journals only where that job is registered.
 
 #### `workspace`
 

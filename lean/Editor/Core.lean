@@ -22,6 +22,7 @@ import Editor.Main
 import Editor.Menu.Compiled
 import Editor.ModeLine.Compiled
 import Editor.ProjectSearch.Compiled
+import Editor.Restore.Compiled
 import Editor.TabCommands.Compiled
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Services
