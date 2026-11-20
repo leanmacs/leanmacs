@@ -1968,8 +1968,40 @@ trap and runs its editor as the installed app runs it
    in a data directory, `leanmacs --data <dir> --probe` must start that
    one and leave no cold record.
 
-It has a time limit of its own, 600 seconds. On macOS the stage takes
-about 13 s and the whole test about 22 s (2026-11-20, Apple M5 Max).
+6. **The first launch.** With a fresh data directory, a state directory
+   and a config of `init.lean` alone, the bundle's editor prints exactly
+   `tests/headless/generate/expected` (but its state jobs' lines), says
+   nothing of its packages and builds nothing (no `<data>/editors`), and
+   the launcher's probe then names `Contents/MacOS/editor`.
+7. **The unchanged default set from the bundle alone** (macOS; the Linux
+   leg says it skips: the app is macOS on arm64 only). The bundle's
+   `Contents/Resources/lean` is made read-only and listed (path, size,
+   modification time); a config directory holds the generated lakefile;
+   the environment is `env -i` with `PATH` a directory of decoys first
+   (`lean`, `lake`, `clang`, `cc`, `ld`, `xcrun`, `cargo` and `git`, each
+   logging its name and exiting 1), `CC` and `LEAN_SYSROOT` decoys,
+   `HOME` inside the temporary directory and the bundle's `editor.build`.
+   The bundle's own `lake -d <config> build :editorInstall` must exit 0,
+   leave the listing identical (a compile would have failed writing into
+   the read-only tree), run no decoy, and install an editor whose
+   `editor.core` is the bundle's and whose `--probe` prints `probe: ok`.
+8. **A package installed and a default one dropped**
+   (`tools/bundle-sets.sh`, macOS): a first launch generates the lakefile
+   naming the bundle's set; then, with `init.lean` importing `HelloInit`,
+   three processes of `tests/user-sets/bundle-script` run through the
+   launcher under the same decoys, decoy `LEAN_CC` too, and the read-only
+   tree: `:package-install hello-init <copy>`, its `editor-core` require
+   pointed at the bundle's core, builds version 1, whose `run hello-init`
+   says `hello-init: initialize ran`; `:package-remove compile` builds
+   version 2, where `run compile` has no such command. The output must
+   equal `tests/user-sets/expected-bundle`, versions 1 and 2 of the
+   bundle's core must be published, no decoy may have run, the listing
+   must be unchanged, and the launcher's probe must name version 2.
+
+It has a time limit of its own, 600 seconds. On macOS (2026-11-20, Apple
+M5 Max) the stage takes about 5 to 14 s, the default set's build from the
+bundle about 7 s, the two builds of step 8 about 9 s, and the whole test
+about 30 s.
 
 ## The user sets test
 

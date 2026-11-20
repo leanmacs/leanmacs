@@ -1,0 +1,31 @@
+reload 1: rejected
+diagnostic: init.lean:6:0: error: module `HelloInit` is not linked into this editor: config may import a config file (`Config.<Name>`), a module of the editor's package set, or a module of `Init`, `Std` or `Lean`
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+reload 2: rejected
+diagnostic: init.lean:6:0: error: module `HelloInit` is not linked into this editor: it is a module of the package `hello-init`, which the config's lakefile requires, so the editor's package set needs a rebuild with that package in it
+restart: the session is handed over
+reload 1: installed, 1 files, 0 commands
+run hello-init: ok
+scene 640x480, focused 0, echo "hello-init: initialize ran", echo padding 8, preedit -, published @N@, theme "default"
+view 0 0,0 318x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 320,0 320x464: "", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+divider 318,0 2x464 in window-divider
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+reload 2: installed, 1 files, 0 commands
+restart: the session is handed over
+reload 1: installed, 1 files, 0 commands
+run compile: no such command
+run hello-init: ok
+scene 640x480, focused 0, echo "hello-init: initialize ran", echo padding 8, preedit -, published @N@, theme "default"
+view 0 0,0 318x464: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 320,0 320x230: "", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 2 320,232 320x232: "", scroll 0, selections 0..0, padding 8 8
+status 2 in mode-line.inactive: mode-line.inactive "scratch" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+divider 318,0 2x464 in window-divider
+divider 320,230 320x2 in window-divider

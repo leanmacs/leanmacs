@@ -243,4 +243,9 @@ cmp -s "$dir/install/editor.core" "$app/Contents/Resources/editor.core" ||
 "$dir/install/editor" --probe | grep -qxF 'probe: ok' || fail "the editor built from the bundle did not start"
 echo "bundle-test: the unchanged default set built from the bundle alone, read-only, with decoys first on the PATH, compiled nothing of it, and its editor has the bundle's core ($((ended - started)) s)"
 
+# 8. A package installed from a path and a default package dropped, by the
+# bundled editor's own build, from the bundle alone (tools/bundle-sets.sh).
+mkdir "$dir/sets"
+sh "$repo/tools/bundle-sets.sh" "$app" "$dir/sets" "$repo"
+
 echo 'bundle-test: ok'
