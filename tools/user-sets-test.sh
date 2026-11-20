@@ -27,6 +27,13 @@
 #   C. Git missing, through the launcher: a lakefile naming a git
 #      dependency, with no git on the PATH, says git is required and how to
 #      get it, and fetches and builds nothing.
+#   D. A set that resolves another core: a lakefile written by hand that
+#      reaches the core only through the default set, and holds a copy of
+#      hello-init naming the core from git (a `file://` stand-in for the
+#      core's repository, tools/core-repo.sh), so Lake resolves the core
+#      to that clone. The build stops after the resolve, before it links,
+#      saying the set resolves editor-core to git and how to fix it; the
+#      editor keeps running and nothing is built into the data directory.
 #
 # It prints `user-sets-test: ok` and the time of each step on success, once
 # no process a step started is still running (tools/leftovers.sh); on its
@@ -133,6 +140,32 @@ printf '%s\n' "$out" | grep -q 'packages: git is required to fetch x, and none w
   fail "C did not say git is required"
 test ! -e "$tmp/data-c" || fail "C wrote into its data directory"
 echo "user-sets-test: C, git missing is said and nothing is fetched: ok"
+
+# D. A set that resolves another core: the lakefile, written by hand,
+# reaches the core only through the default set, and holds a copy of
+# hello-init that names the core from git (the stand-in, tools/core-repo.sh),
+# so Lake takes the package's git require. The build stops before it links.
+. "$repo/tools/core-repo.sh"
+core_repo "$tmp/core-repo" "$lean_dir/lean-toolchain"
+git_core_copy "$fixtures/hello-init" "$tmp/hello-init-d" "$tmp/core-repo"
+config="$tmp/config-d"
+mkdir -p "$config"
+cp "$lean_dir/lean-toolchain" "$config/lean-toolchain"
+cp "$repo/tests/headless/generate/config/init.lean" "$config/init.lean"
+printf 'name = "config"\n\n[[require]]\nname = "default-set"\npath = "%s/packages"\n\n[[require]]\nname = "hello-init"\npath = "%s"\n' \
+  "$repo" "$tmp/hello-init-d" >"$config/lakefile.toml"
+printf 'reload\nsettle\njoin 600\nsettle\nscene\nrun tab-new\n' >"$tmp/core-script"
+started=$(date +%s)
+out=$("$shipped" headless --data "$tmp/data-d" "$sysroot" "$oleans" "$config" "$tmp/core-script") ||
+  { printf '%s\n' "$out"; fail "D exited non-zero"; }
+ended=$(date +%s)
+printf '%s\n' "$out" | grep -qF "echo \"packages: the package set resolves editor-core to git file://$tmp/core-repo at " ||
+  { printf '%s\n' "$out"; fail "D did not say the set resolves another core"; }
+printf '%s\n' "$out" | grep 'Package build of' | grep -q 'Package build failed: the package set resolves editor-core' ||
+  fail "D's build buffer does not end failed on the core"
+printf '%s\n' "$out" | grep -q '^run tab-new: ok' || fail "D: the editor did not keep running"
+test ! -e "$tmp/data-d/editors/$core" || fail "D built into $tmp/data-d/editors/$core"
+echo "user-sets-test: D, a set that resolves another core is refused before linking, and the editor keeps running: ok ($((ended - started)) s)"
 
 no_leftovers "$tmp" || fail "an editor, a launcher or a watcher it started is still running"
 echo "user-sets-test: ok"

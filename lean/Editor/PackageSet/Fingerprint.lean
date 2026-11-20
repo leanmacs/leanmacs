@@ -147,6 +147,38 @@ def gitEntries (manifest : String) : Array Pin :=
         some { name := unquoted name, url, rev, inputRev }
     | _ => #[]
 
+/-- What a manifest resolves `editor-core` to. -/
+inductive CoreEntry where
+  /-- A directory: a `path` entry, inherited or the root's, its `dir` as
+  the manifest writes it. -/
+  | path (directory : String)
+  /-- A git repository, cloned at `rev`, with its `subDir`, if any. -/
+  | git (url : String) (rev : String) (subDir : Option String)
+  deriving DecidableEq, Repr, BEq
+
+/-- The entry of `editor-core` in the manifest whose text is `manifest`
+(its name unquoted); none when it holds none, or is no manifest, or the
+entry is of another kind. -/
+def Fingerprint.coreEntry? (manifest : String) : Option CoreEntry := do
+  let .ok document := Json.parse manifest.toUTF8 | none
+  let some (.array entries) := document.field? "packages" | none
+  let entry ←
+    entries.find? fun entry =>
+        match entry.field? "name" with
+        | some (.string name) => unquoted name == "editor-core"
+        | _ => false
+  let string? (key : String) : Option String :=
+    match entry.field? key with
+    | some (.string text) => some text
+    | _ => none
+  match string? "type" with
+  | some "path" =>
+    return .path (← string? "dir")
+  | some "git" =>
+    return .git (← string? "url") (← string? "rev") (string? "subDir")
+  | _ =>
+    none
+
 /-- The pins of a manifest's text: `pin <name> <url> <rev>` for each git
 entry, in its order ("The parts", in the module docs). -/
 def pins (manifest : Option String) : Array String :=

@@ -22,14 +22,15 @@ arguments and environments among them.
 
 None is started when a build is in flight, when the config has no
 lakefile that can be read, when the running editor knows no fingerprint of
-its own, no data directory or no core identity, or when the fingerprints
-are the same (`same`). With no `lake` it starts none and says
+its own, no data directory, no core identity or no core directory, or
+when the fingerprints are the same (`same`). With no `lake` it starts none and says
 `packages: the package set changed, but this editor has no lake to build
 it (<sysroot>/bin/lake)`. Otherwise it starts one with an order (`Order`):
 the config directory, the `lake`, the data directory, the running
 executable, the build environment (`editor.build`), the requires'
 lines for the record, the shipped set's name, the requires fetched with
-git, and the requires to resolve (`resolveNames`).
+git, the requires to resolve (`resolveNames`) and the running editor's
+core directory.
 
 ## The steps, in order
 
@@ -41,6 +42,20 @@ git, and the requires to resolve (`resolveNames`).
    url or rev, or, for a path require, whose entry is not a path entry
    naming the same directory (`resolveNames`); for `:package-update`, the
    named package, or every git and Reservoir require.
+2b. **Core**: the manifest, `<config>/lake-manifest.json`, is read once,
+   here, and must resolve `editor-core` to the running editor's own core: a
+   path entry whose directory, normalised lexically against the config
+   directory, is the core directory (`coreRefusal?`,
+   `Fingerprint.coreEntry?`). The root's own require and the set's
+   inherited `<set>/../lean` both pass. A git entry, a path at another
+   directory or no entry stops the build before anything is linked or a
+   staging directory made: `the package set resolves editor-core to <git
+   <url> at <rev> | the directory <dir> | nothing>, not this editor's core
+   <core>; require it at the root of <config>/lakefile.toml with path =
+   "<core>", ahead of the other requires (:package-install and
+   :package-remove write it), then :reload`. A git core may already have
+   been fetched by the resolve: the manifest is authoritative only after
+   it.
 3. **Rust**: `lake query :editorRustCrates`, then, when the set holds a
    package with a Rust crate, `cargo --version`. A set with no crate needs
    no Cargo: its link reuses the core's archive as it is built
@@ -52,8 +67,8 @@ git, and the requires to resolve (`resolveNames`).
    `EDITOR_INSTALL_DIR=<data>/editors/staging-<k>` (`nextStaging`) and the build
    environment, its output streamed into the build buffer.
 5. **Record**: the new editor's `editor.core` is read, and
-   `editor.packages` written beside it: the requires, the pins read again
-   from the manifest after the resolve, and the set's name.
+   `editor.packages` written beside it: the requires, the pins of the
+   manifest the core check read after the resolve, and the set's name.
 6. **Probe**: `<staging>/editor --probe`, within 10 s, must print `probe:
    ok`, which catches a bad link, a bad signature or an `initialize` that
    throws before anything is published.
@@ -141,6 +156,9 @@ structure Order where
   fetched : Array String := #[]
   /-- The requires to resolve, by name; none for no `lake update`. -/
   resolve : Array String := #[]
+  /-- The directory of the running editor's core, which the set's manifest
+  must resolve `editor-core` to (the core check). -/
+  core : String := ""
   deriving DecidableEq, Repr, BEq, Inhabited
 
 /-- The order as the text the job is started with: one `key value` a
@@ -153,7 +171,8 @@ def Order.encode (order : Order) : String :=
       order.required.map ("require " ++ ·) ++
       (order.set.map ("set " ++ ·)).toArray ++
       order.fetched.map ("fetched " ++ ·) ++
-      order.resolve.map ("resolve " ++ ·)
+      order.resolve.map ("resolve " ++ ·) ++
+      #[s!"core {order.core}"]
   String.join (lines.toList.map (· ++ "\n"))
 
 /-- The order `text` encodes (`Order.encode`); none for a text that is not
@@ -174,7 +193,7 @@ def Order.decode? (text : String) : Option Order := do
   return {
       config := ← value "config", lake := ← value "lake", data := ← value "data"
       running := ← value "running", environment, required := all "require", set := value "set"
-      fetched := all "fetched", resolve := all "resolve" }
+      fetched := all "fetched", resolve := all "resolve", core := ← value "core" }
 
 /-- The requires to resolve with `lake update`, for the config directory
 `config`: those whose name the manifest holds no entry of; the git ones
@@ -212,6 +231,24 @@ def resolveNames (required : Array Require) (manifest : Option String) (config :
           | _, _ => false).map
     (·.name)
 
+/-- Why the build of the set in the config directory `config` stops before
+it links, when its manifest, whose text is `manifest`, resolves
+`editor-core` to anything but the running editor's core at `core`: a path
+entry naming another directory (both normalised lexically), a git entry,
+or none ("The steps", in the module docs). None when it resolves that
+core, whatever the entry's spelling: the root's own require, or the set's
+inherited `<set>/../lean`. -/
+def coreRefusal? (config core : String) (manifest : Option String) : Option String :=
+  let resolved :=
+    match manifest.bind Fingerprint.coreEntry? with
+    | some (.path directory) =>
+      if normalise config directory == normalise "/" core then none
+      else some s!"the directory {normalise config directory}"
+    | some (.git url rev _) => some s!"git {url} at {rev}"
+    | none => some "nothing"
+  resolved.map fun what =>
+    s!"the package set resolves editor-core to {what}, not this editor's core {core}; require it at the root of {config}/lakefile.toml with path = \"{core}\", ahead of the other requires (:package-install and :package-remove write it), then :reload"
+
 /-- What a reload is to do about the package set (`decide`). -/
 inductive Decision where
   /-- Nothing. -/
@@ -237,6 +274,7 @@ def orderOf (running : Running) (facts : Facts) (resolve : Option (Array String)
     | throw ""
   let some data := running.data | throw ""
   let some _ := running.core | throw ""
+  let some core := running.coreDirectory | throw ""
   let some lake := running.lake | throw (noLake running)
   let required :=
     match facts.lakefile with
@@ -246,7 +284,7 @@ def orderOf (running : Running) (facts : Facts) (resolve : Option (Array String)
   return {
       config := running.config, lake, data, running := running.executable
       environment := running.build, required := fingerprint.required, set := running.setName
-      fetched, resolve := resolve.getD (resolveNames required facts.manifest running.config) }
+      fetched, resolve := resolve.getD (resolveNames required facts.manifest running.config), core }
 
 /-- What a reload is to do about the package set, given what the running
 editor knows of its own (`running`), what the reload read (`facts`) and
@@ -550,6 +588,10 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
     if let some failure←
         streamed (lakeCommand order (#["update", "--keep-toolchain"] ++ order.resolve)) then
       return ← fail (failure.describe "lake update")
+  -- 2b. Core: the manifest, read once here, must resolve the running core.
+  let manifest ← readText (order.config ++ "/lake-manifest.json")
+  if let some how := coreRefusal? order.config order.core manifest then
+    return ← fail how
   -- 3. Rust: the set's crates, then Cargo, which every link runs.
   let crates ←
     match ← runOf (lakeCommand order #["query", ":editorRustCrates"]) queryPatience with
@@ -591,7 +633,6 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
     |
     removeStaging
     return ← fail s!"the build wrote no {staging}/editor.core"
-  let manifest ← readText (order.config ++ "/lake-manifest.json")
   let record : Fingerprint :=
     { required := order.required, pins := pins manifest, set := order.set }
   -- The install made the directory; asking again is no error.

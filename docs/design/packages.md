@@ -1098,6 +1098,23 @@ is pinned on the models (`ModelTest.packageSetBuildChecks`):
    Measured on Lake 5.0.0: a `require` missing from the manifest fails the
    build (`dependency 'b' not in manifest`), `lake update b` adds only
    `b`, and a stale entry for a removed require does not fail the build.
+2b. **Core** (packages phase 12): the manifest is read once, here, and
+   must resolve `editor-core` to the running editor's own core, a path
+   entry whose directory, normalised lexically, is the editor's core
+   directory: the root's own require, or the set's inherited
+   `<set>/../lean`. Anything else stops the build before it links or
+   makes a staging directory: "the package set resolves editor-core to
+   `<git <url> at <rev> | the directory <dir> | nothing>`, not this
+   editor's core `<core>`; require it at the root of
+   `<config>/lakefile.toml` with path = "`<core>`", ahead of the other
+   requires (:package-install and :package-remove write it), then
+   :reload". That is a set that reaches the core only through another
+   package while a package names the core from git: Lake takes the git
+   require, and would build a core from source that is not the one the
+   editor links. The refusal comes after the resolve, which may already
+   have fetched that core; the manifest is authoritative only then. Step 5
+   reuses the manifest this step read. `user-sets-test` D shows it end to
+   end.
 3. **Rust**: `lake query :editorRustCrates`; a set that holds a package
    declaring a Rust crate stops here, refused ("Who can build it"). No
    Cargo is ever run.

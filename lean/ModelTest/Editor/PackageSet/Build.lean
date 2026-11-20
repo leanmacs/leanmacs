@@ -59,15 +59,25 @@ def staging : String :=
 def install (order : Order) : Process.Command :=
   lakeCommand order #["build", ":editorInstall"] #[("EDITOR_INSTALL_DIR", staging)]
 
-/-- The scripts of a whole build of `order` that succeeds: the query
-(listing `crates`), Cargo when there are crates, the install, the record's
-reads, the probe, the move and the prune. -/
-def succeeding (order : Order) (crates : String := "") (probe : String := "probe: ok\n") :
-    Array Process.Script × Array Process.StreamScript :=
-  (#[replied (lakeCommand order #["query", ":editorRustCrates"]) 0 crates,
+/-- A manifest that resolves `editor-core` to the running editor's own
+core, as the root's require by path. -/
+def ownManifest : String :=
+  "{\"packages\": [{\"type\": \"path\", \"name\": \"«editor-core»\", \"dir\": \"/w/lean\", \"inherited\": false}]}"
+
+/-- The read of the config's manifest, answering `manifest`: once, at the
+core check. -/
+def manifestRead (manifest : String := ownManifest) : Process.Script :=
+  replied (rootCommand "/bin/cat" #["/c/lake-manifest.json"]) 0 manifest
+
+/-- The scripts of a whole build of `order` that succeeds: the manifest's
+read (answering `manifest`), the query (listing `crates`), Cargo when
+there are crates, the install, the record's read, the probe, the move and
+the prune. -/
+def succeeding (order : Order) (crates : String := "") (probe : String := "probe: ok\n")
+    (manifest : String := ownManifest) : Array Process.Script × Array Process.StreamScript :=
+  (#[manifestRead manifest, replied (lakeCommand order #["query", ":editorRustCrates"]) 0 crates,
       replied (tool order "cargo") 0 "cargo 1.98.1",
       replied (rootCommand "/bin/cat" #[staging ++ "/editor.core"]) 0 "c0\n",
-      replied (rootCommand "/bin/cat" #["/c/lake-manifest.json"]) 0 "{}",
       replied (rootCommand (staging ++ "/editor") #["--probe"]) 0 probe,
       replied (rootCommand "/bin/mv" #[staging, "/d/editors/c0/1"]),
       replied (rootCommand "/bin/rm" #["-rf", staging]),
@@ -197,10 +207,11 @@ def packageSetBuildChecks : List Check :=
                   environment := #[("LEAN_CC", "/usr/bin/cc")]
                   required := #["path default-set /w/packages", "path hello /h"]
                   set := some "default-set", fetched := #[],
-                  resolve := #["editor-core", "default-set", "hello"] } &&
+                  resolve := #["editor-core", "default-set", "hello"], core := "/w/lean" } &&
             decide running facts true == .nothing &&
             decide (runningWith facts (data := none)) facts false == .nothing &&
             decide { running with core := none } facts false == .nothing &&
+            decide { running with coreDirectory := none } facts false == .nothing &&
             decide (runningWith facts (lake := none)) facts false ==
               .say
                 "packages: the package set changed, but this editor has no lake to build it (/t/bin/lake)") },
@@ -209,7 +220,10 @@ def packageSetBuildChecks : List Check :=
         let facts : Facts := { lakefile := .lean "import Lake" }
         match decide (runningWith facts) facts false, orderFor (lakefileWith #[gitPackage]) with
         | .build _, some order =>
-          pure (Order.decode? order.encode == some order && order.fetched == #["g"])
+          pure
+            (Order.decode? order.encode == some order && order.fetched == #["g"] &&
+              order.core == "/w/lean" &&
+              (order.encode.splitOn "\ncore /w/lean\n").length == 2)
         | _, _ => pure false },
     { name :=
         "the requires resolved are those missing from the manifest and the git ones whose url or rev the manifest does not hold; a path require whose entry names its directory is not"
@@ -308,7 +322,7 @@ def packageSetBuildChecks : List Check :=
               (lakeCommand order
                 #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
               #[]
-          match buildDriver (runningWith facts) #[query] #[resolve],
+          match buildDriver (runningWith facts) #[manifestRead, query] #[resolve],
             buildDriver (runningWith facts)
               ((succeeding order).1.filter (·.command.program != "cargo"))
               ((succeeding order).2.push resolve) with
@@ -497,6 +511,51 @@ def packageSetBuildChecks : List Check :=
             (LakeFailure.refused refusal).describe "lake update" == refusal &&
             (LakeFailure.ended "exited with status 1").describe "lake build" ==
               "lake build exited with status 1") },
+    { name :=
+        "a manifest whose editor-core is git, a path at another directory, or missing ends the build after lake update, before lake query and lake build, makes no staging directory, and says why and how to fix it; the set's inherited entry for the running core, spelled <set>/../lean, passes"
+      run :=
+        let facts := lakefileWith #[hello]
+        match orderFor facts with
+        | none => pure false
+        | some order =>
+          let resolve :=
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
+              #[]
+          let fix :=
+            "not this editor's core /w/lean; require it at the root of /c/lakefile.toml with path = \"/w/lean\", ahead of the other requires (:package-install and :package-remove write it), then :reload"
+          let refused (manifest : String) (what : String) : Bool :=
+            match buildDriver (runningWith facts) #[manifestRead manifest] #[resolve] with
+            | none => false
+            | some driver =>
+              let done := built driver order
+              let how := s!"the package set resolves editor-core to {what}, {fix}"
+              done.loop.state.echo == s!"packages: {how}; this editor keeps running" &&
+                failedWith done how &&
+                !(startedRuns done).any (·.2.contains "query") &&
+                !(startedRuns done).any (·.2.contains ":editorInstall") &&
+                (startedRuns done).any (·.2.contains "update") &&
+                !done.jobs.files.directories.any (·.toString == "/d/editors")
+          let git :=
+            "{\"packages\": [{\"type\": \"git\", \"name\": \"«editor-core»\", \"url\": \"file:///r\", \"rev\": \"abc\", \"inputRev\": \"nightly-1\", \"subDir\": \"lean\", \"inherited\": true}]}"
+          let elsewhere :=
+            "{\"packages\": [{\"type\": \"path\", \"name\": \"«editor-core»\", \"dir\": \"/elsewhere/lean\", \"inherited\": false}]}"
+          let inherited :=
+            "{\"packages\": [{\"type\": \"path\", \"name\": \"«editor-core»\", \"dir\": \"/w/packages/../lean\", \"inherited\": true}]}"
+          let (scripts, streams) := succeeding order (manifest := inherited)
+          let passes :=
+            match buildDriver (runningWith facts) scripts (streams.push resolve) with
+            | none => false
+            | some driver =>
+              ((bufferLines (built driver order)).back?.map
+                  (·.startsWith "Package build finished after")) ==
+                some true
+          pure
+            (refused git "git file:///r at abc" &&
+              refused elsewhere "the directory /elsewhere/lean" &&
+              refused "{\"packages\": []}" "nothing" &&
+              passes) },
     { name := "a probe that fails removes the staging directory and publishes nothing"
       run :=
         let facts := lakefileWith #[hello]

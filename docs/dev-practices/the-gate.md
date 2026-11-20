@@ -2054,6 +2054,16 @@ inside it, but the fixture packages' own `.lake/` under `tests/user-sets/`.
 - **C, git missing**, through the launcher, with no git on the PATH: it
   says git is required and how to get it, and writes nothing in the data
   directory.
+- **D, a set that resolves another core**: a lakefile written by hand that
+  reaches the core only through the default set and holds a copy of
+  `hello-init` naming the core from git, a `file://` stand-in for the
+  core's repository with the tag `nightly-20000101000000`
+  (`tools/core-repo.sh`), so Lake resolves the core to that clone. The
+  shipped default's build must stop before it links, the echo saying
+  `packages: the package set resolves editor-core to git file://…` and the
+  build buffer ending `Package build failed: the package set resolves
+  editor-core …`; `run tab-new` must still answer, and nothing is built
+  into the data directory. It builds nothing, so it takes about a second.
 
 **Nothing it starts outlives it** (`tools/leftovers.sh`), here and in
 `bundle-test`, `app-check` and `user-sets-check` alike. Every process a

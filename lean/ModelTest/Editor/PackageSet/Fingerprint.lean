@@ -162,6 +162,21 @@ def packageSetFingerprintChecks : List Check :=
             (same old (shipped "default-set" "/w/packages") &&
               same new (shipped "default-set" "/w/packages"))
         | _, _ => pure false },
+    { name :=
+        "the manifest's editor-core entry is read as Lake writes it: the root's path require, the set's inherited path with its .. left in, or a git clone with its rev and subDir; none when there is none"
+      run :=
+        let root :=
+          "{\"version\": \"1.3.0\", \"packages\": [{\"type\": \"path\", \"scope\": \"\", \"name\": \"«editor-core»\", \"manifestFile\": \"lake-manifest.json\", \"inherited\": false, \"dir\": \"/w/lean\", \"configFile\": \"lakefile.lean\"}], \"name\": \"config\"}"
+        let inherited :=
+          "{\"version\": \"1.3.0\", \"packages\": [{\"type\": \"path\", \"name\": \"«default-set»\", \"inherited\": false, \"dir\": \"/w/packages\"}, {\"type\": \"path\", \"name\": \"«editor-core»\", \"inherited\": true, \"dir\": \"/w/packages/../lean\"}], \"name\": \"config\"}"
+        let git :=
+          "{\"version\": \"1.3.0\", \"packages\": [{\"url\": \"file:///tmp/core\", \"type\": \"git\", \"subDir\": \"lean\", \"scope\": \"\", \"rev\": \"0123abc\", \"name\": \"«editor-core»\", \"manifestFile\": \"lake-manifest.json\", \"inputRev\": \"nightly-20000101000000\", \"inherited\": true, \"configFile\": \"lakefile.toml\"}], \"name\": \"config\"}"
+        pure
+          (Fingerprint.coreEntry? root == some (.path "/w/lean") &&
+            Fingerprint.coreEntry? inherited == some (.path "/w/packages/../lean") &&
+            Fingerprint.coreEntry? git == some (.git "file:///tmp/core" "0123abc" (some "lean")) &&
+            Fingerprint.coreEntry? manifest == none &&
+            Fingerprint.coreEntry? "not json" == none) },
     { name := "a manifest's quoted names are read unquoted"
       run := pure (unquoted "«default-set»" == "default-set" && unquoted "plain" == "plain") }]
 
