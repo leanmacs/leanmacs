@@ -842,8 +842,8 @@ feature would have to cross").
 | Package | Library (from) | Entry module | Test driver | Fixtures |
 |---|---|---|---|---|
 | `mode-line` (`packages/mode-line/`) | `ModeLine.Compiled` (`lean/Editor/ModeLine/Compiled.lean`) | `ModeLine.EditorPackage` | `mode-line-test`: `ModeLineTest.modeLinePackageChecks`, 1 check | `mode-line`, the core's until the move, byte for byte |
-| `execute-command` (`packages/execute-command/`) | `ExecuteCommand`, `ExecuteCommand.Compiled` (`lean/Editor/ExecuteCommand.lean` and `…/Compiled.lean`) | `ExecuteCommand.EditorPackage` | `execute-command-test`: `ExecuteCommandTest.executeCommandChecks` and `.executeCommandPackageChecks`, 14 checks | `command-prompt`, written before the move |
-| `binding-search` (`packages/binding-search/`) | `BindingSearch`, `BindingSearch.Compiled` (`lean/Editor/BindingSearch.lean` and `…/Compiled.lean`) | `BindingSearch.EditorPackage` | `binding-search-test`: `BindingSearchTest.bindingSearchChecks` and `.bindingSearchPackageChecks`, 11 checks | `binding-search`, written before the move |
+| `execute-command` (`packages/execute-command/`) | `ExecuteCommand`, `ExecuteCommand.Compiled` (`lean/Editor/ExecuteCommand.lean` and `…/Compiled.lean`) | `ExecuteCommand.EditorPackage` | `execute-command-test`: `ExecuteCommandTest.executeCommandChecks` and `.executeCommandPackageChecks`, 16 checks | `command-prompt`, written before the move |
+| `binding-search` (`packages/binding-search/`) | `BindingSearch`, `BindingSearch.Compiled` (`lean/Editor/BindingSearch.lean` and `…/Compiled.lean`) | `BindingSearch.EditorPackage` | `binding-search-test`: `BindingSearchTest.bindingSearchChecks` and `.bindingSearchPackageChecks`, 13 checks | `binding-search`, written before the move |
 | `languages` (`packages/languages/`) | `Languages.Compiled` (`lean/Editor/Language/Compiled.lean`) | `Languages.EditorPackage` | `languages-test`: `LanguagesTest.languagePackageChecks`, 1 check | none: the core's `open-file`, on the default set's editor, opens files in `code` |
 
 - **What each library imports of the core** (`lake -d ../packages query

@@ -27,7 +27,9 @@ test kit (`Editor.Test.…`, a test double the core publishes;
 - `bindingSearchPackageChecks`: the `Package` value
   (`BindingSearch/Compiled.lean`) against the contract check of the
   interface package `binding-search-api`, each of the contract's checks
-  one check here, so the count below holds them.
+  one check here, so the count below holds them; then that the package
+  registers its completion source under its category, and nothing but
+  that and its command.
 -/
 
 /-- Every check of the test driver, in the order they run. -/

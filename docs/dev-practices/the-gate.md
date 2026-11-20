@@ -1912,8 +1912,9 @@ package's tests are by convention are in
   byte for byte ([packages.md](../design/packages.md), "The default
   package `compile`"). The four of the features-as-packages roadmap's
   phase 3: `mode-line` (1 check; the fixture `mode-line`),
-  `execute-command` (14 checks, the interface's contract check among them;
-  the fixture `command-prompt`), `binding-search` (11 checks, the same;
+  `execute-command` (16 checks, the interface's contract check and the
+  registration of its completion source among them; the fixture
+  `command-prompt`), `binding-search` (13 checks, the same;
   the fixture `binding-search`) and `languages` (1 check; no fixture),
   and the interface packages `execute-command-api` and
   `binding-search-api` (4 checks each: the fake keeps the contract, and
