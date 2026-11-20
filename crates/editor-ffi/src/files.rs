@@ -1,17 +1,28 @@
-//! The file service: loads, saves, stamps, listings and directories made,
-//! completed through the completion queue.
+//! The file service: loads, saves, stamps, listings, directories made,
+//! appends and removes, completed through the completion queue, and
+//! appends, removes and saves asked unobserved.
 //!
 //! This is the second service behind the completion queue, in the timer
 //! service's shape (the crate docs, "Services and completions"). A job in
-//! Lean asks for a load, a save, a stamp, a listing or a directory made
-//! with an id. [`Files::start_load`], [`Files::start_save`],
-//! [`Files::start_stamp`], [`Files::start_list`] and
-//! [`Files::start_make_directory`] return at once; the service's thread does the
+//! Lean asks for a load, a save, a stamp, a listing, a directory made, an
+//! append or a remove with an id. [`Files::start_load`],
+//! [`Files::start_save`], [`Files::start_stamp`], [`Files::start_list`],
+//! [`Files::start_make_directory`], [`Files::start_append`] and
+//! [`Files::start_remove`] return at once; the service's thread does the
 //! work, keeps the result under the request's id and completes the
 //! request: for the process's instance, by queueing an
 //! [`EventKind::Completion`](crate::events::EventKind::Completion) whose
 //! code is the id. The caller then takes the result ([`Files::take`]),
 //! once. Rust never calls Lean.
+//!
+//! An append, a remove and a save (expecting whatever is there) may also
+//! be asked **unobserved**, with no id ([`Files::append_unobserved`],
+//! [`Files::remove_unobserved`], [`Files::save_unobserved`]): for what the
+//! editor writes as it goes, such as a record of the session, where no
+//! job waits on each write. One is worked in order with every other
+//! request, is never completed and keeps no result. If it fails, its path
+//! and why are kept as a [`Failure`], oldest first, until they are taken,
+//! once ([`Files::take_failure`]).
 //!
 //! What a load and a save do (what is refused, what is checked, what is
 //! kept, in what order the file system is asked) is `editor-text`'s
@@ -22,21 +33,25 @@
 //!
 //! The pieces:
 //!
-//! - [`Requests`] is the requests not yet worked, in the order they were
-//!   started. It is pure, as the timers' `Schedule` is.
+//! - [`Requests`] is the requests not yet worked, observed and unobserved,
+//!   in the order they were started. It is pure, as the timers' `Schedule`
+//!   is.
 //! - [`Files`] is the service over a file system, the port
 //!   [`editor_text::fs::Fs`]. Its loop, [`Files::run`], takes the oldest
-//!   request, works it with no lock held, keeps the result and completes
-//!   the request through a closure it is given.
-//! - [`FileResult`] is what a request came to, and [`FileResult::encoded`]
-//!   how it crosses: a status, words and a detail string.
+//!   request, works it with no lock held, and for an observed one keeps
+//!   the result and completes the request through a closure it is given;
+//!   for an unobserved one that failed, it keeps the [`Failure`].
+//! - [`FileResult`] is what a request came to, [`FileResult::encoded`]
+//!   how it crosses: a status, words and a detail string, and
+//!   [`FileResult::failure`] what a failed one says for a person.
 //!
 //! The rules:
 //!
 //! - **One thread, in order.** Two saves of one file land in the order
 //!   they were asked for, which a thread for each request could not
-//!   promise. The cost is that a load stuck on a slow file system holds up
-//!   the requests behind it.
+//!   promise, and so do unobserved requests among observed ones. The cost
+//!   is that a load stuck on a slow file system holds up the requests
+//!   behind it.
 //! - **Which thread does the I/O**: the service's, and no other. A start
 //!   never touches the file system.
 //! - **An id in use is refused**: one that is waiting, being worked, or
@@ -48,7 +63,11 @@
 //!   result is dropped too. A result already kept is dropped. So a
 //!   cancelled save has either replaced the file whole or not touched it,
 //!   and a completion that was queued before the cancel still arrives
-//!   after it.
+//!   after it. An unobserved request has no id, so it is never cancelled.
+//! - **An unobserved request is counted while it waits or is worked**
+//!   ([`Files::pending`]), so the count falls to 0 once the queue has
+//!   drained; a failure kept is not counted. Failures are kept until they
+//!   are taken, with no bound: the caller takes them as it goes.
 //! - **A loaded text is kept as a snapshot**, which is `Send + Sync`. The
 //!   handle Lean gets is made when the result is taken
 //!   ([`editor_ffi_files_take`]), and is counted live from then: a result
@@ -74,6 +93,8 @@
 //! | Saved | 0 | seconds, nanoseconds, size |
 //! | Stamped | 0 | present (0 or 1), seconds, nanoseconds, size |
 //! | A directory made | 0 | (none) |
+//! | Appended | 0 | (none) |
+//! | Removed, or nothing was there | 0 | (none) |
 //! | The path is not absolute | 1 | |
 //! | Not found | 2 | |
 //! | Not a file | 3 | |
@@ -92,7 +113,19 @@
 //! 1, not found 2, denied 4 and anything else 9, with not a directory its
 //! own status. A directory that is not made crosses the same way: not
 //! absolute 1, not a directory 10 (a file at the path or on the way to
-//! it), denied 4 and anything else 9.
+//! it), denied 4 and anything else 9. An append or a remove that is refused
+//! crosses as a load's refusal does: not absolute 1, not found 2 (for an
+//! append, the directory the file is in is not there), not a file 3 (a
+//! directory at the path, or for an append a file on the way to it),
+//! denied 4 and anything else 9.
+//!
+//! [`editor_ffi_files_failure`] fills a [`RawFileFailure`]: the path the
+//! unobserved request was about, as the bytes it was asked with, and why
+//! it failed, a string for a person (the refusal's own words, as
+//! [`FileResult::failure`] gives them). Both are buffers the caller owns
+//! and hands back with
+//! [`editor_ffi_text_free`](crate::text::editor_ffi_text_free), each once,
+//! as a [`RawFileResult`]'s detail is.
 //!
 //! The seconds of a stamp cross as a 64-bit two's complement word, so an
 //! instant before 1970 is a word above 2^63. A path crosses as its bytes
@@ -107,21 +140,28 @@
 //! | [`editor_ffi_files_stamp`] | Starts a stamp request: the stamp of the file at a path, or none. False, starting nothing, as for a load |
 //! | [`editor_ffi_files_list`] | Starts a listing of the directory at a path. False, starting nothing, as for a load |
 //! | [`editor_ffi_files_make_directory`] | Starts making the directory at a path, with every directory on the way to it. False, starting nothing, as for a load |
+//! | [`editor_ffi_files_append`] | Starts adding bytes, which it copies, to the end of the file at a path, making the file where nothing is. False, starting nothing, as for a load |
+//! | [`editor_ffi_files_remove`] | Starts removing the file at a path; nothing there is done. False, starting nothing, as for a load |
+//! | [`editor_ffi_files_append_unobserved`] | Asks for an append with no id: never completed, kept only if it fails. False, asking nothing, only when the service has no thread |
+//! | [`editor_ffi_files_remove_unobserved`] | Asks for a remove with no id, as for an unobserved append |
+//! | [`editor_ffi_files_save_unobserved`] | Asks for a save of the snapshot behind a handle, which it clones, expecting whatever is there, with no id, as for an unobserved append |
 //! | [`editor_ffi_files_take`] | Fills a [`RawFileResult`] and returns true, or returns false when the service keeps no result for the id |
+//! | [`editor_ffi_files_failure`] | Fills a [`RawFileFailure`] with the oldest failure of an unobserved request and returns true, taking it, or returns false when none is kept |
 //! | [`editor_ffi_files_cancel`] | Cancels, and says whether there was anything to cancel |
-//! | [`editor_ffi_files_pending`] | Requests waiting or being worked, and results not taken |
+//! | [`editor_ffi_files_pending`] | Requests waiting or being worked, unobserved ones included, and results not taken |
 
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::{ptr, slice, thread};
 
 use editor_fs_std::StdFs;
 use editor_text::file::{
-    self, Expect, LineEndings, ListError, LoadError, Loaded, MakeDirectoryError, SaveError, Stamp,
+    self, AppendError, Expect, LineEndings, ListError, LoadError, Loaded, MakeDirectoryError,
+    RemoveError, SaveError, Stamp,
 };
 use editor_text::fs::{Entry, Fs, FsError, FsErrorKind, Kind, Modified};
 
@@ -130,11 +170,11 @@ use crate::words::{self, Writer};
 use crate::{events, text};
 
 /// The requests that are not yet worked, each an id and what is asked, in
-/// the order they were started.
+/// the order they were started. An unobserved request has no id.
 #[derive(Debug)]
 pub struct Requests<T> {
-    /// The requests, oldest first.
-    waiting: VecDeque<(u64, T)>,
+    /// The requests, oldest first, each with its id if it is observed.
+    waiting: VecDeque<(Option<u64>, T)>,
 }
 
 impl<T> Default for Requests<T> {
@@ -158,26 +198,32 @@ impl<T> Requests<T> {
         if self.holds(id) {
             return false;
         }
-        self.waiting.push_back((id, request));
+        self.waiting.push_back((Some(id), request));
         true
+    }
+
+    /// Adds a request that has no id, behind those already waiting. It
+    /// takes no id, and no cancel names it.
+    pub fn start_unobserved(&mut self, request: T) {
+        self.waiting.push_back((None, request));
     }
 
     /// Removes the request `id`, and returns whether it was waiting.
     pub fn cancel(&mut self, id: u64) -> bool {
         let before = self.waiting.len();
-        self.waiting.retain(|(waiting, _)| *waiting != id);
+        self.waiting.retain(|(waiting, _)| *waiting != Some(id));
         self.waiting.len() != before
     }
 
-    /// Removes and returns the request that has waited longest, if any is
-    /// waiting.
-    pub fn take_next(&mut self) -> Option<(u64, T)> {
+    /// Removes and returns the request that has waited longest, with its id
+    /// if it is observed, if any is waiting.
+    pub fn take_next(&mut self) -> Option<(Option<u64>, T)> {
         self.waiting.pop_front()
     }
 
     /// Whether the request `id` is waiting.
     pub fn holds(&self, id: u64) -> bool {
-        self.waiting.iter().any(|(waiting, _)| *waiting == id)
+        self.waiting.iter().any(|(waiting, _)| *waiting == Some(id))
     }
 
     /// How many requests are waiting.
@@ -220,6 +266,35 @@ pub enum Request {
         /// Where the directory is to be.
         path: PathBuf,
     },
+    /// Add `bytes` to the end of the file at `path`, making the file where
+    /// nothing is.
+    Append {
+        /// Where the file is.
+        path: PathBuf,
+        /// What to add.
+        bytes: Vec<u8>,
+    },
+    /// Remove the file at `path`; nothing there is no error.
+    Remove {
+        /// Where the file is.
+        path: PathBuf,
+    },
+}
+
+impl Request {
+    /// The path the request is about: what an unobserved request's failure
+    /// is kept with.
+    fn path(&self) -> &Path {
+        match self {
+            Self::Load { path, .. }
+            | Self::Save { path, .. }
+            | Self::Stamp { path }
+            | Self::List { path }
+            | Self::MakeDirectory { path }
+            | Self::Append { path, .. }
+            | Self::Remove { path } => path,
+        }
+    }
 }
 
 /// What a request came to.
@@ -249,6 +324,54 @@ pub enum FileResult {
     Made,
     /// A directory was not made.
     NotMade(MakeDirectoryError),
+    /// Bytes were added to a file.
+    Appended,
+    /// Bytes were not added.
+    NotAppended(AppendError),
+    /// A file was removed, or nothing was there.
+    Removed,
+    /// A file was not removed.
+    NotRemoved(RemoveError),
+}
+
+impl FileResult {
+    /// What a request that failed says of why, for a person: the refusal's
+    /// own words. `None` for a request that did what it was asked.
+    pub fn failure(&self) -> Option<String> {
+        match self {
+            Self::Loaded { .. }
+            | Self::Saved(_)
+            | Self::Stamped(_)
+            | Self::Listed(_)
+            | Self::Made
+            | Self::Appended
+            | Self::Removed => None,
+            Self::NotLoaded(error) => Some(error.to_string()),
+            Self::NotSaved(error) => Some(error.to_string()),
+            Self::NotListed(error) => Some(error.to_string()),
+            Self::NotMade(error) => Some(error.to_string()),
+            Self::NotAppended(error) => Some(error.to_string()),
+            Self::NotRemoved(error) => Some(error.to_string()),
+        }
+    }
+}
+
+impl From<Result<(), AppendError>> for FileResult {
+    fn from(appended: Result<(), AppendError>) -> Self {
+        match appended {
+            Ok(()) => Self::Appended,
+            Err(error) => Self::NotAppended(error),
+        }
+    }
+}
+
+impl From<Result<(), RemoveError>> for FileResult {
+    fn from(removed: Result<(), RemoveError>) -> Self {
+        match removed {
+            Ok(()) => Self::Removed,
+            Err(error) => Self::NotRemoved(error),
+        }
+    }
 }
 
 impl From<Result<(), MakeDirectoryError>> for FileResult {
@@ -304,8 +427,8 @@ impl From<Result<Stamp, SaveError>> for FileResult {
 /// module docs have the table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileStatus {
-    /// The file was loaded or saved, its stamp read, or the directory
-    /// made.
+    /// The file was loaded, saved, added to or removed, its stamp read, or
+    /// the directory made.
     Done = 0,
     /// The path is not absolute.
     Relative = 1,
@@ -365,10 +488,11 @@ impl FileResult {
     /// detail, by the table in the module docs.
     ///
     /// The matches on `editor-text`'s [`LoadError`], [`SaveError`],
-    /// [`ListError`] and [`MakeDirectoryError`] are exhaustive on purpose.
-    /// This crate must act on every variant of all four: a refusal with no status and no words of its own would not
-    /// reach Lean as what it is, so a new variant has to be given its row
-    /// of the table here before the crate builds.
+    /// [`ListError`], [`MakeDirectoryError`], [`AppendError`] and
+    /// [`RemoveError`] are exhaustive on purpose. This crate must act on
+    /// every variant of all six: a refusal with no status and no words of
+    /// its own would not reach Lean as what it is, so a new variant has to
+    /// be given its row of the table here before the crate builds.
     pub fn encoded(&self) -> Encoded {
         match self {
             Self::Loaded { stamp, endings, .. } => {
@@ -437,6 +561,18 @@ impl FileResult {
                 MakeDirectoryError::Relative => Encoded::bare(FileStatus::Relative),
                 MakeDirectoryError::NotADirectory => Encoded::bare(FileStatus::NotADirectory),
                 MakeDirectoryError::Fs(error) => refused(error),
+            },
+            Self::Appended | Self::Removed => Encoded::bare(FileStatus::Done),
+            Self::NotAppended(error) => match error {
+                AppendError::Relative => Encoded::bare(FileStatus::Relative),
+                AppendError::NotFound => Encoded::bare(FileStatus::NotFound),
+                AppendError::NotAFile => Encoded::bare(FileStatus::NotAFile),
+                AppendError::Fs(error) => refused(error),
+            },
+            Self::NotRemoved(error) => match error {
+                RemoveError::Relative => Encoded::bare(FileStatus::Relative),
+                RemoveError::NotAFile => Encoded::bare(FileStatus::NotAFile),
+                RemoveError::Fs(error) => refused(error),
             },
         }
     }
@@ -554,14 +690,25 @@ struct State {
     working: Option<Working>,
     /// The results not yet taken, by request id.
     results: BTreeMap<u64, FileResult>,
+    /// The failures of unobserved requests not yet taken, oldest first.
+    failures: VecDeque<Failure>,
     /// Whether [`Files::stop`] has been called.
     stopped: bool,
 }
 
+/// An unobserved request that failed ([`Files::take_failure`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+    /// The path the request was about.
+    pub path: PathBuf,
+    /// Why it failed, for a person: the refusal's own words.
+    pub detail: String,
+}
+
 /// The request the service's thread is working.
 struct Working {
-    /// Its id.
-    id: u64,
+    /// Its id, or none for an unobserved request.
+    id: Option<u64>,
     /// Whether it has been cancelled since it was taken up.
     cancelled: Arc<AtomicBool>,
 }
@@ -575,6 +722,7 @@ impl<F: Fs> Files<F> {
                 requests: Requests::new(),
                 working: None,
                 results: BTreeMap::new(),
+                failures: VecDeque::new(),
                 stopped: false,
             }),
             changed: Condvar::new(),
@@ -637,6 +785,52 @@ impl<F: Fs> Files<F> {
         self.start(id, Request::MakeDirectory { path })
     }
 
+    /// Asks for `bytes` to be added to the end of the file at `path`, which
+    /// is made where nothing is, as the request `id`, and returns whether
+    /// it was accepted. It returns at once and touches no file. An id in
+    /// use is refused.
+    pub fn start_append(&self, id: u64, path: PathBuf, bytes: Vec<u8>) -> bool {
+        self.start(id, Request::Append { path, bytes })
+    }
+
+    /// Asks for the file at `path` to be removed, as the request `id`, and
+    /// returns whether it was accepted. It returns at once and touches no
+    /// file. An id in use is refused.
+    pub fn start_remove(&self, id: u64, path: PathBuf) -> bool {
+        self.start(id, Request::Remove { path })
+    }
+
+    /// Asks, unobserved, for `bytes` to be added to the end of the file at
+    /// `path`: worked in order with every other request, never completed,
+    /// and kept only if it fails ([`take_failure`](Self::take_failure)).
+    pub fn append_unobserved(&self, path: PathBuf, bytes: Vec<u8>) {
+        self.start_unobserved(Request::Append { path, bytes });
+    }
+
+    /// Asks, unobserved, for the file at `path` to be removed, as
+    /// [`append_unobserved`](Self::append_unobserved) asks.
+    pub fn remove_unobserved(&self, path: PathBuf) {
+        self.start_unobserved(Request::Remove { path });
+    }
+
+    /// Asks, unobserved, for `snapshot` to be saved as the file at `path`,
+    /// expecting whatever is there, as
+    /// [`append_unobserved`](Self::append_unobserved) asks. It is a save
+    /// like any other: a temporary file renamed over the file.
+    pub fn save_unobserved(&self, snapshot: editor_text::Snapshot, path: PathBuf) {
+        self.start_unobserved(Request::Save {
+            snapshot,
+            path,
+            expect: Expect::Whatever,
+        });
+    }
+
+    /// Hands over the oldest failure of an unobserved request, once, or
+    /// `None` when none is kept.
+    pub fn take_failure(&self) -> Option<Failure> {
+        self.state().failures.pop_front()
+    }
+
     /// Adds `request` as `id`, unless the id is in use.
     fn start(&self, id: u64, request: Request) -> bool {
         let mut state = self.state();
@@ -644,11 +838,17 @@ impl<F: Fs> Files<F> {
             || state
                 .working
                 .as_ref()
-                .is_some_and(|working| working.id == id);
+                .is_some_and(|working| working.id == Some(id));
         let started = !in_use && state.requests.start(id, request);
         drop(state);
         self.changed.notify_all();
         started
+    }
+
+    /// Adds `request` with no id, behind those already waiting.
+    fn start_unobserved(&self, request: Request) {
+        self.state().requests.start_unobserved(request);
+        self.changed.notify_all();
     }
 
     /// Hands over the result of the request `id`, once. `None` when the
@@ -667,7 +867,7 @@ impl<F: Fs> Files<F> {
             return true;
         }
         if let Some(working) = &state.working
-            && working.id == id
+            && working.id == Some(id)
         {
             // Set under the lock, which the loop holds when it reads it
             // for the last time. True only for the cancel that set it.
@@ -676,8 +876,9 @@ impl<F: Fs> Files<F> {
         state.results.remove(&id).is_some()
     }
 
-    /// How many requests are waiting or being worked, and how many results
-    /// have not been taken, together.
+    /// How many requests are waiting or being worked, unobserved ones
+    /// included, and how many results have not been taken, together. A
+    /// failure kept is not counted.
     pub fn pending(&self) -> usize {
         let state = self.state();
         state.requests.pending() + usize::from(state.working.is_some()) + state.results.len()
@@ -697,7 +898,9 @@ impl<F: Fs> Files<F> {
     ///
     /// The file system is asked, and `complete` is called, with no lock
     /// held. A request cancelled while it was worked keeps no result and
-    /// is not completed.
+    /// is not completed. An unobserved request keeps no result and is not
+    /// completed either: if it failed, its path and why are kept as a
+    /// [`Failure`].
     pub fn run(&self, complete: impl Fn(u64)) {
         let mut state = self.state();
         loop {
@@ -717,9 +920,17 @@ impl<F: Fs> Files<F> {
                 cancelled: Arc::clone(&cancelled),
             });
             drop(state);
+            // Kept for an unobserved request, whose failure names it.
+            let path = id.is_none().then(|| request.path().to_path_buf());
             let result = self.work(request, &cancelled);
             state = self.state();
             state.working = None;
+            let Some(id) = id else {
+                if let (Some(path), Some(detail)) = (path, result.failure()) {
+                    state.failures.push_back(Failure { path, detail });
+                }
+                continue;
+            };
             // The flag is set under the lock, so it is read here for good:
             // a cancel that comes later finds a result to drop.
             if cancelled.load(Ordering::SeqCst) {
@@ -748,6 +959,8 @@ impl<F: Fs> Files<F> {
             Request::Stamp { path } => file::stamp(&self.fs, &path).into(),
             Request::List { path } => file::list(&self.fs, &path).into(),
             Request::MakeDirectory { path } => file::make_directory(&self.fs, &path).into(),
+            Request::Append { path, bytes } => file::append(&self.fs, &path, &bytes).into(),
+            Request::Remove { path } => file::remove(&self.fs, &path).into(),
         }
     }
 
@@ -935,6 +1148,150 @@ pub unsafe extern "C" fn editor_ffi_files_make_directory(
     service_started() && FILES.start_make_directory(id, path)
 }
 
+/// The `len` bytes at `bytes`, copied.
+///
+/// # Safety
+///
+/// `bytes` points to `len` readable bytes, unless `len` is 0.
+unsafe fn bytes_of(bytes: *const u8, len: usize) -> Vec<u8> {
+    if len == 0 {
+        return Vec::new();
+    }
+    // SAFETY: the caller guarantees the pointer and the length.
+    unsafe { slice::from_raw_parts(bytes, len) }.to_vec()
+}
+
+/// Asks the process's file service to add the `bytes_len` bytes at `bytes`
+/// to the end of the file whose path is the `path_len` bytes at `path`,
+/// making the file where nothing is, as the request `id`, and returns
+/// whether it was accepted. It returns at once and never blocks; the bytes
+/// are copied.
+///
+/// The completion and the result are as [`editor_ffi_files_load`]'s.
+///
+/// Returns false, starting nothing, if `id` is in use, or if the operating
+/// system refused the service its thread.
+///
+/// # Safety
+///
+/// `path` points to `path_len` readable bytes, and `bytes` to `bytes_len`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_files_append(
+    id: u64,
+    path: *const u8,
+    path_len: usize,
+    bytes: *const u8,
+    bytes_len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees the pointers and the lengths.
+    let (path, bytes) = unsafe { (path_of(path, path_len), bytes_of(bytes, bytes_len)) };
+    service_started() && FILES.start_append(id, path, bytes)
+}
+
+/// Asks the process's file service to remove the file whose path is the
+/// `path_len` bytes at `path`, as the request `id`, and returns whether it
+/// was accepted. It returns at once and never blocks. Nothing there is done
+/// all the same.
+///
+/// The completion and the result are as [`editor_ffi_files_load`]'s.
+///
+/// Returns false, starting nothing, if `id` is in use, or if the operating
+/// system refused the service its thread.
+///
+/// # Safety
+///
+/// `path` points to `path_len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_files_remove(
+    id: u64,
+    path: *const u8,
+    path_len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let path = unsafe { path_of(path, path_len) };
+    service_started() && FILES.start_remove(id, path)
+}
+
+/// Asks the process's file service, unobserved, to add the `bytes_len`
+/// bytes at `bytes` to the end of the file whose path is the `path_len`
+/// bytes at `path`, as [`editor_ffi_files_append`] does, and returns
+/// whether it was accepted. It returns at once and never blocks.
+///
+/// It is worked in order with every other file request, is never completed
+/// and keeps no result: if it fails, its path and why are kept for
+/// [`editor_ffi_files_failure`].
+///
+/// Returns false, starting nothing, only if the operating system refused
+/// the service its thread.
+///
+/// # Safety
+///
+/// `path` points to `path_len` readable bytes, and `bytes` to `bytes_len`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_files_append_unobserved(
+    path: *const u8,
+    path_len: usize,
+    bytes: *const u8,
+    bytes_len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees the pointers and the lengths.
+    let (path, bytes) = unsafe { (path_of(path, path_len), bytes_of(bytes, bytes_len)) };
+    if !service_started() {
+        return false;
+    }
+    FILES.append_unobserved(path, bytes);
+    true
+}
+
+/// Asks the process's file service, unobserved, to remove the file whose
+/// path is the `path_len` bytes at `path`, as [`editor_ffi_files_remove`]
+/// does; otherwise as [`editor_ffi_files_append_unobserved`].
+///
+/// # Safety
+///
+/// `path` points to `path_len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_files_remove_unobserved(
+    path: *const u8,
+    path_len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let path = unsafe { path_of(path, path_len) };
+    if !service_started() {
+        return false;
+    }
+    FILES.remove_unobserved(path);
+    true
+}
+
+/// Asks the process's file service, unobserved, to save what `snapshot`
+/// holds as the file whose path is the `path_len` bytes at `path`,
+/// expecting whatever is there: a save as [`editor_ffi_files_save`] makes
+/// one, a temporary file renamed over the file. The snapshot is cloned, as
+/// that function clones it. Otherwise as
+/// [`editor_ffi_files_append_unobserved`].
+///
+/// # Safety
+///
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back, and `path` points to `path_len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_files_save_unobserved(
+    snapshot: *const Snapshot,
+    path: *const u8,
+    path_len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let path = unsafe { path_of(path, path_len) };
+    // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
+    let snapshot = unsafe { &*snapshot }.text().clone();
+    if !service_started() {
+        return false;
+    }
+    FILES.save_unobserved(snapshot, path);
+    true
+}
+
 /// The result of a file request as it crosses the boundary: one record,
 /// filled in one call. The module docs have the table of statuses and
 /// words.
@@ -985,7 +1342,11 @@ pub unsafe extern "C" fn editor_ffi_files_take(id: u64, out: *mut RawFileResult)
         | FileResult::Listed(_)
         | FileResult::NotListed(_)
         | FileResult::Made
-        | FileResult::NotMade(_) => ptr::null_mut(),
+        | FileResult::NotMade(_)
+        | FileResult::Appended
+        | FileResult::NotAppended(_)
+        | FileResult::Removed
+        | FileResult::NotRemoved(_) => ptr::null_mut(),
     };
     let mut writer = Writer::with_capacity(encoded.words.len());
     for word in encoded.words {
@@ -998,6 +1359,49 @@ pub unsafe extern "C" fn editor_ffi_files_take(id: u64, out: *mut RawFileResult)
         snapshot,
         words,
         words_len,
+        detail,
+        detail_len,
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+    true
+}
+
+/// The failure of an unobserved file request as it crosses the boundary:
+/// one record, filled in one call ([`editor_ffi_files_failure`]).
+#[repr(C)]
+pub struct RawFileFailure {
+    /// The path the request was about: a buffer of `path_len` bytes, as it
+    /// was asked for, with no encoding, owned by the caller until it is
+    /// handed back with
+    /// [`editor_ffi_text_free`](crate::text::editor_ffi_text_free).
+    pub path: *mut u8,
+    /// The length of `path` in bytes.
+    pub path_len: usize,
+    /// Why it failed, for a person: a buffer of `detail_len` bytes of
+    /// UTF-8, owned by the caller until it is handed back the same way.
+    pub detail: *mut u8,
+    /// The length of `detail` in bytes.
+    pub detail_len: usize,
+}
+
+/// Hands over the oldest failure of an unobserved file request, once:
+/// fills `out` and returns true, or returns false, with `out` untouched,
+/// when none is kept.
+///
+/// # Safety
+///
+/// `out` points to a writable [`RawFileFailure`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_files_failure(out: *mut RawFileFailure) -> bool {
+    let Some(failure) = FILES.take_failure() else {
+        return false;
+    };
+    let (path, path_len) = words::lend(failure.path.into_os_string().into_vec());
+    let (detail, detail_len) = text::lend(failure.detail);
+    let raw = RawFileFailure {
+        path,
+        path_len,
         detail,
         detail_len,
     };
@@ -1213,11 +1617,30 @@ mod tests {
         assert!(requests.start(5, "five"));
 
         assert_eq!(requests.pending(), 3);
-        assert_eq!(requests.take_next(), Some((7, "seven")));
-        assert_eq!(requests.take_next(), Some((3, "three")));
-        assert_eq!(requests.take_next(), Some((5, "five")));
+        assert_eq!(requests.take_next(), Some((Some(7), "seven")));
+        assert_eq!(requests.take_next(), Some((Some(3), "three")));
+        assert_eq!(requests.take_next(), Some((Some(5), "five")));
         assert_eq!(requests.take_next(), None);
         assert_eq!(requests.pending(), 0);
+    }
+
+    #[test]
+    fn unobserved_requests_come_out_in_order_with_observed_ones_and_hold_no_id() {
+        let mut requests = Requests::new();
+
+        assert!(requests.start(7, "seven"));
+        requests.start_unobserved("first unobserved");
+        assert!(requests.start(3, "three"));
+        requests.start_unobserved("second unobserved");
+
+        assert_eq!(requests.pending(), 4);
+        // No id is taken by one, and none cancels one.
+        assert!(!requests.cancel(0));
+        assert_eq!(requests.take_next(), Some((Some(7), "seven")));
+        assert_eq!(requests.take_next(), Some((None, "first unobserved")));
+        assert_eq!(requests.take_next(), Some((Some(3), "three")));
+        assert_eq!(requests.take_next(), Some((None, "second unobserved")));
+        assert_eq!(requests.take_next(), None);
     }
 
     #[test]
@@ -1228,7 +1651,7 @@ mod tests {
         assert!(!requests.start(7, "second"));
 
         assert!(requests.holds(7));
-        assert_eq!(requests.take_next(), Some((7, "first")));
+        assert_eq!(requests.take_next(), Some((Some(7), "first")));
         assert_eq!(requests.take_next(), None);
         // Once it has come out, the id is free again.
         assert!(!requests.holds(7));
@@ -1247,8 +1670,8 @@ mod tests {
         assert!(!requests.cancel(9));
 
         assert_eq!(requests.pending(), 2);
-        assert_eq!(requests.take_next(), Some((1, "one")));
-        assert_eq!(requests.take_next(), Some((3, "three")));
+        assert_eq!(requests.take_next(), Some((Some(1), "one")));
+        assert_eq!(requests.take_next(), Some((Some(3), "three")));
         assert_eq!(requests.take_next(), None);
     }
 
@@ -1976,6 +2399,202 @@ mod tests {
         assert_eq!(raw(3, 0, 0, 0).expect(), None);
         assert_eq!(raw(u64::MAX, 0, 0, 0).expect(), None);
         assert_eq!(raw(2, 0, u64::from(u32::MAX) + 1, 0).expect(), None);
+    }
+
+    #[test]
+    fn an_append_answers_what_editor_text_answers_for_that_path_and_those_bytes() {
+        let asked = [FILE, "/dir/new.txt", "/nowhere/log", "/dir", "relative"];
+        for bytes in [&b"more\r\n"[..], b"\xFFother"] {
+            for path in asked {
+                let rig = Rig::over(fake());
+
+                assert!(rig.files.start_append(1, path.into(), bytes.to_vec()));
+                assert_eq!(rig.next(), 1);
+                let Some(answer) = rig.files.take(1) else {
+                    panic!("no result was kept for {path}");
+                };
+
+                let reference = fake();
+                let expected = FileResult::from(file::append(&reference, Path::new(path), bytes));
+                assert_eq!(said(&answer), said(&expected), "{path}");
+                // The path and the bytes were the ones forwarded.
+                assert_eq!(rig.fs().paths(), reference.paths(), "{path}");
+                for held in reference.paths() {
+                    assert_eq!(rig.fs().bytes(&held), reference.bytes(&held), "{path}");
+                }
+                rig.stop();
+            }
+        }
+    }
+
+    #[test]
+    fn a_remove_answers_what_editor_text_answers_for_that_path() {
+        for path in [FILE, OTHER, MISSING, "/dir", "relative"] {
+            let rig = Rig::over(fake());
+
+            assert!(rig.files.start_remove(1, path.into()));
+            assert_eq!(rig.next(), 1);
+            let Some(answer) = rig.files.take(1) else {
+                panic!("no result was kept for {path}");
+            };
+
+            let reference = fake();
+            let expected = FileResult::from(file::remove(&reference, Path::new(path)));
+            assert_eq!(said(&answer), said(&expected), "{path}");
+            assert_eq!(rig.fs().paths(), reference.paths(), "{path}");
+            rig.stop();
+        }
+    }
+
+    #[test]
+    fn an_append_and_a_remove_cross_as_done_with_no_words_and_a_refusal_as_its_status() {
+        assert_eq!(
+            FileResult::Appended.encoded(),
+            Encoded::bare(FileStatus::Done)
+        );
+        assert_eq!(
+            FileResult::Removed.encoded(),
+            Encoded::bare(FileStatus::Done)
+        );
+        let denied = FsError::new(FsErrorKind::Denied, "os error 13");
+        let other = FsError::new(FsErrorKind::Other, "the disk is on fire");
+        let failed = Encoded {
+            detail: other.to_string(),
+            ..Encoded::bare(FileStatus::Failed)
+        };
+        let not_allowed = Encoded {
+            detail: String::from("os error 13"),
+            ..Encoded::bare(FileStatus::Denied)
+        };
+        let appends = [
+            (AppendError::Relative, Encoded::bare(FileStatus::Relative)),
+            (AppendError::NotFound, Encoded::bare(FileStatus::NotFound)),
+            (AppendError::NotAFile, Encoded::bare(FileStatus::NotAFile)),
+            (AppendError::Fs(denied.clone()), not_allowed.clone()),
+            (AppendError::Fs(other.clone()), failed.clone()),
+        ];
+        for (error, expected) in appends {
+            assert_eq!(FileResult::NotAppended(error).encoded(), expected);
+        }
+        let removes = [
+            (RemoveError::Relative, Encoded::bare(FileStatus::Relative)),
+            (RemoveError::NotAFile, Encoded::bare(FileStatus::NotAFile)),
+            (RemoveError::Fs(denied), not_allowed),
+            (RemoveError::Fs(other), failed),
+        ];
+        for (error, expected) in removes {
+            assert_eq!(FileResult::NotRemoved(error).encoded(), expected);
+        }
+    }
+
+    #[test]
+    fn unobserved_requests_are_worked_in_order_with_observed_ones_and_never_completed() {
+        let rig = Rig::over(fake());
+        let parked = rig.park();
+        assert!(rig.files.start_load(1, OTHER.into(), NO_LIMIT));
+        parked.entered();
+        rig.files.append_unobserved(FILE.into(), b"more".to_vec());
+        assert!(rig.files.start_stamp(2, FILE.into()));
+        rig.files.remove_unobserved(FILE.into());
+        assert!(rig.files.start_stamp(3, FILE.into()));
+        parked.release();
+
+        // Only the observed ones are completed, in order.
+        assert_eq!([rig.next(), rig.next(), rig.next()], [1, 2, 3]);
+        rig.nothing_else_completed(4);
+        // The stamp asked after the append is of the file with the bytes
+        // added, and the one asked after the remove finds nothing.
+        let Some(FileResult::Stamped(appended)) = rig.files.take(2) else {
+            panic!("the stamp after the append did not answer one");
+        };
+        assert_eq!(
+            appended.map(|stamp| stamp.size),
+            Some(BYTES.len() as u64 + 4)
+        );
+        assert!(matches!(rig.files.take(3), Some(FileResult::Stamped(None))));
+        assert!(rig.files.take_failure().is_none());
+        rig.stop();
+    }
+
+    #[test]
+    fn an_unobserved_request_that_fails_is_kept_as_its_path_and_detail_and_taken_once() {
+        let rig = Rig::over(fake());
+
+        rig.files
+            .append_unobserved("/nowhere/log".into(), b"lost".to_vec());
+        rig.files.remove_unobserved("relative".into());
+        rig.files
+            .save_unobserved(snapshot("never saved"), "/dir".into());
+        // One that does not fail keeps nothing.
+        rig.files.remove_unobserved(MISSING.into());
+        rig.nothing_else_completed(1);
+
+        let failures: Vec<Failure> = std::iter::from_fn(|| rig.files.take_failure()).collect();
+        let reference = fake();
+        let saved = file::save(
+            &reference,
+            Path::new("/dir"),
+            &snapshot("never saved"),
+            Expect::Whatever,
+            &never,
+        );
+        let Err(not_saved) = saved else {
+            panic!("a save over a directory saved");
+        };
+        assert_eq!(
+            failures,
+            [
+                Failure {
+                    path: "/nowhere/log".into(),
+                    detail: AppendError::NotFound.to_string(),
+                },
+                Failure {
+                    path: "relative".into(),
+                    detail: RemoveError::Relative.to_string(),
+                },
+                Failure {
+                    path: "/dir".into(),
+                    detail: not_saved.to_string(),
+                },
+            ]
+        );
+        // Taken once.
+        assert!(rig.files.take_failure().is_none());
+        rig.stop();
+    }
+
+    #[test]
+    fn pending_counts_an_unobserved_request_while_it_waits_or_is_worked_and_falls_to_0() {
+        let rig = Rig::over(fake());
+        let parked = rig.park();
+        rig.files.append_unobserved(FILE.into(), b"more".to_vec());
+        parked.entered();
+
+        assert_eq!(rig.files.pending(), 1);
+        rig.files.remove_unobserved(OTHER.into());
+        assert_eq!(rig.files.pending(), 2);
+        parked.release();
+
+        rig.nothing_else_completed(1);
+        assert_eq!(rig.files.pending(), 0);
+        rig.stop();
+    }
+
+    #[test]
+    fn an_unobserved_save_writes_what_editor_text_writes_expecting_whatever() {
+        let rig = Rig::over(fake());
+        let new = snapshot("the session, saved\n");
+
+        rig.files.save_unobserved(new.clone(), FILE.into());
+        rig.nothing_else_completed(1);
+
+        let reference = fake();
+        let _ = file::save(&reference, Path::new(FILE), &new, Expect::Whatever, &never);
+        assert_eq!(rig.fs().bytes(FILE), reference.bytes(FILE));
+        assert_ne!(rig.fs().bytes(FILE).as_deref(), Some(BYTES));
+        assert_eq!(rig.fs().paths(), reference.paths());
+        assert!(rig.files.take_failure().is_none());
+        rig.stop();
     }
 
     #[test]

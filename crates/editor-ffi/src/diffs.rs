@@ -277,6 +277,10 @@ impl<E: LineDiff + Default> Diffs<E> {
                     .unwrap_or_else(PoisonError::into_inner);
                 continue;
             };
+            // The diff service starts no unobserved request: each has an id.
+            let Some(id) = id else {
+                continue;
+            };
             state.working = Some((id, false));
             drop(state);
             let answer = work(&mut E::default(), &request);
@@ -529,7 +533,7 @@ mod tests {
         );
         diffs.stop();
         let (id, request) = diffs.state().requests.take_next().unwrap();
-        assert_eq!(id, 1);
+        assert_eq!(id, Some(1));
         assert_eq!(
             work(&mut Lcs, &request),
             Answer::Script(editor_diff::script(

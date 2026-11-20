@@ -40,9 +40,11 @@ use editor_ffi::events::{
     EventKind, QueueId, RawEvent, SourceKind, editor_ffi_events_next, editor_ffi_events_waiting,
 };
 use editor_ffi::files::{
-    FileStatus, RawExpect, RawFileResult, SERVICE, editor_ffi_files_cancel, editor_ffi_files_list,
-    editor_ffi_files_load, editor_ffi_files_make_directory, editor_ffi_files_pending,
-    editor_ffi_files_save, editor_ffi_files_take,
+    FileStatus, RawExpect, RawFileFailure, RawFileResult, SERVICE, editor_ffi_files_append,
+    editor_ffi_files_append_unobserved, editor_ffi_files_cancel, editor_ffi_files_failure,
+    editor_ffi_files_list, editor_ffi_files_load, editor_ffi_files_make_directory,
+    editor_ffi_files_pending, editor_ffi_files_remove, editor_ffi_files_remove_unobserved,
+    editor_ffi_files_save, editor_ffi_files_save_unobserved, editor_ffi_files_take,
 };
 use editor_ffi::snapshot::{Snapshot, editor_ffi_snapshot_free, editor_ffi_snapshot_live};
 use editor_ffi::text::editor_ffi_text_free;
@@ -161,6 +163,71 @@ unsafe fn save(id: u64, snapshot: *const Snapshot, path: &Path, expect: RawExpec
     // SAFETY: the caller guarantees `snapshot`; the pointer and length are
     // those of `bytes`, and `expect` is readable, for the call.
     unsafe { editor_ffi_files_save(id, snapshot, bytes.as_ptr(), bytes.len(), &raw const expect) }
+}
+
+/// Starts adding `bytes` to the end of the file at `path`: as the request
+/// `id`, or unobserved with none.
+fn append(id: Option<u64>, path: &Path, bytes: &[u8]) -> bool {
+    let path = path.as_os_str().as_bytes();
+    // SAFETY: the pointers and lengths are those of `path` and `bytes`,
+    // alive for the call.
+    unsafe {
+        match id {
+            Some(id) => {
+                editor_ffi_files_append(id, path.as_ptr(), path.len(), bytes.as_ptr(), bytes.len())
+            }
+            None => editor_ffi_files_append_unobserved(
+                path.as_ptr(),
+                path.len(),
+                bytes.as_ptr(),
+                bytes.len(),
+            ),
+        }
+    }
+}
+
+/// Starts removing the file at `path`: as the request `id`, or unobserved
+/// with none.
+fn remove(id: Option<u64>, path: &Path) -> bool {
+    let path = path.as_os_str().as_bytes();
+    // SAFETY: the pointer and length are those of `path`, alive for the
+    // call.
+    unsafe {
+        match id {
+            Some(id) => editor_ffi_files_remove(id, path.as_ptr(), path.len()),
+            None => editor_ffi_files_remove_unobserved(path.as_ptr(), path.len()),
+        }
+    }
+}
+
+/// The oldest failure of an unobserved request, as its path's bytes and
+/// its detail, with its buffers handed back; none when none is kept.
+fn failure() -> Option<(Vec<u8>, String)> {
+    let mut raw = MaybeUninit::<RawFileFailure>::uninit();
+    // SAFETY: `raw` is writable for one record.
+    if !unsafe { editor_ffi_files_failure(raw.as_mut_ptr()) } {
+        return None;
+    }
+    // SAFETY: the call returned true, so it filled the record.
+    let raw = unsafe { raw.assume_init() };
+    // SAFETY: the record's buffers are `path_len` and `detail_len` bytes,
+    // owned by this caller until they are handed back, each once.
+    unsafe {
+        let path = if raw.path_len == 0 {
+            Vec::new()
+        } else {
+            slice::from_raw_parts(raw.path, raw.path_len).to_vec()
+        };
+        let detail = if raw.detail_len == 0 {
+            String::new()
+        } else {
+            String::from_utf8(slice::from_raw_parts(raw.detail, raw.detail_len).to_vec())
+                .expect("the detail is UTF-8")
+        };
+        editor_ffi_text_free(raw.path, raw.path_len);
+        editor_ffi_text_free(raw.detail, raw.detail_len);
+        Some((path, detail))
+    }
 }
 
 /// The result of the request `id`, if the service keeps one.
@@ -334,6 +401,75 @@ fn files_are_loaded_and_saved_through_c_and_completed_on_the_completion_queue() 
     assert_eq!(answer.status, FileStatus::Done.code());
     assert_eq!(answer.words, [0_u64; 0]);
     assert!(made.is_dir());
+
+    // An append where nothing is makes the file, and the next adds to its
+    // end; each is done with no words.
+    let log = directory.path().join("log");
+    for bytes in [&b"one\r\n"[..], b"\xFFtwo\n"] {
+        let appending = next_id();
+        assert!(append(Some(appending), &log, bytes));
+        let answer = completed(appending);
+        assert_eq!(answer.status, FileStatus::Done.code());
+        assert_eq!(answer.words, [0_u64; 0]);
+    }
+    assert_eq!(
+        std::fs::read(&log).expect("the log reads"),
+        b"one\r\n\xFFtwo\n"
+    );
+    // A remove removes it, and a remove of nothing is done as well.
+    for _ in 0..2 {
+        let removing = next_id();
+        assert!(remove(Some(removing), &log));
+        assert_eq!(completed(removing).status, FileStatus::Done.code());
+        assert!(!log.exists());
+    }
+    // An append into a directory that is not there is not found.
+    let lost = directory.path().join("no such directory").join("log");
+    let appending = next_id();
+    assert!(append(Some(appending), &lost, b"x"));
+    assert_eq!(completed(appending).status, FileStatus::NotFound.code());
+
+    // Unobserved requests are worked in order with the rest and never
+    // completed: an append, a save of a snapshot loaded, and an append
+    // that fails, then a stamp, observed, whose completion is the next on
+    // the queue and comes once all three were worked.
+    let unobserved = directory.path().join("unobserved");
+    let session = directory.path().join("session");
+    let loading = next_id();
+    assert!(load(loading, &directory.path().join("fixture-0.txt")));
+    let source = completed(loading);
+    assert!(append(None, &unobserved, b"kept\n"));
+    // SAFETY: the snapshot came from the library in the result just taken,
+    // and is freed once, here, after the call that clones it.
+    unsafe {
+        let path = session.as_os_str().as_bytes();
+        assert!(editor_ffi_files_save_unobserved(
+            source.snapshot,
+            path.as_ptr(),
+            path.len()
+        ));
+        editor_ffi_snapshot_free(source.snapshot);
+    }
+    assert!(append(None, &lost, b"lost"));
+    assert!(remove(None, &directory.path().join("never there")));
+    let marker = next_id();
+    assert!(remove(Some(marker), &directory.path().join("never there")));
+    assert_eq!(completed(marker).status, FileStatus::Done.code());
+    assert_eq!(
+        std::fs::read(&unobserved).expect("the unobserved append made the file"),
+        b"kept\n"
+    );
+    assert_eq!(
+        std::fs::read(&session).expect("the unobserved save made the file"),
+        FIXTURES[0].1
+    );
+    // The failure is kept with its path, and taken once.
+    let Some((path, detail)) = failure() else {
+        panic!("the unobserved append that failed kept no failure");
+    };
+    assert_eq!(path, lost.as_os_str().as_bytes());
+    assert!(!detail.is_empty());
+    assert!(failure().is_none());
 
     // A save that expects nothing a save can expect starts nothing.
     let unknown = RawExpect { tag: 9, ..WHATEVER };

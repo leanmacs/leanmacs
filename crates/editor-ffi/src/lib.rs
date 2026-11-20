@@ -235,14 +235,16 @@
 //! [`editor_text::fs::Fs`], with [`editor_text::fs::FakeFs`] published for
 //! tests and the real adapter in a crate of its own (`editor-fs-std`),
 //! which only the process's instance names; which request is worked when
-//! is the pure [`files::Requests`]; what a load, a save, a stamp and a
-//! listing do is [`editor_text::file`]'s. A request has a result as well as a
+//! is the pure [`files::Requests`]; what a load, a save, a stamp, a
+//! listing, an append and a remove do is [`editor_text::file`]'s. A request
+//! has a result as well as a
 //! completion, which the caller takes by the request's id once the
 //! completion has arrived ([`files::editor_ffi_files_take`]): a record of a
-//! status, a snapshot handle, words and a detail string. Its other C
-//! functions are [`files::editor_ffi_files_load`],
-//! [`files::editor_ffi_files_save`], [`files::editor_ffi_files_stamp`],
-//! [`files::editor_ffi_files_list`], [`files::editor_ffi_files_cancel`] and, as a readout for tests,
+//! status, a snapshot handle, words and a detail string. An append, a
+//! remove and a save may also be asked unobserved, with no id: worked in
+//! order with the rest, never completed, and kept only as a failure
+//! ([`files::editor_ffi_files_failure`]). Its other C functions are in
+//! the module's table ("The C functions"), with, as a readout for tests,
 //! [`files::editor_ffi_files_pending`].
 //!
 //! Tests: the unit tests of `files.rs`, on the fake file system (the
