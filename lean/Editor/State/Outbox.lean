@@ -18,9 +18,11 @@ host that holds the cells ("Restoring", `Editor/Restore/Run.lean`).
 - **Each entry is set by one state request** (`Editor/State/Request.lean`):
   `starts` by `startJob`, `cancels` by `cancelJob`, `answered` by `invoke`
   and by `closePrompt` (`EditorState.closePrompt`), `reload` by `reload`,
-  `theme` by `loadTheme` and `restoredCells` by `restoreCells`. Each of the first three appends in order;
-  `reload` and `theme` are set in place of what was there, so the latest
-  wins.
+  `theme` by `loadTheme` and `restoredCells` by `restoreCells`.
+  `starts`, `cancels`, `answered` and `restoredCells` each append in
+  order, so two `restoreCells` in one command hand on the cells of both,
+  the first's first; `reload` and `theme` are set in place of what was
+  there, so the latest wins.
 - The jobs a command asked to be started are kept in order, a `JobStart`
   each: a registered job's name and plain arguments, and the key a host
   keeps it under, if it has one.
@@ -56,7 +58,8 @@ host that holds the cells ("Restoring", `Editor/Restore/Run.lean`).
 3. A field of `Loop.Stepped` that `Loop.ranInto` fills from `ran.outbox`,
    and the hosts that take it in (`Loop.Driver`, `Editor/Headless.lean`).
 
-Pinned by `ModelTest.stateRequestChecks` (each request's case), and by
+Pinned by `ModelTest.stateRequestChecks` (each request's case, and two
+`restoreCells` appending in order), and by
 `ModelTest.dispatchQuitChecks` and `ModelTest.driverChecks` (handed back
 and emptied).
 -/
