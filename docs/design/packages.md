@@ -1045,11 +1045,15 @@ as the last reload read them with Lake's loader:
   `lakefile.toml` only.
 - **The core's require, at the root, last** (packages phase 12). Each
   edit writes `editor-core` at the lakefile's root by the running editor's
-  core directory, as the last require (`withCoreEdit`, `withCore`): any
-  `editor-core` table is taken out before the edit, whatever its source,
-  and the core's added after the last `[[require]]` table once the edit is
-  made, so an installed package comes before it. A lakefile whose last
-  require is already that directory is left as it is by `withCore`. So every edit
+  core directory, as the last require (`withCoreEdit`, the one
+  composition every command's edit is made through): any `editor-core`
+  table is taken out before the edit, whatever its source, and the core's
+  added after the last `[[require]]` table once the edit is made, so an
+  installed package comes before it. When the edit changes nothing and the
+  lakefile's last require is already that directory (by a path relative to
+  the config directory or absolute, as the fingerprint and the build's
+  core check resolve it, `namesCore`), with no other `editor-core`, it is
+  left as it is by `withCoreEdit`: a repaired lakefile is a fixed point. So every edit
   repairs a lakefile an older editor generated (the set alone) or one
   edited by hand, and a package's git require of the core stays only a
   name. An editor that knows no core directory refuses the edits:

@@ -157,8 +157,9 @@ def installCommand (call : Call) : EditorM Unit := do
   | .ok require =>
     let some (text, required) ← editable installName | return
     edit installName
-        (withCoreEdit state.packageSet.coreDirectory text required (install · · require)) text
-        s!"{installName}: added {require.name}"
+        (withCoreEdit state.packageSet.config state.packageSet.coreDirectory text required
+          (install · · require))
+        text s!"{installName}: added {require.name}"
 
 /-- `:package-remove` ("The `package-set` package", in the module docs). -/
 def removeCommand (call : Call) : EditorM Unit := do
@@ -166,7 +167,7 @@ def removeCommand (call : Call) : EditorM Unit := do
   let some (text, required) ← editable removeName | return
   let packageSet := (← editorState).packageSet
   edit removeName
-      (withCoreEdit packageSet.coreDirectory text required
+      (withCoreEdit packageSet.config packageSet.coreDirectory text required
         (remove · · name packageSet.config packageSet.setName packageSet.facts.setRequires))
       text s!"{removeName}: removed {name}"
 
@@ -175,8 +176,10 @@ def updateCommand (call : Call) : EditorM Unit := do
   match wordsOf call with
   | [name, rev] =>
     let some (text, required) ← editable updateName | return
+    let packageSet := (← editorState).packageSet
     edit updateName
-        (withCoreEdit (← editorState).packageSet.coreDirectory text required (setRev · · name rev))
+        (withCoreEdit packageSet.config packageSet.coreDirectory text required
+          (setRev · · name rev))
         text s!"{updateName}: {name} at {rev}"
   | names =>
     let packageSet := (← editorState).packageSet

@@ -854,8 +854,11 @@ The config session's decisions are tested here too, with no elaborator:
   (`Editor/PackageSet/Edit.lean`), on exact texts: where each require's
   table is, install of a path, a git and a Reservoir require, remove, the
   default set expanded without one of its packages, a rev set, each
-  refusal, and the core's require at the root, a relative path to the
-  running core taken for it as the fingerprint takes it;
+  refusal, and the core's require at the root through the one composition
+  the commands make each edit through (`withCoreEdit`): a set-only
+  lakefile repaired, a git or other-path core replaced, a repaired
+  lakefile a fixed point, and a relative path to the running core taken
+  for it as the fingerprint takes it;
 - `packageSetBuildChecks`: a user's package-set build and its commands
   (`Editor/PackageSet/Build.lean`, `Editor/PackageSet/Compiled.lean`):
   when a reload starts it and when it says it cannot, an editor in a

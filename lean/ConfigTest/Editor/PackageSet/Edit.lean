@@ -46,7 +46,7 @@ def packageSetEditChecks (_ : Unit) : List Check :=
             { name := "compile", source := .path "compile" }]
         let git : Require := { name := "g", source := .git "https://h/g" (some "v1") (some "s") }
         let reservoir : Require := { name := "b", source := .reservoir "lc" (some "1.0") }
-        let edit := withCoreEdit (some core) lakefile required
+        let edit := withCoreEdit "/c" (some core) lakefile required
         let installedGit := edit (install · · git)
         let gitText := (installedGit.toOption).getD ""
         let some gitRequired ← read gitText | return false
@@ -63,7 +63,7 @@ def packageSetEditChecks (_ : Unit) : List Check :=
                   #[{ name := "shipped-themes", source := .path "/w/packages/shipped-themes" },
                     required[1]!, own]) &&
             (←
-              after (withCoreEdit (some core) gitText gitRequired (setRev · · "g" "v2"))
+              after (withCoreEdit "/c" (some core) gitText gitRequired (setRev · · "g" "v2"))
                   ((required.push
                         { git with source := .git "https://h/g" (some "v2") (some "s") }).push
                     own)) },
@@ -73,8 +73,8 @@ def packageSetEditChecks (_ : Unit) : List Check :=
         let text :=
           "name = \"config\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n[[require]]\nname = \"editor-core\"\ngit = \"https://h/leanmacs\"\nsubDir = \"lean\"\nrev = \"nightly-1\"\n"
         let some required ← read text | return false
-        match withCore "/c" text required core with
-        | .ok (repaired, _) =>
+        match withCoreEdit "/c" (some core) text required fun text _ => .ok text with
+        | .ok repaired =>
           return (← read repaired) ==
               some #[{ name := "default-set", source := .path "/w/packages" }, own]
         | .error _ =>

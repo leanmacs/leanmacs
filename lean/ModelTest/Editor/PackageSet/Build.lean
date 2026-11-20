@@ -644,7 +644,8 @@ def packageSetBuildChecks : List Check :=
           | .toml text _ => text
           | _ => ""
         let edited :=
-          (withCoreEdit (some coreDirectory) text generated (install · · hello)).toOption.getD ""
+          (withCoreEdit "/c" (some coreDirectory) text generated (install · · hello)).toOption.getD
+            ""
         let cat := replied (rootCommand "/bin/cat" #["/c/lakefile.toml"]) 0 text
         let mv :=
           replied (rootCommand "/bin/mv" #["/c/lakefile.toml.leanmacs-edit", "/c/lakefile.toml"])
@@ -672,7 +673,7 @@ def packageSetBuildChecks : List Check :=
         let mv :=
           replied (rootCommand "/bin/mv" #["/c/lakefile.toml.leanmacs-edit", "/c/lakefile.toml"])
         let repaired (edit : String → Array Require → Except String String) : Option ByteArray :=
-          (withCoreEdit (some coreDirectory) text required edit).toOption.map (·.toUTF8)
+          (withCoreEdit "/c" (some coreDirectory) text required edit).toOption.map (·.toUTF8)
         let lastIsCore (bytes : Option ByteArray) : Bool :=
           match bytes.bind (String.fromUTF8? ·) with
           | some edited =>
@@ -738,7 +739,7 @@ def packageSetBuildChecks : List Check :=
           pure
             (revised.reloads == driver.reloads + 1 &&
               bytesAt revised "/c/lakefile.toml.leanmacs-edit" ==
-                ((withCoreEdit (some coreDirectory) text (generated.push gitPackage)
+                ((withCoreEdit "/c" (some coreDirectory) text (generated.push gitPackage)
                       (setRev · · "g" "v2")).toOption.map
                   (·.toUTF8)) &&
               order &&

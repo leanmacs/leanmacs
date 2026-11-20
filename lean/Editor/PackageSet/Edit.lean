@@ -43,7 +43,8 @@ hand".
 ## The core's require
 
 Every edit writes the core's require at the lakefile's root
-(`withCoreEdit`, `withCore`): `editor-core` by the directory of the
+(`withCoreEdit`, the one composition the commands make each edit
+through): `editor-core` by the directory of the
 running editor's own core (`Running.coreDirectory`), as the **last**
 require. Lake (4.35) resolves a root's requires last first, and the first
 resolution of a name wins, a dependency's manifest entries with it; so
@@ -52,9 +53,11 @@ a package names, and nothing is cloned (`docs/design/packages.md`, "A
 config directory requires the core and the set"). Any `editor-core`
 table is taken out before the edit, whatever its source, and the core's
 added after the last `[[require]]` table once the edit is made, so an
-installed package comes before it; a lakefile whose last require is
-already that directory, and has no other `editor-core`, is left as it is
-by `withCore`, so a repaired lakefile is a fixed point. So an edit repairs a lakefile an older
+installed package comes before it; when the edit changes nothing and the
+lakefile's last require is already that directory, by a path relative to
+the config directory or absolute (`isCoreAt`), with no other
+`editor-core`, the text is left as it is by `withCoreEdit`, so a repaired
+lakefile is a fixed point. So an edit repairs a lakefile an older
 editor generated, which requires the set alone, or one edited by hand. A
 remove's expansion of the shipped set leaves the core out: the root holds
 it. An editor that knows no directory of its core refuses every edit
@@ -174,7 +177,7 @@ def remove (text : String) (required : Array Require) (name : String) (config : 
     unless setRequired.any (·.name == name) do
       throw s!"the lakefile does not require {name}, and neither does {setRequire.name}"
     let setDirectory := normalise config directory
-    -- The core is not expanded: the root already requires it (`withCore`).
+    -- The core is not expanded: the root already requires it (`withCoreEdit`).
     let kept :=
       (setRequired.filter fun (require : Require) =>
             require.name != name && require.name != coreName).map
@@ -252,37 +255,36 @@ def appendCore (text : String) (core : String) : String :=
     let body := if text.isEmpty || text.endsWith "\n" then text else text ++ "\n"
     body ++ "\n" ++ joined own ++ "\n"
 
-/-- The text with the core's require at its root, by the directory `core`,
-as its last require, and its requires in table order, the core last ("The
-core's require", in the module docs): every `editor-core` table taken out,
-whatever its source, and the core's added after the last `[[require]]`
-table, with one blank line before it; with no table, at the end, as
-`install` adds one. A lakefile whose last require is already the core by
-that directory, and has no other, is answered as it is. -/
-def withCore (config : String) (text : String) (required : Array Require) (core : String) :
-    Except String (String × Array Require) := do
-  let others := required.filter (·.name != coreName)
-  if
-      (required.back?.map (isCoreAt config core)) == some true &&
-        others.size + 1 == required.size then
-    return (text, required)
-  let (text, others) ← withoutCore text required
-  return (appendCore text core, others.push (coreRequire core))
+/-- Whether the lakefile of the config directory `config`, whose requires
+are `required`, already holds the core's require by the directory `core`
+as its last require, and no other `editor-core` (`isCoreAt`). -/
+def coreInPlace (config core : String) (required : Array Require) : Bool :=
+  (required.back?.map (isCoreAt config core)) == some true &&
+    (required.filter (·.name == coreName)).size == 1
 
 /-- Why an edit is refused by an editor that knows no directory of its
 core. -/
 def noCoreDirectory : String :=
   "this editor knows no directory of its core, so it cannot write the lakefile's editor-core require"
 
-/-- The edit `edit` of the lakefile `text`, whose requires are `required`,
-made on it with every `editor-core` table taken out (`withoutCore`), and
-the core's require by the running editor's core directory `core` added
-after, as the last require (`appendCore`), so a table the edit adds comes
-before it; refused when it knows none (`noCoreDirectory`). -/
-def withCoreEdit (core : Option String) (text : String) (required : Array Require)
+/-- The edit `edit` of the lakefile `text` of the config directory `config`,
+whose requires are `required`, with the core's require at its root by the
+running editor's core directory `core`, as its last require ("The core's
+require", in the module docs): the edit made on the text with every
+`editor-core` table taken out, whatever its source (`withoutCore`), and
+the core's require added after its last `[[require]]` table once it is
+made (`appendCore`), so a table the edit adds comes before it. When the
+edit changes nothing and the lakefile already ends with the core's require
+(`coreInPlace`), the text is answered as it is: a repaired lakefile is a
+fixed point. Refused when the editor knows no core directory
+(`noCoreDirectory`). Every package command's edit is made through it. -/
+def withCoreEdit (config : String) (core : Option String) (text : String) (required : Array Require)
     (edit : String → Array Require → Except String String) : Except String String := do
   let some core := core | throw noCoreDirectory
-  let (text, required) ← withoutCore text required
-  return appendCore (← edit text required) core
+  let (bare, others) ← withoutCore text required
+  let edited ← edit bare others
+  if edited == bare && coreInPlace config core required then
+    return text
+  return appendCore edited core
 
 end Editor.PackageSet

@@ -66,13 +66,10 @@ def repaired : String :=
 def repairedRequired : Array Require :=
   required.push { name := "editor-core", source := .path core }
 
-/-- Two answers of `withCore` are equal when both are the same text and
-requires, or the same refusal. -/
-instance : BEq (Except String (String × Array Require)) where
-  beq
-    | .ok one, .ok other => one == other
-    | .error one, .error other => one == other
-    | _, _ => false
+/-- The edit that changes nothing: `withCoreEdit` with it only writes the
+core's require. -/
+def unedited (text : String) (_ : Array Require) : Except String String :=
+  .ok text
 
 end EditTest
 
@@ -144,10 +141,10 @@ def packageSetEditChecks : List Check :=
               .error "hello is not a git dependency, so it has no rev" &&
             setRev lakefile required "nope" "v2" == .error "the lakefile does not require nope") },
     { name :=
-        "withCore writes the core's require by the running core's directory at the root, as its last require, after the set, of a lakefile that requires the set alone"
-      run := pure (withCore "/c" lakefile required core == .ok (repaired, repairedRequired)) },
+        "withCoreEdit writes the core's require by the running core's directory at the root, as its last require, after the set, of a lakefile that requires the set alone"
+      run := pure (withCoreEdit "/c" (some core) lakefile required unedited == .ok repaired) },
     { name :=
-        "withCore takes out an editor-core table that names the core from git, or another directory, wherever it is, and writes the running core's last"
+        "withCoreEdit takes out an editor-core table that names the core from git, or another directory, wherever it is, and writes the running core's last"
       run :=
         let git :=
           "name = \"config\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n[[require]]\nname = \"editor-core\"\ngit = \"https://h/leanmacs\"\nrev = \"nightly-1\"\nsubDir = \"lean\"\n\n# My own package.\n[[require]]\nname = \"hello\"\npath = \"../hello\"\n\n" ++
@@ -166,19 +163,26 @@ def packageSetEditChecks : List Check :=
             library
         let otherRequired : Array Require :=
           required.push { name := "editor-core", source := .path "/elsewhere/lean" }
+        let edit := withCoreEdit "/c" (some core)
         pure
-          (withCore "/c" git gitRequired core == .ok (repaired, repairedRequired) &&
-            withCore "/c" first firstRequired core == .ok (repaired, repairedRequired) &&
-            withCore "/c" other otherRequired core == .ok (repaired, repairedRequired)) },
+          (edit git gitRequired unedited == .ok repaired &&
+            edit first firstRequired unedited == .ok repaired &&
+            edit other otherRequired unedited == .ok repaired) },
     { name :=
-        "withCore answers a lakefile whose last require is already the running core as it is, so a repaired lakefile is a fixed point; one with no table gets the core's at its end"
+        "withCoreEdit answers a lakefile whose last require is already the running core, and no other editor-core, as it is when the edit changes nothing, so a repaired lakefile is a fixed point, however its core's table is written; one with no table gets the core's at its end"
       run :=
+        let spelled :=
+          "name = \"config\"\n\n" ++ tables_ ++
+            "[[require]]\n# The running core.\nname = \"editor-core\"\npath = '/w/./lean'\n" ++
+            library
+        let edit := withCoreEdit "/c" (some core)
         pure
-          (withCore "/c" repaired repairedRequired core == .ok (repaired, repairedRequired) &&
-            withCore "/c" "name = \"c\"" #[] core ==
-              .ok
-                ("name = \"c\"\n\n[[require]]\nname = \"editor-core\"\npath = \"/w/lean\"\n",
-                  #[{ name := "editor-core", source := .path core }])) },
+          (edit repaired repairedRequired unedited == .ok repaired &&
+            edit spelled (required.push { name := "editor-core", source := .path "/w/./lean" })
+                unedited ==
+              .ok spelled &&
+            edit "name = \"c\"" #[] unedited ==
+              .ok "name = \"c\"\n\n[[require]]\nname = \"editor-core\"\npath = \"/w/lean\"\n") },
     { name :=
         "the core's require is the running core's when its path resolves to it against the config directory, as the fingerprint decides: ../lean from /w/x, last, is a fixed point; lean is not the core and is replaced"
       run :=
@@ -194,10 +198,10 @@ def packageSetEditChecks : List Check :=
             library
         pure
           (isCoreAt "/w/x" core (at_ "../lean") && !isCoreAt "/w/x" core (at_ "lean") &&
-            withCore "/w/x" relative (required.push (at_ "../lean")) core ==
-              .ok (relative, required.push (at_ "../lean")) &&
-            withCore "/w/x" elsewhere (required.push (at_ "lean")) core ==
-              .ok (repaired, repairedRequired)) },
+            withCoreEdit "/w/x" (some core) relative (required.push (at_ "../lean")) unedited ==
+              .ok relative &&
+            withCoreEdit "/w/x" (some core) elsewhere (required.push (at_ "lean")) unedited ==
+              .ok repaired) },
     { name :=
         "install, remove and set a rev, each made with the core's require taken out first and written back after, answer a text whose last require is the core, an installed package before it"
       run :=
@@ -207,33 +211,33 @@ def packageSetEditChecks : List Check :=
         let gitRequired : Array Require :=
           #[required[0]!, { name := "g", source := .git "https://h/g" (some "v1") none }]
         pure
-          (withCoreEdit (some core) lakefile required (install · · x) ==
+          (withCoreEdit "/c" (some core) lakefile required (install · · x) ==
               .ok
                 ("name = \"config\"\n\n" ++ tables_ ++
                   "[[require]]\nname = \"x\"\npath = \"/p/x\"\n\n" ++
                   coreTable ++
                   library) &&
-            withCoreEdit (some core) repaired repairedRequired (install · · x) ==
+            withCoreEdit "/c" (some core) repaired repairedRequired (install · · x) ==
               .ok
                 ("name = \"config\"\n\n" ++ tables_ ++
                   "[[require]]\nname = \"x\"\npath = \"/p/x\"\n\n" ++
                   coreTable ++
                   library) &&
-            withCoreEdit (some core) lakefile required
+            withCoreEdit "/c" (some core) lakefile required
                 (remove · · "hello" "/c" (some "default-set") setRequired) ==
               .ok
                 ("name = \"config\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n" ++
                   coreTable ++
                   "# My own package.\n" ++
                   library) &&
-            withCoreEdit (some core) gitLakefile gitRequired (setRev · · "g" "v2") ==
+            withCoreEdit "/c" (some core) gitLakefile gitRequired (setRev · · "g" "v2") ==
               .ok
                 ("name = \"config\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n[[require]]\nname = \"g\"\ngit = \"https://h/g\"\nrev = \"v2\"\n\n[[require]]\nname = \"editor-core\"\npath = \"/w/lean\"\n")) },
     { name :=
         "removing a default package expands the set without the core's require, which the root already holds: the expansion holds one editor-core, the running core's, last"
       run :=
         pure
-          (withCoreEdit (some core) lakefile required
+          (withCoreEdit "/c" (some core) lakefile required
               (remove · · "compile" "/c" (some "default-set") setRequired) ==
             .ok
               ("name = \"config\"\n\n[[require]]\nname = \"shipped-themes\"\npath = \"/w/packages/shipped-themes\"\n\n# My own package.\n[[require]]\nname = \"hello\"\npath = \"../hello\"\n\n" ++
@@ -242,7 +246,7 @@ def packageSetEditChecks : List Check :=
     { name := "an editor that knows no directory of its core refuses every edit, saying so"
       run :=
         pure
-          (withCoreEdit none lakefile required
+          (withCoreEdit "/c" none lakefile required
               (install · · { name := "x", source := .path "/p/x" }) ==
             .error
               "this editor knows no directory of its core, so it cannot write the lakefile's editor-core require") }]
