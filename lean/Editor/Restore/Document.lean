@@ -171,8 +171,9 @@ def Spot.ofJson? (value : Json.Value) : Option Spot := do
 
 /-- A place from JSON, or none. -/
 def Place.ofJson? (value : Json.Value) : Option Place := do
-  return { view := ← Journal.natField? value "view", anchor := ← Spot.ofJson? (← value.field? "anchor")
-           head := ← Spot.ofJson? (← value.field? "head"), top := ← Journal.natField? value "top" }
+  return {
+      view := ← Journal.natField? value "view", anchor := ← Spot.ofJson? (← value.field? "anchor")
+      head := ← Spot.ofJson? (← value.field? "head"), top := ← Journal.natField? value "top" }
 
 /-- An optional string member: `some none` when absent, `none` when it is
 there and not a string. -/
@@ -186,34 +187,46 @@ def optionalString? (value : Json.Value) (name : String) : Option (Option String
 def Document.Buffer.ofJson? (value : Json.Value) : Option Document.Buffer := do
   let file ←
     match value.field? "file" with
-    | none => some none
+    | none =>
+      some none
     | some file =>
-      some (some { path := ← Journal.stringField? file "path"
-                   stamp := ← Journal.stampOf? (← file.field? "stamp") })
+      some
+          (some
+            { path := ← Journal.stringField? file "path"
+              stamp := ← Journal.stampOf? (← file.field? "stamp") })
   let minors ←
     match value.field? "minors" with
-    | none => some #[]
+    | none =>
+      some #[]
     | some (.array items) =>
       items.mapM fun item =>
-        match item with
-        | .string name => some name
-        | _ => none
-    | some _ => none
+          match item with
+          | .string name => some name
+          | _ => none
+    | some _ =>
+      none
   let journal ←
     match value.field? "journal" with
-    | none => some none
+    | none =>
+      some none
     | some journal =>
-      some (some { key := ← Journal.natField? journal "key"
-                   generation := ← Journal.natField? journal "generation" })
+      some
+          (some
+            { key := ← Journal.natField? journal "key"
+              generation := ← Journal.natField? journal "generation" })
   let views ←
     match value.field? "views" with
-    | none => some #[]
-    | some (.array items) => items.mapM Place.ofJson?
-    | some _ => none
-  return { key := ← Journal.natField? value "key", name := ← Journal.stringField? value "name"
-           file, lineEnding := ← Journal.endingOf? (← Journal.stringField? value "lineEnding")
-           major := ← optionalString? value "major", minors
-           language := ← optionalString? value "language", journal, views }
+    | none =>
+      some #[]
+    | some (.array items) =>
+      items.mapM Place.ofJson?
+    | some _ =>
+      none
+  return {
+      key := ← Journal.natField? value "key", name := ← Journal.stringField? value "name"
+      file, lineEnding := ← Journal.endingOf? (← Journal.stringField? value "lineEnding")
+      major := ← optionalString? value "major", minors
+      language := ← optionalString? value "language", journal, views }
 
 /-- What a read of an index came to. -/
 structure Document.Read where
@@ -239,43 +252,51 @@ def unparsed (name why : String) : String :=
 
 /-- The index the text `text` of the file called `name` holds, by the
 version rule ("The version rule", in the module docs). -/
-def Document.read (name text : String) : Document.Read := Id.run do
-  let value ←
-    match Json.parse text.toUTF8 with
-    | .ok value => pure value
-    | .error why => return { report := #[unparsed name why] }
-  let some found := Journal.natField? value "format" | return { report := #[unparsed name "it has no format"] }
-  let some run := Journal.natField? value "run" | return { report := #[unparsed name "it has no run"] }
-  let newer := found > indexFormat
-  let mut report :=
-    if newer then
-      #[s!"{name} is of format {found}, newer than this editor's {indexFormat}: what is known of it is restored, and it is left as it is"] ++
-        (unknownKeys value Document.knownKeys).map fun key => s!"{name}: the key {key} is not known"
-    else #[]
-  let mut buffers := #[]
-  let entries :=
-    match value.field? "buffers" with
-    | some (.array items) => items
-    | _ => #[]
-  for index in [0:entries.size] do
-    let entry := entries[index]!
-    match Document.Buffer.ofJson? entry with
-    | some buffer =>
-      buffers := buffers.push buffer
+def Document.read (name text : String) : Document.Read :=
+  Id.run do
+    let value ←
+      match Json.parse text.toUTF8 with
+      | .ok value =>
+        pure value
+      | .error why =>
+        return { report := #[unparsed name why] }
+    let some found :=
+      Journal.natField? value "format" | return { report := #[unparsed name "it has no format"] }
+    let some run :=
+      Journal.natField? value "run" | return { report := #[unparsed name "it has no run"] }
+    let newer := found > indexFormat
+    let mut report :=
       if newer then
-        report :=
-          report ++
-            (unknownKeys entry Document.Buffer.knownKeys).map fun key =>
-              s!"{name}: buffer {buffer.key}: the key {key} is not known"
-    | none =>
-      report := report.push s!"{name}: buffer entry {index + 1} does not parse and is skipped"
-  let ended :=
-    match value.field? "ended" with
-    | some (.bool ended) => ended
-    | _ => false
-  return {
-      document := some { format := found, run, ended, focused := Journal.natField? value "focused", buffers }
-      newer, report }
+        #[s!"{name} is of format {found}, newer than this editor's {indexFormat}: what is known of it is restored, and it is left as it is"] ++
+          (unknownKeys value Document.knownKeys).map fun key =>
+            s!"{name}: the key {key} is not known"
+      else #[]
+    let mut buffers := #[]
+    let entries :=
+      match value.field? "buffers" with
+      | some (.array items) => items
+      | _ => #[]
+    for index in [0:entries.size] do
+      let entry := entries[index]!
+      match Document.Buffer.ofJson? entry with
+      | some buffer =>
+        buffers := buffers.push buffer
+        if newer then
+          report :=
+            report ++
+              (unknownKeys entry Document.Buffer.knownKeys).map fun key =>
+                s!"{name}: buffer {buffer.key}: the key {key} is not known"
+      | none =>
+        report := report.push s!"{name}: buffer entry {index + 1} does not parse and is skipped"
+    let ended :=
+      match value.field? "ended" with
+      | some (.bool ended) => ended
+      | _ => false
+    return {
+        document :=
+          some
+            { format := found, run, ended, focused := Journal.natField? value "focused", buffers }
+        newer, report }
 
 /-- The name of a run's index file. -/
 def indexName (run : Nat) : String :=
@@ -295,9 +316,12 @@ def journalStem (run buffer generation : Nat) : String :=
 whether it is the base (`.base`) or the log (`.log`). -/
 def journalOf? (name : String) : Option (Nat × Nat × Nat × Bool) := do
   let (stem, base) ←
-    if name.endsWith ".base" then some ((name.dropEnd 5).toString, true)
-    else if name.endsWith ".log" then some ((name.dropEnd 4).toString, false)
-    else none
+    if name.endsWith ".base" then
+      some ((name.dropEnd 5).toString, true)
+    else if name.endsWith ".log" then
+      some ((name.dropEnd 4).toString, false)
+    else
+      none
   let [run, buffer, generation] := stem.splitOn "-" | none
   return (← run.toNat?, ← buffer.toNat?, ← generation.toNat?, base)
 
@@ -305,8 +329,7 @@ def journalOf? (name : String) : Option (Nat × Nat × Nat × Bool) := do
 the files of the session directory and of its journals, and by `runs`, the
 `run` of each index read ("The next run", in the module docs). -/
 def nextRun (names : Array String) (runs : Array Nat) : Nat :=
-  let named :=
-    names.filterMap fun name => (runOfIndex? name) <|> ((journalOf? name).map (·.1))
+  let named := names.filterMap fun name => (runOfIndex? name) <|> ((journalOf? name).map (·.1))
   (named ++ runs).foldl max 0 + 1
 
 /-- What a restore makes of the indexes it read ("Choosing", in the module
@@ -327,8 +350,7 @@ def Document.choose (indexes : Array (Nat × Document.Read)) : Document.Choice :
   let highest := sorted.back?
   let restored : Option Document :=
     highest.bind fun (_, read) => read.document.filter fun (document : Document) => !document.ended
-  let understood (read : Document.Read) : Bool :=
-    read.document.isSome && !read.newer
+  let understood (read : Document.Read) : Bool := read.document.isSome && !read.newer
   { restored
     remove := (sorted.filter (understood ·.2)).map (·.1)
     report := sorted.flatMap (·.2.report) }

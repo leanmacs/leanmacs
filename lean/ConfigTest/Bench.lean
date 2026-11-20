@@ -1111,14 +1111,17 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
 
 /-- A text of about `size` bytes in lines of 52, as `milestone-bench`
 generates its file: `%07d the quick brown fox jumps over the lazy dog`. -/
-def journalText (size : Nat) : String := Id.run do
-  let mut text := ""
-  let mut line := 0
-  while text.utf8ByteSize < size do
-    let number := toString line
-    text := text ++ "".pushn '0' (7 - number.length) ++ number ++ " the quick brown fox jumps over the lazy dog\n"
-    line := line + 1
-  return text
+def journalText (size : Nat) : String :=
+  Id.run do
+    let mut text := ""
+    let mut line := 0
+    while text.utf8ByteSize < size do
+      let number := toString line
+      text :=
+        text ++ "".pushn '0' (7 - number.length) ++ number ++
+          " the quick brown fox jumps over the lazy dog\n"
+      line := line + 1
+    return text
 
 /-- The times of `inserts` one-character inserts into a file buffer of
 `size` bytes at `position` (`start`, `middle` or `end`), each timed from
@@ -1154,7 +1157,8 @@ def journalTimes (directory : System.FilePath) (size : Nat) (position : String) 
     return texts
   -- The first reconcile writes the base and the header.
   let (reconciled, after) ← (Restore.journalOrders state true false).runReal texts
-  let .ok reconciled := reconciled | throw (IO.userError "bench-journal: the first reconcile was refused")
+  let .ok reconciled :=
+    reconciled | throw (IO.userError "bench-journal: the first reconcile was refused")
   state := reconciled.state
   texts ← perform reconciled.orders after
   let mut times := #[]
@@ -1192,10 +1196,10 @@ the gate never does. -/
 def journal : IO UInt8 := do
   IO.println "bench-journal: median / p99 / max, µs per insert"
   IO.FS.withTempDir fun directory => do
-    for (size, label) in [(4096, "4KiB"), (1048576, "1MiB"), (10485760, "10MiB")] do
-      for position in ["start", "middle", "end"] do
-        let times ← journalTimes directory size position 10000
-        IO.println (Row.of s!"journal_order/{label}/{position}" times).line
+      for (size, label) in [(4096, "4KiB"), (1048576, "1MiB"), (10485760, "10MiB")] do
+        for position in ["start", "middle", "end"] do
+          let times ← journalTimes directory size position 10000
+          IO.println (Row.of s!"journal_order/{label}/{position}" times).line
   return 0
 
 end Bench

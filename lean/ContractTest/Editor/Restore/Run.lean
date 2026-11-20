@@ -1,12 +1,12 @@
 import ContractTest.Check
 import Editor.Api
-import Editor.Files.Compiled
 import Editor.Ffi.Files
+import Editor.Files.Compiled
 import Editor.InputScheme.Test
 import Editor.Loop
 import Editor.Restore.Compiled
-import Editor.Text.Model
 import Editor.Test.Linked.Rig
+import Editor.Text.Model
 
 /-!
 # Contract tests: `Editor/Restore/Run.lean`
@@ -68,7 +68,7 @@ def performOrder (rig : ProjectRig) (order : Restore.Order) : IO Unit := do
   | .remove path =>
     discard <| Ffi.filesRemoveUnobserved path.toString
   | .save (.snapshot id) path _ =>
-    if let some snapshot ← rig.published.reader.find? id then
+    if let some snapshot← rig.published.reader.find? id then
       discard <| Ffi.filesSaveUnobserved snapshot path.toString
   | _ =>
     pure ()
@@ -83,8 +83,7 @@ def runRestoring (rig : ProjectRig) (state : System.FilePath) (invocations : Lis
     return { loop with state := loop.state.hostedBy "/" none (some state) }
   let (started, texts) ← begin.runReal (RealTexts.over rig.published) rig.display
   let .ok loop := started | return none
-  runSettledFrom rig loop texts invocations restoreKeys restoreJobs
-    (journal := performOrder rig)
+  runSettledFrom rig loop texts invocations restoreKeys restoreJobs (journal := performOrder rig)
 
 /-- The checks of session restore over the real bindings, in a directory of
 their own, temporary. -/
@@ -99,8 +98,8 @@ def restoreRunChecks (services : Job.Services) : List Check :=
           let rig ← ProjectRig.over services
           let some (typed, texts) ←
             runRestoring rig state
-                [{ command := "start-restore", arguments := [.str state.toString] },
-                  openFile a, { command := "type-text", arguments := [.str "typed "] },
+                [{ command := "start-restore", arguments := [.str state.toString] }, openFile a,
+                  { command := "type-text", arguments := [.str "typed "] },
                   { command := "type-text", arguments := [.str "more "] }] | return false
           -- The journal's writes are unobserved: they are done once the
           -- service holds no request.
@@ -108,7 +107,8 @@ def restoreRunChecks (services : Job.Services) : List Check :=
             return false
           let edited ← bufferText rig texts typed "a.txt"
           let some index := typed.state.findFile a | return false
-          let some live := typed.state.restore.journals.find? (·.buffer == index.index) | return false
+          let some live :=
+            typed.state.restore.journals.find? (·.buffer == index.index) | return false
           let base ← IO.FS.readBinFile (Restore.basePath state 1 index.index live.generation)
           let log ← IO.FS.readBinFile (Restore.logPath state 1 index.index live.generation)
           let decoded := Restore.Journal.decode (File.decodeBytes log)
@@ -119,13 +119,13 @@ def restoreRunChecks (services : Job.Services) : List Check :=
           let fromDisk := (replayed.runModel {}).1.toOption
           let fresh ← ProjectRig.over services
           let some (restored, freshTexts) ←
-            runRestoring fresh state [{ command := "start-restore", arguments := [.str state.toString] }]
-            | return false
+            runRestoring fresh state
+                [{ command := "start-restore", arguments := [.str state.toString] }] | return false
           let again ← bufferText fresh freshTexts restored "a.txt"
           let buffer := (restored.state.findFile a).bind restored.state.buffer?
-          return edited == some "typed more first line\nsecond line\n" &&
-              fromDisk == edited &&
-              decoded.records.size == 1 && again == edited &&
+          return edited == some "typed more first line\nsecond line\n" && fromDisk == edited &&
+              decoded.records.size == 1 &&
+              again == edited &&
               (buffer.map Buffer.isModified) == some true &&
               restored.state.restore.run == some 2 }]
 

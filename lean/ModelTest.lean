@@ -117,6 +117,10 @@ import ModelTest.Editor.ProjectMode.Format
 import ModelTest.Editor.ProjectMode.Listing
 import ModelTest.Editor.ProjectSearch
 import ModelTest.Editor.ProjectSearch.Run
+import ModelTest.Editor.Restore
+import ModelTest.Editor.Restore.Document
+import ModelTest.Editor.Restore.Journal
+import ModelTest.Editor.Restore.Run
 import ModelTest.Editor.Scene
 import ModelTest.Editor.Scroll
 import ModelTest.Editor.Setup
@@ -163,10 +167,6 @@ import ModelTest.Editor.WorkingSet.Disk
 import ModelTest.Editor.WorkingSet.Places
 import ModelTest.Editor.WorkingSet.Refind
 import ModelTest.Editor.WorkingSet.Run
-import ModelTest.Editor.Restore
-import ModelTest.Editor.Restore.Document
-import ModelTest.Editor.Restore.Journal
-import ModelTest.Editor.Restore.Run
 import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
 import ModelTest.Editor.Workspace.Contract

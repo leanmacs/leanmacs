@@ -118,7 +118,6 @@ def packages : Array Package :=
     Ex.package, Buffers.package, FrameCommands.package, Menu.package, WindowCommands.package,
     TabCommands.package, Themes.package, ExecuteCommand.package, BindingSearch.package,
     Workspace.package, ProjectSearch.package, WorkingSet.package, Restore.package, Shell.package,
-    AtPoint.package,
-    VersionControl.package, VersionControl.gutterPackage, Language.package]
+    AtPoint.package, VersionControl.package, VersionControl.gutterPackage, Language.package]
 
 end EditorCore.EditorPackage

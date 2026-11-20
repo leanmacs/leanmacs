@@ -22,7 +22,8 @@ def sample : Document :=
   { run := 3, focused := some 2
     buffers :=
       #[{ key := 1, name := "a.txt"
-          file := some { path := "/r/a.txt", stamp := { seconds := 9, nanoseconds := 1, size := 40 } }
+          file :=
+            some { path := "/r/a.txt", stamp := { seconds := 9, nanoseconds := 1, size := 40 } }
           lineEnding := .crlf, major := some "code", minors := #["outline", "spell"]
           language := some "lean", journal := some { key := 1, generation := 2 }
           views :=
@@ -44,7 +45,8 @@ end RestoreDocumentTest
 open RestoreDocumentTest in
 /-- The checks of the session index (`Editor/Restore/Document.lean`). -/
 def restoreDocumentChecks : List Check :=
-  [{  name := "an index of this editor's format written and read again is the index, with nothing to say"
+  [{  name :=
+        "an index of this editor's format written and read again is the index, with nothing to say"
       run :=
         pure <|
           let read := readAs "session-3.json" sample.render
@@ -66,7 +68,8 @@ def restoreDocumentChecks : List Check :=
     { name := "a buffer entry that does not parse is skipped and said; the others are read"
       run :=
         pure <|
-          let text := "{\"format\":1,\"run\":2,\"buffers\":[{\"name\":1},{\"key\":4,\"name\":\"n\",\"lineEnding\":\"lf\"}]}"
+          let text :=
+            "{\"format\":1,\"run\":2,\"buffers\":[{\"name\":1},{\"key\":4,\"name\":\"n\",\"lineEnding\":\"lf\"}]}"
           let read := readAs "session-2.json" text
           (read.document.map (·.buffers.map (·.key))) == some #[4] &&
             read.report == #["session-2.json: buffer entry 1 does not parse and is skipped"] },
@@ -83,7 +86,8 @@ def restoreDocumentChecks : List Check :=
         pure <|
           let choice :=
             Document.choose
-              #[(5, readAs "session-5.json" newerText), (2, readAs "session-2.json" { sample with run := 2 }.render),
+              #[(5, readAs "session-5.json" newerText),
+                (2, readAs "session-2.json" { sample with run := 2 }.render),
                 (4, readAs "session-4.json" "not json"), (3, readAs "session-3.json" sample.render)]
           (choice.restored.map (·.run)) == some 5 && choice.remove == #[2, 3] &&
             choice.report.size == 5 &&
@@ -102,20 +106,25 @@ def restoreDocumentChecks : List Check :=
         pure <|
           let choice :=
             Document.choose
-              #[(4, readAs "session-4.json" "{"), (2, readAs "session-2.json" { sample with run := 2 }.render)]
+              #[(4, readAs "session-4.json" "{"),
+                (2, readAs "session-2.json" { sample with run := 2 }.render)]
           choice.restored.isNone && choice.remove == #[2] },
     { name :=
         "the next run is one more than the largest found in index names, index runs and journal names; names of neither are passed over"
       run :=
         pure <|
-          nextRun #["session-3.json", "7-2-1.log", "7-2-1.base", "notes.txt", "session-x.json"] #[4] == 8 &&
-            nextRun #[] #[] == 1 && nextRun #["session-12.json"] #[30] == 31 },
+          nextRun #["session-3.json", "7-2-1.log", "7-2-1.base", "notes.txt", "session-x.json"]
+                #[4] ==
+              8 &&
+            nextRun #[] #[] == 1 &&
+            nextRun #["session-12.json"] #[30] == 31 },
     { name := "journal names and index names are read back"
       run :=
         pure <|
           journalOf? s!"{journalStem 3 4 5}.base" == some (3, 4, 5, true) &&
             journalOf? s!"{journalStem 3 4 5}.log" == some (3, 4, 5, false) &&
-            journalOf? "3-4.log" == none && runOfIndex? (indexName 9) == some 9 &&
+            journalOf? "3-4.log" == none &&
+            runOfIndex? (indexName 9) == some 9 &&
             runOfIndex? "session-.json" == none }]
 
 end ModelTest

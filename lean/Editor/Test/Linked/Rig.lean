@@ -192,8 +192,7 @@ what the job held (`Job.finishWith`); each taken in the same way, at most
 in time or ended otherwise than finished, or a step was refused. -/
 partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
     (stepped : Loop.Stepped TestScheme.scheme) (depth : Nat := 8)
-    (keys : Loop.Keys TestScheme.scheme := rigKeys)
-    (jobs : Array Config.JobRegistration := rigJobs)
+    (keys : Loop.Keys TestScheme.scheme := rigKeys) (jobs : Array Config.JobRegistration := rigJobs)
     (journal : Restore.Order → IO Unit := fun _ => pure ()) :
     IO (Option (Loop TestScheme.scheme × RealTexts)) := do
   if depth == 0 then
@@ -205,12 +204,14 @@ partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
   for order in stepped.journal do
     journal order
   for id in stepped.journal.filterMap (·.release) do
-    let releasing : EditorM Unit := discard <| (observing (TextSource.snapshot id).release : TextM _)
+    let releasing : EditorM Unit :=
+      discard <| (observing (TextSource.snapshot id).release : TextM _)
     texts := (← releasing.runReal texts rig.display).2
   for invocation in stepped.answered do
     let (next, after) ← (loop.invoke keys invocation).runReal texts rig.display
     let .ok next := next | return none
-    let some (settled, after) ← settleProjects rig after next (depth - 1) keys jobs journal | return none
+    let some (settled, after) ←
+      settleProjects rig after next (depth - 1) keys jobs journal | return none
     loop := settled
     texts := after
   for start in stepped.starts do
@@ -225,14 +226,16 @@ partial def settleProjects (rig : ProjectRig) (texts : RealTexts)
     for invocation in ← posts.get do
       let (next, after) ← (loop.deliver keys label (runPosted invocation)).runReal texts rig.display
       let .ok next := next | return none
-      let some (settled, after) ← settleProjects rig after next (depth - 1) keys jobs journal | return none
+      let some (settled, after) ←
+        settleProjects rig after next (depth - 1) keys jobs journal | return none
       loop := settled
       texts := after
     let some (.finished command) ← handle.outcome? | return none
     let (next, after) ←
       Job.finishWith rig.held handle (loop.deliver keys label command) texts rig.display
     let .ok next := next | return none
-    let some (settled, after) ← settleProjects rig after next (depth - 1) keys jobs journal | return none
+    let some (settled, after) ←
+      settleProjects rig after next (depth - 1) keys jobs journal | return none
     loop := settled
     texts := after
   return some (loop, texts)
@@ -250,7 +253,8 @@ def runSettledFrom (rig : ProjectRig) (loop : Loop TestScheme.scheme) (texts : R
     let (stepped, after) ← (loop.invoke keys invocation).runReal texts rig.display
     let .ok stepped := stepped | return none
     let some (settled, after) ←
-      settleProjects rig after stepped (keys := keys) (jobs := jobs) (journal := journal) | return none
+      settleProjects rig after stepped (keys := keys) (jobs := jobs) (journal :=
+          journal) | return none
     loop := settled
     texts := after
   return some (loop, texts)

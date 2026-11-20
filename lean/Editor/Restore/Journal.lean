@@ -115,10 +115,10 @@ def Record.toJson : Record → Json.Value
   | .header first =>
     .object <|
       #[("format", natJson format), ("kind", .string "header"), ("name", .string first.name)] ++
-          (first.path.map fun path => #[("path", Json.Value.string path)]).getD #[] ++
+        (first.path.map fun path => #[("path", Json.Value.string path)]).getD #[] ++
         (first.stamp.map fun stamp => #[("stamp", stampJson stamp)]).getD #[] ++
-      #[("lineEnding", .string (endingName first.lineEnding)),
-        ("revision", natJson first.revision)]
+        #[("lineEnding", .string (endingName first.lineEnding)),
+          ("revision", natJson first.revision)]
   | .edits made =>
     .object
       #[("kind", .string "edits"),
@@ -164,8 +164,9 @@ def stringField? (value : Json.Value) (name : String) : Option String := do
 /-- A stamp from JSON, or none. -/
 def stampOf? (value : Json.Value) : Option File.Stamp := do
   let .number seconds ← value.field? "seconds" | none
-  return { seconds := ← seconds.toInt?, nanoseconds := ← natField? value "nanoseconds"
-           size := ← natField? value "size" }
+  return {
+      seconds := ← seconds.toInt?, nanoseconds := ← natField? value "nanoseconds"
+      size := ← natField? value "size" }
 
 /-- A line ending from its name, or none. -/
 def endingOf? : String → Option File.LineEnding
@@ -177,16 +178,22 @@ def endingOf? : String → Option File.LineEnding
 def headerOf? (value : Json.Value) : Option Header := do
   let path ←
     match value.field? "path" with
-    | none => some none
-    | some (.string path) => some (some path)
-    | some _ => none
+    | none =>
+      some none
+    | some (.string path) =>
+      some (some path)
+    | some _ =>
+      none
   let stamp ←
     match value.field? "stamp" with
-    | none => some none
-    | some stamp => (stampOf? stamp).map some
-  return { name := ← stringField? value "name", path, stamp
-           lineEnding := ← endingOf? (← stringField? value "lineEnding")
-           revision := ← natField? value "revision" }
+    | none =>
+      some none
+    | some stamp =>
+      (stampOf? stamp).map some
+  return {
+      name := ← stringField? value "name", path, stamp
+      lineEnding := ← endingOf? (← stringField? value "lineEnding")
+      revision := ← natField? value "revision" }
 
 /-- An edit from JSON, or none: two offsets in order, then the pieces of its
 inserted text. -/
@@ -200,9 +207,9 @@ def editOf? (value : Json.Value) : Option Edit := do
     none
   let pieces ←
     (items.extract 2 items.size).mapM fun piece =>
-      match piece with
-      | .string text => some text
-      | _ => none
+        match piece with
+        | .string text => some text
+        | _ => none
   if pieces.isEmpty then
     none
   return { start, stop, inserted := "\x00".intercalate pieces.toList }
@@ -213,62 +220,68 @@ def editsOf? (value : Json.Value) : Option (Array Edit) := do
   let edits ← items.mapM editOf?
   let ordered :=
     (List.range (edits.size - 1)).all fun index => edits[index]!.stop ≤ edits[index + 1]!.start
-  if ordered then some edits else none
+  if ordered then
+    some edits
+  else
+    none
 
 /-- What the log's text `text` reads as ("Reading a log", in the module
 docs). -/
-def decode (text : String) : Decoded := Id.run do
-  let lines := (text.splitOn "\n").toArray
-  -- A text that ends with a line break leaves an empty last piece.
-  let complete := text.endsWith "\n" || text.isEmpty
-  let count := if complete then lines.size - 1 else lines.size
-  let mut decoded : Decoded := {}
-  for index in [0:count] do
-    let line := lines[index]!
-    let last := index + 1 == count && !complete
-    let number := index + 1
-    match Json.parse line.toUTF8 with
-    | .error _ =>
-      if last then
-        decoded := { decoded with torn := line.utf8ByteSize }
-      else
-        decoded := { decoded with stopped := some s!"line {number} does not parse" }
-      break
-    | .ok value =>
-      if let some found := natField? value "format" then
-        if found > format then
+def decode (text : String) : Decoded :=
+  Id.run do
+    let lines := (text.splitOn "\n").toArray
+    -- A text that ends with a line break leaves an empty last piece.
+    let complete := text.endsWith "\n" || text.isEmpty
+    let count := if complete then lines.size - 1 else lines.size
+    let mut decoded : Decoded := {}
+    for index in [0:count] do
+      let line := lines[index]!
+      let last := index + 1 == count && !complete
+      let number := index + 1
+      match Json.parse line.toUTF8 with
+      | .error _ =>
+        if last then
+          decoded := { decoded with torn := line.utf8ByteSize }
+        else
+          decoded := { decoded with stopped := some s!"line {number} does not parse" }
+        break
+      | .ok value =>
+        if let some found := natField? value "format" then
+          if found > format then
+            decoded :=
+              { decoded with
+                stopped :=
+                  some s!"line {number} is of format {found}, newer than this editor's {format}" }
+            break
+        match stringField? value "kind" with
+        | some "header" =>
+          if index == 0 then
+            match headerOf? value with
+            | some header =>
+              decoded := { decoded with header := some header }
+            | none =>
+              decoded := { decoded with stopped := some s!"line {number} is not a header" }
+              break
+          else
+            decoded := { decoded with stopped := some s!"line {number} is a second header" }
+            break
+        | some "edits" =>
+          match editsOf? value with
+          | some edits =>
+            decoded := { decoded with records := decoded.records.push edits }
+          | none =>
+            decoded := { decoded with stopped := some s!"line {number} is not a record of edits" }
+            break
+        | some kind =>
           decoded :=
             { decoded with
-              stopped := some s!"line {number} is of format {found}, newer than this editor's {format}" }
+              stopped :=
+                some s!"line {number} is of the kind {kind}, which this editor does not know" }
           break
-      match stringField? value "kind" with
-      | some "header" =>
-        if index == 0 then
-          match headerOf? value with
-          | some header =>
-            decoded := { decoded with header := some header }
-          | none =>
-            decoded := { decoded with stopped := some s!"line {number} is not a header" }
-            break
-        else
-          decoded := { decoded with stopped := some s!"line {number} is a second header" }
-          break
-      | some "edits" =>
-        match editsOf? value with
-        | some edits =>
-          decoded := { decoded with records := decoded.records.push edits }
         | none =>
-          decoded := { decoded with stopped := some s!"line {number} is not a record of edits" }
+          decoded := { decoded with stopped := some s!"line {number} has no kind" }
           break
-      | some kind =>
-        decoded :=
-          { decoded with
-            stopped := some s!"line {number} is of the kind {kind}, which this editor does not know" }
-        break
-      | none =>
-        decoded := { decoded with stopped := some s!"line {number} has no kind" }
-        break
-  return decoded
+    return decoded
 
 /-- The transaction that makes the edits `edits` to a text of `length`
 bytes: each edit's bytes deleted and its text inserted, the rest kept. -/
@@ -304,7 +317,8 @@ def replay (text : TextId) (records : Array (Array Edit)) : TextM Nat := do
 text it inserted read from the text as it is now by `slice`. -/
 def editsOf (patch : Patch) (slice : Nat → Nat → TextM String) : TextM (Array Edit) :=
   patch.edits.mapM fun edit => do
-    return { start := edit.old.start, stop := edit.old.stop
-             inserted := ← slice edit.new.start edit.new.stop }
+    return {
+        start := edit.old.start, stop := edit.old.stop
+        inserted := ← slice edit.new.start edit.new.stop }
 
 end Editor.Restore.Journal

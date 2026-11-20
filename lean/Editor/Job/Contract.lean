@@ -528,7 +528,8 @@ def fileProperties : List FileProperty :=
           | .error refusal => refusal == error
           | .ok () => false
         return refusedAs atDirectory .notAFile && refusedAs throughFile .notAFile &&
-            refusedAs missing .notFound && refusedAs relative .relativePath
+            refusedAs missing .notFound &&
+            refusedAs relative .relativePath
       after := #[("a.txt", rawFile), ("sub", ByteArray.empty)] },
     { name :=
         "a remove removes the file, a remove of nothing is no error, and a relative path is refused relativePath"

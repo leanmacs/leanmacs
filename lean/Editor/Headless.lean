@@ -856,7 +856,7 @@ def Journal.real (published : SnapshotReader) : Journal where
     | .remove path =>
       discard <| Ffi.filesRemoveUnobserved path.toString
     | .save (.snapshot id) path _ =>
-      if let some snapshot ← published.find? id then
+      if let some snapshot← published.find? id then
         discard <| Ffi.filesSaveUnobserved snapshot path.toString
     | _ =>
       pure ()
@@ -2025,7 +2025,9 @@ def settleRestore (collaborators : Collaborators β σ scheme) (running : Runnin
   unless restored || !inFlight do
     return running
   let held := running.heldRequests
-  let mut running := { running with restoring := none, heldRequests := #[] }
+  let mut running :=
+    { running with
+      restoring := none, heldRequests := #[] }
   for request in held do
     running ← running.request collaborators request
   return running
@@ -2488,26 +2490,26 @@ def directive? (line : String) : Except String (Option Directive) :=
                         else
                           if line == "journal" then .ok (some .journal)
                           else
-                          if line == "journalled" then .ok (some .journalled)
-                          else
-                          if line == "abort" then .ok (some .abort)
-                          else
-                            if line == "idle" || line.startsWith "idle " then
-                              match (named line 4).bind String.toNat? with
-                              | some milliseconds => .ok (some (.idle milliseconds))
-                              | none =>
-                                .error
-                                  s!"`{line}` is not an idle: expected idle <milliseconds>, one number"
+                            if line == "journalled" then .ok (some .journalled)
                             else
-                              if line == "advance" || line.startsWith "advance " then
-                                match (named line 7).bind String.toNat? with
-                                | some milliseconds => .ok (some (.advance milliseconds))
-                                | none =>
-                                  .error
-                                    s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
+                              if line == "abort" then .ok (some .abort)
                               else
-                                .error
-                                  s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, agree, settle, join, idle <milliseconds>, advance <milliseconds>, journal, journalled, abort, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
+                                if line == "idle" || line.startsWith "idle " then
+                                  match (named line 4).bind String.toNat? with
+                                  | some milliseconds => .ok (some (.idle milliseconds))
+                                  | none =>
+                                    .error
+                                      s!"`{line}` is not an idle: expected idle <milliseconds>, one number"
+                                else
+                                  if line == "advance" || line.startsWith "advance " then
+                                    match (named line 7).bind String.toNat? with
+                                    | some milliseconds => .ok (some (.advance milliseconds))
+                                    | none =>
+                                      .error
+                                        s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
+                                  else
+                                    .error
+                                      s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, agree, settle, join, idle <milliseconds>, advance <milliseconds>, journal, journalled, abort, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -2953,7 +2955,9 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
     catch _ =>
       return none
   let recorded ← ModuleLookup.recorded appPath readFile
-  let { render := drawn, generate, sysroot, oleans, config := configDir, script := scriptPath, state } ←
+  let
+    { render := drawn, generate, sysroot, oleans, config := configDir, script := scriptPath, state }
+    ←
     match read appPath arguments recorded with
     | .ok read =>
       pure read

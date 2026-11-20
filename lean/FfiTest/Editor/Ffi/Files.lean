@@ -299,8 +299,10 @@ def fileChecks (_ : Unit) : List Check :=
             unless ← fileCompleted id do
               return false
             match ← Editor.Ffi.filesTake id with
-            | some .made => return true
-            | _ => return false
+            | some .made =>
+              return true
+            | _ =>
+              return false
           unless ← Editor.Ffi.filesAppend 1060 log.toString "one\n".toUTF8 do
             return false
           let first ← done 1060
@@ -320,7 +322,8 @@ def fileChecks (_ : Unit) : List Check :=
             return false
           let refused := (← Editor.Ffi.filesTake 1064).bind refusalOf
           return first && second && held == "one\n".toUTF8 ++ mixedBytes && removed && again &&
-              !(← log.pathExists) && refused == some .notFound },
+              !(← log.pathExists) &&
+              refused == some .notFound },
     { name :=
         "unobserved appends, a save and a remove are worked in order and never completed; a failure is kept with its path and taken once; pending falls to 0"
       run :=
@@ -346,7 +349,8 @@ def fileChecks (_ : Unit) : List Check :=
           let failure ← Editor.Ffi.filesFailure
           let once := (← Editor.Ffi.filesFailure).isNone
           return once && started.all id && drained && (← IO.FS.readBinFile log) == "ab".toUTF8 &&
-              (← IO.FS.readBinFile base) == mixedBytes && !(← source.pathExists) &&
+              (← IO.FS.readBinFile base) == mixedBytes &&
+              !(← source.pathExists) &&
               (failure.map (·.1)) == some missing.toString },
     { name :=
         "a file result the bindings cannot read is an error: a status the table does not have, words that are not the status's, and a load with no snapshot"

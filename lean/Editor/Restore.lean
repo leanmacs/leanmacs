@@ -161,9 +161,10 @@ def placeOf (text : TextId) (window : Window) : TextM (Option Place) := do
   let .selection selection ← text.marker window.selection | return none
   let some range := selection.ranges[selection.primary]? | return none
   let .anchor scroll ← text.marker window.scroll | return none
-  return some {
-      view := window.id.index, anchor := ← spotOf text range.anchor, head := ← spotOf text range.head
-      top := (← spotOf text scroll.offset).row }
+  return some
+      { view := window.id.index, anchor := ← spotOf text range.anchor,
+        head := ← spotOf text range.head
+        top := (← spotOf text scroll.offset).row }
 
 /-- The index of `state` now, for the run `run` ("The index", in the module
 docs). The focused view is the selected one (`EditorState.selectedView`): a
@@ -180,7 +181,7 @@ def Document.of (state : EditorState) (run : Nat) (ended : Bool := false) : Text
     let mut views := #[]
     for window in state.windows do
       if window.buffer == id then
-        if let .ok (some place) ← observing (placeOf buffer.text window) then
+        if let .ok (some place)← observing (placeOf buffer.text window) then
           views := views.push place
     -- The places a restore read and did not put back, as they were read:
     -- their views' ids are the earlier run's.
@@ -230,11 +231,12 @@ def generation (directory : System.FilePath) (run index number : Nat) (buffer : 
     { name := buffer.name, path := buffer.file.map (·.path.toString)
       stamp := buffer.file.map (·.stamp), lineEnding := buffer.lineEnding, revision }
   let bytes := (Journal.Record.header header).bytes
-  return (#[{ request := .save (.snapshot snapshot) (basePath directory run index number) .whatever
-              release := some snapshot },
-            { request := .append (logPath directory run index number) bytes }],
-    { buffer := index, generation := number, revision, logBytes := bytes.size, baseBytes := size
-      path := buffer.file.map (·.path), stamp := buffer.file.map (·.stamp) })
+  return (#[{
+          request := .save (.snapshot snapshot) (basePath directory run index number) .whatever
+          release := some snapshot },
+        { request := .append (logPath directory run index number) bytes }],
+      { buffer := index, generation := number, revision, logBytes := bytes.size, baseBytes := size
+        path := buffer.file.map (·.path), stamp := buffer.file.map (·.stamp) })
 
 /-- The reconciler ("The journal reconciler", in the module docs) of
 `state`: `enabled` when the `restore` package's jobs are registered, and
@@ -258,8 +260,13 @@ def journalOrders (state : EditorState) (enabled leaving : Bool)
     let save : Order :=
       { request := .save (.snapshot snapshot) (indexPath directory run) .whatever
         release := some snapshot }
-    return { state := { state with restore := { kept with journals := #[], ended := true } }
-             orders := orders.push save, cancels := #[writeJob, saveJob] }
+    return {
+        state :=
+          { state with
+            restore :=
+              { kept with
+                journals := #[], ended := true } }
+        orders := orders.push save, cancels := #[writeJob, saveJob] }
   let mut orders := #[]
   let mut journals := #[]
   let mut next := kept.nextGeneration
@@ -288,20 +295,27 @@ def journalOrders (state : EditorState) (enabled leaving : Bool)
         journals := journals.push journal
         continue
       let record : Option (Nat × ByteArray) ←
-        if !sameFile then pure none
+        if !sameFile then
+          pure none
         else
           match ← observing (buffer.text.changesSince journal.revision) with
-          | .error _ => pure none
+          | .error _ =>
+            pure none
           | .ok patch =>
             let edits ← Journal.editsOf patch buffer.text.slice
             let bytes := (Journal.Record.edits edits).bytes
-            if journal.logBytes + bytes.size > max limit journal.baseBytes then pure none
-            else pure (some (patch.revision, bytes))
+            if journal.logBytes + bytes.size > max limit journal.baseBytes then
+              pure none
+            else
+              pure (some (patch.revision, bytes))
       match record with
       | some (revision, bytes) =>
-        orders := orders.push { request := .append (logPath directory run index journal.generation) bytes }
+        orders :=
+          orders.push { request := .append (logPath directory run index journal.generation) bytes }
         journals :=
-          journals.push { journal with revision, logBytes := journal.logBytes + bytes.size }
+          journals.push
+            { journal with
+              revision, logBytes := journal.logBytes + bytes.size }
       | none =>
         let (made, fresh) ← generation directory run index next buffer
         next := next + 1
@@ -325,10 +339,12 @@ def journalOrders (state : EditorState) (enabled leaving : Bool)
     let entry := { entry with generation := entry.generation.getD configGeneration }
     if entry.generation.any (configGeneration > ·) then
       if registered entry.mode then
-        answered := answered.push { command := modesName, arguments := [.nat entry.buffer, .str entry.mode] }
+        answered :=
+          answered.push { command := modesName, arguments := [.nat entry.buffer, .str entry.mode] }
       else
         let name := ((state.buffer? ⟨entry.buffer⟩).map (·.name)).getD s!"buffer {entry.buffer}"
-        said := some s!"restore: no mode is registered as {entry.mode}: {name} is restored without it"
+        said :=
+          some s!"restore: no mode is registered as {entry.mode}: {name} is restored without it"
     else
       deferred := deferred.push entry
   let kept :=
@@ -337,7 +353,9 @@ def journalOrders (state : EditorState) (enabled leaving : Bool)
       places :=
         kept.places.filter fun entry =>
           (state.buffer? ⟨entry.buffer⟩).any (·.history.head == entry.revision) }
-  let state := { state with restore := kept, echo := said.getD state.echo }
+  let state :=
+    { state with
+      restore := kept, echo := said.getD state.echo }
   -- The index, once it differs from the last written and no write is
   -- pending: while one is, the index is not even made, since the write
   -- renders the index as it is when it fires.
@@ -348,6 +366,7 @@ def journalOrders (state : EditorState) (enabled leaving : Bool)
     return { state, orders, answered }
   return {
       state := { state with restore := { kept with writing := true } }, orders, answered
-      starts := #[{ name := writeJob, arguments := [.str directory.toString], key := some writeJob }] }
+      starts :=
+        #[{ name := writeJob, arguments := [.str directory.toString], key := some writeJob }] }
 
 end Editor.Restore

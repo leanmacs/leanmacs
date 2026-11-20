@@ -117,7 +117,9 @@ def setKept (kept : Kept) : EditorM Unit :=
 /-- The restore, finished, with `report` said in the echo area: nothing is
 journalled, since the run has no number. -/
 def failed (report : String) : EditorM Unit := do
-  setKept { (← editorState).restore with restored := true, pending := none }
+  setKept
+      { (← editorState).restore with
+        restored := true, pending := none }
   message report
 
 /-- Sets the modes of the buffer `id` by name, language before major: a
@@ -129,8 +131,10 @@ def setModes (id : BufferId) (major : Option String) (minors : Array String)
   let mut deferred := #[]
   if let some mode := major then
     match ← id.setMajorMode mode with
-    | .error (.noSuchMode _) => deferred := deferred.push { buffer := id.index, mode }
-    | _ => pure ()
+    | .error (.noSuchMode _) =>
+      deferred := deferred.push { buffer := id.index, mode }
+    | _ =>
+      pure ()
   for minor in minors.reverse do
     discard <| id.addMinorMode minor
   return deferred
@@ -185,7 +189,8 @@ def intoScratch (text : TextId) : EditorM (Option BufferId) := do
 and `restore-files` started for the rest. -/
 def read (loaded : Loaded) : EditorM Unit := do
   if let .error error := loaded.made then
-    failed s!"restore: {journalsDirectory loaded.directory} cannot be made: {error.describe}; nothing is restored or journalled"
+    failed
+        s!"restore: {journalsDirectory loaded.directory} cannot be made: {error.describe}; nothing is restored or journalled"
     return
   let mut report : Array String := #[]
   -- The indexes, by the version rule.
@@ -195,10 +200,15 @@ def read (loaded : Loaded) : EditorM Unit := do
     | .ok file =>
       reads := reads.push (run, Document.read name (← textOf file))
     | .error error =>
-      reads := reads.push (run, { report := #[s!"{name} cannot be loaded ({error.describe}): it is left as it is"] })
+      reads :=
+        reads.push
+          (run,
+            { report := #[s!"{name} cannot be loaded ({error.describe}): it is left as it is"] })
   let choice := Document.choose reads
   report := report ++ choice.report
-  let run := nextRun (loaded.sessionNames ++ loaded.journalNames) (reads.filterMap (·.2.document.map (·.run)))
+  let run :=
+    nextRun (loaded.sessionNames ++ loaded.journalNames)
+      (reads.filterMap (·.2.document.map (·.run)))
   let entryOf (journalRun key : Nat) : Option Document.Buffer :=
     choice.restored.bind fun document =>
       if document.run == journalRun then document.buffers.find? (·.key == key) else none
@@ -215,10 +225,13 @@ def read (loaded : Loaded) : EditorM Unit := do
       | .ok file =>
         decoded := decoded.push (generation, Journal.decode (← textOf file))
       | .error error =>
-        report := report.push s!"journal {journalStem group.run group.buffer generation}: its log cannot be loaded ({error.describe}): it is left as it is"
+        report :=
+          report.push
+            s!"journal {journalStem group.run group.buffer generation}: its log cannot be loaded ({error.describe}): it is left as it is"
     let headed := decoded.filter (·.2.header.isSome)
     let live : Option Nat :=
-      if headed.isEmpty then (group.bases.map (·.1)).foldl (fun found g => some ((found.getD g).max g)) none
+      if headed.isEmpty then
+        (group.bases.map (·.1)).foldl (fun found g => some ((found.getD g).max g)) none
       else some ((headed.map (·.1)).foldl max 0)
     let some generation := live | continue
     let stem := journalStem group.run group.buffer generation
@@ -230,28 +243,38 @@ def read (loaded : Loaded) : EditorM Unit := do
     let played ← (Journal.replay text log.records : TextM Nat)
     let mut understood := true
     if played < log.records.size then
-      report := report.push s!"journal {stem}: {log.records.size - played} of its records do not apply: it is left as it is"
+      report :=
+        report.push
+          s!"journal {stem}: {log.records.size - played} of its records do not apply: it is left as it is"
       understood := false
     if log.torn > 0 then
       report := report.push s!"journal {stem}: a torn last line of {log.torn} bytes is dropped"
     if let some why := log.stopped then
-      report := report.push s!"journal {stem}: {why}: what came before is restored, and it is left as it is"
+      report :=
+        report.push s!"journal {stem}: {why}: what came before is restored, and it is left as it is"
       understood := false
     let entry := entryOf group.run group.buffer
     let header := log.header
-    let name := (header.map (·.name)) <|> (entry.map (·.name)) |>.getD (orphanName group.run group.buffer)
+    let name :=
+      (header.map (·.name)) <|> (entry.map (·.name)) |>.getD (orphanName group.run group.buffer)
     -- The buffer: the scratch buffer when the text is a scratch text and it
     -- is untouched, a new one otherwise.
     let path := header.bind (·.path)
     let intoScratch? ←
-      if path.isNone && name == EditorState.scratchName then intoScratch text else pure none
+      if path.isNone && name == EditorState.scratchName then
+        intoScratch text
+      else
+        pure none
     let id ←
       match intoScratch? with
-      | some id => pure (some id)
+      | some id =>
+        pure (some id)
       | none =>
         match ← addBuffer ((← editorState).freeName name) text with
-        | .ok id => pure (some id)
-        | .error _ => pure none
+        | .ok id =>
+          pure (some id)
+        | .error _ =>
+          pure none
     let some id := id |
       report := report.push s!"journal {stem}: no buffer could be made for it: it is left as it is"
       continue
@@ -264,11 +287,15 @@ def read (loaded : Loaded) : EditorM Unit := do
         discard <| id.attachFile path stamp first.lineEnding
         statArguments := statArguments ++ [.nat id.index, .str path]
     if let some entry := entry then
-      pending := { pending with deferred := pending.deferred ++ (← setModes id entry.major entry.minors entry.language) }
+      pending :=
+        { pending with
+          deferred := pending.deferred ++ (← setModes id entry.major entry.minors entry.language) }
       let revision ← (buffer.text.revision : TextM Nat)
       let others := entry.views.filter fun place => some place.view != focused
       if !others.isEmpty then
-        pending := { pending with places := pending.places.push { buffer := id.index, revision, places := others } }
+        pending :=
+          { pending with
+            places := pending.places.push { buffer := id.index, revision, places := others } }
       if let some place := entry.views.find? (some ·.view == focused) then
         pending := { pending with focusBuffer := some (id.index, place) }
       restoredKeys := restoredKeys.push entry.key
@@ -298,7 +325,7 @@ def read (loaded : Loaded) : EditorM Unit := do
   setKept { (← editorState).restore with pending := some pending }
   let arguments :=
     [.str loaded.directory.toString, .nat (statArguments.length / 2)] ++ statArguments ++ loads
-  if let .error refusal ← startJob filesJob arguments then
+  if let .error refusal← startJob filesJob arguments then
     failed s!"restore: {refusal.describe}"
 
 /-- The job `restore` ("Restoring", in the module docs): the journals'
@@ -310,20 +337,24 @@ def restoreWork (arguments : List Argument) : Work := fun _ => do
   let made ← File.makeDirectory (journalsDirectory directory)
   let names (path : System.FilePath) : JobM (Array String) := do
     match ← File.list path with
-    | .ok entries => return (entries.filter (·.kind == .file)).map (·.name)
-    | .error _ => return #[]
+    | .ok entries =>
+      return (entries.filter (·.kind == .file)).map (·.name)
+    | .error _ =>
+      return #[]
   let sessionNames ← names (sessionDirectory directory)
   let journalNames ← names (journalsDirectory directory)
   let mut indexes := #[]
   for name in sessionNames do
     if let some run := runOfIndex? name then
-      indexes := indexes.push (run, name, ← File.load (sessionDirectory directory / name) Files.limit)
+      indexes :=
+        indexes.push (run, name, ← File.load (sessionDirectory directory / name) Files.limit)
   let mut journals := #[]
   for name in journalNames do
     if let some (run, buffer, generation, base) := journalOf? name then
       journals :=
         journals.push
-          (run, buffer, generation, base, ← File.load (journalsDirectory directory / name) Files.limit)
+          (run, buffer, generation, base,
+            ← File.load (journalsDirectory directory / name) Files.limit)
   return read { directory, made, sessionNames, journalNames, indexes, journals }
 
 /-- Puts the window `view`, which shows `buffer`, at `place`, clamped to the
@@ -332,11 +363,16 @@ def placeIn (view : ViewId) (buffer : BufferId) (place : Place) : EditorM Unit :
   let some shown := (← editorState).buffer? buffer | return
   let anchor ← (Marks.offsetAt shown.text place.anchor.row place.anchor.column : TextM Nat)
   let head ← (Marks.offsetAt shown.text place.head.row place.head.column : TextM Nat)
-  if let .ok selection ← view.selection then
-    discard <| view.select { selection with ranges := #[⟨anchor, head⟩], primary := 0 }
+  if let .ok selection← view.selection then
+    discard <|
+        view.select
+          { selection with
+            ranges := #[⟨anchor, head⟩], primary := 0 }
   let top ← (Marks.offsetAt shown.text place.top 0 : TextM Nat)
   if let some window := (← editorState).window? view then
-    discard <| (observing (shown.text.place window.scroll (.anchor { offset := top, bias := .before })) : TextM _)
+    discard <|
+        (observing (shown.text.place window.scroll (.anchor { offset := top, bias := .before })) :
+          TextM _)
 
 /-- The report's buffer, holding `lines`, read-only and shown nowhere: made,
 or its text replaced. -/
@@ -344,11 +380,14 @@ def writeReport (lines : Array String) : EditorM Unit := do
   let text := "\n".intercalate lines.toList ++ "\n"
   let id ←
     match ← findBuffer reportName with
-    | some id => pure (some id)
+    | some id =>
+      pure (some id)
     | none =>
       match ← createBuffer reportName with
-      | .ok id => pure (some id)
-      | .error _ => pure none
+      | .ok id =>
+        pure (some id)
+      | .error _ =>
+        pure none
   let some id := id | return
   let some buffer := (← editorState).buffer? id | return
   discard <| id.setReadOnly false
@@ -378,7 +417,9 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
     if let some found := found then
       discard <| id.markChanged file.stamp found false
       changed := changed + 1
-      report := report.push s!"{file.path}: changed on disk since; restored with its unsaved text and marked"
+      report :=
+        report.push
+          s!"{file.path}: changed on disk since; restored with its unsaved text and marked"
   let mut deferred := pending.deferred
   let mut places := pending.places
   let mut reopened : Array (Option BufferId) := #[]
@@ -392,13 +433,17 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
         deferred := deferred ++ (← setModes id entry.major entry.minors entry.language)
         if !entry.places.isEmpty then
           let some buffer := (← editorState).buffer? id | continue
-          places := places.push { buffer := id.index, revision := ← (buffer.text.revision : TextM Nat), places := entry.places }
+          places :=
+            places.push
+              { buffer := id.index, revision := ← (buffer.text.revision : TextM Nat),
+                places := entry.places }
     | .error .notFound =>
       reopened := reopened.push none
       report := report.push s!"{entry.path}: gone from disk: it is not restored"
     | .error error =>
       reopened := reopened.push none
-      report := report.push s!"{entry.path}: cannot be loaded ({error.describe}): it is not restored"
+      report :=
+        report.push s!"{entry.path}: cannot be loaded ({error.describe}): it is not restored"
   -- The focused view's buffer, in the window focused now.
   let focus : Option (BufferId × Place) :=
     match pending.focusBuffer, pending.focusReopen with
@@ -407,7 +452,7 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
     | none, none => none
   if let some (buffer, place) := focus then
     let view := (← editorState).frame.focused
-    if let .ok () ← view.show buffer then
+    if let .ok ()← view.show buffer then
       placeIn view buffer place
   let buffers := pending.unsaved + (reopened.filter (·.isSome)).size
   let mut summary := s!"restore: {buffers} buffers, {pending.unsaved} with unsaved text"
@@ -420,18 +465,20 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
     writeReport (#[summary] ++ report)
     message summary
   setKept
-    { (← editorState).restore with
-      run := some pending.run, stale := pending.stale, staleIndexes := pending.staleIndexes
-      places, deferred, pending := none, restored := true }
+      { (← editorState).restore with
+        run := some pending.run, stale := pending.stale, staleIndexes := pending.staleIndexes
+        places, deferred, pending := none, restored := true }
 
 /-- The job `restore-files` ("Restoring", in the module docs): each restored
 buffer's file stated, and each file to reopen loaded. -/
 def filesWork (arguments : List Argument) : Work := fun _ => do
-  let .str _ :: .nat count :: rest := arguments | throw s!"{filesJob}: its arguments are not a restore's"
+  let .str _ :: .nat count :: rest :=
+    arguments | throw s!"{filesJob}: its arguments are not a restore's"
   let mut stats := #[]
   let mut remaining := rest
   for _ in [0:count] do
-    let .nat index :: .str path :: more := remaining | throw s!"{filesJob}: its arguments are not a restore's"
+    let .nat index :: .str path :: more :=
+      remaining | throw s!"{filesJob}: its arguments are not a restore's"
     stats := stats.push (index, ← File.stat path)
     remaining := more
   let mut loads := #[]
@@ -472,7 +519,9 @@ def writeNow (state : String) : EditorM Unit := do
     return
   let document ← (Document.of editor run : TextM Document)
   let rendered := document.render
-  setKept { kept with written := some rendered, writing := false }
+  setKept
+      { kept with
+        written := some rendered, writing := false }
   let text ← createText rendered
   let snapshot ← (text.snapshot : TextM SnapshotId)
   ((TextSource.text text).release : TextM Unit)
@@ -480,7 +529,7 @@ def writeNow (state : String) : EditorM Unit := do
   let arguments :=
     [.nat snapshot.index, .str (sessionDirectory directory).toString,
       .str (indexPath directory run).toString]
-  if let .error refusal ← startJob saveJob arguments (key := some saveJob) then
+  if let .error refusal← startJob saveJob arguments (key := some saveJob) then
     (snapshot.release : TextM Unit)
     message s!"restore: the session index is not saved: {refusal.describe}"
 

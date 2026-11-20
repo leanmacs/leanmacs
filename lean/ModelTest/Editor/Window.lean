@@ -310,7 +310,8 @@ def windowStartChecks : List Check :=
         let withFile := (parsed [(inFiles "note.txt").toString]).map (·.starts (.skip none) #[])
         pure <|
           empty == some #[.restore, .say "hi", .reload] &&
-            (parsed ["f"]).map (·.starts (.skip none) #[]) == some #[.restore, .open "/work/project/f"] &&
+            (parsed ["f"]).map (·.starts (.skip none) #[]) ==
+              some #[.restore, .open "/work/project/f"] &&
             (parsed ["f"]).map (·.starts (.load "/c") #["a", "b"]) ==
               some #[.restore, .open "/work/project/f", .say "a", .say "b", .reload] &&
             match empty.bind started, withFile.bind started with

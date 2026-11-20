@@ -19,7 +19,8 @@ namespace JournalFormatTest
 
 /-- A header of a buffer holding a file. -/
 def header : Journal.Header :=
-  { name := "a.txt", path := some "/r/a.txt", stamp := some { seconds := -3, nanoseconds := 7, size := 12 }
+  { name := "a.txt", path := some "/r/a.txt",
+    stamp := some { seconds := -3, nanoseconds := 7, size := 12 }
     lineEnding := .crlf, revision := 4 }
 
 /-- Records whose inserted texts hold a byte that is not UTF-8 (its escape),
@@ -27,7 +28,8 @@ a NUL, a CRLF, characters of two, three and four bytes, and an empty insert
 and an empty delete. -/
 def records : Array (Array Journal.Edit) :=
   #[#[{ start := 0, stop := 0, inserted := s!"a{File.escape 0xFF}b" }],
-    #[{ start := 1, stop := 3, inserted := "x\x00y\x00" }, { start := 5, stop := 5, inserted := "" }],
+    #[{ start := 1, stop := 3, inserted := "x\x00y\x00" },
+      { start := 5, stop := 5, inserted := "" }],
     #[{ start := 2, stop := 2, inserted := "line\r\nnext é 中 😀" }],
     #[{ start := 0, stop := 4, inserted := "" }]]
 
@@ -75,8 +77,7 @@ def journalFormatChecks : List Check :=
         pure <|
           let bare : Journal.Header := { name := "scratch" }
           (Journal.decode (loadedText (Journal.Record.header bare).bytes)).header == some bare },
-    { name :=
-        "a torn last line is dropped and its bytes said; the records before it are read"
+    { name := "a torn last line is dropped and its bytes said; the records before it are read"
       run :=
         pure <|
           let whole := (Journal.Record.edits #[{ start := 0, stop := 0, inserted := "tail" }]).bytes
@@ -91,9 +92,9 @@ def journalFormatChecks : List Check :=
           let after := (Journal.Record.edits #[{ start := 0, stop := 0, inserted := "z" }]).bytes
           let decoded := Journal.decode (loadedText (logBytes ++ unknown ++ after))
           decoded.records == records &&
-            decoded.stopped == some "line 6 is of the kind marks, which this editor does not know" },
-    { name :=
-        "a line of a newer format stops the reading before it, with why"
+            decoded.stopped ==
+              some "line 6 is of the kind marks, which this editor does not know" },
+    { name := "a line of a newer format stops the reading before it, with why"
       run :=
         pure <|
           let newer := File.encodeText "{\"format\":2,\"kind\":\"edits\",\"edits\":[]}\n"
@@ -111,17 +112,15 @@ def journalFormatChecks : List Check :=
       run :=
         pure <|
           let cases : List (String × (TextId → TextM Unit)) :=
-            [("hello world\n",
-                fun text => do
-                  text.insert 5 ","
-                  text.delete 0 1
-                  text.insert 0 "J"
-                  text.insert 12 "\x00end"),
-              ("é 中 😀\r\nline\n",
-                fun text => do
-                  text.delete 0 2
-                  text.insert 0 "e"
-                  text.insert 2 "x"),
+            [("hello world\n", fun text => do
+                text.insert 5 ","
+                text.delete 0 1
+                text.insert 0 "J"
+                text.insert 12 "\x00end"),
+              ("é 中 😀\r\nline\n", fun text => do
+                text.delete 0 2
+                text.insert 0 "e"
+                text.insert 2 "x"),
               ("", fun text => text.insert 0 "typed into nothing")]
           cases.all fun (original, edit) =>
             match replayed original edit with
@@ -134,9 +133,9 @@ def journalFormatChecks : List Check :=
             let text ← createText "abc"
             let played ←
               Journal.replay text
-                #[#[{ start := 0, stop := 1, inserted := "X" }],
-                  #[{ start := 2, stop := 9, inserted := "" }],
-                  #[{ start := 0, stop := 0, inserted := "never" }]]
+                  #[#[{ start := 0, stop := 1, inserted := "X" }],
+                    #[{ start := 2, stop := 9, inserted := "" }],
+                    #[{ start := 0, stop := 0, inserted := "never" }]]
             return (played, ← text.read)
           (program.runModel {}).1.toOption == some (1, "Xbc") }]
 

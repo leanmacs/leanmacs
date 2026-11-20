@@ -98,7 +98,9 @@ def headlessCommandLineChecks : List Check :=
           (read outside ["--state", "/st", "/s", "/o", "/c", "/t"] ==
               some { explicit false with state := some "/st" } &&
             read installed ["--render", "--state", "/st", "--generate", "/c", "/t"] ==
-              some { bundled true with generate := true, state := some "/st" } &&
+              some
+                { bundled true with
+                  generate := true, state := some "/st" } &&
             (read outside ["/s", "/o", "/c", "/t"]).map (·.state) == some none &&
             refused installed ["--state"] &&
             refused installed ["--state", "/a", "--state", "/b", "/c", "/t"] &&

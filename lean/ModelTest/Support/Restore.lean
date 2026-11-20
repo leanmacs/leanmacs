@@ -31,10 +31,11 @@ def stateDirectory : System.FilePath :=
 step handed a log bound of `limit`, with `modes` registered beside the
 restore package's and the config generation `generation`; `none` if making
 the state was refused. -/
-def restoreDriver (files : Option FileModel := none) (state : Option System.FilePath := some stateDirectory)
-    (limit : Nat := Restore.bound) (modes : Array Mode := #[]) (generation : Nat := 0) :
-    Option EvilDriver :=
-  (driverWith (Restore.package.registered.commands ++ Ex.package.registered.commands ++
+def restoreDriver (files : Option FileModel := none)
+    (state : Option System.FilePath := some stateDirectory) (limit : Nat := Restore.bound)
+    (modes : Array Mode := #[]) (generation : Nat := 0) : Option EvilDriver :=
+  (driverWith
+        (Restore.package.registered.commands ++ Ex.package.registered.commands ++
           WindowCommands.package.registered.commands)
         (Restore.package.registered.modes ++ modes) Restore.package.registered.jobs).map
     fun driver =>

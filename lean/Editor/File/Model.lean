@@ -300,7 +300,8 @@ def onTheWay (path : System.FilePath) : Array System.FilePath :=
   let rec walk (fuel : Nat) (here : System.FilePath) (found : Array System.FilePath) :
     Array System.FilePath :=
     match fuel, here.parent with
-    | fuel + 1, some parent => if parent == here then found else walk fuel parent (found.push parent)
+    | fuel + 1, some parent =>
+      if parent == here then found else walk fuel parent (found.push parent)
     | _, _ => found
   walk path.components.length path #[]
 

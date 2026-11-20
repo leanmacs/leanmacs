@@ -427,13 +427,22 @@ def journaled (driver : Loop.Driver scheme) (orders : Array Restore.Order) : Loo
         match order.request with
         | .append path bytes =>
           let (reply, files) := files.append path bytes
-          ((match reply with | .error error => some error.describe | .ok () => none), files)
+          ((match reply with
+            | .error error => some error.describe
+            | .ok () => none),
+            files)
         | .remove path =>
           let (reply, files) := files.remove path
-          ((match reply with | .error error => some error.describe | .ok () => none), files)
+          ((match reply with
+            | .error error => some error.describe
+            | .ok () => none),
+            files)
         | .save source path expect =>
           let (reply, files) := files.save source path expect
-          ((match reply with | .error error => some error.describe | .ok _ => none), files)
+          ((match reply with
+            | .error error => some error.describe
+            | .ok _ => none),
+            files)
         | _ => (some "not a journal's request", files)
       let texts :=
         match order.release with
@@ -476,21 +485,22 @@ partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
     (model : EditorModel) : Loop.Driver scheme :=
   let driver :=
     ((stepped.cancels.foldl Loop.Driver.cancel
-          { driver with
-            loop := stepped.loop, model
-            stopped := driver.stopped || stepped.next == Loop.Next.stop
-            reloads := driver.reloads + if stepped.reload then 1 else 0
-            themes := driver.themes ++ stepped.theme.toArray
-            armed :=
-              match stepped.pause with
-              | .keep => driver.armed
-              | .arm view pauses => pauses.map fun ms => (view, ms, driver.now + ms)
-              | .disarm => #[]
-            hinted :=
-              match stepped.hintDelay with
-              | .keep => driver.hinted
-              | .arm generation ms => some (generation, driver.now + ms)
-              | .disarm => none }).journaled stepped.journal).started
+              { driver with
+                loop := stepped.loop, model
+                stopped := driver.stopped || stepped.next == Loop.Next.stop
+                reloads := driver.reloads + if stepped.reload then 1 else 0
+                themes := driver.themes ++ stepped.theme.toArray
+                armed :=
+                  match stepped.pause with
+                  | .keep => driver.armed
+                  | .arm view pauses => pauses.map fun ms => (view, ms, driver.now + ms)
+                  | .disarm => #[]
+                hinted :=
+                  match stepped.hintDelay with
+                  | .keep => driver.hinted
+                  | .arm generation ms => some (generation, driver.now + ms)
+                  | .disarm => none }).journaled
+          stepped.journal).started
       stepped.starts
   let driver := driver.spawned stepped.spawns
   stepped.answered.foldl

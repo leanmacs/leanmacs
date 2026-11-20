@@ -78,7 +78,8 @@ def noToolchain : String :=
 /-- The options before the paths of `arguments`, in order, after those in
 `seen`; the state directory the last `--state` named; the paths; and whether
 every `--state` had a directory after it that is no option. -/
-def split : List String → List String → Option String → List String × Option String × List String × Bool
+def split :
+    List String → List String → Option String → List String × Option String × List String × Bool
   | "--state" :: directory :: rest, seen, _ =>
     if directory.startsWith "--" then (seen ++ ["--state"], none, rest, false)
     else split rest (seen ++ ["--state"]) (some directory)

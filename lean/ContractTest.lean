@@ -13,6 +13,7 @@ import ContractTest.Editor.Job.Contract
 import ContractTest.Editor.Job.Real
 import ContractTest.Editor.Process.Environment
 import ContractTest.Editor.ProjectSearch.Run
+import ContractTest.Editor.Restore.Run
 import ContractTest.Editor.Shell
 import ContractTest.Editor.SyntaxTree.Contract
 import ContractTest.Editor.SyntaxTree.Real
@@ -24,7 +25,6 @@ import ContractTest.Editor.VersionControl.Review
 import ContractTest.Editor.VersionControl.Status
 import ContractTest.Editor.Watch.Contract
 import ContractTest.Editor.Watch.Real
-import ContractTest.Editor.Restore.Run
 import ContractTest.Editor.WorkingSet.Run
 import ContractTest.Editor.Workspace
 import ContractTest.Editor.Workspace.Contract

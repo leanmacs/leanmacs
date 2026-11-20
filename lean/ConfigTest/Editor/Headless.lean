@@ -2652,7 +2652,7 @@ def withRestoreHost (context : Context) (files : List (String × String))
     writeConfig directory files
     let stage ←
       Stage.new context context.elaborator (Config.Directory.source directory)
-        { packages := #[Files.package, Restore.package] }
+          { packages := #[Files.package, Restore.package] }
     let fake ← Job.FakeFiles.new stage.collaborators.services.completions journalledModel
     let stage :=
       { stage with
@@ -2676,7 +2676,7 @@ def withRestoreFiles (context : Context) (files : List (String × String))
       IO.FS.writeBinFile (Restore.logPath state 1 0 1) journalledLog
       let stage ←
         Stage.overFiles context (Config.Directory.source directory)
-          { packages := #[Files.package, Restore.package] }
+            { packages := #[Files.package, Restore.package] }
       let stage :=
         { stage with
           collaborators :=
@@ -2707,8 +2707,9 @@ def restoreOrderChecks (context : Context) : List Check :=
           unless ← host.settle patience do
             return false
           let lines ← output.get
-          let restored := firstLine? lines fun line =>
-            line.startsWith "job " && (line.splitOn s!" {Restore.filesJob}: ok").length == 2
+          let restored :=
+            firstLine? lines fun line =>
+              line.startsWith "job " && (line.splitOn s!" {Restore.filesJob}: ok").length == 2
           let installed := firstLine? lines (·.startsWith "reload 1: installed")
           let shown := firstLine? lines fun line => (line.splitOn "\"hello world\"").length == 2
           return match restored, installed, shown with

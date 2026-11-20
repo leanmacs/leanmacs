@@ -29,10 +29,11 @@ def configMode : Mode :=
 first argument names, and adds the minor mode its second names. -/
 def modesCommandForTest : Config.Registration :=
   { name := "test-modes"
-    action := .call fun call => do
-      let .str major :: .str minor :: _ := call.arguments | return
-      discard <| call.target.window.id.setMajorMode major
-      discard <| call.target.window.buffer.addMinorMode minor }
+    action :=
+      .call fun call => do
+        let .str major :: .str minor :: _ := call.arguments | return
+        discard <| call.target.window.id.setMajorMode major
+        discard <| call.target.window.buffer.addMinorMode minor }
 
 /-- `driver` with the checks' commands: the reconcile checks' and
 `test-modes`. -/
@@ -41,8 +42,13 @@ def withCommands (driver : EvilDriver) : EvilDriver :=
     keys :=
       { driver.keys with
         command? := fun name =>
-          match [noteCommand, ownedCommand, placeCommand, modesCommandForTest].find? (·.name == name) with
-          | some { action := .call run, .. } => some fun call => do run call; return none
+          match
+            [noteCommand, ownedCommand, placeCommand, modesCommandForTest].find?
+              (·.name == name) with
+          | some { action := .call run, .. } =>
+            some fun call => do
+              run call;
+              return none
           | _ => driver.keys.command? name } }
 
 /-- The first loop: restored over `files`, with `modes`, and the checks'
@@ -101,7 +107,11 @@ def restoreChecks : List Check :=
         "after an abort, the buffers come back: a file's unsaved text, modified, at its file with its line ending and modes, the scratch buffer's text, and the focused buffer shown with its cursor"
       run :=
         pure <|
-          match first (some ((world fun files => files.withFile "/r/c.txt" "one\r\ntwo\r\n".toUTF8).getD {})) #[configMode] with
+          match
+            first
+              (some
+                ((world fun files => files.withFile "/r/c.txt" "one\r\ntwo\r\n".toUTF8).getD {}))
+              #[configMode] with
           | none => false
           | some begun =>
             let scratched := evilFed begun (typing "kept")
@@ -116,9 +126,11 @@ def restoreChecks : List Check :=
               textNamed again "a.txt" == textNamed edited "a.txt" &&
                 textNamed again "c.txt" == some "ne\r\ntwo\r\n" &&
                 textNamed again EditorState.scratchName == some "kept" &&
-                (a.map (·.isModified)) == some true && (c.map (·.lineEnding)) == some .crlf &&
+                (a.map (·.isModified)) == some true &&
+                (c.map (·.lineEnding)) == some .crlf &&
                 (a.bind (·.file.map (·.path))) == some (root / "a.txt") &&
-                (c.map fun buffer => (buffer.major, buffer.minors)) == some (some configMode.name, #["spell"]) &&
+                (c.map fun buffer => (buffer.major, buffer.minors)) ==
+                  some (some configMode.name, #["spell"]) &&
                 focusedShown again == focusedShown edited &&
                 again.loop.state.echo == "restore: 3 buffers, 3 with unsaved text" },
     { name :=
@@ -129,31 +141,42 @@ def restoreChecks : List Check :=
           | none => false
           | some begun =>
             let edited := drained (opened (evilFed (opened begun "a.txt") "x") "b.txt")
-            match second edited (fun files => files.withFile (root / "a.txt") "rewritten\n".toUTF8) with
+            match
+              second edited (fun files => files.withFile (root / "a.txt") "rewritten\n".toUTF8) with
             | none => false
             | some again =>
               let marked := (bufferNamed again "a.txt").bind (·.file.bind (·.changed))
               let shown := opened again "a.txt"
               let typedIn := evilFed shown "x"
               let saved := ran typedIn Files.saveName
-              (marked.bind (·.found)) == ((again.jobs.files.file? (root / "a.txt")).map (·.stamp)) &&
-                ((bufferNamed shown "a.txt").bind (·.file.bind (·.changed.map (·.told)))) == some true &&
+              (marked.bind (·.found)) ==
+                  ((again.jobs.files.file? (root / "a.txt")).map (·.stamp)) &&
+                ((bufferNamed shown "a.txt").bind (·.file.bind (·.changed.map (·.told)))) ==
+                  some true &&
                 textNamed typedIn "a.txt" != textNamed edited "a.txt" &&
                 bytesAt saved (root / "a.txt") == some "rewritten\n".toUTF8 &&
-                (saved.loop.state.echo.splitOn "the file on disk is not the one that was expected").length == 2 &&
+                (saved.loop.state.echo.splitOn
+                      "the file on disk is not the one that was expected").length ==
+                  2 &&
                 (again.loop.state.echo.splitOn "1 changed on disk").length == 2 },
-    { name := "an unmodified file of the index is reopened, and one gone from disk is said and not restored"
+    { name :=
+        "an unmodified file of the index is reopened, and one gone from disk is said and not restored"
       run :=
         pure <|
           match first with
           | none => false
           | some begun =>
             let both := drained (evilFed (opened (opened begun "b.txt") "a.txt") "x")
-            match second both, second both (fun files => { files with files := files.files.filter (·.path != root / "b.txt") }) with
+            match second both,
+              second both
+                (fun files =>
+                  { files with files := files.files.filter (·.path != root / "b.txt") }) with
             | some kept, some gone =>
               (bufferNamed kept "b.txt").map (·.isModified) == some false &&
-                textNamed kept "b.txt" == some bText && (bufferNamed gone "b.txt").isNone &&
-                ((reportOf gone).splitOn "/r/b.txt: gone from disk: it is not restored").length == 2 &&
+                textNamed kept "b.txt" == some bText &&
+                (bufferNamed gone "b.txt").isNone &&
+                ((reportOf gone).splitOn "/r/b.txt: gone from disk: it is not restored").length ==
+                  2 &&
                 (gone.loop.state.echo.splitOn s!"see {reportName}").length == 2
             | _, _ => false },
     { name :=
@@ -164,7 +187,8 @@ def restoreChecks : List Check :=
             world fun files =>
               withJournal
                 (withJournal
-                  (withJournal files 3 1 1 (some { name := "note" }) "abc" #[#[{ start := 3, stop := 3, inserted := "d" }]])
+                  (withJournal files 3 1 1 (some { name := "note" }) "abc"
+                    #[#[{ start := 3, stop := 3, inserted := "d" }]])
                   4 2 1 (some { name := "note" }) "xyz" #[])
                 5 7 1 none "base" #[#[{ start := 0, stop := 1, inserted := "B" }]]
           match files.bind fun files => (restoredDriver (some files)) with
@@ -172,10 +196,12 @@ def restoreChecks : List Check :=
           | some again =>
             let names := again.loop.state.buffers.filterMap (·.map (·.name))
             let notes := names.filter (·.startsWith "note")
-            notes.size == 2 && (notes.filterMap (textNamed again ·)).qsort (· < ·) == #["abcd", "xyz"] &&
+            notes.size == 2 &&
+              (notes.filterMap (textNamed again ·)).qsort (· < ·) == #["abcd", "xyz"] &&
               textNamed again (orphanName 5 7) == some "Base" &&
               (bufferNamed again (orphanName 5 7)).bind (·.file) == none },
-    { name := "after a restore, the new bases are asked for before the journals taken in are removed"
+    { name :=
+        "after a restore, the new bases are asked for before the journals taken in are removed"
       run :=
         pure <|
           match first with
@@ -185,8 +211,10 @@ def restoreChecks : List Check :=
             match restoreDriver (some edited.jobs.files) with
             | none => false
             | some fresh =>
-              let started := fresh.started #[{ name := restoreJob, arguments := [.str stateDirectory.toString] }]
-              let read := match started.pending[0]? with
+              let started :=
+                fresh.started #[{ name := restoreJob, arguments := [.str stateDirectory.toString] }]
+              let read :=
+                match started.pending[0]? with
                 | some job => (started.finish job.id).1
                 | none => started
               match read.pending.find? (·.name == filesJob) with
@@ -195,12 +223,14 @@ def restoreChecks : List Check :=
                 match read.finish job.id with
                 | (finished, some stepped) =>
                   let orders := stepped.journal
-                  let newBase := orders.findIdx? fun order =>
-                    match order.request with
-                    | .save _ path _ => path == basePath stateDirectory 2 0 1
-                    | _ => false
-                  let staleRemove := orders.findIdx? fun order =>
-                    order.request == .remove (basePath stateDirectory 1 0 1)
+                  let newBase :=
+                    orders.findIdx? fun order =>
+                      match order.request with
+                      | .save _ path _ => path == basePath stateDirectory 2 0 1
+                      | _ => false
+                  let staleRemove :=
+                    orders.findIdx? fun order =>
+                      order.request == .remove (basePath stateDirectory 1 0 1)
                   (match newBase, staleRemove with
                     | some base, some remove => base < remove
                     | _, _ => false) &&
@@ -220,15 +250,20 @@ def restoreChecks : List Check :=
             | some one, some other =>
               let placed :=
                 drained
-                  (ran (ran split "test-place" [.nat one.index, .nat 0, .nat 1, .nat 1, .nat 2, .nat 0])
+                  (ran
+                    (ran split "test-place"
+                      [.nat one.index, .nat 0, .nat 1, .nat 1, .nat 2, .nat 0])
                     "test-place" [.nat other.index, .nat 2, .nat 0, .nat 2, .nat 3, .nat 1])
-              let before := (indexOf placed 1).bind (·.buffers.find? (·.name == EditorState.scratchName))
+              let before :=
+                (indexOf placed 1).bind (·.buffers.find? (·.name == EditorState.scratchName))
               match second placed with
               | none => false
               | some again =>
-                let after := (indexOf again 2).bind (·.buffers.find? (·.name == EditorState.scratchName))
+                let after :=
+                  (indexOf again 2).bind (·.buffers.find? (·.name == EditorState.scratchName))
                 let spots (buffer : Option Document.Buffer) : Array (Spot × Spot) :=
-                  ((buffer.map (·.views.map fun place => (place.anchor, place.head))).getD #[]).qsort
+                  ((buffer.map (·.views.map fun place => (place.anchor, place.head))).getD
+                        #[]).qsort
                     fun a b => a.1.row < b.1.row
                 again.loop.state.restore.places.size == 1 && spots before == spots after &&
                   (spots after).size == 2
@@ -243,7 +278,8 @@ def restoreChecks : List Check :=
           let files :=
             world fun files =>
               withIndex
-                (withJournal files 5 2 1 (some { name := "note" }) "ab" #[#[{ start := 2, stop := 2, inserted := "c" }]] unknown)
+                (withJournal files 5 2 1 (some { name := "note" }) "ab"
+                  #[#[{ start := 2, stop := 2, inserted := "c" }]] unknown)
                 "session-5.json" newer
           match files with
           | none => false
@@ -253,10 +289,17 @@ def restoreChecks : List Check :=
             | some again =>
               let settled := drained (evilFed again "l")
               textNamed settled "note" == some "abc" && textNamed settled "a.txt" == some aText &&
-                bytesAt settled (sessionDirectory stateDirectory / "session-5.json") == some newer.toUTF8 &&
-                bytesAt settled (logPath stateDirectory 5 2 1) == bytesAt { again with jobs := { again.jobs with files } } (logPath stateDirectory 5 2 1) &&
-                ((reportOf settled).splitOn "session-5.json: the key layouts is not known").length == 2 &&
-                ((reportOf settled).splitOn "session-5.json: buffer 1: the key folds is not known").length == 2 &&
+                bytesAt settled (sessionDirectory stateDirectory / "session-5.json") ==
+                  some newer.toUTF8 &&
+                bytesAt settled (logPath stateDirectory 5 2 1) ==
+                  bytesAt { again with jobs := { again.jobs with files } }
+                    (logPath stateDirectory 5 2 1) &&
+                ((reportOf settled).splitOn
+                      "session-5.json: the key layouts is not known").length ==
+                  2 &&
+                ((reportOf settled).splitOn
+                      "session-5.json: buffer 1: the key folds is not known").length ==
+                  2 &&
                 ((reportOf settled).splitOn "line 3 is of the kind marks").length == 2 },
     { name :=
         "a major mode only config registers is deferred at the restore and set once a config that registers it installs; one the config does not register is said and not set"
@@ -265,13 +308,20 @@ def restoreChecks : List Check :=
           match first (modes := #[configMode]) with
           | none => false
           | some begun =>
-            let moded := drained (ran (evilFed (opened begun "a.txt") "x") "test-modes" [.str configMode.name, .str "spell"])
+            let moded :=
+              drained
+                (ran (evilFed (opened begun "a.txt") "x") "test-modes"
+                  [.str configMode.name, .str "spell"])
             match second moded, restoredDriver (modes := #[configMode]) (generation := 1),
-                restoredDriver (generation := 1) with
+              restoredDriver (generation := 1) with
             | some again, some withMode, some without =>
               let deferred := (bufferNamed again "a.txt").bind (·.major)
-              let installed := evilFed { again with keys := { withMode.keys with command? := again.keys.command? } } "l"
-              let missing := evilFed { again with keys := { without.keys with command? := again.keys.command? } } "l"
+              let installed :=
+                evilFed
+                  { again with keys := { withMode.keys with command? := again.keys.command? } } "l"
+              let missing :=
+                evilFed { again with keys := { without.keys with command? := again.keys.command? } }
+                  "l"
               deferred.isNone && again.loop.state.restore.deferred.size == 1 &&
                 (bufferNamed installed "a.txt").bind (·.major) == some configMode.name &&
                 installed.loop.state.restore.deferred.isEmpty &&

@@ -60,30 +60,34 @@ def forgotten (driver : EvilDriver) (name : String) (edit : TextId → TextM Uni
 its window. -/
 def noteCommand : Config.Registration :=
   { name := "test-note"
-    action := .call fun call => do
-      let .ok id ← createBuffer "note" | return
-      discard <| call.target.window.id.show id }
+    action :=
+      .call fun call => do
+        let .ok id ← createBuffer "note" | return
+        discard <| call.target.window.id.show id }
 
 /-- A command that makes `owned`, a read-only buffer it writes into, and an
 excerpt buffer of the scratch buffer's text. -/
 def ownedCommand : Config.Registration :=
   { name := "test-owned"
-    action := .call fun _ => do
-      let .ok id ← createBuffer "owned" | return
-      discard <| id.setReadOnly true
-      discard <| id.writing (id.insertAt 0 "generated")
-      let state ← editorState
-      let some scratch := state.buffer? ⟨0⟩ | return
-      discard <| createExcerptBufferOf "excerpts" #[⟨scratch.text, 0, 0⟩] }
+    action :=
+      .call fun _ => do
+        let .ok id ← createBuffer "owned" | return
+        discard <| id.setReadOnly true
+        discard <| id.writing (id.insertAt 0 "generated")
+        let state ← editorState
+        let some scratch := state.buffer? ⟨0⟩ | return
+        discard <| createExcerptBufferOf "excerpts" #[⟨scratch.text, 0, 0⟩] }
 
 /-- A command that puts the window of its first argument at the place its
 other arguments say (`Restore.placeIn`). -/
 def placeCommand : Config.Registration :=
   { name := "test-place"
-    action := .call fun call => do
-      let .nat view :: .nat ar :: .nat ac :: .nat hr :: .nat hc :: .nat top :: _ := call.arguments | return
-      let some window := (← editorState).window? ⟨view⟩ | return
-      placeIn ⟨view⟩ window.buffer { view, anchor := ⟨ar, ac⟩, head := ⟨hr, hc⟩, top } }
+    action :=
+      .call fun call => do
+        let .nat view :: .nat ar :: .nat ac :: .nat hr :: .nat hc :: .nat top :: _ :=
+          call.arguments | return
+        let some window := (← editorState).window? ⟨view⟩ | return
+        placeIn ⟨view⟩ window.buffer { view, anchor := ⟨ar, ac⟩, head := ⟨hr, hc⟩, top } }
 
 /-- The checks' driver, restored, with the test commands. -/
 def driver (state : Option System.FilePath := some stateDirectory) (limit : Nat := Restore.bound) :
@@ -95,7 +99,10 @@ def driver (state : Option System.FilePath := some stateDirectory) (limit : Nat 
           { driver.keys with
             command? := fun name =>
               match [noteCommand, ownedCommand, placeCommand].find? (·.name == name) with
-              | some { action := .call run, .. } => some fun call => do run call; return none
+              | some { action := .call run, .. } =>
+                some fun call => do
+                  run call;
+                  return none
               | _ => driver.keys.command? name } }
 
 end JournalReconcileTest
@@ -115,7 +122,8 @@ def journalReconcileChecks : List Check :=
             made && begun.loop.state.restore.run == some 1 &&
               ((logOf typedIn 1 0 1).map fun log => (log.header.isSome, log.records.size)) ==
                 some (true, 2) &&
-              journalText typedIn 1 0 1 == some "abc" && journalFiles typedIn == filesOf 0 1 &&
+              journalText typedIn 1 0 1 == some "abc" &&
+              journalFiles typedIn == filesOf 0 1 &&
               typedIn.journalFailures.isEmpty },
     { name := "a buffer whose text did not move gets no record"
       run :=
@@ -136,8 +144,10 @@ def journalReconcileChecks : List Check :=
             let edited := evilFed (opened begun "a.txt") "x"
             let index := indexNamed edited "a.txt"
             let saved := ran edited Files.saveName
-            journalFiles edited == filesOf index 1 && journalText edited 1 index 1 == some (aText.drop 1).toString &&
-              journalFiles saved == #[] && (liveOf saved index).isNone },
+            journalFiles edited == filesOf index 1 &&
+              journalText edited 1 index 1 == some (aText.drop 1).toString &&
+              journalFiles saved == #[] &&
+              (liveOf saved index).isNone },
     { name := "undo back to the saved state removes the journal"
       run :=
         pure <|
@@ -160,7 +170,8 @@ def journalReconcileChecks : List Check :=
             | some live =>
               live.generation > 1 && journalFiles typedIn == filesOf 0 live.generation &&
                 journalText typedIn 1 0 live.generation == some "abcdef" },
-    { name := "a log forgotten past the record's revision gives a new generation, its base the text now"
+    { name :=
+        "a log forgotten past the record's revision gives a new generation, its base the text now"
       run :=
         pure <|
           match driver with
@@ -216,8 +227,7 @@ def journalReconcileChecks : List Check :=
           | some begun =>
             let typedIn := evilFed begun (typing "abc")
             journalFiles typedIn == #[] && (indexOf typedIn 1).isNone },
-    { name :=
-        "a leave removes this run's journals and saves its index saying ended"
+    { name := "a leave removes this run's journals and saves its index saying ended"
       run :=
         pure <|
           match driver with
@@ -238,7 +248,8 @@ def journalReconcileChecks : List Check :=
             let quiet := drained burst
             pendingNamed burst writeJob == 1 &&
               ((indexOf quiet 1).map fun document =>
-                  document.buffers.map fun buffer => (buffer.name, buffer.journal.map (·.generation))) ==
+                  document.buffers.map fun buffer =>
+                    (buffer.name, buffer.journal.map (·.generation))) ==
                 some #[(EditorState.scratchName, some 1)] },
     { name :=
         "every window's place is recorded: two windows on one buffer, each with its selection and scroll top, a third on another buffer, and the focused view named"
@@ -253,15 +264,20 @@ def journalReconcileChecks : List Check :=
             match views[0]?, views[1]? with
             | some first, some second =>
               let placed :=
-                ran (ran split "test-place" [.nat first.index, .nat 0, .nat 1, .nat 1, .nat 2, .nat 0])
+                ran
+                  (ran split "test-place"
+                    [.nat first.index, .nat 0, .nat 1, .nat 1, .nat 2, .nat 0])
                   "test-place" [.nat second.index, .nat 2, .nat 0, .nat 3, .nat 3, .nat 1]
               let third := ran placed WindowCommands.splitName
               let focused := third.loop.state.frame.focused
               let opened := drained (invoked third Files.openName [.str (root / "a.txt").toString])
               let document := indexOf opened 1
-              let scratch := (document.bind (·.buffers.find? (·.name == EditorState.scratchName))).map (·.views)
-              let file := (document.bind (·.buffers.find? (·.name == "a.txt"))).map (·.views.map (·.view))
-              (scratch.map fun places => places.map fun place => (place.view, place.anchor, place.head)) ==
+              let scratch :=
+                (document.bind (·.buffers.find? (·.name == EditorState.scratchName))).map (·.views)
+              let file :=
+                (document.bind (·.buffers.find? (·.name == "a.txt"))).map (·.views.map (·.view))
+              (scratch.map fun places =>
+                    places.map fun place => (place.view, place.anchor, place.head)) ==
                   some #[(first.index, ⟨0, 1⟩, ⟨1, 2⟩), (second.index, ⟨2, 0⟩, ⟨3, 3⟩)] &&
                 (scratch.map (·.map (·.top))) == some #[0, 1] &&
                 file == some #[focused.index] &&
