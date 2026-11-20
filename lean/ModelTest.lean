@@ -1293,8 +1293,12 @@ Session restore is checked in Lean alone too:
   installs, or said when it does not register it; a cursor after a
   multi-byte character put back where it was; and phase 2's: (a) windows
   and layouts and (b) tabs back as they were up to their ids, (c) the jump
-  list, (d) every restored buffer marked with no history before the
-  restore, (h) a frame refused falling back to phase 1's placement, (i) a
+  list: at its end and in its middle with an entry before the index
+  dropped, an entry in a kept buffer with no file, one in a file no buffer
+  keeps, and one in the file of a buffer restored, held there again, each
+  window's C-o and C-i going where the first loop's went, (d) every
+  restored buffer marked with no history before the restore, (h) a frame
+  refused falling back to phase 1's placement, (i) a
   window of a buffer not kept showing scratch, said, (e) the workspace
   table and (f) its stores, met, never written or parked and claimed, (g)
   a reported job said stopped and the host's count of other jobs said,

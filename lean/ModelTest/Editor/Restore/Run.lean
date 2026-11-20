@@ -202,6 +202,69 @@ def withCodecs (names : List String) (driver : EvilDriver) : EvilDriver :=
 def keptCell (owner name : String) (version : Nat) (value : Value) : KeptCell :=
   { owner, name, version, value }
 
+/-- The jump list of `driver`'s focused window: each entry, then its index,
+then the previous-context mark, each place named by where it is now,
+`<buffer>:<row>:<column>` for one held in a buffer and
+`file <path>:<row>:<column>` for one in a file, the column in characters. -/
+def jumpsShown (driver : EvilDriver) : Option (Array String × Nat × Option String) := do
+  let state := driver.loop.state
+  let window ← state.window? state.frame.focused
+  let shown (place : Editor.Place) : TextM String :=
+    match place with
+    | .file path row column => pure s!"file {path}:{row}:{column}"
+    | .held buffer marker => do
+      let name := ((state.buffer? buffer).map (·.name)).getD "no buffer"
+      let (row, column) ← Marks.pointAt marker.text (← Marks.offsetOf marker)
+      return s!"{name}:{row}:{column}"
+  let program : TextM (Array String × Option String) := do
+    return (← window.jumps.list.entries.mapM shown, ← window.jumps.previous.mapM shown)
+  let (entries, previous) ← (program.runModel driver.model.texts).1.toOption
+  return (entries, window.jumps.list.index, previous)
+
+/-- What `driver`'s focused window shows once `keys` are typed and what
+they start is settled. -/
+def shownAfter (driver : EvilDriver) (keys : String) : String :=
+  focusedShown (drained (evilFed driver keys))
+
+/-- `document` with every jump of the kept buffer `key` written as a place
+in the file `path`, as an index holds the place of a file no buffer kept
+when it was written. -/
+def filedJumps (document : Document) (key : Nat) (path : String) : Document :=
+  let filed : Jump → Jump
+    | .kept at_ row column => if at_ == key then .file path row column else .kept at_ row column
+    | jump => jump
+  { document with
+    buffers :=
+      document.buffers.map fun buffer =>
+        { buffer with
+          views :=
+            buffer.views.map fun place =>
+              { place with
+                jumps :=
+                  place.jumps.map fun jumps =>
+                    { jumps with
+                      entries := jumps.entries.map filed,
+                      previous := jumps.previous.map filed } } } }
+
+/-- A first loop whose scratch buffer has `one`, `two` and `three` typed
+in, so it is journalled, with jumps in it recorded by `g g` and `G`. -/
+def typedScratch : Option EvilDriver :=
+  (first).map fun begun => drained (evilFed begun "i o n e RET t w o RET t h r e e <Escape> g g G")
+
+/-- A first loop with jumps in `b.txt`, by `G` and `g g`, then `a.txt`
+opened and edited, and `b.txt` closed, so the jumps in it are places in
+its file. -/
+def closedFile : Option EvilDriver :=
+  (first
+        (some
+          ((world fun files =>
+                (files.withFile "/r/a.txt" "one\ntwo\nthree\nfour\n".toUTF8).withFile "/r/b.txt"
+                  "alpha\nbeta\ngamma\n".toUTF8).getD
+            {}))).map
+    fun begun =>
+    let inB := evilFed (opened begun "b.txt") "G g g"
+    drained (closed (evilFed (opened inB "a.txt") "G x") "b.txt")
+
 end RestoreRunTest
 
 open RestoreRunTest in
@@ -251,6 +314,101 @@ def restoreChecks : List Check :=
                 jumpsOf before == some (3, 3, true) &&
                 jumpsOf again == some (2, 2, true) &&
                 focusedShown (evilFed before "C-o") != focusedShown before },
+    { name :=
+        "(c) the jump list with its index in the middle, an entry before it dropped: the index moves back past the dropped entry, and the restored window's C-o and C-i go where the first loop's went"
+      run :=
+        pure <|
+          match framed with
+          | none => false
+          | some before =>
+            -- C-o once leaves the index in the middle of the list, after
+            -- the scratch buffer's entry, which is not kept.
+            let mid := drained (evilFed before "C-o")
+            match second mid with
+            | none => false
+            | some again =>
+              jumpsShown mid ==
+                  some
+                    (#["scratch:0:0", "a.txt:0:0", "a.txt:3:0", "a.txt:1:0"], 2,
+                      some "a.txt:1:0") &&
+                jumpsShown again ==
+                  some (#["a.txt:0:0", "a.txt:3:0", "a.txt:1:0"], 1, some "a.txt:1:0") &&
+                shownAfter mid "C-o" == shownAfter again "C-o" &&
+                shownAfter mid "C-i" == shownAfter again "C-i" &&
+                shownAfter again "C-o" != shownAfter again "C-i" },
+    { name :=
+        "(c) a jump entry in a kept buffer with no file is held in the restored buffer by a new marker, and the restored window's C-o goes where the first loop's went"
+      run :=
+        pure <|
+          match typedScratch with
+          | none => false
+          | some before =>
+            match second before with
+            | none => false
+            | some again =>
+              let window := again.loop.state.window? again.loop.state.frame.focused
+              let scratch := again.loop.state.findBuffer EditorState.scratchName
+              jumpsShown before == some (#["scratch:2:4", "scratch:0:0"], 2, some "scratch:0:0") &&
+                jumpsShown again == jumpsShown before &&
+                (window.map fun window =>
+                    window.jumps.list.entries.all fun
+                      | .held buffer _ => some buffer == scratch
+                      | .file .. => false) ==
+                  some true &&
+                shownAfter before "C-o" == shownAfter again "C-o" &&
+                shownAfter again "C-o" != focusedShown again },
+    { name :=
+        "(c) a jump entry in a file no buffer keeps is restored as a place in that file, and the restored window's C-o reaches it, opening the file where the first loop's did"
+      run :=
+        pure <|
+          match closedFile with
+          | none => false
+          | some before =>
+            match second before with
+            | none => false
+            | some again =>
+              let back (driver : EvilDriver) : EvilDriver :=
+                drained (evilFed (drained (evilFed driver "C-o")) "C-o")
+              jumpsShown before ==
+                  some
+                    (#["scratch:0:0", "file /r/b.txt:0:0", "file /r/b.txt:2:0", "file /r/b.txt:0:0",
+                        "a.txt:0:0"],
+                      5, some "a.txt:0:0") &&
+                jumpsShown again ==
+                  some
+                    (#["file /r/b.txt:0:0", "file /r/b.txt:2:0", "file /r/b.txt:0:0", "a.txt:0:0"],
+                      4, some "a.txt:0:0") &&
+                focusedShown (back before) == focusedShown (back again) &&
+                focusedShown (back again) == "|alpha\nbeta\ngamma\n" },
+    { name :=
+        "(c) a jump entry recorded in the file of a buffer the restore puts back is held in that buffer once it is restored (Jumps.attach)"
+      run :=
+        pure <|
+          match framed with
+          | none => false
+          | some before =>
+            let filed (files : FileModel) : FileModel :=
+              match indexOf before 1 with
+              | some document =>
+                match document.buffers.find? (·.name == "a.txt") with
+                | some kept =>
+                  withIndex files (indexName 1) (filedJumps document kept.key "/r/a.txt").render
+                | none => files
+              | none => files
+            match second before filed, second before with
+            | some attached, some again =>
+              let a := attached.loop.state.findBuffer "a.txt"
+              let window := attached.loop.state.window? attached.loop.state.frame.focused
+              (indexOf before 1).any (fun document => document.buffers.any (·.name == "a.txt")) &&
+                jumpsShown attached == some (#["a.txt:0:0", "a.txt:3:0"], 2, some "a.txt:3:0") &&
+                jumpsShown attached == jumpsShown again &&
+                (window.map fun window =>
+                    window.jumps.list.entries.all fun
+                      | .held buffer _ => some buffer == a
+                      | .file .. => false) ==
+                  some true &&
+                shownAfter attached "C-o" == shownAfter again "C-o"
+            | _, _ => false },
     { name :=
         "(d) undo: every restored buffer is marked as having no history before the restore, and u at its root says so"
       run :=
