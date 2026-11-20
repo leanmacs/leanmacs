@@ -1,14 +1,22 @@
 import Editor.Api
 import Editor.Command.Call
+import ExecuteCommandApi
 
 /-!
 # The command prompt: running any registered command by name
 
 `execute-command` asks `Command: ` for the name of a registered command and
 runs the one accepted, as Emacs's `M-x` does. It is written over the editor
-API (`commandNames`, `matchByCategory`, `invoke`, `Editor/Api.lean`).
-`Editor.lean` imports this module, so config calls it. The command as
-compiled code registers it is in `Editor/ExecuteCommand/Compiled.lean`.
+API (`commandNames`, `matchByCategory`, `invoke`, the core's
+`lean/Editor/Api.lean`). It is the library of the default package
+`execute-command`, a Lake package outside the core
+(`packages/execute-command/`): an editor built from a set that holds it
+elaborates config on the set's base, which holds this module through the
+entry module `ExecuteCommand/EditorPackage.lean`, so config calls it with
+`import ExecuteCommand`. The command as compiled code registers it is in
+`ExecuteCommand/Compiled.lean`. The name it is registered under is the
+interface package `execute-command-api`'s (`packages/execute-command-api/`),
+whose contract check this package's tests run.
 
 - **The candidates are every registered command's name** (`source`), from
   compiled code and from config, the command prompt itself and the
@@ -27,7 +35,7 @@ compiled code registers it is in `Editor/ExecuteCommand/Compiled.lean`.
   specific tier shadows is never shown. The text stays the name, so
   resolution is unchanged.
 - **It asks when it is given no name** (`executeCommand`), as the ex
-  command asks for its line (`Editor/Ex.lean`). With a string as its first
+  command asks for its line (the core's `lean/Editor/Ex.lean`). With a string as its first
   argument it runs the command that string names. With anything else
   first, or nothing, it asks with a prompt labelled `label`, whose
   continuation is `execute-command` itself; so a Vim key, which hands a
@@ -40,7 +48,7 @@ compiled code registers it is in `Editor/ExecuteCommand/Compiled.lean`.
   `ex`, `switch-buffer`) asks in turn. An accepted name is three steps: the
   accept, `execute-command` with the name, and the named command.
 - **The answer is resolved as it was listed** (`resolve`), the rule
-  `switch-buffer` follows (`Editor/Buffers.lean`): a name a command is
+  `switch-buffer` follows (the core's `lean/Editor/Buffers.lean`): a name a command is
   registered under exactly is run; otherwise the first command the style
   lists for the text (`matchByCategory`), so accepting a typed fragment
   with nothing chosen runs the top of the list shown. A text nothing
@@ -59,18 +67,22 @@ A new list of candidates is a source registered in the category `command`.
 A new order or search is config's style for `command`. What a candidate
 shows beside its name is `annotation`.
 
-Pinned by `ModelTest.executeCommandChecks`, on the loop's driver over the
-editor's models and the test scheme; by the headless fixture
-`tests/headless/command-prompt`, on the default editor with a config of
-its own; and by the headless fixture `tests/headless/default-config`,
-which runs `SPC :` under the shipped default config.
+Pinned by `ExecuteCommandTest.executeCommandChecks`
+(`ExecuteCommandTest/ExecuteCommand.lean`), on the core's test kit: the
+loop's driver over the editor's models and the test scheme; by the
+headless fixture `tests/headless/command-prompt`, run on the default set's
+editor and the fixture set's; and by the core's headless fixture
+`tests/headless/default-config`, which runs `SPC :` under the shipped
+default config.
 -/
 
 namespace Editor.ExecuteCommand
 
-/-- The name the command prompt is registered under. -/
+/-- The name the command prompt is registered under: the one the interface
+package declares (`ExecuteCommandApi.executeCommandName`), so a rename on
+either side is a build error or a contract failure. -/
 def name : String :=
-  "execute-command"
+  ExecuteCommandApi.executeCommandName
 
 /-- The label of the prompt the command asks for a command's name with. -/
 def label : String :=

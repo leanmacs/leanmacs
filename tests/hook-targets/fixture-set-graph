@@ -4,6 +4,8 @@ greeting-loud	implementation	greeting greeting-api
 echo	implementation	-
 mode-line	implementation	-
 shipped-themes	implementation	-
+execute-command-api	interface	-
+execute-command	implementation	execute-command-api
 compile	implementation	-
 languages	implementation	-
 word-count	implementation	-

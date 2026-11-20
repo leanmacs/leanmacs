@@ -37,7 +37,6 @@ import Editor.Evil.Compiled
 import Editor.Ex
 import Editor.Ex.Compiled
 import Editor.Ex.Line
-import Editor.ExecuteCommand.Compiled
 import Editor.Face
 import Editor.Ffi.Counter
 import Editor.Ffi.Events
@@ -2729,19 +2728,23 @@ def shippedChecks (_ : Unit) : List Check :=
             TabCommands.package.registered.commands.all (compiled ·.name) &&
             Vim.Default.tabKeys.all (compiled ·.2) },
     { name :=
-        "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names, the buffers, the tabs, the themes and the commands; and with the command prompt, execute-command, registered by the execute-command package"
+        "the executable's hosts start with the completion sources that ship each registered by its package, so config can ask for each by name: the ex line's history and its names, the buffers, the tabs and the themes"
       run := do
         let registry := shippedRegistry
         let ownedBy (package : Package) (name : String) : Bool :=
           registry.sources.any fun entry =>
             entry.source.name == name && entry.owner == package.owner
         return [(Ex.package, Ex.historySource.name), (Ex.package, Ex.namesSource.name),
-                  (Buffers.package, Buffers.source.name),
-                  (TabCommands.package, TabCommands.source.name),
-                  (Themes.package, Themes.source.name),
-                  (ExecuteCommand.package, ExecuteCommand.source.name)].all
-              (fun (package, name) => ownedBy package name && (registry.source? name).isSome) &&
-            (registry.find? ExecuteCommand.name).any (·.owner == ExecuteCommand.package.owner) },
+                (Buffers.package, Buffers.source.name),
+                (TabCommands.package, TabCommands.source.name),
+                (Themes.package, Themes.source.name)].all
+            fun (package, name) => ownedBy package name && (registry.source? name).isSome },
+    { name :=
+        "the executable's hosts start with nothing of the execute-command package: no command execute-command, no source commands, and no source in the category command, registered by a package of the core's Lake package"
+      run := do
+        let registry := shippedRegistry
+        return (registry.find? "execute-command").isNone && (registry.source? "commands").isNone &&
+            registry.sourcesIn "command" == #[] },
     { name :=
         "the executable's hosts start with the shipped completion styles, fuzzy and orderless, and the shipped completion display, minibuffer, registered by the completion package, and with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
       run := do
@@ -2758,8 +2761,7 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.sourcesIn "ex-line" == #[Ex.historySource.name, Ex.namesSource.name] &&
             registry.sourcesIn "buffer" == #[Buffers.source.name] &&
             registry.sourcesIn "tab" == #[TabCommands.source.name] &&
-            registry.sourcesIn "theme" == #[Themes.source.name] &&
-            registry.sourcesIn ExecuteCommand.category == #[ExecuteCommand.source.name] },
+            registry.sourcesIn "theme" == #[Themes.source.name] },
     { name :=
         "the executable's hosts start with nothing of the compile mode: no command, ex name, job, mode or contribution of it is registered by a package of the core's Lake package, and compile as an ex name is not bound; the minibuffer's mode is"
       run := do

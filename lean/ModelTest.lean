@@ -64,7 +64,6 @@ import ModelTest.Editor.Ex.Compiled
 import ModelTest.Editor.Ex.Line
 import ModelTest.Editor.ExcerptView
 import ModelTest.Editor.Executable
-import ModelTest.Editor.ExecuteCommand
 import ModelTest.Editor.Extension
 import ModelTest.Editor.Face
 import ModelTest.Editor.Face.Vocabulary
@@ -633,20 +632,6 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   that driver, told of two registered themes: with no name it asks among
   them, with a registered name the step hands the name back, and a name
   nobody registered, or a prompt already open, is said in the echo area;
-- `executeCommandChecks`: the command prompt (`Editor/ExecuteCommand.lean`)
-  on that driver, from keys that bind neither it nor `load-theme`: it lists
-  the registered commands' names in order, and of a registry the loop is
-  told of, a command config no longer registers is no longer listed;
-  accepting `load-theme` runs it
-  as a step of its own, which asks in turn, and accepting a theme there
-  loads it; a typed fragment runs the first command the style lists for it,
-  a text nothing matches is said and an empty one runs nothing; a prompt
-  already open is said; and a fake style chosen for the category `command`
-  reverses the listing and decides which command a fragment runs, while a
-  theme prompt keeps its own order; opened by a key bound to it or from the
-  menu, it annotates its candidates with their keys as when called by name;
-  and its source, `commands`, holds the completion sources' contract on
-  the kit's runner and answers something there (`Editor.Test.sourceHolds`);
 - `bindingSearchChecks`: the binding search (`Editor/BindingSearch.lean`)
   on that driver: it lists each binding the scheme reaches as its keys and
   command, annotated with its description; accepting one runs its command
@@ -1633,7 +1618,6 @@ def checks : List Check :=
     autoReloadChecks ++
     bufferCommandChecks ++
     themeChecks ++
-    executeCommandChecks ++
     bindingSearchChecks ++
     appearanceChecks ++
     faceVocabularyChecks ++

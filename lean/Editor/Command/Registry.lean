@@ -49,12 +49,12 @@ request of the editor's port (`EditorRequest.registry`,
   `themeNames` the names themes are registered under.
 - `commandNames` is answered the names commands are registered under, each
   once, in their order: the command prompt's candidates
-  (`Editor/ExecuteCommand.lean`).
+  (`packages/execute-command/ExecuteCommand.lean`).
 - `keyBindings` is answered the key sequences that reach a command in a
   view, as the input scheme says in the scheme's state of the step that
   asks: the loop fills it per step from the scheme, not from the registry
   (`Loop.Registered.keyBindings`). The binding search and the command
-  prompt ask (`Editor/BindingSearch.lean`, `Editor/ExecuteCommand.lean`).
+  prompt ask (`Editor/BindingSearch.lean`, `packages/execute-command/ExecuteCommand.lean`).
 - `autoReload` is answered config's setting alone. Whether auto-reload is
   in effect is a command's choice, which is state (`EditorState.autoReload`),
   or else this.

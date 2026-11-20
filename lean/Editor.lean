@@ -12,7 +12,6 @@ import Editor.Evil.Scroll
 import Editor.Evil.Theorems
 import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
-import Editor.ExecuteCommand
 import Editor.Extension
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
@@ -122,11 +121,13 @@ with `Themes.loadThemeCommand`, over `themeNames` and `loadTheme`
 the one in force with `useTheme` (`Editor/Setup.lean`). Its registration
 with the theme `default` (`Editor/Themes/Compiled.lean`) is not imported,
 and the palettes that ship are a package outside the core
-(`packages/shipped-themes/`), which config names by a theme's name alone. So is
-the command prompt (`Editor/ExecuteCommand.lean`): `execute-command`, which
-a command of config's calls with `ExecuteCommand.executeCommand`, over
-`commandNames`; its registration (`Editor/ExecuteCommand/Compiled.lean`) is
-not imported. So is the binding search (`Editor/BindingSearch.lean`):
+(`packages/shipped-themes/`), which config names by a theme's name alone.
+The command prompt, `execute-command`, is not here: it is a package
+outside the core (`packages/execute-command/`), and config reaches it with
+`import ExecuteCommand`, a module of the set's base through the package's
+entry module (`Editor/Main.lean`, "The base"); a command of config's then
+calls it with `ExecuteCommand.executeCommand`, over `commandNames`, which
+is here. So is the binding search (`Editor/BindingSearch.lean`):
 `search-bindings`, which a command of config's calls with
 `BindingSearch.searchBindings`, over `keyBindings`; its registration
 (`Editor/BindingSearch/Compiled.lean`) is not imported.

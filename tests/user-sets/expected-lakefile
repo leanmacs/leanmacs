@@ -9,6 +9,10 @@ name = "shipped-themes"
 path = "@REPO@/packages/shipped-themes"
 
 [[require]]
+name = "execute-command"
+path = "@REPO@/packages/execute-command"
+
+[[require]]
 name = "languages"
 path = "@REPO@/packages/languages"
 

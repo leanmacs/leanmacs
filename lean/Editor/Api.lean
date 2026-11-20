@@ -575,7 +575,7 @@ asking loads none. Neither makes a request of the library. Pinned by
 compiled code's first, then config's, in the order they were first
 registered, as the loop is told of the registry for the step that asks, so
 a reload that drops config's command drops its name. It is what the command
-prompt lists (`Editor/ExecuteCommand.lean`). Where no loop runs the command
+prompt lists (`packages/execute-command/ExecuteCommand.lean`). Where no loop runs the command
 it answers none. It makes no request of the library. Pinned by
 `ModelTest.dispatchStateChecks`.
 

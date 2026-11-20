@@ -4,7 +4,6 @@ import Editor.Buffers.Compiled
 import Editor.Completion.Compiled
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
-import Editor.ExecuteCommand.Compiled
 import Editor.Files.Compiled
 import Editor.FrameCommands.Compiled
 import Editor.Menu.Compiled
@@ -110,7 +109,10 @@ core's and the compile mode's: the `code` mode still follows version
 control's modes. The mode line's package, which was second here, is the
 default package `mode-line` (`packages/mode-line/`), and registers its
 segments after version control's `review`: a listing names segments, and
-resolves them by name, so the order shows nowhere.
+resolves them by name, so the order shows nowhere. The command prompt's
+package, which was thirteenth here, after `themes`, is the default package
+`execute-command` (`packages/execute-command/`): its command follows
+version control's in the command prompt now.
 -/
 
 namespace EditorCore.EditorPackage
@@ -122,9 +124,8 @@ them ("The order", in the module docs). -/
 def packages : Array Package :=
   #[Completion.package, Files.package, Minibuffer.package, Evil.package, Ex.package,
     Buffers.package, FrameCommands.package, Menu.package, WindowCommands.package,
-    TabCommands.package, Themes.package, ExecuteCommand.package, BindingSearch.package,
-    Workspace.package, ProjectSearch.package, WorkingSet.package, Restore.package,
-    PackageSet.package, Shell.package, AtPoint.package, VersionControl.package,
-    VersionControl.gutterPackage]
+    TabCommands.package, Themes.package, BindingSearch.package, Workspace.package,
+    ProjectSearch.package, WorkingSet.package, Restore.package, PackageSet.package, Shell.package,
+    AtPoint.package, VersionControl.package, VersionControl.gutterPackage]
 
 end EditorCore.EditorPackage

@@ -301,7 +301,7 @@ loop has little of its own to do.
   invocations to run next: a prompt's continuation with its answer, and
   what the command asked for. The ex command runs the command a line
   names this way (`Editor/Ex.lean`), and so does the command prompt,
-  `execute-command`, the command accepted (`Editor/ExecuteCommand.lean`).
+  `execute-command`, the command accepted (`packages/execute-command/ExecuteCommand.lean`).
   A name no command is registered
   under is said by that step, `<name>: no such command`.
 - **Rollback needs no rule of its own.** A command that asks and then

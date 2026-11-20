@@ -404,7 +404,7 @@ registers nothing else.
   latest entry of a name, so of two packages that register one name the
   later is the one found. The names commands are registered under
   (`names`), the packages' first in that order, are what the command
-  prompt lists (`registered`, `Editor/ExecuteCommand.lean`).
+  prompt lists (`registered`, `packages/execute-command/ExecuteCommand.lean`).
 - **Config comes after every package.** An install is `replaceOwned` for
   the owner `config`, which puts config's entries after every other
   owner's. So config's command of a name a package's command has is the

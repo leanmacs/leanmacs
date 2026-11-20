@@ -13,7 +13,6 @@ import Editor.Config.Elaborator.Model
 import Editor.Display.Contract
 import Editor.Evil.Compiled
 import Editor.Evil.Theorems
-import Editor.ExecuteCommand.Compiled
 import Editor.Extension
 import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Contract

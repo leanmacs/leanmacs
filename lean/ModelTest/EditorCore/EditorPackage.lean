@@ -23,9 +23,9 @@ open Editor
 register. -/
 def shippedPackageNames : Array String :=
   #["completion", "files", "minibuffer", "evil", "ex", "buffers", "frame-commands", "menu",
-    "window-commands", "tab-commands", "themes", "execute-command", "binding-search", "workspace",
-    "project-search", "working-set", "restore", "package-set", "shell", "at-point",
-    "version-control", "version-control-gutter"]
+    "window-commands", "tab-commands", "themes", "binding-search", "workspace", "project-search",
+    "working-set", "restore", "package-set", "shell", "at-point", "version-control",
+    "version-control-gutter"]
 
 /-- The checks of the packages of the core's Lake package
 (`EditorCore/EditorPackage.lean`): the list a host is handed is whole,
@@ -47,19 +47,20 @@ def packageSetChecks : List Check :=
                 "restore", "restore-files", "restore-write", "restore-save", "restart-probe",
                 "restart-save", "vc-gutter-head", "vc-gutter-diff", "vc-gutter-refs"] },
     { name :=
-        "every package of the shipped set is accepted, and their names are the 22 of the package table, each once, in its order, with no package of the shipped palettes and none of the compile mode, the languages or the mode line among them"
+        "every package of the shipped set is accepted, and their names are the 21 of the package table, each once, in its order, with no package of the shipped palettes and none of the compile mode, the languages, the mode line or the command prompt among them"
       run :=
         let (state, refused) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
             EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 22 &&
-            shippedPackageNames.toList.eraseDups.length == 22 &&
+            shippedPackageNames.size == 21 &&
+            shippedPackageNames.toList.eraseDups.length == 21 &&
             !shippedPackageNames.contains "shipped-themes" &&
             !shippedPackageNames.contains "compile" &&
             !shippedPackageNames.contains "languages" &&
             !shippedPackageNames.contains "mode-line" &&
+            !shippedPackageNames.contains "execute-command" &&
             state.packages == shippedPackageNames &&
             EditorCore.EditorPackage.packages.all fun package =>
               package.collected.toOption.isSome) },

@@ -1,22 +1,16 @@
 import Editor.Api
 import Editor.Command
 import Editor.Command.Call
-import Editor.Command.Dispatch
 import Editor.Completion
 import Editor.Completion.Candidate
 import Editor.Completion.Style
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.Event
-import Editor.ExecuteCommand
-import Editor.ExecuteCommand.Compiled
 import Editor.Face
 import Editor.InputScheme.Test
 import Editor.Invocation
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.State
 import Editor.Test.Config
 import Editor.Test.Driver
@@ -26,18 +20,28 @@ import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Test.Sources
 import Editor.Themes
-import Editor.Themes.Compiled
 import Editor.Value
-import ModelTest.Check
+import ExecuteCommand
+import ExecuteCommand.Compiled
+import ExecuteCommandTest.Check
 
 /-!
-# Model tests: `Editor/ExecuteCommand.lean`
+# Model tests: `ExecuteCommand.lean`
 
-The model tests of `Editor/ExecuteCommand.lean`: `executeCommandChecks`. The
-root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `ExecuteCommand.lean`: `executeCommandChecks`. They were
+the core's (`ModelTest.executeCommandChecks`) while the command prompt was
+a module of the core, and moved here with their sentences as they were.
+The test driver's root, `ExecuteCommandTest/Model.lean`, runs them.
+
+They run on the core's test kit: the loop's driver (`Editor.Test.Driver`,
+`Editor.Test.Loop`), the minibuffer's package as the kit's prompts bring it
+(`Editor.Test.Prompts`), and the source contract's runner
+(`Editor.Test.Sources`). The command that loads a theme is registered here
+from the editor API (`Themes.loadThemeCommand`), as compiled code
+registers it.
 -/
 
-namespace ModelTest
+namespace ExecuteCommandTest
 
 open Editor
 open Editor.Test
@@ -48,15 +52,15 @@ def saysMarked : Dispatched := fun _ => do
   return none
 
 /-- The commands of the command prompt's checks, by name, in the order they
-are registered: the commands compiled code registers for the command prompt,
-for loading a theme and for the minibuffer (`ExecuteCommand.package.registered.commands`,
-`Themes.package.registered.commands`, `Minibuffer.package.registered.commands`), then `marked`, which says
+are registered: the commands compiled code registers for the command prompt
+(`ExecuteCommand.package.registered.commands`), the command that loads a
+theme, as the themes package registers it (`Themes.loadName`,
+`Themes.loadThemeCommand`), and the minibuffer's commands
+(`Minibuffer.package.registered.commands`), then `marked`, which says
 `marked`. -/
 def executeCommands : List (String × Dispatched) :=
-  let compiled : List (String × Dispatched) :=
-    (ExecuteCommand.package.registered.commands ++ Themes.package.registered.commands ++
-          Minibuffer.package.registered.commands).toList.filterMap
-      fun registration =>
+  let called (registrations : Array Config.Registration) : List (String × Dispatched) :=
+    registrations.toList.filterMap fun registration =>
       match registration.action with
       | .call run =>
         some
@@ -64,7 +68,12 @@ def executeCommands : List (String × Dispatched) :=
             run call
             return none)
       | _ => none
-  compiled ++ [("marked", saysMarked)]
+  let loadTheme : Dispatched := fun call => do
+    Themes.loadThemeCommand call
+    return none
+  called ExecuteCommand.package.registered.commands ++ [(Themes.loadName, loadTheme)] ++
+    called Minibuffer.package.registered.commands ++
+    [("marked", saysMarked)]
 
 /-- What a step of the command prompt's checks is handed: the commands of
 `executeCommands`, the loop told their names, in order, as the registered
@@ -111,8 +120,8 @@ it and the minibuffer's accept runs. -/
 def accepting (driver : TestDriver) (typed : String) : TestDriver :=
   (fedTo (calling driver) (.commit typed :: presses "C-e y")).1
 
-/-- The checks of the command prompt (`Editor/ExecuteCommand.lean`,
-`Editor/ExecuteCommand/Compiled.lean`), on the loop's driver over the
+/-- The checks of the command prompt (`ExecuteCommand.lean`,
+`ExecuteCommand/Compiled.lean`), on the loop's driver over the
 editor's models and the test scheme: it lists every registered command,
 runs the one accepted as a step of its own, so one that asks asks in turn,
 and the style chosen for the category `command` decides the order. -/
@@ -273,4 +282,4 @@ def executeCommandChecks : List Check :=
                 annotations chosen == annotations named }] ++
     (sourceHolds ExecuteCommand.source).map fun (name, held) => { name, run := pure held }
 
-end ModelTest
+end ExecuteCommandTest

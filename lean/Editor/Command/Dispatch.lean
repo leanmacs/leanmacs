@@ -188,12 +188,12 @@ from the next command.
     asks, for the candidates of its prompt;
   - the commands registered (`commandNames`, from
     `Loop.Registered.commandNames`), each once, in their order: the
-    command prompt asks, for its candidates (`Editor/ExecuteCommand.lean`);
+    command prompt asks, for its candidates (`packages/execute-command/ExecuteCommand.lean`);
   - the key sequences that reach a command in a view (`keyBindings`, from
     `Loop.Registered.keyBindings`), which the loop fills per step from the
     input scheme, in the scheme's state of that step, not from the
     registry: the binding search and the command prompt ask
-    (`Editor/BindingSearch.lean`, `Editor/ExecuteCommand.lean`);
+    (`Editor/BindingSearch.lean`, `packages/execute-command/ExecuteCommand.lean`);
   - config's auto-reload setting (`autoReload`): whether auto-reload is in
     effect where no command chose (`Files.autoReloadOn`,
     `Editor/Files.lean`), a command's choice being the state's;
@@ -474,7 +474,7 @@ structure Loop.Registered where
   that loads a theme: its candidates, and the names it may load. -/
   themeNames : Array String := #[]
   /-- The names commands are registered under, each once, for the command
-  prompt (`Editor/ExecuteCommand.lean`). Whoever fills this and `command`
+  prompt (`packages/execute-command/ExecuteCommand.lean`). Whoever fills this and `command`
   fills them from one registry. -/
   commandNames : Array String := #[]
   /-- The key sequences that reach a command in each view, as the input

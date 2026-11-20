@@ -1,5 +1,5 @@
 import Editor
-import Editor.ExecuteCommand
+import ExecuteCommand
 open Editor
 
 -- A config for the command prompt, `execute-command`. It chooses a style of
