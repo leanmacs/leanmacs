@@ -142,6 +142,13 @@ run = [
   # tests/empty-set requires the core alone, so it holds no package and the
   # step must exit 2, saying so. Its output is shown only when it does not.
   "status=0; out=$(sh ../tools/package-set.sh test ../tests/empty-set 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -q 'names no package of the set'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # With `--only`, a step runs over the named packages of the set alone,
+  # as the pre-commit hook asks for (tools/lean-hook.sh): told `greeting`,
+  # the test step tests `greeting` and no other package. A name that is no
+  # package of the set is exit 2, naming it, so a misspelt name cannot pass
+  # by running over nothing. Their output is shown only when it is not that.
+  "out=$(PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh --only greeting test ../tests/packages 2>&1) && test \"$(printf '%s\\n' \"$out\" | grep '^package-set: test ')\" = \"package-set: test greeting ($(cd ../tests/packages/greeting && pwd))\" || { printf '%s\\n' \"$out\"; echo 'lean-test: package-set --only greeting did not test greeting alone'; exit 1; }",
+  "status=0; out=$(sh ../tools/package-set.sh --only greeting --only nosuch test ../tests/packages 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'nosuch is no package of the set'; } || { printf '%s\\n' \"$out\"; exit 1; }",
 ]
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
@@ -1100,6 +1107,15 @@ run = [
   # the machine; what it prints was compared with what an editor built at
   # the commit before the move prints for it.
   "out=$(sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; for line in 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test EchoTest.Linked of echo' \"echo linked test: the contract's 7 properties hold on the Rust-backed binding, each request completed through the completion queue\" 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 7 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture shipped-formats of compile' 'package-set: ran 4 linked tests and 9 headless fixtures over 6 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done",
+  # With `--only`, `run` runs over the named packages alone, and still
+  # refuses to run nothing: the interface package `greeting-api` has no
+  # linked test and no headless fixture, so `--only greeting-api` is exit
+  # 2, unless the caller says with `--allow-empty-run` that running nothing
+  # is what it means, as the pre-commit hook does for a change to an
+  # interface package; the gate never says it. Their output is shown only
+  # when it is not that.
+  "status=0; out=$(sh ../tools/package-set.sh --only greeting-api run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'nothing to run'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  "out=$(sh ../tools/package-set.sh --only greeting-api --allow-empty-run run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean 2>&1) && printf '%s\\n' \"$out\" | grep -qxF 'package-set: ran 0 linked tests and 0 headless fixtures over 1 package' || { printf '%s\\n' \"$out\"; exit 1; }",
   # The same step over the default set (packages/): the linked test and
   # the fixtures of the default packages, on the editor built from the
   # default set, the one that is shipped. So the compile mode's linked test

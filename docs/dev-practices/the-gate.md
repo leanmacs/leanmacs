@@ -1969,6 +1969,20 @@ package's tests are by convention are in
   under a package's `tests/headless/` with no `config/`, no `script` or no
   `expected` is exit 2, naming what is missing, and so is a set whose
   packages hold no linked test and no fixture at all.
+- **`--only <package>`**, given once for each package and before the
+  step, runs the step over the named packages of the set alone, in the
+  set's order; `build` still builds the set's editor first. It is what the
+  pre-commit hook runs for a change that reaches only some packages ("The
+  pre-commit hook", below). A name that is no package of the set is exit 2,
+  naming it. `run` over the named packages still refuses to run nothing,
+  unless `--allow-empty-run` is given too, as the hook does for a change
+  to an interface package such as `greeting-api`, which has no linked test
+  and no fixture; the gate's own steps run over every package and never
+  pass it, and the script refuses it without `--only`. `lean-test` shows
+  `--only greeting test` testing `greeting` alone and `--only nosuch`
+  refused; `ffi-test` shows `--only greeting-api run` refused and, with
+  `--allow-empty-run`, printing `package-set: ran 0 linked tests and 0
+  headless fixtures over 1 package`.
 - **The fixture's own checks.** `greeting`: three checks in its driver
   (`GreetingTest/Greeting.lean`), and the contract check of
   `greeting-api`, which it implements; a linked test
