@@ -28,8 +28,10 @@ table a restore makes of them. Pure.
 The table with every workspace and project of the record, and each cell:
 
 - **with a codec now** (a package's, registered before the restore), met by
-  the install rule (`StoreDeclaration.meet`): kept at its version,
-  migrated, or reset to the initial tree with a report line;
+  the install rule (`StoreDeclaration.meet`) and written into its store
+  (`Workspaces.meetInto`): kept at its version, migrated, or reset to the
+  initial tree with a report line. The reconciler claims a parked cell by
+  the same function, so the rule and its report are written once;
 - **with none** (config's, which registers after the restore), handed back
   parked, with its scope, for the reconciler to meet once config has
   installed (`Editor/Restore.lean`).
@@ -210,6 +212,25 @@ def Document.Workspaces.withParked (record : Document.Workspaces)
         { project with cells := project.cells ++ of (.project project.identity) }
     unscoped := record.unscoped ++ of .unscoped }
 
+/-- `table` with the kept cell `cell` met with `codec` and written into its
+store, the one at `scope` ("What a restore makes of it", in the module
+docs): met by the install rule (`StoreDeclaration.meet`), with the report
+line when its value was lost. A scope the table does not hold leaves it as
+it is. The one rule for meeting a kept table cell, which a restore
+(`Workspaces.restore`) and the reconciler's claim of a parked cell
+(`Restore.mirrored`, `Editor/Restore.lean`) share. -/
+def Workspaces.meetInto (table : Workspace.Table) (scope : Document.Scope) (cell : KeptCell)
+    (codec : StoreCodec) : Workspace.Table × Option String :=
+  let met := codec.declaration.meet (some (cell.version, cell.value))
+  let table :=
+    match scope with
+    | .workspace location =>
+      (table.setWorkspaceValue location cell.name met.value).toOption.getD table
+    | .project identity =>
+      (table.setProjectValue identity cell.name met.value).toOption.getD table
+    | .unscoped => table.setUnscopedValue cell.name met.value
+  (table, met.lost.map fun why => s!"store {cell.name}: {why}")
+
 /-- What a restore makes of `record` ("What a restore makes of it", in the
 module docs): the table, the cells parked with their scopes, and the report
 lines. -/
@@ -217,43 +238,34 @@ def Workspaces.restore (record : Document.Workspaces)
     (codec? : String → Option (String × StoreCodec)) :
     Workspace.Table × Array (Document.Scope × KeptCell) × Array String :=
   Id.run do
-    let mut parked : Array (Document.Scope × KeptCell) := #[]
-    let mut report : Array String := #[]
-    let mut stores : Array (Document.Scope × Array (String × Value)) := #[]
-    let scopes : Array (Document.Scope × Array KeptCell) :=
-      record.workspaces.map (fun workspace => (.workspace workspace.location, workspace.cells)) ++
-        record.projects.map (fun project => (.project project.identity, project.cells)) ++
-        #[(.unscoped, record.unscoped)]
-    for (scope, cells) in scopes do
-      let mut met : Array (String × Value) := #[]
-      for cell in cells do
-        match codec? cell.name with
-        | some (_, codec) =>
-          let meeting := codec.declaration.meet (some (cell.version, cell.value))
-          met := met.push (cell.name, meeting.value)
-          if let some why := meeting.lost then
-            report := report.push s!"store {cell.name}: {why}"
-        | none =>
-          parked := parked.push (scope, cell)
-      stores := stores.push (scope, met)
-    let cellsOf (scope : Document.Scope) : Array (String × Value) :=
-      ((stores.find? (·.1 == scope)).map (·.2)).getD #[]
     let projectOf (identity : Project.Identity) : Project :=
       match record.projects.find? (·.identity == identity) with
       | some project =>
         { identity, name := project.name, remote := project.remote, commonDir := project.commonDir }
       | none => { identity, name := "" }
-    let table : Workspace.Table :=
+    let mut table : Workspace.Table :=
       { workspaces :=
           record.workspaces.map fun workspace =>
             let made : Workspace :=
               { location := workspace.location, branch := workspace.branch
                 project := projectOf workspace.project }
-            (made, cellsOf (.workspace workspace.location))
-        projects :=
-          record.projects.map fun project =>
-            (projectOf project.identity, cellsOf (.project project.identity))
-        unscoped := cellsOf .unscoped }
+            (made, #[])
+        projects := record.projects.map fun project => (projectOf project.identity, #[]) }
+    let mut parked : Array (Document.Scope × KeptCell) := #[]
+    let mut report : Array String := #[]
+    let scopes : Array (Document.Scope × Array KeptCell) :=
+      record.workspaces.map (fun workspace => (.workspace workspace.location, workspace.cells)) ++
+        record.projects.map (fun project => (.project project.identity, project.cells)) ++
+        #[(.unscoped, record.unscoped)]
+    for (scope, cells) in scopes do
+      for cell in cells do
+        match codec? cell.name with
+        | some (_, codec) =>
+          let (met, lost) := Workspaces.meetInto table scope cell codec
+          table := met
+          report := report ++ lost.toArray
+        | none =>
+          parked := parked.push (scope, cell)
     return (table, parked, report)
 
 end Editor.Restore

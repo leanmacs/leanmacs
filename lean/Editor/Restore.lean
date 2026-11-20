@@ -88,10 +88,12 @@ none:
   debounced write.
 - **Parked cells** (`Kept.parked`, table cells a restore read that no codec
   met) are met once config has installed past the generation they were
-  parked at: each whose codec is registered now is met
-  (`StoreDeclaration.meet`) and put in its store, and the rest are
-  dropped and said once in the echo area. Until then they are carried into
-  every index written.
+  parked at: each whose codec is registered now is met and put in its
+  store by the rule a restore meets a cell with (`Workspaces.meetInto`,
+  `Editor/Restore/Workspaces.lean`), and the rest are dropped. What that
+  install lost is said once in the echo area: each value the codec
+  refused and reset (`store <name>: <why>`), and the names dropped. Until
+  then they are carried into every index written.
 - **The jobs** are the reported jobs running, as the host last handed them.
 - **The held layout** (`Kept.heldLayout`), which a restore sets so that the
   host's default does not rearrange the layout it put back, is let go once
@@ -251,9 +253,10 @@ structure Context where
 /-- The table's kept cells and the parked ones mirrored into `kept` from
 `state` and `context` ("Mirroring", in the module docs), when the revisions
 moved since the last mirror: the host's cells forced, a parked cell met
-with a codec once an install registers one, and dropped, said once, after
-an install that does not. The state, with each claimed cell in its store,
-and the sentence to say, if any. -/
+into its store (`Workspaces.meetInto`) once an install registers its
+codec, and dropped after an install that does not; a value the codec
+refused, and the cells dropped, said once. The state, with each claimed
+cell in its store, and the sentence to say, if any. -/
 def mirrored (state : EditorState) (context : Context) : EditorState × Option String :=
   Id.run do
     let kept := state.restore
@@ -266,24 +269,22 @@ def mirrored (state : EditorState) (context : Context) : EditorState × Option S
     if !parked.isEmpty && context.configGeneration > kept.parkedAt then
       let mut table := state.workspaces
       let mut dropped := #[]
+      let mut lines := #[]
       for (scope, cell) in parked do
         match context.registered.codec? cell.name with
         | some (_, codec) =>
-          let met := codec.declaration.meet (some (cell.version, cell.value))
-          table :=
-            match scope with
-            | .workspace location =>
-              (table.setWorkspaceValue location cell.name met.value).toOption.getD table
-            | .project identity =>
-              (table.setProjectValue identity cell.name met.value).toOption.getD table
-            | .unscoped => table.setUnscopedValue cell.name met.value
+          let (met, lost) := Workspaces.meetInto table scope cell codec
+          table := met
+          lines := lines ++ lost.toArray
         | none =>
           dropped := dropped.push cell.name
       parked := #[]
       if !dropped.isEmpty then
-        said :=
-          some
-            s!"restore: the session kept {", ".intercalate dropped.toList}, but no codec is registered for it now; dropped"
+        lines :=
+          lines.push
+            s!"the session kept {", ".intercalate dropped.toList}, but no codec is registered for it now; dropped"
+      if !lines.isEmpty then
+        said := some s!"restore: {"; ".intercalate lines.toList}"
       state :=
         { state with
           workspaces := table, workspacesRevision := state.workspacesRevision + 1 }

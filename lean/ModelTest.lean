@@ -1252,7 +1252,8 @@ Session restore is checked in Lean alone too:
 - `restoreWorkspaceChecks`: the workspace table as the index records it
   (`Editor/Restore/Workspaces.lean`), pure: the JSON round trip of each
   identity, location and branch; only cells with a codec, through its
-  keep; a restore that meets, migrates, resets and parks; restore then
+  keep; a restore that meets, migrates, resets and parks; a kept cell met
+  into each scope with its loss line (`Workspaces.meetInto`); restore then
   record; and parked cells carried back into their stores.
 - `restoreOffsetChecks`: where a recorded spot is put back
   (`Restore.offsetOf`, `Editor/Restore.lean`), on the text model: its
@@ -1273,7 +1274,8 @@ Session restore is checked in Lean alone too:
   a change of the host's cells is mirrored and written once, and an
   unchanged revision reads nothing; a parked table cell an install
   registers no codec for dropped, said once, and gone from the next index;
-  and a reported job's start and end each change the jobs listed.
+  one whose codec refuses its value reset and the loss said; and a
+  reported job's start and end each change the jobs listed.
 - `restoreChecks`: restoring a session (`Editor/Restore/Run.lean`) on that
   driver, from what a first loop wrote or a check wrote by hand: buffers,
   texts, line endings, modes and the focused cursor come back; a file

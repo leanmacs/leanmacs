@@ -202,6 +202,33 @@ def journalReconcileChecks : List Check :=
               dropped.loop.state.restore.parked.isEmpty &&
               unscopedNames quiet 1 == some #[] &&
               later.2 == none && later.1.restore.parked.isEmpty },
+    { name :=
+        "a parked table cell whose codec an install registers is met into its store, and one whose value that codec refuses is reset to its initial value and the loss said in the echo area"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let refusing : Store Nat :=
+              { name := "late", version := 1, initial := 0, encode := .nat, decode := fun _ => none }
+            let counting : Store Nat :=
+              { refusing with
+                name := "count"
+                decode := fun
+                  | .nat n => some n
+                  | _ => none }
+            let codec? (name : String) : Option (String × StoreCodec) :=
+              if name == "late" then some ("config", refusing.codec)
+              else if name == "count" then some ("config", counting.codec) else none
+            let parked :=
+              withParked #[(.unscoped, keptOf "count" 4), (.unscoped, keptOf "late" 5)]
+                (drained begun)
+            let met := evilFed (installedWith 1 codec? (drained (evilFed parked "l"))) "l"
+            met.loop.state.workspaces.unscopedValue? "count" == some (.nat 4) &&
+              met.loop.state.workspaces.unscopedValue? "late" == some (.nat 0) &&
+              met.loop.state.restore.parked.isEmpty &&
+              met.loop.state.echo ==
+                "restore: store late: the new config cannot decode the stored value, which was reset to the initial value" },
     { name := "a reported job's start and its end each change the jobs the index lists"
       run :=
         pure <|

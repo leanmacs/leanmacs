@@ -130,6 +130,29 @@ def restoreWorkspaceChecks : List Check :=
             report ==
               #["store tally: the new config cannot decode the stored value, which was reset to the initial value"] &&
             restored.cache.isEmpty },
+    { name :=
+        "a kept cell met into its scope is written into that store, met by the install rule, with a report line when its value is lost; a scope the table does not hold leaves it as it is"
+      run :=
+        pure <|
+          let cell (name : String) (version : Nat) (value : Value) : KeptCell :=
+            { owner := "pkg", name, version, value }
+          let (inWorkspace, kept) :=
+            Workspaces.meetInto table (.workspace (.local "/w/r")) (cell "tally" 1 (.nat 4))
+              tally.codec
+          let (inProject, refused) :=
+            Workspaces.meetInto table (.project (.root "/plain")) (cell "tally" 2 (.str "bad"))
+              tally.codec
+          let (unscoped, _) := Workspaces.meetInto table .unscoped (cell "tally" 2 (.nat 6)) tally.codec
+          let (nowhere, _) :=
+            Workspaces.meetInto table (.project (.declared "none")) (cell "tally" 2 (.nat 6))
+              tally.codec
+          inWorkspace.workspaceValue? (.local "/w/r") "tally" == some (.nat 8) && kept.isNone &&
+            inProject.projectValue? (.root "/plain") "tally" == some (.nat 0) &&
+            refused ==
+              some
+                "store tally: the new config cannot decode the stored value, which was reset to the initial value" &&
+            unscoped.unscopedValue? "tally" == some (.nat 6) &&
+            nowhere.projects.map (·.2) == table.projects.map (·.2) },
     { name := "a restore and then a record give back the record"
       run :=
         pure <|
