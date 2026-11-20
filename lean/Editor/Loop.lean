@@ -1568,6 +1568,10 @@ structure Loop.Keys (scheme : InputScheme) where
   its owner, name and key: what the session index lists, which the next
   start's restore reports as stopped. -/
   running : Array Restore.RunningJob := #[]
+  /-- How many other jobs are running now (`Restore.otherJobs`): those not
+  reported, the restore's own left out, which the session index counts
+  and the next start's restore says were stopped. -/
+  otherJobs : Nat := 0
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -3388,7 +3392,8 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
     Restore.journalOrders loop.state (keys.registered.jobs Restore.restoreJob)
         (nextOf loop == .stop)
         { registered := keys.registered, configGeneration := keys.registered.generation
-          limit := keys.journalBound, stores := keys.stores, running := keys.running }
+          limit := keys.journalBound, stores := keys.stores, running := keys.running
+          otherJobs := keys.otherJobs }
   let loop := { loop with state := reconciled.state }
   -- What the key asks of completion at point, from the state the scene
   -- shows: a trigger's command to run next, and the pause.

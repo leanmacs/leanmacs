@@ -754,9 +754,16 @@ host hands the loop the reported jobs running each step
 (`Loop.Keys.running`), the session index lists them, and after a run that
 did not end cleanly the restore says each was stopped by the restart, in
 `*restore*` and in the summary (`; N jobs stopped`). Watchers, reads,
-completion and the restore's own jobs are not reported: their reconcilers
-start them again, or they are not missed. The index is written debounced,
-so a job that starts and the process aborts within 500 ms is not said.
+completion and the like are not reported by name: their reconcilers start
+them again, or they are not missed. They are still counted, so no running
+job goes unsaid (amended in phase 2's review): the host hands how many
+jobs not reported are running (`Loop.Keys.otherJobs`, `Restore.otherJobs`),
+the index records that count alone (`otherJobs`), and the restore says
+`and M other jobs were running: the restart stopped them` in `*restore*`
+and counts them in the summary's `; N jobs stopped` with the reported
+ones. The restore's own jobs, which read and write the session, are never
+counted. The index is written debounced, so a job that starts and the
+process aborts within 500 ms is not said.
 
 As built (`lean/Editor/Job.lean`), a job reaches time, files, processes
 and changes on disk:

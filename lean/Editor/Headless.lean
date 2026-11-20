@@ -370,11 +370,12 @@ with the status 134 and no shutdown (`IO.Process.exit`): not the signal,
 which on a macOS desktop raises the crash reporter.
 
 **What the session index is handed.** The reported jobs running
-(`Running.reported`, each with its owner and key) and the config state's
-cells kept across a restart (`Config.State.keptCells`, made only when the
-reconciler forces them, at its revision `cellsRevision`) are in the keys of
-every step (`Loop.Keys.running`, `Loop.Keys.stores`), and the cells a
-restore read (`Loop.Stepped.restoredCells`) are taken in with the write a
+(`Running.reported`, each with its owner and key), how many others run
+(`Running.otherJobs`, a count only, the restore's own left out) and the
+config state's cells kept across a restart (`Config.State.keptCells`, made
+only when the reconciler forces them, at its revision `cellsRevision`) are
+in the keys of every step (`Loop.Keys.running`, `Loop.Keys.otherJobs`,
+`Loop.Keys.stores`), and the cells a restore read (`Loop.Stepped.restoredCells`) are taken in with the write a
 step asked for (`Config.State.restoreCells`). The script's `workspaces`
 prints the workspace table.
 
@@ -1486,6 +1487,12 @@ def reported (running : Running β σ scheme) : Array Restore.RunningJob :=
     { owner := entry.owner.name, name := entry.name
       key := (running.keyed.find? (·.2 == entry.id)).map (·.1) }
 
+/-- How many jobs running the session index counts as other jobs
+(`Restore.otherJobs`): those the registry does not report, the restore's
+own left out (`Loop.Keys.otherJobs`). -/
+def otherJobs (running : Running β σ scheme) : Nat :=
+  Restore.otherJobs running.config.registry.reported (running.jobs.table.entries.map (·.name))
+
 /-- What a step of the loop is handed, from the registry as it is now: the
 active keymaps of each view (`Config.Registry.activeMaps`: the modes of the
 view's buffer, then every owner's key bindings), which the loop applies to
@@ -1525,7 +1532,7 @@ def keys (collaborators : Collaborators β σ scheme) (running : Running β σ s
     stores :=
       { revision := running.config.cellsRevision
         cells := Thunk.mk fun _ => running.config.keptCells }
-    running := running.reported }
+    running := running.reported, otherJobs := running.otherJobs }
 
 /-- Publishes a scene of the frame's state, if there is a frame, its status
 lines drawn by the mode line the registry and config make (`keys`): what

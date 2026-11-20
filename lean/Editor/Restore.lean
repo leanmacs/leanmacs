@@ -95,7 +95,9 @@ none:
   install lost is said once in the echo area: each value the codec
   refused and reset (`store <name>: <why>`), and the names dropped. Until
   then they are carried into every index written.
-- **The jobs** are the reported jobs running, as the host last handed them.
+- **The jobs** are the reported jobs running, as the host last handed them,
+  and how many other jobs run, a count only (`otherJobs`): those the
+  registry does not report, the restore's own left out.
 - **The held layout** (`Kept.heldLayout`), which a restore sets so that the
   host's default does not rearrange the layout it put back, is let go once
   the config generation is past it (`Loop.publish`, `Editor/Loop.lean`).
@@ -164,6 +166,15 @@ def saveJob : String :=
 def modesName : String :=
   "restore-modes"
 
+/-- How many of the jobs running, by their names `names`, the index counts
+as other jobs (`Document.otherJobs`): those the registry does not report
+(`reported`), the restore's own jobs left out, since they are the
+session's own reading and writing, and the next start runs its own. What a
+host hands the reconciler (`Loop.Keys.otherJobs`). -/
+def otherJobs (reported : String → Bool) (names : Array String) : Nat :=
+  (names.filter fun name =>
+      !reported name && ![restoreJob, filesJob, writeJob, saveJob].contains name).size
+
 /-- A journal order: a file request the host hands the file service with
 nothing to wait for, and the snapshot to release once it is handed. -/
 structure Order where
@@ -225,7 +236,7 @@ def Document.of (state : EditorState) (run : Nat) (ended : Bool := false) : Text
       run, ended, focused := some state.selectedView.index, buffers
       frame := some (← Frame.Record.of state)
       workspaces := kept.table.map (·.withParked kept.parked), stores := kept.stores
-      jobs := kept.jobs }
+      jobs := kept.jobs, otherJobs := kept.otherJobs }
 
 /-- What the host holds of the declared stores' cells for the index: a
 revision it bumps whenever they change, and the cells kept across a
@@ -254,6 +265,8 @@ structure Context where
   stores : StoresNow := {}
   /-- The reported jobs running now. -/
   running : Array RunningJob := #[]
+  /-- How many other jobs are running now (`otherJobs`). -/
+  otherJobs : Nat := 0
 
 /-- The table's kept cells and the parked ones mirrored into `kept` from
 `state` and `context` ("Mirroring", in the module docs), when the revisions
@@ -358,7 +371,7 @@ def journalOrders (state : EditorState) (enabled leaving : Bool) (context : Cont
     { state with
       restore :=
         { state.restore with
-          jobs := context.running
+          jobs := context.running, otherJobs := context.otherJobs
           heldLayout := state.restore.heldLayout.filter (configGeneration ≤ ·) } }
   let kept := state.restore
   let some run := kept.run | return { state }

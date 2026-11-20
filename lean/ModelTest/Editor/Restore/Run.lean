@@ -370,7 +370,7 @@ def restoreChecks : List Check :=
                 installed.loop.state.workspaces.unscopedValue? "later" == some (.nat 5) &&
                 installed.loop.state.restore.parked.isEmpty },
     { name :=
-        "(g) a reported job running at the write is named in *restore* as stopped by the restart, and the summary counts it; a job the registry does not report is not handed"
+        "(g) a reported job running at the write is named in *restore* as stopped by the restart, the other jobs running are counted there, and the summary counts them all; a job the registry does not report is not handed by name but counted, and the restore's own jobs are not counted"
       run :=
         pure <|
           match first with
@@ -381,27 +381,48 @@ def restoreChecks : List Check :=
                 keys :=
                   { begun.keys with
                     running :=
-                      #[{ owner := "shell", name := "shell-run", key := some "shell outside" }] } }
+                      #[{ owner := "shell", name := "shell-run", key := some "shell outside" }]
+                    otherJobs := 2 } }
             let typed := drained (evilFed running (typing "kept"))
             let pendingJob (name : String) : Loop.Driver.Pending :=
               { id := 9, name, outcome := .cancelled, key := some name }
-            let handedJobs :=
+            let handed :=
               ({ begun with
-                    pending := #[pendingJob "waited", pendingJob "watched"]
+                    pending :=
+                      #[pendingJob "waited", pendingJob "watched", pendingJob writeJob,
+                        pendingJob saveJob]
                     keys :=
                       { begun.keys with
                         registered :=
                           { begun.keys.registered with reported := (· == "waited") } } } :
-                  EvilDriver).handed.running
+                  EvilDriver).handed
             match second typed with
             | none => false
             | some again =>
               ((reportOf again).splitOn
                       "the job shell-run (shell outside) of shell was running: the restart stopped it").length ==
                   2 &&
+                ((reportOf again).splitOn
+                      "and 2 other jobs were running: the restart stopped them").length ==
+                  2 &&
                 again.loop.state.echo ==
-                  s!"restore: 1 buffers, 1 with unsaved text; 1 jobs stopped; see {reportName}" &&
-                handedJobs.map (·.name) == #["waited"] },
+                  s!"restore: 1 buffers, 1 with unsaved text; 3 jobs stopped; see {reportName}" &&
+                handed.running.map (·.name) == #["waited"] && handed.otherJobs == 1 },
+    { name :=
+        "other jobs running at the write with no reported one are counted in *restore* and in the summary"
+      run :=
+        pure <|
+          match first with
+          | none => false
+          | some begun =>
+            let running : EvilDriver := { begun with keys := { begun.keys with otherJobs := 1 } }
+            match second (drained (evilFed running (typing "kept"))) with
+            | none => false
+            | some again =>
+              ((reportOf again).splitOn "1 jobs were running: the restart stopped them").length ==
+                  2 &&
+                again.loop.state.echo ==
+                  s!"restore: 1 buffers, 1 with unsaved text; 1 jobs stopped; see {reportName}" },
     { name :=
         "(j) a package's declared store: an entry at its version is handed on as it is, one at an older version migrated, one decode refuses as the initial value with a report line; config's is handed on as it is, and an unknown owner's is not, and is said"
       run :=

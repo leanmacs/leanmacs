@@ -260,7 +260,9 @@ def startedJobs (driver : Loop.Driver scheme) : Array (String × Option String) 
 /-- What a step of the driver's loop is handed: its `keys`, told which names
 a job is registered under, and, after the running jobs its keys hold, each
 job started and not delivered that the registry says is reported, as the
-compiled owner's: the driver keeps no owners. -/
+compiled owner's: the driver keeps no owners; and, beside the count its
+keys hold, how many of the others the session index counts
+(`Restore.otherJobs`). -/
 def handed (driver : Loop.Driver scheme) : Loop.Keys scheme :=
   let reported := driver.keys.registered.reported
   { driver.keys with
@@ -269,7 +271,9 @@ def handed (driver : Loop.Driver scheme) : Loop.Keys scheme :=
     running :=
       driver.keys.running ++
         (driver.startedJobs.filter (reported ·.1)).map fun (name, key) =>
-          { owner := Config.Owner.compiled.name, name, key } }
+          { owner := Config.Owner.compiled.name, name, key }
+    otherJobs :=
+      driver.keys.otherJobs + Restore.otherJobs reported (driver.startedJobs.map (·.1)) }
 
 /-- The job model with each of the job snapshots `held` released. -/
 def releasing (jobs : JobModel) (held : Array JobSnapshotId) : JobModel :=

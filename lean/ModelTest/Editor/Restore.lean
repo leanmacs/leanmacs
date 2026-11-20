@@ -109,9 +109,11 @@ def driver (state : Option System.FilePath := some stateDirectory) (limit : Nat 
 def withStores (revision : Nat) (cells : Array KeptCell) (driver : EvilDriver) : EvilDriver :=
   { driver with keys := { driver.keys with stores := { revision, cells := Thunk.pure cells } } }
 
-/-- `driver` handed `running` as the reported jobs running. -/
-def withRunning (running : Array RunningJob) (driver : EvilDriver) : EvilDriver :=
-  { driver with keys := { driver.keys with running } }
+/-- `driver` handed `running` as the reported jobs running, and
+`otherJobs` as how many others are. -/
+def withRunning (running : Array RunningJob) (driver : EvilDriver) (otherJobs : Nat := 0) :
+    EvilDriver :=
+  { driver with keys := { driver.keys with running, otherJobs } }
 
 /-- A config cell kept across a restart. -/
 def keptOf (name : String) (value : Nat) : KeptCell :=
@@ -240,6 +242,17 @@ def journalReconcileChecks : List Check :=
             let ended := drained (evilFed (withRunning #[] started) "l")
             (indexOf started 1).map (·.jobs) == some #[job] &&
               (indexOf ended 1).map (·.jobs) == some #[] },
+    { name :=
+        "how many other jobs run, not reported, is a count the index lists, changed by their start and their end"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let started := drained (evilFed (withRunning #[] (drained begun) (otherJobs := 2)) "l")
+            let ended := drained (evilFed (withRunning #[] started) "l")
+            (indexOf started 1).map (·.otherJobs) == some 2 &&
+              (indexOf ended 1).map (·.otherJobs) == some 0 },
     { name :=
         "from an empty state directory the restore makes session/journals/, and typing gives a base at the first edit and then one record per event, which replay to the text"
       run :=

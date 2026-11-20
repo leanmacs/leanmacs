@@ -16,7 +16,7 @@ it removes (`Document.choose`), and the next run's number (`nextRun`).
 ## The document
 
 `{"format":2,"run":n,"ended":false,"focused":view,"buffers":[…],"frame":{…},
-"workspaces":{…},"stores":[…],"jobs":[…]}`: the format, the run that wrote
+"workspaces":{…},"stores":[…],"jobs":[…],"otherJobs":n}`: the format, the run that wrote
 it, whether that run ended cleanly (only the index a clean end writes says
 so), the focused view, and for each buffer kept:
 
@@ -46,6 +46,8 @@ Format 2 added, beside the buffers, each absent when there is none:
   tree's JSON (`Editor/Restore/Value.lean`);
 - `jobs`: the reported jobs running when it was written, each
   `{"owner":o,"name":n,"key":k}`, `key` absent for a job with none;
+- `otherJobs`: how many other jobs were running then, a count only: those
+  not reported, the restore's own left out;
 - and in a place, `run`.
 
 Nothing of format 1 changed shape or meaning. The number moved to 2 so that
@@ -58,7 +60,7 @@ understood once its own index is written.
 A read never throws: every problem is a line of its report.
 
 - A format at or below this editor's is read fully: a format-1 index has
-  no frame, workspaces, stores or jobs.
+  no frame, workspaces, stores, jobs or other jobs.
 - A newer format is read leniently: the known fields are read, and every
   key this editor does not know, at the top or in a buffer, is named in the
   report.
@@ -146,6 +148,9 @@ structure Document where
   stores : Array KeptCell := #[]
   /-- The reported jobs running when it was written. -/
   jobs : Array RunningJob := #[]
+  /-- How many other jobs were running when it was written: those not
+  reported, the restore's own left out (`Restore.otherJobs`). -/
+  otherJobs : Nat := 0
   deriving BEq, Repr
 
 /-- A place as JSON. -/
@@ -206,7 +211,9 @@ def Document.toJson (document : Document) : Json.Value :=
       optionalMember "workspaces" (document.workspaces.map (·.toJson)) ++
       (if document.stores.isEmpty then #[]
       else #[("stores", .array (document.stores.map (·.toJson)))]) ++
-      (if document.jobs.isEmpty then #[] else #[("jobs", .array (document.jobs.map (·.toJson)))])
+      (if document.jobs.isEmpty then #[] else #[("jobs", .array (document.jobs.map (·.toJson)))]) ++
+      if document.otherJobs == 0 then #[]
+      else #[("otherJobs", Journal.natJson document.otherJobs)]
 
 /-- The document as the text of its file. -/
 def Document.render (document : Document) : String :=
@@ -214,7 +221,8 @@ def Document.render (document : Document) : String :=
 
 /-- The keys of the document this editor knows. -/
 def Document.knownKeys : Array String :=
-  #["format", "run", "ended", "focused", "buffers", "frame", "workspaces", "stores", "jobs"]
+  #["format", "run", "ended", "focused", "buffers", "frame", "workspaces", "stores", "jobs",
+    "otherJobs"]
 
 /-- The keys of a buffer this editor knows. -/
 def Document.Buffer.knownKeys : Array String :=
@@ -387,7 +395,8 @@ def Document.read (name text : String) : Document.Read :=
         document :=
           some
             { format := found, run, ended, focused := Journal.natField? value "focused", buffers
-              frame, workspaces, stores, jobs }
+              frame, workspaces, stores, jobs
+              otherJobs := (Journal.natField? value "otherJobs").getD 0 }
         newer, report }
 
 /-- The name of a run's index file. -/

@@ -37,8 +37,8 @@ def newerText : String :=
   "{\"format\":99,\"run\":5,\"ended\":false,\"layouts\":[1,2],\"buffers\":[{\"key\":0,\"name\":\"b.txt\",\"lineEnding\":\"lf\",\"folds\":[],\"views\":[]},{\"key\":\"x\"}]}"
 
 /-- `sample` with every key format 2 added: a frame, the workspace table, a
-declared store's cell, a running job, a view's jumps, and a place kept
-from an earlier run. -/
+declared store's cell, a running job, a count of other jobs running, a
+view's jumps, and a place kept from an earlier run. -/
 def full : Document :=
   { sample with
     buffers :=
@@ -74,7 +74,8 @@ def full : Document :=
     stores := #[{ owner := "config", name := "kept", version := 1, value := .nat 2 }]
     jobs :=
       #[{ owner := "shell", name := "shell-run", key := some "shell outside" },
-        { owner := "x", name := "y" }] }
+        { owner := "x", name := "y" }]
+    otherJobs := 3 }
 
 /-- An index as phase 1 wrote it, format 1, kept as it was written. -/
 def formatOne : String :=
@@ -110,7 +111,7 @@ def restoreDocumentChecks : List Check :=
                 "session-5.json: buffer 0: the key folds is not known",
                 "session-5.json: buffer entry 2 does not parse and is skipped"] },
     { name :=
-        "an index of format 2 with every key it added round-trips: the frame, the workspaces, the stores, the jobs, a view's jumps and a kept place's run, with nothing to say"
+        "an index of format 2 with every key it added round-trips: the frame, the workspaces, the stores, the jobs and the other jobs' count, a view's jumps and a kept place's run, with nothing to say"
       run :=
         pure <|
           let read := readAs "session-3.json" full.render
@@ -148,6 +149,7 @@ def restoreDocumentChecks : List Check :=
           let stripped : Document :=
             { full with
               format := 1, frame := none, workspaces := none, stores := #[], jobs := #[]
+              otherJobs := 0
               buffers :=
                 full.buffers.map fun buffer =>
                   { buffer with views := buffer.views.map ({ · with jumps := none, run := none }) } }

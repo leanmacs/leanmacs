@@ -156,6 +156,8 @@ structure Kept.Pending where
   keys : Array (Nat × Nat) := #[]
   /-- The reported jobs the index restored says were running. -/
   jobs : Array RunningJob := #[]
+  /-- How many other jobs the index restored says were running. -/
+  otherJobs : Nat := 0
   /-- The declared stores' cells of the index restored, to hand the host. -/
   stores : Array KeptCell := #[]
   deriving BEq, Repr
@@ -216,6 +218,9 @@ structure Kept where
   mirrored : Option (Nat × Nat × Nat) := none
   /-- The reported jobs running, as the host last handed them. -/
   jobs : Array RunningJob := #[]
+  /-- How many other jobs are running, as the host last handed them
+  (`Restore.otherJobs`). -/
+  otherJobs : Nat := 0
   deriving BEq, Repr
 
 end Editor.Restore

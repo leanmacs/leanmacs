@@ -80,12 +80,13 @@ its command, since only a command can read what a job loaded.
   declared stores' cells (`restoreCells`): config's as they are, to be
   parked until config installs, a package's met with its codec, and any
   other's dropped, said. Each reported job the index says was running is
-  said stopped by the restart. It gives the run its number, which starts
+  said stopped by the restart, and the other jobs it counts are said in
+  one line (`and M other jobs were running`). It gives the run its number, which starts
   the journal (`Kept.run`), and the files it took in to remove
   (`Kept.stale`, `Kept.staleIndexes`).
 - **What is said**: a line in the echo area, `restore: N buffers, M with
   unsaved text`, then `; K changed on disk` when there are, `; J jobs
-  stopped` when a reported job was running, and `; see *restore*` when the
+  stopped` when a job was running, reported or not, and `; see *restore*` when the
   report has more; the whole report in the read-only
   buffer `*restore*`, shown nowhere.
 - **A restore never fails to start the editor.** Every problem is a line
@@ -273,6 +274,7 @@ def read (loaded : Loaded) : EditorM Unit := do
   let mut pending : Kept.Pending :=
     { run, staleIndexes := choice.remove.map (indexPath loaded.directory)
       frame := choice.restored.bind (·.frame), jobs := (choice.restored.map (·.jobs)).getD #[]
+      otherJobs := (choice.restored.map (·.otherJobs)).getD 0
       stores := (choice.restored.map (·.stores)).getD #[] }
   -- The workspace table, before any buffer is attached, so that attaching
   -- finds its workspaces: each cell met with the codec registered now (a
@@ -483,6 +485,13 @@ def configOwner : String :=
 def stoppedLine (job : RunningJob) : String :=
   let key := (job.key.map fun key => s!" ({key})").getD ""
   s!"the job {job.name}{key} of {job.owner} was running: the restart stopped it"
+
+/-- What the report says of the `count` other jobs that were running, not
+reported by name, after the `named` reported ones; nothing for none. -/
+def othersLine (named count : Nat) : Array String :=
+  if count == 0 then #[]
+  else if named == 0 then #[s!"{count} jobs were running: the restart stopped them"]
+  else #[s!"and {count} other jobs were running: the restart stopped them"]
 
 /-- The declared stores' cells of the index to hand the host
 ("Restoring", in the module docs), and what the report says: config's as
@@ -742,14 +751,16 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
   report := report ++ lines
   if !cells.isEmpty then
     restoreCells cells
-  -- The reported jobs that were running: the restart stopped them.
-  report := report ++ pending.jobs.map stoppedLine
+  -- The jobs that were running: the restart stopped them, each reported
+  -- one named, the others counted.
+  report := report ++ pending.jobs.map stoppedLine ++ othersLine pending.jobs.size pending.otherJobs
+  let stopped := pending.jobs.size + pending.otherJobs
   let buffers := pending.unsaved + (reopened.filter (·.isSome)).size
   let mut summary := s!"restore: {buffers} buffers, {pending.unsaved} with unsaved text"
   if changed > 0 then
     summary := summary ++ s!"; {changed} changed on disk"
-  if !pending.jobs.isEmpty then
-    summary := summary ++ s!"; {pending.jobs.size} jobs stopped"
+  if stopped > 0 then
+    summary := summary ++ s!"; {stopped} jobs stopped"
   let problems := report.size > changed
   if problems then
     summary := summary ++ s!"; see {reportName}"

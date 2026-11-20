@@ -1229,7 +1229,8 @@ Session restore is checked in Lean alone too:
   header; and edits read from a text's log and replayed make the text.
 - `restoreDocumentChecks`: the session index
   (`Editor/Restore/Document.lean`), pure: the round trip, and format 2's
-  with every key it added; a format-1 index as phase 1 wrote it read
+  with every key it added, a kept place's run and the other jobs' count
+  among them; a format-1 index as phase 1 wrote it read
   fully; a newer format's keys inside the frame passed over; a format-2
   index stripped to format 1 reading as the same buffers; a store, job,
   frame or workspaces entry that does not parse said; a newer
@@ -1274,8 +1275,9 @@ Session restore is checked in Lean alone too:
   a change of the host's cells is mirrored and written once, and an
   unchanged revision reads nothing; a parked table cell an install
   registers no codec for dropped, said once, and gone from the next index;
-  one whose codec refuses its value reset and the loss said; and a
-  reported job's start and end each change the jobs listed.
+  one whose codec refuses its value reset and the loss said; a reported
+  job's start and end each change the jobs listed; and so does the count
+  of other jobs.
 - `restoreChecks`: restoring a session (`Editor/Restore/Run.lean`) on that
   driver, from what a first loop wrote or a check wrote by hand: buffers,
   texts, line endings, modes and the focused cursor come back; a file
@@ -1293,8 +1295,9 @@ Session restore is checked in Lean alone too:
   restore, (h) a frame refused falling back to phase 1's placement, (i) a
   window of a buffer not kept showing scratch, said, (e) the workspace
   table and (f) its stores, met, never written or parked and claimed, (g)
-  a reported job said stopped, and (j) a package's declared store met with
-  its codec.
+  a reported job said stopped and the other jobs counted, the restore's
+  own never, other jobs alone counted, and (j) a package's declared store
+  met with its codec.
 
 Listing a workspace's files is checked in Lean alone too:
 
