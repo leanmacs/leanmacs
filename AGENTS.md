@@ -144,6 +144,42 @@ order, in parallel, and leaves the developer's machine exactly as it found it.
 - Set up any state a test needs inside the test itself, so it passes on a clean
   checkout.
 
+## Deterministic concurrency in tests
+
+A test's result never depends on how threads are scheduled or how fast the
+machine is. A test that passes on an idle laptop and fails on a loaded CI
+runner is a bug in the test or in the code, and it is fixed, never retried
+or given a longer timeout. Threads, queues and the clock are described in
+`docs/design/concurrency.md`.
+
+- Test logic that runs across threads through a port, with a fake that
+  runs the work on the test's own thread, or that the test steps. Do this for
+  the editor loop, jobs and timers (the fake clock), and for the file, process
+  and watch services. Use real threads only in an adapter's contract check.
+- Wait for an event, never for time. Wait on what signals that the work is
+  done: a task or promise to `IO.wait` on, a channel, a joined thread, or a
+  barrier that a service's queue reaches only after all the work queued before
+  it. Never use `IO.sleep`, `thread::sleep` or a poll with a deadline to let
+  work finish.
+- Give an API that starts background work something to wait on: a task, a
+  promise or a flush. The caller may drop it on purpose; a test does not.
+- Tie each thread, loop and queued piece of work to a scope, such as a bracket
+  or an owner whose `Drop` joins it, that ends only once the work has ended.
+  Something a test creates does not outlive the test: its loop has stopped,
+  its queues have drained, and nothing still writes into the directory being
+  removed.
+- Check that something does not happen once the system is idle, meaning its
+  queues are empty and nothing can run. A deadline does not show it. Where no
+  idle signal exists yet, add one.
+- A timeout is only a guard against a hang. When it runs out, the test reports
+  a hang. It is not a result, and the test does not pass or fail on time.
+- Pin results that do not depend on scheduling. Check the final state, or
+  what was published last, and not how many times something happened when
+  that count changes with timing.
+- To show a race is fixed, write a test that forces the bad interleaving
+  every time (a gate, a held call or a fake clock), so it fails on the old
+  code. A stress loop under load backs that test up but cannot replace it.
+
 ## Iterate and dogfood
 
 Automated tests are the evidence that work is done, and every phase and
