@@ -255,7 +255,10 @@
 //! status, a snapshot handle, words and a detail string. An append, a
 //! remove and a save may also be asked unobserved, with no id: worked in
 //! order with the rest, never completed, and kept only as a failure
-//! ([`files::editor_ffi_files_failure`]). Its other C functions are in
+//! ([`files::editor_ffi_files_failure`]). A flush
+//! ([`files::editor_ffi_files_flush`]) is completed once every request
+//! started before it, unobserved ones included, has been worked: it is how
+//! a caller waits for them. Its other C functions are in
 //! the module's table ("The C functions"), with, as a readout for tests,
 //! [`files::editor_ffi_files_pending`].
 //!

@@ -78,7 +78,7 @@ use editor_diff::{ByteHunk, LineDiff, Step};
 use editor_diff_imara::ImaraDiff;
 
 use crate::events;
-use crate::files::Requests;
+use crate::files::{Queued, Requests};
 use crate::log::RawWords;
 use crate::snapshot::Snapshot;
 use crate::words::Writer;
@@ -270,15 +270,16 @@ impl<E: LineDiff + Default> Diffs<E> {
             if state.stopped {
                 return;
             }
-            let Some((id, request)) = state.requests.take_next() else {
+            let Some((id, queued)) = state.requests.take_next() else {
                 state = self
                     .changed
                     .wait(state)
                     .unwrap_or_else(PoisonError::into_inner);
                 continue;
             };
-            // The diff service starts no unobserved request: each has an id.
-            let Some(id) = id else {
+            // The diff service starts no unobserved request and no flush:
+            // each is work, with an id.
+            let (Some(id), Queued::Work(request)) = (id, queued) else {
                 continue;
             };
             state.working = Some((id, false));
@@ -532,8 +533,11 @@ mod tests {
             2,
         );
         diffs.stop();
-        let (id, request) = diffs.state().requests.take_next().unwrap();
+        let (id, queued) = diffs.state().requests.take_next().unwrap();
         assert_eq!(id, Some(1));
+        let Queued::Work(request) = queued else {
+            panic!("a diff came out of the requests as a flush");
+        };
         assert_eq!(
             work(&mut Lcs, &request),
             Answer::Script(editor_diff::script(

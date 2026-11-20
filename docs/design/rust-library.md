@@ -478,7 +478,14 @@ file with a watch yet: a change is found when a save is asked for.
   or failed (`editor_ffi_files_make_directory`, bound as
   `Ffi.filesMakeDirectory`). An append and a remove are done with no words
   (`editor_ffi_files_append`, `editor_ffi_files_remove`), and one refused
-  is not absolute, not found, not a file, denied or failed.
+  is not absolute, not found, not a file, denied or failed. **A flush is a
+  barrier** (`editor_ffi_files_flush`, deterministic-test-concurrency
+  phase 1): a marker on the queue under the caller's id, completed when the
+  worker reaches it, so every request started before it, observed or
+  unobserved, has been worked and its completion queued ahead of the
+  flush's. It keeps no result, its id is in use while it waits, and a
+  cancel withdraws it. It is what a host or a test waits on to know the
+  queue has drained, in place of polling the count.
 - **Unobserved requests** (session-restore phase 1): an append, a remove, and a
   save that expects whatever is there may be asked with no id
   (`editor_ffi_files_append_unobserved`,
@@ -493,7 +500,8 @@ file with a watch yet: a change is found when a save is asked for.
   the caller hands back as it does a result's detail). The count of
   pending requests includes an unobserved one while it waits or is worked,
   so it falls to 0 once the queue has drained; a failure kept is not
-  counted.
+  counted. The count is a readout; **the way to wait for unobserved
+  requests is a flush**, which no caller has to poll.
 - **How the tests are kept off the disk.** `editor-text`'s tests, and the
   service's unit tests, run on the fake. That is held by the gate, not by
   review: a `clippy.toml` beside each of the two crates lists `std::fs`,

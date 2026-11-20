@@ -34,8 +34,8 @@
 //! The pieces:
 //!
 //! - [`Requests`] is the requests not yet worked, observed and unobserved,
-//!   in the order they were started. It is pure, as the timers' `Schedule`
-//!   is.
+//!   and the flushes among them ([`Queued`]), in the order they were
+//!   started. It is pure, as the timers' `Schedule` is.
 //! - [`Files`] is the service over a file system, the port
 //!   [`editor_text::fs::Fs`]. Its loop, [`Files::run`], takes the oldest
 //!   request, works it with no lock held, and for an observed one keeps
@@ -64,9 +64,16 @@
 //!   cancelled save has either replaced the file whole or not touched it,
 //!   and a completion that was queued before the cancel still arrives
 //!   after it. An unobserved request has no id, so it is never cancelled.
+//! - **A flush is a barrier** ([`Files::flush`]): a marker on the queue,
+//!   completed when the worker reaches it, so every request started
+//!   before it, observed or unobserved, has been worked by then, and its
+//!   completion is queued behind theirs. It keeps no result, its id is in
+//!   use while it waits, and cancelling it withdraws it. It is how a caller
+//!   waits for unobserved requests to be worked.
 //! - **An unobserved request is counted while it waits or is worked**
 //!   ([`Files::pending`]), so the count falls to 0 once the queue has
-//!   drained; a failure kept is not counted. Failures are kept until they
+//!   drained; a failure kept is not counted. The count is a readout; a
+//!   flush is what to wait on. Failures are kept until they
 //!   are taken, with no bound: the caller takes them as it goes.
 //! - **A loaded text is kept as a snapshot**, which is `Send + Sync`. The
 //!   handle Lean gets is made when the result is taken
@@ -147,6 +154,7 @@
 //! | [`editor_ffi_files_save_unobserved`] | Asks for a save of the snapshot behind a handle, which it clones, expecting whatever is there, with no id, as for an unobserved append |
 //! | [`editor_ffi_files_take`] | Fills a [`RawFileResult`] and returns true, or returns false when the service keeps no result for the id |
 //! | [`editor_ffi_files_failure`] | Fills a [`RawFileFailure`] with the oldest failure of an unobserved request and returns true, taking it, or returns false when none is kept |
+//! | [`editor_ffi_files_flush`] | Asks for an id to be completed once every request started before it is worked; keeps no result. False, starting nothing, as for a load |
 //! | [`editor_ffi_files_cancel`] | Cancels, and says whether there was anything to cancel |
 //! | [`editor_ffi_files_pending`] | Requests waiting or being worked, unobserved ones included, and results not taken |
 
@@ -170,11 +178,23 @@ use crate::words::{self, Writer};
 use crate::{events, text};
 
 /// The requests that are not yet worked, each an id and what is asked, in
-/// the order they were started. An unobserved request has no id.
+/// the order they were started. An unobserved request has no id. A flush
+/// ([`start_flush`](Self::start_flush)) waits among them as a marker.
 #[derive(Debug)]
 pub struct Requests<T> {
     /// The requests, oldest first, each with its id if it is observed.
-    waiting: VecDeque<(Option<u64>, T)>,
+    waiting: VecDeque<(Option<u64>, Queued<T>)>,
+}
+
+/// What waits in [`Requests`]: a piece of work, or a flush, which is no
+/// work at all and is completed when the worker reaches it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Queued<T> {
+    /// A request to be worked.
+    Work(T),
+    /// A flush: once it is taken, every request started before it has been
+    /// taken too.
+    Flush,
 }
 
 impl<T> Default for Requests<T> {
@@ -195,38 +215,52 @@ impl<T> Requests<T> {
     /// whether it was added. An id that is already waiting is refused, and
     /// the request it names is as it was.
     pub fn start(&mut self, id: u64, request: T) -> bool {
+        self.push(id, Queued::Work(request))
+    }
+
+    /// Adds a flush as `id`, behind every request already waiting, observed
+    /// or not, and returns whether it was added. An id that is already
+    /// waiting is refused. It comes out of [`take_next`](Self::take_next)
+    /// once everything before it has, and is cancelled as a request is.
+    pub fn start_flush(&mut self, id: u64) -> bool {
+        self.push(id, Queued::Flush)
+    }
+
+    /// Adds `queued` as `id`, unless the id is waiting.
+    fn push(&mut self, id: u64, queued: Queued<T>) -> bool {
         if self.holds(id) {
             return false;
         }
-        self.waiting.push_back((Some(id), request));
+        self.waiting.push_back((Some(id), queued));
         true
     }
 
     /// Adds a request that has no id, behind those already waiting. It
     /// takes no id, and no cancel names it.
     pub fn start_unobserved(&mut self, request: T) {
-        self.waiting.push_back((None, request));
+        self.waiting.push_back((None, Queued::Work(request)));
     }
 
-    /// Removes the request `id`, and returns whether it was waiting.
+    /// Removes the request or flush `id`, and returns whether it was
+    /// waiting.
     pub fn cancel(&mut self, id: u64) -> bool {
         let before = self.waiting.len();
         self.waiting.retain(|(waiting, _)| *waiting != Some(id));
         self.waiting.len() != before
     }
 
-    /// Removes and returns the request that has waited longest, with its id
-    /// if it is observed, if any is waiting.
-    pub fn take_next(&mut self) -> Option<(Option<u64>, T)> {
+    /// Removes and returns what has waited longest, a request or a flush,
+    /// with its id if it is observed, if anything is waiting.
+    pub fn take_next(&mut self) -> Option<(Option<u64>, Queued<T>)> {
         self.waiting.pop_front()
     }
 
-    /// Whether the request `id` is waiting.
+    /// Whether the request or flush `id` is waiting.
     pub fn holds(&self, id: u64) -> bool {
         self.waiting.iter().any(|(waiting, _)| *waiting == Some(id))
     }
 
-    /// How many requests are waiting.
+    /// How many requests and flushes are waiting.
     pub fn pending(&self) -> usize {
         self.waiting.len()
     }
@@ -834,15 +868,33 @@ impl<F: Fs> Files<F> {
     /// Adds `request` as `id`, unless the id is in use.
     fn start(&self, id: u64, request: Request) -> bool {
         let mut state = self.state();
-        let in_use = state.results.contains_key(&id)
-            || state
-                .working
-                .as_ref()
-                .is_some_and(|working| working.id == Some(id));
-        let started = !in_use && state.requests.start(id, request);
+        let started = !Self::in_use(&state, id) && state.requests.start(id, request);
         drop(state);
         self.changed.notify_all();
         started
+    }
+
+    /// Asks for the request `id` to be completed once every request started
+    /// before this call, observed or unobserved, has been worked, and
+    /// returns whether it was accepted. It returns at once. An id in use is
+    /// refused. It keeps no result: its completion is the whole answer.
+    /// Cancelling it while it waits withdraws it.
+    pub fn flush(&self, id: u64) -> bool {
+        let mut state = self.state();
+        let started = !Self::in_use(&state, id) && state.requests.start_flush(id);
+        drop(state);
+        self.changed.notify_all();
+        started
+    }
+
+    /// Whether `id` is being worked or has a result not taken. One waiting
+    /// is the queue's to refuse.
+    fn in_use(state: &State, id: u64) -> bool {
+        state.results.contains_key(&id)
+            || state
+                .working
+                .as_ref()
+                .is_some_and(|working| working.id == Some(id))
     }
 
     /// Adds `request` with no id, behind those already waiting.
@@ -907,12 +959,25 @@ impl<F: Fs> Files<F> {
             if state.stopped {
                 return;
             }
-            let Some((id, request)) = state.requests.take_next() else {
+            let Some((id, queued)) = state.requests.take_next() else {
                 state = self
                     .changed
                     .wait(state)
                     .unwrap_or_else(PoisonError::into_inner);
                 continue;
+            };
+            let request = match queued {
+                Queued::Work(request) => request,
+                // Everything started before it has been worked: it is
+                // completed now, and keeps no result.
+                Queued::Flush => {
+                    drop(state);
+                    if let Some(id) = id {
+                        complete(id);
+                    }
+                    state = self.state();
+                    continue;
+                }
             };
             let cancelled = Arc::new(AtomicBool::new(false));
             state.working = Some(Working {
@@ -1422,6 +1487,26 @@ pub extern "C" fn editor_ffi_files_cancel(id: u64) -> bool {
     FILES.cancel(id)
 }
 
+/// Asks the process's file service for the request `id` to be completed
+/// once every file request started before this call, observed or
+/// unobserved, has been worked, and returns whether it was accepted. It
+/// returns at once and never blocks.
+///
+/// The completion is one [`EventKind::Completion`] on the completion queue,
+/// from the library source [`SERVICE`], whose code is `id`, queued behind
+/// the completions of the requests it waited for. It keeps no result:
+/// there is nothing to take. Cancelling it with [`editor_ffi_files_cancel`]
+/// while it waits withdraws it.
+///
+/// Returns false, starting nothing, if `id` is in use, or if the operating
+/// system refused the service its thread.
+///
+/// [`EventKind::Completion`]: crate::events::EventKind::Completion
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_files_flush(id: u64) -> bool {
+    service_started() && FILES.flush(id)
+}
+
 /// How many file requests are waiting or being worked, and how many
 /// results have not been taken, together. A readout for tests, which use
 /// it to see that a cancel left nothing behind.
@@ -1617,9 +1702,9 @@ mod tests {
         assert!(requests.start(5, "five"));
 
         assert_eq!(requests.pending(), 3);
-        assert_eq!(requests.take_next(), Some((Some(7), "seven")));
-        assert_eq!(requests.take_next(), Some((Some(3), "three")));
-        assert_eq!(requests.take_next(), Some((Some(5), "five")));
+        assert_eq!(requests.take_next(), Some((Some(7), Queued::Work("seven"))));
+        assert_eq!(requests.take_next(), Some((Some(3), Queued::Work("three"))));
+        assert_eq!(requests.take_next(), Some((Some(5), Queued::Work("five"))));
         assert_eq!(requests.take_next(), None);
         assert_eq!(requests.pending(), 0);
     }
@@ -1636,10 +1721,16 @@ mod tests {
         assert_eq!(requests.pending(), 4);
         // No id is taken by one, and none cancels one.
         assert!(!requests.cancel(0));
-        assert_eq!(requests.take_next(), Some((Some(7), "seven")));
-        assert_eq!(requests.take_next(), Some((None, "first unobserved")));
-        assert_eq!(requests.take_next(), Some((Some(3), "three")));
-        assert_eq!(requests.take_next(), Some((None, "second unobserved")));
+        assert_eq!(requests.take_next(), Some((Some(7), Queued::Work("seven"))));
+        assert_eq!(
+            requests.take_next(),
+            Some((None, Queued::Work("first unobserved")))
+        );
+        assert_eq!(requests.take_next(), Some((Some(3), Queued::Work("three"))));
+        assert_eq!(
+            requests.take_next(),
+            Some((None, Queued::Work("second unobserved")))
+        );
         assert_eq!(requests.take_next(), None);
     }
 
@@ -1651,7 +1742,7 @@ mod tests {
         assert!(!requests.start(7, "second"));
 
         assert!(requests.holds(7));
-        assert_eq!(requests.take_next(), Some((Some(7), "first")));
+        assert_eq!(requests.take_next(), Some((Some(7), Queued::Work("first"))));
         assert_eq!(requests.take_next(), None);
         // Once it has come out, the id is free again.
         assert!(!requests.holds(7));
@@ -1670,9 +1761,104 @@ mod tests {
         assert!(!requests.cancel(9));
 
         assert_eq!(requests.pending(), 2);
-        assert_eq!(requests.take_next(), Some((Some(1), "one")));
-        assert_eq!(requests.take_next(), Some((Some(3), "three")));
+        assert_eq!(requests.take_next(), Some((Some(1), Queued::Work("one"))));
+        assert_eq!(requests.take_next(), Some((Some(3), Queued::Work("three"))));
         assert_eq!(requests.take_next(), None);
+    }
+
+    #[test]
+    fn a_flush_comes_out_of_the_requests_in_order_with_work_and_holds_its_id() {
+        let mut requests = Requests::new();
+
+        assert!(requests.start(7, "seven"));
+        requests.start_unobserved("unobserved");
+        assert!(requests.start_flush(1));
+        assert!(requests.start(3, "three"));
+
+        // Its id is in use while it waits, for a flush and a request alike.
+        assert!(requests.holds(1));
+        assert!(!requests.start_flush(1));
+        assert!(!requests.start(1, "one"));
+        assert!(!requests.start_flush(7));
+        assert_eq!(requests.pending(), 4);
+        assert_eq!(requests.take_next(), Some((Some(7), Queued::Work("seven"))));
+        assert_eq!(
+            requests.take_next(),
+            Some((None, Queued::Work("unobserved")))
+        );
+        assert_eq!(requests.take_next(), Some((Some(1), Queued::Flush)));
+        assert_eq!(requests.take_next(), Some((Some(3), Queued::Work("three"))));
+        assert_eq!(requests.take_next(), None);
+    }
+
+    #[test]
+    fn a_flush_cancelled_while_it_waits_is_never_completed() {
+        let mut requests = Requests::new();
+        assert!(requests.start(7, "seven"));
+        assert!(requests.start_flush(1));
+
+        assert!(requests.cancel(1));
+        assert!(!requests.cancel(1));
+
+        assert_eq!(requests.take_next(), Some((Some(7), Queued::Work("seven"))));
+        assert_eq!(requests.take_next(), None);
+    }
+
+    /// The worker is held inside load 1 while an unobserved append, a stamp
+    /// and a flush are queued behind it. The held worker is the only thing
+    /// that completes anything, so a flush completed at its call, or ahead
+    /// of the work queued before it, is seen every time.
+    #[test]
+    fn a_flush_is_completed_only_once_every_request_started_before_it_is_worked() {
+        let rig = Rig::over(fake());
+        let parked = rig.park();
+        assert!(rig.files.start_load(1, FILE.into(), NO_LIMIT));
+        parked.entered();
+        rig.files.append_unobserved(OTHER.into(), b"more".to_vec());
+        assert!(rig.files.start_stamp(2, FILE.into()));
+        assert!(rig.files.flush(3));
+        // Its id is in use while it waits.
+        assert!(!rig.files.flush(3));
+        assert!(!rig.files.start_load(3, FILE.into(), NO_LIMIT));
+
+        assert!(rig.completed.try_recv().is_err());
+        parked.release();
+
+        assert_eq!([rig.next(), rig.next()], [1, 2]);
+        // The flush's completion is the next; the append was worked by then.
+        assert_eq!(rig.next(), 3);
+        assert_eq!(
+            rig.fs().bytes(OTHER).as_deref(),
+            Some(&b"the other file\nmore"[..])
+        );
+        // It keeps no result, and once completed its id is free.
+        assert!(rig.files.take(3).is_none());
+        assert!(rig.files.take(1).is_some());
+        assert!(rig.files.take(2).is_some());
+        assert_eq!(rig.files.pending(), 0);
+        assert!(rig.files.flush(3));
+        assert_eq!(rig.next(), 3);
+        rig.stop();
+    }
+
+    #[test]
+    fn a_flush_cancelled_while_it_waits_behind_work_is_never_completed() {
+        let rig = Rig::over(fake());
+        let parked = rig.park();
+        assert!(rig.files.start_load(1, FILE.into(), NO_LIMIT));
+        parked.entered();
+        assert!(rig.files.flush(2));
+
+        assert_eq!(rig.files.pending(), 2);
+        assert!(rig.files.cancel(2));
+        assert!(!rig.files.cancel(2));
+        parked.release();
+
+        assert_eq!(rig.next(), 1);
+        rig.nothing_else_completed(3);
+        assert!(rig.files.take(1).is_some());
+        assert_eq!(rig.files.pending(), 0);
+        rig.stop();
     }
 
     #[test]

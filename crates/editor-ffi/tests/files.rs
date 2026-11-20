@@ -42,9 +42,10 @@ use editor_ffi::events::{
 use editor_ffi::files::{
     FileStatus, RawExpect, RawFileFailure, RawFileResult, SERVICE, editor_ffi_files_append,
     editor_ffi_files_append_unobserved, editor_ffi_files_cancel, editor_ffi_files_failure,
-    editor_ffi_files_list, editor_ffi_files_load, editor_ffi_files_make_directory,
-    editor_ffi_files_pending, editor_ffi_files_remove, editor_ffi_files_remove_unobserved,
-    editor_ffi_files_save, editor_ffi_files_save_unobserved, editor_ffi_files_take,
+    editor_ffi_files_flush, editor_ffi_files_list, editor_ffi_files_load,
+    editor_ffi_files_make_directory, editor_ffi_files_pending, editor_ffi_files_remove,
+    editor_ffi_files_remove_unobserved, editor_ffi_files_save, editor_ffi_files_save_unobserved,
+    editor_ffi_files_take,
 };
 use editor_ffi::snapshot::{Snapshot, editor_ffi_snapshot_free, editor_ffi_snapshot_live};
 use editor_ffi::text::editor_ffi_text_free;
@@ -463,6 +464,25 @@ fn files_are_loaded_and_saved_through_c_and_completed_on_the_completion_queue() 
         std::fs::read(&session).expect("the unobserved save made the file"),
         FIXTURES[0].1
     );
+    // A flush asked behind a load and an unobserved append is completed
+    // after the load, with the append on disk by then, and keeps no result.
+    let flushed = directory.path().join("flushed");
+    let loading = next_id();
+    assert!(load(loading, &directory.path().join("fixture-0.txt")));
+    assert!(append(None, &flushed, b"flushed\n"));
+    let flush = next_id();
+    assert!(editor_ffi_files_flush(flush));
+    let loaded = completed(loading);
+    assert_eq!(next_completion(), completion_of(flush));
+    assert_eq!(
+        std::fs::read(&flushed).expect("the append before the flush made the file"),
+        b"flushed\n"
+    );
+    assert!(take(flush).is_none());
+    // SAFETY: the snapshot came from the library in the result just taken,
+    // and is freed once, here.
+    unsafe { editor_ffi_snapshot_free(loaded.snapshot) };
+
     // The failure is kept with its path, and taken once.
     let Some((path, detail)) = failure() else {
         panic!("the unobserved append that failed kept no failure");
