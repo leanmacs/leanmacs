@@ -407,7 +407,8 @@ def restoreChecks : List Check :=
                   2 &&
                 again.loop.state.echo ==
                   s!"restore: 1 buffers, 1 with unsaved text; 3 jobs stopped; see {reportName}" &&
-                handed.running.map (·.name) == #["waited"] && handed.otherJobs == 1 },
+                handed.running.map (·.name) == #["waited"] &&
+                handed.otherJobs == 1 },
     { name :=
         "other jobs running at the write with no reported one are counted in *restore* and in the summary"
       run :=

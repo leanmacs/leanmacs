@@ -226,8 +226,7 @@ def Workspaces.meetInto (table : Workspace.Table) (scope : Document.Scope) (cell
     match scope with
     | .workspace location =>
       (table.setWorkspaceValue location cell.name met.value).toOption.getD table
-    | .project identity =>
-      (table.setProjectValue identity cell.name met.value).toOption.getD table
+    | .project identity => (table.setProjectValue identity cell.name met.value).toOption.getD table
     | .unscoped => table.setUnscopedValue cell.name met.value
   (table, met.lost.map fun why => s!"store {cell.name}: {why}")
 

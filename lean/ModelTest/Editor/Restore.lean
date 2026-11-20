@@ -113,7 +113,10 @@ def withStores (revision : Nat) (cells : Array KeptCell) (driver : EvilDriver) :
 `otherJobs` as how many others are. -/
 def withRunning (running : Array RunningJob) (driver : EvilDriver) (otherJobs : Nat := 0) :
     EvilDriver :=
-  { driver with keys := { driver.keys with running, otherJobs } }
+  { driver with
+    keys :=
+      { driver.keys with
+        running, otherJobs } }
 
 /-- A config cell kept across a restart. -/
 def keptOf (name : String) (value : Nat) : KeptCell :=
@@ -139,7 +142,9 @@ def installedWith (generation : Nat) (codec? : String → Option (String × Stor
   { driver with
     keys :=
       { driver.keys with
-        registered := { driver.keys.registered with generation, codec? } } }
+        registered :=
+          { driver.keys.registered with
+            generation, codec? } } }
 
 /-- The names of the unscoped cells the index of the run `run` lists. -/
 def unscopedNames (driver : EvilDriver) (run : Nat) : Option (Array String) :=
@@ -195,15 +200,16 @@ def journalReconcileChecks : List Check :=
             let quiet := drained dropped
             -- A later mirror, a revision moved, says nothing again.
             let later :=
-              mirrored quiet.loop.state ({ configGeneration := 1, stores := { revision := 7 } } :
-                  Context)
+              mirrored quiet.loop.state
+                ({ configGeneration := 1, stores := { revision := 7 } } : Context)
             unscopedNames waiting 1 == some #["gone"] &&
               waiting.loop.state.restore.parked.size == 1 &&
               dropped.loop.state.echo ==
                 "restore: the session kept gone, but no codec is registered for it now; dropped" &&
               dropped.loop.state.restore.parked.isEmpty &&
               unscopedNames quiet 1 == some #[] &&
-              later.2 == none && later.1.restore.parked.isEmpty },
+              later.2 == none &&
+              later.1.restore.parked.isEmpty },
     { name :=
         "a parked table cell whose codec an install registers is met into its store, and one whose value that codec refuses is reset to its initial value and the loss said in the echo area"
       run :=
@@ -212,7 +218,8 @@ def journalReconcileChecks : List Check :=
           | none => false
           | some begun =>
             let refusing : Store Nat :=
-              { name := "late", version := 1, initial := 0, encode := .nat, decode := fun _ => none }
+              { name := "late", version := 1, initial := 0, encode := .nat,
+                decode := fun _ => none }
             let counting : Store Nat :=
               { refusing with
                 name := "count"

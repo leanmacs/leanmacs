@@ -142,7 +142,8 @@ def restoreWorkspaceChecks : List Check :=
           let (inProject, refused) :=
             Workspaces.meetInto table (.project (.root "/plain")) (cell "tally" 2 (.str "bad"))
               tally.codec
-          let (unscoped, _) := Workspaces.meetInto table .unscoped (cell "tally" 2 (.nat 6)) tally.codec
+          let (unscoped, _) :=
+            Workspaces.meetInto table .unscoped (cell "tally" 2 (.nat 6)) tally.codec
           let (nowhere, _) :=
             Workspaces.meetInto table (.project (.declared "none")) (cell "tally" 2 (.nat 6))
               tally.codec

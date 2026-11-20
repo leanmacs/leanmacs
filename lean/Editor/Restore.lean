@@ -218,10 +218,7 @@ def Document.of (state : EditorState) (run : Nat) (ended : Bool := false) : Text
     for entry in kept.places do
       if entry.buffer == index && entry.revision == buffer.history.head then
         views :=
-          views ++
-            entry.places.map fun place =>
-              { place with
-                run := place.run <|> some entry.run }
+          views ++ entry.places.map fun place => { place with run := place.run <|> some entry.run }
     buffers :=
       buffers.push
         { key := index, name := buffer.name

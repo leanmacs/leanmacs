@@ -490,8 +490,9 @@ def stoppedLine (job : RunningJob) : String :=
 reported by name, after the `named` reported ones; nothing for none. -/
 def othersLine (named count : Nat) : Array String :=
   if count == 0 then #[]
-  else if named == 0 then #[s!"{count} jobs were running: the restart stopped them"]
-  else #[s!"and {count} other jobs were running: the restart stopped them"]
+  else
+    if named == 0 then #[s!"{count} jobs were running: the restart stopped them"]
+    else #[s!"and {count} other jobs were running: the restart stopped them"]
 
 /-- The declared stores' cells of the index to hand the host
 ("Restoring", in the module docs), and what the report says: config's as

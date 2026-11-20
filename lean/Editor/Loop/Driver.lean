@@ -272,8 +272,7 @@ def handed (driver : Loop.Driver scheme) : Loop.Keys scheme :=
       driver.keys.running ++
         (driver.startedJobs.filter (reported ·.1)).map fun (name, key) =>
           { owner := Config.Owner.compiled.name, name, key }
-    otherJobs :=
-      driver.keys.otherJobs + Restore.otherJobs reported (driver.startedJobs.map (·.1)) }
+    otherJobs := driver.keys.otherJobs + Restore.otherJobs reported (driver.startedJobs.map (·.1)) }
 
 /-- The job model with each of the job snapshots `held` released. -/
 def releasing (jobs : JobModel) (held : Array JobSnapshotId) : JobModel :=

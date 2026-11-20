@@ -212,8 +212,7 @@ def Document.toJson (document : Document) : Json.Value :=
       (if document.stores.isEmpty then #[]
       else #[("stores", .array (document.stores.map (·.toJson)))]) ++
       (if document.jobs.isEmpty then #[] else #[("jobs", .array (document.jobs.map (·.toJson)))]) ++
-      if document.otherJobs == 0 then #[]
-      else #[("otherJobs", Journal.natJson document.otherJobs)]
+      if document.otherJobs == 0 then #[] else #[("otherJobs", Journal.natJson document.otherJobs)]
 
 /-- The document as the text of its file. -/
 def Document.render (document : Document) : String :=
@@ -234,9 +233,11 @@ def Place.ofJson? (value : Json.Value) : Option Place := do
       view := ← Journal.natField? value "view", anchor := ← Spot.ofJson? (← value.field? "anchor")
       head := ← Spot.ofJson? (← value.field? "head"), top := ← Journal.natField? value "top"
       jumps := ← optionalField? value "jumps" Jumps.Record.ofJson?
-      run := ← optionalField? value "run" fun
-          | .number run => run.toNat?
-          | _ => none }
+      run :=
+        ←
+          optionalField? value "run" fun
+              | .number run => run.toNat?
+              | _ => none }
 
 /-- An optional string member: `some none` when absent, `none` when it is
 there and not a string. -/

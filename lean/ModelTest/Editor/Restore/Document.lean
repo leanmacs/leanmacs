@@ -46,14 +46,12 @@ def full : Document :=
         { buffer with
           views :=
             (buffer.views.modify 0 fun place =>
-                { place with
-                  jumps :=
-                    some
-                      { entries := #[.kept 1 0 2, .file "/r/b.txt" 4 0], index := 1
-                        previous := some (.kept 0 3 3) } }).modify
-              1 fun place =>
-              { place with
-                run := some 1 } }
+                  { place with
+                    jumps :=
+                      some
+                        { entries := #[.kept 1 0 2, .file "/r/b.txt" 4 0], index := 1
+                          previous := some (.kept 0 3 3) } }).modify
+              1 fun place => { place with run := some 1 } }
     frame :=
       some
         { selected := 1, chosen := some .monocle
@@ -152,13 +150,21 @@ def restoreDocumentChecks : List Check :=
               otherJobs := 0
               buffers :=
                 full.buffers.map fun buffer =>
-                  { buffer with views := buffer.views.map ({ · with jumps := none, run := none }) } }
+                  { buffer with
+                    views :=
+                      buffer.views.map
+                        ({ · with
+                          jumps := none, run := none }) } }
           let read := readAs "session-3.json" stripped.render
           let plain := readAs "session-3.json" full.render
           (read.document.map (·.buffers)) ==
               (plain.document.map fun document =>
                 document.buffers.map fun buffer =>
-                  { buffer with views := buffer.views.map ({ · with jumps := none, run := none }) }) &&
+                  { buffer with
+                    views :=
+                      buffer.views.map
+                        ({ · with
+                          jumps := none, run := none }) }) &&
             read.report.isEmpty },
     { name :=
         "a store or a job entry that does not parse is skipped and said, and a frame or workspaces that do not parse are read as none and said"
