@@ -306,6 +306,58 @@ def Ended.describe : Process.Exit → String
   | .code n => s!"exited with status {n}"
   | .signal n => s!"was ended by the signal {n}"
 
+/-- The text of `line` between the first `before` and the next `after` in
+it, when both are there. -/
+def between? (line before after : String) : Option String :=
+  match line.splitOn before with
+  | _ :: rest :: _ =>
+    match rest.splitOn after with
+    | inside :: _ :: _ => some inside
+    | _ => none
+  | _ => none
+
+/-- What a line of a failed build's output says is missing of the tooling a
+package's native code needs, with how to get it; none for any other line.
+The app ships the Lean toolchain alone, with no C library headers, no
+macOS SDK beyond the link stubs of what the shipped editor links, and no
+Cargo (decided 2026-11-20), so a package with native code needs the
+user's own tooling or a prebuilt binary its lakefile fetches
+(`docs/design/packages.md`, "Who can build it"). It knows the compiler's
+missing header (`fatal error: '<h>' file not found`) and the linker's
+missing framework or library (`framework not found for -framework <F>`,
+`library not found for -l<L>`). -/
+def missingTooling? (line : String) : Option String :=
+  let install :=
+    "the app ships the Lean toolchain alone: install the Xcode command line tools (`xcode-select --install`) for a package whose build uses them, or use the package's prebuilt binary, as its documentation says"
+  match between? line "fatal error: '" "' file not found" with
+  | some header =>
+    some s!"a package's C includes <{header}>, a header of the system's C library or SDK; {install}"
+  | none =>
+    match between? (line ++ "\n") "framework not found for -framework " "\n" with
+    | some framework =>
+      some s!"a package links the system framework {framework.trimAscii}; {install}"
+    | none =>
+      match between? (line ++ "\n") "library not found for -l" "\n" with
+      | some library => some s!"a package links the system library {library.trimAscii}; {install}"
+      | none => none
+
+/-- The app bundle the toolchain's `lake` at `lake` is in, when it is a
+bundle's: `<bundle>/Contents/Resources/lean/toolchain/bin/lake`. -/
+def bundleOfLake? (lake : String) : Option String :=
+  let suffix := "/Contents/Resources/lean/toolchain/bin/lake"
+  if lake.endsWith suffix then some (lake.dropEnd suffix.length).toString else none
+
+/-- What is said when the bundle's `lake` at `lake` failed as macOS
+refusing to run it does (`how`): killed at its start (the signal 9), or
+refused (`Operation not permitted`). A downloaded app's files are
+quarantined, and after the app is opened its nested tools may still be
+refused; removing the flag lets them run (`packaging/macos/README.txt`).
+None for a `lake` outside a bundle, or any other failure. -/
+def refusedToolchain? (lake how : String) : Option String := do
+  let bundle ← bundleOfLake? lake
+  guard (how == Ended.describe (.signal 9) || (how.splitOn "not permitted").length > 1)
+  return s!"macOS refused to run the bundled toolchain ({lake}); remove the quarantine flag: xattr -dr com.apple.quarantine {bundle}"
+
 /-- The lines of `frames`, decoded. -/
 def framesOf : Process.Frames → Array String
   | .lines lines => lines.map File.decodeBytes
@@ -380,15 +432,22 @@ def toolFailure (order : Order) (program : String) : JobM (Option String) := do
     return some (Ended.describe ran.exit)
 
 /-- Runs `command` as a streaming child, posting its lines to the buffer
-as they come: none when it exits 0, else how it ended. -/
+as they come: none when it exits 0, else how it ended, followed by what its
+output said is missing of a package's native tooling (`missingTooling?`);
+or, for a bundle's `lake` that macOS refused to run, that
+(`refusedToolchain?`). -/
 def streamed (command : Process.Command) : JobM (Option String) := do
+  let refused (how : String) : String := (refusedToolchain? command.program how).getD how
   match
     ←
       Process.request
           (.start command { stdout := .lines, stderr := .lines, bound := lineBound }) with
   | .error error =>
-    return some error.describe
+    return some (refused error.describe)
   | .ok child =>
+    -- What the output said is missing of a package's native tooling, at
+    -- its first line that says so.
+    let mut missing : Option String := none
     for _ in [0:1000000000] do
       match ← Process.read child with
       | .error error =>
@@ -397,11 +456,16 @@ def streamed (command : Process.Command) : JobM (Option String) := do
         let lines := framesOf delivery.stdout ++ framesOf delivery.stderr
         unless lines.isEmpty do
           post { command := outputName, arguments := lines.toList.map .str }
+        if missing.isNone then
+          missing := lines.findSome? missingTooling?
         match delivery.ended with
         | some (.exited (.code 0)) =>
           return none
         | some (.exited exit) =>
-          return some (Ended.describe exit)
+          let how := Ended.describe exit
+          return some
+              (refusedToolchain? command.program how |>.getD
+                ((missing.map (s!"{how}: " ++ ·)).getD how))
         | some (.lineTooLong _ bound) =>
           return some s!"wrote a line longer than {bound} bytes"
         | some (.failed detail) =>
@@ -444,12 +508,18 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
   unless order.resolve.isEmpty do
     if let some how←
         streamed (lakeCommand order (#["update", "--keep-toolchain"] ++ order.resolve)) then
-      return ← fail s!"lake update {how}"
+      return ←
+          fail
+              (if (bundleOfLake? order.lake).isSome && how.startsWith "macOS refused" then how
+              else s!"lake update {how}")
   -- 3. Rust: the set's crates, then Cargo, which every link runs.
   let crates ←
     match ← runOf (lakeCommand order #["query", ":editorRustCrates"]) queryPatience with
     | .error how =>
-      return ← fail s!"lake query :editorRustCrates could not run: {how}"
+      return ←
+          fail
+              ((refusedToolchain? order.lake how).getD
+                s!"lake query :editorRustCrates could not run: {how}")
     | .ok ran =>
       match ran.exit with
       | .code 0 =>
@@ -457,7 +527,10 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
       | exit =>
         let said := ((String.fromUTF8? ran.stderr).getD "").splitOn "\n" |>.filter (!·.isEmpty)
         post { command := outputName, arguments := said.map .str }
-        return ← fail s!"lake query :editorRustCrates {Ended.describe exit}"
+        return ←
+            fail
+                ((refusedToolchain? order.lake (Ended.describe exit)).getD
+                  s!"lake query :editorRustCrates {Ended.describe exit}")
   unless crates.isEmpty do
     if let some how← toolFailure order "cargo" then
       return ← fail (cargoRequired crates how)
@@ -474,7 +547,10 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
       streamed
         (lakeCommand order #["build", ":editorInstall"] #[("EDITOR_INSTALL_DIR", staging)]) then
     removeStaging
-    return ← fail s!"lake build {how}"
+    return ←
+        fail
+            (if (bundleOfLake? order.lake).isSome && how.startsWith "macOS refused" then how
+            else s!"lake build {how}")
   -- 5. The new editor's core, and its record.
   let some core := (← readText (staging ++ "/editor.core")).bind coreIn
     |

@@ -308,6 +308,59 @@ def packageSetBuildChecks : List Check :=
                 ["LEAN_CC", "LEAN_AR", "LEAN_SYSROOT", "LEAN", "LEAN_PATH", "LEAN_SRC_PATH",
                       "LAKE_HOME", "LAKE_OVERRIDE_LEAN", "ELAN_TOOLCHAIN", "CC", "AR"].all
                   clearedVariables.contains) },
+    { name :=
+        "a build that fails for want of a header of the system's C library says which tooling is missing and how to get it, in the buffer's failure line and the echo area; a framework or a library the link lacks too; any other line says nothing more"
+      run :=
+        let facts := lakefileWith #[hello]
+        match orderFor facts with
+        | none => pure false
+        | some order =>
+          let resolve :=
+            streaming (lakeCommand order #["update", "--keep-toolchain", "default-set", "hello"])
+              #[]
+          let failing :=
+            streaming (install order) #["c/glue.c:1:10: fatal error: 'stdio.h' file not found"] 1
+          match buildDriver (runningWith facts) (succeeding order).1 #[resolve, failing] with
+          | none => pure false
+          | some driver =>
+            let done := built driver order
+            let says (text part : String) : Bool := (text.splitOn part).length > 1
+            pure
+              (failedWith done
+                  "lake build exited with status 1: a package's C includes <stdio.h>, a header of the system's C library or SDK" &&
+                says done.loop.state.echo "xcode-select --install" &&
+                done.loop.state.echo.endsWith "; this editor keeps running" &&
+                ((missingTooling? "ld64.lld: error: framework not found for -framework Metal").map
+                    (says · "the system framework Metal")) ==
+                  some true &&
+                ((missingTooling? "ld64.lld: error: library not found for -lsqlite3").map
+                    (says · "the system library sqlite3")) ==
+                  some true &&
+                missingTooling? "ld64.lld: error: undefined symbol: leanmacs_no_such_symbol" ==
+                  none) },
+    { name :=
+        "a bundle's lake killed at its start, or refused, as macOS refuses a quarantined tool, ends the build saying macOS refused the bundled toolchain and how to remove the flag; a lake outside a bundle, or another failure, says what it said before"
+      run :=
+        let facts := lakefileWith #[hello]
+        let bundled := "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain/bin/lake"
+        match decide (runningWith facts (lake := some bundled)) facts false with
+        | .build order =>
+          let resolve :=
+            { command := lakeCommand order #["update", "--keep-toolchain", "default-set", "hello"]
+              steps := #[], exit := .signal 9 : Process.StreamScript }
+          match buildDriver (runningWith facts (lake := some bundled)) #[] #[resolve] with
+          | none => pure false
+          | some driver =>
+            let done := built driver order
+            pure
+              (done.loop.state.echo ==
+                  s!"packages: macOS refused to run the bundled toolchain ({bundled}); remove the quarantine flag: xattr -dr com.apple.quarantine /Applications/Leanmacs.app; this editor keeps running" &&
+                refusedToolchain? bundled "could not start: Operation not permitted" ==
+                  some
+                    s!"macOS refused to run the bundled toolchain ({bundled}); remove the quarantine flag: xattr -dr com.apple.quarantine /Applications/Leanmacs.app" &&
+                refusedToolchain? "/t/bin/lake" "was ended by the signal 9" == none &&
+                refusedToolchain? bundled "exited with status 1" == none)
+        | _ => pure false },
     { name := "a probe that fails removes the staging directory and publishes nothing"
       run :=
         let facts := lakefileWith #[hello]
