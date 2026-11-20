@@ -16,6 +16,7 @@ import Editor.Menu
 import Editor.Menu.Compiled
 import Editor.Process.Environment
 import Editor.ProjectMode
+import Editor.Test.Shipped
 import Editor.Window
 import Editor.Window.Real
 import Editor.Workspace
@@ -46,6 +47,13 @@ set's packages.
 
 namespace FfiTest
 
+/-- The packages the window host is handed in these scenarios, as the
+default editor's root hands them: the core's Lake package's, then the
+kit's stand-ins for the default packages whose data the core keeps
+(`Editor.Test.Shipped`, `Editor/Test/Shipped.lean`). -/
+def shippedPackages : Array Editor.Package :=
+  EditorCore.EditorPackage.packages ++ #[Editor.Test.Shipped.languages]
+
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform, on the absolute path `file`, or with no file, on the
 editor's one empty buffer, when it is `none`: a cells display bound to the
@@ -75,7 +83,7 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     Editor.Ffi.windowRequest .scripted .minimise
     Editor.Window.shutdown
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options (.skip none)
+    Editor.Window.host shippedPackages #[`Editor] .scripted options (.skip none)
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[] shutdown
         .headless
   unless status == 0 do
@@ -157,10 +165,9 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := [oleanDir], composition := true }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
-        (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
-        none)
+    Editor.Window.host shippedPackages #[`Editor] .scripted options (.load configDir)
+        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
+        Editor.Window.shutdown .headless (patience := none)
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host-config: the window mode ended with status {status}"
     return 1
@@ -190,8 +197,8 @@ def windowHostBaseScenario (sysroot oleanDir configDir : String) : IO UInt8 := d
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := [oleanDir], composition := true }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor, `ConfigFixture] .scripted
-        options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+    Editor.Window.host shippedPackages #[`Editor, `ConfigFixture] .scripted options
+        (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
         (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
         none)
   unless status == 0 do
@@ -228,10 +235,9 @@ def windowHostGenerateScenario (sysroot oleanDir configDir : String) : IO UInt8 
   let generator : Editor.Config.Generator :=
     { create := Editor.Config.Directory.create configDir, pin, set := some set }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
-        (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
-        none) (generator := some generator)
+    Editor.Window.host shippedPackages #[`Editor] .scripted options (.load configDir)
+        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
+        Editor.Window.shutdown .headless (patience := none) (generator := some generator)
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host-generate: the window mode ended with status {status}"
     return 1
@@ -276,7 +282,7 @@ def windowHostDirectScenario (editorPath sysroot configDir : String) : IO UInt8 
       return 1
   let plan := options.configPlan false
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options plan
+    Editor.Window.host shippedPackages #[`Editor] .scripted options plan
         (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
         Editor.Window.shutdown .headless (patience := none)
   unless status == 0 do
@@ -303,9 +309,9 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
     { file := some file, config := none, configGiven := false, sysroot := none, oleans := []
       composition := true }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scriptedUndrawn options
-        (.skip none) (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle
-        #[] Editor.Window.shutdown .headless
+    Editor.Window.host shippedPackages #[`Editor] .scriptedUndrawn options (.skip none)
+        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
+        Editor.Window.shutdown .headless
   unless status == 1 do
     IO.eprintln s!"ffi-test window-host-undrawn: the window mode ended with status {status}, not 1"
     return 1
@@ -367,11 +373,10 @@ def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 :
       return "recorded"
     let said ← IO.mkRef (#[] : Array String)
     let status ←
-      Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
-          (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
-          (← Editor.Clipboard.InProcess.new).handle #[] shutdown .headless (patience := none)
-          (afterRestore := #[.run Editor.restartName]) (replace := replace) (say := fun line =>
-          said.modify (·.push line))
+      Editor.Window.host shippedPackages #[`Editor] .scripted options (.load configDir)
+          (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
+          shutdown .headless (patience := none) (afterRestore := #[.run Editor.restartName])
+          (replace := replace) (say := fun line => said.modify (·.push line))
     let record := state / "session" / "handover"
     let exec : Editor.Restart.Invocation :=
       { program := launcher, arguments := #["--handover", record.toString] }

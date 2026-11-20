@@ -5,6 +5,10 @@ name = "shipped-themes"
 path = "@REPO@/packages/shipped-themes"
 
 [[require]]
+name = "languages"
+path = "@REPO@/packages/languages"
+
+[[require]]
 name = "hello-init"
 path = "@DIR@/hello-init"
 

@@ -60,7 +60,6 @@ import Editor.Job.Runner
 import Editor.Job.Table
 import Editor.Keymap
 import Editor.Language
-import Editor.Language.Compiled
 import Editor.Layout
 import Editor.Loop
 import Editor.Menu
@@ -2678,17 +2677,10 @@ def shippedChecks (_ : Unit) : List Check :=
             registry.atPointNames none #[] == #["words"] &&
             registry.unknownAtPoints == #[] },
     { name :=
-        "the executable's hosts start with the code mode and the languages rust, json, markdown, toml and lean, in that order, registered by the languages package"
+        "the executable's hosts start with nothing of the languages package: no mode code and no language is registered by a package of the core's Lake package"
       run := do
         let registry := shippedRegistry
-        return registry.modes.any
-              (fun entry =>
-                entry.mode.name == Language.codeName && entry.owner == Language.package.owner) &&
-            (registry.mode? Language.codeName).any (·.syntaxTreeOfLanguage) &&
-            registry.languages.map
-                (fun entry => (entry.language.name, entry.owner == Language.package.owner)) ==
-              #[("rust", true), ("json", true), ("markdown", true), ("toml", true),
-                ("lean", true)] },
+        return (registry.mode? "code").isNone && registry.languages.isEmpty },
     { name :=
         "the executable's hosts start with C-s-f bound to toggle-fullscreen, s-m to minimise-window and s-q to quit, the first two commands the frame-commands package's and quit the ex package's, and the three bindings the frame-commands package's; with switch-buffer, list-buffers and close-buffer registered by the buffers package, and the ex names b, ls and bd bound to them"
       run := do

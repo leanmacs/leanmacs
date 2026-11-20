@@ -1,23 +1,24 @@
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.Language
-import Editor.Language.Compiled
 import Editor.Mode
 import Editor.Package
-import ModelTest.Check
+import Languages.Compiled
+import LanguagesTest.Check
 
 /-!
-# Model tests: `Editor/Language/Compiled.lean`
+# Model tests: `Languages/Compiled.lean`
 
-The model tests of `Editor/Language/Compiled.lean`: `languagePackageChecks`.
-The root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `Languages/Compiled.lean`: `languagePackageChecks`. They
+were the core's (`ModelTest.languagePackageChecks`) while the package was a
+module of the core, and moved here with their sentence as it was. The test
+driver's root, `LanguagesTest/Model.lean`, runs them.
 -/
 
-namespace ModelTest
+namespace LanguagesTest
 
 open Editor
 
-/-- The checks of the `languages` package (`Editor/Language/Compiled.lean`):
+/-- The checks of the `languages` package (`Languages/Compiled.lean`):
 what it registers is the `code` mode and the shipped languages. -/
 def languagePackageChecks : List Check :=
   [{  name :=
@@ -31,4 +32,4 @@ def languagePackageChecks : List Check :=
             registered.modes.map (·.name) == #["code"] &&
             registered.commands.isEmpty) }]
 
-end ModelTest
+end LanguagesTest

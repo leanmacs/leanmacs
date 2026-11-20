@@ -7,7 +7,6 @@ import Editor.Ex.Compiled
 import Editor.ExecuteCommand.Compiled
 import Editor.Files.Compiled
 import Editor.FrameCommands.Compiled
-import Editor.Language.Compiled
 import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.ModeLine.Compiled
@@ -97,8 +96,7 @@ language table read as they did:
   follow `restart`'s;
 - `ex` comes before `version-control`: each binds its own ex names, and
   the ex names' completion lists them in the order they were bound, the
-  `ex` package's first;
-- `languages` comes last: the `code` mode after version control's modes.
+  `ex` package's first.
 
 Nothing in this list is ordered by what a package depends on: a command's
 name is looked up when it is run, so a package may name a command of a
@@ -108,7 +106,10 @@ core. So the compile mode's package, which was seventeenth here, between
 `shell` and `at-point`, registers after all of these now: its commands
 follow version control's in the command prompt, and its ex names follow
 version control's (`docs/design/packages.md`, "Registration order is
-visible").
+visible"). The languages' package, which was last here, is the default
+package `languages` (`packages/languages/`) now, and registers after the
+core's and the compile mode's: the `code` mode still follows version
+control's modes.
 -/
 
 namespace EditorCore.EditorPackage
@@ -123,6 +124,6 @@ def packages : Array Package :=
     TabCommands.package, Themes.package, ExecuteCommand.package, BindingSearch.package,
     Workspace.package, ProjectSearch.package, WorkingSet.package, Restore.package,
     PackageSet.package, Shell.package, AtPoint.package, VersionControl.package,
-    VersionControl.gutterPackage, Language.package]
+    VersionControl.gutterPackage]
 
 end EditorCore.EditorPackage

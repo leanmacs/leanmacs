@@ -17,7 +17,6 @@ import Editor.ExecuteCommand.Compiled
 import Editor.Extension
 import Editor.FrameCommands.Compiled
 import Editor.InputScheme.Contract
-import Editor.Language.Compiled
 import Editor.Main
 import Editor.Menu.Compiled
 import Editor.ModeLine.Compiled

@@ -225,8 +225,8 @@ refused here: it is left out at install, and the report names it.
 
 A language (`Editor/Language.lean`) is held by owner like a theme, in a
 `LanguageEntry`, and replaced as a set (`replaceLanguages`). The
-`languages` package registers the languages that ship (`Language.shipped`,
-`Editor/Language/Compiled.lean`); `setup` registers more with
+`languages` package registers the languages that ship (`Language.shipped`;
+the default package `languages`, `packages/languages/`); `setup` registers more with
 `defineLanguage` (`Editor/Setup.lean`). The table a path's language is
 chosen from (`languageTable`) is each owner's entries over the earlier
 owners' (`Language.over`): config's first, in the order it defined them,

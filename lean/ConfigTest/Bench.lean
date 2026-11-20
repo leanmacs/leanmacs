@@ -1,6 +1,7 @@
 import ConfigTest.Support.Candidates
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
+import ConfigTest.Support.Shipped
 import Editor.Api
 import Editor.AtPoint.Compiled
 import Editor.Clipboard
@@ -50,7 +51,6 @@ import Editor.Text.Real
 import Editor.Watch
 import Editor.Workspace.Compiled
 import Editor.Workspace.FindFile
-import EditorCore.EditorPackage
 
 /-!
 # Config tests: the benchmark
@@ -780,9 +780,9 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
       { completions := waits, timers := clock.timers, fuzzy := Fuzzy.real
         snapshots := Job.realSnapshots published.reader }
     let shippedPackages :=
-      if atPoint then EditorCore.EditorPackage.packages
+      if atPoint then shippedPackages
       else
-        EditorCore.EditorPackage.packages.map fun package =>
+        shippedPackages.map fun package =>
           if package.name == AtPoint.package.name then atPointUnused else package
     let packages :=
       shippedPackages.push

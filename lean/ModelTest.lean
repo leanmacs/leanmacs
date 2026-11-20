@@ -100,7 +100,6 @@ import ModelTest.Editor.Jumps.Go
 import ModelTest.Editor.Key.Notation
 import ModelTest.Editor.Keymap
 import ModelTest.Editor.Language
-import ModelTest.Editor.Language.Compiled
 import ModelTest.Editor.Layout
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
@@ -832,12 +831,12 @@ The config session's decisions are tested here too, with no elaborator:
   nothing, bare too; a value is registered at its own type's point only;
   a reload replaces config's values and keeps a package's; and `named`
   finds the latest value of a name, config's over a package's;
-- `completionPackageChecks`, `modeLinePackageChecks` and
-  `languagePackageChecks`: the packages of what ships in core modules
-  register it, in order: the shipped styles and displays
-  (`Editor/Completion/Compiled.lean`), the shipped segments
-  (`Editor/ModeLine/Compiled.lean`), and the `code` mode with the shipped
-  languages (`Editor/Language/Compiled.lean`);
+- `completionPackageChecks` and `modeLinePackageChecks`: the packages of
+  what ships in core modules register it, in order: the shipped styles and
+  displays (`Editor/Completion/Compiled.lean`) and the shipped segments
+  (`Editor/ModeLine/Compiled.lean`). The `code` mode with the shipped
+  languages is the default package `languages`' (`packages/languages/`),
+  whose own tests hold it (`LanguagesTest.languagePackageChecks`);
 - `exPackageChecks` and `versionControlPackageChecks`: each package binds
   its own ex names, in order: the `ex` package the files', its own and the
   buffers' and no other (`Editor/Ex/Compiled.lean`), and the
@@ -1487,7 +1486,6 @@ def checks : List Check :=
     extensionChecks ++
     completionPackageChecks ++
     modeLinePackageChecks ++
-    languagePackageChecks ++
     exPackageChecks ++
     versionControlPackageChecks ++
     filesPackageChecks ++

@@ -1,5 +1,6 @@
 import ConfigTest.Check
 import ConfigTest.Support.Hosts
+import ConfigTest.Support.Shipped
 import Editor.Completion
 import Editor.Config.Directory
 import Editor.Config.Elaborate
@@ -25,7 +26,6 @@ import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
 import Editor.Text
 import Editor.Text.Real
-import EditorCore.EditorPackage
 
 /-!
 # Config tests: support: Syntax
@@ -95,8 +95,8 @@ def rustObjectsText : String :=
 
 /-- Runs `check` against a host of the Vim scheme that ships, made over the
 collaborators the executable's hosts are made of (`Headless.shippedOver`),
-handed the packages of the core's Lake package
-(`EditorCore.EditorPackage.packages`),
+handed the packages of the core's Lake package and the kit's stand-ins
+(`shippedPackages`, `ConfigTest/Support/Shipped.lean`),
 with the real elaborator, a config directory of `files` and the services of
 a stage of its own; its syntax tree is the real binding over the library's
 syntax service, which after an attach, and before a question of a text's
@@ -126,8 +126,8 @@ def withVimHost (context : Context) (files : List (String × String)) (check : S
       | none =>
         pure staged.services
     let shipped :=
-      Headless.shippedOver EditorCore.EditorPackage.packages #[`Editor] "" [] "" staged.emit
-        services staged.published staged.held (← Config.Elaborate.ModuleFiles.temporary)
+      Headless.shippedOver shippedPackages #[`Editor] "" [] "" staged.emit services staged.published
+        staged.held (← Config.Elaborate.ModuleFiles.temporary)
     let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
       let real ← RealSyntaxTree.new snapshots
       return fun request => do

@@ -3,6 +3,7 @@ import ConfigTest.Support.Configs
 import ConfigTest.Support.Hosts
 import ConfigTest.Support.Keys
 import ConfigTest.Support.Lines
+import ConfigTest.Support.Shipped
 import ConfigTest.Support.Syntax
 import Editor.Config.Directory
 import Editor.Config.Packages
@@ -14,7 +15,6 @@ import Editor.ProjectSearch.Run
 import Editor.WorkingSet.Run
 import Editor.Workspace.FindFile
 import Editor.Workspace.FindInProject
-import EditorCore.EditorPackage
 
 /-!
 # Config tests: the default config
@@ -49,14 +49,14 @@ def defaultBuilt (context : Context) : IO Config.Registrations := do
           s!"the default config was rejected: {outcome.diagnostics.toList.map (·.message)}"
 
 /-- The registry a host of the executable starts with, the one the packages
-of the core's Lake package make (`Config.State.ofPackages` of
-`EditorCore.EditorPackage.packages`), with the
+of the core's Lake package and the kit's stand-ins make
+(`Config.State.ofPackages` of `shippedPackages`), with the
 default config's bindings, prefix names
 and leaders installed for the owner `.config`, as a reload installs them
 (`Config.Reload.install`). -/
 def defaultRegistry (registrations : Config.Registrations) : IO Config.Registry := do
   let (state, _) : Config.State Config.Elaborate.Base Config.Elaborate.Handle × Array String :=
-    Config.State.ofPackages EditorCore.EditorPackage.packages
+    Config.State.ofPackages shippedPackages
   let registry :=
     (state.registry.replaceBindings .config registrations.bindings).replacePrefixNames .config
       registrations.prefixNames

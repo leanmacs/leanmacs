@@ -11,10 +11,11 @@
 #
 # It requires the core and each default package. A default package has a
 # directory here and a `require` below: the shipped themes
-# (shipped-themes/), then the compile mode (compile/). They register in
-# that order, after the core's. Every other feature is still a package of
-# the core's Lake package (lean/EditorCore/EditorPackage.lean). This is
-# also the lakefile a user's package set starts from.
+# (shipped-themes/), the compile mode (compile/), then the languages
+# (languages/). They register in that order, after the core's. Every other
+# feature is still a package of the core's Lake package
+# (lean/EditorCore/EditorPackage.lean). This is also the lakefile a user's
+# package set starts from.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages update --keep-toolchain
@@ -37,3 +38,8 @@ path = "shipped-themes"
 [[require]]
 name = "compile"
 path = "compile"
+
+# The languages that ship and the `code` mode: the third default package.
+[[require]]
+name = "languages"
+path = "languages"
