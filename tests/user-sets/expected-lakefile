@@ -6,7 +6,7 @@ path = "@REPO@/packages/shipped-themes"
 
 [[require]]
 name = "hello-init"
-path = "@REPO@/tests/user-sets/hello-init"
+path = "@DIR@/hello-init"
 
 [[require]]
 name = "editor-core"

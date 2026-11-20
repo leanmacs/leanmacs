@@ -7,15 +7,20 @@
 # fresh temporary directory, removed at the end: the config, the state and
 # data directories, and HOME and XDG_* point inside it, so a missed flag
 # still lands there. The fixture packages (tests/user-sets/<name>) are
-# built in place, into their own .lake/, as the fixture set's packages are.
+# built in place, into their own .lake/, as the fixture set's packages are,
+# but hello-init: a copy of it in the temporary directory names the core
+# from git, from a `file://` stand-in for the core's repository
+# (tools/core-repo.sh), as a published package does.
 #
 #   A. Install, then drop a default package: three processes of one script
 #      (tests/user-sets/install-script), started through the launcher.
 #      P1, the shipped default, loads a lakefile that requires the default
 #      set and starts no build; the config, which imports `HelloInit`, is
 #      refused. It opens a file, types unsaved text, splits the window and
-#      opens a tab, then `:package-install hello-init <dir>`: the set is
-#      built and the editor restarts into version 1. P2 shows the session
+#      opens a tab, then `:package-install hello-init <dir>`, the copy that
+#      names the core from git: the install writes the running core's
+#      require at the lakefile's root, the set is built against that core,
+#      with no core cloned, and the editor restarts into version 1. P2 shows the session
 #      as it was, runs `hello-init` (`hello-init: initialize ran`), installs
 #      `broken-link`, whose link fails, keeps running, removes it (no
 #      build), then removes `compile`, a default package: version 2. P3
@@ -76,6 +81,13 @@ done
 . "$repo/tools/user-sets-filters.sh"
 core=$(cat "$shipped.core")
 
+# The stand-in for the core's repository (tools/core-repo.sh), and a copy
+# of hello-init that names the core from it by git, as a published package
+# does: A installs that copy, and D another.
+. "$repo/tools/core-repo.sh"
+core_repo "$tmp/core-repo" "$lean_dir/lean-toolchain"
+git_core_copy "$fixtures/hello-init" "$tmp/hello-init" "$tmp/core-repo"
+
 # A. Install, then drop a default package.
 config="$tmp/config"
 mkdir -p "$config"
@@ -83,7 +95,7 @@ cp "$fixtures/config/init.lean" "$config/init.lean"
 cp "$lean_dir/lean-toolchain" "$config/lean-toolchain"
 printf 'name = "config"\n\n[[require]]\nname = "default-set"\npath = "%s/packages"\n\n[[lean_lib]]\nname = "Config"\nglobs = ["Config.+"]\n' "$repo" >"$config/lakefile.toml"
 printf 'first line\nsecond line\n' >"$tmp/note.txt"
-sed "s|@NOTE@|$tmp/note.txt|; s|@HELLO@|$fixtures/hello-init|; s|@LINK@|$fixtures/broken-link|" \
+sed "s|@NOTE@|$tmp/note.txt|; s|@HELLO@|$tmp/hello-init|; s|@LINK@|$fixtures/broken-link|" \
   "$fixtures/install-script" >"$tmp/install-script"
 started=$(date +%s)
 status=0
@@ -101,8 +113,13 @@ grep -q 'Package build failed: lake build exited with status 1' "$tmp/install-bu
   fail "A's build buffer does not end the broken-link build failed"
 grep -q 'leanmacs_no_such_symbol' "$tmp/install-buffer" ||
   fail "A's build buffer does not show the linker's error, naming leanmacs_no_such_symbol"
-sed "s|$repo|@REPO@|g" "$config/lakefile.toml" | diff "$fixtures/expected-lakefile" - ||
+sed "s|$repo|@REPO@|g; s|$tmp|@DIR@|g" "$config/lakefile.toml" | diff "$fixtures/expected-lakefile" - ||
   fail "A's lakefile differs from expected-lakefile"
+# The root's core won: no core was cloned, under .lake/packages or anywhere
+# else in the set's .lake.
+test ! -e "$config/.lake/packages/editor-core" || fail "A cloned a core into $config/.lake/packages/editor-core"
+test -z "$(find "$config/.lake" -name EditorCoreStub.lean 2>/dev/null)" ||
+  fail "A cloned the stand-in core under $config/.lake"
 test "$(ls "$tmp/data/editors" | tr '\n' ' ')" = "$core " || fail "A left $(ls "$tmp/data/editors") in the editors directory"
 test "$(ls "$tmp/data/editors/$core" | tr '\n' ' ')" = "1 2 " || fail "A left $(ls "$tmp/data/editors/$core") of its core"
 probe=$("$launcher" --data "$tmp/data" --default "$shipped" -- --probe | grep '^executable ')
@@ -111,7 +128,7 @@ test ! -e "$tmp/state/session/handover" || fail "A left a hand-over record"
 test -z "$(ls -A "$tmp/data/launch" 2>/dev/null)" || fail "A left a cold record"
 LEAN_CC=/usr/bin/cc lake -d ../packages build --no-build -q :editor ||
   fail "the user set's builds made the default set's editor out of date"
-echo "user-sets-test: A, install hello-init, fail broken-link, drop compile: ok ($((ended - started)) s)"
+echo "user-sets-test: A, install hello-init naming the core from git, fail broken-link, drop compile, and no core cloned: ok ($((ended - started)) s)"
 
 # B. A set that does not elaborate.
 config="$tmp/config-b"
@@ -145,8 +162,6 @@ echo "user-sets-test: C, git missing is said and nothing is fetched: ok"
 # reaches the core only through the default set, and holds a copy of
 # hello-init that names the core from git (the stand-in, tools/core-repo.sh),
 # so Lake takes the package's git require. The build stops before it links.
-. "$repo/tools/core-repo.sh"
-core_repo "$tmp/core-repo" "$lean_dir/lean-toolchain"
 git_core_copy "$fixtures/hello-init" "$tmp/hello-init-d" "$tmp/core-repo"
 config="$tmp/config-d"
 mkdir -p "$config"

@@ -14,10 +14,13 @@
 #      started by the launcher in its place, builds the set and restarts
 #      into the new version. With a lakefile naming `broken-elab`, the copy
 #      keeps running and the buffer shows Lean's error.
-#   F. Git update: a package in a local git repository (`file://`) is
-#      installed and pinned; after a new commit, `:package-update x` moves
-#      the pin and builds; `:package-update x <old rev>` writes the rev
-#      into the lakefile and builds.
+#   F. Git update: a package in a local git repository (`file://`), which
+#      names the core from git (a `file://` stand-in, tools/core-repo.sh),
+#      is installed and pinned; after a new commit, `:package-update x`
+#      moves the pin and builds; `:package-update x <old rev>` writes the
+#      rev into the lakefile and builds. The lakefile then requires the
+#      running core at its root, as its last require, and no core is
+#      cloned.
 #   G. Rust: a set holding the fixture package `echo`, whose crate the
 #      editor's Cargo workspace holds, builds with Cargo, and the new
 #      editor passes its probe.
@@ -116,13 +119,19 @@ printf '%s\n' "$out" | grep -q '^run tab-new: ok' || fail "E: the copy did not k
 ended=$(date +%s)
 echo "user-sets-check: E, the first launch after an update rebuilds, and a failure keeps the shipped default: ok ($((ended - started)) s)"
 
-# F. Git update.
+# F. Git update. The package names the core from git, from a `file://`
+# stand-in for the core's repository (tools/core-repo.sh), as a published
+# package does; the config's lakefile requires the running core at its
+# root, which wins.
 started=$(date +%s)
+. "$repo/tools/core-repo.sh"
+core_repo "$tmp/f/core-repo" "$lean_dir/lean-toolchain"
 mkdir -p "$tmp/f/repo/GitPackage"
 (
   cd "$tmp/f/repo"
   cp "$lean_dir/lean-toolchain" lean-toolchain
-  printf 'name = "git-package"\n\n[[require]]\nname = "editor-core"\npath = "%s"\n\n[[lean_lib]]\nname = "GitPackage"\n' "$lean_dir" >lakefile.toml
+  printf 'name = "git-package"\n\n[[require]]\nname = "editor-core"\ngit = "file://%s"\nsubDir = "lean"\nrev = "%s"\n\n[[lean_lib]]\nname = "GitPackage"\n' \
+    "$tmp/f/core-repo" "$core_repo_tag" >lakefile.toml
   write_version() {
     printf 'import Editor.Api\nimport Editor.Package\n\nnamespace GitPackage\n\n/-- The package. -/\ndef package : Editor.Package :=\n  { name := "git-package", setup := Editor.command "git-package" (Editor.message "git-package %s") }\n\nend GitPackage\n' "$1" >GitPackage.lean
   }
@@ -157,10 +166,15 @@ script_at "$tmp/f/back" "package-update git-package $first"
 "$tmp/f/data/editors/$core/2/editor" headless --data "$tmp/f/data" "$sysroot" "$oleans" "$tmp/f/config" "$tmp/f/back" >"$tmp/f/out3" ||
   { cat "$tmp/f/out3"; fail "F: the update to a rev failed"; }
 grep -qxF "rev = \"$first\"" "$tmp/f/config/lakefile.toml" || fail "F: the rev was not written into the lakefile"
+# Each edit wrote the running core's require at the root, as its last.
+last_table=$(awk '/^\[\[require\]\]/ { getline name; getline path; last = name "\n" path } END { print last }' "$tmp/f/config/lakefile.toml")
+test "$last_table" = "name = \"editor-core\"
+path = \"$lean_dir\"" || { cat "$tmp/f/config/lakefile.toml"; fail "F: the lakefile's last require is not the running core at $lean_dir"; }
+test ! -e "$tmp/f/config/.lake/packages/editor-core" || fail "F cloned a core into the set's .lake/packages"
 grep -qxF "pin git-package file://$tmp/f/repo $first" "$tmp/f/data/editors/$core/3/editor.packages" ||
   { cat "$tmp/f/out3"; fail "F: version 3 does not record the pin $first"; }
 ended=$(date +%s)
-echo "user-sets-check: F, install from git, update, and update to a rev: ok ($((ended - started)) s)"
+echo "user-sets-check: F, install from git a package naming the core from git, update, and update to a rev, the core required at the root: ok ($((ended - started)) s)"
 
 # G. Rust: a set holding `echo`, built with Cargo.
 started=$(date +%s)

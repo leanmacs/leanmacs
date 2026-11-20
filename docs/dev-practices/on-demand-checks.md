@@ -267,12 +267,17 @@ the fixture packages' own `.lake/` and, for the Rust set, the checkout's
   the new version, which answers `hello-init: initialize ran`. With a
   lakefile naming `broken-elab`, the copy keeps running and the build
   buffer shows Lean's `Type mismatch`.
-- **F, git update.** A package in a local repository (`file://`) is
+- **F, git update.** A package in a local repository (`file://`), whose
+  lakefile names the core from git as a published package's does (a
+  `file://` stand-in for the core's repository, `tools/core-repo.sh`), is
   installed and its pin recorded in `editor.packages`; after a new commit
   `:package-update git-package` moves the pin and builds version 2;
   `:package-update git-package <first rev>` writes `rev` into the
   lakefile and builds version 3 at that pin. Each step runs on the version
-  the one before built, so its start-up reload builds nothing.
+  the one before built, so its start-up reload builds nothing. After
+  them the lakefile's last require must be `editor-core` by the running
+  core's directory, which each edit wrote at the root, and no core may be
+  cloned under the config's `.lake/packages`.
 - **G, Rust.** A set holding the fixture package `echo`, whose crate the
   editor's Cargo workspace holds, builds with Cargo, and the new editor
   passes its probe. (A crate outside the repository is refused; `ffi-test`

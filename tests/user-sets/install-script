@@ -1,6 +1,7 @@
 # The script of tools/user-sets-test.sh, A, run through the launcher with
-# `@NOTE@` a file of two lines, `@HELLO@` the fixture package `hello-init`
-# and `@LINK@` the fixture package `broken-link`. Three processes run it,
+# `@NOTE@` a file of two lines, `@HELLO@` a copy of the fixture package
+# `hello-init` that names the core from git (tools/core-repo.sh) and
+# `@LINK@` the fixture package `broken-link`. Three processes run it,
 # each going on after the last `restarted` the one before passed.
 
 # P1, the shipped default: its lakefile requires the default set, the set

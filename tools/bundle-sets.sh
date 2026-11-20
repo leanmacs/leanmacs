@@ -46,9 +46,12 @@
 # - `sets`: the user's package set built by the editor's own job, with a
 #   decoy `LEAN_CC` too, which the job clears. The fixture package
 #   `hello-init` (tests/user-sets/hello-init) is copied into the work
-#   directory, its `.lake/` left behind, with its `editor-core` require
-#   pointed at the bundle's core, `Contents/Resources/lean/lean`, in its
-#   lakefile and its manifest, so the set resolves one core, the bundle's.
+#   directory, its `.lake/` left behind, naming the core from git, from a
+#   `file://` stand-in for the core's repository (tools/core-repo.sh, made
+#   before the decoys), as a published package does. The lakefile's root
+#   requires the bundle's core, so Lake never runs git (the decoy `git`
+#   would log it) and no core is cloned under the config's
+#   `.lake/packages`.
 #   P0, a first launch, generates the lakefile; then `init.lean` is
 #   replaced by one that imports `HelloInit` (a reload refused at its
 #   imports generates nothing, so the import comes after, as a user's
@@ -175,6 +178,15 @@ esac
 [ "$(uname)" = Darwin ] || fail "$check is macOS only"
 test ! -w "$lean" || fail "the bundle's Contents/Resources/lean is writable: make it read-only first"
 
+# For `sets`, before the decoys, with the caller's own git and lake: the
+# stand-in for the core's repository and a copy of hello-init that names
+# the core from it by git, as a published package does (tools/core-repo.sh).
+if [ "$check" = sets ]; then
+  . "$repo/tools/core-repo.sh"
+  core_repo "$work/core-repo" "$repo/lean/lean-toolchain"
+  git_core_copy "$fixtures/hello-init" "$work/hello-init" "$work/core-repo"
+fi
+
 listing() {
   find "$lean" -print0 | xargs -0 stat -f '%N %z %m' | sort
 }
@@ -250,12 +262,6 @@ if [ "$check" = c-glue ]; then
 fi
 
 hello=$work/hello-init
-cp -R "$fixtures/hello-init" "$hello"
-rm -rf "$hello/.lake"
-sed "s|^path = \"../../../lean\"|path = \"$lean/lean\"|" "$fixtures/hello-init/lakefile.toml" >"$hello/lakefile.toml"
-sed "s|\"dir\": \"../../../lean\"|\"dir\": \"$lean/lean\"|" "$fixtures/hello-init/lake-manifest.json" >"$hello/lake-manifest.json"
-grep -qF "$lean/lean" "$hello/lakefile.toml" && grep -qF "$lean/lean" "$hello/lake-manifest.json" ||
-  fail "could not point hello-init's editor-core require at the bundle's core"
 
 # P0, the first launch: the lakefile is generated, naming the bundle's set.
 # A reload refused at its imports generates nothing (docs/design/packages.md,
@@ -288,7 +294,8 @@ test "$(ls "$work/data/editors" | tr '\n' ' ')" = "$core " || fail "the builds l
 test "$(ls "$work/data/editors/$core" | tr '\n' ' ')" = "1 2 " ||
   fail "the builds did not publish versions 1 and 2 of the bundle's core: $(ls "$work/data/editors/$core")"
 untouched
+test ! -e "$config/.lake/packages/editor-core" || fail "the build cloned a core into $config/.lake/packages/editor-core"
 probe=$(env -i "$launcher" --data "$work/data" --probe | grep '^executable ')
 test "$probe" = "executable $work/data/editors/$core/2/editor" || fail "the launcher chose $probe, not version 2"
 settled
-echo "bundle-sets: installed hello-init from a path into the bundled editor and ran its command, dropped compile and started the result, from the bundle's own toolchain, read-only, with decoys first on the PATH ($((ended - started)) s)"
+echo "bundle-sets: installed hello-init, naming the core from git, into the bundled editor and ran its command, dropped compile and started the result, from the bundle's own toolchain, read-only, with decoys first on the PATH ($((ended - started)) s)"

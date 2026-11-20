@@ -1,6 +1,8 @@
 # The script of tools/bundle-sets.sh, run by `mise run bundle-test` and
 # `mise run app-check` through a bundle's launcher, with `@HELLO@` a copy
-# of the fixture package `hello-init` that requires the bundle's core.
+# of the fixture package `hello-init` that names the core from git
+# (tools/core-repo.sh); the config's lakefile requires the bundle's core at
+# its root, which wins.
 # Three processes run it, each going on after the last `restarted` the one
 # before passed. The config directory holds the lakefile a first launch
 # generated, naming the bundle's set, and `init.lean`, which imports

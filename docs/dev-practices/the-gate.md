@@ -2002,13 +2002,17 @@ trap and runs its editor as the installed app runs it
    naming the bundle's set; then, with `init.lean` importing `HelloInit`,
    three processes of `tests/user-sets/bundle-script` run through the
    launcher under the same decoys, decoy `LEAN_CC` too, and the read-only
-   tree: `:package-install hello-init <copy>`, its `editor-core` require
-   pointed at the bundle's core, builds version 1, whose `run hello-init`
-   says `hello-init: initialize ran`; `:package-remove compile` builds
-   version 2, where `run compile` has no such command. The output must
-   equal `tests/user-sets/expected-bundle`, versions 1 and 2 of the
-   bundle's core must be published, no decoy may have run, the listing
-   must be unchanged, and the launcher's probe must name version 2.
+   tree: `:package-install hello-init <copy>`, a copy that names the core
+   from git, from a `file://` stand-in for the core's repository made
+   before the decoys (`tools/core-repo.sh`), builds version 1 against the
+   bundle's core, which the lakefile requires at its root, whose `run
+   hello-init` says `hello-init: initialize ran`; `:package-remove
+   compile` builds version 2, where `run compile` has no such command. The
+   output must equal `tests/user-sets/expected-bundle`, versions 1 and 2
+   of the bundle's core must be published, no decoy may have run (the
+   decoy `git` among them, so Lake never fetched the core), the listing
+   must be unchanged, no core may be cloned under the config's
+   `.lake/packages`, and the launcher's probe must name version 2.
 
 It has a time limit of its own, 600 seconds. On macOS (2026-11-20, Apple
 M5 Max) the stage takes about 5 to 14 s, the default set's build from the
@@ -2023,6 +2027,11 @@ set end to end through the app's launcher
 ([packages.md](../design/packages.md), "User package sets"). Everything it
 writes is in a fresh temporary directory, with `HOME` and `XDG_*` pointed
 inside it, but the fixture packages' own `.lake/` under `tests/user-sets/`.
+`hello-init` is installed from a copy in that directory that names the
+core from git, as a published package does: a `file://` stand-in for the
+core's repository, tagged `nightly-20000101000000`, holding none of the
+core's sources (`tools/core-repo.sh`), with the copy's manifest written by
+`lake update` against it.
 
 - **A, install, a failing link, a dropped default package**
   (`tests/user-sets/install-script`), three processes started by
@@ -2030,8 +2039,10 @@ inside it, but the fixture packages' own `.lake/` under `tests/user-sets/`.
   --state … --data …`. The shipped default loads a lakefile that requires
   the default set and starts no build, and refuses the config, which
   imports `HelloInit`; it opens a file, types, splits and opens a tab, and
-  `:package-install hello-init <dir>` builds the set and restarts into
-  version 1, which restores the session (the unsaved text, the split, the
+  `:package-install hello-init <dir>` (the copy naming the core from git)
+  writes the running core's require at the lakefile's root, builds the set
+  against that core, cloning none, and restarts into version 1, which
+  restores the session (the unsaved text, the split, the
   tab, the summary) and answers `hello-init: initialize ran`.
   `:package-install broken-link <dir>` fails at the link: the echo says
   the editor keeps running, and it does. `:package-remove broken-link`
@@ -2043,7 +2054,9 @@ inside it, but the fixture packages' own `.lake/` under `tests/user-sets/`.
   `expected-install`; the build buffer's views must hold `Package build
   failed: lake build exited with status 1` and the linker's
   `leanmacs_no_such_symbol`; the lakefile must equal `expected-lakefile`
-  (the core, the shipped themes and `hello-init`, by absolute path); the
+  (the core, the shipped themes and `hello-init`, by absolute path); no
+  core may be cloned under the config's `.lake` (no
+  `.lake/packages/editor-core`, no file of the stand-in); the
   data directory must hold exactly versions 1 and 2 of the core and no
   staging directory; the launcher's probe must choose version 2; no
   hand-over or cold record may be left; and the default set's editor must
