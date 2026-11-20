@@ -9,6 +9,8 @@ and is the editor: its state, the command loop, commands, modes, keymaps
 and config. A Rust library, linked into the Lean executable, provides text
 storage, layout, rendering, the window and processes.
 
+![leanmacs editing its own Lean source, Editor/Api.lean, with tree-sitter highlighting and the Vim mode line](docs/images/leanshot.png)
+
 ## What it does
 
 - Opens files in a window drawn with wgpu in the system's monospace font,
