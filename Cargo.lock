@@ -590,6 +590,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-raster-coretext"
+version = "0.1.0"
+dependencies = [
+ "editor-raster",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-text",
+]
+
+[[package]]
 name = "editor-release"
 version = "0.1.0"
 
@@ -1664,6 +1674,7 @@ checksum = "0cde0dfb48d25d2b4862161a4d5fcc0e3c24367869ad306b0c9ec0073bfed92d"
 dependencies = [
  "bitflags",
  "objc2-core-foundation",
+ "objc2-core-graphics",
 ]
 
 [[package]]
