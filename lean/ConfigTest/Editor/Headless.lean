@@ -3402,4 +3402,54 @@ def journalFailureChecks (context : Context) : List Check :=
               echoAgain == "journal: /state/c: full".quote &&
               loggedAgain == logged.push "journal: /state/c: full" }]
 
+/-- Holds the library's file service's worker under a wait of `completions`,
+whose pump runs, and returns the hold's id once the worker has reached it:
+nothing handed to the service afterwards is worked until `Ffi.filesCancel`
+of the id lets it go. Throws when the service refuses the hold, and reports a
+hang when the worker has not reached it within `patience`. -/
+def holdFiles (completions : Job.Completions) : IO UInt64 := do
+  let (id, wait) ← completions.register
+  unless ← Ffi.filesHold id do
+    completions.finish id .cancelled
+    throw <| IO.userError "the file service did not take the hold"
+  let reached ← Job.awaitWithin patience (wait.resultD .cancelled)
+  unless reached == some .completed do
+    discard <| Ffi.filesCancel id
+    throw <|
+        IO.userError
+          s!"a hang: the file service's worker had not reached the hold within {patience} ms"
+  return id
+
+/-- The checks of the host's journal over the library's file service
+(`Headless.Journal.real`), which the headless end, the window's shutdown and
+the `journalled` and `indexed` requests wait on. -/
+def journalDrainChecks (context : Context) : List Check :=
+  [{  name :=
+        "the host's journal over the library's file service drains only once every order handed to it has been worked: with the service's worker held, its drain has not ended; let go, the drain ends true and the remove handed before it has been worked"
+      run := do
+        let completions ← context.fileWaits
+        let clock ← Job.FakeClock.new completions
+        let published ← Snapshots.new
+        let held ← Job.HeldSnapshots.new
+        let services : Job.Services :=
+          { completions, timers := clock.timers
+            files := Job.realFiles completions published.reader held }
+        let journal := Headless.Journal.real published.reader services
+        IO.FS.withTempDir fun directory => do
+            let stale := directory / "session-1.json"
+            IO.FS.writeFile stale "{}"
+            let hold ← holdFiles completions
+            let (waiting, ended, there) ←
+              tryFinally
+                  (do
+                    journal.perform { request := .remove stale }
+                    let drained ← journal.drained
+                    let waiting := !(← IO.hasFinished drained)
+                    discard <| Ffi.filesCancel hold
+                    let ended ← Job.awaitWithin patience drained
+                    return (waiting, ended, ← stale.pathExists))
+                  (discard <| Ffi.filesCancel hold)
+            saw (waiting && ended == some true && !there)
+                s!"the drain waiting while held {waiting}, ended {ended}, the file there after {there}" }]
+
 end ConfigTest
