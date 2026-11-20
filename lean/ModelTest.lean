@@ -122,6 +122,7 @@ import ModelTest.Editor.Restore
 import ModelTest.Editor.Restore.Compiled
 import ModelTest.Editor.Restore.Document
 import ModelTest.Editor.Restore.Frame
+import ModelTest.Editor.Restore.Indexed
 import ModelTest.Editor.Restore.Journal
 import ModelTest.Editor.Restore.Run
 import ModelTest.Editor.Restore.Value
@@ -1271,7 +1272,7 @@ Session restore is checked in Lean alone too:
   into each scope with its loss line (`Workspaces.meetInto`); restore then
   record; and parked cells carried back into their stores.
 - `restoreOffsetChecks`: where a recorded spot is put back
-  (`Restore.offsetOf`, `Editor/Restore.lean`), on the text model: its
+  (`Restore.offsetOf`, `Editor/Restore/Indexed.lean`), on the text model: its
   column in bytes, after a multi-byte character, clamped past the row's
   content, moved back from inside a character, and a row past the last.
 - `journalReconcileChecks`: the journal's reconciler
