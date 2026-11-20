@@ -15,10 +15,10 @@ it removes (`Document.choose`), and the next run's number (`nextRun`).
 
 ## The document
 
-`{"format":1,"run":n,"ended":false,"focused":view,"buffers":[…]}`: the
-format, the run that wrote it, whether that run ended cleanly (only the
-index a clean end writes says so), the focused view, and for each buffer
-kept:
+`{"format":2,"run":n,"ended":false,"focused":view,"buffers":[…],"frame":{…},
+"workspaces":{…},"stores":[…],"jobs":[…]}`: the format, the run that wrote
+it, whether that run ended cleanly (only the index a clean end writes says
+so), the focused view, and for each buffer kept:
 
 - `key`, the buffer's index, which names its journals;
 - `name`;
@@ -29,17 +29,38 @@ kept:
   run, or absent;
 - `views`: one place for each window on the buffer (`Restore.Place`): its
   view's id, the anchor and the head of its primary selection as a row and
-  a byte column, and its scroll's top row.
+  a byte column, its scroll's top row, and its jump list (`jumps`,
+  `{"entries":[…],"index":i,"previous":<jump>}`, absent when it has none;
+  `Editor/Restore/Frame.lean`).
+
+Format 2 added, beside the buffers, each absent when there is none:
+
+- `frame`: the tabs and windows (`Frame.Record`, `Editor/Restore/Frame.lean`);
+- `workspaces`: the workspace table with the cells kept across a restart
+  (`Document.Workspaces`, `Editor/Restore/Workspaces.lean`);
+- `stores`: the declared stores' cells kept across a restart, each
+  `{"owner":o,"name":n,"version":v,"value":<value>}`, the value a plain
+  tree's JSON (`Editor/Restore/Value.lean`);
+- `jobs`: the reported jobs running when it was written, each
+  `{"owner":o,"name":n,"key":k}`, `key` absent for a job with none.
+
+Nothing of format 1 changed shape or meaning. The number moved to 2 so that
+a format-1 editor reads a format-2 index leniently, naming the keys it does
+not know and leaving the file as it is, rather than removing it as
+understood once its own index is written.
 
 ## The version rule
 
 A read never throws: every problem is a line of its report.
 
-- A format at or below this editor's is read fully.
+- A format at or below this editor's is read fully: a format-1 index has
+  no frame, workspaces, stores or jobs.
 - A newer format is read leniently: the known fields are read, and every
   key this editor does not know, at the top or in a buffer, is named in the
   report.
-- A buffer entry that does not parse is skipped, and said.
+- A buffer entry that does not parse is skipped, and said; so is a `stores`
+  or a `jobs` entry, and a `frame` or a `workspaces` that does not parse
+  is read as none, and said.
 - A file that does not parse is said, and read as nothing: the restore goes
   on from the journals alone.
 
@@ -61,7 +82,7 @@ namespace Editor.Restore
 /-- The format of the index this editor writes, and the newest it reads
 fully. -/
 def indexFormat : Nat :=
-  1
+  2
 
 /-- A buffer's file, as the index records it. -/
 structure Document.File where
@@ -113,13 +134,41 @@ structure Document where
   focused : Option Nat := none
   /-- The buffers kept. -/
   buffers : Array Document.Buffer := #[]
-  deriving DecidableEq, Repr
+  /-- The frame's tabs and windows, when recorded. -/
+  frame : Option Frame.Record := none
+  /-- The workspace table, when recorded. -/
+  workspaces : Option Document.Workspaces := none
+  /-- The declared stores' cells kept across a restart. -/
+  stores : Array KeptCell := #[]
+  /-- The reported jobs running when it was written. -/
+  jobs : Array RunningJob := #[]
+  deriving BEq, Repr
 
 /-- A place as JSON. -/
 def Place.toJson (place : Place) : Json.Value :=
-  .object
+  .object <|
     #[("view", Journal.natJson place.view), ("anchor", place.anchor.toJson),
-      ("head", place.head.toJson), ("top", Journal.natJson place.top)]
+        ("head", place.head.toJson), ("top", Journal.natJson place.top)] ++
+      optionalMember "jumps" (place.jumps.map (·.toJson))
+
+/-- A running job as JSON. -/
+def RunningJob.toJson (job : RunningJob) : Json.Value :=
+  .object <|
+    #[("owner", .string job.owner), ("name", .string job.name)] ++
+      optionalMember "key" (job.key.map .string)
+
+/-- A running job from JSON, or none. -/
+def RunningJob.ofJson? (value : Json.Value) : Option RunningJob := do
+  let key ←
+    match value.field? "key" with
+    | none =>
+      some none
+    | some (.string key) =>
+      some (some key)
+    | some _ =>
+      none
+  return { owner := ← Journal.stringField? value "owner",
+           name := ← Journal.stringField? value "name", key }
 
 /-- A buffer as JSON. -/
 def Document.Buffer.toJson (buffer : Document.Buffer) : Json.Value :=
@@ -147,7 +196,12 @@ def Document.toJson (document : Document) : Json.Value :=
     #[("format", Journal.natJson document.format), ("run", Journal.natJson document.run),
         ("ended", .bool document.ended)] ++
       ((document.focused.map fun view => #[("focused", Journal.natJson view)]).getD #[]) ++
-      #[("buffers", .array (document.buffers.map (·.toJson)))]
+      #[("buffers", .array (document.buffers.map (·.toJson)))] ++
+      optionalMember "frame" (document.frame.map (·.toJson)) ++
+      optionalMember "workspaces" (document.workspaces.map (·.toJson)) ++
+      (if document.stores.isEmpty then #[]
+      else #[("stores", .array (document.stores.map (·.toJson)))]) ++
+      (if document.jobs.isEmpty then #[] else #[("jobs", .array (document.jobs.map (·.toJson)))])
 
 /-- The document as the text of its file. -/
 def Document.render (document : Document) : String :=
@@ -155,7 +209,7 @@ def Document.render (document : Document) : String :=
 
 /-- The keys of the document this editor knows. -/
 def Document.knownKeys : Array String :=
-  #["format", "run", "ended", "focused", "buffers"]
+  #["format", "run", "ended", "focused", "buffers", "frame", "workspaces", "stores", "jobs"]
 
 /-- The keys of a buffer this editor knows. -/
 def Document.Buffer.knownKeys : Array String :=
@@ -165,7 +219,8 @@ def Document.Buffer.knownKeys : Array String :=
 def Place.ofJson? (value : Json.Value) : Option Place := do
   return {
       view := ← Journal.natField? value "view", anchor := ← Spot.ofJson? (← value.field? "anchor")
-      head := ← Spot.ofJson? (← value.field? "head"), top := ← Journal.natField? value "top" }
+      head := ← Spot.ofJson? (← value.field? "head"), top := ← Journal.natField? value "top"
+      jumps := ← optionalField? value "jumps" Jumps.Record.ofJson? }
 
 /-- An optional string member: `some none` when absent, `none` when it is
 there and not a string. -/
@@ -229,7 +284,7 @@ structure Document.Read where
   newer : Bool := false
   /-- What the read has to say, a line each. -/
   report : Array String := #[]
-  deriving DecidableEq, Repr
+  deriving BEq, Repr
 
 /-- The names of `value`'s members that are not among `known`. -/
 def unknownKeys (value : Json.Value) (known : Array String) : Array String :=
@@ -284,10 +339,47 @@ def Document.read (name text : String) : Document.Read :=
       match value.field? "ended" with
       | some (.bool ended) => ended
       | _ => false
+    -- What format 2 added, each read as none and said when it does not
+    -- parse.
+    let mut frame := none
+    if let some member := value.field? "frame" then
+      match Frame.Record.ofJson? member with
+      | some record =>
+        frame := some record
+      | none =>
+        report := report.push s!"{name}: its frame does not parse and is not restored"
+    let mut workspaces := none
+    if let some member := value.field? "workspaces" then
+      match Document.Workspaces.ofJson? member with
+      | some record =>
+        workspaces := some record
+      | none =>
+        report := report.push s!"{name}: its workspaces do not parse and are not restored"
+    let entriesOf (key : String) : Array Json.Value :=
+      match value.field? key with
+      | some (.array items) => items
+      | _ => #[]
+    let mut stores := #[]
+    let storeEntries := entriesOf "stores"
+    for index in [0:storeEntries.size] do
+      match KeptCell.ofJson? storeEntries[index]! with
+      | some cell =>
+        stores := stores.push cell
+      | none =>
+        report := report.push s!"{name}: store entry {index + 1} does not parse and is skipped"
+    let mut jobs := #[]
+    let jobEntries := entriesOf "jobs"
+    for index in [0:jobEntries.size] do
+      match RunningJob.ofJson? jobEntries[index]! with
+      | some job =>
+        jobs := jobs.push job
+      | none =>
+        report := report.push s!"{name}: job entry {index + 1} does not parse and is skipped"
     return {
         document :=
           some
-            { format := found, run, ended, focused := Journal.natField? value "focused", buffers }
+            { format := found, run, ended, focused := Journal.natField? value "focused", buffers
+              frame, workspaces, stores, jobs }
         newer, report }
 
 /-- The name of a run's index file. -/
@@ -334,7 +426,7 @@ structure Document.Choice where
   remove : Array Nat := #[]
   /-- What is said of the indexes, a line each. -/
   report : Array String := #[]
-  deriving DecidableEq, Repr
+  deriving BEq, Repr
 
 /-- The choice among `indexes`, each a run and what its read came to. -/
 def Document.choose (indexes : Array (Nat × Document.Read)) : Document.Choice :=

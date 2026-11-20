@@ -1211,7 +1211,11 @@ Session restore is checked in Lean alone too:
   unknown kind or a newer format stops the reading before it; a log with no
   header; and edits read from a text's log and replayed make the text.
 - `restoreDocumentChecks`: the session index
-  (`Editor/Restore/Document.lean`), pure: the format-1 round trip; a newer
+  (`Editor/Restore/Document.lean`), pure: the round trip, and format 2's
+  with every key it added; a format-1 index as phase 1 wrote it read
+  fully; a newer format's keys inside the frame passed over; a format-2
+  index stripped to format 1 reading as the same buffers; a store, job,
+  frame or workspaces entry that does not parse said; a newer
   format read leniently with each unknown key named; a bad entry skipped; a
   file that is not JSON; which index is restored (the highest run, whatever
   its format, none when it ended) and which are removed or left; the next

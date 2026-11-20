@@ -36,6 +36,46 @@ top and in a buffer, and an entry that does not parse. -/
 def newerText : String :=
   "{\"format\":99,\"run\":5,\"ended\":false,\"layouts\":[1,2],\"buffers\":[{\"key\":0,\"name\":\"b.txt\",\"lineEnding\":\"lf\",\"folds\":[],\"views\":[]},{\"key\":\"x\"}]}"
 
+/-- `sample` with every key format 2 added: a frame, the workspace table, a
+declared store's cell, a running job, and a view's jumps. -/
+def full : Document :=
+  { sample with
+    buffers :=
+      sample.buffers.modify 0 fun buffer =>
+        { buffer with
+          views :=
+            buffer.views.modify 0 fun place =>
+              { place with
+                jumps :=
+                  some
+                    { entries := #[.kept 1 0 2, .file "/r/b.txt" 4 0], index := 1
+                      previous := some (.kept 0 3 3) } } }
+    frame :=
+      some
+        { selected := 1, chosen := some .monocle
+          tabs :=
+            #[{ windows := #[0], focused := 0 },
+              { name := some "two", windows := #[2, 5],
+                layout := .splits (.split .rows 1 1 .tile .tile)
+                focused := 2, lastFocused := some 5 }]
+          elsewhere := #[(5, "*restore*")] }
+    workspaces :=
+      some
+        { workspaces :=
+            #[{ location := .local "/r", branch := some (.named "main"), project := .root "/r"
+                cells :=
+                  #[{ owner := "shell", name := "shell-history", version := 1,
+                      value := .list [.str "make"] }] }]
+          projects := #[{ identity := .root "/r", name := "r" }] }
+    stores := #[{ owner := "config", name := "kept", version := 1, value := .nat 2 }]
+    jobs :=
+      #[{ owner := "shell", name := "shell-run", key := some "shell outside" },
+        { owner := "x", name := "y" }] }
+
+/-- An index as phase 1 wrote it, format 1, kept as it was written. -/
+def formatOne : String :=
+  "{\"format\":1,\"run\":4,\"ended\":false,\"focused\":0,\"buffers\":[{\"key\":0,\"name\":\"scratch\",\"lineEnding\":\"lf\",\"journal\":{\"key\":0,\"generation\":1},\"views\":[{\"view\":0,\"anchor\":[0,1],\"head\":[0,1],\"top\":0}]}]}"
+
 /-- What reading `text` as `name` came to. -/
 def readAs (name text : String) : Document.Read :=
   Document.read name text
@@ -61,10 +101,75 @@ def restoreDocumentChecks : List Check :=
                 (document.format, document.run, document.buffers.map (·.name))) ==
               some (99, 5, #["b.txt"]) &&
             read.report ==
-              #["session-5.json is of format 99, newer than this editor's 1: what is known of it is restored, and it is left as it is",
+              #["session-5.json is of format 99, newer than this editor's 2: what is known of it is restored, and it is left as it is",
                 "session-5.json: the key layouts is not known",
                 "session-5.json: buffer 0: the key folds is not known",
                 "session-5.json: buffer entry 2 does not parse and is skipped"] },
+    { name :=
+        "an index of format 2 with every key it added round-trips: the frame, the workspaces, the stores, the jobs and a view's jumps, with nothing to say"
+      run :=
+        pure <|
+          let read := readAs "session-3.json" full.render
+          read.document == some full && read.report.isEmpty && !read.newer },
+    { name :=
+        "an index of format 1, as phase 1 wrote it, is read fully: no frame, no workspaces, no stores, no jobs, nothing to say"
+      run :=
+        pure <|
+          let read := readAs "session-4.json" formatOne
+          !read.newer && read.report.isEmpty &&
+            read.document ==
+              some
+                { format := 1, run := 4, focused := some 0
+                  buffers :=
+                    #[{ key := 0, name := "scratch", journal := some { key := 0, generation := 1 }
+                        views :=
+                          #[{ view := 0, anchor := ⟨0, 1⟩, head := ⟨0, 1⟩, top := 0 }] }] } },
+    { name :=
+        "an index of format 3 with keys this editor does not know inside the frame is read leniently: the frame read, the top keys named"
+      run :=
+        pure <|
+          let text :=
+            "{\"format\":3,\"run\":6,\"buffers\":[],\"frame\":{\"selected\":0,\"stacks\":[],\"tabs\":[{\"windows\":[0],\"docked\":[],\"floats\":[],\"layout\":\"monocle\",\"focused\":0,\"pane\":1}]},\"later\":1}"
+          let read := readAs "session-6.json" text
+          read.newer &&
+            (read.document.bind (·.frame)) ==
+              some { tabs := #[{ windows := #[0], layout := .monocle, focused := 0 }] } &&
+            read.report ==
+              #["session-6.json is of format 3, newer than this editor's 2: what is known of it is restored, and it is left as it is",
+                "session-6.json: the key later is not known"] },
+    { name :=
+        "a format-2 index with the keys format 2 added removed and its format set to 1 reads as the same buffers"
+      run :=
+        pure <|
+          let stripped : Document :=
+            { full with
+              format := 1, frame := none, workspaces := none, stores := #[], jobs := #[]
+              buffers :=
+                full.buffers.map fun buffer =>
+                  { buffer with views := buffer.views.map ({ · with jumps := none }) } }
+          let read := readAs "session-3.json" stripped.render
+          let plain := readAs "session-3.json" full.render
+          (read.document.map (·.buffers)) ==
+              (plain.document.map fun document =>
+                document.buffers.map fun buffer =>
+                  { buffer with views := buffer.views.map ({ · with jumps := none }) }) &&
+            read.report.isEmpty },
+    { name :=
+        "a store or a job entry that does not parse is skipped and said, and a frame or workspaces that do not parse are read as none and said"
+      run :=
+        pure <|
+          let text :=
+            "{\"format\":2,\"run\":2,\"buffers\":[],\"frame\":{\"tabs\":1},\"workspaces\":{\"workspaces\":3},\"stores\":[{\"owner\":\"config\"},{\"owner\":\"config\",\"name\":\"n\",\"version\":1,\"value\":null}],\"jobs\":[{\"name\":1}]}"
+          let read := readAs "session-2.json" text
+          (read.document.map fun document =>
+                (document.frame.isNone, document.workspaces.isNone, document.stores.map (·.name),
+                  document.jobs.size)) ==
+              some (true, true, #["n"], 0) &&
+            read.report ==
+              #["session-2.json: its frame does not parse and is not restored",
+                "session-2.json: its workspaces do not parse and are not restored",
+                "session-2.json: store entry 1 does not parse and is skipped",
+                "session-2.json: job entry 1 does not parse and is skipped"] },
     { name := "a buffer entry that does not parse is skipped and said; the others are read"
       run :=
         pure <|

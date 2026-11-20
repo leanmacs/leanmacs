@@ -8,6 +8,8 @@ The plain data of session restore that the editor state holds
 (`EditorState.restore`, `Editor/State.lean`), here in a leaf module so that
 the state can name it and the logic that keeps it (`Editor/Restore.lean`),
 which imports the state, can too: the state imports nothing that imports it.
+It is still a leaf with the records it names (`Editor/Restore/Records.lean`):
+that module and what it imports are all upstream of the state.
 The rules are in `Editor/Restore.lean`; the formats on disk in
 `Editor/Restore/Journal.lean` and `Editor/Restore/Document.lean`.
 
@@ -18,6 +20,17 @@ The rules are in `Editor/Restore.lean`; the formats on disk in
 | Another fact the reconciler keeps between two publishes | A field of `Restore.Kept`, written by `Restore.journalOrders` or by a command of the `restore` package through `StateRequest.setRestore` |
 | Another fact kept of one buffer's live journal | A field of `Restore.Journal` |
 | Another fact of a window's place in a buffer | A field of `Restore.Place`, with its JSON in `Restore.Document` |
+| Another fact of the frame, its tabs or windows | A field of `Frame.Record` or `Tab.Record` (`Editor/Restore/Records.lean`), its JSON and its reading of the state in `Editor/Restore/Frame.lean`, and its putting back in `Restore.restored` |
+| Another fact of the workspace table | A field of `Workspace.Record`, `Project.Record` or `Document.Workspaces` (`Editor/Restore/Records.lean`), with its JSON, record and restore in `Editor/Restore/Workspaces.lean` |
+| Another fact of a store kept across a restart | A field of `KeptCell` (`Editor/Store/Codec.lean`), its JSON in `Editor/Restore/Workspaces.lean`; mirrored into `Kept.stores` or `Kept.table` by `Restore.journalOrders` |
+| A new plain type `Kept`, `Kept.Pending` or `Restore.Place` names | `Editor/Restore/Records.lean`, never a module that imports the state |
+
+The cells parked for a codec (`Kept.parked`) are written by the same two
+writers: the restore's first half parks the table cells no codec met, with
+`setRestore` (`Restore.read`), and the reconciler claims or drops them
+after an install. The state request that restores the table
+(`StateRequest.restoreWorkspaces`) takes plain data, the cells already met,
+and writes no field here.
 
 Pinned by `ModelTest.journalReconcileChecks` and `ModelTest.restoreChecks`.
 -/
@@ -35,6 +48,8 @@ structure Place where
   head : Spot
   /-- The first row the window shows. -/
   top : Nat
+  /-- Its jump list and previous-context mark, when it has either. -/
+  jumps : Option Jumps.Record := none
   deriving DecidableEq, Repr, Inhabited
 
 /-- The live journal of one buffer: what generation it is, and how far it
@@ -121,7 +136,16 @@ structure Kept.Pending where
   places : Array Kept.Places := #[]
   /-- The modes deferred so far. -/
   deferred : Array Kept.Deferred := #[]
-  deriving DecidableEq, Repr
+  /-- The frame of the index restored, to put back. -/
+  frame : Option Frame.Record := none
+  /-- Each buffer kept of the index restored that is restored, by its key
+  in that index, and its index in this run. -/
+  keys : Array (Nat × Nat) := #[]
+  /-- The reported jobs the index restored says were running. -/
+  jobs : Array RunningJob := #[]
+  /-- The declared stores' cells of the index restored, to hand the host. -/
+  stores : Array KeptCell := #[]
+  deriving BEq, Repr
 
 /-- What the session's reconciler keeps between two publishes. -/
 structure Kept where
@@ -156,6 +180,29 @@ structure Kept where
   /-- Whether the restore has finished, whatever it came to: a host holds
   its driver's requests until it has. -/
   restored : Bool := false
-  deriving DecidableEq, Repr
+  /-- The config generation at the restore, while the layout it put back
+  is held: a publish passes over the layout it is handed until config has
+  installed past it (`Loop.publish`). -/
+  heldLayout : Option Nat := none
+  /-- The declared stores' cells kept across a restart, codec applied, and
+  the entries of config parked until it installs: what the index lists
+  under `stores`, mirrored from the host (`Loop.Keys.stores`). -/
+  stores : Array KeptCell := #[]
+  /-- The workspace table's cells kept across a restart, codec applied, and
+  those parked: what the index lists under `workspaces`. -/
+  table : Option Document.Workspaces := none
+  /-- The table cells a restore read that no codec met yet, each with its
+  scope, and the config generation they were parked at: met by the
+  reconciler after the first install that registers a codec, and dropped
+  after one that does not. -/
+  parked : Array (Document.Scope × KeptCell) := #[]
+  /-- The config generation the parked cells wait past. -/
+  parkedAt : Nat := 0
+  /-- The revisions last mirrored: the host's cells', the workspace
+  table's and the registry's generation. -/
+  mirrored : Option (Nat × Nat × Nat) := none
+  /-- The reported jobs running, as the host last handed them. -/
+  jobs : Array RunningJob := #[]
+  deriving BEq, Repr
 
 end Editor.Restore
