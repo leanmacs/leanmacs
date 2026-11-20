@@ -58,7 +58,7 @@
 #   answers `run compile: no such command` and still runs `hello-init`. The
 #   output, with the work directory, the bundle and the core's identity
 #   written `@DIR@`, `@APP@` and `@CORE@` and the lines that vary from run
-#   to run left out (tools/user-sets-test.sh's `scrub` and `stable`), must
+#   to run left out (`scrub` and `stable`, tools/user-sets-filters.sh), must
 #   equal tests/user-sets/expected-bundle; versions 1 and 2 of the bundle's
 #   core, and nothing else, are published; and the launcher's probe names
 #   version 2.
@@ -252,13 +252,8 @@ generated "$config" "$work/data" "$quiet"
 cp "$fixtures/config/init.lean" "$config/init.lean"
 sed "s|@HELLO@|$hello|" "$fixtures/bundle-script" >"$work/script"
 
-scrub() {
-  sed "s|$work|@DIR@|g; s|$app|@APP@|g; s|$core|@CORE@|g"
-}
-stable() {
-  { grep -v '^job ' | grep -v 'Package build of' | grep -v '\*package-build\*' || true; } |
-    sed 's/, published [0-9]*,/, published @N@,/'
-}
+# `scrub` and `stable`, shared with tools/user-sets-test.sh.
+. "$repo/tools/user-sets-filters.sh"
 
 started=$(date +%s)
 status=0
@@ -266,7 +261,7 @@ status=0
   LEAN_SYSROOT="$decoys" "$launcher" --data "$work/data" headless --state "$work/state" --data "$work/data" \
   "$config" "$work/script") >"$work/out" 2>"$work/err" || status=$?
 ended=$(date +%s)
-scrub <"$work/out" >"$work/scrubbed"
+scrub "$work" @DIR@ "$app" @APP@ "$core" @CORE@ <"$work/out" >"$work/scrubbed"
 if [ "$status" -ne 0 ]; then
   cat "$work/scrubbed" "$work/err" >&2
   fail "the bundle's editor exited $status"

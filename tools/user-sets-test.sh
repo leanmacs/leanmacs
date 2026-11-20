@@ -56,22 +56,11 @@ for package in hello-init broken-link broken-elab; do
   test -f "$fixtures/$package/lake-manifest.json" || fail "$package has no lake-manifest.json"
 done
 
-# Substitutes the temporary directory, the repository, the shipped editor
-# and the core's identity in the output on stdin.
+# `scrub` and `stable`, shared with tools/bundle-sets.sh
+# (tools/user-sets-filters.sh). The output is scrubbed of the temporary
+# directory, the repository and the core's identity.
+. "$repo/tools/user-sets-filters.sh"
 core=$(cat "$shipped.core")
-scrub() {
-  sed "s|$tmp|@DIR@|g; s|$repo|@REPO@|g; s|$core|@CORE@|g"
-}
-
-# The lines of the output on stdin that are stable from run to run: job
-# lines go, and so does every line of the build buffer's views, which hold
-# Lake's own output and the build's time; those are checked apart. A
-# scene's count of publishes is written @N@: each delivery of Lake's output
-# is a post, and how Lake's lines fall into deliveries varies.
-stable() {
-  { grep -v '^job ' | grep -v 'Package build of' | grep -v '\*package-build\*' || true; } |
-    sed 's/, published [0-9]*,/, published @N@,/'
-}
 
 # A. Install, then drop a default package.
 config="$tmp/config"
@@ -87,7 +76,7 @@ status=0
 "$launcher" --data "$tmp/data" --default "$shipped" -- headless --state "$tmp/state" --data "$tmp/data" \
   "$sysroot" "$oleans" "$config" "$tmp/install-script" >"$tmp/install-out" 2>"$tmp/install-err" || status=$?
 ended=$(date +%s)
-scrub <"$tmp/install-out" >"$tmp/install-scrubbed"
+scrub "$tmp" @DIR@ "$repo" @REPO@ "$core" @CORE@ <"$tmp/install-out" >"$tmp/install-scrubbed"
 if [ "$status" -ne 0 ]; then
   cat "$tmp/install-scrubbed" "$tmp/install-err" >&2
   fail "A exited $status"
@@ -120,7 +109,7 @@ started=$(date +%s)
 out=$("$shipped" headless --data "$tmp/data-b" "$sysroot" "$oleans" "$config" "$tmp/elab-script") ||
   fail "B exited non-zero"
 ended=$(date +%s)
-printf '%s\n' "$out" | scrub | stable | diff "$fixtures/expected-elab" - || fail "B's output differs from expected-elab"
+printf '%s\n' "$out" | scrub "$tmp" @DIR@ "$repo" @REPO@ "$core" @CORE@ | stable | diff "$fixtures/expected-elab" - || fail "B's output differs from expected-elab"
 printf '%s\n' "$out" | grep 'Package build of' | grep -q 'Package build failed: lake build exited with status 1' ||
   fail "B's build buffer does not end failed"
 printf '%s\n' "$out" | grep 'Package build of' | grep -q 'Type mismatch' ||
