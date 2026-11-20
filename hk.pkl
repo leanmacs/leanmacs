@@ -36,10 +36,14 @@ local changed = new Mapping<String, Step> {
     }
     // A crate's `clippy.toml` lists what the crate may not name (real files,
     // processes, clocks), so a commit that changes only a list still runs
-    // the lint.
+    // the lint. Which crates the lint and the tests run over is decided by
+    // tools/rust-targets.sh from Cargo's graph, which lists the same
+    // patterns as this glob: a change inside a crate's directory runs that
+    // crate's and its dependents', any other the whole workspace's
+    // (docs/dev-practices/the-gate.md, "The pre-commit hook").
     ["rust"] {
-        glob = rust_sources + List("mise.toml", "**/clippy.toml")
-        check = "mise run lint && mise run test"
+        glob = rust_sources + List("mise.toml", "**/clippy.toml", "tools/rust-targets.sh", "tools/rust-hook.sh", "tests/rust-targets/**")
+        check = "sh tools/rust-hook.sh {{files}}"
         exclusive = true
     }
     ["c"] {

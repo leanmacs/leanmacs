@@ -68,8 +68,33 @@ env = { RUSTDOCFLAGS = "-D rustdoc::broken_intra_doc_links" }
 run = "cargo doc --workspace --no-deps --document-private-items --locked"
 
 [tasks.test]
-description = "Rust unit, integration and doc tests"
-run = "cargo test --workspace --locked"
+description = "Rust unit, integration and doc tests, and the decision of which crates the pre-commit hook's Rust step runs over (tools/rust-targets.sh)"
+run = [
+  "cargo test --workspace --locked",
+  # What the pre-commit hook's Rust step runs for a staged change
+  # (tools/rust-targets.sh; docs/dev-practices/the-gate.md, "The pre-commit
+  # hook"), decided over a crate graph written by hand
+  # (tests/rust-targets/graph, its crates under /repo): for each case under
+  # tests/rust-targets/cases/, the decision for the staged paths `paths`
+  # must be exactly `expected`: a crate and every crate that depends on it,
+  # the whole workspace for any other path the step reads, or nothing.
+  "for case in leaf depended prefix nested outer crate-manifest crate-clippy package-crate lock root-manifest mise rust-outside tooling fixtures workspace-wins docs-only two-crates; do c=tests/rust-targets/cases/$case; out=$(sh tools/rust-targets.sh --lines tests/rust-targets/graph --root /repo $(cat \"$c/paths\")) || { echo \"test: rust-targets failed on the case $case\"; exit 1; }; { if [ -n \"$out\" ]; then printf '%s\\n' \"$out\"; fi; } | diff \"$c/expected\" - || { echo \"test: rust-targets decided otherwise on the case $case\"; exit 1; }; done",
+  # And it cannot pass by deciding over nothing: a graph of lines not of
+  # three fields, with a dependency that is no line, or holding no line,
+  # is exit 2 with the message beside it (tests/rust-targets/bad/), and so
+  # is a command line with no path. Their output is shown only when it is
+  # not that.
+  "for bad in two-fields unknown-dep empty; do b=tests/rust-targets/bad/$bad; status=0; out=$(sh tools/rust-targets.sh --lines \"$b/graph\" --root /repo crates/b/src/lib.rs 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF \"$(cat \"$b/message\")\"; } || { printf '%s\\n' \"$out\"; echo \"test: rust-targets exited $status on tests/rust-targets/bad/$bad\"; exit 1; }; done",
+  "status=0; out=$(sh tools/rust-targets.sh --lines tests/rust-targets/graph --root /repo 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'no path'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # Then on Cargo's real graph: every crate of the workspace is one the
+  # hook targets, a file in its directory reaching that crate, not the
+  # workspace and not nothing; and a change to `editor-service` reaches it
+  # and the crates that depend on it, `editor-ffi` and the fixture
+  # package's `echo-service`, and no other. A crate whose directory were
+  # outside the repository would fail here rather than be skipped.
+  "n=0; f=$(mktemp) && trap 'rm -f \"$f\"' EXIT && sh tools/rust-targets.sh --print-graph > \"$f\" && root=$(git rev-parse --show-toplevel) && tab=$(printf '\\t') && while IFS=$tab read -r name dir deps; do out=$(sh tools/rust-targets.sh --lines \"$f\" --root \"$root\" \"${dir#\"$root\"/}/src/lib.rs\") && printf '%s\\n' \"$out\" | grep -qxF \"crate $name\" || { printf '%s\\n' \"$out\"; echo \"test: a file in the directory of $name does not reach $name\"; exit 1; }; n=$((n + 1)); done < \"$f\" && test \"$n\" -gt 0 || { echo \"test: the hook targets $n crates of the workspace\"; exit 1; }",
+  "test \"$(sh tools/rust-targets.sh crates/editor-service/src/lib.rs | sort | tr '\\n' ' ')\" = 'crate echo-service crate editor-ffi crate editor-service ' || { sh tools/rust-targets.sh crates/editor-service/src/lib.rs; echo 'test: rust-targets did not reach editor-service and its dependents alone'; exit 1; }",
+]
 
 # The model tests: editor logic run in Lean alone, against hand-written fakes
 # and the pure models of the editor's ports (lean/ModelTest.lean and
