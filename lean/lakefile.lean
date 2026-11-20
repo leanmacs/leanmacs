@@ -551,6 +551,14 @@ def isInRepository (root : FilePath) (pkg : Package) : IO Bool := do
   let dir := (← IO.FS.realPath pkg.dir).toString
   return dir == root || dir.startsWith (root ++ "/")
 
+/-- The core's archive in the repository `root` and the file of the system
+libraries it needs, as Cargo builds them for the core (`rustlib`):
+`target/release/libeditor_rust.a` and
+`target/editor-rust/core/native-static-libs`. -/
+def prebuiltRustFiles (root : FilePath) : FilePath × FilePath :=
+  (root / "target" / "release" / s!"lib{(rustCrateName "core").replace "-" "_"}.a",
+    systemLibrariesFile (rustDir root "core"))
+
 /-- The core's archive as it is already built, in the repository `root`
 (`target/release/libeditor_rust.a`, with its system libraries beside the
 generated crate, `target/editor-rust/core/native-static-libs`), read and
@@ -559,8 +567,7 @@ archive's content and the libraries' line, as `buildRust` gives it. With
 either missing the build fails, saying so. -/
 def prebuiltRust (root : FilePath) : FetchM (Job FilePath) :=
   Job.async do
-    let archive := root / "target" / "release" / s!"lib{(rustCrateName "core").replace "-" "_"}.a"
-    let libraries := systemLibrariesFile (rustDir root "core")
+    let (archive, libraries) := prebuiltRustFiles root
     unless (← archive.pathExists) && (← libraries.pathExists) do
       error
           s!"the core's Rust archive is not built ({archive} and {libraries}): a set with no Rust reuses it and runs no Cargo"
@@ -957,11 +964,196 @@ package_facet editorRootTransImports pkg : Array String := do
 /-- The config base of a package set, one module a line
 (`lake -d <set dir> query :editorBase`; `setBase`): `Editor`, then the
 entry module of each package of the set outside the core. It is what the
-generated root hands `Editor.Main.run`, and what the bundle's module files
-are the closure of, with `Std` and `Lean` (`editorApp`,
-`mise run bundle-test`). It reads no source and builds nothing. -/
+generated root hands `Editor.Main.run`, and what `mise run module-bench`
+takes the closure of. It reads no source and builds nothing. -/
 package_facet editorBase pkg : Array String := do
   return Job.pure ((setBase (← setEntries pkg)).map (·.toString))
+
+/-- The place under the bundle's `Contents/Resources/lean` of the Lake
+package whose directory, with its links resolved, is `dir`, for a set whose
+directory is `setDir` and a core whose directory is `coreDir`, both
+resolved too: the core at `lean`, the set at `set` and a package under the
+set's directory at the same place under `set`; none for a package
+elsewhere, which the bundle cannot ship (`editorShipped`). -/
+def shippedPlace (coreDir setDir dir : String) : Option String :=
+  if dir == coreDir then some "lean"
+  else
+    if dir == setDir then some "set"
+    else
+      if dir.startsWith (setDir ++ "/") then
+        some ("set/" ++ (dir.drop (setDir.length + 1)).toString)
+      else none
+
+#guard shippedPlace "/r/lean" "/r/packages" "/r/lean" == some "lean"
+
+#guard shippedPlace "/r/lean" "/r/packages" "/r/packages" == some "set"
+
+#guard shippedPlace "/r/lean" "/r/packages" "/r/packages/compile" == some "set/compile"
+
+#guard shippedPlace "/r/lean" "/r/packages" "/r/packages-other" == none
+
+#guard shippedPlace "/r/lean" "/r/packages" "/elsewhere/p" == none
+
+/-- `file` relative to `dir`, when `file` is under it, with every `.`
+part left out: `dir` and `file` as Lake builds them, one by joining parts
+to the other. -/
+def relativeUnder (dir file : FilePath) : Option String :=
+  let prefix_ := dir.toString ++ "/"
+  if file.toString.startsWith prefix_ then
+    let parts := ((file.toString.drop prefix_.length).toString.splitOn "/").filter (· != ".")
+    some ("/".intercalate parts)
+  else none
+
+#guard relativeUnder "/r/lean" "/r/lean/./Editor/Api.lean" == some "Editor/Api.lean"
+
+#guard relativeUnder "/r/lean" "/r/other/Api.lean" == none
+
+/-- Whether a library of `pkg` ships its modules built in the bundle
+(`editorShipped`): of the core, `Editor` and `EditorCore`, the libraries
+`coreIdentity` reads; of another package, each library but its tests,
+`<P>Test`. -/
+def shipsLibrary (pkg : Package) (lib : LeanLib) : Bool :=
+  if pkg.keyName == __name__ then lib.name == `Editor || lib.name == `EditorCore
+  else
+    match toUpperCamelCase pkg.baseName with
+    | .str namespace_ base => lib.name != .str namespace_ (base ++ "Test")
+    | _ => true
+
+/-- Every module of the library `lib` whose source file is there: its
+modules (`LeanLib.modules`) and each module under the directory of one of
+its roots, so a module no root imports is among them too, since a package
+may import any of them. -/
+def libraryModules (lib : LeanLib) (listed : Array Module) : IO (Array Module) := do
+  let mut found := listed
+  for root in lib.roots do
+    let dir :=
+      root.components.foldl (fun dir part => dir / part.toString (escape := false)) lib.srcDir
+    if ← dir.isDir then
+      for path in ← dir.walkDir do
+        if path.extension == some "lean" then
+          if let some relative := relativeUnder lib.srcDir path then
+            let name :=
+              ((relative.dropEnd ".lean".length).toString.splitOn "/").foldl
+                (fun name part => Name.str name part) Name.anonymous
+            if let some mod := lib.findModule? name then
+              found := found.push mod
+  let mut seen : Std.HashSet Name := {}
+  let mut modules : Array Module := #[]
+  for mod in found do
+    if !seen.contains mod.name && (← mod.leanFile.pathExists) then
+      seen := seen.insert mod.name
+      modules := modules.push mod
+  return modules
+
+/-- The files of the built module `mod` in its package's build directory:
+every file in the directory of its `.olean` and in that of its C file
+whose name is the module's last part and an ending (`Api.olean`,
+`Api.olean.hash`, `Api.trace`, `Api.c.o.export`, `Api.setup.json` and the
+rest), whatever Lake wrote, so Lake reads the copy as up to date. -/
+def builtFiles (mod : Module) : IO (Array FilePath) := do
+  let stem := mod.name.getString! ++ "."
+  let mut files : Array FilePath := #[]
+  for dir in [mod.oleanFile.parent, mod.cFile.parent] do
+    let some dir := dir | continue
+    if ← dir.isDir then
+      let entries := (← dir.readDir).filter (·.fileName.startsWith stem)
+      files := files ++ (entries.map (·.path)).qsort (·.toString < ·.toString)
+  return files
+
+/-- What an app bundle ships of the set `pkg`, built (`lake -d <set dir>
+query :editorShipped`; `docs/design/lean-runtime.md`, "Build"), so a
+user's package-set build from the bundle compiles nothing of it: one line
+`file<TAB><source><TAB><place>` for each file, its place relative to the
+bundle's `Contents/Resources/lean`, and one line `oleans<TAB><place>` for
+each `.olean` directory of the set (`moduleDirectories`), in order, its
+place relative to `Contents/Resources`, which the bundle's record
+`editor.oleans` holds (`Editor/ModuleLookup.lean`, "The bundle's record").
+
+The core goes to `lean`, the set to `set` and each package under the set's
+directory to the same place under `set` (`shippedPlace`), so the set's and
+the packages' lakefiles name the bundle's core unchanged; a package
+elsewhere is refused. For each package of the set (`setPackages`): its
+lakefile, `lake-manifest.json` and `lean-toolchain`; and for every module
+of each library that ships (`shipsLibrary`, `libraryModules`: of the core,
+`Editor` and `EditorCore`; of the others, each library but its tests), its
+source and every file Lake wrote for it (`builtFiles`). Of the core, also
+its glue, `ffi/glue.c`, with `glue.o` built and its trace and hash. Then
+the core's Rust archive and its system libraries
+(`prebuiltRustFiles`), at `target/` under `lean`, which is where a user's
+set outside the bundle's `lean` reads them (`prebuiltRust`,
+`repositoryRoot`).
+
+It fetches each listed module's `oExport`, and so its `.olean`, `.ilean`
+and C file, and `glue.o`, so every file it lists is built. It builds no
+Rust: the archive must be built already. `tools/stage-bundle.sh` copies
+what it lists and decides nothing; which modules exist is Lake's
+knowledge, and a module left out would be built into the bundle the first
+time a package imported it. -/
+package_facet editorShipped pkg : Array String := do
+  let ws ← getWorkspace
+  let some core := ws.findPackageByKey? __name__
+    | error "the core's package is not in the workspace"
+  let coreDir := (← IO.FS.realPath core.dir).toString
+  let setDir := (← IO.FS.realPath pkg.dir).toString
+  let mut placed : Array (Package × String) := #[]
+  let mut libraries : Array (Job (Array Module)) := #[]
+  for dep in setPackages ws pkg do
+    let dir := (← IO.FS.realPath dep.dir).toString
+    let some place := shippedPlace coreDir setDir dir
+      |
+      error
+          s!"the package {dep.baseName.toString (escape := false)} ({dir}) is outside the set's directory {setDir}, so an app bundle cannot ship it"
+    placed := placed.push (dep, place)
+    for lib in dep.leanLibs do
+      if shipsLibrary dep lib then
+        libraries :=
+          libraries.push (← (← lib.modules.fetch).mapM fun listed => libraryModules lib listed)
+  let directories ← moduleDirectories pkg
+  let glueJob ← glue.o.fetch
+  let root ← repositoryRoot
+  let modulesJob := (Job.collectArray libraries).map (·.flatten)
+  let builtJob ←
+    modulesJob.bindM fun modules => do
+        let jobs ← modules.mapM (·.oExport.fetch)
+        return (Job.collectArray jobs).map fun _ => modules
+  (builtJob.zipWith Prod.mk glueJob).mapM fun (modules, _) => do
+      let placeOf (dep : Package) : Option String :=
+        (placed.find? (·.1.keyName == dep.keyName)).map (·.2)
+      let mut lines : Array String := #[]
+      let line (source : FilePath) (place : String) : String := s!"file\t{source}\t{place}"
+      for (dep, place) in placed do
+        for file in [dep.configFile, dep.dir / "lake-manifest.json", dep.dir / "lean-toolchain"] do
+          if ← file.pathExists then
+            let some relative := relativeUnder dep.dir file
+              | error s!"{file} is not under its package's directory {dep.dir}"
+            lines := lines.push (line file s!"{place}/{relative}")
+      let gluePlace := placeOf core
+      for file in
+        [core.dir / "ffi" / "glue.c", core.buildDir / "ffi" / "glue.o",
+          core.buildDir / "ffi" / "glue.o.hash", core.buildDir / "ffi" / "glue.o.trace"] do
+        let some relative := relativeUnder core.dir file
+          | error s!"{file} is not under the core's directory {core.dir}"
+        if let some place := gluePlace then
+          lines := lines.push (line file s!"{place}/{relative}")
+      for mod in modules do
+        let some place := placeOf mod.pkg
+          | error s!"the module {mod.name} is of no package of the set"
+        for file in #[mod.leanFile] ++ (← builtFiles mod) do
+          let some relative := relativeUnder mod.pkg.dir file
+            | error s!"{file} is not under its package's directory {mod.pkg.dir}"
+          lines := lines.push (line file s!"{place}/{relative}")
+      let (archive, libraries) := prebuiltRustFiles root
+      for file in [archive, libraries] do
+        let some relative := relativeUnder root file
+          | error s!"{file} is not under the repository {root}"
+        lines := lines.push (line file relative)
+      for directory in directories do
+        let some dep := placed.find? fun (dep, _) => directory == dep.leanLibDir
+          | error s!"the .olean directory {directory} is of no package of the set"
+        let some relative := relativeUnder dep.1.dir directory
+          | error s!"{directory} is not under its package's directory {dep.1.dir}"
+        lines := lines.push s!"oleans\tlean/{dep.2}/{relative}"
+      return lines
 
 /-- The file of the executable `editorLinked` links for the module `mod`:
 in the `bin/` of the module's package, named as the module is with a dash
@@ -1315,26 +1507,23 @@ it by default: the gate never does, and it is refused with the reason
 anywhere but macOS on arm64 (`requireArm64Mac`).
 
 `pkg` is the set, which holds the bundle, its trace, its staging directory
-and its closure file in its build directory. Everything else it reads is
-the core's, this package's, found in the workspace by name: the stage
-script, this lakefile, the version file, the artwork and the `.olean`
-directory.
+and its list of shipped files in its build directory. Everything else it
+reads is the core's, this package's, found in the workspace by name: the
+stage script, this lakefile, the version file and the artwork.
 
 It holds `Contents/MacOS/leanmacs`, the app's launcher (`launcher`), which is
 the bundle's `CFBundleExecutable` and starts the editor by exec with
 `CFProcessPath` pointing CoreFoundation at the bundle
 (`docs/design/lean-runtime.md`, "The app's identity across an exec");
 `Contents/MacOS/editor`, a copy of the set's `editor`, the shipped default;
-under
-`Contents/Resources/lean`, the `.olean`, `.olean.server` and
-`.olean.private` files of the modules the set's config base imports and of
-every module of `Std` and `Lean`, which a config file may import
-(`setBase`, then `Std` and `Lean`; the closure `config-test bench-modules`
-lists, over the set's `.olean` directories, `moduleDirectories`), from the
-toolchain Lake runs
-on, which is the pinned one, and from the core and each package of the set
-whose modules the base holds, all in the bundle's one directory, laid out
-by `tools/stage-bundle.sh` as `bundle-test` lays them out; `Contents/Info.plist`
+under `Contents/Resources`, everything a user's package-set build needs,
+so one builds from the app alone (`docs/design/lean-runtime.md`, "Build"):
+the whole toolchain Lake runs on, which is the pinned one, the core and
+each default package with their sources and build output, the set's
+lakefile, the Rust archive and the link stubs, with the records
+`editor.core`, `editor.oleans` and `editor.build`, laid out by
+`tools/stage-bundle.sh` from what `editorShipped` lists, as `bundle-test`
+lays them out; `Contents/Info.plist`
 (`appInfoPlist`), with the version from `app/version` (`appVersionFile`,
 `parseAppVersion`, which fails the build on a malformed line) and the build
 ID and the commit from `LEANMACS_BUILD_ID` and `LEANMACS_COMMIT`
@@ -1351,8 +1540,9 @@ would be left unsealed, and any write after signing breaks the seal.
 Extended attributes are cleared first, since `codesign --verify --strict`
 refuses them.
 
-The trace mixes the executable's, `config-test`'s, the library's, the stage
-script's, this lakefile's, the version file's and the artwork's traces with
+The trace mixes the executable's, the shipped list's (`editorShipped`, a
+hash of its text, whose job carries the trace of every module it lists),
+the stage script's, this lakefile's, the version file's and the artwork's traces with
 the toolchain's, the platform's and the property list's, so the bundle is rebuilt, from nothing,
 only when one of them changed, or when the bundle is gone. The property
 list's trace is a hash of its text, which holds the build ID and the
@@ -1367,30 +1557,29 @@ package_facet editorApp pkg : FilePath := do
   requireArm64Mac
   let some core := (← getWorkspace).findPackageByKey? __name__
     | error "the core's package is not in the workspace"
-  -- The set's config base and the directories its modules are in, which
-  -- the bundle's module files are the closure of, with `Std` and `Lean`,
-  -- and are copied from.
-  let base := (setBase (← setEntries pkg)).map (·.toString)
-  let searched := ":".intercalate ((← moduleDirectories pkg).map (·.toString)).toList
   let exe ← fetch <| pkg.facet `editor
   let launcherJob ← launcher.fetch
-  let lister ← «config-test».fetch
-  let library ← Editor.fetch
+  -- What the bundle ships of the set, built.
+  let shippedJob ← fetch <| pkg.facet `editorShipped
   let stager ← inputTextFile <| core.dir / ".." / "tools" / "stage-bundle.sh"
   -- This file is the recipe, so a change to it rebuilds the bundle too.
   let recipe ← inputTextFile <| core.dir / "lakefile.lean"
   let versionJob ← inputTextFile <| core.dir / appVersionFile
   let artJob ← inputBinFile <| core.dir / appIconFile
   let inputs :=
-    (((((((exe.zipWith Prod.mk lister).zipWith Prod.mk stager).zipWith (fun paths _ => paths)
-                      library).zipWith
-                  (fun paths _ => paths) recipe).zipWith
+    (((((((exe.zipWith Prod.mk shippedJob).zipWith Prod.mk stager).zipWith (fun paths _ => paths)
+                  recipe).zipWith
               Prod.mk versionJob).zipWith
           Prod.mk artJob).zipWith
-      Prod.mk launcherJob)
-  inputs.mapM fun (((((exe, lister), stager), versionFile), art), launcherFile) => do
+      Prod.mk launcherJob))
+  inputs.mapM fun (((((exe, shipped), stager), versionFile), art), launcherFile) => do
       addLeanTrace
       addPlatformTrace
+      -- The list names each file shipped; the content of each is in the
+      -- trace of the module or target that built it, which the list's job
+      -- carries.
+      let shippedText := "\n".intercalate shipped.toList ++ "\n"
+      addTrace (.ofHash (pureHash shippedText) "editorShipped")
       let version ←
         match parseAppVersion (← IO.FS.readFile versionFile) with
         | .ok version =>
@@ -1431,19 +1620,13 @@ package_facet editorApp pkg : FilePath := do
           if ← staging.pathExists then
             IO.FS.removeDirAll staging
           let sysroot ← getLeanSysroot
-          let closure := pkg.buildDir / s!"{appName}.app.closure"
-          let modules ←
-            captureProc
-                { cmd := lister.toString
-                  args :=
-                    #["bench-modules", sysroot.toString, searched] ++ base ++ #["Std", "Lean"] }
-          IO.FS.writeFile closure (modules ++ "\n")
+          let list := pkg.buildDir / s!"{appName}.app.shipped"
+          IO.FS.writeFile list shippedText
           proc (quiet := true)
               { cmd := stager.toString
                 args :=
-                  #["--closure", closure.toString, "--launcher", launcherFile.toString,
-                    staged.toString, exe.toString, sysroot.toString, searched, "olean",
-                    "olean.server", "olean.private"] }
+                  #["--launcher", launcherFile.toString, staged.toString, exe.toString,
+                    sysroot.toString, list.toString] }
           IO.FS.writeFile (staged / "Contents" / "Info.plist") plist
           -- The system's tools, by absolute path: mise's PATH may hold others of
           -- the same name (a Python package installs an `xattr` with no `-r`).

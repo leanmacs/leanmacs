@@ -97,52 +97,53 @@ are left out:
 
 ```
 Leanmacs.app/Contents/MacOS/editor
-Leanmacs.app/Contents/Resources/lean/toolchain/lib/lean/   the toolchain's modules
-Leanmacs.app/Contents/Resources/lean/editor/               the editor's .olean files
+Leanmacs.app/Contents/Resources/editor.oleans              the .olean directories, one a line
+Leanmacs.app/Contents/Resources/lean/toolchain/            the Lean toolchain, whole
+Leanmacs.app/Contents/Resources/lean/lean/.lake/build/lib/lean/                 the core's modules
+Leanmacs.app/Contents/Resources/lean/set/shipped-themes/.lake/build/lib/lean/   a default package's
+Leanmacs.app/Contents/Resources/lean/set/compile/.lake/build/lib/lean/          another's
 ```
 
-`Contents/Resources/lean/toolchain` is a sysroot: its modules are under its
-`lib/lean`, as a toolchain's are, and it holds `Std` and `Lean` whole, so
-config in a bundled editor may import them. The editor's directory holds
-every module of the config base, the default packages' beside the core's,
-so a bundle needs no record. A bundle holds no package set
-(`Contents/Resources/lean/set` is where one would be), so with `--generate`
-a bundled editor creates `lean-toolchain` and no lakefile, and says so as
-information. Two directories given on the command line
-are used in place of the bundle's. Outside a bundle there is no toolchain to
-fall back on, so two paths are refused, status 2, with
+`Contents/Resources/lean/toolchain` is a sysroot: the whole Lean
+toolchain, so config in a bundled editor may import any module of `Init`,
+`Std` or `Lean`, and a user's package-set build runs its `lake`. The
+editor's `.olean` directories are the lines of the bundle's record,
+`Contents/Resources/editor.oleans`, each relative to `Contents/Resources`:
+the core's and each default package's own build directory, staged with
+their sources, so the modules are shipped once and a build from the bundle
+reads them as up to date. A bundle with no record has no `.olean`
+directory. The bundle ships its package set at `Contents/Resources/lean/set`,
+so with `--generate` a bundled editor creates `lean-toolchain` and a
+`lakefile.toml` that requires that set. Two directories given on the
+command line are used in place of the bundle's. Outside a bundle there is
+no toolchain to fall back on, so two paths are refused, status 2, with
 `editor: no Lean toolchain: give <sysroot> <olean dir> before the config directory, or run the executable from an app bundle; <olean dir> is a search path, directories joined with `:`, which must hold the core's and every package's of the editor's set unless the build recorded them beside the executable (<executable>.oleans)`
 before the usage. The resolution is a pure function of the executable's
-path (`lean/Editor/ModuleLookup.lean`, pinned by
+path and the record (`lean/Editor/ModuleLookup.lean`, pinned by
 `ModelTest.moduleLookupChecks` and `ModelTest.headlessCommandLineChecks`),
 and the executable's path is read from `IO.appPath`.
 
 `mise run bundle-test`, part of the gate, lays out that bundle in a
 temporary directory with `tools/stage-bundle.sh` and runs the headless
-mode of a copy of `editor` there on `tests/headless/bundle`, with no
-directory argument, an empty environment and a working directory outside
-the bundle ([`the-gate.md`](the-gate.md)). To stage one by hand, from
-`lean/`, into a directory of your own:
+mode of its editor, through the launcher, on `tests/headless/bundle` and
+the default packages' fixtures, with no directory argument, an empty
+environment and a working directory outside the bundle
+([`the-gate.md`](the-gate.md), "The bundle test"). To stage one by hand,
+from `lean/`, into a directory of your own:
 
 ```sh
-sysroot=$(lean --print-prefix)
-base=$(lake -d ../packages query :editorBase | tr '\n' ' ')
-oleans=$(paste -s -d : ../packages/.lake/build/bin/editor.oleans)
-.lake/build/bin/config-test bench-modules "$sysroot" "$oleans" $base Std Lean > <dir>/closure
-../tools/stage-bundle.sh --closure <dir>/closure <dir>/Leanmacs.app ../packages/.lake/build/bin/editor \
-  "$sysroot" "$oleans" olean olean.server olean.private
+lake -d ../packages query :editorShipped > <dir>/shipped
+../tools/stage-bundle.sh <dir>/Leanmacs.app ../packages/.lake/build/bin/editor \
+  "$(lean --print-prefix)" <dir>/shipped
 ```
 
-Those are the modules the default set's config base imports, `Editor` and
-the entry module of each default package, with every module of `Std` and
-`Lean`, which a config file may import, and the three file kinds importing
-them reads ([`lean-runtime.md`](../design/lean-runtime.md), "What
-config may import, measured"). The `.olean` directories are the ones the
-build recorded beside the editor, joined with `:`: the script copies each
-module from the first that holds it, all into the bundle's one directory.
-Without `--closure` the script stages whole top-level directories:
-`--roots` names the toolchain's (`Init,Std` by default), and `Editor` is
-staged from each package directory that holds it.
+On APFS the toolchain and the module files are cloned, so the stage costs
+about 0.3 GB of disk, the editor and the launcher, and takes about 13 s.
+The script's `--closure` and `--roots` forms stage module files alone into
+one directory, `Contents/Resources/lean/editor`, which they name in the
+record; `mise run module-bench` uses them to measure what config may
+import ([`lean-runtime.md`](../design/lean-runtime.md), "What config may
+import, measured").
 
 `mise run app` builds this layout for real, as `Leanmacs.app`
 ([`building.md`](building.md), "The app bundle"), and `mise run app-check`

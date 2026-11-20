@@ -122,8 +122,8 @@ built from one:
   the build is a facet and not a stanza each set repeats. A facet a
   required package defines works on a root whose lakefile is TOML. The
   default set's lakefile is the one a later phase generates and edits for a
-  user (phases 7 and 8), and the shipped core will supply the same facets
-  over prebuilt pieces (phase 9).
+  user (phases 7 and 8), and the app ships the core built, so the same
+  facets run over its prebuilt pieces (phase 9).
 
 | Facet | On | Gives |
 |---|---|---|
@@ -133,6 +133,7 @@ built from one:
 | `editorRoot` | a package, the set | For `lake query`: writes the set's root module and prints its path; links and builds nothing |
 | `editorRootImports`, `editorRootTransImports` | a package, the set | For `lake query`: the generated root's direct and transitive imports, one module a line |
 | `editorBase` | a package, the set | For `lake query`: the set's config base, one module a line: `Editor`, then the entry module of each package of the set outside the core |
+| `editorShipped` | a package, the set | For `lake query`: what an app bundle ships of the set, built: one line `file<TAB><source><TAB><place>` a file (the core's `Editor` and `EditorCore` libraries and each other package's libraries but its tests, with their sources and every file Lake wrote; the lakefiles; the core's glue; the Rust archive), and one `oleans<TAB><place>` a `.olean` directory, for `tools/stage-bundle.sh` ([lean-runtime.md](lean-runtime.md), "The app ships the toolchain") |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
 | `editorPackageImports` | a package, the set | For `lake query`: each direct import of a core module by a module of those packages, one a line, with the module's kind (`library`, `test`, `linked`, `linked-test`); what the package imports check reads |
 | `editorRustCrates` | a package, the set | For `lake query`: the set's package crates, one a line ("Rust in a package", below) |
@@ -361,10 +362,12 @@ globs = ["Config.+"]
   `Editor.Main.run` the set's Lake name and the pin, and the `editor` facet
   writes the set's directory beside the executable, in
   `<set>/.lake/build/bin/editor.set`, as it writes `editor.oleans`. In a
-  bundle the directory would be `Contents/Resources/lean/set`
-  (`lean/Editor/ModuleLookup.lean`, "The set"). An editor that finds no
-  set directory generates `lean-toolchain` alone: the app does, until it
-  ships a set (phase 9).
+  bundle the directory is `Contents/Resources/lean/set`, where the app
+  ships the default set (`lean/Editor/ModuleLookup.lean`, "The set"), so
+  the app generates the lakefile too, naming that set (decided
+  2026-11-19, deferred to phase 9; `bundle-test` and `app-check` check
+  it). An editor that finds no set directory generates `lean-toolchain`
+  alone.
 - **The lakefile is the user's once it is there.** The editor never
   rewrites it. When a config file imports a module that is not linked, the
   editor reads the lakefile's `[[require]]` names, with Lake's TOML loader
@@ -435,8 +438,10 @@ globs = ["Config.+"]
   fixtures) still finds a package's modules through the record, and an
   editor with no record, a staged or relinked one, is given every
   directory: the user-side link check gives its relinked editor two. In a
-  bundle the rule is unchanged: one directory, which holds every module of
-  the base, the packages' among them.
+  bundle the directories are those the bundle's record names,
+  `Contents/Resources/editor.oleans`, relative to `Contents/Resources`:
+  the staged core's and each default package's own
+  ([lean-runtime.md](lean-runtime.md), "The app ships the toolchain").
 - **What "no hand-written list of packages" means.** No module names the
   Lake packages of a set: the set's lakefile is the one place, and the
   root is generated from it. Each Lake package's entry module still lists
@@ -608,8 +613,8 @@ set, holds its three themes.
   a theme by its name, and the themes are in the executable, so the bundle
   needed nothing of this package while the config base was the core's
   alone. The base is the set's now, and holds this package's entry module,
-  so the bundle ships its `.olean` files with the rest of the base's
-  closure, in the bundle's one directory. `bundle-test` runs the
+  so the bundle ships its modules, in this package's own build directory
+  staged under `Contents/Resources/lean/set` (phase 9). `bundle-test` runs the
   package's `shipped-themes` and `package-names` fixtures from a staged
   bundle with an empty environment.
 
@@ -753,8 +758,9 @@ over the process service, a major mode, ex names and contributions.
   (`tests/headless/core-ex-names`, in `ffi-test`). The listing job stays
   registered there and lists a contribution's commands, which nothing
   then reads.
-- **The app bundle carries its module files**, with the rest of the
-  config base's closure, and `bundle-test` runs the fixture `config` from
+- **The app bundle carries its modules**, built, in this package's own
+  build directory under `Contents/Resources/lean/set`, and `bundle-test`
+  runs the fixture `config` from
   a staged bundle with an empty environment.
 
 ### The fixture set
@@ -994,8 +1000,8 @@ the host tells it of a build `:package-update` started too, and whether
 it has said why it cannot build. It starts none while one is in
 flight, when the editor has no data directory or knows no core identity,
 or when it has no `lake`; then it says once: "the package set changed, but
-this editor has no lake to build it (`<sysroot>/bin/lake`)", which is what
-the app says until phase 9 ships the toolchain. `:reload` retries a failed
+this editor has no lake to build it (`<sysroot>/bin/lake`)". The app ships
+the toolchain since phase 9, so it has one. `:reload` retries a failed
 build.
 
 **The config directory is the set's root**: the build runs

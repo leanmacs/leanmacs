@@ -22,10 +22,13 @@ def headlessCommandLineChecks : List Check :=
   let installed := "/Applications/Leanmacs.app/Contents/MacOS/editor"
   let outside := "/opt/leanmacs/bin/editor"
   let recorded := ["/w/lean/.lake/build/lib/lean", "/w/packages/themes/.lake/build/lib/lean"]
-  let read (appPath : String) (arguments : List String) (recorded : List String := []) :
+  -- What the bundle's record names (`ModuleLookup.recorded`).
+  let shipped := ["/Applications/Leanmacs.app/Contents/Resources/lean/lean/.lake/build/lib/lean"]
+  let read (appPath : String) (arguments : List String)
+    (recorded : List String := if appPath == installed then shipped else []) :
     Option Headless.Arguments := (Headless.read appPath arguments recorded).toOption
   let refusal (appPath : String) (arguments : List String) : Option String :=
-    match Headless.read appPath arguments with
+    match Headless.read appPath arguments (if appPath == installed then shipped else []) with
     | .error reason => some reason
     | .ok _ => none
   -- Refused with the empty reason: the usage line alone says why.
@@ -36,7 +39,7 @@ def headlessCommandLineChecks : List Check :=
   let bundled (render : Bool) : Headless.Arguments :=
     { render, generate := false
       sysroot := "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain"
-      oleans := ["/Applications/Leanmacs.app/Contents/Resources/lean/editor"], config := "/c"
+      oleans := shipped, config := "/c"
       script := "/t" }
   [{  name :=
         "four paths are the toolchain, the .olean directory, the config directory and the script, wherever the executable is"

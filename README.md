@@ -154,10 +154,9 @@ the directory a Lake package whose Lean is the editor's, so Lean's language
 server, started in the directory by any editor, checks a config file as
 leanmacs elaborates it.
 
-- An editor run from a checkout writes both. Its lakefile requires the
-  package set the editor was built from, by that set's directory.
-- The app writes `lean-toolchain` alone for now: it ships no package set
-  for a lakefile to require.
+- Both write both. The lakefile requires the package set the editor was
+  built from, by that set's directory: for the app, the default set it
+  ships inside `Leanmacs.app`.
 - The lakefile's library is every module under `Config/`. `init.lean` is in
   no library, on purpose: on a file system that ignores case, a built
   `init.olean` is found for Lean's own `Init`. Do not add `init` to a

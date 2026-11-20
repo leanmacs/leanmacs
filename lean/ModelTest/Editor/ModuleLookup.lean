@@ -23,13 +23,12 @@ reader; and the directory of the set the executable was built from, by its
 own record outside a bundle and by the bundle's layout in one. -/
 def moduleLookupChecks : List Check :=
   let bundled (bundle : String) : ModuleLookup.Directories :=
-    { sysroot := some s!"{bundle}/Contents/Resources/lean/toolchain"
-      oleans := [s!"{bundle}/Contents/Resources/lean/editor"] }
+    { sysroot := some s!"{bundle}/Contents/Resources/lean/toolchain", oleans := [] }
   let installed := "/Applications/Leanmacs.app/Contents/MacOS/editor"
   let built := "/w/packages/.lake/build/bin/editor"
   let recorded := ["/w/lean/.lake/build/lib/lean", "/w/packages/themes/.lake/build/lib/lean"]
   [{  name :=
-        "an executable at <bundle>/Contents/MacOS/<name> finds the toolchain at Contents/Resources/lean/toolchain and its .olean files at Contents/Resources/lean/editor, in a renamed bundle and in one with no .app suffix too"
+        "an executable at <bundle>/Contents/MacOS/<name> finds the toolchain at Contents/Resources/lean/toolchain, in a renamed bundle and in one with no .app suffix too, and with no record no .olean directory: none is guessed from the layout"
       run :=
         pure
           (ModuleLookup.resolve installed {} == bundled "/Applications/Leanmacs.app" &&

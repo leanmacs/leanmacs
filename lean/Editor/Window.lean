@@ -26,8 +26,8 @@ before the first event (`Options.starts`). It reads nothing itself, so
   none given no config is loaded, and the echo area says so (`noToolchain`).
 - **`--oleans`** is the directory of the editor's `.olean` files: one, or
   several joined with `:`, searched in order. When not given it is the
-  bundle's, `Contents/Resources/lean/editor`, for an executable in a
-  bundle. Outside one the directories the build that linked the executable
+  directories the bundle's record `Contents/Resources/editor.oleans` names,
+  for an executable in a bundle. Outside one the directories the build that linked the executable
   recorded beside it (`Editor/ModuleLookup.lean`, "The record"), which the
   edge reads, are searched, after any `--oleans` gives; an executable with
   no record has no default, so with a toolchain and no `--oleans` no config

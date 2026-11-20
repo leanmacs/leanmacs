@@ -14,8 +14,7 @@ recorded for it. It reads nothing itself, so `model-test` pins it
 - **In a bundle**, an executable at `<bundle>/Contents/MacOS/<name>`, the
   toolchain is `<bundle>/Contents/Resources/lean/toolchain` and the editor's
   `.olean` files are in the directories the bundle's record names
-  ("The bundle's record"). A bundle with no record has the one directory
-  `<bundle>/Contents/Resources/lean/editor`. The bundle is known by that
+  ("The bundle's record"); a bundle with no record has none. The bundle is known by that
   layout alone, not by a `.app` suffix, so a renamed or copied bundle still
   finds its modules; the rule is the same on every platform.
 - **Outside one** there is no toolchain unless one is given, and the
@@ -84,9 +83,9 @@ in the config directory, finds the modules config imports.
   absolute. An executable with no such record, a staged or relinked one,
   knows no set directory.
 - **In a bundle** it is `<bundle>/Contents/Resources/lean/set`, by the
-  bundle's layout, as the other two directories are. A bundle does not hold
-  that directory yet: the app ships no package set to name, so an editor in
-  a bundle knows none, and generates no lakefile.
+  bundle's layout, as the toolchain is: the default set the app ships,
+  which `tools/stage-bundle.sh` stages there, so the lakefile an editor in
+  the app generates names it.
 - A directory that is not there is none, in either case.
 
 Nothing is read from the environment: `LEAN_PATH` and every other variable
@@ -186,8 +185,7 @@ no toolchain given, a shipped default in a bundle lends that bundle's
 toolchain, so a per-user editor the app's launcher started loads config. The
 toolchain is the one given, else the bundle's in a bundle, else none. The
 `.olean` directories are, in a bundle, the ones given (`searchPath`), else
-the ones its record names, else, with no record, the bundle's one
-`lean/editor`; outside a bundle, the ones given and then every recorded
+the ones its record names, so none with no record; outside a bundle, the ones given and then every recorded
 one, so none when nothing was given and nothing recorded. -/
 def resolve (appPath : String) (explicit : Given) (recorded : List String := [])
     (shipped : Option String := none) : Directories :=
@@ -195,9 +193,8 @@ def resolve (appPath : String) (explicit : Given) (recorded : List String := [])
   match bundle? appPath with
   | some bundle =>
     let resources := bundle / "Contents" / "Resources" / "lean"
-    let own := if recorded.isEmpty then [(resources / "editor").toString] else recorded
     { sysroot := explicit.sysroot <|> some (resources / "toolchain").toString
-      oleans := if explicit.oleans.isSome then given else own }
+      oleans := if explicit.oleans.isSome then given else recorded }
   | none =>
     -- A per-user editor the app's launcher started: the shipped default's
     -- bundle holds the toolchain.

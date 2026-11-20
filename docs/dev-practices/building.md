@@ -114,8 +114,14 @@ Leanmacs.app/Contents/Info.plist
 Leanmacs.app/Contents/MacOS/leanmacs                       the launcher, the bundle's CFBundleExecutable
 Leanmacs.app/Contents/MacOS/editor                         a copy of the editor executable, the shipped default
 Leanmacs.app/Contents/Resources/Leanmacs.icns              the icon, made from lean/app/Leanmacs.png
-Leanmacs.app/Contents/Resources/lean/toolchain/lib/lean/   the toolchain's modules
-Leanmacs.app/Contents/Resources/lean/editor/               the editor's modules
+Leanmacs.app/Contents/Resources/editor.core                the core's identity (the launcher reads it)
+Leanmacs.app/Contents/Resources/editor.oleans              the .olean directories, relative to Resources
+Leanmacs.app/Contents/Resources/editor.build               the environment a build from the app runs with
+Leanmacs.app/Contents/Resources/lean/toolchain/            the Lean toolchain, whole: lean, lake, clang, ld64.lld, Init, Std, Lean, Lake
+Leanmacs.app/Contents/Resources/lean/lean/                 the core: its lakefile, sources and build output
+Leanmacs.app/Contents/Resources/lean/set/                  the default set's lakefile, and each default package built
+Leanmacs.app/Contents/Resources/lean/target/               the core's Rust archive and its system libraries
+Leanmacs.app/Contents/Resources/lean/link-stubs/           the system libraries' link stubs
 ```
 
 Two executables: the app's launcher, `leanmacs` (`crates/editor-launch-std`,
@@ -129,21 +135,22 @@ built" and "The app's identity across an exec"). The launcher passes every
 argument through, so `Leanmacs.app/Contents/MacOS/leanmacs headless …` is
 the bundle's headless mode.
 
-The modules are the closure of the default set's config base, the modules
-config is elaborated on (`Editor`, then the entry module of each default
-package, `ShippedThemes.EditorPackage` and `Compile.EditorPackage`), with
-every module of `Std` and `Lean`, which a config file may import
-([`lean-runtime.md`](../design/lean-runtime.md), "What config may import,
-measured"). The packages' modules are in the same one directory as the
-core's, so the bundle holds `Contents/Resources/lean/editor/Compile.olean`
-beside `Editor.olean`. Each is there as its `.olean`, `.olean.server` and
-`.olean.private` files: the
-layout and the file kinds `mise run bundle-test` stages
-([`headless-mode.md`](headless-mode.md), "From an app bundle"), laid out by
-the same `tools/stage-bundle.sh`. On 2026-11-19 that was 7,249 files of
-2,501 modules, 1,760 MB, beside a 232 MB executable: 1,995 MB in all. It
-was 849 MB before the bundle carried `Lean`'s modules, which are two thirds
-of it now. `Info.plist` names the
+Under `Contents/Resources` the bundle holds everything a user's
+package-set build needs, so one builds from the app alone, with no Lean,
+compiler or Cargo of the user's ([`lean-runtime.md`](../design/lean-runtime.md),
+"Build"; [`packages.md`](../design/packages.md), "User package sets"): the
+whole toolchain, the core and each default package with their sources and
+build output in their own `.lake/build`, which a build from the bundle
+reads as up to date, the set's lakefile, the Rust archive that a set with
+no Rust package relinks with, and the link stubs the toolchain's linker
+needs for the system's frameworks. What ships of the set is what
+`lake -d ../packages query :editorShipped` lists, and
+`tools/stage-bundle.sh` copies it, the layout `mise run bundle-test`
+stages ([`headless-mode.md`](headless-mode.md), "From an app bundle").
+Config may import any module of `Init`, `Std` and `Lean` the toolchain
+holds. Its size is in [`lean-runtime.md`](../design/lean-runtime.md),
+"Memory and size": about 3.9 GB, where it was 1,995 MB with the module
+files of config's imports alone (2026-11-19). `Info.plist` names the
 bundle identifier `io.github.leanmacs.Leanmacs`, the executable `editor`,
 the icon, `NSHighResolutionCapable`, `LSArchitecturePriority` arm64 and
 `LSMinimumSystemVersion`, the lowest macOS the bundle has been run on:

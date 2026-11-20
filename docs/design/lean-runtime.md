@@ -86,10 +86,9 @@ count for a script a hundred times as long.
 
 **The app bundle is a facet of the set too** (`editorApp`, which nothing
 builds by default; `mise run app` builds it from the default set, at
-`packages/.lake/build/Leanmacs.app`). It copies the set's executable and the `.olean` files of
-the closure of the set's config base with `Std` and `Lean`, which a config
-file may import, into `Leanmacs.app`, laid out as module lookup
-expects (`lean/Editor/ModuleLookup.lean`), writes `Info.plist`, with
+`packages/.lake/build/Leanmacs.app`). It copies the set's executable and
+everything a user's package-set build needs into `Leanmacs.app` ("The app
+ships the toolchain", below), writes `Info.plist`, with
 the version from `lean/app/version` as `CFBundleShortVersionString`, the
 build ID as `CFBundleVersion` and the commit as `LeanmacsCommit`, a key of
 the app's own, and the icon, made from the checked-in
@@ -103,6 +102,67 @@ its inputs, the plist's text among them, makes it rebuild only when one
 changed, so a new commit rebuilds it. It builds on macOS on
 arm64 only. How to build it, what it holds and why it is signed again are
 in [building.md](../dev-practices/building.md), "The app bundle".
+
+### The app ships the toolchain
+
+A user's package set is built by the editor itself
+([packages.md](packages.md), "User package sets"), so the app carries
+everything that build needs, and a set of pure-Lean packages builds from
+the app alone, with no Lean, compiler or Cargo on the machine (decided
+2026-11-20: the app ships the Lean toolchain only; no SDK, no C library
+headers and no Cargo). Under `Contents/Resources`:
+
+```
+editor.core, editor.oleans, editor.build   the records (below)
+lean/toolchain/                            the Lean toolchain, whole, but mise's exposed/
+lean/lean/                                 the core: lakefile.lean, lean-toolchain, lake-manifest.json,
+                                           ffi/glue.c, the sources of the Editor and EditorCore libraries,
+                                           and their .lake/build output with every trace and hash
+lean/set/                                  the default set: lakefile.toml, lake-manifest.json, lean-toolchain
+lean/set/shipped-themes/, lean/set/compile/  each default package: its lakefile, sources and build output
+lean/target/release/libeditor_rust.a       the core's Rust archive
+lean/target/editor-rust/core/native-static-libs  the system libraries it needs
+lean/link-stubs/                           macOS: the system libraries' link stubs
+```
+
+- **Where things are follows from the lakefiles.** The set's lakefile
+  names `../lean` and each package's `../../lean`, which both reach
+  `lean/lean`, so no lakefile is rewritten; and `repositoryRoot`, the
+  core's directory's parent, is `lean/`, so a user's set outside it
+  reuses the archive in `lean/target` with no Cargo (`prebuiltRust`).
+- **What ships is Lake's list.** `lake -d <set> query :editorShipped`
+  builds and lists every module of the core's `Editor` and `EditorCore`
+  libraries, which a package may import, and of each other library of the
+  set's packages but its tests, with the files Lake wrote for each, the
+  lakefiles and the core's glue; `tools/stage-bundle.sh` copies the list
+  and decides nothing. Each package's modules ship once, in that package's
+  own build directory.
+- **A build from the bundle compiles none of it.** Lake decides "up to
+  date" by trace hashes, never by modification time; a module's trace mixes
+  its source's hash, its imports', its options, the platform and Lean's
+  githash, and no path. So the core's and the packages' outputs, built in
+  CI with the system compiler and copied with their `.trace` and `.hash`
+  files, are up to date at another path under the bundled `clang`. Lake
+  writes a dependency's elaborated lakefile into the root workspace
+  (`<config>/.lake/config`), so a user's build writes only into the config
+  directory and the data directory, never into the bundle.
+- **The bundle's records.** `editor.oleans` names the `.olean`
+  directories, relative to `Contents/Resources`
+  (`lean/Editor/ModuleLookup.lean`, "The bundle's record").
+  `editor.build` is the executable's `.build` record without `LEAN_CC`, so
+  a build the app runs keeps `MACOSX_DEPLOYMENT_TARGET` and compiles with
+  the bundled `clang` (`lean/Editor/PackageSet/Running.lean`).
+- **The toolchain a build runs is the running editor's,** whatever is on
+  the `PATH` or in the environment. The job runs `<sysroot>/bin/lake` by
+  absolute path, and Lake finds `lean` and `clang` beside itself; the job
+  removes `LEAN_CC`, `LEAN_SYSROOT`, `LEAN`, `LEAN_PATH`, `CC` and the rest
+  of `clearedVariables` before setting the build record
+  (`lean/Editor/PackageSet/Build.lean`); and the core's lakefile asks Lake
+  for its toolchain (`Lake.findInstall?`), never the `PATH`
+  (`leanSystemLibDir`, `editorLinkArgs`).
+- **Fetching a git or Reservoir package uses the system `git`**, which the
+  app does not ship (decided 2026-11-18); a missing one is reported
+  ([packages.md](packages.md), "The build, as a job").
 
 There is no hand-written Lean start-up sequence and no scraping of
 generated symbol names, which the first prototype needed. What can break on
@@ -575,8 +635,10 @@ queues and exits.
   is loaded, and the echo area says
   `config: not loaded: no Lean toolchain given (--sysroot)`. `mise run
   edit` always gives the pinned one.
-- **The editor's `.olean` files** are, in a bundle,
-  `Contents/Resources/lean/editor`. Outside one they are where the build
+- **The editor's `.olean` files** are, in a bundle, in the directories
+  the bundle's record `Contents/Resources/editor.oleans` names, relative
+  to `Contents/Resources`: the staged core's and each default package's
+  own build directory ("Build", "The app ships the toolchain"). Outside one they are where the build
   that linked the executable recorded them, unless `--oleans` says
   otherwise. The editor is linked from a package set into the set's build
   directory, and each Lake package's modules are built in that package's

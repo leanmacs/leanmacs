@@ -1,0 +1,9 @@
+name = "config"
+
+[[require]]
+name = "default-set"
+path = "@SET@"
+
+[[lean_lib]]
+name = "Config"
+globs = ["Config.+"]

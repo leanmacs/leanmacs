@@ -1098,111 +1098,25 @@ run = [
   "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/packages/greeting/tests/headless/hello/config ../tests/packages/greeting/tests/headless/hello/script) && printf '%s\\n' \"$out\" | grep -qxF 'run greeting-hello: no such command'",
 ]
 
-# The headless mode run from a bundle, as the installed editor will be
-# (docs/dev-practices/headless-mode.md, "From an app bundle"). It runs the
-# built executables only, so it needs just `lean` before it, and has a time
-# limit of its own: copying the 180 MB executable and the module files must
-# not eat `ffi-test`'s.
-#
-# Cargo first builds the app's launcher (crates/editor-launch-std, the
-# binary `leanmacs`), release, into target/; its own up-to-date check makes
-# that quick once built. Then one shell, which makes a temporary directory
-# (its path with its links resolved, as CoreFoundation names a bundle) and
-# removes it by a trap when the shell ends, whether the check passed or
-# failed. In it, tools/stage-bundle.sh lays out `Leanmacs.app` as the bundle
-# will be: a copy of `editor` (not a link) in `Contents/MacOS`, and of the
-# launcher beside it as `leanmacs`, the bundle's `CFBundleExecutable`, and
-# the `.olean`,
-# `.olean.server` and `.olean.private` files of the modules the default
-# set's config base imports and of every module of `Std` and `Lean`, which
-# a config file may import, under
-# `Contents/Resources/lean/toolchain/lib/lean` and
-# `Contents/Resources/lean/editor`. The base is the set's (`lake -d
-# ../packages query :editorBase`: `Editor`, then the entry module of each
-# default package), `config-test bench-modules` lists the closure of it
-# with `Std` and `Lean`, and its modules are searched for, and copied from, the directories the build
-# recorded beside the editor (packages/.lake/build/bin/editor.oleans),
-# joined with `:`: the core's and each default package's, all into the
-# bundle's one directory. Those three kinds and that closure are what
-# `mise run module-bench` measured the import to need
-# (docs/design/lean-runtime.md, "What config may import, measured"). The
-# one `lake query` builds nothing and writes nothing: `lean` has written
-# the set's root.
-# `lean --print-prefix` runs on the staging side only. The fixture's config
-# and script (tests/headless/bundle) are copied into the temporary
-# directory, and the copy of the editor runs its headless mode on them from
-# a working directory outside the bundle, with no directory argument and an
-# empty environment (no `HOME`, `PATH`, `LEAN_PATH` or `XDG_*`): it must
-# exit 0 and print exactly `expected`. The fixture's config imports `Lean`
-# and names a declaration of Lean's elaborator, so it loads only if the
-# bundle carries Lean's module files. It passes only if the executable
-# found its modules from its own path: outside a bundle it would find no
-# toolchain and be refused, and the build tree's `.olean` directory is not
-# beside the copy. The fixture's commands only make texts, so nothing is
-# written outside the temporary directory. Every run of the bundle's editor
-# here goes through the launcher, `Contents/MacOS/leanmacs`, with its
-# arguments passed through: so the launcher's layout rule (the default is
-# `Contents/MacOS/editor` beside it) and its pass-through hold on both legs,
-# and the exec'd `editor` still finds the bundle's modules from its own path.
-#
-# Then three fixtures of the default packages from the same bundle: the
-# shipped themes' (packages/shipped-themes/tests/headless/)
-# `shipped-themes`, whose config names `solarized-light`, and
-# `package-names`, whose config names a declaration of the package,
-# `ShippedThemes.themes`; and the compile mode's
-# (packages/compile/tests/headless/) `config`, whose config is written on
-# `Compile.cargoMode`, `Compile.Format` and `Compile.shipped`. Each is
-# copied and run the same way and must print exactly its `expected`. The
-# last two elaborate only if the bundle's one `.olean` directory holds the
-# packages' module files beside the core's: a bundle has no record, and the
-# editor is given no directory.
-#
-# Then the generated files (tests/headless/generate, whose config
-# directory holds `init.lean` alone): the bundle's `editor headless
-# --generate`, on a copy of it, must load the config and print the fixture's
-# `expected` and one line more, the information that no lakefile is
-# generated; leave a `lean-toolchain` that is `lean/lean-toolchain` byte for
-# byte; and leave no `lakefile.toml`. A staged bundle holds no
-# `Contents/Resources/lean/set`, the package set a lakefile would require,
-# so the editor in it knows no set directory and writes no lakefile, and the
-# app's is the same until it ships a set. It then prints `bundle-test: the
-# bundle generated lean-toolchain and no lakefile, and the config loaded`.
-#
-# Then `editor --version` (lean/Editor/Version.lean), through `IO.appPath`
-# and the real file read: the fixture's `Info.plist`, which holds only the
-# three keys with a fake stamp, is copied into the staged `Contents/`, and
-# the copy, run with an empty environment, must print exactly
-# `version-expected`; and the build tree's `editor`, outside a bundle, must
-# print the line of a development build.
-#
-# Then the app's identity, through the launcher (docs/design/lean-runtime.md,
-# "The app's identity across an exec"): with that `Info.plist` in place,
-# whose `CFBundleIdentifier` is `org.leanmacs.bundle-test`, `leanmacs
-# --probe`, with an empty environment, must print `probe: ok`,
-# `launched-by <bundle>/Contents/MacOS/leanmacs`, on macOS `bundle
-# <bundle> identifier org.leanmacs.bundle-test` (elsewhere `bundle none`),
-# and `executable <bundle>/Contents/MacOS/editor`, the executable the
-# launcher started;
-# and so must `leanmacs --default <dir>/outside/editor -- --probe`, its
-# executable line naming that copy, a copy of
-# the editor outside the bundle, which an explicit `--default` starts in
-# place of the bundle's: the real editor sees the app as its main bundle
-# from outside it.
-#
-# Last, the launcher's choice of a per-user editor (docs/design/packages.md,
-# "User package sets"): with a copy of the editor at
-# `<tmp>/data/editors/<the staged editor.core>/1/editor`, another under a
-# core that is not the bundle's and a staging directory beside them,
-# `leanmacs --data <tmp>/data --probe`, with an empty environment, must
-# start the copy of the bundle's core, which prints its own path with the
-# app as its main bundle, and leave no cold record under `<tmp>/data/launch`:
-# the probe removes the record it was handed.
+# The app bundle's layout, staged and run (tools/bundle-test.sh, whose
+# header says each step; docs/dev-practices/the-gate.md, "The bundle
+# test"; docs/dev-practices/headless-mode.md, "From an app bundle"):
+# tools/stage-bundle.sh lays `Leanmacs.app` out in a temporary directory
+# from what `lake -d ../packages query :editorShipped` lists, the whole
+# Lean toolchain, the Rust archive and, on macOS, the link stubs; the
+# bundle must hold every piece a user's package-set build needs; and its
+# editor, run through the launcher with no directory argument and an empty
+# environment, must run the headless fixtures from its own modules,
+# generate a lakefile naming the bundle's set, say its version, and be
+# found by the launcher. It runs the built executables only, so it needs
+# just `lean` before it, and has a time limit of its own: on Linux the
+# toolchain is copied, about 3.1 GB, where macOS clones it.
 [tasks.bundle-test]
-description = "Stage the app bundle's layout in a temporary directory, with the launcher and the module files of the default set's config base and of Std and Lean, and run the headless mode of a copy of the editor there through the launcher, with no directory argument, an empty environment and a working directory outside it, on the bundle fixture and on the default packages' fixtures, its --version on a fixture Info.plist, and the launcher's probe of the bundle's editor and of one outside the bundle (tools/stage-bundle.sh, tests/headless/bundle)"
+description = "Stage the app bundle's layout in a temporary directory, with the launcher, the whole Lean toolchain, the core and the default packages built, the Rust archive and the link stubs, check it holds each piece a package-set build needs, and run its editor through the launcher with no directory argument and an empty environment: the headless fixtures, the generated lakefile, --version and the launcher's probes (tools/bundle-test.sh, tools/stage-bundle.sh, tests/headless/bundle)"
 depends = ["lean"]
 dir = "lean"
-timeout = "120s"
-run = '''lean_dir=$PWD && cargo build --quiet --locked --release --manifest-path ../Cargo.toml -p editor-launch-std --bin leanmacs && dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && dir=$(cd "$dir" && pwd -P) && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && base=$(lake -d ../packages query :editorBase | tr '\n' ' ') && oleans=$(paste -s -d : ../packages/.lake/build/bin/editor.oleans) && .lake/build/bin/config-test bench-modules "$sysroot" "$oleans" $base Std Lean >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" --launcher ../target/release/leanmacs "$dir/Leanmacs.app" ../packages/.lake/build/bin/editor "$sysroot" "$oleans" olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" - && themes=$lean_dir/../packages/shipped-themes/tests/headless/shipped-themes && cp -R "$themes/config" "$dir/themes-config" && cp "$themes/script" "$dir/themes-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" headless "$dir/themes-config" "$dir/themes-script") && printf '%s\n' "$out" | diff "$themes/expected" - && names=$lean_dir/../packages/shipped-themes/tests/headless/package-names && cp -R "$names/config" "$dir/names-config" && cp "$names/script" "$dir/names-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" headless "$dir/names-config" "$dir/names-script") && printf '%s\n' "$out" | diff "$names/expected" - && compile=$lean_dir/../packages/compile/tests/headless/config && cp -R "$compile/config" "$dir/compile-config" && cp "$compile/script" "$dir/compile-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" headless "$dir/compile-config" "$dir/compile-script") && printf '%s\n' "$out" | diff "$compile/expected" - && generate=$lean_dir/../tests/headless/generate && cp -R "$generate/config" "$dir/generate-config" && cp "$generate/script" "$dir/generate-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" headless --generate "$dir/generate-config" "$dir/generate-script") && printf '%s\n' "$out" | grep -v '^diagnostic: config:0:0: information: ' | diff "$generate/expected" - && printf '%s\n' "$out" | grep -q '^diagnostic: config:0:0: information: no lakefile.toml is generated' && cmp -s "$dir/generate-config/lean-toolchain" "$lean_dir/lean-toolchain" && test ! -e "$dir/generate-config/lakefile.toml" && echo 'bundle-test: the bundle generated lean-toolchain and no lakefile, and the config loaded' && cp "$fixtures/Info.plist" "$dir/Leanmacs.app/Contents/Info.plist" && env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" --version | diff "$fixtures/version-expected" - && "$lean_dir/../packages/.lake/build/bin/editor" --version | grep -qxF 'Leanmacs, a development build: not run from an app bundle, so it has no version, build ID or commit' && launcher="$dir/Leanmacs.app/Contents/MacOS/leanmacs" && if [ "$(uname)" = Darwin ]; then seen="bundle $dir/Leanmacs.app identifier org.leanmacs.bundle-test"; else seen='bundle none'; fi && printf 'probe: ok\nlaunched-by %s\n%s\nexecutable %s\n' "$launcher" "$seen" "$dir/Leanmacs.app/Contents/MacOS/editor" >"$dir/probe-expected" && env -i "$launcher" --probe | diff "$dir/probe-expected" - && mkdir "$dir/outside" && cp "$lean_dir/../packages/.lake/build/bin/editor" "$dir/outside/editor" && printf 'probe: ok\nlaunched-by %s\n%s\nexecutable %s\n' "$launcher" "$seen" "$dir/outside/editor" >"$dir/outside-expected" && env -i "$launcher" --default "$dir/outside/editor" -- --probe | diff "$dir/outside-expected" - && echo 'bundle-test: the editor in the bundle and one outside it, started by the launcher, both see the app as their main bundle' && core=$(cat "$dir/Leanmacs.app/Contents/Resources/editor.core") && mkdir -p "$dir/data/editors/$core/1" "$dir/data/editors/other/1" "$dir/data/editors/$core/staging-9" && cp "$lean_dir/../packages/.lake/build/bin/editor" "$dir/data/editors/$core/1/editor" && cp "$lean_dir/../packages/.lake/build/bin/editor" "$dir/data/editors/other/1/editor" && printf 'probe: ok\nlaunched-by %s\n%s\nexecutable %s\n' "$launcher" "$seen" "$dir/data/editors/$core/1/editor" >"$dir/per-user-expected" && env -i "$launcher" --data "$dir/data" --probe | diff "$dir/per-user-expected" - && test -z "$(ls -A "$dir/data/launch")" && echo 'bundle-test: the launcher started the per-user editor of the bundle core, with the app as its main bundle, and left no cold record''''
+timeout = "600s"
+run = "sh ../tools/bundle-test.sh"
 
 # A user's package set end to end, through the app's launcher
 # (tools/user-sets-test.sh; docs/dev-practices/the-gate.md, "The user sets

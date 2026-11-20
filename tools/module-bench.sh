@@ -28,12 +28,18 @@
 # resident set size. The editor it runs is the default package set's, whose
 # config base is the set's and not `Editor` alone: `Editor`, then the entry
 # module of each default package (docs/design/packages.md, "The config base
-# of a set"). So that bundle is staged as `bundle-test` and the `editorApp`
-# facet stage theirs: the closure of the set's base with `Std` and `Lean`,
+# of a set"). So that bundle is staged as the app's was before it shipped
+# the whole toolchain (docs/design/lean-runtime.md, "What config may
+# import, measured"): the closure of the set's base with `Std` and `Lean`,
 # which a config file may import (`lake -d ../packages query :editorBase`),
 # each module copied from the first of the directories the build recorded
 # beside the editor that holds it (`editor.oleans`), with the kinds the set
-# `Editor` was found to need. Its modules and bytes are printed too.
+# `Editor` was found to need, into the bundle's one directory
+# `Contents/Resources/lean/editor`, which tools/stage-bundle.sh's
+# `--closure` mode names in the bundle's record, `editor.oleans`, so the
+# staged editor finds its modules with no directory argument. Its modules
+# and bytes are printed too. The app's own figures are
+# `mise run bundle-bench`'s.
 #
 # Bytes are apparent sizes, summed from `stat -f %z`; MB are 10^6 bytes. It
 # asserts one thing: each headless run it times installed its config (a

@@ -138,11 +138,12 @@ def windowOptionChecks : List Check :=
                   oleans := ["/opt/core/lib/lean"], composition := true } &&
             (parsed ["--no-ime"]).map (·.file) == some none) },
     { name :=
-        "a Finder start: no arguments, / as the working directory, HOME set and XDG_CONFIG_HOME unset, in a bundle: no file, config from ~/.config/leanmacs, and the bundle's toolchain and .olean files"
+        "a Finder start: no arguments, / as the working directory, HOME set and XDG_CONFIG_HOME unset, in a bundle: no file, config from ~/.config/leanmacs, the bundle's toolchain and the .olean directories its record names"
       run :=
         let finder : Window.Environment :=
           { workingDirectory := "/", xdgConfigHome := none, home := some "/Users/ada"
-            appPath := "/Applications/Leanmacs.app/Contents/MacOS/editor" }
+            appPath := "/Applications/Leanmacs.app/Contents/MacOS/editor"
+            recordedOleans := ["/Applications/Leanmacs.app/Contents/Resources/lean/lean/lib"] }
         pure <|
           match parsed [] finder with
           | none => false
@@ -150,7 +151,7 @@ def windowOptionChecks : List Check :=
             options.file == none && options.config == some "/Users/ada/.config/leanmacs" &&
               options.sysroot ==
                 some "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain" &&
-              options.oleans == ["/Applications/Leanmacs.app/Contents/Resources/lean/editor"] &&
+              options.oleans == ["/Applications/Leanmacs.app/Contents/Resources/lean/lean/lib"] &&
               options.configPlan true == .load "/Users/ada/.config/leanmacs" },
     { name :=
         "with no option, config is looked for in the directory leanmacs under XDG_CONFIG_HOME, or under HOME's .config when that is unset; no toolchain is given; the editor's .olean files are beside the executable's directory; and an input method may compose"

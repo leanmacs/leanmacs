@@ -1267,68 +1267,8 @@ from the build tree, outside a bundle, must be status 2 with a line on
 stderr that starts `editor: no Lean toolchain`.
 
 `mise run bundle-test` runs **the headless mode from an app bundle**, as the
-installed editor will find its modules. In a temporary directory removed by
-a trap, `tools/stage-bundle.sh` lays out `Leanmacs.app`: a copy of `editor`
-in `Contents/MacOS`, and the `.olean`, `.olean.server` and `.olean.private`
-files of the modules the default set's config base imports, and of every
-module of `Std` and `Lean`, which a config file may import, under
-`Contents/Resources/lean/toolchain/lib/lean` and
-`Contents/Resources/lean/editor`. The base is asked of Lake (`lake -d
-../packages query :editorBase`: `Editor`, then the entry module of each
-default package), `config-test bench-modules` lists the closure of it with
-`Std` and `Lean`, and the modules are searched for, and copied from, the directories the build
-recorded beside the editor, the core's and each default package's, all
-into the bundle's one directory. The copy then runs
-`editor headless <config dir> <script file>` on `tests/headless/bundle`
-with no directory argument, an empty environment (`env -i`: no `HOME`,
-`PATH` or `LEAN_PATH`) and a working directory outside the bundle; it must
-exit 0 and print exactly `expected`, whose command calls compiled code of
-`Init` and of `Editor`, and whose root imports `Lean` and names a
-declaration of Lean's elaborator, so it loads only from a bundle that
-carries Lean's module files. So the executable found the toolchain and its
-own `.olean` files from its own path, and those three file kinds are enough to
-import and run config: outside a bundle the same command line is refused,
-and the build tree's `.olean` directory is not beside the copy. The same
-copy then runs three fixtures of the default packages the same way, each
-of which must print exactly its `expected`: `shipped-themes` of the
-package of that name, whose config names `solarized-light`;
-`package-names` of the same package, whose config names its declaration
-`ShippedThemes.themes`; and `config` of the package `compile`, whose
-config is written on `Compile.cargoMode`, `Compile.Format` and
-`Compile.shipped`. The last two elaborate only if the bundle's one
-directory holds the packages' module files beside the core's: a bundle
-has no record. Then **the generated files**: the copy runs
-`editor headless --generate` on a copy of `tests/headless/generate`, whose
-config directory holds `init.lean` alone. The config must load, with the
-fixture's `expected` and one line more, the information that no lakefile is
-generated; the directory must then hold a `lean-toolchain` that is
-`lean/lean-toolchain` byte for byte, and no `lakefile.toml`: a staged
-bundle holds no package set (`Contents/Resources/lean/set`) for a lakefile
-to require, as the app does not yet. It has a
-time limit of its own, 120 seconds, for copying the executable and the
-module files. Then it checks `editor --version` through `IO.appPath` and
-the real file read (`lean/Editor/Version.lean`): `tests/headless/bundle/
-Info.plist`, which holds only the version, build ID and commit keys with a
-fake stamp, is copied into the staged `Contents/`, and the copy, with an
-empty environment, must print exactly `version-expected`; and the build
-tree's `editor --version`, outside a bundle, must say it is a development
-build. The model tests pin the plist reader and the three outputs against a
-fake file read (`ModelTest.versionChecks`), and `mise run app-check` runs
-the real bundle's `--version` against the real plist.
-
-Since session-restore phase 3 the staged bundle holds **the app's
-launcher** too, `Contents/MacOS/leanmacs` (`crates/editor-launch-std`, built
-by Cargo, release, first), and every run above goes through it with its
-arguments passed through: so its layout rule (the default is the `editor`
-beside it) and its pass-through hold on both legs, and the exec'd editor
-still finds the bundle's modules. Then, with the fixture `Info.plist` in
-place, whose `CFBundleIdentifier` is `org.leanmacs.bundle-test`, **the
-probe**: `leanmacs --probe`, with an empty environment, must print `probe:
-ok`, `launched-by <bundle>/Contents/MacOS/leanmacs` and, on macOS, `bundle
-<bundle> identifier org.leanmacs.bundle-test` (`bundle none` elsewhere);
-and so must `leanmacs --default <dir>/outside/editor -- --probe`, a copy of
-the editor outside the bundle, which an explicit `--default` starts: the
-real editor sees the app as its main bundle from outside it.
+installed editor will find its modules, from a bundle staged as the app
+is, with the whole toolchain ("The bundle test", below).
 
 What the gate checks of drawing, then: frames a bound display publishes
 reach a render loop with the input they answer (`editor-ffi`'s tests,
@@ -1522,8 +1462,8 @@ directory the script makes and removes.
 
   It must print `config-package: generated lakefile.toml and
   lean-toolchain, the config loaded, and a second run wrote nothing`.
-  `bundle-test` has the staged bundle do the same, where no lakefile is
-  generated ("the generated files", above), and `ffi-test
+  `bundle-test` has the staged bundle do the same, where the lakefile
+  names the bundle's own set ("The bundle test", below), and `ffi-test
   window-host-generate` hands the window host a generator on a temporary
   copy of `tests/window/title-bar/config`, which must then hold both files.
 - **The language server** (the same script, then `config-test lsp`,
@@ -1973,6 +1913,63 @@ package's tests are by convention are in
   with no git, says git is required and how to get it, writes nothing in
   the data directory, and still answers the next command; `match`, run
   with `--generate`, starts no build.
+
+## The bundle test
+
+`mise run bundle-test` (`tools/bundle-test.sh`, whose header says each
+step) stages the app bundle's layout in a temporary directory removed by a
+trap and runs its editor as the installed app runs it
+([headless-mode.md](headless-mode.md), "From an app bundle";
+[lean-runtime.md](../design/lean-runtime.md), "Build"):
+
+1. **The stage.** `lake -d ../packages query :editorShipped` lists what the
+   bundle ships of the default set, built: the core's and each default
+   package's sources and build output, the set's and the packages'
+   lakefiles, the core's glue and the Rust archive. `tools/stage-bundle.sh`
+   copies them, the whole Lean toolchain, the editor, the launcher (built
+   by Cargo, release, first) and, on macOS, the link stubs into
+   `Leanmacs.app`, and writes the records `editor.core`, `editor.oleans`
+   and `editor.build` (without `LEAN_CC`) in `Contents/Resources`. Every
+   copy is a clone on APFS; on Linux the toolchain, about 3.1 GB, is
+   copied.
+2. **The pieces.** `lean`, `lake`, `clang` and `ld64.lld` are there and
+   executable, with `Init`, `Std`, `Lean` and `Lake`, `lean.h`, the static
+   libraries, the Rust archive and its system libraries, the core's and
+   each default package's built modules, the core's glue, the set's
+   lakefile and, on macOS, the stubs; it prints `bundle-test: the bundle
+   holds lean, lake, clang, ld64.lld, Init, Std, Lean, the static
+   libraries, the Rust archive, the built core and default packages`.
+3. **The headless runs.** Through the launcher, `Contents/MacOS/leanmacs`,
+   with no directory argument, an empty environment (`env -i`: no `HOME`,
+   `PATH` or `LEAN_PATH`) and a working directory outside the bundle, the
+   bundle's editor runs `tests/headless/bundle`, whose root imports `Lean`
+   and names a declaration of Lean's elaborator, and three fixtures of the
+   default packages: `shipped-themes` and `package-names` of the package
+   `shipped-themes`, and `config` of the package `compile`. Each must
+   print exactly its `expected`, which it can only from the modules the
+   bundle's record names.
+4. **The generated lakefile.** `headless --generate` on a copy of
+   `tests/headless/generate`, whose config directory holds `init.lean`
+   alone, must print exactly its `expected`, write a `lakefile.toml` equal
+   to `tests/headless/generate/expected-lakefile-bundle` with `@SET@` the
+   bundle's `Contents/Resources/lean/set`, and a `lean-toolchain` that is
+   `lean/lean-toolchain` byte for byte. That lakefile names the set the
+   editor was built from, so the reload starts no build.
+5. **The version and the identity.** With `tests/headless/bundle/
+   Info.plist` (the version, build ID and commit keys with a fake stamp)
+   in `Contents/`, `--version` must print exactly `version-expected`, and
+   the build tree's `editor --version` the line of a development build
+   (the plist reader is `ModelTest.versionChecks`'). `leanmacs --probe`
+   must print `probe: ok`, `launched-by <bundle>/Contents/MacOS/leanmacs`,
+   on macOS `bundle <bundle> identifier org.leanmacs.bundle-test` (`bundle
+   none` elsewhere) and `executable <bundle>/Contents/MacOS/editor`; so
+   must `leanmacs --default <dir>/outside/editor -- --probe` for a copy
+   outside the bundle; and with a per-user editor under the bundle's core
+   in a data directory, `leanmacs --data <dir> --probe` must start that
+   one and leave no cold record.
+
+It has a time limit of its own, 600 seconds. On macOS the stage takes
+about 13 s and the whole test about 22 s (2026-11-20, Apple M5 Max).
 
 ## The user sets test
 

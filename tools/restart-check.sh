@@ -169,8 +169,11 @@ for name in x.restart-elsewhere y.restart-bad after.txt after2.txt; do
 done
 
 # A. A cold launch.
+# The bundle's .olean directories are the lines of its record, each under
+# Contents/Resources (lean/Editor/ModuleLookup.lean, "The bundle's record").
+oleans=$(sed "s|^|$copy/Contents/Resources/|" "$copy/Contents/Resources/editor.oleans" | paste -s -d : -)
 open -n -a "$copy" --args --state "$state" --config "$dir/config" \
-  --sysroot "$copy/Contents/Resources/lean/toolchain" --oleans "$copy/Contents/Resources/lean/editor"
+  --sysroot "$copy/Contents/Resources/lean/toolchain" --oleans "$oleans"
 within 30 test -n "$(instances)" || fail "A: no instance of $identifier was listed"
 P=$(only_instance A)
 within 30 index_lists '"run":1' || fail "A: the first run wrote no index"
