@@ -1926,6 +1926,20 @@ package's tests are by convention are in
   archive generated from `editor-ffi` and `echo-service`, and the default
   set's editor the core's ([packages.md](../design/packages.md), "Rust in a
   package").
+- **A set's system libraries come back.** rustc writes the file of system
+  libraries beside a generated crate (`target/editor-rust/<key>/native-static-libs`)
+  only when it runs, so when the file is gone and the archive is fresh the
+  build cleans the generated crate and builds it again (`buildRust` in
+  `lean/lakefile.lean`). `ffi-test` deletes the fixture set's file
+  (`target/editor-rust/echo/native-static-libs`), builds `lake -d
+  ../tests/packages build --wfail :editorRust`, and requires the file back
+  holding the same line, which names `-lz`. It is the one step of
+  `ffi-test` that builds: it runs Cargo alone, on an archive `lean` built,
+  and writes only under `target/`, which `lean-fmt` does not read.
+  **Seen to bite, once each by hand** (2026-11-19): with the clean given a
+  package name that is not the generated crate's, the build fails on
+  `cargo clean`; with no clean at all, it fails with `cargo built
+  editor-rust-echo but rustc wrote no …`; either way the step fails.
 
 ## The Rust bans check
 

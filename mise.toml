@@ -221,6 +221,9 @@ run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xa
 # run beside `lean-fmt`, the other task that waits for `lean`. The one
 # file they may write is the root of the user-side link's set, in that
 # set's own build directory (tests/user-link/.lake), which no other task
+# reads. The one build is of the fixture set's Rust archive, after its
+# file of system libraries is deleted (`:editorRust`), which `lean` built
+# and which runs Cargo alone, writing under target/ and nowhere `lean-fmt`
 # reads.
 # The time limit turns a hang into a failure: a deadlock in the main-thread
 # hand-off, or a process that waits for a task still blocked in the library.
@@ -306,6 +309,15 @@ run = [
   # and the core's own executables do.
   "test \"$(lake -d ../tests/packages query :editorRustCrates | cut -f1,2)\" = \"$(printf 'echo\\techo-service')\"",
   "test -z \"$(lake -d ../packages query :editorRustCrates)\"",
+  # A set's archive comes back with its system libraries when the file that
+  # holds them is gone and the archive is fresh (`buildRust`): rustc writes
+  # the file only when it runs, so the build cleans the generated crate and
+  # builds it again. With the fixture set's file deleted (`lean` built it),
+  # building `:editorRust` must write it back holding the same line, which
+  # names `-lz`, the system library `echo-service`'s zlib needs. It writes
+  # only under target/, which `lean-fmt` does not read, and Cargo locks
+  # that directory.
+  "f=../target/editor-rust/echo/native-static-libs && before=$(cat \"$f\") && rm \"$f\" && lake -d ../tests/packages build --wfail :editorRust && test \"$(cat \"$f\")\" = \"$before\" && grep -qw -- -lz \"$f\" || { echo \"ffi-test: building :editorRust did not write back $f\"; exit 1; }",
   # A package's crate depends on `editor-service` and on nothing else of
   # the editor's, held by cargo-deny's bans over the crate generated from
   # the set, with the `deny.toml` written beside it, in which the generated
