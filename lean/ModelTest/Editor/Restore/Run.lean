@@ -621,6 +621,37 @@ def restoreChecks : List Check :=
               | _, _ => false
             | _, _ => false },
     { name :=
+        "a place kept from an earlier run is never taken for a window of a later run's frame: a format-1 restore keeps the other window's place under its old view id, a split gives a new window that id on another buffer, and the next restore puts every window back on its own buffer"
+      run :=
+        pure <|
+          match first with
+          | none => false
+          | some begun =>
+            -- Window 0 on b.txt, window 1 on a.txt, focused.
+            let split := ran (evilFed (opened begun "b.txt") "x") WindowCommands.splitName
+            let firstRun := drained (evilFed (opened split "a.txt") "x")
+            let unframed (files : FileModel) : FileModel :=
+              match indexOf firstRun 1 with
+              | some document =>
+                withIndex files (indexName 1)
+                  { document with
+                      format := 1, frame := none }.render
+              | none => files
+            match second firstRun unframed with
+            | none => false
+            | some phaseOne =>
+              -- b.txt's place is kept under view 1; the split's window is 1,
+              -- on a.txt.
+              let resplit := drained (ran phaseOne WindowCommands.splitName)
+              match second resplit with
+              | none => false
+              | some again =>
+                let buffers (driver : EvilDriver) : Option (Array String) :=
+                  (viewsOf driver).map (·.map (·.1))
+                phaseOne.loop.state.restore.places.size == 1 &&
+                  buffers resplit == some #["a.txt", "a.txt"] &&
+                  buffers again == buffers resplit },
+    { name :=
         "the version rule end to end: an index of a newer format with unknown keys and a journal with a record of an unknown kind restore what is known, report the rest, and are left byte for byte"
       run :=
         pure <|

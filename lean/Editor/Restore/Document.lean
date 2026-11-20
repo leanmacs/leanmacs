@@ -31,7 +31,10 @@ so), the focused view, and for each buffer kept:
   view's id, the anchor and the head of its primary selection as a row and
   a byte column, its scroll's top row, and its jump list (`jumps`,
   `{"entries":[…],"index":i,"previous":<jump>}`, absent when it has none;
-  `Editor/Restore/Frame.lean`).
+  `Editor/Restore/Frame.lean`), and `run`, absent on a place of a window of
+  the run that wrote the index: on a place a restore read and did not put
+  back, written again (`Kept.places`), the run whose view ids it is under,
+  since view ids are unique only within one run.
 
 Format 2 added, beside the buffers, each absent when there is none:
 
@@ -42,7 +45,8 @@ Format 2 added, beside the buffers, each absent when there is none:
   `{"owner":o,"name":n,"version":v,"value":<value>}`, the value a plain
   tree's JSON (`Editor/Restore/Value.lean`);
 - `jobs`: the reported jobs running when it was written, each
-  `{"owner":o,"name":n,"key":k}`, `key` absent for a job with none.
+  `{"owner":o,"name":n,"key":k}`, `key` absent for a job with none;
+- and in a place, `run`.
 
 Nothing of format 1 changed shape or meaning. The number moved to 2 so that
 a format-1 editor reads a format-2 index leniently, naming the keys it does
@@ -149,7 +153,8 @@ def Place.toJson (place : Place) : Json.Value :=
   .object <|
     #[("view", Journal.natJson place.view), ("anchor", place.anchor.toJson),
         ("head", place.head.toJson), ("top", Journal.natJson place.top)] ++
-      optionalMember "jumps" (place.jumps.map (·.toJson))
+      optionalMember "jumps" (place.jumps.map (·.toJson)) ++
+      optionalMember "run" (place.run.map Journal.natJson)
 
 /-- A running job as JSON. -/
 def RunningJob.toJson (job : RunningJob) : Json.Value :=
@@ -220,7 +225,10 @@ def Place.ofJson? (value : Json.Value) : Option Place := do
   return {
       view := ← Journal.natField? value "view", anchor := ← Spot.ofJson? (← value.field? "anchor")
       head := ← Spot.ofJson? (← value.field? "head"), top := ← Journal.natField? value "top"
-      jumps := ← optionalField? value "jumps" Jumps.Record.ofJson? }
+      jumps := ← optionalField? value "jumps" Jumps.Record.ofJson?
+      run := ← optionalField? value "run" fun
+          | .number run => run.toNat?
+          | _ => none }
 
 /-- An optional string member: `some none` when absent, `none` when it is
 there and not a string. -/

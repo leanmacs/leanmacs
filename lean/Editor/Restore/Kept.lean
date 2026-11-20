@@ -50,6 +50,12 @@ structure Place where
   top : Nat
   /-- Its jump list and previous-context mark, when it has either. -/
   jumps : Option Jumps.Record := none
+  /-- The run whose view ids `view` is one of, when it is not the run of
+  the index that holds the place: a place a restore read and did not put
+  back, written again (`Kept.places`). View ids are unique only within one
+  run, so a restore matches only its index's own places, those with none,
+  to the focused view and to the frame's views. -/
+  run : Option Nat := none
   deriving DecidableEq, Repr, Inhabited
 
 /-- The live journal of one buffer: what generation it is, and how far it
@@ -80,6 +86,9 @@ structure Kept.Places where
   revision : Nat
   /-- The places. -/
   places : Array Place
+  /-- The run of the index they were read from: the run whose view ids
+  they are, unless a place names an earlier one (`Place.run`). -/
+  run : Nat := 0
   deriving DecidableEq, Repr
 
 /-- A major mode a restore could not set because no mode of its name was
@@ -110,6 +119,8 @@ structure Kept.Reopen where
   language : Option String := none
   /-- The places of its windows. -/
   places : Array Place := #[]
+  /-- The run of the index it is of, whose view ids its places are. -/
+  run : Nat := 0
   deriving DecidableEq, Repr
 
 /-- What the first half of a restore read and the second is to finish

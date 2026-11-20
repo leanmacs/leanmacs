@@ -65,7 +65,8 @@ The index holds, for each buffer that holds a file and each buffer
 journalled, its file, line ending, modes, live journal and the place of
 each window on it (`Restore.Place`), with its jump list; and the places a
 restore read that it did not put back, while the buffer's text has not
-moved since (`Kept.places`). Beside the buffers it holds the frame's tabs
+moved since (`Kept.places`), each with the run whose view ids it is under
+(`Place.run`). Beside the buffers it holds the frame's tabs
 and windows (`Frame.Record.of`, `Editor/Restore/Frame.lean`), and what the
 reconciler mirrors: the workspace table's cells kept across a restart with
 the parked ones (`Kept.table`, `Kept.parked`), the declared stores' cells
@@ -202,10 +203,14 @@ def Document.of (state : EditorState) (run : Nat) (ended : Bool := false) : Text
         if let .ok (some place)← observing (placeOf state buffer.text window) then
           views := views.push place
     -- The places a restore read and did not put back, as they were read:
-    -- their views' ids are the earlier run's.
+    -- their views' ids are an earlier run's, which each names.
     for entry in kept.places do
       if entry.buffer == index && entry.revision == buffer.history.head then
-        views := views ++ entry.places
+        views :=
+          views ++
+            entry.places.map fun place =>
+              { place with
+                run := place.run <|> some entry.run }
     buffers :=
       buffers.push
         { key := index, name := buffer.name

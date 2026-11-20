@@ -1283,7 +1283,8 @@ Session restore is checked in Lean alone too:
   an unmodified file reopened and a gone one said; journals of a run with no
   index, one with no header, and two of one name; the new bases before the
   stale files' removal; the other windows put back with the frame, or,
-  from an index with none, their places kept and written again; the
+  from an index with none, their places kept and written again, and never
+  taken for a later run's window of the same view id; the
   version rule end to end; a mode only config registers deferred until it
   installs, or said when it does not register it; a cursor after a
   multi-byte character put back where it was; and phase 2's: (a) windows

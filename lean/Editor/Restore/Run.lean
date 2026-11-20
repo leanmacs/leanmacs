@@ -72,7 +72,11 @@ its command, since only a command can read what a job loaded.
   or a refusal of the state falls back to the placement above, said, every
   marker made for it given up. With no frame (a format-1 index) the other
   windows' places are kept (`Kept.places`), and written again in the index
-  while their buffer's text does not move. It hands the host the index's
+  while their buffer's text does not move, each naming the run whose view
+  ids it is under (`Place.run`): view ids are unique only within a run, so
+  the focused view and the frame's views are looked up among the index's
+  own places alone, and a kept place is never taken for a window of a later
+  run. It hands the host the index's
   declared stores' cells (`restoreCells`): config's as they are, to be
   parked until config installs, a package's met with its codec, and any
   other's dropped, said. Each reported job the index says was running is
@@ -263,6 +267,9 @@ def read (loaded : Loaded) : EditorM Unit := do
     choice.restored.bind fun document =>
       if document.run == journalRun then document.buffers.find? (·.key == key) else none
   let focused := choice.restored.bind (·.focused)
+  -- The focused view's place: one of the index's own, never one an earlier
+  -- run's ids are under (`Place.run`).
+  let ownFocused (place : Place) : Bool := place.run.isNone && some place.view == focused
   let mut pending : Kept.Pending :=
     { run, staleIndexes := choice.remove.map (indexPath loaded.directory)
       frame := choice.restored.bind (·.frame), jobs := (choice.restored.map (·.jobs)).getD #[]
@@ -354,12 +361,14 @@ def read (loaded : Loaded) : EditorM Unit := do
         { pending with
           deferred := pending.deferred ++ (← setModes id entry.major entry.minors entry.language) }
       let revision ← (buffer.text.revision : TextM Nat)
-      let others := entry.views.filter fun place => some place.view != focused
+      let others := entry.views.filter fun place => !ownFocused place
       if !others.isEmpty then
         pending :=
           { pending with
-            places := pending.places.push { buffer := id.index, revision, places := others } }
-      if let some place := entry.views.find? (some ·.view == focused) then
+            places :=
+              pending.places.push
+                { buffer := id.index, revision, places := others, run := group.run } }
+      if let some place := entry.views.find? ownFocused then
         pending := { pending with focusBuffer := some (id.index, place) }
       restoredKeys := restoredKeys.push entry.key
       pending := { pending with keys := pending.keys.push (entry.key, id.index) }
@@ -375,7 +384,7 @@ def read (loaded : Loaded) : EditorM Unit := do
     if restoredKeys.contains entry.key then
       continue
     let some file := entry.file | continue
-    if let some place := entry.views.find? (some ·.view == focused) then
+    if let some place := entry.views.find? ownFocused then
       pending := { pending with focusReopen := some (pending.reopen.size, place) }
     pending :=
       { pending with
@@ -383,7 +392,8 @@ def read (loaded : Loaded) : EditorM Unit := do
           pending.reopen.push
             { key := entry.key, path := file.path, major := entry.major, minors := entry.minors
               language := entry.language
-              places := entry.views.filter fun place => some place.view != focused } }
+              places := entry.views.filter fun place => !ownFocused place
+              run := (choice.restored.map (·.run)).getD 0 } }
     loads := loads ++ [.str file.path]
   pending := { pending with report := report }
   setKept
@@ -683,7 +693,7 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
           places :=
             places.push
               { buffer := id.index, revision := ← (buffer.text.revision : TextM Nat),
-                places := entry.places }
+                places := entry.places, run := entry.run }
     | .error .notFound =>
       reopened := reopened.push none
       report := report.push s!"{entry.path}: gone from disk: it is not restored"
@@ -702,13 +712,16 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
     if let .ok ()← view.show buffer then
       placeIn view buffer place
   -- The frame, every window of every tab: each view's buffer and place are
-  -- its buffer's in the index.
+  -- its buffer's in the index, among the index's own places only, since a
+  -- place kept from an earlier run is under that run's view ids
+  -- (`Place.run`).
+  let own (places : Array Place) : Array Place := places.filter (·.run.isNone)
   let placed : Array (Nat × BufferId × Place) :=
     pending.places.flatMap
-        (fun entry => entry.places.map fun place => (place.view, ⟨entry.buffer⟩, place)) ++
+        (fun entry => (own entry.places).map fun place => (place.view, ⟨entry.buffer⟩, place)) ++
       ((pending.reopen.zip reopened).flatMap fun (entry, id) =>
         match id with
-        | some id => entry.places.map fun place => (place.view, id, place)
+        | some id => (own entry.places).map fun place => (place.view, id, place)
         | none => #[]) ++
       (focus.map fun (buffer, place) => #[(place.view, buffer, place)]).getD #[]
   let mut frameRestored := false

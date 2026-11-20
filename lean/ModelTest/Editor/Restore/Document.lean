@@ -37,19 +37,23 @@ def newerText : String :=
   "{\"format\":99,\"run\":5,\"ended\":false,\"layouts\":[1,2],\"buffers\":[{\"key\":0,\"name\":\"b.txt\",\"lineEnding\":\"lf\",\"folds\":[],\"views\":[]},{\"key\":\"x\"}]}"
 
 /-- `sample` with every key format 2 added: a frame, the workspace table, a
-declared store's cell, a running job, and a view's jumps. -/
+declared store's cell, a running job, a view's jumps, and a place kept
+from an earlier run. -/
 def full : Document :=
   { sample with
     buffers :=
       sample.buffers.modify 0 fun buffer =>
         { buffer with
           views :=
-            buffer.views.modify 0 fun place =>
+            (buffer.views.modify 0 fun place =>
+                { place with
+                  jumps :=
+                    some
+                      { entries := #[.kept 1 0 2, .file "/r/b.txt" 4 0], index := 1
+                        previous := some (.kept 0 3 3) } }).modify
+              1 fun place =>
               { place with
-                jumps :=
-                  some
-                    { entries := #[.kept 1 0 2, .file "/r/b.txt" 4 0], index := 1
-                      previous := some (.kept 0 3 3) } } }
+                run := some 1 } }
     frame :=
       some
         { selected := 1, chosen := some .monocle
@@ -106,7 +110,7 @@ def restoreDocumentChecks : List Check :=
                 "session-5.json: buffer 0: the key folds is not known",
                 "session-5.json: buffer entry 2 does not parse and is skipped"] },
     { name :=
-        "an index of format 2 with every key it added round-trips: the frame, the workspaces, the stores, the jobs and a view's jumps, with nothing to say"
+        "an index of format 2 with every key it added round-trips: the frame, the workspaces, the stores, the jobs, a view's jumps and a kept place's run, with nothing to say"
       run :=
         pure <|
           let read := readAs "session-3.json" full.render
@@ -146,13 +150,13 @@ def restoreDocumentChecks : List Check :=
               format := 1, frame := none, workspaces := none, stores := #[], jobs := #[]
               buffers :=
                 full.buffers.map fun buffer =>
-                  { buffer with views := buffer.views.map ({ · with jumps := none }) } }
+                  { buffer with views := buffer.views.map ({ · with jumps := none, run := none }) } }
           let read := readAs "session-3.json" stripped.render
           let plain := readAs "session-3.json" full.render
           (read.document.map (·.buffers)) ==
               (plain.document.map fun document =>
                 document.buffers.map fun buffer =>
-                  { buffer with views := buffer.views.map ({ · with jumps := none }) }) &&
+                  { buffer with views := buffer.views.map ({ · with jumps := none, run := none }) }) &&
             read.report.isEmpty },
     { name :=
         "a store or a job entry that does not parse is skipped and said, and a frame or workspaces that do not parse are read as none and said"
