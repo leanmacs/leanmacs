@@ -22,6 +22,11 @@ two default packages, `shipped-themes` (`packages/shipped-themes/`) and
 `compile` (`packages/compile/`). This document draws the lines later moves
 cut along.
 
+What a package author and a user read is in `docs/packages/`: the guide
+to writing a package ([writing-a-package.md](../packages/writing-a-package.md))
+and the guide to installing, updating and removing them
+([installing-packages.md](../packages/installing-packages.md)).
+
 ## The core and its root
 
 **The core** is every module under `lean/Editor/`. Between phase 3, which
@@ -782,7 +787,7 @@ guide quotes.
 | `tests/packages/greeting/` | The Lake package `greeting`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean`), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting` and registers `greeting-reply` again with another text; its test driver and the fixture `tests/headless/reply` |
 | `tests/packages/echo/` | The Lake package `echo`, which holds Rust ("Rust in a package", below): its crate `echo-service` (`rust/`), its glue (`ffi/glue.c`), the port of its service with a pure model, a contract and the Rust-backed binding, its test driver (`EchoTest/Model.lean`) and its linked test (`EchoTest/Linked.lean`). It registers no package |
-| `docs/packages/word-count/` | The Lake package `word-count`, the example the guide to writing a package (`docs/packages/writing-a-package.md`) quotes: the command `word-count` (`WordCount.lean`), its entry module, its test driver (`WordCountTest/Model.lean`, which runs `WordCountTest/WordCount.lean`) and three fixtures: `count`, the command compiled in; `as-config`, the same code as a config file; and `from-config`, a config that imports the package's module. It has no linked test |
+| `docs/packages/word-count/` | The Lake package `word-count`, the example the guide to writing a package ([writing-a-package.md](../packages/writing-a-package.md)) quotes: the command `word-count` (`WordCount.lean`), its entry module, its test driver (`WordCountTest/Model.lean`, which runs `WordCountTest/WordCount.lean`) and three fixtures: `count`, the command compiled in; `as-config`, the same code as a config file; and `from-config`, a config that imports the package's module. It has no linked test |
 
 - **A package outside the core is built by the package-set build and its
   command runs.** The fixture set's editor prints `run greeting-hello: ok`
