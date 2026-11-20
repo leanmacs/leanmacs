@@ -235,7 +235,11 @@ origin; hotspots and churn are not built.
   built, the order is tests first, then by file dependency, among files
   that are ready the one that changes more lines first
   (`orderFiles`, `lean/Editor/VersionControl/ReviewHunks.lean`), until
-  rdm:roadmap/acp-agents can order by plan step. The rounds the review
+  rdm:roadmap/acp-agents can order by plan step. The path guess for tests
+  is to be replaced by commit order and an optional `review.isTest` in
+  the config, not a classifier per language
+  ([review-interface.md](review-interface.md#4-the-change-stack-vc-review-grouped)).
+  The rounds the review
   keeps, each hunk's decision and what was viewed of it, are what the
   order will be measured from.
 - **Provenance storage**: the edit log is in memory. How is per-edit origin

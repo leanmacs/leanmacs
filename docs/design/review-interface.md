@@ -409,8 +409,34 @@ built from, so what the owner read is what they can show someone else.
 
 ### 4. The change stack (`vc-review`, grouped)
 
-`vc-review` already orders hunks, tests first and then by dependency. The
-proposal groups them and says why:
+`vc-review` already orders hunks, tests first and then by dependency. Its
+test rule (`isTest`) guesses from the path, and the guess misses this
+repository's own tests (`lean/ModelTest/...`, a Rust `<module>/tests.rs`,
+an inline `#[cfg(test)] mod tests`). A classifier for every language
+cannot be kept up, and a wrong guess that does not say so is worse than
+none. So the editor does not classify tests. It orders by history:
+
+- **Plan step, then commit.** Agent work is test-first (AGENTS.md), so a
+  step's failing-test commit comes before the code that passes it.
+  Showing each hunk in the order of the commit that introduced it puts
+  the promise before the implementation in any language, inline test
+  modules included, with nothing to classify. A hunk's commit comes from
+  git (the branch's blame against the merge base). Steps come from the
+  `Plan-Step:` trailer, or from matching commit subjects to the plan's
+  "TDD order and commits" until the trailer exists.
+- **Without that history** (a squashed change, someone else's branch, a
+  forge PR), there is no promise-before-how order to recover, and the
+  editor does not pretend: files go by dependency, and the brief or the
+  PR description comes first.
+- **A project that wants tests grouped** supplies a function in its
+  config, `review.isTest : Path → Bool`. With it, tests come first within
+  each group; without it, nothing is guessed. The knowledge of a
+  language's test layout lives in the project's config, not in the
+  editor.
+- Where a change has no tests for a scenario, that is a finding (the
+  `untested` reason), not something the order hides.
+
+The proposal groups the hunks and says why:
 
 - **Groups ("cohorts")** in this order of preference:
   1. By plan step, from the edit log's origin once
@@ -421,7 +447,8 @@ proposal groups them and says why:
   3. Otherwise by file dependency, as now.
 - **Each group's header states its rule**: `step 2 · "parse the config
   header" · 3 hunks · callee before caller`. Within a group, a callee
-  comes before its callers and a test comes before what it tests.
+  comes before its callers, and the header names the rule that ordered
+  the group (`plan step`, `commit order`, `config isTest`, `dependency`).
 - **Side by side**: a group's hunks are one excerpt buffer, so a
   definition and its uses are on one screen. A neighbour strip shows the
   callers of a changed function that the change did *not* touch,
