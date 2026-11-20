@@ -96,8 +96,8 @@ none:
   refused and reset (`store <name>: <why>`), and the names dropped. Until
   then they are carried into every index written.
 - **The jobs** are the reported jobs running, as the host last handed them,
-  and how many other jobs run, a count only (`otherJobs`): those the
-  registry does not report, the restore's own left out.
+  and how many other jobs run, a count only (`otherJobs`): config's jobs
+  the registry does not report.
 - **The held layout** (`Kept.heldLayout`), which a restore sets so that the
   host's default does not rearrange the layout it put back, is let go once
   the config generation is past it (`Loop.publish`, `Editor/Loop.lean`).
@@ -166,14 +166,18 @@ def saveJob : String :=
 def modesName : String :=
   "restore-modes"
 
-/-- How many of the jobs running, by their names `names`, the index counts
-as other jobs (`Document.otherJobs`): those the registry does not report
-(`reported`), the restore's own jobs left out, since they are the
-session's own reading and writing, and the next start runs its own. What a
-host hands the reconciler (`Loop.Keys.otherJobs`). -/
-def otherJobs (reported : String → Bool) (names : Array String) : Nat :=
-  (names.filter fun name =>
-      !reported name && ![restoreJob, filesJob, writeJob, saveJob].contains name).size
+/-- How many of the jobs running, each its owner's name and its name
+(`jobs`), the index counts as other jobs (`Document.otherJobs`): config's
+jobs the registry does not report (`reported`). A package's job is
+reported when a person waits on it (`workJob … (reported := true)`), and
+otherwise its reconciler starts it again or it is not missed, as its
+package decided when it registered it: its watchers, reads and the
+restore's own jobs among them, which would otherwise be counted at every
+restart. Config's jobs are the user's, which no one sorted that way, so
+each one running is counted. What a host hands the reconciler
+(`Loop.Keys.otherJobs`). -/
+def otherJobs (reported : String → Bool) (jobs : Array (String × String)) : Nat :=
+  (jobs.filter fun (owner, name) => owner == Config.Owner.config.name && !reported name).size
 
 /-- A journal order: a file request the host hands the file service with
 nothing to wait for, and the snapshot to release once it is handed. -/

@@ -1568,9 +1568,9 @@ structure Loop.Keys (scheme : InputScheme) where
   its owner, name and key: what the session index lists, which the next
   start's restore reports as stopped. -/
   running : Array Restore.RunningJob := #[]
-  /-- How many other jobs are running now (`Restore.otherJobs`): those not
-  reported, the restore's own left out, which the session index counts
-  and the next start's restore says were stopped. -/
+  /-- How many other jobs are running now (`Restore.otherJobs`): config's
+  not reported, which the session index counts and the next start's
+  restore says were stopped. -/
   otherJobs : Nat := 0
 
 /-- How a command the loop ran ended. -/

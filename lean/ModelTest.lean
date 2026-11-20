@@ -1277,7 +1277,7 @@ Session restore is checked in Lean alone too:
   registers no codec for dropped, said once, and gone from the next index;
   one whose codec refuses its value reset and the loss said; a reported
   job's start and end each change the jobs listed; and so does the count
-  of other jobs.
+  of other jobs, config's not reported alone.
 - `restoreChecks`: restoring a session (`Editor/Restore/Run.lean`) on that
   driver, from what a first loop wrote or a check wrote by hand: buffers,
   texts, line endings, modes and the focused cursor come back; a file
@@ -1295,9 +1295,9 @@ Session restore is checked in Lean alone too:
   restore, (h) a frame refused falling back to phase 1's placement, (i) a
   window of a buffer not kept showing scratch, said, (e) the workspace
   table and (f) its stores, met, never written or parked and claimed, (g)
-  a reported job said stopped and the other jobs counted, the restore's
-  own never, other jobs alone counted, and (j) a package's declared store
-  met with its codec.
+  a reported job said stopped and the host's count of other jobs said,
+  other jobs alone counted, and (j) a package's declared store met with its
+  codec.
 
 Listing a workspace's files is checked in Lean alone too:
 

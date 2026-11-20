@@ -370,7 +370,7 @@ def restoreChecks : List Check :=
                 installed.loop.state.workspaces.unscopedValue? "later" == some (.nat 5) &&
                 installed.loop.state.restore.parked.isEmpty },
     { name :=
-        "(g) a reported job running at the write is named in *restore* as stopped by the restart, the other jobs running are counted there, and the summary counts them all; a job the registry does not report is not handed by name but counted, and the restore's own jobs are not counted"
+        "(g) a reported job running at the write is named in *restore* as stopped by the restart, the other jobs running are counted there, and the summary counts them all; a job the registry does not report is not handed by name, and the count is the host's"
       run :=
         pure <|
           match first with
@@ -388,11 +388,10 @@ def restoreChecks : List Check :=
               { id := 9, name, outcome := .cancelled, key := some name }
             let handed :=
               ({ begun with
-                    pending :=
-                      #[pendingJob "waited", pendingJob "watched", pendingJob writeJob,
-                        pendingJob saveJob]
+                    pending := #[pendingJob "waited", pendingJob "watched"]
                     keys :=
                       { begun.keys with
+                        otherJobs := 4
                         registered :=
                           { begun.keys.registered with reported := (· == "waited") } } } :
                   EvilDriver).handed
@@ -408,7 +407,7 @@ def restoreChecks : List Check :=
                 again.loop.state.echo ==
                   s!"restore: 1 buffers, 1 with unsaved text; 3 jobs stopped; see {reportName}" &&
                 handed.running.map (·.name) == #["waited"] &&
-                handed.otherJobs == 1 },
+                handed.otherJobs == 4 },
     { name :=
         "other jobs running at the write with no reported one are counted in *restore* and in the summary"
       run :=

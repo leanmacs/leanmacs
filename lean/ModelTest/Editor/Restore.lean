@@ -250,6 +250,14 @@ def journalReconcileChecks : List Check :=
             (indexOf started 1).map (·.jobs) == some #[job] &&
               (indexOf ended 1).map (·.jobs) == some #[] },
     { name :=
+        "the other jobs counted are config's not reported: config's reported job, and a package's job reported or not, are not"
+      run :=
+        pure <|
+          Restore.otherJobs (· == "waited")
+              #[("config", "mine"), ("config", "waited"), ("config", "theirs"),
+                ("files", "follow-file"), ("shell", "waited"), ("restore", writeJob)] ==
+            2 },
+    { name :=
         "how many other jobs run, not reported, is a count the index lists, changed by their start and their end"
       run :=
         pure <|
