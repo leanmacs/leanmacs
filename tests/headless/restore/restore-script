@@ -1,0 +1,11 @@
+# Run after `abort-script` with the same `--state`: the restore runs first
+# and the requests below wait for it. The file's buffer comes back with the
+# text typed before the abort, modified, in the window, with the cursor the
+# last index recorded. Once restored, the session index changes and its
+# write waits on the clock: `advance` fires it and `join` waits for every
+# job, so the lines below are in one order.
+settle
+advance 500
+join
+show
+scene

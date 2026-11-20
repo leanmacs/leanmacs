@@ -1,0 +1,8 @@
+# Run with `--state` holding `newer/`: an index of format 99 with keys this
+# editor does not know, and a journal whose log has a record of a kind it
+# does not know. What is known is restored, the report says the rest, and
+# the editor starts; afterwards both files are as they were, byte for byte.
+settle
+advance 500
+join
+show

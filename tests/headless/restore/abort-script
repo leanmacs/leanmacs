@@ -1,0 +1,25 @@
+# A template of a script: `mise run ffi-test` copies `note.txt` into a
+# temporary directory, writes this file there with `@FILE@` replaced by the
+# copy's absolute path, and runs it with `--state` naming a fresh directory
+# beside it. It opens the file, types in insert state, waits until the
+# journal's writes are worked (`journalled`) and aborts: the process ends
+# with the status 134 and no shutdown. `restore-script`, run next with the
+# same `--state`, restores what was typed.
+
+# The restore is first, and finds nothing. `:e` opens the file; its load is
+# a job, and once it has made the buffer the session index changes, so a
+# write of it waits on the clock: `advance` fires it and `join` waits for
+# both.
+key : Semicolon shift
+commit e @FILE@
+key <Enter> Enter -
+advance 500
+join
+
+# Typed in insert state: each key is one record of the file's journal.
+key i KeyI -
+key x KeyX -
+key y KeyY -
+key <Escape> Escape -
+journalled
+abort

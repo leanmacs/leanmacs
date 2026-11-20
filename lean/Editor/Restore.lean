@@ -166,7 +166,9 @@ def placeOf (text : TextId) (window : Window) : TextM (Option Place) := do
       top := (← spotOf text scroll.offset).row }
 
 /-- The index of `state` now, for the run `run` ("The index", in the module
-docs). -/
+docs). The focused view is the selected one (`EditorState.selectedView`): a
+prompt's asker while a prompt is open, so opening one changes nothing of
+the index. -/
 def Document.of (state : EditorState) (run : Nat) (ended : Bool := false) : TextM Document := do
   let kept := state.restore
   let mut buffers := #[]
@@ -195,7 +197,7 @@ def Document.of (state : EditorState) (run : Nat) (ended : Bool := false) : Text
             (kept.journals.find? (·.buffer == index)).map fun journal =>
               { key := index, generation := journal.generation }
           views }
-  return { run, ended, focused := some state.frame.focused.index, buffers }
+  return { run, ended, focused := some state.selectedView.index, buffers }
 
 /-- What the reconciler hands back: the state with what it keeps, the
 journal's orders, the jobs to start and the invocations to run. -/

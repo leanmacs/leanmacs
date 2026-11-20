@@ -1,0 +1,25 @@
+# A template of a script, run with `--state` naming a fresh directory: the
+# file is opened, edited, saved with `:w` and the editor quits with `:q`,
+# a clean end. Afterwards the journals' directory is empty and this run's
+# index says it ended; `restore-script` run next restores nothing.
+key : Semicolon shift
+commit e @FILE@
+key <Enter> Enter -
+advance 500
+join
+key i KeyI -
+key z KeyZ -
+key <Escape> Escape -
+advance 500
+join
+# The save is a job, and once it has written the file the index changes
+# with the file's stamp: `advance` fires that write and `join` waits for
+# both.
+key : Semicolon shift
+commit w
+key <Enter> Enter -
+advance 500
+join
+key : Semicolon shift
+commit q
+key <Enter> Enter -
