@@ -21,7 +21,9 @@ A restore check's directory is removed only once its journal has drained
 loop hands the stale index's remove to the file service as its last order,
 unobserved, and nothing else waits for it, so without the drain that remove
 can land while the directory is being removed, which then fails. The first
-check pins the drain with a journal that holds its orders (`HeldJournal`).
+two checks pin the drain with a journal that holds its orders (`HeldJournal`),
+the second when the body throws; the third pins that a journal that does
+not drain fails the check.
 -/
 
 namespace ContractTest
@@ -188,6 +190,37 @@ def restoreRunChecks (services : Job.Services) : List Check :=
           throw <|
               IO.userError
                 s!"the scaffold returned {held}, worked {events}, left the directory {if gone then "gone" else "there"} and {left.size} orders held"
+        return true },
+    { name :=
+        "a restore check's journal is drained even when its body throws: the scaffold rethrows the body's error, and a remove the body handed out before throwing is worked"
+      run := do
+        let journal ← HeldJournal.new
+        let used ← IO.mkRef (none : Option System.FilePath)
+        let outcome ←
+          try
+            discard <|
+                withJournalledDirectory journal.journal.drained fun directory => do
+                  let stale := directory / "session-1.json"
+                  IO.FS.writeFile stale "{}"
+                  journal.journal.perform { request := .remove stale }
+                  used.set (some directory)
+                  throw <| IO.userError "the body failed"
+            pure "returned"
+          catch error =>
+            pure s!"threw {error}"
+        let some directory ← used.get | return false
+        let events ← journal.events.get
+        let expected := #[s!"worked remove {directory / "session-1.json"}"]
+        unless outcome == "threw the body failed" && events == expected do
+          throw <| IO.userError s!"the scaffold {outcome} and worked {events}"
+        return true },
+    { name :=
+        "a restore check whose journal does not drain fails: the scaffold returns false though its body held"
+      run := do
+        let stuck : Journal := { perform := fun _ => pure (), drained := return false }
+        let held ← withJournalledDirectory stuck.drained fun _ => return true
+        if held then
+          throw <| IO.userError "the scaffold returned true though its journal did not drain"
         return true },
     { name :=
         "typing in a file's buffer is journalled by the library's file service, the base and the log on disk replaying to the text; a second loop over the same state directory, with no shutdown between, restores the buffer modified, at its file"
