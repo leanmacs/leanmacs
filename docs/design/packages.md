@@ -801,6 +801,11 @@ The core's API is the set of core modules a package may name in an `import`
 line. It is defined by a rule over the module map, and each row of the map
 says which side of the rule its modules are on.
 
+This is the rule as built. As the remaining features move out it becomes
+three layers, the core, interface packages and implementation packages,
+with no package importing an implementation package
+([extension-points.md](extension-points.md), "Three layers").
+
 - **A package may import any core module that is not internal.** The rule
   is about `import` lines. Lean's imports are transitive, so a module an
   importable module imports is visible to the package's code whether or not
