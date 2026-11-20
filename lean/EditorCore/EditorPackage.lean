@@ -12,6 +12,7 @@ import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.ModeLine.Compiled
 import Editor.ProjectSearch.Compiled
+import Editor.Restore.Compiled
 import Editor.Shell.Compiled
 import Editor.TabCommands.Compiled
 import Editor.Themes.Compiled
@@ -87,6 +88,9 @@ language table read as they did:
 - `project-search` and `working-set` come after `workspace`: project
   search reads the workspace's rule of what is searched, and their
   commands follow the workspace's in the command prompt;
+- `restore` comes after `working-set` and before `shell`: like project
+  search and the working sets it keeps state under the state directory,
+  and what it registers follows the workspace's;
 - `ex` comes before `version-control`: each binds its own ex names, and
   the ex names' completion lists them in the order they were bound, the
   `ex` package's first;
@@ -113,7 +117,8 @@ def packages : Array Package :=
   #[Completion.package, ModeLine.package, Files.package, Minibuffer.package, Evil.package,
     Ex.package, Buffers.package, FrameCommands.package, Menu.package, WindowCommands.package,
     TabCommands.package, Themes.package, ExecuteCommand.package, BindingSearch.package,
-    Workspace.package, ProjectSearch.package, WorkingSet.package, Shell.package, AtPoint.package,
+    Workspace.package, ProjectSearch.package, WorkingSet.package, Restore.package, Shell.package,
+    AtPoint.package,
     VersionControl.package, VersionControl.gutterPackage, Language.package]
 
 end EditorCore.EditorPackage

@@ -24,7 +24,7 @@ register. -/
 def shippedPackageNames : Array String :=
   #["completion", "mode-line", "files", "minibuffer", "evil", "ex", "buffers", "frame-commands",
     "menu", "window-commands", "tab-commands", "themes", "execute-command", "binding-search",
-    "workspace", "project-search", "working-set", "shell", "at-point", "version-control",
+    "workspace", "project-search", "working-set", "restore", "shell", "at-point", "version-control",
     "version-control-gutter", "languages"]
 
 /-- The checks of the packages of the core's Lake package
@@ -32,15 +32,15 @@ def shippedPackageNames : Array String :=
 every package of it is accepted, and what it registers is all theirs. -/
 def packageSetChecks : List Check :=
   [{  name :=
-        "every package of the shipped set is accepted, and their names are the 22 of the package table, each once, in its order, with no package of the shipped palettes and none of the compile mode among them"
+        "every package of the shipped set is accepted, and their names are the 23 of the package table, each once, in its order, with no package of the shipped palettes and none of the compile mode among them"
       run :=
         let (state, refused) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
         pure
           (refused == #[] &&
             EditorCore.EditorPackage.packages.map (·.name) == shippedPackageNames &&
-            shippedPackageNames.size == 22 &&
-            shippedPackageNames.toList.eraseDups.length == 22 &&
+            shippedPackageNames.size == 23 &&
+            shippedPackageNames.toList.eraseDups.length == 23 &&
             !shippedPackageNames.contains "shipped-themes" &&
             !shippedPackageNames.contains "compile" &&
             state.packages == shippedPackageNames &&

@@ -10,6 +10,7 @@ import Editor.Invocation
 import Editor.JumpList
 import Editor.Layout
 import Editor.Marks
+import Editor.Restore.Kept
 import Editor.Scene
 import Editor.State.Outbox
 import Editor.TabBar
@@ -1117,7 +1118,7 @@ and moving are `Editor/JumpList.lean`'s and `Editor/Jumps.lean`'s.
 | What commands remember for the whole editor from one command to the next, to put back or repeat (a register, the last find, the last search) | A field of `EditorState.Remembered` ("What commands remember"), set by an operation here and read through one |
 | The whole editor, set and read on its own (the scroll margin, the pending key prefix, a command's choice of auto-reload, asked to quit, the order buffers were used in) | A field of `EditorState` |
 | What the last publish was handed or measured, or drew itself (the row heights, the padding, when the tab bar shows, the tab bar's and the candidate list's views) | A field of `EditorState`, set by a publish (`Loop.publish`, `Editor/Loop.lean`) |
-| What a reconciler of the loop keeps in step after each publish (the files followed for auto-reload, the gutter's tracked files and watched repositories, the open prompt's job keys) | A field of `EditorState` beside `following`, `tracked`, `refWatches` and `completionKeys`, written by that reconciler |
+| What a reconciler of the loop keeps in step after each publish (the files followed for auto-reload, the gutter's tracked files and watched repositories, the open prompt's job keys, the session's journals) | A field of `EditorState` beside `following`, `tracked`, `refWatches`, `completionKeys` and `restore`, written by that reconciler; its type plain data here, or in a leaf module this one imports (`Editor/Restore/Kept.lean`) |
 | One checkout or one codebase (compilation state, command history) | A value in a workspace's or a project's store (`Workspace.Table`) |
 | The open prompt (what completes it, what it has shown) | A field of `Prompt` |
 | What the user sees of it | A field of the scene (`Editor/Scene.lean`), filled in `Loop.scene`, or in `Loop.views` for a field of a view (`Editor/Loop.lean`) |
@@ -2179,6 +2180,10 @@ structure EditorState where
   /-- The repositories whose `HEAD` and index the version-control gutter
   watches. -/
   refWatches : Array RefWatch := #[]
+  /-- What the session's reconciler keeps (`Editor/Restore.lean`): this run's
+  number once restored, each buffer's live journal, and the index last
+  written. -/
+  restore : Restore.Kept := {}
   /-- The workspaces and projects of the session, with their stores, and
   each directory's cached answer ("Workspaces", in the module docs). -/
   workspaces : Workspace.Table := {}

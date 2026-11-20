@@ -1,0 +1,271 @@
+import ModelTest.Check
+import ModelTest.Support.Restore
+
+/-!
+# Model tests: `Editor/Restore.lean`
+
+The model tests of `Editor/Restore.lean`: `journalReconcileChecks`, on the
+loop's driver over the editor's models and the job model, with the state
+directory `/state`. Each reads what the journal's orders left in the file
+model, decoded and replayed. The root module `ModelTest` runs them; its
+module doc says what each shows.
+-/
+
+namespace ModelTest
+
+open Editor
+open Editor.Restore
+open WorkingSetTest
+open RestoreTest
+
+namespace JournalReconcileTest
+
+/-- The key strings that type `text` in insert state from normal state,
+then leave it. -/
+def typing (text : String) : String :=
+  s!"i {typed text} <Escape>"
+
+/-- `driver` once the test command `name` runs with `arguments`, and what
+it starts is settled. -/
+def ran (driver : EvilDriver) (name : String) (arguments : List Argument := []) : EvilDriver :=
+  drained (invoked driver name arguments)
+
+/-- The live journal of the buffer `index`. -/
+def liveOf (driver : EvilDriver) (index : Nat) : Option Journal :=
+  driver.loop.state.restore.journals.find? (·.buffer == index)
+
+/-- The journal files of the buffer `index`'s generation `generation` of
+run 1. -/
+def filesOf (index generation : Nat) : Array String :=
+  #[(basePath stateDirectory 1 index generation).toString,
+    (logPath stateDirectory 1 index generation).toString]
+
+/-- The index of the buffer called `name`. -/
+def indexNamed (driver : EvilDriver) (name : String) : Nat :=
+  ((driver.loop.state.findBuffer name).map (·.index)).getD 999
+
+/-- `driver` with the text of the buffer called `name` edited behind the
+loop's back by `edit`, and its log forgotten up to the revision that
+leaves. -/
+def forgotten (driver : EvilDriver) (name : String) (edit : TextId → TextM Unit) : EvilDriver :=
+  match driver.loop.state.findBuffer name >>= driver.loop.state.buffer? with
+  | none => driver
+  | some buffer =>
+    let program : TextM Unit := do
+      edit buffer.text
+      buffer.text.forget (← buffer.text.revision)
+    { driver with model := { driver.model with texts := (program.runModel driver.model.texts).2 } }
+
+/-- A command that makes the buffer `note`, with no file, and shows it in
+its window. -/
+def noteCommand : Config.Registration :=
+  { name := "test-note"
+    action := .call fun call => do
+      let .ok id ← createBuffer "note" | return
+      discard <| call.target.window.id.show id }
+
+/-- A command that makes `owned`, a read-only buffer it writes into, and an
+excerpt buffer of the scratch buffer's text. -/
+def ownedCommand : Config.Registration :=
+  { name := "test-owned"
+    action := .call fun _ => do
+      let .ok id ← createBuffer "owned" | return
+      discard <| id.setReadOnly true
+      discard <| id.writing (id.insertAt 0 "generated")
+      let state ← editorState
+      let some scratch := state.buffer? ⟨0⟩ | return
+      discard <| createExcerptBufferOf "excerpts" #[⟨scratch.text, 0, 0⟩] }
+
+/-- A command that puts the window of its first argument at the place its
+other arguments say (`Restore.placeIn`). -/
+def placeCommand : Config.Registration :=
+  { name := "test-place"
+    action := .call fun call => do
+      let .nat view :: .nat ar :: .nat ac :: .nat hr :: .nat hc :: .nat top :: _ := call.arguments | return
+      let some window := (← editorState).window? ⟨view⟩ | return
+      placeIn ⟨view⟩ window.buffer { view, anchor := ⟨ar, ac⟩, head := ⟨hr, hc⟩, top } }
+
+/-- The checks' driver, restored, with the test commands. -/
+def driver (state : Option System.FilePath := some stateDirectory) (limit : Nat := Restore.bound) :
+    Option EvilDriver :=
+  (restoreDriver (state := state) (limit := limit)).map fun driver =>
+    begun
+      { driver with
+        keys :=
+          { driver.keys with
+            command? := fun name =>
+              match [noteCommand, ownedCommand, placeCommand].find? (·.name == name) with
+              | some { action := .call run, .. } => some fun call => do run call; return none
+              | _ => driver.keys.command? name } }
+
+end JournalReconcileTest
+
+open JournalReconcileTest in
+/-- The checks of the journal's reconciler (`Editor/Restore.lean`). -/
+def journalReconcileChecks : List Check :=
+  [{  name :=
+        "from an empty state directory the restore makes session/journals/, and typing gives a base at the first edit and then one record per event, which replay to the text"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let made := begun.jobs.files.directories.contains (journalsDirectory stateDirectory)
+            let typedIn := evilFed begun (typing "abc")
+            made && begun.loop.state.restore.run == some 1 &&
+              ((logOf typedIn 1 0 1).map fun log => (log.header.isSome, log.records.size)) ==
+                some (true, 2) &&
+              journalText typedIn 1 0 1 == some "abc" && journalFiles typedIn == filesOf 0 1 &&
+              typedIn.journalFailures.isEmpty },
+    { name := "a buffer whose text did not move gets no record"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let typedIn := evilFed begun (typing "ab")
+            let moved := evilFed typedIn "h h l"
+            (logOf typedIn 1 0 1).map (·.records.size) == some 1 &&
+              (logOf moved 1 0 1).map (·.records.size) == some 1 },
+    { name := "a save removes the journal of the file's buffer"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let edited := evilFed (opened begun "a.txt") "x"
+            let index := indexNamed edited "a.txt"
+            let saved := ran edited Files.saveName
+            journalFiles edited == filesOf index 1 && journalText edited 1 index 1 == some (aText.drop 1).toString &&
+              journalFiles saved == #[] && (liveOf saved index).isNone },
+    { name := "undo back to the saved state removes the journal"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let edited := evilFed (opened begun "a.txt") "x"
+            let undone := evilFed edited "u"
+            journalFiles edited != #[] && journalFiles undone == #[] },
+    { name :=
+        "past the bound a new generation is written, and the old one's files are removed after it; the live one replays to the text"
+      run :=
+        pure <|
+          match driver (limit := 150) with
+          | none => false
+          | some begun =>
+            let typedIn := evilFed begun (typing "abcdef")
+            match liveOf typedIn 0 with
+            | none => false
+            | some live =>
+              live.generation > 1 && journalFiles typedIn == filesOf 0 live.generation &&
+                journalText typedIn 1 0 live.generation == some "abcdef" },
+    { name := "a log forgotten past the record's revision gives a new generation, its base the text now"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let typedIn := evilFed begun (typing "ab")
+            let behind := forgotten typedIn EditorState.scratchName fun text => text.insert 0 "z"
+            let after := evilFed behind (typing "c")
+            (liveOf after 0).map (·.generation) == some 2 && journalFiles after == filesOf 0 2 &&
+              journalText after 1 0 2 == textNamed after EditorState.scratchName },
+    { name :=
+        "a save while still modified gives a new generation whose header has the file's new stamp"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let edited := evilFed (opened begun "a.txt") "x"
+            let index := indexNamed edited "a.txt"
+            let saving := evilFed (invoked edited Files.saveName) "x"
+            let saved := drained saving
+            let stamp := (bufferNamed saved "a.txt").bind (·.file.map (·.stamp))
+            match liveOf saved index with
+            | none => false
+            | some live =>
+              live.generation == 2 && journalFiles saved == filesOf index 2 &&
+                ((logOf saved 1 index 2).bind (·.header.bind (·.stamp))) == stamp &&
+                stamp != ((logOf edited 1 index 1).bind (·.header.bind (·.stamp))) },
+    { name := "closing a buffer removes its journal"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let noted := evilFed (ran begun "test-note") (typing "n")
+            let index := indexNamed noted "note"
+            let closedNote := ran noted Buffers.closeName [.str "note"]
+            journalFiles noted == filesOf index 1 && journalFiles closedNote == #[] },
+    { name := "read-only, excerpt and minibuffer buffers are never journalled"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let owned := ran begun "test-owned"
+            let prompted := evilFed owned ": a b"
+            journalFiles prompted == #[] && prompted.loop.state.prompt.isSome },
+    { name := "with no state directory nothing is journalled"
+      run :=
+        pure <|
+          match driver (state := none) with
+          | none => false
+          | some begun =>
+            let typedIn := evilFed begun (typing "abc")
+            journalFiles typedIn == #[] && (indexOf typedIn 1).isNone },
+    { name :=
+        "a leave removes this run's journals and saves its index saying ended"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let typedIn := drained (evilFed begun (typing "abc"))
+            let left := ran typedIn Ex.quitName
+            journalFiles typedIn != #[] && left.stopped && journalFiles left == #[] &&
+              (indexOf left 1).map (·.ended) == some true },
+    { name := "the index write fires once for a burst of changes, and writes the state at its end"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let written := drained begun
+            let burst := evilFed written (typing "abc")
+            let quiet := drained burst
+            pendingNamed burst writeJob == 1 &&
+              ((indexOf quiet 1).map fun document =>
+                  document.buffers.map fun buffer => (buffer.name, buffer.journal.map (·.generation))) ==
+                some #[(EditorState.scratchName, some 1)] },
+    { name :=
+        "every window's place is recorded: two windows on one buffer, each with its selection and scroll top, a third on another buffer, and the focused view named"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let lines := evilFed begun "i o n e RET t w o RET t h r e e RET f o u r <Escape>"
+            let split := ran lines WindowCommands.splitName
+            let views := split.loop.state.frame.windows
+            match views[0]?, views[1]? with
+            | some first, some second =>
+              let placed :=
+                ran (ran split "test-place" [.nat first.index, .nat 0, .nat 1, .nat 1, .nat 2, .nat 0])
+                  "test-place" [.nat second.index, .nat 2, .nat 0, .nat 3, .nat 3, .nat 1]
+              let third := ran placed WindowCommands.splitName
+              let focused := third.loop.state.frame.focused
+              let opened := drained (invoked third Files.openName [.str (root / "a.txt").toString])
+              let document := indexOf opened 1
+              let scratch := (document.bind (·.buffers.find? (·.name == EditorState.scratchName))).map (·.views)
+              let file := (document.bind (·.buffers.find? (·.name == "a.txt"))).map (·.views.map (·.view))
+              (scratch.map fun places => places.map fun place => (place.view, place.anchor, place.head)) ==
+                  some #[(first.index, ⟨0, 1⟩, ⟨1, 2⟩), (second.index, ⟨2, 0⟩, ⟨3, 3⟩)] &&
+                (scratch.map (·.map (·.top))) == some #[0, 1] &&
+                file == some #[focused.index] &&
+                (document.bind (·.focused)) == some focused.index
+            | _, _ => false }]
+
+end ModelTest

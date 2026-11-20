@@ -82,8 +82,53 @@ structure Kept.Deferred where
   buffer : Nat
   /-- The mode's name. -/
   mode : String
-  /-- The config generation when it was deferred: a later one decides it. -/
-  generation : Nat
+  /-- The config generation when it was deferred: a later one decides it.
+  `none` until the reconciler first sees it, which reads the generation
+  then. -/
+  generation : Option Nat := none
+  deriving DecidableEq, Repr
+
+/-- A buffer of the index restored that held a file with no unsaved text:
+reopened from its file (`Restore.restored`). -/
+structure Kept.Reopen where
+  /-- Its file's path. -/
+  path : System.FilePath
+  /-- Its major mode's name. -/
+  major : Option String := none
+  /-- Its minor modes' names. -/
+  minors : Array String := #[]
+  /-- Its language's name. -/
+  language : Option String := none
+  /-- The places of its windows. -/
+  places : Array Place := #[]
+  deriving DecidableEq, Repr
+
+/-- What the first half of a restore read and the second is to finish
+(`Editor/Restore/Run.lean`, "Restoring"): the run's number, the buffers to
+reopen, where the focus goes, and what to say and remove. -/
+structure Kept.Pending where
+  /-- This run's number. -/
+  run : Nat
+  /-- The buffers to reopen from their files, in the index's order. -/
+  reopen : Array Kept.Reopen := #[]
+  /-- The buffer restored with its unsaved text that the focused view
+  showed, and its place there. -/
+  focusBuffer : Option (Nat × Place) := none
+  /-- The buffer to reopen that the focused view showed (an index into
+  `reopen`), and its place there. -/
+  focusReopen : Option (Nat × Place) := none
+  /-- How many buffers were restored with their unsaved text. -/
+  unsaved : Nat := 0
+  /-- What the report says so far, a line each. -/
+  report : Array String := #[]
+  /-- The journal files taken in. -/
+  stale : Array System.FilePath := #[]
+  /-- The indexes taken in, of a format this editor understands. -/
+  staleIndexes : Array System.FilePath := #[]
+  /-- The places kept of the buffers restored with their unsaved text. -/
+  places : Array Kept.Places := #[]
+  /-- The modes deferred so far. -/
+  deferred : Array Kept.Deferred := #[]
   deriving DecidableEq, Repr
 
 /-- What the session's reconciler keeps between two publishes. -/
@@ -114,6 +159,11 @@ structure Kept where
   places : Array Kept.Places := #[]
   /-- The major modes a restore deferred. -/
   deferred : Array Kept.Deferred := #[]
+  /-- What the first half of a restore left the second, while it runs. -/
+  pending : Option Kept.Pending := none
+  /-- Whether the restore has finished, whatever it came to: a host holds
+  its driver's requests until it has. -/
+  restored : Bool := false
   deriving DecidableEq, Repr
 
 end Editor.Restore

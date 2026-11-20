@@ -17,6 +17,7 @@ import Editor.InputScheme
 import Editor.Key.Notation
 import Editor.Marks.Follow
 import Editor.ModeLine
+import Editor.Restore
 import Editor.State
 import Editor.VersionControl.Gutter
 
@@ -1018,6 +1019,11 @@ changed the state or not (`Loop.publish`):
    state shows with what it saw at the last publish (`Loop.Seen`) and
    starts one `check-files` for the files that are due ("Files that
    changed on disk", below).
+10. **The session journal** (`Restore.journalOrders`,
+   `Editor/Restore.lean`): one record for each buffer whose text moved
+   since its last, handed back as orders (`Loop.Stepped.journal`) for the
+   host's file service, and the session index's write started when the
+   index changed.
 
 Every edit the loop makes for an input event carries `Origin.user`.
 
@@ -1550,6 +1556,10 @@ structure Loop.Keys (scheme : InputScheme) where
   tracked excerpt is timed by ("After each event", in the module docs, step
   4b). A loop handed none records 0, so every duration is 0. -/
   now : Nat := 0
+  /-- How long a session journal's log may grow before a new base is
+  written (`Restore.journalOrders`): `Restore.bound` unless a test hands a
+  smaller one. -/
+  journalBound : Nat := Restore.bound
 
 /-- How a command the loop ran ended. -/
 inductive Loop.Ending where
@@ -1651,6 +1661,11 @@ structure Loop.Stepped (scheme : InputScheme) where
   said of the state the step's scene shows ("Key hints", in the module
   docs). -/
   hintDelay : Loop.HintDelayChange := .keep
+  /-- The session journal's orders the publish handed back
+  (`Restore.journalOrders`, `Editor/Restore.lean`), for the host to hand
+  its file service in order, unobserved, and then to release the snapshots
+  they name. -/
+  journal : Array Restore.Order := #[]
 
 namespace EditorState
 
@@ -3334,7 +3349,9 @@ the one the publish left, with the file jobs it starts and cancels
 cancels and spawns (`completionJobs`), then the version-control gutter's
 (`VersionControl.reconcile`), handed the git program of the workspace
 settings `keys` was told of (`Registered.workspaceSettings`, what the
-version-control commands ask for), and it says stop when the editor then
+version-control commands ask for), then the session journal's orders, its
+index write and the modes a restore deferred (`Restore.journalOrders`,
+`Editor/Restore.lean`), and it says stop when the editor then
 leaves (`nextOf`) and to go on otherwise. The key hints are opened, closed
 and listed with the publish (`publishHinted`), and the step hands what the
 host is to do with their delay (`Stepped.hintDelay`). The scene comes
@@ -3347,6 +3364,11 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
   let (state, gutterStarts, gutterCancels) ←
     VersionControl.reconcile keys.registered.jobs keys.registered.workspaceSettings.git loop.state
   let loop := { loop with state }
+  let reconciled ←
+    Restore.journalOrders loop.state (keys.registered.jobs Restore.restoreJob)
+        (nextOf loop == .stop) (fun name => (keys.registered.entering name).isSome)
+        keys.registered.generation keys.journalBound
+  let loop := { loop with state := reconciled.state }
   -- What the key asks of completion at point, from the state the scene
   -- shows: a trigger's command to run next, and the pause.
   let (asked, pause) := loop.atPointAsks keys stepped.key
@@ -3358,9 +3380,11 @@ def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM 
   let loop := { loop with pausing }
   return { stepped with
       loop, next := nextOf loop
-      starts := stepped.starts ++ starts ++ sourceStarts ++ gutterStarts
-      cancels := stepped.cancels ++ cancels ++ sourceCancels ++ gutterCancels
-      spawns := stepped.spawns ++ spawns, answered := stepped.answered ++ asked, pause, hintDelay }
+      starts := stepped.starts ++ starts ++ sourceStarts ++ gutterStarts ++ reconciled.starts
+      cancels := stepped.cancels ++ cancels ++ sourceCancels ++ gutterCancels ++ reconciled.cancels
+      spawns := stepped.spawns ++ spawns
+      answered := stepped.answered ++ asked ++ reconciled.answered, pause, hintDelay
+      journal := stepped.journal ++ reconciled.orders }
 
 /-- The step the key hint delay of `generation` firing is: the loop with its
 key hints due when they are of that generation (`EditorState.keyHintsDue`),

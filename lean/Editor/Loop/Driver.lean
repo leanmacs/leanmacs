@@ -72,6 +72,9 @@ handled after the answer's command.
   (`Loop.Stepped.pause`, `Loop.Stepped.hintDelay`) are due that many
   milliseconds from it, and `pass` fires what is due, as a host's job clock
   completes their waits.
+- **A step's journal orders are handed to the file model** (`journaled`),
+  before its jobs start, as a host hands them its file service: so a job
+  the step starts reads what they wrote.
 - **A reload a step asked for is counted** (`reloads`), and **a theme a step
   asked for is recorded** (`themes`). The driver has no config session to
   reload or to switch the theme of: a host feeds its reload reducer
@@ -222,6 +225,9 @@ structure Loop.Driver (scheme : InputScheme) where
   /-- The key hint delay armed (`Loop.Stepped.hintDelay`), if one is: the
   generation of the hints it makes due, and the reading it is due at. -/
   hinted : Option (Nat × Nat) := none
+  /-- What the journal's orders that failed said, each its path and why, in
+  order (`journaled`). -/
+  journalFailures : Array String := #[]
 
 namespace Loop.Driver
 
@@ -403,6 +409,42 @@ def started (driver : Loop.Driver scheme) (starts : Array JobStart) : Loop.Drive
           (work start.arguments ()).run)
     driver
 
+/-- The driver once each of `orders`, a step's journal orders
+(`Loop.Stepped.journal`, `Editor/Restore.lean`), is handed to the file model
+its jobs read, in order, as the host hands them its file service
+unobserved: each request is answered by `FileModel.handle` over the text
+model's snapshots, and the snapshot it names is then released in the text
+model. A refusal is kept, its path and why (`journalFailures`). -/
+def journaled (driver : Loop.Driver scheme) (orders : Array Restore.Order) : Loop.Driver scheme :=
+  orders.foldl
+    (fun driver order =>
+      let files := { driver.jobs.files with snapshots := driver.model.texts.snapshots }
+      let path : String :=
+        match order.request with
+        | .append path _ | .remove path | .save _ path _ => path.toString
+        | _ => ""
+      let (failure, files) : Option String × FileModel :=
+        match order.request with
+        | .append path bytes =>
+          let (reply, files) := files.append path bytes
+          ((match reply with | .error error => some error.describe | .ok () => none), files)
+        | .remove path =>
+          let (reply, files) := files.remove path
+          ((match reply with | .error error => some error.describe | .ok () => none), files)
+        | .save source path expect =>
+          let (reply, files) := files.save source path expect
+          ((match reply with | .error error => some error.describe | .ok _ => none), files)
+        | _ => (some "not a journal's request", files)
+      let texts :=
+        match order.release with
+        | some snapshot => ((TextSource.snapshot snapshot).release.runModel driver.model.texts).2
+        | none => driver.model.texts
+      { driver with
+        jobs := { driver.jobs with files }
+        model := { driver.model with texts }
+        journalFailures := driver.journalFailures ++ failure.toArray.map (s!"{path}: " ++ ·) })
+    driver
+
 /-- The driver once each of `spawns` is run (`Loop.Spawn`): the job of its
 key is cancelled first, and its work is run on the job model as a started
 job's is, under the next id, kept under its label and its key. -/
@@ -433,7 +475,7 @@ code is not a design driver"). -/
 partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
     (model : EditorModel) : Loop.Driver scheme :=
   let driver :=
-    (stepped.cancels.foldl Loop.Driver.cancel
+    ((stepped.cancels.foldl Loop.Driver.cancel
           { driver with
             loop := stepped.loop, model
             stopped := driver.stopped || stepped.next == Loop.Next.stop
@@ -448,7 +490,7 @@ partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
               match stepped.hintDelay with
               | .keep => driver.hinted
               | .arm generation ms => some (generation, driver.now + ms)
-              | .disarm => none }).started
+              | .disarm => none }).journaled stepped.journal).started
       stepped.starts
   let driver := driver.spawned stepped.spawns
   stepped.answered.foldl

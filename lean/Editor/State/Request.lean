@@ -284,6 +284,9 @@ inductive StateRequest where
   | setGutter (id : BufferId) (gutter : Option Buffer.Gutter)
   /-- Tell the version-control gutter's state what arrived. -/
   | gutter (change : GutterChange)
+  /-- Set what the session's reconciler keeps (`Editor/Restore.lean`), in
+  place of what it kept. -/
+  | setRestore (kept : Restore.Kept)
   /-- Choose auto-reload on or off, for as long as the editor runs. -/
   | setAutoReload (on : Bool)
   /-- Stop following the buffer `id` for auto-reload: its follow job ended. -/
@@ -422,6 +425,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setSpans .. => Except BufferRefusal Unit
   | .setGutter .. => Except BufferRefusal Unit
   | .gutter _ => Unit
+  | .setRestore _ => Unit
   | .setAutoReload _ => Unit
   | .unfollow _ => Unit
   | .refuseFollow _ => Unit
@@ -523,6 +527,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setSpans id spans, state => state.setSpans id spans
   | .setGutter id gutter, state => state.setGutter id gutter
   | .gutter change, state => ((), state.changeGutter change)
+  | .setRestore kept, state => ((), { state with restore := kept })
   | .setAutoReload on, state => ((), { state with autoReload := some on })
   | .unfollow id, state => ((), { state with following := state.following.filter (·.buffer != id) })
   | .refuseFollow id, state =>

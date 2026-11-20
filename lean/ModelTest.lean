@@ -163,6 +163,7 @@ import ModelTest.Editor.WorkingSet.Disk
 import ModelTest.Editor.WorkingSet.Places
 import ModelTest.Editor.WorkingSet.Refind
 import ModelTest.Editor.WorkingSet.Run
+import ModelTest.Editor.Restore
 import ModelTest.Editor.Restore.Document
 import ModelTest.Editor.Restore.Journal
 import ModelTest.Editor.Workspace
@@ -1198,6 +1199,17 @@ Session restore is checked in Lean alone too:
   file that is not JSON; which index is restored (the highest run, whatever
   its format, none when it ended) and which are removed or left; the next
   run's number; and the names of indexes and journals.
+- `journalReconcileChecks`: the journal's reconciler
+  (`Editor/Restore.lean`) on the loop's driver over the models with the
+  state directory `/state`, each read from the file model, decoded and
+  replayed: from an empty state directory the restore makes the journals'
+  directory, and typing gives one record per event; a buffer that did not
+  move gets none; a save, an undo to the saved state and a close remove the
+  journal; the bound and a forgotten log give a new generation; a save
+  while modified gives a new header stamp; read-only, excerpt and
+  minibuffer buffers are never journalled; no state directory journals
+  nothing; a leave removes everything and saves the index ended; the index
+  write fires once for a burst; and every window's place is recorded.
 
 Listing a workspace's files is checked in Lean alone too:
 
@@ -1385,6 +1397,7 @@ def checks : List Check :=
     workingSetDiskChecks ++
     journalFormatChecks ++
     restoreDocumentChecks ++
+    journalReconcileChecks ++
     driverChecks ++
     promptChecks ++
     candidateChecks ++
