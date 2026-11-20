@@ -601,6 +601,10 @@ impl Fs for Discard {
         Ok(())
     }
 
+    fn append(&self, _: &Path, _: &mut Pieces<'_>) -> Result<(), FsError> {
+        Err(FsError::new(FsErrorKind::Other, "a save appends nothing"))
+    }
+
     fn rename(&self, _: &Path, _: &Path) -> Result<(), FsError> {
         self.renamed.store(true, Ordering::SeqCst);
         Ok(())

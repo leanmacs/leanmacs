@@ -87,6 +87,26 @@
 //! how a caller saves into a directory that may not be there yet: a save
 //! itself makes none.
 //!
+//! # Appending and removing
+//!
+//! [`append`] adds bytes to the end of the file at a path, and makes the
+//! file, with the platform's default permissions, where nothing is. It is
+//! one call of the port's `append`, so the bytes reach the system and are
+//! **not synced**: it is for a record added to often, such as a log, and is
+//! not a save. A path that is not absolute is refused
+//! ([`AppendError::Relative`]) before the file system is asked. The
+//! directory the file is in not being there is [`AppendError::NotFound`]: an
+//! append makes no directory. A directory at the path, or a file on the way
+//! to it, is [`AppendError::NotAFile`]. Anything else the file system
+//! refuses is handed on ([`AppendError::Fs`]).
+//!
+//! [`remove`] removes the file at a path, in one call of the port's
+//! `remove`. **Nothing there is no error**: what the caller asks for is so
+//! already. A path that is not absolute is refused
+//! ([`RemoveError::Relative`]) before the file system is asked; what the
+//! port refuses as not a file is [`RemoveError::NotAFile`], and anything
+//! else is handed on ([`RemoveError::Fs`]).
+//!
 //! # Saving
 //!
 //! [`save`] saves a [`Snapshot`], so the thread that owns the text hands
@@ -195,6 +215,7 @@
 //!   that it is not seen. A content hash would close it, at the cost of
 //!   reading the file at every save.
 
+use std::borrow::Cow;
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -525,6 +546,95 @@ pub fn make_directory(fs: &dyn Fs, path: &Path) -> Result<(), MakeDirectoryError
             MakeDirectoryError::Fs(error)
         }
     })
+}
+
+/// Why bytes were not added to a file ([`append`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppendError {
+    /// The path is not absolute. The file system was not asked.
+    Relative,
+    /// The directory the file is in is not there.
+    NotFound,
+    /// What is at the path is not a file, or what is on the way to it is
+    /// not a directory.
+    NotAFile,
+    /// The file system refused, for another reason.
+    Fs(FsError),
+}
+
+impl fmt::Display for AppendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Relative => f.write_str("the path is not absolute"),
+            Self::NotFound => f.write_str("the directory the file is in is not there"),
+            Self::NotAFile => f.write_str(
+                "what is there is not a file, or what is on the way to it is not a directory",
+            ),
+            Self::Fs(error) => write!(f, "the file system refused: {error}"),
+        }
+    }
+}
+
+impl Error for AppendError {}
+
+/// Adds `bytes` to the end of the file at `path`, which must be absolute,
+/// and makes the file where nothing is. The module docs say what is
+/// refused.
+pub fn append(fs: &dyn Fs, path: &Path, bytes: &[u8]) -> Result<(), AppendError> {
+    if !path.is_absolute() {
+        return Err(AppendError::Relative);
+    }
+    let mut pieces = std::iter::once(Cow::Borrowed(bytes));
+    fs.append(path, &mut pieces)
+        .map_err(|error| match error.kind {
+            FsErrorKind::NotFound => AppendError::NotFound,
+            FsErrorKind::NotAFile => AppendError::NotAFile,
+            FsErrorKind::Denied | FsErrorKind::Exists | FsErrorKind::Other => {
+                AppendError::Fs(error)
+            }
+        })
+}
+
+/// Why a file was not removed ([`remove`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoveError {
+    /// The path is not absolute. The file system was not asked.
+    Relative,
+    /// What is at the path is not a file.
+    NotAFile,
+    /// The file system refused, for another reason.
+    Fs(FsError),
+}
+
+impl fmt::Display for RemoveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Relative => f.write_str("the path is not absolute"),
+            Self::NotAFile => f.write_str("what is there is not a file"),
+            Self::Fs(error) => write!(f, "the file system refused: {error}"),
+        }
+    }
+}
+
+impl Error for RemoveError {}
+
+/// Removes the file at `path`, which must be absolute. Nothing there is no
+/// error. The module docs say what is refused.
+pub fn remove(fs: &dyn Fs, path: &Path) -> Result<(), RemoveError> {
+    if !path.is_absolute() {
+        return Err(RemoveError::Relative);
+    }
+    match fs.remove(path) {
+        Ok(()) => Ok(()),
+        Err(error) => match error.kind {
+            // What the caller asks for is so already.
+            FsErrorKind::NotFound => Ok(()),
+            FsErrorKind::NotAFile => Err(RemoveError::NotAFile),
+            FsErrorKind::Denied | FsErrorKind::Exists | FsErrorKind::Other => {
+                Err(RemoveError::Fs(error))
+            }
+        },
+    }
 }
 
 /// What a save expects to find at the path, which it checks before it
@@ -1123,6 +1233,132 @@ mod tests {
                 FsError::new(FsErrorKind::Denied, "no")
             )
         );
+    }
+
+    #[test]
+    fn an_append_or_a_remove_of_a_path_that_is_not_absolute_is_refused_before_the_file_system_is_asked()
+     {
+        let fs = fake_with(b"text");
+
+        for path in ["dir/file.txt", "file.txt", ""] {
+            assert_eq!(
+                append(&fs, Path::new(path), b"more"),
+                Err(AppendError::Relative),
+                "{path:?}"
+            );
+            assert_eq!(
+                remove(&fs, Path::new(path)),
+                Err(RemoveError::Relative),
+                "{path:?}"
+            );
+        }
+        assert_eq!(fs.calls(), []);
+    }
+
+    #[test]
+    fn an_append_makes_the_file_where_nothing_is_and_adds_to_its_end_through_the_port() {
+        let fs = FakeFs::new();
+        fs.directory("/dir");
+
+        assert_eq!(append(&fs, Path::new(PATH), b"one\r\n\xFF"), Ok(()));
+        assert_eq!(append(&fs, Path::new(PATH), b"two\n"), Ok(()));
+
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(&b"one\r\n\xFFtwo\n"[..]));
+        // One call each, and nothing else asked.
+        assert_eq!(
+            fs.calls(),
+            [Call::Append(PATH.into()), Call::Append(PATH.into())]
+        );
+    }
+
+    #[test]
+    fn an_append_refused_by_the_file_system_is_refused_in_its_own_words() {
+        let fs = fake_with(OLD);
+        fs.directory("/dir/sub");
+
+        assert_eq!(
+            append(&fs, Path::new("/nowhere/log"), b"x"),
+            Err(AppendError::NotFound)
+        );
+        assert_eq!(
+            append(&fs, Path::new("/dir/sub"), b"x"),
+            Err(AppendError::NotAFile)
+        );
+        let denied = FsError::new(FsErrorKind::Denied, "injected");
+        fs.fail(Op::Append, denied.clone());
+        assert_eq!(
+            append(&fs, Path::new(PATH), b"x"),
+            Err(AppendError::Fs(denied))
+        );
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(OLD));
+    }
+
+    #[test]
+    fn a_remove_removes_the_file_through_the_port_and_nothing_there_is_no_error() {
+        let fs = fake_with(OLD);
+
+        assert_eq!(remove(&fs, Path::new(PATH)), Ok(()));
+        assert_eq!(remove(&fs, Path::new(PATH)), Ok(()));
+
+        assert_eq!(fs.bytes(PATH), None);
+        assert_eq!(
+            fs.calls(),
+            [Call::Remove(PATH.into()), Call::Remove(PATH.into())]
+        );
+    }
+
+    #[test]
+    fn a_remove_refused_by_the_file_system_is_refused_in_its_own_words() {
+        let fs = fake_with(OLD);
+        fs.directory("/dir/sub");
+
+        assert_eq!(
+            remove(&fs, Path::new("/dir/sub")),
+            Err(RemoveError::NotAFile)
+        );
+        let denied = FsError::new(FsErrorKind::Denied, "injected");
+        fs.fail(Op::Remove, denied.clone());
+        assert_eq!(remove(&fs, Path::new(PATH)), Err(RemoveError::Fs(denied)));
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(OLD));
+    }
+
+    #[test]
+    fn each_append_and_remove_error_says_what_it_is() {
+        let denied = FsError::new(FsErrorKind::Denied, "os error 13");
+        let said = [
+            (
+                AppendError::Relative.to_string(),
+                "the path is not absolute",
+            ),
+            (
+                AppendError::NotFound.to_string(),
+                "the directory the file is in is not there",
+            ),
+            (
+                AppendError::NotAFile.to_string(),
+                "what is there is not a file, or what is on the way to it is not a directory",
+            ),
+            (
+                AppendError::Fs(denied.clone()).to_string(),
+                "the file system refused: it is not allowed: os error 13",
+            ),
+            (
+                RemoveError::Relative.to_string(),
+                "the path is not absolute",
+            ),
+            (
+                RemoveError::NotAFile.to_string(),
+                "what is there is not a file",
+            ),
+            (
+                RemoveError::Fs(denied).to_string(),
+                "the file system refused: it is not allowed: os error 13",
+            ),
+        ];
+
+        for (error, expected) in &said {
+            assert_eq!(error, expected);
+        }
     }
 
     #[test]

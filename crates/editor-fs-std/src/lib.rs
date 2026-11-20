@@ -22,6 +22,12 @@
 //!   never more open than it will be. With none named, it has the default
 //!   mode less the mask. Then every piece is written, and the file is
 //!   synced (`sync_all`, which on macOS is `F_FULLFSYNC`).
+//! - **`append`** opens with `append` and `create` (`O_APPEND | O_CREAT`),
+//!   so a file is made, with the default mode less the mask, where nothing
+//!   is, and every piece is written at the end. It is **not synced**, as
+//!   the port says. The system refuses a directory as one (`EISDIR`) and a
+//!   file on the way as not a directory (`ENOTDIR`), both the port's
+//!   `NotAFile`.
 //! - **`rename`** is `fs::rename`. The directory the file is now in is then
 //!   opened and synced, so the new name is on disk too, and **a failure of
 //!   that sync is ignored**: some file systems cannot sync a directory, and
@@ -177,6 +183,19 @@ impl Fs for StdFs {
             file.write_all(&piece).map_err(|error| refusal(&error))?;
         }
         file.sync_all().map_err(|error| refusal(&error))
+    }
+
+    fn append(&self, path: &Path, pieces: &mut Pieces<'_>) -> Result<(), FsError> {
+        let mut file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)
+            .map_err(|error| refusal(&error))?;
+        for piece in pieces {
+            file.write_all(&piece).map_err(|error| refusal(&error))?;
+        }
+        // Not synced: the port asks only that the bytes reach the system.
+        Ok(())
     }
 
     fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError> {

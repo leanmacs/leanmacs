@@ -22,6 +22,14 @@
 //!   nothing, when anything is at the path, a link included, whatever the
 //!   link names. It takes pieces so that a caller hands over a rope's
 //!   pieces and never a copy of the text.
+//! - **[`Fs::append`]** adds the pieces it is given, joined, to the end of
+//!   the file at a path, and makes the file, with the platform's default
+//!   permissions, when nothing is there. A directory at the path, and a
+//!   file on the way to it, are refused as [`FsErrorKind::NotAFile`]; a
+//!   directory on the way that is not there as [`FsErrorKind::NotFound`].
+//!   The bytes are handed to the system before it returns, and **are not
+//!   synced**: an append is for a record that is added to often, such as a
+//!   log, where a crash may lose the last of it.
 //! - **[`Fs::rename`]** puts the file at one path in place of whatever
 //!   file is at another, in one step, with its permissions and **with its
 //!   stamp**: the modification time and the size its stat said before the
@@ -95,8 +103,9 @@ mod fake;
 
 pub use fake::{Call, FakeFs, FakeGround, Op};
 
-/// The pieces a file is written from, in order ([`Fs::write`]). Joined,
-/// they are the file's bytes. A piece may be empty.
+/// The pieces a file is written from, in order ([`Fs::write`]), or added
+/// to its end ([`Fs::append`]). Joined, they are the bytes written. A piece
+/// may be empty.
 pub type Pieces<'a> = dyn Iterator<Item = Cow<'a, [u8]>> + 'a;
 
 /// A file system, as far as the crate needs one. The module docs have the
@@ -132,6 +141,19 @@ pub trait Fs: Send + Sync {
         pieces: &mut Pieces<'_>,
         permissions: Option<Permissions>,
     ) -> Result<(), FsError>;
+
+    /// Adds `pieces`, joined, to the end of the file at `path`, and makes
+    /// the file, with the platform's default permissions, when nothing is
+    /// there. The bytes are handed to the system before it returns, and are
+    /// not synced.
+    ///
+    /// Refused as [`FsErrorKind::NotAFile`] when what is at `path` is a
+    /// directory, or a file is on the way to it, and as
+    /// [`FsErrorKind::NotFound`] when the directory `path` is in is not
+    /// there.
+    ///
+    /// An append that fails partway may leave part of the pieces added.
+    fn append(&self, path: &Path, pieces: &mut Pieces<'_>) -> Result<(), FsError>;
 
     /// Puts the file at `from` in place of whatever file is at `to`, in one
     /// step: at every moment `to` holds the old file whole or the new one

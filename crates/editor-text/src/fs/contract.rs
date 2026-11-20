@@ -51,6 +51,12 @@
 //!   directory; making it again is no error; a file can be written in it.
 //!   Making a directory where a file is, or under one, is refused as
 //!   [`FsErrorKind::NotAFile`], and the file is as it was.
+//! - **An append adds to the end.** Appending pieces where nothing is makes
+//!   a file that reads as them, joined (an empty piece and bytes that are
+//!   not UTF-8 among them); appending again adds the new pieces after them.
+//!   Appending to a directory, or under a file, is refused as
+//!   [`FsErrorKind::NotAFile`], and the file is as it was; appending into a
+//!   directory that is not there is refused as [`FsErrorKind::NotFound`].
 //! - **A file is removed**, and its stat is then none.
 //!
 //! # The ground
@@ -202,6 +208,17 @@ pub enum Violation {
     /// Making a directory where a file is, or under one, was not refused
     /// as not a file, or changed the file.
     DirectoryMadeThroughAFile,
+    /// Appending where nothing is did not make a file that reads as the
+    /// pieces, joined.
+    AppendNotMade,
+    /// Appending to a file did not add the pieces at its end.
+    AppendNotAtTheEnd,
+    /// Appending to a directory, or under a file, was not refused as not a
+    /// file, or changed the file.
+    AppendedToADirectory,
+    /// Appending into a directory that is not there was not refused as not
+    /// found.
+    AppendedIntoNoDirectory,
     /// A removed file was still there.
     NotRemoved,
 }
@@ -279,6 +296,16 @@ impl fmt::Display for Violation {
             Self::DirectoryMadeThroughAFile => {
                 "making a directory where a file is, or under one, was not refused as not a file, or changed the file"
             }
+            Self::AppendNotMade => {
+                "appending where nothing is did not make a file of the pieces, joined"
+            }
+            Self::AppendNotAtTheEnd => "appending to a file did not add the pieces at its end",
+            Self::AppendedToADirectory => {
+                "appending to a directory, or under a file, was not refused as not a file, or changed the file"
+            }
+            Self::AppendedIntoNoDirectory => {
+                "appending into a directory that is not there was not refused as not found"
+            }
             Self::NotRemoved => "a removed file was still there",
         })
     }
@@ -317,6 +344,7 @@ pub fn check(fs: &dyn Fs, ground: &dyn Ground) -> Result<(), Violation> {
     a_link_to_nothing(fs, ground, root)?;
     a_listing(fs, ground, root, &file)?;
     a_directory_is_made(fs, root, &file, &joined)?;
+    an_append_adds_to_the_end(fs, root, &file, &joined)?;
 
     must("removing a file", fs.remove(&file))?;
     if must("the stat of a removed file", fs.stat(&file))?.is_some() {
@@ -334,6 +362,12 @@ fn write(
 ) -> Result<(), FsError> {
     let mut pieces = parts.iter().map(|part| Cow::Borrowed(*part));
     fs.write(path, &mut pieces, permissions)
+}
+
+/// Adds `parts` to the end of the file at `path`.
+fn append(fs: &dyn Fs, path: &Path, parts: &[&[u8]]) -> Result<(), FsError> {
+    let mut pieces = parts.iter().map(|part| Cow::Borrowed(*part));
+    fs.append(path, &mut pieces)
 }
 
 /// What the file system answered, or the violation of it refusing what
@@ -661,6 +695,42 @@ fn a_directory_is_made(
     Ok(())
 }
 
+/// Appending where nothing is makes a file of the pieces, and appending
+/// again adds to its end; appending to a directory, or under `file`, is
+/// refused as not a file, and `file` still reads as `joined`; appending
+/// into a directory that is not there is refused as not found.
+fn an_append_adds_to_the_end(
+    fs: &dyn Fs,
+    root: &Path,
+    file: &Path,
+    joined: &[u8],
+) -> Result<(), Violation> {
+    let appended = root.join("appended");
+    let first: &[&[u8]] = &[b"one\r\n", b"", b"\xFFtwo"];
+    must("appending where nothing is", append(fs, &appended, first))?;
+    if !reads(fs, &appended, &first.concat())? {
+        return Err(Violation::AppendNotMade);
+    }
+    must(
+        "appending to a file",
+        append(fs, &appended, &[b"\n", b"three\n"]),
+    )?;
+    if !reads(fs, &appended, b"one\r\n\xFFtwo\nthree\n")? {
+        return Err(Violation::AppendNotAtTheEnd);
+    }
+    let refused = [root.to_path_buf(), file.join("under")]
+        .iter()
+        .all(|path| refused_as(&append(fs, path, &[b"x"]), FsErrorKind::NotAFile));
+    if !refused || !reads(fs, file, joined)? {
+        return Err(Violation::AppendedToADirectory);
+    }
+    let into = append(fs, &root.join("no-directory").join("file"), &[b"x"]);
+    if !refused_as(&into, FsErrorKind::NotFound) {
+        return Err(Violation::AppendedIntoNoDirectory);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -717,6 +787,14 @@ mod tests {
         RefusesADirectoryThatIsThere,
         /// Making a directory where a file is replaces the file with it.
         MakesADirectoryOverAFile,
+        /// An append keeps only its last piece.
+        AppendKeepsTheLastPiece,
+        /// An append replaces what the file held.
+        AppendReplaces,
+        /// An append to a directory is refused as something else.
+        AppendRefusesADirectoryAsOther,
+        /// An append makes the directory its file is in.
+        AppendMakesTheDirectory,
     }
 
     impl Broken {
@@ -814,6 +892,36 @@ mod tests {
                     _ => self.inner.write(path, pieces, permissions),
                 },
                 _ => self.inner.write(path, pieces, permissions),
+            }
+        }
+
+        fn append(&self, path: &Path, pieces: &mut Pieces<'_>) -> Result<(), FsError> {
+            match self.fault {
+                Fault::AppendKeepsTheLastPiece => {
+                    let mut last = pieces.last().into_iter();
+                    self.inner.append(path, &mut last)
+                }
+                Fault::AppendReplaces => {
+                    if self.inner.bytes(path).is_some() {
+                        self.inner.take_away(path);
+                    }
+                    self.inner.append(path, pieces)
+                }
+                Fault::AppendRefusesADirectoryAsOther
+                    if self.inner.stat(path).ok().flatten().map(|stat| stat.kind)
+                        == Some(Kind::Directory) =>
+                {
+                    Err(FsError::new(FsErrorKind::Other, "it is a directory"))
+                }
+                Fault::AppendMakesTheDirectory => {
+                    if let Some(parent) = path.parent()
+                        && matches!(self.inner.stat(parent), Ok(None))
+                    {
+                        self.inner.directory(parent);
+                    }
+                    self.inner.append(path, pieces)
+                }
+                _ => self.inner.append(path, pieces),
             }
         }
 
@@ -1091,6 +1199,38 @@ mod tests {
     }
 
     #[test]
+    fn an_append_that_keeps_only_its_last_piece_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::AppendKeepsTheLastPiece),
+            Err(Violation::AppendNotMade)
+        );
+    }
+
+    #[test]
+    fn an_append_that_replaces_the_file_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::AppendReplaces),
+            Err(Violation::AppendNotAtTheEnd)
+        );
+    }
+
+    #[test]
+    fn an_append_to_a_directory_refused_as_something_else_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::AppendRefusesADirectoryAsOther),
+            Err(Violation::AppendedToADirectory)
+        );
+    }
+
+    #[test]
+    fn an_append_that_makes_its_directory_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::AppendMakesTheDirectory),
+            Err(Violation::AppendedIntoNoDirectory)
+        );
+    }
+
+    #[test]
     fn a_listing_of_a_file_that_is_not_refused_is_refused() {
         assert_eq!(
             verdict_on(Fault::ListOfAFileIsNotRefused),
@@ -1306,6 +1446,22 @@ mod tests {
             (
                 Violation::DirectoryMadeThroughAFile,
                 "making a directory where a file is, or under one, was not refused as not a file, or changed the file",
+            ),
+            (
+                Violation::AppendNotMade,
+                "appending where nothing is did not make a file of the pieces, joined",
+            ),
+            (
+                Violation::AppendNotAtTheEnd,
+                "appending to a file did not add the pieces at its end",
+            ),
+            (
+                Violation::AppendedToADirectory,
+                "appending to a directory, or under a file, was not refused as not a file, or changed the file",
+            ),
+            (
+                Violation::AppendedIntoNoDirectory,
+                "appending into a directory that is not there was not refused as not found",
             ),
             (Violation::NotRemoved, "a removed file was still there"),
         ];

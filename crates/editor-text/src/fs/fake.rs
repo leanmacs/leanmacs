@@ -9,7 +9,8 @@
 //! port's rules.
 //!
 //! - **Its time is the one a test sets.** A file made by [`FakeFs::file`]
-//!   or by the port's `write` is stamped with the fake's own time, which
+//!   or by the port's `write`, or added to by its `append`, is stamped with
+//!   the fake's own time, which
 //!   only [`FakeFs::set_now`] moves. Two writes with no `set_now` between
 //!   them have one modification time: that is a file system whose clock is
 //!   coarser than the writes are apart, made on purpose.
@@ -46,6 +47,8 @@ pub enum Op {
     Read,
     /// [`Fs::write`].
     Write,
+    /// [`Fs::append`].
+    Append,
     /// [`Fs::rename`].
     Rename,
     /// [`Fs::remove`].
@@ -69,6 +72,8 @@ pub enum Call {
     Read(PathBuf),
     /// [`Fs::write`] of a file at this path, with these permissions named.
     Write(PathBuf, Option<Permissions>),
+    /// [`Fs::append`] to the file at this path.
+    Append(PathBuf),
     /// [`Fs::rename`] of the first path to the second.
     Rename(PathBuf, PathBuf),
     /// [`Fs::remove`] of this path.
@@ -90,6 +95,7 @@ impl Call {
             Self::Stat(_) => Op::Stat,
             Self::Read(_) => Op::Read,
             Self::Write(..) => Op::Write,
+            Self::Append(_) => Op::Append,
             Self::Rename(..) => Op::Rename,
             Self::Remove(_) => Op::Remove,
             Self::Resolve(_) => Op::Resolve,
@@ -526,6 +532,41 @@ impl State {
         }
     }
 
+    /// [`Fs::append`]. A link is followed, as the system's append follows
+    /// one; the file is stamped with the fake's time and keeps its
+    /// permissions, and one made has the default permissions.
+    fn append(&mut self, path: &Path, pieces: &mut Pieces<'_>) -> Result<(), FsError> {
+        let at = self.followed(path)?;
+        let now = self.now;
+        match self.nodes.get_mut(&at) {
+            Some(Node::File {
+                bytes, modified, ..
+            }) => {
+                for piece in pieces {
+                    bytes.extend_from_slice(&piece);
+                }
+                *modified = now;
+                Ok(())
+            }
+            Some(Node::Directory(_) | Node::Other(_)) => Err(refused(FsErrorKind::NotAFile, path)),
+            Some(Node::Link(_)) | None => {
+                let Some(parent) = at.parent() else {
+                    // The root, which is always a directory.
+                    return Err(refused(FsErrorKind::NotAFile, path));
+                };
+                self.directory_at(parent)?;
+                let bytes = pieces.flat_map(|piece| piece.into_owned()).collect();
+                let node = Node::File {
+                    bytes,
+                    modified: now,
+                    permissions: FakeFs::DEFAULT_PERMISSIONS,
+                };
+                self.nodes.insert(at, node);
+                Ok(())
+            }
+        }
+    }
+
     /// [`Fs::rename`].
     fn rename(&mut self, from: &Path, to: &Path) -> Result<(), FsError> {
         match self.nodes.get(from) {
@@ -660,6 +701,12 @@ impl Fs for FakeFs {
     ) -> Result<(), FsError> {
         self.call(Call::Write(path.to_path_buf(), permissions), |state| {
             state.write(path, pieces, permissions)
+        })
+    }
+
+    fn append(&self, path: &Path, pieces: &mut Pieces<'_>) -> Result<(), FsError> {
+        self.call(Call::Append(path.to_path_buf()), |state| {
+            state.append(path, pieces)
         })
     }
 
@@ -869,6 +916,87 @@ mod tests {
         assert_eq!(kind("/dir/sub"), Err(FsErrorKind::Exists));
         assert_eq!(kind("/dir/pipe"), Err(FsErrorKind::Exists));
         assert_eq!(fs.bytes("/dir/file"), Some(b"old".to_vec()));
+    }
+
+    /// Adds `parts` to the end of the file at `path` through the port.
+    fn append(fs: &FakeFs, path: &str, parts: &[&[u8]]) -> Result<(), FsError> {
+        let mut pieces = parts.iter().map(|part| Cow::Borrowed(*part));
+        fs.append(Path::new(path), &mut pieces)
+    }
+
+    #[test]
+    fn an_append_makes_a_file_where_nothing_is_and_then_adds_to_its_end() {
+        let fs = FakeFs::new();
+        fs.directory("/dir");
+        fs.set_now(at(100));
+
+        assert_eq!(append(&fs, "/dir/log", &[b"one\r\n", b"", b"\xFF"]), Ok(()));
+        assert_eq!(fs.bytes("/dir/log"), Some(b"one\r\n\xFF".to_vec()));
+        assert_eq!(
+            fs.permissions("/dir/log"),
+            Some(FakeFs::DEFAULT_PERMISSIONS)
+        );
+        fs.set_now(at(101));
+        fs.set_permissions("/dir/log", Permissions::new(0o600));
+        assert_eq!(append(&fs, "/dir/log", &[b"two\n"]), Ok(()));
+
+        assert_eq!(fs.bytes("/dir/log"), Some(b"one\r\n\xFFtwo\n".to_vec()));
+        // Stamped with the fake's time, and its permissions kept.
+        let stat = fs.stat(Path::new("/dir/log")).ok().flatten();
+        assert_eq!(stat.map(|stat| stat.modified), Some(at(101)));
+        assert_eq!(fs.permissions("/dir/log"), Some(Permissions::new(0o600)));
+        assert_eq!(
+            fs.calls().first(),
+            Some(&Call::Append(PathBuf::from("/dir/log")))
+        );
+        assert_eq!(Call::Append("/".into()).op(), Op::Append);
+    }
+
+    #[test]
+    fn an_append_follows_a_link_to_the_file_it_names() {
+        let fs = FakeFs::new();
+        fs.file("/dir/file", b"a");
+        fs.link("/dir/link", "/dir/file");
+
+        assert_eq!(append(&fs, "/dir/link", &[b"b"]), Ok(()));
+
+        assert_eq!(fs.bytes("/dir/file"), Some(b"ab".to_vec()));
+        assert_eq!(
+            fs.link_target("/dir/link"),
+            Some(PathBuf::from("/dir/file"))
+        );
+    }
+
+    #[test]
+    fn an_append_needs_its_directory_and_refuses_what_is_not_a_file() {
+        let fs = FakeFs::new();
+        fs.file("/dir/file", b"old");
+        fs.directory("/dir/sub");
+        fs.other("/dir/pipe");
+
+        let kind = |path: &str| append(&fs, path, &[b"new"]).map_err(|error| error.kind);
+        assert_eq!(kind("/nowhere/file"), Err(FsErrorKind::NotFound));
+        assert_eq!(kind("/dir/file/under"), Err(FsErrorKind::NotAFile));
+        assert_eq!(kind("/dir/sub"), Err(FsErrorKind::NotAFile));
+        assert_eq!(kind("/dir/pipe"), Err(FsErrorKind::NotAFile));
+        assert_eq!(kind("/"), Err(FsErrorKind::NotAFile));
+        assert_eq!(fs.bytes("/dir/file"), Some(b"old".to_vec()));
+        assert_eq!(fs.stat(Path::new("/nowhere")), Ok(None));
+    }
+
+    #[test]
+    fn fail_fails_the_next_append_and_it_adds_nothing() {
+        let fs = FakeFs::new();
+        fs.file("/dir/log", b"one");
+        fs.fail(Op::Append, refusal(FsErrorKind::Other));
+
+        assert_eq!(
+            append(&fs, "/dir/log", &[b"two"]),
+            Err(refusal(FsErrorKind::Other))
+        );
+        assert_eq!(fs.bytes("/dir/log"), Some(b"one".to_vec()));
+        assert_eq!(append(&fs, "/dir/log", &[b"two"]), Ok(()));
+        assert_eq!(fs.bytes("/dir/log"), Some(b"onetwo".to_vec()));
     }
 
     #[test]
