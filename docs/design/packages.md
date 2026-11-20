@@ -862,9 +862,13 @@ executable it links, besides `editor.oleans` and `editor.set`:
   the default set's and the fixture set's. The whole libraries are hashed,
   not only the modules a set links, so a package that imports a core
   module the default set does not link does not change the identity. A
-  per-user editor linked against another core is never started (see "The
-  launcher's choice", below). `tools/stage-bundle.sh` copies the record
-  beside the shipped default, `Contents/MacOS/editor.core`.
+  per-user editor linked against another core is never started
+  ([lean-runtime.md](lean-runtime.md), "A cold start picks the newest
+  per-user editor"). `tools/stage-bundle.sh` copies the record
+  in the bundle's resources, `Contents/Resources/editor.core`: `codesign`
+  refuses a file in `Contents/MacOS` that is not code (found by `mise run
+  app-check`). The launcher and the editor read it there for an executable
+  in a bundle, and beside the executable otherwise.
 - **`editor.build`**: the environment a rebuild must reproduce, one line
   `NAME=value` for each of `LEAN_CC` and `MACOSX_DEPLOYMENT_TARGET` that
   was set when the build ran (`buildRecordText`). In a checkout

@@ -14,7 +14,8 @@
 //!   else `$HOME/.local/share/leanmacs` when `HOME` is set and not empty.
 //!   With none of them there is no data directory, and no per-user editor.
 //! - **The core** is the identity of the shipped default's core: the one
-//!   line of `<default>.core` beside the default executable
+//!   line of `<default>.core` beside the default executable, or in a
+//!   bundle `Contents/Resources/editor.core`
 //!   ([`core_record`], [`core_identity`]). An editor built on another core
 //!   is not one this default's launcher may start, so only
 //!   `<data>/editors/<core>/` is looked in.
@@ -76,12 +77,30 @@ pub fn data_dir(
     set(HOME).map(|home| home.join(".local").join("share").join(APP))
 }
 
-/// The record of the shipped default's core: `<default>.core`.
+/// The record of the shipped default's core: in an app bundle, where the
+/// default is `<bundle>/Contents/MacOS/<name>`,
+/// `<bundle>/Contents/Resources/<name>.core`, since `codesign` refuses a
+/// file in `Contents/MacOS` that is not code; elsewhere `<default>.core`,
+/// beside it, where the package-set build writes it.
 #[must_use]
 pub fn core_record(default: &Path) -> PathBuf {
-    let mut path = default.as_os_str().to_owned();
-    path.push(".core");
-    PathBuf::from(path)
+    let mut name = default.file_name().unwrap_or_default().to_owned();
+    name.push(".core");
+    let macos = default.parent();
+    let contents = macos.and_then(Path::parent);
+    match (macos, contents) {
+        (Some(macos), Some(contents))
+            if macos.file_name() == Some(std::ffi::OsStr::new("MacOS"))
+                && contents.file_name() == Some(std::ffi::OsStr::new("Contents")) =>
+        {
+            contents.join("Resources").join(name)
+        }
+        _ => {
+            let mut path = default.as_os_str().to_owned();
+            path.push(".core");
+            PathBuf::from(path)
+        }
+    }
 }
 
 /// The core's identity in its record's bytes: their one line, without the
@@ -201,10 +220,14 @@ mod tests {
     }
 
     #[test]
-    fn the_core_is_the_one_line_beside_the_default() {
+    fn the_core_is_the_one_line_beside_the_default_or_in_its_bundles_resources() {
         assert_eq!(
             core_record(Path::new("/A.app/Contents/MacOS/editor")),
-            PathBuf::from("/A.app/Contents/MacOS/editor.core")
+            PathBuf::from("/A.app/Contents/Resources/editor.core")
+        );
+        assert_eq!(
+            core_record(Path::new("/w/packages/.lake/build/bin/editor")),
+            PathBuf::from("/w/packages/.lake/build/bin/editor.core")
         );
         assert_eq!(core_identity(b"3f9a0c\n"), Some("3f9a0c".to_owned()));
         assert_eq!(core_identity(b"  3f9a0c \r\n"), Some("3f9a0c".to_owned()));

@@ -465,6 +465,8 @@ mod tests {
 
     const LAUNCHER: &str = "/Apps/Leanmacs.app/Contents/MacOS/leanmacs";
     const SHIPPED: &str = "/Apps/Leanmacs.app/Contents/MacOS/editor";
+    /// The record of the shipped default's core, in its bundle's resources.
+    const SHIPPED_CORE: &str = "/Apps/Leanmacs.app/Contents/Resources/editor.core";
     const RECORD: &str = "/s/session/handover";
 
     fn args(words: &[&str]) -> Vec<OsString> {
@@ -514,7 +516,7 @@ mod tests {
     fn cold_world(paths: &[String]) -> FakeWorld {
         let mut fake = FakeWorld::new(LAUNCHER, false);
         fake.platform.set_var("HOME", "/h");
-        fake.files = fake.files.clone().with(format!("{SHIPPED}.core"), "c\n");
+        fake.files = fake.files.clone().with(SHIPPED_CORE.to_owned(), "c\n");
         for path in paths {
             fake.files = fake.files.clone().with(path.as_str(), "exe");
         }
@@ -640,13 +642,11 @@ mod tests {
     #[test]
     fn with_no_core_record_or_an_empty_one_the_shipped_default_starts_as_before() {
         let mut fake = cold_world(&[version(DATA, "1")]);
-        fake.files
-            .files
-            .remove(Path::new(&format!("{SHIPPED}.core")));
+        fake.files.files.remove(Path::new(SHIPPED_CORE));
         run(&args(&["headless"]), &mut fake.world());
         assert_started_the_default_as_before(&fake);
         let mut fake = cold_world(&[version(DATA, "1")]);
-        fake.files = fake.files.clone().with(format!("{SHIPPED}.core"), "\n");
+        fake.files = fake.files.clone().with(SHIPPED_CORE.to_owned(), "\n");
         run(&args(&["headless"]), &mut fake.world());
         assert_started_the_default_as_before(&fake);
     }

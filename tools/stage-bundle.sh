@@ -8,7 +8,8 @@
 #
 # It makes `<bundle dir>/Contents/MacOS/` and copies the executable there as
 # `editor` (a copy, never a link), with the record of the core's identity
-# beside it, `editor.core`, when the build wrote one, and with `--launcher`
+# in `Contents/Resources/editor.core` when the build wrote one, and with
+# `--launcher`
 # the app's launcher
 # there as `leanmacs` (`crates/editor-launch-std`; the bundle's
 # `CFBundleExecutable`, which starts `editor`), and copies module files,
@@ -92,11 +93,14 @@ staged_toolchain="$bundle/Contents/Resources/lean/toolchain/lib/lean"
 staged_editor="$bundle/Contents/Resources/lean/editor"
 mkdir -p "$macos" "$staged_toolchain" "$staged_editor"
 cp "$executable" "$macos/editor"
-# The core's identity, beside the shipped default, where the launcher reads
-# it to choose a per-user editor (docs/design/packages.md, "User package
-# sets"); an executable the package-set build did not link has none.
+# The core's identity of the shipped default, in the bundle's resources,
+# where the launcher reads it to choose a per-user editor
+# (docs/design/packages.md, "User package sets"): `codesign` refuses a file
+# in Contents/MacOS that is not code. An executable the package-set build
+# did not link has none.
 if [ -e "$executable.core" ]; then
-  cp "$executable.core" "$macos/editor.core"
+  mkdir -p "$bundle/Contents/Resources"
+  cp "$executable.core" "$bundle/Contents/Resources/editor.core"
 fi
 if [ -n "$launcher" ]; then
   cp "$launcher" "$macos/leanmacs"

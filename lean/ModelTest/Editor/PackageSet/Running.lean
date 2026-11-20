@@ -67,6 +67,14 @@ def packageSetRunningChecks : List Check :=
             bare.core == none &&
             bare.lake == none) },
     { name :=
+        "the core record of an executable in an app bundle is in the bundle's Contents/Resources, where codesign lets a file that is not code be; outside one it is beside the executable"
+      run :=
+        pure
+          (coreRecordPath "/A.app/Contents/MacOS/editor" ==
+              "/A.app/Contents/Resources/editor.core" &&
+            coreRecordPath "/w/packages/.lake/build/bin/editor" ==
+              "/w/packages/.lake/build/bin/editor.core") },
+    { name :=
         "a .build record's lines are NAME=value, a value may hold =, and a line with none is left out"
       run :=
         pure

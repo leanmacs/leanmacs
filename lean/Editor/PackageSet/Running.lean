@@ -23,7 +23,9 @@ changes them after, but what each reload reads of the config (`facts`).
   (`PackageSet.shipped`), when it knows the set's directory; with neither it
   has none, and never starts a build.
 
-In a bundle the records are beside `Contents/MacOS/editor`, as outside one.
+In a bundle the core's record is `Contents/Resources/editor.core`
+(`coreRecordPath`): `codesign` refuses a file in `Contents/MacOS` that is
+not code.
 
 Pure over its two ports, so `model-test` pins it
 (`ModelTest.packageSetRunningChecks`).
@@ -59,9 +61,20 @@ structure Running where
   facts : Facts := {}
   deriving DecidableEq, Repr, BEq, Inhabited
 
-/-- The record of the core's identity beside the executable at `appPath`. -/
+/-- The record of the core's identity of the executable at `appPath`:
+beside it, `<executable>.core`, where the package-set build writes it; in
+an app bundle, `<bundle>/Contents/Resources/<name>.core`, where
+`tools/stage-bundle.sh` puts it, since `codesign` refuses a file in
+`Contents/MacOS` that is not code. The launcher reads it by the same rule
+(`crates/editor-launch/src/editors.rs`, `core_record`). -/
 def coreRecordPath (appPath : String) : String :=
-  appPath ++ ".core"
+  let path := System.FilePath.mk appPath
+  match path.parent, path.parent.bind (·.parent), path.fileName with
+  | some macOS, some contents, some name =>
+    if macOS.fileName == some "MacOS" && contents.fileName == some "Contents" then
+      (contents / "Resources" / s!"{name}.core").toString
+    else appPath ++ ".core"
+  | _, _, _ => appPath ++ ".core"
 
 /-- The record of the build environment beside the executable at
 `appPath`. -/
