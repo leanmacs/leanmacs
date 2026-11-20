@@ -891,11 +891,13 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use std::sync::Arc;
+
     use super::{Coalescing, Service, Target, WatchReply};
     use crate::batch::{Change, Kinds};
     use crate::clock::ManualClock;
     use crate::fake::{FakeGround, FakeWatch, Flaws};
-    use crate::{Depth, Kind, RefusalKind};
+    use crate::{Depth, Kind, Refusal, RefusalKind, Sink, Watch};
 
     /// How long a test waits for something that should happen at once.
     /// Only a broken service takes this long, and the test then fails
@@ -1642,6 +1644,119 @@ mod tests {
         assert!(nothing, "the flush waits for the start's completion");
         assert_eq!(after, [1, 2]);
         assert_eq!(refusal(service.take(1)), Some(RefusalKind::NotAbsolute));
+    }
+
+    /// A watch port over the fake whose registrations, as each is dropped,
+    /// tell the first receiver of [`gated_drops`] and wait for its sender to
+    /// be told or dropped, before the fake's registration is dropped.
+    struct GatedDrops {
+        /// The fake it registers with.
+        fake: FakeWatch,
+        /// Told as a drop begins.
+        began: Arc<Mutex<Sender<()>>>,
+        /// Waited on before a drop goes on.
+        gate: Arc<Mutex<Receiver<()>>>,
+    }
+
+    /// A registration of [`GatedDrops`].
+    struct GatedRegistration {
+        /// The fake's registration, dropped once the gate is passed.
+        _inner: <FakeWatch as Watch>::Registration,
+        /// Told as the drop begins.
+        began: Arc<Mutex<Sender<()>>>,
+        /// Waited on before the drop goes on.
+        gate: Arc<Mutex<Receiver<()>>>,
+    }
+
+    impl Drop for GatedRegistration {
+        fn drop(&mut self) {
+            self.began
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(())
+                .ok();
+            self.gate
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .recv()
+                .ok();
+        }
+    }
+
+    impl Watch for GatedDrops {
+        type Registration = GatedRegistration;
+
+        fn watch(
+            &self,
+            directory: &Path,
+            depth: Depth,
+            sink: Sink,
+        ) -> Result<GatedRegistration, Refusal> {
+            Ok(GatedRegistration {
+                _inner: self.fake.watch(directory, depth, sink)?,
+                began: Arc::clone(&self.began),
+                gate: Arc::clone(&self.gate),
+            })
+        }
+    }
+
+    /// A port over `fake` whose drops are gated, the receiver told as each
+    /// begins, and the sender that lets them go.
+    fn gated_drops(fake: &FakeWatch) -> (GatedDrops, Receiver<()>, Sender<()>) {
+        let (began, dropping) = mpsc::channel();
+        let (release, gate) = mpsc::channel();
+        let gated = GatedDrops {
+            fake: fake.clone(),
+            began: Arc::new(Mutex::new(began)),
+            gate: Arc::new(Mutex::new(gate)),
+        };
+        (gated, dropping, release)
+    }
+
+    /// Start 1 is cancelled while it is in the port, and its thread, back
+    /// from the port, is held inside the drop of what it registered: a
+    /// flush asked now waits for that drop. Shutdown waits on the same
+    /// tickets (`State::starts`), so it too returns only once a cancelled
+    /// start has dropped what it registered.
+    #[test]
+    fn a_flush_asked_while_a_cancelled_start_drops_its_registration_is_completed_after_the_drop() {
+        let (fake, _ground, clock) = fake();
+        let (gated, dropping, release) = gated_drops(&fake);
+        let (sender, completed) = mpsc::channel();
+        let sender = Mutex::new(sender);
+        let service = Service::new(gated, clock.clone(), move |id| {
+            sender
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(id)
+                .ok();
+        });
+        fake.hold_watches();
+        assert!(service.start(1, directory("/w", Depth::Tree), AT_ONCE));
+        assert!(fake.until(DEADLINE, |record| record.parked == 1));
+        assert!(service.cancel(1));
+        fake.release_watches();
+        assert_eq!(dropping.recv_timeout(DEADLINE), Ok(()), "the drop begins");
+
+        let asked = service.flush(2);
+        // Read while the drop is held, and checked once it is let go.
+        let nothing = completed.try_recv().is_err();
+        let live = fake.live();
+        drop(release);
+        assert!(asked);
+        assert!(nothing, "the flush waits for the cancelled start's drop");
+        assert_eq!(
+            live,
+            [(PathBuf::from("/w"), Depth::Tree)],
+            "held in its drop"
+        );
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
+        assert_eq!(fake.live(), [], "dropped before the flush was completed");
+        service.shutdown();
+        assert!(
+            completed.try_recv().is_err(),
+            "the start is never completed"
+        );
     }
 
     #[test]
