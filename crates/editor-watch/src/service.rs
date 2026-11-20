@@ -73,9 +73,11 @@
 //!   other watch shares it. Cancelling a wait drops that wait alone.
 //! - **Shutdown** ([`Service::shutdown`]) refuses every later start, which
 //!   comes to [`RefusalKind::ShutDown`] and is completed at once; cancels
-//!   every watch; waits for every start in flight to return from the port;
-//!   and drops every registration. It is idempotent, and dropping the last
-//!   handle of a service does it.
+//!   every watch and every start in flight, and drops every registration,
+//!   in one step, so a start held in the port does not keep the live
+//!   watches' registrations; then waits for every start in flight to
+//!   return from the port, each dropping what it registered. It is
+//!   idempotent, and dropping the last handle of a service does it.
 //! - **Locks**: a registration is never dropped, and the closure never
 //!   called, while the service's lock is held. A registration is taken out
 //!   under the lock and dropped after it is released: an adapter's drop may
@@ -529,9 +531,9 @@ impl<W: Watch, C: Clock> Service<W, C> {
         true
     }
 
-    /// Refuses every later start, cancels every watch, waits for every
-    /// start in flight to return from the port, and drops every
-    /// registration. Safe to call again.
+    /// Refuses every later start, cancels every watch and every start in
+    /// flight, drops every registration, and then waits for every start in
+    /// flight to return from the port. Safe to call again.
     pub fn shutdown(&self) {
         self.inner().shutdown();
     }
@@ -802,16 +804,19 @@ impl<W: Watch, C: Clock> Inner<W, C> {
             }
             Held::Live(_) => false,
         });
+        // Every registration was a live watch's, and none is made from
+        // now on, so each is dropped now, not after the slowest start.
+        let ended: Vec<_> = state.registrations.drain().collect();
+        drop(state);
+        drop(ended);
         // A start in flight sees it is no longer wanted when it returns
         // from the port, and drops what it registered itself.
         let mut state = self
             .finished
-            .wait_while(state, |state| state.active > 0)
+            .wait_while(self.state(), |state| state.active > 0)
             .unwrap_or_else(PoisonError::into_inner);
-        let ended: Vec<_> = state.registrations.drain().collect();
         let flushed = state.take_every_flush();
         drop(state);
-        drop(ended);
         self.complete_all(flushed);
     }
 
@@ -1544,10 +1549,24 @@ mod tests {
         assert_eq!(completed.try_recv(), Ok(3));
     }
 
+    /// Shutdown runs on a thread of its own while start 1 is held in the
+    /// port, and the start is let go only once shutdown has withdrawn it.
+    /// The sign is the live watch 4's registration being dropped, which
+    /// shutdown does in the same step as it withdraws every start, before
+    /// it waits for them. A start let go any earlier comes back wanted and
+    /// is completed, which is the interleaving this test rules out.
     #[test]
     fn a_cancelled_flush_is_never_completed_and_shutdown_completes_one_waiting() {
         let (fake, _ground, clock) = fake();
         let (service, completed) = service(&fake, &clock);
+        // On a registration of its own, apart from start 1's.
+        started(
+            &service,
+            &completed,
+            4,
+            directory("/w/sub", Depth::Entries),
+            AT_ONCE,
+        );
         fake.hold_watches();
         assert!(service.start(1, file("/w/f"), AT_ONCE));
         assert!(fake.until(DEADLINE, |record| record.parked == 1));
@@ -1559,14 +1578,19 @@ mod tests {
             let service = service.clone();
             thread::spawn(move || service.shutdown())
         };
+        let shut = fake.until(DEADLINE, |record| record.dropped.len() == 1);
         fake.release_watches();
         shutting.join().expect("shutdown returns");
         assert!(asked && withdrawn);
+        assert!(shut, "shutdown ends the live watch while the start is held");
 
         // The cancelled start is never completed, nor the cancelled flush.
         assert_eq!(completed.recv_timeout(DEADLINE), Ok(3));
         assert!(completed.try_recv().is_err());
         assert_eq!(service.pending(), 0);
+        // The start dropped what it registered before the flush it was the
+        // last thing for was completed.
+        assert_eq!(fake.live(), []);
     }
 
     #[test]

@@ -721,8 +721,10 @@ C functions are `crates/editor-ffi/src/watches.rs`.
     start cancelled while its port call is in flight drops the
     registration when the call returns, and is never completed. An id in
     use is refused. **Shutdown** refuses every later start (as shut down,
-    completed at once), cancels every watch, waits for every start in
-    flight, and drops every registration; it is idempotent. **A flush**
+    completed at once), cancels every watch and every start in flight
+    and drops every registration in one step, so a start held in the port
+    does not keep the live watches' registrations, then waits for every
+    start in flight; it is idempotent. **A flush**
     (`Service::flush`, deterministic-test-concurrency phase 1) is a wait
     of the caller's, completed once every start asked before it has
     returned from the port (registered and completed, refused, or dropped
