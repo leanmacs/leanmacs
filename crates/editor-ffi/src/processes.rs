@@ -121,7 +121,7 @@
 //! | [`editor_ffi_processes_held`] | Whether a child is held at its bound: 0 no, 1 yes, 2 no such child. A readout for tests |
 //! | [`editor_ffi_processes_flush`] | Asks for an id to be completed once every run before it has ended and every child cancelled before it has been reaped; keeps no reply. False for an id in use |
 //! | [`editor_ffi_processes_cancel`] | Cancels a run, a streaming child or a wait on one, killing the child's group, and says whether there was anything to cancel |
-//! | [`editor_ffi_processes_pending`] | Runs and streaming children whose child is not yet reaped, results not taken, and waits not answered or not taken |
+//! | [`editor_ffi_processes_pending`] | Runs and streaming children whose child is not yet reaped, results not taken, waits not answered or not taken, and the flushes waiting |
 //! | [`editor_ffi_processes_shutdown`] | Kills every group, runs and streaming children alike, and returns once every child is reaped; a later run or open is refused as shut down |
 
 use std::path::PathBuf;
@@ -611,9 +611,10 @@ pub extern "C" fn editor_ffi_processes_flush(id: u64) -> bool {
 
 /// How many runs and streaming children are not over, a cancelled one
 /// being over once its child is reaped; how many results have not been
-/// taken; and how many waits on streaming children have not been answered
-/// or not taken: all together. A readout for tests, which use it to see
-/// that a cancelled run's or streaming child's child was reaped.
+/// taken; how many waits on streaming children have not been answered or
+/// not taken; and the flushes waiting: all together. A readout for tests,
+/// which use it to see that a cancelled run's or streaming child's child
+/// was reaped.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_processes_pending() -> u64 {
     words::word(PROCESSES.pending())

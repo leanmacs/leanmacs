@@ -216,9 +216,12 @@ job reads as it comes and whose standard input it writes to (phase 2;
   it has been answered, and every streaming child cancelled or forgotten
   before it has been reaped; with nothing to wait for it is completed at
   once. Each run's thread, after its own completion, and each streaming
-  child's waiter, once its child is reaped, removes its id from every
+  child's waiter, once its child is reaped, removes its ticket from every
   flush and completes those it was the last thing for, in the order they
-  were asked; shutdown completes the rest once every child is reaped. **A
+  were asked; shutdown completes the rest once every child is reaped. A
+  run's result is kept, and an open answered, before its completion is
+  queued, so each holds a ticket until then and a flush waits on the
+  tickets: a flush asked in between is still completed after it. **A
   live streaming child, its pending read and a write held by a full pipe
   are not covered**: they wait on the child, not on the service, and a
   flush that waited for them would never be completed. The contract holds
@@ -727,10 +730,13 @@ C functions are `crates/editor-ffi/src/watches.rs`.
     start in flight; it is idempotent. **A flush**
     (`Service::flush`, deterministic-test-concurrency phase 1) is a wait
     of the caller's, completed once every start asked before it has
-    returned from the port (registered and completed, refused, or dropped
-    as cancelled); at once when no start is in flight. A start's thread,
-    after its own completion, completes each flush it was the last thing
-    for, in the order asked, and shutdown completes the rest. **A pending
+    returned from the port (registered and completed, refused and
+    completed, or cancelled and what it registered dropped); at once when
+    no start is in flight. A start leaves `Starting` before its completion
+    is queued, so each start holds a ticket until its thread has finished
+    and a flush and shutdown wait on the tickets. A start's thread, after
+    its own completion, completes each flush it was the last thing for, in
+    the order asked, and shutdown completes the rest. **A pending
     read is not covered**: it waits on the disk, not on the service.
   - **A registration is never dropped, and the completion never called,
     under the service's lock.** It is taken out under the lock and dropped
