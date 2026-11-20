@@ -1968,7 +1968,8 @@ trap and runs its editor as the installed app runs it
    editor was built from, then, last, the core the editor links, at its
    root, so the reload starts no build.
 5. **The version and the identity.** With `tests/headless/bundle/
-   Info.plist` (the version, build ID and commit keys with a fake stamp)
+   Info.plist` (the version, build ID, commit and core tag keys with a
+   fake stamp)
    in `Contents/`, `--version` must print exactly `version-expected`, and
    the build tree's `editor --version` the line of a development build
    (the plist reader is `ModelTest.versionChecks`'). `leanmacs --probe`

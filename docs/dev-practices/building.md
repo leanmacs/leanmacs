@@ -184,6 +184,11 @@ them (lean/Editor/Version.lean):
   prints. The committer time, not the author time: landing rebases, which
   resets it, so the ID goes up along `main`.
 - `LeanmacsCommit` is the commit, HEAD's full SHA, from `LEANMACS_COMMIT`.
+- `LeanmacsCoreTag` is the tag of the build's core, `nightly-<build ID>`,
+  derived from the build ID: the tag the nightly release creates at the
+  commit, which a package pins the core at (`editor-release`'s
+  `nightly::core_tag`, which `check_stamp` holds this key to at release).
+  `editor --version` prints it on its `core` line.
 
 `mise run app` sets both variables with `leanmacs-release build-id` and
 `commit` (`crates/editor-release-std`), which take each variable as it is

@@ -41,7 +41,8 @@ def versionPlist (stamp : String) (extra : String := "") : String :=
 </plist>
 "
 
-/-- The three keys of a stamp as `appInfoPlist` writes them. -/
+/-- The four keys of a stamp as `appInfoPlist` writes them, the core's tag
+`nightly-<build>`. -/
 def versionStampKeys (version build commit : String) : String :=
   s!"\t<key>CFBundleShortVersionString</key>
 \t<string>{version}</string>
@@ -49,6 +50,8 @@ def versionStampKeys (version build commit : String) : String :=
 \t<string>{build}</string>
 \t<key>LeanmacsCommit</key>
 \t<string>{commit}</string>
+\t<key>LeanmacsCoreTag</key>
+\t<string>nightly-{build}</string>
 "
 
 /-- The checks of `editor --version` (`Editor/Version.lean`): what it prints
@@ -57,7 +60,9 @@ on the shape `editorApp` writes, and each text it refuses; and what it
 reads, through a fake file read. -/
 def versionChecks : List Check :=
   let sha := String.ofList (List.replicate 40 'a')
-  let stamp : Version.Stamp := { version := "0.0.1", build := "20010203040506", commit := sha }
+  let stamp : Version.Stamp :=
+    { version := "0.0.1", build := "20010203040506", commit := sha,
+      tag := "nightly-20010203040506" }
   let good := versionPlist (versionStampKeys "0.0.1" "20010203040506" sha)
   let refusal (plist : String) : Option String :=
     match Version.ofInfoPlist plist with
@@ -73,11 +78,12 @@ def versionChecks : List Check :=
     modify (·.push path)
     pure answer
   [{  name :=
-        "a stamped build reports the version, the build ID and the commit on three lines, with status 0"
+        "a stamped build reports the version, the build ID, the commit and the core's tag on four lines, with status 0"
       run :=
         pure
           (Version.report (.stamped stamp) ==
-            (s!"Leanmacs 0.0.1\nbuild 20010203040506\ncommit {sha}", 0)) },
+            (s!"Leanmacs 0.0.1\nbuild 20010203040506\ncommit {sha}\ncore nightly-20010203040506",
+              0)) },
     { name := "a development build says it has no version, build ID or commit, with status 0"
       run :=
         pure
@@ -93,11 +99,14 @@ def versionChecks : List Check :=
         "the plist reader takes the stamp from the shape appInfoPlist writes, document types nested above it"
       run := pure ((Version.ofInfoPlist good).toOption == some stamp) },
     { name :=
-        "the plist reader refuses a missing LeanmacsCommit, a key given twice, an <integer>, a binary plist and a value with &, each naming the key"
+        "the plist reader refuses a missing LeanmacsCommit, a missing LeanmacsCoreTag, a key given twice, an <integer>, a binary plist and a value with &, each naming the key"
       run :=
         let noCommit :=
           versionPlist
             "\t<key>CFBundleShortVersionString</key>\n\t<string>0.0.1</string>\n\t<key>CFBundleVersion</key>\n\t<string>20010203040506</string>\n"
+        let noTag :=
+          versionPlist
+            s!"\t<key>CFBundleShortVersionString</key>\n\t<string>0.0.1</string>\n\t<key>CFBundleVersion</key>\n\t<string>20010203040506</string>\n\t<key>LeanmacsCommit</key>\n\t<string>{sha}</string>\n"
         let twice :=
           versionPlist (versionStampKeys "0.0.1" "20010203040506" sha)
             "\t<key>CFBundleVersion</key>\n\t<string>20010203040507</string>\n"
@@ -108,6 +117,7 @@ def versionChecks : List Check :=
         let entity := versionPlist (versionStampKeys "0.0.1&amp;" "20010203040506" sha)
         pure
           (refusal noCommit == some "LeanmacsCommit is missing" &&
+            refusal noTag == some "LeanmacsCoreTag is missing" &&
             refusal twice == some "CFBundleVersion is given more than once" &&
             refusal integer == some "CFBundleVersion is not a <string>" &&
             names "CFBundleShortVersionString" ("bplist00" ++ good) &&

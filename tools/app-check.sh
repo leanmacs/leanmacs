@@ -38,7 +38,8 @@
 #    cannot address), and each must fail naming the key. Its
 #    `CFBundleShortVersionString` is the line of `lean/app/version`, read
 #    here from the file the build reads, its `CFBundleVersion` the expected
-#    build ID and its `LeanmacsCommit` the expected commit; its
+#    build ID, its `LeanmacsCommit` the expected commit and its
+#    `LeanmacsCoreTag` `nightly-<expected build ID>`; its
 #    `LSApplicationCategoryType` is `public.app-category.developer-tools`
 #    and its `NSHumanReadableCopyright` is not empty;
 # 4. converts the icon back to an iconset (`iconutil -c iconset`), which
@@ -61,7 +62,8 @@
 #    ships, and `@SET@` its `Contents/Resources/lean/set`, the set it ships;
 # 5b. runs the copy's `editor --version` the same way, through the launcher,
 #    with an empty environment from `/`: it must print exactly `Leanmacs
-#    <version>`, `build <build ID>` and `commit <commit>`, so the Lean plist
+#    <version>`, `build <build ID>`, `commit <commit>` and `core
+#    nightly-<build ID>`, so the Lean plist
 #    reader (lean/Editor/Version.lean) reads the keys the build writes;
 # 5c. runs the launcher's `--probe` of the copy's editor, and of a copy of
 #    the editor outside the bundle with `--default`, each with an empty
@@ -418,6 +420,7 @@ check_key() {
 check_key "$plist" CFBundleShortVersionString "$version" lean/app/version
 check_key "$plist" CFBundleVersion "$build_id" "the build ID"
 check_key "$plist" LeanmacsCommit "$commit" "the commit"
+check_key "$plist" LeanmacsCoreTag "nightly-$build_id" "the core's tag"
 category=$(read_key LSApplicationCategoryType 2>/dev/null) || fail "Info.plist has no LSApplicationCategoryType"
 [ "$category" = public.app-category.developer-tools ] ||
   fail "Info.plist's LSApplicationCategoryType is $category, not public.app-category.developer-tools"
@@ -479,17 +482,18 @@ sed "s|@SET@|$app/Contents/Resources/lean/set|; s|@CORE@|$app/Contents/Resources
 step "the copy's headless mode with --generate loaded the config, and generated lean-toolchain and a lakefile naming the copy's set"
 
 # 5b. What the copy says of its build, read from its own Info.plist.
-# Whether the bundle at $1 says version $2, build $3 and commit $4.
+# Whether the bundle at $1 says version $2, build $3, commit $4 and the
+# core's tag nightly-$3.
 check_says() {
   local said
   said=$(cd / && env -i "$1/Contents/MacOS/leanmacs" --version) || fail "$1's editor --version failed"
-  [ "$said" = "$(printf 'Leanmacs %s\nbuild %s\ncommit %s' "$2" "$3" "$4")" ] ||
+  [ "$said" = "$(printf 'Leanmacs %s\nbuild %s\ncommit %s\ncore nightly-%s' "$2" "$3" "$4" "$3")" ] ||
     fail "$1's editor --version printed
 $said
-not version $2, build $3, commit $4"
+not version $2, build $3, commit $4, core nightly-$3"
 }
 check_says "$app" "$version" "$build_id" "$commit"
-step "the copy's editor --version, with an empty environment from /, printed version $version, build $build_id and commit $commit"
+step "the copy's editor --version, with an empty environment from /, printed version $version, build $build_id, commit $commit and core nightly-$build_id"
 
 # 5c. The app's identity, through the launcher: the bundle's editor, and a
 # copy of it outside the bundle started with --default, each see the copy as

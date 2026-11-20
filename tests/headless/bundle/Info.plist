@@ -10,5 +10,7 @@
 	<string>20010203040506</string>
 	<key>LeanmacsCommit</key>
 	<string>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</string>
+	<key>LeanmacsCoreTag</key>
+	<string>nightly-20010203040506</string>
 </dict>
 </plist>

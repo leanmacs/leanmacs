@@ -1498,8 +1498,12 @@ def checkAppArtwork (sipsOutput : String) : Except String Unit :=
 of the version file (`appVersionFile`), built as `build` from `commit`
 (`parseAppStamp`). The version is `CFBundleShortVersionString`, the build ID
 `CFBundleVersion`, and the commit `LeanmacsCommit`, a key of the app's own
-with no dot in it, so `plutil -extract` can address it. `editor --version`
-reads the three (`Editor/Version.lean`, `plistKeys`). `NSHumanReadableCopyright` names
+with no dot in it, so `plutil -extract` can address it. `LeanmacsCoreTag`
+is the tag of the build's core, `nightly-<build ID>`, which the nightly
+release creates at the commit and a package pins the core at; it is
+derived here from the build ID, and `editor-release`'s `core_tag` holds
+it to its own derivation at release (`check_stamp`). `editor --version`
+reads the four (`Editor/Version.lean`, `plistKeys`). `NSHumanReadableCopyright` names
 the licence, as `Cargo.toml` gives it, and `LSApplicationCategoryType` files
 the app under developer tools.
 
@@ -1580,6 +1584,8 @@ def appInfoPlist (version build commit : String) : String :=
 \t<string>{appMinimumSystemVersion}</string>
 \t<key>LeanmacsCommit</key>
 \t<string>{commit}</string>
+\t<key>LeanmacsCoreTag</key>
+\t<string>nightly-{build}</string>
 \t<key>NSHighResolutionCapable</key>
 \t<true/>
 \t<key>NSHumanReadableCopyright</key>

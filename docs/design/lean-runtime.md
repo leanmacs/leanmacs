@@ -90,8 +90,9 @@ builds by default; `mise run app` builds it from the default set, at
 everything a user's package-set build needs into `Leanmacs.app` ("The app
 ships the toolchain", below), writes `Info.plist`, with
 the version from `lean/app/version` as `CFBundleShortVersionString`, the
-build ID as `CFBundleVersion` and the commit as `LeanmacsCommit`, a key of
-the app's own, and the icon, made from the checked-in
+build ID as `CFBundleVersion`, the commit as `LeanmacsCommit` and the
+core's tag, `nightly-<build ID>`, as `LeanmacsCoreTag`, keys of the app's
+own, and the icon, made from the checked-in
 artwork `lean/app/Leanmacs.png`, and signs the whole bundle ad-hoc, last.
 The build ID and the commit come from the environment,
 `LEANMACS_BUILD_ID` and `LEANMACS_COMMIT`, which `mise run app` sets from

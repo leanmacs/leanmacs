@@ -4,11 +4,15 @@ import Editor.ModuleLookup
 # What build the running editor is
 
 `editor --version` (`Editor/Executable.lean`, `Editor/Main.lean`) says the app's
-version, its build ID and the commit it was built from. All three are in
-the bundle's `Contents/Info.plist`, where `editorApp` (lean/lakefile.lean,
-`appInfoPlist`) writes them: `CFBundleShortVersionString`, the line of
-`lean/app/version`; `CFBundleVersion`, the build ID; and `LeanmacsCommit`,
-the commit (`plistKeys`).
+version, its build ID, the commit it was built from and the tag of its
+core. All four are in the bundle's `Contents/Info.plist`, where
+`editorApp` (lean/lakefile.lean, `appInfoPlist`) writes them:
+`CFBundleShortVersionString`, the line of `lean/app/version`;
+`CFBundleVersion`, the build ID; `LeanmacsCommit`, the commit; and
+`LeanmacsCoreTag`, `nightly-<build ID>`, the tag the nightly release puts
+at that commit (`crates/editor-release`, `core_tag`), which a package pins
+the core at (`plistKeys`). The commit line stays: it is the revision
+itself, and the tag names it for a package's `rev`.
 
 This module is pure. It reads the plist through a reader function, the
 port (`read`): `Editor.Main.run` passes the real file read, and the model tests
@@ -32,6 +36,8 @@ structure Stamp where
   build : String
   /-- The commit's full SHA, `LeanmacsCommit`. -/
   commit : String
+  /-- The core's tag, `LeanmacsCoreTag`: `nightly-<build ID>`. -/
+  tag : String
   deriving DecidableEq, Repr
 
 /-- What the running executable is. -/
@@ -45,11 +51,12 @@ inductive Build where
   | unreadable (path reason : String)
   deriving DecidableEq, Repr
 
-/-- The keys of the version, the build ID and the commit. They must be the
-ones lakefile `appInfoPlist` writes; `mise run app-check` (step 5b) runs
-`editor --version` on the real plist, which shows they are. -/
-def plistKeys : String × String × String :=
-  ("CFBundleShortVersionString", "CFBundleVersion", "LeanmacsCommit")
+/-- The keys of the version, the build ID, the commit and the core's tag.
+They must be the ones lakefile `appInfoPlist` writes; `mise run app-check`
+(step 5b) runs `editor --version` on the real plist, which shows they
+are. -/
+def plistKeys : String × String × String × String :=
+  ("CFBundleShortVersionString", "CFBundleVersion", "LeanmacsCommit", "LeanmacsCoreTag")
 
 /-- The string value of `key` in `plist`, the text of an XML property list:
 the text between `<string>` and `</string>` after `<key>key</key>` and any
@@ -81,10 +88,10 @@ def stringOf? (plist key : String) : Except String String := do
 /-- The stamp in the text of an `Info.plist`, or the first key's reason it
 is not there (`stringOf?`). -/
 def ofInfoPlist (plist : String) : Except String Stamp := do
-  let (versionKey, buildKey, commitKey) := plistKeys
+  let (versionKey, buildKey, commitKey, tagKey) := plistKeys
   return {
       version := ← stringOf? plist versionKey, build := ← stringOf? plist buildKey
-      commit := ← stringOf? plist commitKey }
+      commit := ← stringOf? plist commitKey, tag := ← stringOf? plist tagKey }
 
 /-- The `Info.plist` of the bundle an executable at `appPath` is in, or none
 outside a bundle (`ModuleLookup.bundle?`). -/
@@ -110,12 +117,14 @@ def read [Monad m] (appPath : String) (readFile : System.FilePath → m (Except 
       | .error reason =>
         pure (.unreadable path.toString reason)
 
-/-- What `editor --version` prints for `build`, and its exit status: three
-lines and 0 for a stamped build, one line and 0 for a development build,
+/-- What `editor --version` prints for `build`, and its exit status: four
+lines and 0 for a stamped build (the last, `core <tag>`, the tag a package
+pins the core at), one line and 0 for a development build,
 and one line naming the plist and the reason, and 1, for one that could not
 be read. -/
 def report : Build → String × UInt32
-  | .stamped stamp => (s!"Leanmacs {stamp.version}\nbuild {stamp.build}\ncommit {stamp.commit}", 0)
+  | .stamped stamp =>
+    (s!"Leanmacs {stamp.version}\nbuild {stamp.build}\ncommit {stamp.commit}\ncore {stamp.tag}", 0)
   | .development =>
     ("Leanmacs, a development build: not run from an app bundle, so it has no version, build ID or commit",
       0)
