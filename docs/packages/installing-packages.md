@@ -152,6 +152,7 @@ make the same edit and `:reload`.
   running editor's core directory after the last require. So a lakefile an
   older editor wrote, which requires the default set alone, or one you
   edited, is repaired by the next command. A `:reload` never rewrites it.
+  So `editor-core` itself cannot be installed, given a rev or removed.
 - **A `lakefile.lean` is never edited.** The commands say they edit
   `lakefile.toml` only. Any change to a `lakefile.lean` starts a build,
   since it is a program and is not read.

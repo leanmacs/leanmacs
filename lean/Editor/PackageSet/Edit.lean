@@ -27,7 +27,10 @@ hand".
 - **Install** (`install`) adds a table after the last require, or at the
   end with none: `name` and then `path`; `git` with an optional `rev`; or
   `scope` with an optional `version` for Reservoir. A name already
-  required is refused.
+  required is refused, and so is `editor-core` ("the core cannot be
+  installed; the root requires it"): every edit takes the core's tables
+  out first, so its name is never already required there, and the root's
+  own is written after.
 - **Remove** (`remove`) takes a require's table out, with one blank line
   after it. `editor-core` is refused ("the core cannot be removed"). A name
   the lakefile does not require is refused, unless the lakefile requires
@@ -38,7 +41,8 @@ hand".
   set").
 - **Set a rev** (`setRev`) writes `rev = "<rev>"` into a git require's
   table, in place of the one there or after its `git` line. A require that
-  is not a git dependency is refused.
+  is not a git dependency is refused, and so is `editor-core` ("the core
+  cannot be given a rev; the root requires it by path").
 
 ## The core's require
 
@@ -132,6 +136,8 @@ def joined (lines : Array String) : String :=
 /-- The text with `require` added ("The edits", in the module docs). -/
 def install (text : String) (required : Array Require) (require : Require) : Except String String :=
   do
+  if require.name == coreName then
+    throw "the core cannot be installed; the root requires it"
   if required.any (·.name == require.name) then
     throw s!"the lakefile already requires {require.name}"
   let (lines, tabled) ← located text required
@@ -200,6 +206,8 @@ def remove (text : String) (required : Array Require) (name : String) (config : 
 in the module docs). -/
 def setRev (text : String) (required : Array Require) (name rev : String) : Except String String :=
   do
+  if name == coreName then
+    throw "the core cannot be given a rev; the root requires it by path"
   let (lines, tabled) ← located text required
   let some (require, start, stop) := tabled.find? (·.1.name == name)
     | throw s!"the lakefile does not require {name}"

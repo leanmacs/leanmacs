@@ -249,6 +249,23 @@ def packageSetEditChecks : List Check :=
           (withCoreEdit "/c" none lakefile required
               (install · · { name := "x", source := .path "/p/x" }) ==
             .error
-              "this editor knows no directory of its core, so it cannot write the lakefile's editor-core require") }]
+              "this editor knows no directory of its core, so it cannot write the lakefile's editor-core require") },
+    { name :=
+        "the commands' composition refuses to install editor-core, to give it a rev, or to remove it, on a lakefile with the core's require at its root and on one that requires the set alone, so the lakefile never holds two editor-core tables"
+      run :=
+        let gitCore : Require :=
+          { name := "editor-core", source := .git "https://h/leanmacs" (some "nightly-1") none }
+        let pathCore : Require := { name := "editor-core", source := .path "/elsewhere/lean" }
+        let refusals (text : String) (required : Array Require) : Bool :=
+          let edit := withCoreEdit "/c" (some core) text required
+          edit (install · · gitCore) ==
+              .error "the core cannot be installed; the root requires it" &&
+            edit (install · · pathCore) ==
+              .error "the core cannot be installed; the root requires it" &&
+            edit (setRev · · "editor-core" "v2") ==
+              .error "the core cannot be given a rev; the root requires it by path" &&
+            edit (remove · · "editor-core" "/c" (some "default-set") setRequired) ==
+              .error "the core cannot be removed"
+        pure (refusals repaired repairedRequired && refusals lakefile required) }]
 
 end ModelTest

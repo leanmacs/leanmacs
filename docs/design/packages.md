@@ -1041,6 +1041,11 @@ as the last reload read them with Lake's loader:
   left out because the root already requires it. `editor-core` is refused
   ("the core cannot be removed"), as is a package nothing requires.
 - **A rev** is written into a git require's table.
+- **The core** is never installed, given a rev or removed: each refuses
+  `editor-core` ("the core cannot be installed; the root requires it",
+  "the core cannot be given a rev; the root requires it by path", "the
+  core cannot be removed"), since the root's own core require is written
+  after every edit.
 - **A `lakefile.lean`** is never edited: the commands say they edit
   `lakefile.toml` only.
 - **The core's require, at the root, last** (packages phase 12). Each

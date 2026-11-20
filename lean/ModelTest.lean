@@ -857,8 +857,9 @@ The config session's decisions are tested here too, with no elaborator:
   refusal, and the core's require at the root through the one composition
   the commands make each edit through (`withCoreEdit`): a set-only
   lakefile repaired, a git or other-path core replaced, a repaired
-  lakefile a fixed point, and a relative path to the running core taken
-  for it as the fingerprint takes it;
+  lakefile a fixed point, a relative path to the running core taken for
+  it as the fingerprint takes it, and `editor-core` refused to install,
+  rev and remove through it;
 - `packageSetBuildChecks`: a user's package-set build and its commands
   (`Editor/PackageSet/Build.lean`, `Editor/PackageSet/Compiled.lean`):
   when a reload starts it and when it says it cannot, an editor in a
