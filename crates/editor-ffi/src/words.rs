@@ -106,19 +106,17 @@ impl Writer {
     }
 }
 
-/// The bytes Lean lent for the length of a call: `len` bytes at `bytes`.
-/// No bytes at all may be lent with any pointer, a null one included.
+/// The bytes Lean lent for the length of a call: `len` bytes at `bytes`,
+/// read with [`editor_service::buffer::borrow`], whose rule for no bytes
+/// lent with any pointer, a null one included, holds here.
 ///
 /// # Safety
 ///
-/// `bytes` points to `len` readable bytes that stay unchanged for `'a`.
+/// As [`editor_service::buffer::borrow`]: when `len` is not zero, `bytes`
+/// points to `len` readable bytes that stay unchanged for `'a`.
 pub(crate) unsafe fn borrow<'a>(bytes: *const u8, len: usize) -> &'a [u8] {
-    if len == 0 {
-        return &[];
-    }
-    // SAFETY: the caller guarantees the pointer, the length and the
-    // lifetime, and a slice of bytes has no alignment to keep.
-    unsafe { std::slice::from_raw_parts(bytes, len) }
+    // SAFETY: the caller keeps `editor_service::buffer::borrow`'s contract.
+    unsafe { editor_service::buffer::borrow(bytes, len) }
 }
 
 /// Gives `bytes` up as a buffer for a result record: its pointer and its

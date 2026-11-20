@@ -17,13 +17,20 @@ pub fn lend(bytes: Vec<u8>) -> (*mut u8, usize) {
     (Box::into_raw(bytes).cast(), len)
 }
 
-/// The `len` bytes at `bytes`, lent for the length of a call.
+/// The `len` bytes at `bytes`, lent for the length of a call. No bytes at
+/// all may be lent with any pointer, a null one included: a length of zero
+/// borrows as the empty slice without the pointer being looked at.
 ///
 /// # Safety
 ///
-/// `bytes` points to `len` readable bytes that stay unchanged for `'a`.
+/// When `len` is not zero, `bytes` points to `len` readable bytes that stay
+/// unchanged for `'a`.
 pub unsafe fn borrow<'a>(bytes: *const u8, len: usize) -> &'a [u8] {
-    // SAFETY: the caller guarantees the pointer, the length and the lifetime.
+    if len == 0 {
+        return &[];
+    }
+    // SAFETY: the caller guarantees the pointer, the length and the
+    // lifetime, and a slice of bytes has no alignment to keep.
     unsafe { slice::from_raw_parts(bytes, len) }
 }
 
@@ -63,5 +70,11 @@ mod tests {
             assert_eq!(borrow(bytes, len), b"");
             reclaim(bytes, len);
         }
+    }
+
+    #[test]
+    fn no_bytes_lent_with_a_null_pointer_borrow_as_empty() {
+        // SAFETY: no bytes are lent, which any pointer may do.
+        assert_eq!(unsafe { borrow(ptr::null(), 0) }, b"");
     }
 }
