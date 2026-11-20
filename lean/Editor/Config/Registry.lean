@@ -40,8 +40,8 @@ a theme in: a later definition of a name is over an earlier one.
 `Registrations` is what one run of a `setup` asks for, collected by a pure
 handler of the setup port and then checked. `Registrations.ofSetup` is the
 whole of it: the registrations, or the message the `setup` is refused with.
-A `setup` is refused when it declares a store name twice, registers a
-command name twice or a job name twice, sets a face twice, defines a theme
+A `setup` is refused when it declares a store name twice, keeps a store
+across a restart twice, registers a command name twice or a job name twice, sets a face twice, defines a theme
 twice or names one twice, binds a key sequence twice or binds no keys,
 binds an ex name twice, defines a completion source twice, or registers a
 command over a store it does not declare
@@ -1701,7 +1701,7 @@ theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
 twice, the layout chosen twice, the tab bar chosen twice, the title bar chosen twice, the leader set twice (`leaderTwice`), the localleader set twice (`localLeaderTwice`), a key sequence bound twice (compared as written, whatever states each binding names; `problemUnder?` compares the keys as they expand), a binding of
 no keys, an ex name bound twice, the process environment set twice,
-auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a compile contribution registered twice or naming a command twice, project commands given twice for one project and mode or naming a command twice, a command over a store that is not declared, a mode name defined twice, a
+auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a compile contribution registered twice or naming a command twice, project commands given twice for one project and mode or naming a command twice, a command over a store that is not declared, a store kept across a restart twice, a mode name defined twice, a
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named, a language name defined twice, a language with a pattern no
 file name can be meant by (`Language.problems`), of which the first is
