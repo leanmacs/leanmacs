@@ -104,6 +104,19 @@ open RestoreRunTest in
 /-- The checks of restoring a session (`Editor/Restore/Run.lean`). -/
 def restoreChecks : List Check :=
   [{  name :=
+        "a cursor after a multi-byte character comes back where it was: its column is recorded in bytes and put back in bytes"
+      run :=
+        pure <|
+          match
+            first
+              (some ((world fun files => files.withFile "/r/e.txt" "é xy\n".toUTF8).getD {})) with
+          | none => false
+          | some begun =>
+            let moved := drained (evilFed (opened begun "e.txt") "l l")
+            match second moved with
+            | none => false
+            | some again => focusedShown moved == "é |xy\n" && focusedShown again == "é |xy\n" },
+    { name :=
         "after an abort, the buffers come back: a file's unsaved text, modified, at its file with its line ending and modes, the scratch buffer's text, and the focused buffer shown with its cursor"
       run :=
         pure <|

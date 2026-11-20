@@ -156,6 +156,22 @@ def spotOf (text : TextId) (offset : Nat) : TextM Spot := do
   let point ← text.pointOf offset
   return { row := point.row, column := point.column }
 
+/-- The byte offset of `text` that `spot` records: the start of its row,
+clamped to the last row, and its column in bytes, clamped to the row's
+content and moved back to the start of the character it falls inside. The
+inverse of `spotOf`, which records a column in bytes. -/
+def offsetOf (text : TextId) (spot : Spot) : TextM Nat := do
+  let row := min spot.row ((← text.lineCount) - 1)
+  let content ← text.rowContent row
+  let start ← text.offsetOf ⟨row, 0⟩
+  let (column, _) :=
+    content.toList.foldl
+      (fun (bytes, stopped) char =>
+        if !stopped && bytes + char.utf8Size ≤ spot.column then (bytes + char.utf8Size, false)
+        else (bytes, true))
+      (0, false)
+  return start + column
+
 /-- The place of `window`, whose buffer's text is `text`. -/
 def placeOf (text : TextId) (window : Window) : TextM (Option Place) := do
   let .selection selection ← text.marker window.selection | return none

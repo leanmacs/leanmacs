@@ -1,7 +1,6 @@
 import Editor.Api
 import Editor.Files
 import Editor.Job
-import Editor.Marks
 import Editor.Restore
 
 /-!
@@ -358,17 +357,18 @@ def restoreWork (arguments : List Argument) : Work := fun _ => do
   return read { directory, made, sessionNames, journalNames, indexes, journals }
 
 /-- Puts the window `view`, which shows `buffer`, at `place`, clamped to the
-text: its selection's anchor and head, and its scroll's top row. -/
+text: its selection's anchor and head, their columns in bytes as recorded
+(`Restore.offsetOf`), and its scroll's top row. -/
 def placeIn (view : ViewId) (buffer : BufferId) (place : Place) : EditorM Unit := do
   let some shown := (← editorState).buffer? buffer | return
-  let anchor ← (Marks.offsetAt shown.text place.anchor.row place.anchor.column : TextM Nat)
-  let head ← (Marks.offsetAt shown.text place.head.row place.head.column : TextM Nat)
+  let anchor ← (offsetOf shown.text place.anchor : TextM Nat)
+  let head ← (offsetOf shown.text place.head : TextM Nat)
   if let .ok selection← view.selection then
     discard <|
         view.select
           { selection with
             ranges := #[⟨anchor, head⟩], primary := 0 }
-  let top ← (Marks.offsetAt shown.text place.top 0 : TextM Nat)
+  let top ← (offsetOf shown.text ⟨place.top, 0⟩ : TextM Nat)
   if let some window := (← editorState).window? view then
     discard <|
         (observing (shown.text.place window.scroll (.anchor { offset := top, bias := .before })) :

@@ -1213,6 +1213,10 @@ Session restore is checked in Lean alone too:
   file that is not JSON; which index is restored (the highest run, whatever
   its format, none when it ended) and which are removed or left; the next
   run's number; and the names of indexes and journals.
+- `restoreOffsetChecks`: where a recorded spot is put back
+  (`Restore.offsetOf`, `Editor/Restore.lean`), on the text model: its
+  column in bytes, after a multi-byte character, clamped past the row's
+  content, moved back from inside a character, and a row past the last.
 - `journalReconcileChecks`: the journal's reconciler
   (`Editor/Restore.lean`) on the loop's driver over the models with the
   state directory `/state`, each read from the file model, decoded and
@@ -1232,7 +1236,8 @@ Session restore is checked in Lean alone too:
   index, one with no header, and two of one name; the new bases before the
   stale files' removal; the other windows' places kept and written again;
   the version rule end to end; and a mode only config registers deferred
-  until it installs, or said when it does not register it.
+  until it installs, or said when it does not register it; and a cursor
+  after a multi-byte character put back where it was.
 
 Listing a workspace's files is checked in Lean alone too:
 
@@ -1422,6 +1427,7 @@ def checks : List Check :=
     workingSetDiskChecks ++
     journalFormatChecks ++
     restoreDocumentChecks ++
+    restoreOffsetChecks ++
     journalReconcileChecks ++
     restoreChecks ++
     driverChecks ++
