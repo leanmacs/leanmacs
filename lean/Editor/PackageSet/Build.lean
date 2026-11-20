@@ -37,9 +37,10 @@ git, and the requires to resolve (`resolveNames`).
    dependency: `git --version`. Not found, or a non-zero exit (macOS's
    command-line-tools shim), stops the build with `gitRequired`.
 2. **Resolve**: `lake update --keep-toolchain <names>` for the requires
-   missing from the manifest or whose entry disagrees with the lakefile's
-   url or rev; for `:package-update`, the named package, or every git and
-   Reservoir require.
+   missing from the manifest, whose entry disagrees with the lakefile's
+   url or rev, or, for a path require, whose entry is not a path entry
+   naming the same directory (`resolveNames`); for `:package-update`, the
+   named package, or every git and Reservoir require.
 3. **Rust**: `lake query :editorRustCrates`, then, when the set holds a
    package with a Rust crate, `cargo --version`. A set with no crate needs
    no Cargo: its link reuses the core's archive as it is built
@@ -175,27 +176,39 @@ def Order.decode? (text : String) : Option Order := do
       running := ← value "running", environment, required := all "require", set := value "set"
       fetched := all "fetched", resolve := all "resolve" }
 
-/-- The requires to resolve with `lake update`: those whose name the
-manifest holds no entry of, and the git ones whose entry has another url,
-or another revision than the lakefile asks for. -/
-def resolveNames (required : Array Require) (manifest : Option String) : Array String :=
-  let entries :=
+/-- The requires to resolve with `lake update`, for the config directory
+`config`: those whose name the manifest holds no entry of; the git ones
+whose entry has another url, or another revision than the lakefile asks
+for; and the path ones whose entry is not a path entry naming the same
+directory (both normalised lexically against `config`). Lake keeps a
+stale entry when a require's source kind changes, and only warns (probed
+on Lake 4.35.0): a root `editor-core` by path over the git or inherited
+entry a set had before. -/
+def resolveNames (required : Array Require) (manifest : Option String) (config : String := "/") :
+    Array String :=
+  let entries : Array (String × Json.Value) :=
     match manifest.map (Json.parse ·.toUTF8) with
     | some (.ok document) =>
       match document.field? "packages" with
       | some (.array items) =>
         items.filterMap fun (item : Json.Value) =>
           match item.field? "name" with
-          | some (.string name) => some (unquoted name)
+          | some (.string name) => some (unquoted name, item)
           | _ => none
       | _ => #[]
     | _ => #[]
   let pinned := (manifest.map gitEntries).getD #[]
   (required.filter fun require =>
-        if !entries.contains require.name then true
-        else
+        match entries.find? (·.1 == require.name) with
+        | none => true
+        | some (_, entry) =>
           match require.source, pinned.find? (·.name == require.name) with
           | .git url rev _, some pin => pin.url != url || (rev.isSome && pin.inputRev != rev)
+          | .path directory, _ =>
+            match entry.field? "type", entry.field? "dir" with
+            | some (.string "path"), some (.string dir) =>
+              normalise config dir != normalise config directory
+            | _, _ => true
           | _, _ => false).map
     (·.name)
 
@@ -233,7 +246,7 @@ def orderOf (running : Running) (facts : Facts) (resolve : Option (Array String)
   return {
       config := running.config, lake, data, running := running.executable
       environment := running.build, required := fingerprint.required, set := running.setName
-      fetched, resolve := resolve.getD (resolveNames required facts.manifest) }
+      fetched, resolve := resolve.getD (resolveNames required facts.manifest running.config) }
 
 /-- What a reload is to do about the package set, given what the running
 editor knows of its own (`running`), what the reload read (`facts`) and

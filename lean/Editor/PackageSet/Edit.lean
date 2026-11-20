@@ -33,12 +33,29 @@ hand".
   the lakefile does not require is refused, unless the lakefile requires
   the shipped set by path and the name is one of that set's own requires:
   then the set's table is **expanded**, replaced by a table for each of the
-  set's requires but that one, a path made absolute against the set's
+  set's requires but that one and the core, a path made absolute against the set's
   directory (`docs/design/packages.md`, "A config directory requires the
   set").
 - **Set a rev** (`setRev`) writes `rev = "<rev>"` into a git require's
   table, in place of the one there or after its `git` line. A require that
   is not a git dependency is refused.
+
+## The core's require
+
+Every edit is made on the lakefile with the core's require written at its
+root first (`withCoreEdit`, `withCore`): `editor-core` by the directory of
+the running editor's own core (`Running.coreDirectory`), ahead of every
+other require, so Lake's root require wins over a git core a package
+names (`docs/design/packages.md`, "A config directory requires the core
+and the set"). Any `editor-core` table is taken out, whatever its source,
+and the core's is inserted before the first `[[require]]` table and the
+comments just before it; a lakefile whose first table already requires
+that directory, and has no other `editor-core`, is left as it is, so a
+repaired lakefile is a fixed point. So an edit repairs a lakefile an older
+editor generated, which requires the set alone, or one edited by hand. A
+remove's expansion of the shipped set leaves the core out: the root holds
+it. An editor that knows no directory of its core refuses every edit
+(`noCoreDirectory`). A reload never rewrites a lakefile.
 -/
 
 namespace Editor.PackageSet
@@ -154,8 +171,11 @@ def remove (text : String) (required : Array Require) (name : String) (config : 
     unless setRequired.any (·.name == name) do
       throw s!"the lakefile does not require {name}, and neither does {setRequire.name}"
     let setDirectory := normalise config directory
+    -- The core is not expanded: the root already requires it (`withCore`).
     let kept :=
-      (setRequired.filter (·.name != name)).map fun (require : Require) =>
+      (setRequired.filter fun (require : Require) =>
+            require.name != name && require.name != coreName).map
+        fun (require : Require) =>
         match require.source with
         | .path path => { require with source := .path (normalise setDirectory path) }
         | _ => require
@@ -189,5 +209,73 @@ def setRev (text : String) (required : Array Require) (name rev : String) : Exce
     let at_ := ((List.range (stop - start)).map (· + start) |>.find? (keyed "git")).map (· + 1)
     let index := at_.getD stop
     return joined (lines.extract 0 index ++ #[line] ++ lines.extract index lines.size)
+
+/-- The require of the running editor's core, by its directory `core`: what
+every edit writes at the root of the lakefile ("The core's require", in the
+module docs). -/
+def coreRequire (core : String) : Require :=
+  { name := coreName, source := .path core }
+
+/-- Whether `require` is the core's require by the directory `core`, the
+path spelled absolute. -/
+def isCoreAt (core : String) (require : Require) : Bool :=
+  match require.name, require.source with
+  | "editor-core", .path directory =>
+    directory.startsWith "/" && normalise "/" directory == normalise "/" core
+  | _, _ => false
+
+/-- The index of the first line of the comments just before the line
+`index` of `lines`: the comment block a table's header follows, which
+belongs to that table ("Where a table is", in the module docs). -/
+def commentsBefore (lines : Array String) (index : Nat) : Nat :=
+  Id.run do
+    let mut start := index
+    while start > 0 && lines[start - 1]!.trimAscii.toString.startsWith "#" do
+      start := start - 1
+    return start
+
+/-- The text with the core's require at its root, by the directory `core`,
+and its requires in table order, the core first ("The core's require", in
+the module docs): every `editor-core` table taken out, whatever its source,
+and the core's inserted before the first `[[require]]` table and the
+comments just before it, with one blank line after it; with no table, at
+the end, as `install` adds one. A lakefile whose first table already
+requires the core by that directory, and no other, is answered as it is. -/
+def withCore (text : String) (required : Array Require) (core : String) :
+    Except String (String × Array Require) := do
+  let others := required.filter (·.name != coreName)
+  if (required[0]?.map (isCoreAt core)) == some true && others.size + 1 == required.size then
+    return (text, required)
+  let (lines, tabled) ← located text required
+  let kept :=
+    tabled.foldr
+      (fun (require, start, stop) lines =>
+        if require.name == coreName then replaced lines start stop #[] else lines)
+      lines
+  let own := coreRequire core
+  match (tables kept)[0]? with
+  | some (first, _) =>
+    let at_ := commentsBefore kept first
+    return (joined (kept.extract 0 at_ ++ own.table ++ #[""] ++ kept.extract at_ kept.size),
+        #[own] ++ others)
+  | none =>
+    let text := joined kept
+    let body := if text.isEmpty || text.endsWith "\n" then text else text ++ "\n"
+    return (body ++ "\n" ++ joined own.table ++ "\n", #[own] ++ others)
+
+/-- Why an edit is refused by an editor that knows no directory of its
+core. -/
+def noCoreDirectory : String :=
+  "this editor knows no directory of its core, so it cannot write the lakefile's editor-core require"
+
+/-- The edit `edit` of the lakefile `text`, whose requires are `required`,
+made on it with the core's require written at its root first (`withCore`),
+by the running editor's core directory `core`; refused when it knows none
+(`noCoreDirectory`). -/
+def withCoreEdit (core : Option String) (text : String) (required : Array Require)
+    (edit : String → Array Require → Except String String) : Except String String := do
+  let some core := core | throw noCoreDirectory
+  let (text, required) ← withCore text required core
+  edit text required
 
 end Editor.PackageSet

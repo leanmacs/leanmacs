@@ -212,10 +212,10 @@ def packageSetBuildChecks : List Check :=
           pure (Order.decode? order.encode == some order && order.fetched == #["g"])
         | _, _ => pure false },
     { name :=
-        "the requires resolved are those missing from the manifest and the git ones whose url or rev the manifest does not hold"
+        "the requires resolved are those missing from the manifest and the git ones whose url or rev the manifest does not hold; a path require whose entry names its directory is not"
       run :=
         let manifest :=
-          "{\"packages\": [{\"type\": \"git\", \"name\": \"g\", \"url\": \"https://example.invalid/g\", \"rev\": \"abc\", \"inputRev\": \"v0\"}, {\"type\": \"path\", \"name\": \"«editor-core»\", \"dir\": \"/w/lean\"}, {\"type\": \"path\", \"name\": \"«default-set»\"}]}"
+          "{\"packages\": [{\"type\": \"git\", \"name\": \"g\", \"url\": \"https://example.invalid/g\", \"rev\": \"abc\", \"inputRev\": \"v0\"}, {\"type\": \"path\", \"name\": \"«editor-core»\", \"dir\": \"/w/lean\"}, {\"type\": \"path\", \"name\": \"«default-set»\", \"dir\": \"/w/packages\"}]}"
         pure
           (resolveNames (generated ++ #[gitPackage, hello]) (some manifest) == #["g", "hello"] &&
             resolveNames
@@ -224,6 +224,31 @@ def packageSetBuildChecks : List Check :=
                       source := .git "https://example.invalid/g" (some "v0") none }])
                 (some manifest) ==
               #[]) },
+    { name :=
+        "a path require is resolved when its manifest entry is not a path entry naming the same directory: a git entry, an inherited one at another directory, or a path at another; not when the entry names it spelled another way"
+      run :=
+        let core : Require := { name := "editor-core", source := .path "/w/lean" }
+        let manifestWith (entry : String) : String :=
+          "{\"packages\": [" ++ entry ++
+            ", {\"type\": \"path\", \"name\": \"«default-set»\", \"dir\": \"/w/packages\"}]}"
+        let git :=
+          manifestWith
+            "{\"type\": \"git\", \"name\": \"«editor-core»\", \"url\": \"file:///r\", \"rev\": \"abc\", \"inputRev\": \"nightly-1\", \"subDir\": \"lean\", \"inherited\": true}"
+        let inheritedElsewhere :=
+          manifestWith
+            "{\"type\": \"path\", \"name\": \"«editor-core»\", \"dir\": \"/elsewhere/lean\", \"inherited\": true}"
+        let pathElsewhere :=
+          manifestWith
+            "{\"type\": \"path\", \"name\": \"«editor-core»\", \"dir\": \"/elsewhere/lean\", \"inherited\": false}"
+        let same :=
+          manifestWith
+            "{\"type\": \"path\", \"name\": \"«editor-core»\", \"dir\": \"/w/packages/../lean\", \"inherited\": true}"
+        let required := #[core, { name := "default-set", source := .path "/w/packages" }]
+        pure
+          (resolveNames required (some git) == #["editor-core"] &&
+            resolveNames required (some inheritedElsewhere) == #["editor-core"] &&
+            resolveNames required (some pathElsewhere) == #["editor-core"] &&
+            resolveNames required (some same) == #[]) },
     { name :=
         "with a git dependency and no git, the build says git is required and how to get it, runs nothing more, and the buffer ends failed; a git that exits 1 is the same"
       run :=
@@ -563,6 +588,52 @@ def packageSetBuildChecks : List Check :=
               refused.loop.state.echo ==
                 s!"{installName}: this config's lakefile is a lakefile.lean, and the package commands edit lakefile.toml only")
         | _, _ => pure false },
+    { name :=
+        ":package-install, :package-remove and :package-update with a rev, on the lakefile generated before the core was required at its root, each start the edit job with the text repaired: the running core's require first"
+      run :=
+        let facts := setOnlyLakefileWith #[gitPackage]
+        let (text, required) :=
+          match facts.lakefile with
+          | .toml text required => (text, required)
+          | _ => ("", #[])
+        let cat := replied (rootCommand "/bin/cat" #["/c/lakefile.toml"]) 0 text
+        let mv :=
+          replied (rootCommand "/bin/mv" #["/c/lakefile.toml.leanmacs-edit", "/c/lakefile.toml"])
+        let repaired (edit : String → Array Require → Except String String) : Option ByteArray :=
+          (withCoreEdit (some coreDirectory) text required edit).toOption.map (·.toUTF8)
+        let firstIsCore (bytes : Option ByteArray) : Bool :=
+          match bytes.bind (String.fromUTF8? ·) with
+          | some edited =>
+            (edited.splitOn "[[require]]\nname = \"editor-core\"\npath = \"/w/lean\"").length ==
+                2 &&
+              (edited.splitOn "[[require]]")[1]?.map (·.startsWith "\nname = \"editor-core\"") ==
+                some true
+          | none => false
+        let after (name : String) (argument : String) : Option ByteArray :=
+          (buildDriver (runningWith facts) #[cat, mv]).bind fun driver =>
+            bytesAt (drained (invoked driver name [.str argument])) "/c/lakefile.toml.leanmacs-edit"
+        let installed := after installName "hello /h"
+        let removed := after removeName "compile"
+        let revised := after updateName "g v2"
+        pure
+          (installed == repaired (install · · hello) && firstIsCore installed &&
+            removed ==
+              repaired (remove · · "compile" "/c" (some "default-set") facts.setRequires) &&
+            firstIsCore removed &&
+            revised == repaired (setRev · · "g" "v2") &&
+            firstIsCore revised) },
+    { name :=
+        "an editor that knows no directory of its core refuses an edit, saying so, and writes nothing"
+      run :=
+        let facts := setOnlyLakefileWith
+        match buildDriver { runningWith facts with coreDirectory := none } #[] with
+        | some driver =>
+          let done := drained (invoked driver installName [.str "hello /h"])
+          pure
+            (done.reloads == driver.reloads &&
+              done.loop.state.echo ==
+                s!"{installName}: this editor knows no directory of its core, so it cannot write the lakefile's editor-core require")
+        | none => pure false },
     { name :=
         "an edit of a lakefile that changed since the last reload is refused, and nothing is written or reloaded"
       run :=

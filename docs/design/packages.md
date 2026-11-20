@@ -1029,14 +1029,31 @@ as the last reload read them with Lake's loader:
 - **Remove** takes a table out. When the lakefile requires the shipped
   set (`default-set`) and the name is one of that set's own requires, the
   set's table is replaced by a table for each of the set's requires but
-  that one, each path made absolute against the set's directory: the
-  default set expanded, minus the package. `editor-core` is refused ("the
-  core cannot be removed"), as is a package nothing requires.
+  that one and the core, each path made absolute against the set's
+  directory: the default set expanded, minus the package. The core is
+  left out because the root already requires it. `editor-core` is refused
+  ("the core cannot be removed"), as is a package nothing requires.
 - **A rev** is written into a git require's table.
 - **A `lakefile.lean`** is never edited: the commands say they edit
   `lakefile.toml` only.
+- **The core's require, at the root, first** (packages phase 12). Each
+  edit is made on the lakefile with `editor-core` written at its root by
+  the running editor's core directory first (`withCore`): any
+  `editor-core` table is taken out, whatever its source, and the core's is
+  inserted before the first `[[require]]` table. A lakefile whose first
+  table already requires that directory is left as it is. So every edit
+  repairs a lakefile an older editor generated (the set alone) or one
+  edited by hand, and a package's git require of the core stays only a
+  name. An editor that knows no core directory refuses the edits:
+  "`<command>`: this editor knows no directory of its core, so it cannot
+  write the lakefile's editor-core require". A reload never rewrites the
+  lakefile: one edited by hand without the core's require builds as before
+  while Lake still resolves the running core through the set by path, and
+  is refused by the build's core check otherwise; the next edit repairs
+  it.
 
-`config-test` reads every text these edits make back with Lake's loader.
+`config-test` reads every text these edits make back with Lake's loader,
+the core first.
 
 ### The build, as a job
 
@@ -1072,7 +1089,11 @@ is pinned on the models (`ModelTest.packageSetBuildChecks`):
    `xcode-select --install` on macOS, or from https://git-scm.com, then
    :reload; this editor keeps running".
 2. **Resolve**: `lake update --keep-toolchain <names>` for the requires the
-   manifest lacks or whose entry has another url or revision; for
+   manifest lacks, whose entry has another url or revision, or, for a path
+   require, whose entry is not a path entry naming the same directory (a
+   repaired root `editor-core` over the git or inherited entry the set had:
+   Lake keeps such a stale entry and only warns, `manifest out of date:
+   source kind (git/path) of dependency '«editor-core»' changed`); for
    `:package-update`, the named package or every git and Reservoir one.
    Measured on Lake 5.0.0: a `require` missing from the manifest fails the
    build (`dependency 'b' not in manifest`), `lake update b` adds only

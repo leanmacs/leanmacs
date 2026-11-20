@@ -23,6 +23,13 @@ commands with ex names that edit the config's `lakefile.toml`
   `lake update` for the named package or for every git and Reservoir one,
   with no edit of the lakefile: the manifest pins which revision.
 
+Every edit is made with the core's require written at the lakefile's root
+first, by the running editor's core directory (`withCoreEdit`,
+`Editor/PackageSet/Edit.lean`, "The core's require"), so each repairs a
+lakefile without it; an editor that knows no core directory refuses
+them: `<command>: this editor knows no directory of its core, so it
+cannot write the lakefile's editor-core require`.
+
 An edit is computed from the lakefile as the last reload read it
 (`EditorState.packageSet.facts`) and written by the job `package-edit`
 (`editWork`), which reads the file again first and refuses one that has
@@ -149,7 +156,9 @@ def installCommand (call : Call) : EditorM Unit := do
     message s!"{installName}: {why}"
   | .ok require =>
     let some (text, required) ← editable installName | return
-    edit installName (install text required require) text s!"{installName}: added {require.name}"
+    edit installName
+        (withCoreEdit state.packageSet.coreDirectory text required (install · · require)) text
+        s!"{installName}: added {require.name}"
 
 /-- `:package-remove` ("The `package-set` package", in the module docs). -/
 def removeCommand (call : Call) : EditorM Unit := do
@@ -157,7 +166,8 @@ def removeCommand (call : Call) : EditorM Unit := do
   let some (text, required) ← editable removeName | return
   let packageSet := (← editorState).packageSet
   edit removeName
-      (remove text required name packageSet.config packageSet.setName packageSet.facts.setRequires)
+      (withCoreEdit packageSet.coreDirectory text required
+        (remove · · name packageSet.config packageSet.setName packageSet.facts.setRequires))
       text s!"{removeName}: removed {name}"
 
 /-- `:package-update` ("The `package-set` package", in the module docs). -/
@@ -165,7 +175,9 @@ def updateCommand (call : Call) : EditorM Unit := do
   match wordsOf call with
   | [name, rev] =>
     let some (text, required) ← editable updateName | return
-    edit updateName (setRev text required name rev) text s!"{updateName}: {name} at {rev}"
+    edit updateName
+        (withCoreEdit (← editorState).packageSet.coreDirectory text required (setRev · · name rev))
+        text s!"{updateName}: {name} at {rev}"
   | names =>
     let packageSet := (← editorState).packageSet
     let required :=
