@@ -21,9 +21,13 @@ A restore check's directory is removed only once its journal has drained
 loop hands the stale index's remove to the file service as its last order,
 unobserved, and nothing else waits for it, so without the drain that remove
 can land while the directory is being removed, which then fails. The first
-two checks pin the drain with a journal that holds its orders (`HeldJournal`),
-the second when the body throws; the third pins that a journal that does
-not drain fails the check.
+two checks run one contract of the port (`drainsBeforeRemoval`) on the
+journal that holds its orders (`HeldJournal`) and on the real one
+(`Journal.real`), whose drain is what keeps the race out; the real case holds
+the file service's worker on a gate until the drain first reads the service's
+pending count, so a drain that does not wait finds the remove unworked every
+time. The third pins the drain when the body throws; the fourth that a
+journal that does not drain fails the check.
 -/
 
 namespace ContractTest
@@ -98,15 +102,18 @@ structure Journal where
   if that does not happen within `patience`. -/
   drained : IO Bool
 
-/-- Whether the library's file service holds no request within `patience`:
-it works requests in order, so every order handed to it has been worked. -/
-def filesDrained : IO Bool :=
-  eventually (return (← Ffi.filesPending) == 0)
+/-- Whether the library's file service holds no request within `patience`,
+reading how many it holds with `pending` (the service's own count, unless a
+check gates it): it works requests in order, so every order handed to it has
+been worked. -/
+def filesDrained (pending : IO UInt64 := Ffi.filesPending) : IO Bool :=
+  eventually (return (← pending) == 0)
 
-/-- The checks' journal over the library's file service, as a host's. -/
-def Journal.real (rig : ProjectRig) : Journal :=
+/-- The checks' journal over the library's file service, as a host's; its
+drain reads the service's pending count with `pending`. -/
+def Journal.real (rig : ProjectRig) (pending : IO UInt64 := Ffi.filesPending) : Journal :=
   { perform := performOrder rig
-    drained := filesDrained }
+    drained := filesDrained pending }
 
 /-- A journal that holds every order handed to it until `drained`, which
 works them in order on the real filesystem, logging `worked <kind> <path>`
@@ -151,6 +158,72 @@ def withJournalledDirectory (drained : IO Bool) (body : System.FilePath → IO B
             emptied.set (← drained))
     return held && (← emptied.get)
 
+/-- The contract of the `Journal` port, which `HeldJournal.journal` and
+`Journal.real` both keep: run under `withJournalledDirectory`, a remove the
+body hands out for a file that exists is worked by the time `drained`
+returns, before the directory goes, and the journal then holds nothing. The
+scaffold returns true, nothing throws, and the directory is gone after.
+
+`hold` runs in the directory before the remove is handed out (the real case
+holds the file service's worker with it); `left` counts what the journal
+still holds, read as `drained` returns; `settle` runs after that read, before
+the directory goes, so a failing journal still leaves nothing in flight.
+Throws, saying what it saw, when the property fails. -/
+def drainsBeforeRemoval (journal : Journal) (hold : System.FilePath → IO Unit) (left : IO Nat)
+    (settle : IO Unit) : IO Bool := do
+  let used ← IO.mkRef (none : Option System.FilePath)
+  let seen ← IO.mkRef (none : Option (Bool × Nat))
+  let drained := do
+    let emptied ← journal.drained
+    if let some directory← used.get then
+      seen.set (some (← (directory / "session-1.json").pathExists, ← left))
+    settle
+    return emptied
+  let held ←
+    withJournalledDirectory drained fun directory => do
+        let stale := directory / "session-1.json"
+        IO.FS.writeFile stale "{}"
+        hold directory
+        journal.perform { request := .remove stale }
+        used.set (some directory)
+        return true
+  let some directory ← used.get | return false
+  let gone := !(← directory.pathExists)
+  let some (there, count) ← seen.get | return false
+  unless held && !there && count == 0 && gone do
+    throw <|
+        IO.userError
+          s!"the scaffold returned {held}; when the drain returned the stale file was {if there then "there" else "gone"} and {count} orders were left; the directory was {if gone then "gone" else "there"} after"
+  return true
+
+/-- A gate that holds the library's file service's worker: `hold` makes a
+named pipe in a directory and hands the service an append to it, which
+blocks the worker opening the pipe until `release` opens it to read. The
+service works in order, so nothing handed to it after `hold` is worked
+before `release`. `release` is idempotent. -/
+structure WorkerGate where
+  /-- Makes the pipe in the directory and blocks the worker on it. -/
+  hold : System.FilePath → IO Unit
+  /-- Lets the worker go, once; nothing when the gate is not held. -/
+  release : IO Unit
+
+/-- A worker gate, not yet held. -/
+def WorkerGate.new : IO WorkerGate := do
+  let pipe ← IO.mkRef (none : Option System.FilePath)
+  return {
+      hold := fun directory => do
+        let path := directory / "gate"
+        let made ← IO.Process.output { cmd := "mkfifo", args := #[path.toString] }
+        unless made.exitCode == 0 do
+          throw <| IO.userError s!"mkfifo exited {made.exitCode}: {made.stderr}"
+        unless ← Ffi.filesAppendUnobserved path.toString "gate".toUTF8 do
+          throw <| IO.userError "the file service has no thread"
+        pipe.set (some path)
+      release := do
+        if let some path← pipe.swap none then
+          let handle ← IO.FS.Handle.mk path .read
+          discard handle.readBinToEnd }
+
 /-- The loop of a host started fresh over `rig`, with `state` as its state
 directory, once each of `invocations` has run and settled, the journal's
 orders handed to the library's file service. -/
@@ -168,29 +241,23 @@ def runRestoring (rig : ProjectRig) (state : System.FilePath) (invocations : Lis
 their own, temporary. -/
 def restoreRunChecks (services : Job.Services) : List Check :=
   [{  name :=
-        "a restore check's state directory is removed only once every order its journal handed out has been worked: a stale index's remove still held when the body ends is worked before the directory goes, and the directory is gone after"
+        "a restore check's state directory is removed only once every order its journal handed out has been worked, on the journal that holds its orders: a stale index's remove still held when the body ends is worked before the directory goes, and nothing is left held"
       run := do
         let journal ← HeldJournal.new
-        let used ← IO.mkRef (none : Option System.FilePath)
-        let held ←
-          withJournalledDirectory journal.journal.drained fun directory => do
-              let session := directory / "state" / "session"
-              IO.FS.createDirAll session
-              IO.FS.writeFile (session / "session-1.json") "{}"
-              IO.FS.writeFile (session / "session-2.json") "{}"
-              journal.journal.perform { request := .remove (session / "session-1.json") }
-              used.set (some directory)
-              return true
-        let some directory ← used.get | return false
-        let events ← journal.events.get
-        let left ← journal.held.get
-        let gone := !(← directory.pathExists)
-        let expected := #[s!"worked remove {directory / "state" / "session" / "session-1.json"}"]
-        unless held && events == expected && gone && left.isEmpty do
-          throw <|
-              IO.userError
-                s!"the scaffold returned {held}, worked {events}, left the directory {if gone then "gone" else "there"} and {left.size} orders held"
-        return true },
+        drainsBeforeRemoval journal.journal (fun _ => pure ()) (return (← journal.held.get).size)
+            (pure ()) },
+    { name :=
+        "a restore check's state directory is removed only once every order its journal handed out has been worked, on the real journal over the library's file service: with the service's worker held until the drain first reads the pending count, the stale index's remove is worked before the directory goes, and nothing is left pending"
+      run := do
+        let rig ← ProjectRig.over services
+        let gate ← WorkerGate.new
+        let pending := do
+          gate.release
+          Ffi.filesPending
+        drainsBeforeRemoval (Journal.real rig pending) gate.hold (return (← Ffi.filesPending).toNat)
+            (do
+              gate.release
+              discard <| filesDrained) },
     { name :=
         "a restore check's journal is drained even when its body throws: the scaffold rethrows the body's error, and a remove the body handed out before throwing is worked"
       run := do
