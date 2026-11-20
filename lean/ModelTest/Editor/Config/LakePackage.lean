@@ -17,14 +17,22 @@ open Editor.Config
 (`Editor/Config/LakePackage.lean`): the generated lakefile's text, and what
 is done about the two files given what the directory holds. -/
 def lakePackageChecks : List Check :=
-  let set : LakePackage.Set := { name := "default-set", directory := "/w/packages" }
+  let set : LakePackage.Set :=
+    { name := "default-set", directory := "/w/packages", core := "/w/lean" }
   let pin := "leanprover/lean4:v4.35.0\n"
   [{  name :=
-        "the generated lakefile names the package config, requires the set by its Lake name and its directory, and declares the library Config of every module under it"
+        "the generated lakefile names the package config, requires editor-core by the running editor's core directory first, then the set by its Lake name and its directory, and declares the library Config of every module under it"
       run :=
         pure
           (LakePackage.lakefile set ==
-            "name = \"config\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n[[lean_lib]]\nname = \"Config\"\nglobs = [\"Config.+\"]\n") },
+            "name = \"config\"\n\n[[require]]\nname = \"editor-core\"\npath = \"/w/lean\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n[[lean_lib]]\nname = \"Config\"\nglobs = [\"Config.+\"]\n") },
+    { name := "an editor's set is known only when both its set directory and its core directory are"
+      run :=
+        let origin : LakePackage.Origin := { setName := "default-set", pin }
+        pure
+          (origin.set (some "/w/packages") (some "/w/lean") == some set &&
+            origin.set none (some "/w/lean") == none &&
+            origin.set (some "/w/packages") none == none) },
     { name :=
         "a set directory with a backslash or a double quote in it is written as a TOML basic string, each with a backslash before it"
       run :=
@@ -65,12 +73,13 @@ def lakePackageChecks : List Check :=
               (message.splitOn "\n").length == 1
           | _ => false) },
     { name :=
-        "an editor that knows no set directory creates the toolchain file alone, and says as information that no lakefile is generated"
+        "an editor that knows no set directory, or no core directory, creates the toolchain file alone, and says as information that no lakefile is generated, naming both directories"
       run :=
         pure
           (match LakePackage.actions pin none { lakefile := false, toolchain := none } with
           | #[.inform message, .create "lean-toolchain" text] =>
-            text == pin && (message.splitOn "lakefile.toml").length == 2
+            text == pin && (message.splitOn "lakefile.toml").length == 2 &&
+              (message.splitOn "directory of its core or of the package set").length == 2
           | _ => false) },
     { name := "an editor that knows no set directory says nothing of a lakefile that is there"
       run :=

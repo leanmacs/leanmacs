@@ -701,7 +701,7 @@ queues and exits.
   bundle holds no set yet (`ModuleLookup.setDirectory?`). The set's Lake
   name and the toolchain pin are not found but handed in: the generated
   root passes them to `Editor.Main.run`
-  ([packages.md](packages.md), "A config directory requires the set").
+  ([packages.md](packages.md), "A config directory requires the core and the set").
 - **Where both are found** is a pure function of the executable's path,
   read from `IO.appPath` at the edge, of what the build recorded for it,
   read at the same edge, and of the directories the command

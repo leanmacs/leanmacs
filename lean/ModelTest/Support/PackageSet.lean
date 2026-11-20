@@ -6,8 +6,10 @@ import Editor.PackageSet.Running
 
 What a running editor knows of its own package set, and the facts a reload
 reads of a config, as the package-set checks build them: the shipped
-default at `/w/packages`, its config directory `/c` and data directory
-`/d`, and the generated lakefile with more requires after its one. Shared
+default at `/w/packages`, its core at `/w/lean`, its config directory `/c`
+and data directory `/d`, and the generated lakefile (or the one generated
+before it required the core at its root) with more requires after its
+own. Shared
 by the test modules of `Editor/PackageSet/Build.lean` and
 `Editor/Config/Reload.lean`; it holds no checks of its own.
 -/
@@ -23,6 +25,10 @@ namespace PackageSetTest
 def setDirectory : String :=
   "/w/packages"
 
+/-- The directory of the running editor's core. -/
+def coreDirectory : String :=
+  "/w/lean"
+
 /-- The running editor of the checks: the shipped default, with its
 records, its `lake`, the config directory `/c` and the data directory
 `/d`, whose last reload read `facts`. -/
@@ -30,24 +36,40 @@ def runningWith (facts : Facts) (data : Option String := some "/d")
     (lake : Option String := some "/t/bin/lake") : Running :=
   { executable := "/w/packages/.lake/build/bin/editor", config := "/c"
     fingerprint := some (shipped "default-set" setDirectory), core := some "c0"
+    coreDirectory := some coreDirectory
     build := #[("LEAN_CC", "/usr/bin/cc")], sysroot := some "/t", lake, data, facts }
 
-/-- The generated lakefile's requires. -/
+/-- The generated lakefile's requires: the running core, then the set. -/
 def generated : Array Require :=
+  #[{ name := "editor-core", source := .path coreDirectory },
+    { name := "default-set", source := .path setDirectory }]
+
+/-- The requires of the lakefile generated before the core was required at
+the root: the set alone. -/
+def setOnly : Array Require :=
   #[{ name := "default-set", source := .path setDirectory }]
 
-/-- The generated lakefile with `more` after its one require. -/
-def lakefileWith (more : Array Require := #[]) : Facts :=
+/-- A lakefile of `required`, then `more`, as the facts a reload reads. -/
+def lakefileOf (required : Array Require) (more : Array Require) : Facts :=
   let text :=
     "name = \"config\"\n\n" ++
       String.join
-        ((generated ++ more).toList.map fun require =>
+        ((required ++ more).toList.map fun require =>
           "\n".intercalate require.table.toList ++ "\n\n")
-  { lakefile := .toml text (generated ++ more)
+  { lakefile := .toml text (required ++ more)
     setRequires :=
       #[{ name := "editor-core", source := .path "../lean" },
         { name := "shipped-themes", source := .path "shipped-themes" },
         { name := "compile", source := .path "compile" }] }
+
+/-- The generated lakefile with `more` after its requires. -/
+def lakefileWith (more : Array Require := #[]) : Facts :=
+  lakefileOf generated more
+
+/-- The lakefile generated before the core was required at the root, with
+`more` after its one require. -/
+def setOnlyLakefileWith (more : Array Require := #[]) : Facts :=
+  lakefileOf setOnly more
 
 /-- The package `hello` by path. -/
 def hello : Require :=

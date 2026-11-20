@@ -37,8 +37,9 @@
 #    copy of tests/headless/generate, whose config directory holds
 #    `init.lean` alone, must load the config and print exactly its
 #    `expected`, write `lakefile.toml` equal to
-#    tests/headless/generate/expected-lakefile-bundle with `@SET@` the
-#    bundle's `Contents/Resources/lean/set`, and write `lean-toolchain`
+#    tests/headless/generate/expected-lakefile-bundle with `@CORE@` the
+#    bundle's `Contents/Resources/lean/lean` and `@SET@` its
+#    `Contents/Resources/lean/set`, and write `lean-toolchain`
 #    byte for byte `lean/lean-toolchain`.
 # 5. **The version and the identity.** With the fixture's `Info.plist` in
 #    `Contents/`, the bundle's `--version` prints exactly
@@ -137,7 +138,7 @@ cp "$generate/script" "$dir/generate-script"
 out=$(cd "$dir/elsewhere" && env -i "$launcher" headless --generate "$dir/generate-config" "$dir/generate-script") ||
   fail "the bundle's headless --generate exited non-zero"
 printf '%s\n' "$out" | diff "$generate/expected" - || fail "the bundle's headless --generate differs from its expected"
-sed "s|@SET@|$lean/set|" "$generate/expected-lakefile-bundle" | diff - "$dir/generate-config/lakefile.toml" ||
+sed "s|@SET@|$lean/set|; s|@CORE@|$lean/lean|" "$generate/expected-lakefile-bundle" | diff - "$dir/generate-config/lakefile.toml" ||
   fail "the bundle generated another lakefile.toml than expected-lakefile-bundle"
 cmp -s "$dir/generate-config/lean-toolchain" "$lean_dir/lean-toolchain" ||
   fail "the bundle generated another lean-toolchain than lean/lean-toolchain"

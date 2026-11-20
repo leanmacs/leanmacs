@@ -15,7 +15,14 @@ one read, the lakefile's required, is the TOML adapter's
 
 ## The parts
 
-- **Requires**, in the lakefile's order, each one line (`Require.line`):
+- **Requires**, in the lakefile's order, each one line (`Require.line`),
+  but the root's own-core require (`Require.ownCore`): `editor-core` by a
+  path naming the running editor's own core directory. Every lakefile the
+  editor writes has it, and the one an older editor generated has not;
+  both are the same set, the shipped default's. A root `editor-core`
+  naming another directory, or any other source, is kept, so that set
+  differs, and its build's core check refuses it
+  (`Editor/PackageSet/Build.lean`).
   `path <name> <directory>`, the directory made absolute against the
   config directory and normalised lexically (`normalise`); `git <name>
   <url> <rev or -> <subDir or ->`; or `reservoir <name> <scope> <version
@@ -39,8 +46,8 @@ is `lakefile.lean <hash of its text>`, so any edit of it starts a build.
   fingerprint it started from, the pins read again after the resolve.
 - **An executable built from a set directory**, the shipped default,
   has the fingerprint of the lakefile it would generate (`shipped`): one
-  `path <set name> <set directory>` require and no pin. So a generated
-  lakefile matches it and starts no build.
+  `path <set name> <set directory>` require, the own-core one left out, and
+  no pin. So a generated lakefile matches it and starts no build.
 
 ## Where an addition goes
 
@@ -188,14 +195,25 @@ def same (one other : Fingerprint) : Bool :=
 def textHash (text : String) : String :=
   String.ofList (Nat.toDigits 16 (hash text).toNat)
 
+/-- Whether `require` is the root's own-core require for the running
+editor whose core directory is `core`: `editor-core` by a path that names
+that directory, however it is spelled ("The parts", in the module docs). -/
+def Require.ownCore (config : String) (core : Option String) (require : Require) : Bool :=
+  match require.name, require.source, core with
+  | "editor-core", .path directory, some core => normalise config directory == normalise "/" core
+  | _, _, _ => false
+
 /-- The fingerprint of the config in the directory `config` whose facts are
-`facts`, carrying `set`, the shipped set's name; none when it has no
-lakefile, or one that cannot be read, which never starts a build. -/
-def Fingerprint.ofFacts (config : String) (facts : Facts) (set : Option String) :
-    Option Fingerprint :=
+`facts`, carrying `set`, the shipped set's name, for the running editor
+whose core directory is `core`; none when it has no lakefile, or one that
+cannot be read, which never starts a build. -/
+def Fingerprint.ofFacts (config : String) (facts : Facts) (set : Option String)
+    (core : Option String) : Option Fingerprint :=
   match facts.lakefile with
   | .toml _ required =>
-    some { required := required.map (·.line config), pins := PackageSet.pins facts.manifest, set }
+    some
+      { required := (required.filter (!·.ownCore config core)).map (·.line config)
+        pins := PackageSet.pins facts.manifest, set }
   | .lean text =>
     some
       { required := #[s!"lakefile.lean {textHash text}"], pins := PackageSet.pins facts.manifest,

@@ -133,15 +133,26 @@ open BuildTest in
 (`Editor/PackageSet/Build.lean`, `Editor/PackageSet/Compiled.lean`). -/
 def packageSetBuildChecks : List Check :=
   [{  name :=
-        "a reload whose fingerprint matches the running editor's starts no build: the generated lakefile, and one whose manifest differs only in its path entries"
+        "a reload whose fingerprint matches the running editor's starts no build: the generated lakefile, which requires the running core at its root, the one generated before it did, and one whose manifest differs only in its path entries; a root core naming another directory starts one"
       run :=
         let generatedFacts := lakefileWith
+        let oldFacts := setOnlyLakefileWith
         let pathManifest :=
           { generatedFacts with
             manifest := some "{\"packages\": [{\"type\": \"path\", \"name\": \"«default-set»\"}]}" }
+        let otherCore :=
+          { generatedFacts with
+            lakefile :=
+              .toml ""
+                (#[{ name := "editor-core", source := .path "/elsewhere/lean" }] ++
+                  generated.extract 1 generated.size) }
         pure
           (decide (runningWith generatedFacts) generatedFacts false == .nothing &&
-            decide (runningWith pathManifest) pathManifest false == .nothing) },
+            decide (runningWith oldFacts) oldFacts false == .nothing &&
+            decide (runningWith pathManifest) pathManifest false == .nothing &&
+            (match decide (runningWith otherCore) otherCore false with
+            | .build _ => true
+            | _ => false)) },
     { name :=
         "an editor in a bundle, whose shipped fingerprint names its set in Contents/Resources/lean/set, starts no build for the lakefile generated for it; one naming another set directory starts one"
       run :=
@@ -158,13 +169,18 @@ def packageSetBuildChecks : List Check :=
         let generatedFor (directory : String) : Facts :=
           {
             lakefile :=
-              .toml (Config.LakePackage.lakefile { name := "default-set", directory })
-                #[{ name := "default-set", source := .path directory }] }
+              .toml
+                (Config.LakePackage.lakefile
+                  { name := "default-set", directory
+                    core := "/A.app/Contents/Resources/lean/lean" })
+                #[{ name := "editor-core", source := .path "/A.app/Contents/Resources/lean/lean" },
+                  { name := "default-set", source := .path directory }] }
         let facts := generatedFor bundleSet
         let elsewhere := generatedFor setDirectory
         pure
           (directory == some bundleSet &&
-            Fingerprint.ofFacts running.config facts running.setName == running.fingerprint &&
+            Fingerprint.ofFacts running.config facts running.setName running.coreDirectory ==
+              running.fingerprint &&
             decide { running with facts } facts false == .nothing &&
             (match decide { running with facts := elsewhere } elsewhere false with
             | .build _ => true
@@ -181,7 +197,7 @@ def packageSetBuildChecks : List Check :=
                   environment := #[("LEAN_CC", "/usr/bin/cc")]
                   required := #["path default-set /w/packages", "path hello /h"]
                   set := some "default-set", fetched := #[],
-                  resolve := #["default-set", "hello"] } &&
+                  resolve := #["editor-core", "default-set", "hello"] } &&
             decide running facts true == .nothing &&
             decide (runningWith facts (data := none)) facts false == .nothing &&
             decide { running with core := none } facts false == .nothing &&
@@ -199,7 +215,7 @@ def packageSetBuildChecks : List Check :=
         "the requires resolved are those missing from the manifest and the git ones whose url or rev the manifest does not hold"
       run :=
         let manifest :=
-          "{\"packages\": [{\"type\": \"git\", \"name\": \"g\", \"url\": \"https://example.invalid/g\", \"rev\": \"abc\", \"inputRev\": \"v0\"}, {\"type\": \"path\", \"name\": \"«default-set»\"}]}"
+          "{\"packages\": [{\"type\": \"git\", \"name\": \"g\", \"url\": \"https://example.invalid/g\", \"rev\": \"abc\", \"inputRev\": \"v0\"}, {\"type\": \"path\", \"name\": \"«editor-core»\", \"dir\": \"/w/lean\"}, {\"type\": \"path\", \"name\": \"«default-set»\"}]}"
         pure
           (resolveNames (generated ++ #[gitPackage, hello]) (some manifest) == #["g", "hello"] &&
             resolveNames
@@ -263,7 +279,9 @@ def packageSetBuildChecks : List Check :=
             replied (lakeCommand order #["query", ":editorRustCrates"]) 0
               "echo\techo-service\t/r/echo/rust/Cargo.toml\n"
           let resolve :=
-            streaming (lakeCommand order #["update", "--keep-toolchain", "default-set", "hello"])
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
               #[]
           match buildDriver (runningWith facts) #[query] #[resolve],
             buildDriver (runningWith facts)
@@ -287,7 +305,9 @@ def packageSetBuildChecks : List Check :=
         | none => pure false
         | some order =>
           let resolve :=
-            streaming (lakeCommand order #["update", "--keep-toolchain", "default-set", "hello"])
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
               #["updated"]
           let failing :=
             streaming (install order) #["error: undefined symbol: leanmacs_no_such_symbol"] 1
@@ -343,7 +363,9 @@ def packageSetBuildChecks : List Check :=
         | none => pure false
         | some order =>
           let resolve :=
-            streaming (lakeCommand order #["update", "--keep-toolchain", "default-set", "hello"])
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
               #[]
           let failing :=
             streaming (install order) #["c/glue.c:1:10: fatal error: 'stdio.h' file not found"] 1
@@ -373,7 +395,9 @@ def packageSetBuildChecks : List Check :=
         match decide (runningWith facts (lake := some bundled)) facts false with
         | .build order =>
           let resolve :=
-            { command := lakeCommand order #["update", "--keep-toolchain", "default-set", "hello"]
+            { command :=
+                lakeCommand order
+                  #["update", "--keep-toolchain", "editor-core", "default-set", "hello"]
               steps := #[], exit := .signal 9 : Process.StreamScript }
           match buildDriver (runningWith facts (lake := some bundled)) #[] #[resolve] with
           | none => pure false
@@ -399,7 +423,9 @@ def packageSetBuildChecks : List Check :=
           let refusal :=
             s!"macOS refused to run the bundled toolchain ({bundled}); remove the quarantine flag: xattr -dr com.apple.quarantine /Applications/Leanmacs.app"
           let resolve :=
-            streaming (lakeCommand order #["update", "--keep-toolchain", "default-set", "hello"])
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
               #[]
           let query := lakeCommand order #["query", ":editorRustCrates"]
           let (scripts, streams) := succeeding order
@@ -453,7 +479,9 @@ def packageSetBuildChecks : List Check :=
         | none => pure false
         | some order =>
           let resolve :=
-            streaming (lakeCommand order #["update", "--keep-toolchain", "default-set", "hello"])
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
               #[]
           let (scripts, streams) := succeeding order (probe := "dyld: no\n")
           match buildDriver (runningWith facts) scripts (streams.push resolve) with
@@ -472,7 +500,9 @@ def packageSetBuildChecks : List Check :=
         | none => pure false
         | some order =>
           let resolve :=
-            streaming (lakeCommand order #["update", "--keep-toolchain", "default-set", "hello"])
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "editor-core", "default-set", "hello"])
               #[]
           let (scripts, streams) := succeeding order
           match buildDriver (runningWith facts) scripts (streams.push resolve) with

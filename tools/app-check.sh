@@ -57,7 +57,8 @@
 #    fixture's `expected`; the directory must then hold a `lean-toolchain`
 #    that is `lean/lean-toolchain` byte for byte, and a `lakefile.toml`
 #    equal to `tests/headless/generate/expected-lakefile-bundle` with
-#    `@SET@` the copy's `Contents/Resources/lean/set`, the set the app ships;
+#    `@CORE@` the copy's `Contents/Resources/lean/lean`, the core the app
+#    ships, and `@SET@` its `Contents/Resources/lean/set`, the set it ships;
 # 5b. runs the copy's `editor --version` the same way, through the launcher,
 #    with an empty environment from `/`: it must print exactly `Leanmacs
 #    <version>`, `build <build ID>` and `commit <commit>`, so the Lean plist
@@ -472,7 +473,7 @@ printf '%s\n' "$out" | diff "$generate/expected" - ||
   fail "the headless mode with --generate printed other than tests/headless/generate/expected"
 cmp -s "$dir/generate-config/lean-toolchain" "$lean_dir/lean-toolchain" ||
   fail "the generated lean-toolchain is not lean/lean-toolchain"
-sed "s|@SET@|$app/Contents/Resources/lean/set|" "$generate/expected-lakefile-bundle" |
+sed "s|@SET@|$app/Contents/Resources/lean/set|; s|@CORE@|$app/Contents/Resources/lean/lean|" "$generate/expected-lakefile-bundle" |
   diff - "$dir/generate-config/lakefile.toml" ||
   fail "the generated lakefile.toml is not expected-lakefile-bundle naming the copy's set"
 step "the copy's headless mode with --generate loaded the config, and generated lean-toolchain and a lakefile naming the copy's set"

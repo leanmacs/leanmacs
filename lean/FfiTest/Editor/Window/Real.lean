@@ -223,7 +223,8 @@ def windowHostGenerateScenario (sysroot oleanDir configDir : String) : IO UInt8 
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := [oleanDir], composition := true }
   let pin := "leanprover/lean4:made-up\n"
-  let set : Editor.Config.LakePackage.Set := { name := "made-up-set", directory := "/made/up" }
+  let set : Editor.Config.LakePackage.Set :=
+    { name := "made-up-set", directory := "/made/up", core := "/made/core" }
   let generator : Editor.Config.Generator :=
     { create := Editor.Config.Directory.create configDir, pin, set := some set }
   let status ←

@@ -171,7 +171,8 @@ handles and on which base, what it refuses before it elaborates anything,
 what it does about the config directory's generated files, and what it
 gives back. -/
 def moduleSessionChecks : List Check :=
-  let set : LakePackage.Set := { name := "default-set", directory := "/w/packages" }
+  let set : LakePackage.Set :=
+    { name := "default-set", directory := "/w/packages", core := "/w/lean" }
   [{  name :=
         "a first load makes the base, elaborates the root and asks for its setup, and the outcome hands the base back"
       run := do

@@ -219,7 +219,9 @@ whose facts are `facts`, resolving `resolve`; or why none can start: an
 empty reason for one that starts silently. -/
 def orderOf (running : Running) (facts : Facts) (resolve : Option (Array String) := none) :
     Except String Order := do
-  let some fingerprint := Fingerprint.ofFacts running.config facts running.setName | throw ""
+  let some fingerprint :=
+    Fingerprint.ofFacts running.config facts running.setName running.coreDirectory
+    | throw ""
   let some data := running.data | throw ""
   let some _ := running.core | throw ""
   let some lake := running.lake | throw (noLake running)
@@ -240,7 +242,8 @@ docs). -/
 def decide (running : Running) (facts : Facts) (inFlight : Bool) : Decision :=
   if inFlight then .nothing
   else
-    match running.fingerprint, Fingerprint.ofFacts running.config facts running.setName with
+    match running.fingerprint,
+      Fingerprint.ofFacts running.config facts running.setName running.coreDirectory with
     | some own, some config =>
       if same own config then .nothing
       else

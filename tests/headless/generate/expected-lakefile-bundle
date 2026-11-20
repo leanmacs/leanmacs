@@ -1,6 +1,10 @@
 name = "config"
 
 [[require]]
+name = "editor-core"
+path = "@CORE@"
+
+[[require]]
 name = "default-set"
 path = "@SET@"
 

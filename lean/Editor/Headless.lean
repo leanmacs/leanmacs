@@ -3232,9 +3232,10 @@ def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : Strin
 directory `configDir`, for the editor at `appPath` that the build says
 `origin` of: files are created in that directory, never overwritten
 (`Config.Directory.create`); the pin is the build's; and the package set is
-the build's name for it at the directory the editor finds for itself
-(`ModuleLookup.setDirectory?`, with the real file read and directory
-test), or none when it finds none, and then no lakefile is written. Both
+the build's name for it at the directory the editor finds for itself, with
+the directory of its core (`ModuleLookup.setDirectory?`,
+`ModuleLookup.coreDirectory?`, with the real file read and directory
+test), or none when it finds either not, and then no lakefile is written. Both
 executable hosts make theirs with it, at the edge. -/
 def generatorAt (origin : Config.LakePackage.Origin) (appPath : String) (configDir : String) :
     IO Config.Generator := do
@@ -3249,9 +3250,10 @@ def generatorAt (origin : Config.LakePackage.Origin) (appPath : String) (configD
     catch _ =>
       return false
   let directory ← ModuleLookup.setDirectory? appPath readFile isDirectory
+  let core ← ModuleLookup.coreDirectory? appPath readFile isDirectory
   return {
       create := Config.Directory.create configDir, pin := origin.pin
-      set := origin.set directory }
+      set := origin.set directory core }
 
 /-- What the executable at `appPath`, built as `origin` says, knows of its
 own package set (`PackageSet.at`), read at the edge with the real file

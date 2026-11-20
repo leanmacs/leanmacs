@@ -108,7 +108,7 @@ generated() {
     cat "$1.first" >&2
     fail "the first launch on $1 exited non-zero"
   }
-  sed "s|@SET@|$lean/set|" "$generate/expected-lakefile-bundle" | diff - "$1/lakefile.toml" ||
+  sed "s|@SET@|$lean/set|; s|@CORE@|$lean/lean|" "$generate/expected-lakefile-bundle" | diff - "$1/lakefile.toml" ||
     fail "the first launch generated another lakefile than expected-lakefile-bundle"
   cmp -s "$1/lean-toolchain" "$repo/lean/lean-toolchain" ||
     fail "the first launch generated another lean-toolchain than lean/lean-toolchain"
@@ -157,7 +157,7 @@ first-launch)
   printf '%s\n' "$out" | grep -v '^job ' | diff "$generate/expected" - ||
     fail "the first launch differs from tests/headless/generate/expected"
   ! printf '%s\n' "$out" | grep -q 'packages:' || fail "the first launch said something of its packages: $out"
-  sed "s|@SET@|$lean/set|" "$generate/expected-lakefile-bundle" | diff - "$config/lakefile.toml" ||
+  sed "s|@SET@|$lean/set|; s|@CORE@|$lean/lean|" "$generate/expected-lakefile-bundle" | diff - "$config/lakefile.toml" ||
     fail "the first launch generated another lakefile than expected-lakefile-bundle"
   cmp -s "$config/lean-toolchain" "$repo/lean/lean-toolchain" ||
     fail "the first launch generated another lean-toolchain than lean/lean-toolchain"
@@ -259,7 +259,7 @@ grep -qF "$lean/lean" "$hello/lakefile.toml" && grep -qF "$lean/lean" "$hello/la
 
 # P0, the first launch: the lakefile is generated, naming the bundle's set.
 # A reload refused at its imports generates nothing (docs/design/packages.md,
-# "A config directory requires the set"), so the import of `HelloInit` is
+# "A config directory requires the core and the set"), so the import of `HelloInit` is
 # written after, as a user would.
 config=$work/config
 generated "$config" "$work/data" "$quiet"

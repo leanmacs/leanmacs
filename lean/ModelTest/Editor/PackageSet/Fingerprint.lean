@@ -72,16 +72,17 @@ def packageSetFingerprintChecks : List Check :=
         "two fingerprints are of one set when their required and pins are the same, whatever set name they carry; a require more, or a pin moved, is another set"
       run :=
         let one :=
-          (Fingerprint.ofFacts config (factsOf #[{ name := "a", source := .path "a" }]) (some "s"))
+          (Fingerprint.ofFacts config (factsOf #[{ name := "a", source := .path "a" }]) (some "s")
+            none)
         let other :=
-          (Fingerprint.ofFacts config (factsOf #[{ name := "a", source := .path "a" }]) none)
+          (Fingerprint.ofFacts config (factsOf #[{ name := "a", source := .path "a" }]) none none)
         let more :=
           Fingerprint.ofFacts config
             (factsOf #[{ name := "a", source := .path "a" }, { name := "b", source := .path "b" }])
-            none
+            none none
         let pinned :=
           Fingerprint.ofFacts config
-            (factsOf #[{ name := "a", source := .path "a" }] (some manifest)) none
+            (factsOf #[{ name := "a", source := .path "a" }] (some manifest)) none none
         match one, other, more, pinned with
         | some one, some other, some more, some pinned =>
           pure (same one other && !same one more && !same one pinned)
@@ -92,8 +93,8 @@ def packageSetFingerprintChecks : List Check :=
         let pathOnly :=
           "{\"version\": \"1.3.0\", \"packages\": [{\"type\": \"path\", \"name\": \"y\", \"dir\": \"../local\"}], \"name\": \"config\"}"
         let required : Array Require := #[{ name := "y", source := .path "../local" }]
-        match Fingerprint.ofFacts config (factsOf required) none,
-          Fingerprint.ofFacts config (factsOf required (some pathOnly)) none with
+        match Fingerprint.ofFacts config (factsOf required) none none,
+          Fingerprint.ofFacts config (factsOf required (some pathOnly)) none none with
         | some without, some withPaths => pure (same without withPaths)
         | _, _ => pure false },
     { name :=
@@ -112,7 +113,7 @@ def packageSetFingerprintChecks : List Check :=
         "the shipped default's fingerprint is the generated lakefile's: one path require of its set and no pin, so a generated lakefile matches it"
       run :=
         let generated : Array Require := #[{ name := "default-set", source := .path "/w/packages" }]
-        match Fingerprint.ofFacts config (factsOf generated) none with
+        match Fingerprint.ofFacts config (factsOf generated) none none with
         | some fingerprint =>
           pure
             (same fingerprint (shipped "default-set" "/w/packages") &&
@@ -121,13 +122,46 @@ def packageSetFingerprintChecks : List Check :=
     { name :=
         "a lakefile.lean is known by the hash of its text, so any edit is another set; no lakefile, or one that cannot be read, has no fingerprint"
       run :=
-        let of (text : String) := Fingerprint.ofFacts config { lakefile := .lean text } none
+        let of (text : String) := Fingerprint.ofFacts config { lakefile := .lean text } none none
         match of "import Lake\n", of "import Lake\n", of "import Lake\n-- edited\n" with
         | some a, some b, some c =>
           pure
-            (same a b && !same a c && Fingerprint.ofFacts config {} none == none &&
-              Fingerprint.ofFacts config { lakefile := .unreadable "no" } none == none)
+            (same a b && !same a c && Fingerprint.ofFacts config {} none none == none &&
+              Fingerprint.ofFacts config { lakefile := .unreadable "no" } none none == none)
         | _, _, _ => pure false },
+    { name :=
+        "a root editor-core require by the running editor's own core directory is left out of the fingerprint, however its path is spelled; one naming another directory, or the core from git, is kept"
+      run :=
+        let set : Require := { name := "default-set", source := .path "/w/packages" }
+        let own : Require := { name := "editor-core", source := .path "../../../../w/x/../lean" }
+        let other : Require := { name := "editor-core", source := .path "/elsewhere/lean" }
+        let git : Require :=
+          { name := "editor-core",
+            source := .git "https://h/leanmacs" (some "nightly-1") (some "lean") }
+        let of (required : Array Require) :=
+          (Fingerprint.ofFacts config (factsOf required) none (some "/w/lean")).map (·.required)
+        pure
+          (of #[own, set] == some #["path default-set /w/packages"] &&
+            of #[other, set] ==
+              some #["path editor-core /elsewhere/lean", "path default-set /w/packages"] &&
+            of #[git, set] ==
+              some
+                #["git editor-core https://h/leanmacs nightly-1 lean",
+                  "path default-set /w/packages"] &&
+            (Fingerprint.ofFacts config (factsOf #[own, set]) none none).map (·.required) ==
+              some #["path editor-core /w/lean", "path default-set /w/packages"]) },
+    { name :=
+        "the lakefile generated before the core was required at the root, and the one generated now, both fingerprint as the shipped default's, so neither starts a build"
+      run :=
+        let set : Require := { name := "default-set", source := .path "/w/packages" }
+        let core : Require := { name := "editor-core", source := .path "/w/lean" }
+        match Fingerprint.ofFacts config (factsOf #[set]) none (some "/w/lean"),
+          Fingerprint.ofFacts config (factsOf #[core, set]) none (some "/w/lean") with
+        | some old, some new =>
+          pure
+            (same old (shipped "default-set" "/w/packages") &&
+              same new (shipped "default-set" "/w/packages"))
+        | _, _ => pure false },
     { name := "a manifest's quoted names are read unquoted"
       run := pure (unquoted "«default-set»" == "default-set" && unquoted "plain" == "plain") }]
 

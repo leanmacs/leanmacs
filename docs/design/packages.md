@@ -267,7 +267,7 @@ of the set in order and appends their `packages` in that order; a set of
 the core alone (`tests/empty-set`) passes the core's array as it is and
 the base `Editor` alone. The last value before the arguments is what the
 build says of the editor for the files it generates in a config directory
-("A config directory requires the set", below): the set's Lake name and the
+("A config directory requires the core and the set", below): the set's Lake name and the
 text of the core's `lean-toolchain`. The gate requires the default set's root to
 import exactly these five modules (`lake -d ../packages query
 :editorRootImports`, in `ffi-test`), and its base to be the three named
@@ -339,7 +339,7 @@ mode, which the base imported, left the core.
   on, and an import of a module of a package that is not in the set is
   refused, naming the module.
 
-#### A config directory requires the set
+#### A config directory requires the core and the set
 
 A config directory is a Lake package, so that Lean's language server,
 started in it, checks a config file as the editor elaborates it. The editor
@@ -350,6 +350,10 @@ generates its `lakefile.toml` when there is none
 name = "config"
 
 [[require]]
+name = "editor-core"
+path = "/…/lean"
+
+[[require]]
 name = "default-set"
 path = "/…/packages"
 
@@ -358,11 +362,20 @@ name = "Config"
 globs = ["Config.+"]
 ```
 
-- **It requires the set, by path, and nothing else.** The set requires the
-  core and each of its packages, so Lake resolves, for the language server,
-  exactly the modules the editor links, from the build directories the
-  editor's own build filled: nothing is fetched and nothing under the set
-  is rebuilt.
+- **It requires the running editor's own core at its root, by path, then
+  the set, by path, and nothing else** (packages phase 12). The set
+  requires the core and each of its packages, so Lake resolves, for the
+  language server, exactly the modules the editor links, from the build
+  directories the editor's own build filled: nothing is fetched and
+  nothing under the set is rebuilt. The core's require at the root is what
+  keeps it so for a package that names the core from git: Lake's root
+  require wins over any a package makes, whichever order the requires are
+  in, so that package builds against this editor's core and no core is
+  cloned. A set that reaches the core only through another package takes
+  the package's git require instead (probed on Lake 4.35.0, 2026-11-20).
+  The core's directory is the one the editor links
+  (`lean/Editor/ModuleLookup.lean`, "The core"): the checkout's `lean/`, or
+  the app's `Contents/Resources/lean/lean`.
 - **The build tells the editor what to write.** The generated root hands
   `Editor.Main.run` the set's Lake name and the pin, and the `editor` facet
   writes the set's directory beside the executable, in
@@ -371,8 +384,8 @@ globs = ["Config.+"]
   ships the default set (`lean/Editor/ModuleLookup.lean`, "The set"), so
   the app generates the lakefile too, naming that set (decided
   2026-11-19, deferred to phase 9; `bundle-test` and `app-check` check
-  it). An editor that finds no set directory generates `lean-toolchain`
-  alone.
+  it). An editor that finds no set directory, or no core directory,
+  generates `lean-toolchain` alone.
 - **The lakefile is the user's once it is there.** The editor never
   rewrites it. When a config file imports a module that is not linked, the
   editor reads the lakefile's `[[require]]` names, with Lake's TOML loader
@@ -416,7 +429,7 @@ globs = ["Config.+"]
   the gate runs.
 - **And it records where the set is.** Beside `editor.oleans` the `editor`
   facet writes `editor.set`, the set's directory on one line, absolute
-  ("A config directory requires the set", above).
+  ("A config directory requires the core and the set", above).
 - **So the build records where the modules are, for the editor it links.**
   The set's build directory holds the editor and its root and no other
   module, so an editor run directly cannot find the modules config is
@@ -958,7 +971,17 @@ running executable was linked with" is decided on a **fingerprint**
   against the config directory and normalised lexically), `git <name>
   <url> <rev|-> <subDir|->`, or `reservoir <name> <scope> <version|->`.
   The tables are read with Lake's TOML loader
-  (`Config.Lakefile.Toml.requireEntries`).
+  (`Config.Lakefile.Toml.requireEntries`). **The root's own-core require
+  is left out**: `editor-core` by a path that names the running editor's
+  own core directory, however it is spelled. So the lakefile an editor
+  generates now and the one an older editor generated, the set alone,
+  both match the shipped default and start no build; without that, every
+  existing config would rebuild once after the upgrade, for an identical
+  editor. A root `editor-core` naming another directory, or any other
+  source, stays in the fingerprint: that set differs, a build starts, and
+  its core check refuses it ("The build, as a job"). `editor.packages`
+  records are written from the same fingerprint, so they leave the line
+  out too.
 - **Pins**: the git entries of `lake-manifest.json`, `pin <name> <url>
   <rev>`. Path entries are left out: the lakefile decides them, and Lean's
   language server writes them into a manifest the user never touched. A

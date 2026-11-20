@@ -28,12 +28,16 @@ def lakefileChecks (_ : Unit) : List Check :=
          "name = \"config\"\n\n[[require]]\nname = \"default-set\"\npath = \"/w/packages\"\n\n[[require]]\nname = \"greeting-loud\"\ngit = \"https://example.invalid/greeting\"\nrev = \"main\"\n\n[[lean_lib]]\nname = \"Config\"\n"
        return (← names text) == some #["default-set", "greeting-loud"] },
     { name :=
-        "the lakefile the editor generates for a set is read back as requiring that set, a directory with a quote and a backslash in it too"
+        "the lakefile the editor generates for a set is read back as requiring the core, then that set, a directory with a quote and a backslash in it too"
       run := do
         let plain :=
-          Config.LakePackage.lakefile { name := "default-set", directory := "/w/packages" }
-        let quoted := Config.LakePackage.lakefile { name := "my-set", directory := "/w/a \"b\"\\c" }
-        return (← names plain) == some #["default-set"] && (← names quoted) == some #["my-set"] },
+          Config.LakePackage.lakefile
+            { name := "default-set", directory := "/w/packages", core := "/w/lean" }
+        let quoted :=
+          Config.LakePackage.lakefile
+            { name := "my-set", directory := "/w/a \"b\"\\c", core := "/w/a \"b\"\\core" }
+        return (← names plain) == some #["editor-core", "default-set"] &&
+            (← names quoted) == some #["editor-core", "my-set"] },
     { name := "a lakefile with no require requires nothing"
       run := do
         return (← names "name = \"config\"\n\n[[lean_lib]]\nname = \"Config\"\n") == some #[] },
@@ -78,12 +82,16 @@ def lakefileEntryChecks (_ : Unit) : List Check :=
                 { name := "bare", source := .git "https://example.invalid/bare" none none },
                 { name := "batteries", source := .reservoir "leanprover-community" (some "v1.2") },
                 { name := "unscoped", source := .reservoir "" none }] },
-    { name := "the generated lakefile is read back as one path require of its set"
+    { name :=
+        "the generated lakefile is read back as a path require of the core, then one of its set"
       run := do
         let text :=
-          Config.LakePackage.lakefile { name := "default-set", directory := "/w/packages" }
+          Config.LakePackage.lakefile
+            { name := "default-set", directory := "/w/packages", core := "/w/lean" }
         return (← entries text) ==
-            some #[{ name := "default-set", source := .path "/w/packages" }] },
+            some
+              #[{ name := "editor-core", source := .path "/w/lean" },
+                { name := "default-set", source := .path "/w/packages" }] },
     { name := "a text that is not TOML is an error, and a table with no string name is left out"
       run := do
         let broken := (← Config.Lakefile.Toml.requireEntries "name = \"config\n[[require").toOption
