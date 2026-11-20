@@ -135,6 +135,19 @@ def withParked (cells : Array (Document.Scope × KeptCell)) (driver : EvilDriver
               { state.restore with
                 parked := cells, parkedAt := 0 } } } }
 
+/-- `driver` with the major mode `mode` of the buffer `buffer` deferred at
+the config generation 0, as a restore defers a mode only config registers
+(`Kept.deferred`). -/
+def withDeferred (buffer : Nat) (mode : String) (driver : EvilDriver) : EvilDriver :=
+  let state := driver.loop.state
+  { driver with
+    loop :=
+      { driver.loop with
+        state :=
+          { state with
+            restore :=
+              { state.restore with deferred := #[{ buffer, mode, generation := some 0 }] } } } }
+
 /-- `driver` told that config has installed `generation` times, with the
 codecs `codec?`. -/
 def installedWith (generation : Nat) (codec? : String → Option (String × StoreCodec))
@@ -208,7 +221,7 @@ def journalReconcileChecks : List Check :=
                 "restore: the session kept gone, but no codec is registered for it now; dropped" &&
               dropped.loop.state.restore.parked.isEmpty &&
               unscopedNames quiet 1 == some #[] &&
-              later.2 == none &&
+              later.2.isEmpty &&
               later.1.restore.parked.isEmpty },
     { name :=
         "a parked table cell whose codec an install registers is met into its store, and one whose value that codec refuses is reset to its initial value and the loss said in the echo area"
@@ -238,6 +251,44 @@ def journalReconcileChecks : List Check :=
               met.loop.state.restore.parked.isEmpty &&
               met.loop.state.echo ==
                 "restore: store late: the new config cannot decode the stored value, which was reset to the initial value" },
+    { name :=
+        "an install that settles a deferred mode no config registers and drops a parked table cell no codec is registered for says both, in one sentence"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let parked :=
+              withDeferred 0 "missing-mode"
+                (withParked #[(.unscoped, keptOf "gone" 5)] (drained begun))
+            let settled :=
+              evilFed (installedWith 1 (fun _ => none) (drained (evilFed parked "l"))) "l"
+            let name := ((settled.loop.state.buffer? ⟨0⟩).map (·.name)).getD ""
+            settled.loop.state.restore.parked.isEmpty &&
+              settled.loop.state.restore.deferred.isEmpty &&
+              settled.loop.state.echo ==
+                s!"restore: the session kept gone, but no codec is registered for it now; dropped; no mode is registered as missing-mode: {name} is restored without it" },
+    { name :=
+        "an install that settles a deferred mode no config registers and resets a parked table cell whose value its codec refuses says both, in one sentence"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let refusing : Store Nat :=
+              { name := "late", version := 1, initial := 0, encode := .nat,
+                decode := fun _ => none }
+            let codec? (name : String) : Option (String × StoreCodec) :=
+              if name == "late" then some ("config", refusing.codec) else none
+            let parked :=
+              withDeferred 0 "missing-mode"
+                (withParked #[(.unscoped, keptOf "late" 5)] (drained begun))
+            let settled := evilFed (installedWith 1 codec? (drained (evilFed parked "l"))) "l"
+            let name := ((settled.loop.state.buffer? ⟨0⟩).map (·.name)).getD ""
+            settled.loop.state.workspaces.unscopedValue? "late" == some (.nat 0) &&
+              settled.loop.state.restore.deferred.isEmpty &&
+              settled.loop.state.echo ==
+                s!"restore: store late: the new config cannot decode the stored value, which was reset to the initial value; no mode is registered as missing-mode: {name} is restored without it" },
     { name := "a reported job's start and its end each change the jobs the index lists"
       run :=
         pure <|

@@ -1275,7 +1275,9 @@ Session restore is checked in Lean alone too:
   a change of the host's cells is mirrored and written once, and an
   unchanged revision reads nothing; a parked table cell an install
   registers no codec for dropped, said once, and gone from the next index;
-  one whose codec refuses its value reset and the loss said; a reported
+  one whose codec refuses its value reset and the loss said; an install
+  that settles a deferred mode no config registers as well says both, in
+  one sentence, whether the cell is dropped or reset; a reported
   job's start and end each change the jobs listed; and so does the count
   of other jobs, config's not reported alone.
 - `restoreChecks`: restoring a session (`Editor/Restore/Run.lean`) on that

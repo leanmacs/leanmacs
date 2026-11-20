@@ -110,6 +110,11 @@ config has installed, a mode now registered is set through the command
 `restore-modes`, which the reconciler hands back to run, so its `onEnter`
 runs; a mode still not registered is said, and not set.
 
+What one reconcile says is one sentence in the echo area, `restore: ` and
+its lines joined by `; `: the parked cells' (reset or dropped) and then each
+deferred mode still not registered. The install that settles the one often
+settles the others, and none is dropped for another.
+
 Pinned by `ModelTest.journalReconcileChecks`, and the held layout by
 `ModelTest.loopChecks`.
 -/
@@ -275,16 +280,17 @@ moved since the last mirror: the host's cells forced, a parked cell met
 into its store (`Workspaces.meetInto`) once an install registers its
 codec, and dropped after an install that does not; a value the codec
 refused, and the cells dropped, said once. The state, with each claimed
-cell in its store, and the sentence to say, if any. -/
-def mirrored (state : EditorState) (context : Context) : EditorState × Option String :=
+cell in its store, and the lines to say, each without the `restore: `
+the reconciler says them under. -/
+def mirrored (state : EditorState) (context : Context) : EditorState × Array String :=
   Id.run do
     let kept := state.restore
     let revisions := (context.stores.revision, state.workspacesRevision, context.configGeneration)
     if kept.mirrored == some revisions then
-      return (state, none)
+      return (state, #[])
     let mut state := state
     let mut parked := kept.parked
-    let mut said := none
+    let mut said := #[]
     if !parked.isEmpty && context.configGeneration > kept.parkedAt then
       let mut table := state.workspaces
       let mut dropped := #[]
@@ -302,8 +308,7 @@ def mirrored (state : EditorState) (context : Context) : EditorState × Option S
         lines :=
           lines.push
             s!"the session kept {", ".intercalate dropped.toList}, but no codec is registered for it now; dropped"
-      if !lines.isEmpty then
-        said := some s!"restore: {"; ".intercalate lines.toList}"
+      said := lines
       state :=
         { state with
           workspaces := table, workspacesRevision := state.workspacesRevision + 1 }
@@ -459,7 +464,7 @@ def journalOrders (state : EditorState) (enabled leaving : Bool) (context : Cont
   -- The modes a restore deferred, once a config has installed.
   let mut answered := #[]
   let mut deferred := #[]
-  let mut said := none
+  let mut said := unclaimed
   for entry in kept.deferred do
     let entry := { entry with generation := entry.generation.getD configGeneration }
     if entry.generation.any (configGeneration > ·) then
@@ -468,8 +473,7 @@ def journalOrders (state : EditorState) (enabled leaving : Bool) (context : Cont
           answered.push { command := modesName, arguments := [.nat entry.buffer, .str entry.mode] }
       else
         let name := ((state.buffer? ⟨entry.buffer⟩).map (·.name)).getD s!"buffer {entry.buffer}"
-        said :=
-          some s!"restore: no mode is registered as {entry.mode}: {name} is restored without it"
+        said := said.push s!"no mode is registered as {entry.mode}: {name} is restored without it"
     else
       deferred := deferred.push entry
   let kept :=
@@ -480,7 +484,8 @@ def journalOrders (state : EditorState) (enabled leaving : Bool) (context : Cont
           (state.buffer? ⟨entry.buffer⟩).any (·.history.head == entry.revision) }
   let state :=
     { state with
-      restore := kept, echo := (said <|> unclaimed).getD state.echo }
+      restore := kept
+      echo := if said.isEmpty then state.echo else s!"restore: {"; ".intercalate said.toList}" }
   -- The index, once it differs from the last written and no write is
   -- pending: while one is, the index is not even made, since the write
   -- renders the index as it is when it fires.
