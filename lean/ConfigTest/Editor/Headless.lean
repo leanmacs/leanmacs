@@ -1317,6 +1317,18 @@ wait 2" with
             (refusal "# a comment\n\nreload\nrun\n").startsWith "line 4: " &&
             (refusal "settle now\n").startsWith "line 1: ") },
     { name :=
+        "a settle may give its own patience in milliseconds, one number: anything else after settle is refused, with the number of the line"
+      run :=
+        let refusal (text : String) : String :=
+          match Headless.script text with
+          | .error message => message
+          | .ok _ => ""
+        pure
+          ((Headless.script "reload\nsettle 90000\nsettle\n").toOption ==
+              some #[⟨1, .request .reload⟩, ⟨2, .settleWithin 90000⟩, ⟨3, .settle⟩] &&
+            (refusal "reload\nsettle soon\n").startsWith "line 2: " &&
+            (refusal "settle 1 2\n").startsWith "line 1: ") },
+    { name :=
         "a key directive is a logical key, a physical key and modifiers: one character or a <Name>, a code or -, and modifiers joined with + or -"
       run :=
         pure
@@ -1437,6 +1449,23 @@ wait 2" with
             finally
               -- The job that was left behind ends; its wake-up is under this
               -- host's source id, which no later host is given.
+              gate.open },
+    { name :=
+        "a settle with its own milliseconds waits that long, not the run's patience, and its failure says how long it waited"
+      run := do
+        let gate ← Gate.new
+        IO.FS.withTempDir fun directory => do
+            writeConfig directory slowConfig
+            let stage ←
+              Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
+            try
+              -- The reload is held open. The run's patience is a minute, so
+              -- a failure now is the settle's own fifth of a second.
+              let failure ←
+                Headless.run stage.collaborators
+                    #[⟨3, .request .reload⟩, ⟨7, .settleWithin 200⟩, ⟨8, .request .show⟩] 60000
+              return failure == some (.waited 200 (.reloading (some 7)))
+            finally
               gate.open },
     { name :=
         "a script that ends while a reload cannot finish fails at its end, with a reload still running and no line"
@@ -1689,6 +1718,13 @@ wait 2" with
             (reloading.splitOn "line 12").length == 2 &&
             (unanswered.splitOn "line 12").length == 2 &&
             (atEnd.splitOn "line").length == 1) },
+    { name := "a wait that had its own patience is described with that patience, not the run's"
+      run :=
+        let waited := Headless.Failure.describe 30000 (.waited 90000 (.reloading (some 9)))
+        pure
+          (waited == Headless.Failure.describe 90000 (.reloading (some 9)) &&
+            (waited.splitOn "90000 ms").length == 2 &&
+            (waited.splitOn "30000 ms").length == 1) },
     { name :=
         "the headless mode's run disposes of its collaborators once its loop has ended: dispose is called once, after every line the script had the host print"
       run :=
