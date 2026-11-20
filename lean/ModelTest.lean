@@ -119,9 +119,11 @@ import ModelTest.Editor.ProjectSearch
 import ModelTest.Editor.ProjectSearch.Run
 import ModelTest.Editor.Restore
 import ModelTest.Editor.Restore.Document
+import ModelTest.Editor.Restore.Frame
 import ModelTest.Editor.Restore.Journal
 import ModelTest.Editor.Restore.Run
 import ModelTest.Editor.Restore.Value
+import ModelTest.Editor.Restore.Workspaces
 import ModelTest.Editor.Scene
 import ModelTest.Editor.Scroll
 import ModelTest.Editor.Setup
@@ -1220,6 +1222,17 @@ Session restore is checked in Lean alone too:
   twice, negative integers and big naturals, a NUL, bytes that are not
   UTF-8 and multi-byte characters; JSON that is no tree read as none; and
   the shipped stores kept across a restart, initial and populated.
+- `restoreFrameChecks`: the frame as the session index records it
+  (`Editor/Restore/Frame.lean`), pure and on the text model: its JSON
+  round trip over every layout, anchor and a zoomed, named tab, a newer
+  key passed over; renumbering; each record `check` refuses; and the
+  record of a state of two tabs with splits, a docked window, a float at
+  a position and a window elsewhere.
+- `restoreWorkspaceChecks`: the workspace table as the index records it
+  (`Editor/Restore/Workspaces.lean`), pure: the JSON round trip of each
+  identity, location and branch; only cells with a codec, through its
+  keep; a restore that meets, migrates, resets and parks; restore then
+  record; and parked cells carried back into their stores.
 - `restoreOffsetChecks`: where a recorded spot is put back
   (`Restore.offsetOf`, `Editor/Restore.lean`), on the text model: its
   column in bytes, after a multi-byte character, clamped past the row's
@@ -1436,6 +1449,8 @@ def checks : List Check :=
     restoreDocumentChecks ++
     restoreOffsetChecks ++
     restoreValueChecks ++
+    restoreFrameChecks ++
+    restoreWorkspaceChecks ++
     journalReconcileChecks ++
     restoreChecks ++
     driverChecks ++

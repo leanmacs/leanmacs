@@ -1,4 +1,5 @@
 import Editor.File
+import Editor.Restore.Records
 
 /-!
 # What the session's reconciler keeps
@@ -22,15 +23,6 @@ Pinned by `ModelTest.journalReconcileChecks` and `ModelTest.restoreChecks`.
 -/
 
 namespace Editor.Restore
-
-/-- A position as the session index records it: a row, from 0, and a column
-in bytes of that row's content. -/
-structure Spot where
-  /-- The row, from 0. -/
-  row : Nat
-  /-- The column, in bytes from the start of the row. -/
-  column : Nat
-  deriving DecidableEq, Repr, Inhabited
 
 /-- Where one window is in its buffer: its view's id, the anchor and the head
 of its primary selection, and the row its scroll starts at. -/

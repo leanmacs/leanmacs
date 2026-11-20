@@ -1,5 +1,5 @@
 import Editor.Restore.Document
-import Editor.State
+import Editor.Restore.Indexed
 
 /-!
 # Session restore: the journal and the index, kept in step
@@ -138,39 +138,6 @@ structure Order where
   /-- The snapshot the request names, to release once it is handed. -/
   release : Option SnapshotId := none
   deriving DecidableEq, Repr
-
-/-- Whether the buffer `id` of `state` is journalled ("The journal
-reconciler", in the module docs). -/
-def journalled (state : EditorState) (id : BufferId) (buffer : Buffer) : Bool :=
-  state.minibufferBuffer? != some id && buffer.excerpts.isNone && buffer.isModified &&
-    (buffer.file.isSome || !buffer.readOnly)
-
-/-- Whether the buffer `id` of `state` is kept in the index: it holds a file
-and is no excerpt buffer, or it is journalled. -/
-def indexed (state : EditorState) (id : BufferId) (buffer : Buffer) : Bool :=
-  (buffer.file.isSome && buffer.excerpts.isNone && state.minibufferBuffer? != some id) ||
-    journalled state id buffer
-
-/-- A byte offset of `text` as a spot. -/
-def spotOf (text : TextId) (offset : Nat) : TextM Spot := do
-  let point ← text.pointOf offset
-  return { row := point.row, column := point.column }
-
-/-- The byte offset of `text` that `spot` records: the start of its row,
-clamped to the last row, and its column in bytes, clamped to the row's
-content and moved back to the start of the character it falls inside. The
-inverse of `spotOf`, which records a column in bytes. -/
-def offsetOf (text : TextId) (spot : Spot) : TextM Nat := do
-  let row := min spot.row ((← text.lineCount) - 1)
-  let content ← text.rowContent row
-  let start ← text.offsetOf ⟨row, 0⟩
-  let (column, _) :=
-    content.toList.foldl
-      (fun (bytes, stopped) char =>
-        if !stopped && bytes + char.utf8Size ≤ spot.column then (bytes + char.utf8Size, false)
-        else (bytes, true))
-      (0, false)
-  return start + column
 
 /-- The place of `window`, whose buffer's text is `text`. -/
 def placeOf (text : TextId) (window : Window) : TextM (Option Place) := do

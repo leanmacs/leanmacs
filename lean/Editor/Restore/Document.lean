@@ -1,5 +1,6 @@
-import Editor.Restore.Journal
+import Editor.Restore.Frame
 import Editor.Restore.Kept
+import Editor.Restore.Workspaces
 
 /-!
 # The session index
@@ -114,10 +115,6 @@ structure Document where
   buffers : Array Document.Buffer := #[]
   deriving DecidableEq, Repr
 
-/-- A spot as JSON: `[row, column]`. -/
-def Spot.toJson (spot : Spot) : Json.Value :=
-  .array #[Journal.natJson spot.row, Journal.natJson spot.column]
-
 /-- A place as JSON. -/
 def Place.toJson (place : Place) : Json.Value :=
   .object
@@ -163,11 +160,6 @@ def Document.knownKeys : Array String :=
 /-- The keys of a buffer this editor knows. -/
 def Document.Buffer.knownKeys : Array String :=
   #["key", "name", "file", "lineEnding", "major", "minors", "language", "journal", "views"]
-
-/-- A spot from JSON, or none. -/
-def Spot.ofJson? (value : Json.Value) : Option Spot := do
-  let .array #[.number row, .number column] := value | none
-  return { row := ← row.toNat?, column := ← column.toNat? }
 
 /-- A place from JSON, or none. -/
 def Place.ofJson? (value : Json.Value) : Option Place := do
