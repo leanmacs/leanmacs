@@ -1,0 +1,2 @@
+lean-hook: packages impl-a
+run: env LEAN_HOOK_PACKAGES=impl-a mise run lean-packages

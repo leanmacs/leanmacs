@@ -4,7 +4,7 @@
 # tools/rust-targets.sh decides for the staged files it is given, and
 # decides nothing itself.
 #
-#   tools/rust-hook.sh <staged path>...
+#   tools/rust-hook.sh [--dry-run] [--lines <file> --root <dir>] <staged path>...
 #
 # Run it at the repository's root, as hk does. For:
 #
@@ -18,7 +18,28 @@
 # It prints the decision first, `rust-hook: workspace`, `rust-hook: crates
 # <names>` or `rust-hook: nothing`, and exits with the status of what it
 # ran, or of the decision when that fails.
+#
+# With `--dry-run` it prints each command, `run: <command>`, instead of
+# running it, and with `--lines` and `--root` it hands the decision a graph
+# from a file instead of asking Cargo (tools/rust-targets.sh), so the gate
+# can see what a commit would run without running it (`mise run test`,
+# over tests/rust-targets/).
 set -eu
+
+dry=
+if [ "${1-}" = --dry-run ]; then
+  dry=1
+  shift
+fi
+
+# Runs a command, or prints it with `--dry-run`.
+run() {
+  if [ -n "$dry" ]; then
+    echo "run: $*"
+  else
+    "$@"
+  fi
+}
 
 targets=$(mise exec -- sh tools/rust-targets.sh "$@")
 
@@ -28,8 +49,8 @@ case $targets in
     ;;
   workspace)
     echo "rust-hook: workspace"
-    mise run lint
-    mise run test
+    run mise run lint
+    run mise run test
     ;;
   *)
     names=$(printf '%s\n' "$targets" | sed -n 's/^crate //p' | tr '\n' ' ')
@@ -43,7 +64,7 @@ case $targets in
       echo "rust-hook: tools/rust-targets.sh decided on no crate: $targets" >&2
       exit 2
     }
-    mise exec -- cargo clippy "$@" --all-targets --locked -- -D warnings
-    mise exec -- cargo test "$@" --locked
+    run mise exec -- cargo clippy "$@" --all-targets --locked -- -D warnings
+    run mise exec -- cargo test "$@" --locked
     ;;
 esac

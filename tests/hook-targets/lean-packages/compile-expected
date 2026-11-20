@@ -1,0 +1,9 @@
+lean-packages: sh ../tools/toolchain-check.sh
+lean-packages: no-cargo sh ../tools/package-set.sh --only compile --only greeting test ../tests/packages
+lean-packages: system-cc sh ../tools/package-set.sh --only compile --only greeting build ../tests/packages
+lean-packages: sh ../tools/package-set.sh --only compile --only greeting fmt ../tests/packages
+lean-packages: sh ../tools/layer-imports-check.sh ../tests/packages
+lean-packages: sh ../tools/package-imports-check.sh ../tests/packages
+lean-packages: sh ../tools/package-set.sh --only compile --only greeting --allow-empty-run run ../tests/packages <sysroot> .lake/build/lib/lean
+lean-packages: system-cc lake -d ../packages build --wfail :editor
+lean-packages: sh ../tools/package-set.sh --only compile --allow-empty-run run ../packages <sysroot> .lake/build/lib/lean

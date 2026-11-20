@@ -1,0 +1,3 @@
+lean-hook: core
+run: mise run lean-fmt
+run: mise run ffi-test

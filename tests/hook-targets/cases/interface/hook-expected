@@ -1,0 +1,2 @@
+lean-hook: packages api impl-a api2 impl-b impl-c
+run: env LEAN_HOOK_PACKAGES=api impl-a api2 impl-b impl-c mise run lean-packages

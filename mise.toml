@@ -86,6 +86,12 @@ run = [
   # not that.
   "for bad in two-fields unknown-dep empty; do b=tests/rust-targets/bad/$bad; status=0; out=$(sh tools/rust-targets.sh --lines \"$b/graph\" --root /repo crates/b/src/lib.rs 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF \"$(cat \"$b/message\")\"; } || { printf '%s\\n' \"$out\"; echo \"test: rust-targets exited $status on tests/rust-targets/bad/$bad\"; exit 1; }; done",
   "status=0; out=$(sh tools/rust-targets.sh --lines tests/rust-targets/graph --root /repo 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'no path'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # What the hook's Rust step then runs (tools/rust-hook.sh), with
+  # `--dry-run`, which prints each command instead of running it, over the
+  # same graph: for a crate no crate depends on, a crate others depend on,
+  # the workspace and docs alone, the decision and the commands must be
+  # exactly the case's `hook-expected`.
+  "for case in leaf depended lock docs-only; do c=tests/rust-targets/cases/$case; out=$(sh tools/rust-hook.sh --dry-run --lines tests/rust-targets/graph --root /repo $(cat \"$c/paths\")) && printf '%s\\n' \"$out\" | diff \"$c/hook-expected\" - || { echo \"test: rust-hook would run otherwise on the case $case\"; exit 1; }; done",
   # Then on Cargo's real graph: every crate of the workspace is one the
   # hook targets, a file in its directory reaching that crate, not the
   # workspace and not nothing; and a change to `editor-service` reaches it
@@ -147,6 +153,21 @@ run = [
   "for bad in three-fields bad-layer unknown-require empty; do b=../tests/hook-targets/bad/$bad; status=0; out=$(sh ../tools/hook-targets.sh --lines \"$b/graph\" --root /repo tests/packages/impl-a/ImplA.lean 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF \"$(cat \"$b/message\")\"; } || { printf '%s\\n' \"$out\"; echo \"lean-test: hook-targets exited $status on tests/hook-targets/bad/$bad\"; exit 1; }; done",
   "status=0; out=$(sh ../tools/hook-targets.sh --lines ../tests/hook-targets/graph --root /repo 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'no path'; } || { printf '%s\\n' \"$out\"; exit 1; }",
   "status=0; out=$(sh ../tools/hook-targets.sh --graph ../tests/hook-targets/graph lean/X.lean 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage:'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # What the hook's Lean step then runs (tools/lean-hook.sh), with
+  # `--dry-run`, which prints each command instead of running it, over the
+  # same graph: for one implementation package, an interface package, the
+  # core and docs alone, the decision and the commands must be exactly the
+  # case's `hook-expected`. And what a package-targeted commit runs
+  # (tools/lean-packages.sh, the `lean-packages` task): for `compile`, a
+  # default package, and `greeting`, a fixture package, exactly
+  # tests/hook-targets/lean-packages/compile-expected, whose last two
+  # commands build the default set's editor and run `compile` over it;
+  # for `greeting` alone, exactly greeting-expected, which never names the
+  # default set. It asks Lake for the default set's packages and builds
+  # nothing. With no name it is exit 2.
+  "for case in impl-only interface core docs-only; do out=$(cd .. && sh tools/lean-hook.sh --dry-run --lines tests/hook-targets/graph --root /repo $(cat \"tests/hook-targets/cases/$case/paths\")) && printf '%s\\n' \"$out\" | diff \"../tests/hook-targets/cases/$case/hook-expected\" - || { echo \"lean-test: lean-hook would run otherwise on the case $case\"; exit 1; }; done",
+  "for names in 'compile greeting' greeting; do out=$(sh ../tools/lean-packages.sh --dry-run $names) && printf '%s\\n' \"$out\" | diff \"../tests/hook-targets/lean-packages/${names%% *}-expected\" - || { echo \"lean-test: lean-packages would run otherwise for $names\"; exit 1; }; done",
+  "status=0; out=$(sh ../tools/lean-packages.sh --dry-run 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'names no package'; } || { printf '%s\\n' \"$out\"; exit 1; }",
   'PATH="$PWD/no-cargo:$PATH" lake test --wfail',
   # The same for each package of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps"): its Lake test
@@ -254,37 +275,14 @@ run = [
 # a staged change that reaches only those packages (tools/lean-hook.sh,
 # which sets LEAN_HOOK_PACKAGES to their names, separated by spaces, from
 # tools/hook-targets.sh; docs/dev-practices/the-gate.md, "The pre-commit
-# hook"). Never part of `ci`: the gate runs every package's checks and the
-# core's, and a commit's targeting never stands in for it.
-#
-# In order: the toolchain check; then each named package of the fixture
-# set (tools/package-set.sh --only): its Lake test driver, with the `cargo`
-# that fails first on the PATH, as `lean-test` runs it; the set's editor,
-# which compiles whatever of the core and of the other packages is stale
-# and links, then the package's default targets under its linters and its
-# linked test, as `lean` builds them; its format check, as `lean-fmt`; the
-# layer and package imports checks over the set, two Lake queries of about
-# a second, kept because the targeting is sound only while no package
-# imports an implementation package; and its linked test and headless
-# fixtures on the set's editor, as `ffi-test`, with `--allow-empty-run` so
-# an interface package, which holds neither, passes. Last, for the named
-# packages that are also packages of the default set (packages/), that
-# set's editor and the same `run` over it, as `ffi-test` does for every
-# default package.
+# hook"). What it runs, and in what order, is tools/lean-packages.sh's,
+# whose `--dry-run` `lean-test` pins. Never part of `ci`: the gate runs
+# every package's checks and the core's, and a commit's targeting never
+# stands in for it.
 [tasks.lean-packages]
-description = "The Lean checks of the packages named in LEAN_HOOK_PACKAGES alone, over the fixture set and, for default packages, the default set: what pre-commit runs for a change that reaches only those packages (tools/lean-hook.sh); never part of ci"
+description = "The Lean checks of the packages named in LEAN_HOOK_PACKAGES alone, over the fixture set and, for default packages, the default set: what pre-commit runs for a change that reaches only those packages (tools/lean-hook.sh, tools/lean-packages.sh); never part of ci"
 dir = "lean"
-run = [
-  "test -n \"${LEAN_HOOK_PACKAGES:-}\" || { echo 'lean-packages: LEAN_HOOK_PACKAGES names no package, so there is nothing to check' >&2; exit 2; }",
-  "sh ../tools/toolchain-check.sh",
-  "set --; for n in $LEAN_HOOK_PACKAGES; do set -- \"$@\" --only \"$n\"; done; PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh \"$@\" test ../tests/packages",
-  "set --; for n in $LEAN_HOOK_PACKAGES; do set -- \"$@\" --only \"$n\"; done; LEAN_CC=/usr/bin/cc sh ../tools/package-set.sh \"$@\" build ../tests/packages",
-  "set --; for n in $LEAN_HOOK_PACKAGES; do set -- \"$@\" --only \"$n\"; done; sh ../tools/package-set.sh \"$@\" fmt ../tests/packages",
-  "sh ../tools/layer-imports-check.sh ../tests/packages",
-  "sh ../tools/package-imports-check.sh ../tests/packages",
-  "set --; for n in $LEAN_HOOK_PACKAGES; do set -- \"$@\" --only \"$n\"; done; sh ../tools/package-set.sh \"$@\" --allow-empty-run run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
-  "defaults=$(lake -d ../packages query :editorPackages | cut -f1) || exit 2; set --; for n in $LEAN_HOOK_PACKAGES; do if printf '%s\\n' \"$defaults\" | grep -qxF \"$n\"; then set -- \"$@\" --only \"$n\"; fi; done; if [ \"$#\" -gt 0 ]; then LEAN_CC=/usr/bin/cc lake -d ../packages build --wfail :editor && sh ../tools/package-set.sh \"$@\" --allow-empty-run run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean; fi",
-]
+run = 'sh ../tools/lean-packages.sh ${LEAN_HOOK_PACKAGES:-}'
 
 # Tracked files only, so Lake's fetched packages and build output are never
 # looked at. A new C file is checked once it is `git add`ed. Vendored C

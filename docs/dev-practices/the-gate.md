@@ -2082,7 +2082,8 @@ fixture set to reach that package, so a package Lake lists that the hook
 would not target fails the gate.
 
 **What a package's checks are** (`mise run lean-packages`, with the names
-in `LEAN_HOOK_PACKAGES`; never part of `ci`), in order: the toolchain
+in `LEAN_HOOK_PACKAGES`, which runs `tools/lean-packages.sh`; never part
+of `ci`), in order: the toolchain
 check; over the named packages of the fixture set (`tools/package-set.sh
 --only`, "The package steps", above), the `test` step, with the `cargo`
 that fails first on the `PATH`; the `build` step, which first builds the
@@ -2131,6 +2132,16 @@ in its names, layers and requires, a change to `greeting-api`'s module to
 reach exactly `greeting-api`, `greeting` and `greeting-loud` when Lake is
 asked, and every package of the set to be targeted.
 
+The dispatchers are pinned too, with `--dry-run`, which prints each
+command instead of running it. `lean-test` runs `tools/lean-hook.sh` over
+the hand-written graph for one implementation package, an interface
+package, the core and docs alone, and requires exactly the decision and
+the commands in each case's `hook-expected`; and `tools/lean-packages.sh`
+for `compile` and `greeting` together and for `greeting` alone, requiring
+exactly `tests/hook-targets/lean-packages/compile-expected`, whose last
+two commands build the default set's editor and run `compile` over it,
+and `greeting-expected`, which never names the default set.
+
 **Time, before and after** (2026-11-20, an Apple M5 Max, 18 cores, 128 GB; `hk run pre-commit`
 with one file staged, a comment line appended to it, a distinct one each
 run so Lake rebuilds that module; three runs on a warm tree, min and
@@ -2163,7 +2174,10 @@ the workspace. `mise run test` pins it: the cases under
 `tests/rust-targets/` over a crate graph written by hand, the refused
 graphs under `tests/rust-targets/bad/`, every crate of the workspace
 targeted as itself, and a change to `editor-service` reaching exactly
-`editor-service`, `editor-ffi` and `echo-service`. It was measured before
+`editor-service`, `editor-ffi` and `echo-service`; and, with
+`tools/rust-hook.sh --dry-run`, the commands for a crate no crate depends
+on, a crate others depend on, the workspace and docs alone, each case's
+`hook-expected`. It was measured before
 it was built, with one comment line appended to a crate's `src/lib.rs`,
 three runs each, both columns under the same background load (a load
 average of 70 to 100), so the times are long but the comparison holds:
