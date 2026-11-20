@@ -308,6 +308,19 @@ def restoreChecks : List Check :=
               (reportOf driver).contains
                 "session-42.json was named by the restart but it is not there; restoring as after an unclean end" },
     { name :=
+        "a named index that does not parse is said, left as it is, and the index the version rule chooses is restored"
+      run :=
+        pure <|
+          let garbage := "{ not an index"
+          let change (files : FileModel) : FileModel := withIndex files (indexName 0) garbage
+          match restartedOver (some (indexPath stateDirectory 0)) (change := change) with
+          | none => false
+          | some driver =>
+            (bufferNamed driver "a.txt").isSome &&
+              (reportOf driver).contains
+                "session-0.json was named by the restart but it does not parse; restoring as after an unclean end" &&
+              bytesAt driver (indexPath stateDirectory 0) == some garbage.toUTF8 },
+    { name :=
         "a restart's summary says the window was closed and reopened, and, after a fallback, which executables ended before the one that restored it"
       run :=
         pure <|
