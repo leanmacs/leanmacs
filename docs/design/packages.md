@@ -1030,7 +1030,12 @@ is pinned on the models (`ModelTest.packageSetBuildChecks`):
 7. **Publish**: `/bin/mv <staging> <data>/editors/<core>/<n>`, atomic
    within one file system.
 8. **Prune**: this core's versions older than `n-1`, every other core's
-   directory but the running executable's, and leftover `staging-*`.
+   directory, and leftover `staging-*`; the directory that holds the
+   running executable is always kept, whichever core or version it is. An
+   older version of this core can be the running one: a publish whose
+   restart did not happen (refused, or the session not written), or whose
+   new editor crashed so the launcher started the one before, leaves it
+   running when the next build publishes.
 9. **Restart** into the new editor through the restore's restart
    (`Editor.restart`), with the session handed over; with no state
    directory, "built `<exe>`; it starts at the next launch".
@@ -1059,7 +1064,7 @@ one only when `--data` is given, so no script can build into a user's
 own. `<core>` is the core's identity, so an editor linked against another
 core is never started; `<n>` is one more than the largest version there
 (`lean/Editor/PackageSet/Layout.lean`). At most two versions are kept per
-core, about 420 MB each.
+core, about 420 MB each, plus the running editor's own when it is older.
 
 ### The package commands
 

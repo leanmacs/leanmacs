@@ -57,7 +57,8 @@ git, and the requires to resolve (`resolveNames`).
    ok`, which catches a bad link, a bad signature or an `initialize` that
    throws before anything is published.
 7. **Publish**: `/bin/mv <staging> <data>/editors/<core>/<n>`.
-8. **Prune**: `/bin/rm -rf` for each directory `pruned` names.
+8. **Prune**: `/bin/rm -rf` for each directory `pruned` names, never the
+   one that holds the running executable.
 9. **Restart** into the new editor (`Editor.restart`), or, with no state
    directory, `packages: built <exe>; it starts at the next launch`.
 

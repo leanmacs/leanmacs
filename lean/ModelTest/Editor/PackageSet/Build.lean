@@ -343,6 +343,17 @@ def packageSetBuildChecks : List Check :=
             nextVersion #["1", "2", "10", "staging", "x"] == 11 &&
             nextStaging #["staging-1", "staging-x", "3"] == 2) },
     { name :=
+        "pruning never removes the version the running editor is under: an older version of the build's own core, or the one before the new one"
+      run :=
+        pure
+          (pruned "/d" "c1" 3 #["1", "2", "3"] #["c1"] "/d/editors/c1/1/editor" == #[] &&
+            pruned "/d" "c1" 4 #["1", "2", "3", "4"] #["c1"] "/d/editors/c1/1/editor" ==
+              #["/d/editors/c1/2"] &&
+            pruned "/d" "c1" 4 #["1", "2", "3", "4"] #["c1"] "/d/editors/c1/3/editor" ==
+              #["/d/editors/c1/1", "/d/editors/c1/2"] &&
+            pruned "/d" "c1" 13 #["1", "11", "12", "13"] #["c1"] "/d/editors/c1/1/editor" ==
+              #["/d/editors/c1/11"]) },
+    { name :=
         ":package-install edits the lakefile through the edit job, which writes it and asks for a reload; a lakefile.lean is refused"
       run :=
         let facts := lakefileWith

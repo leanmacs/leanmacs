@@ -17,9 +17,9 @@ The layout of per-user editors under the data directory
   considers only numeric directories that hold `editor`
   (`crates/editor-launch/src/editors.rs`).
 - **Pruning** after a publish (`pruned`) removes this core's versions
-  older than the one before the new one, every other core's directory but
-  the one that holds the running executable, and leftover staging
-  directories.
+  older than the one before the new one, every other core's directory, and
+  leftover staging directories; the directory that holds the running
+  executable is always kept, whichever core or version it is.
 
 Pure: `model-test` pins it (`ModelTest.packageSetBuildChecks`).
 -/
@@ -64,14 +64,22 @@ def nextStaging (names : Array String) : Nat :=
 /-- The directories to remove after version `n` of `core` was published
 (`pruned`, "Pruning" in the module docs): given the names in the core's
 directory (`versions`), the names in `<data>/editors` (`entries`) and the
-running executable, this core's versions below `n - 1`, every other core's
-directory but the one the running executable is under, and every staging
-directory. -/
+running executable, this core's versions below `n - 1` but the one the
+running executable is under, every other core's directory but the one the
+running executable is under, and every staging directory.
+
+The running editor may be an older version of this core: a publish whose
+restart did not happen (refused, or the session not written), or whose new
+editor crashed so the launcher started the one before, leaves it running,
+and its next build publishes past it. Its directory holds its modules and
+the executable `:restart` probes, so it is kept. -/
 def pruned (data core : String) (n : Nat) (versions entries : Array String) (running : String) :
     Array String :=
+  let holdsRunning (directory : String) : Bool := running.startsWith (directory ++ "/")
   let old :=
-    (versions.filterMap fun name => (versionOf? name).filter (· + 1 < n)).qsort (· < ·) |>.map
-      (versionDirectory data core)
+    ((versions.filterMap fun name => (versionOf? name).filter (· + 1 < n)).qsort (· < ·) |>.map
+          (versionDirectory data core)).filter
+      (!holdsRunning ·)
   let others :=
     entries.filterMap fun name =>
       if name == core then none
@@ -79,7 +87,7 @@ def pruned (data core : String) (n : Nat) (versions entries : Array String) (run
         if name.startsWith "staging-" then some (editorsDirectory data ++ "/" ++ name)
         else
           let directory := editorsDirectory data ++ "/" ++ name
-          if running.startsWith (directory ++ "/") then none else some directory
+          if holdsRunning directory then none else some directory
   old ++ others
 
 end Editor.PackageSet

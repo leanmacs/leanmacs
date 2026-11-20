@@ -856,7 +856,8 @@ The config session's decisions are tested here too, with no elaborator:
   Cargo required for a Rust crate and none run for a set with no crate; a
   failing build shown, its staging directory removed and nothing
   published; a failing probe; a success that writes the record, publishes
-  version 1 and restarts into it; what is pruned; and the three commands'
+  version 1 and restarts into it; what is pruned, never the running
+  editor's version; and the three commands'
   edits, their refusals and the reload after them;
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
