@@ -127,8 +127,9 @@ show:
   program of the loop that is refused, and a window's close request with
   nothing unsaved ending the loop; and the headless mode's run disposing of
   its collaborators once its loop has ended, whether it failed or not, even
-  with the editor thread inside an event when a wait runs out, which
-  patience a failure names (`Wait.failureIn`), and
+  with the editor thread inside an event when a join or an advance runs
+  out, or with the loop slow to end at the script's end, which patience a
+  failure names (`Wait.failureIn`), and
   the executable's hosts' dispose removing the directory of the config
   files' module data once it was made;
 - `dispatchChecks`: keys through the host, with the test scheme and
