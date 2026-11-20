@@ -1309,9 +1309,13 @@ fixture's `expected` and one line more, the information that no lakefile is
 generated; the directory must then hold a `lean-toolchain` that is
 `lean/lean-toolchain` byte for byte, and no `lakefile.toml`: a staged
 bundle holds no package set (`Contents/Resources/lean/set`) for a lakefile
-to require, as the app does not yet. It has a
-time limit of its own, 120 seconds, for copying the executable and the
-module files. Then it checks `editor --version` through `IO.appPath` and
+to require, as the app does not yet. The bundle fixture's first settle
+waits up to 90 seconds (`settle 90000`), not the default 30: it is the
+chain's cold first reload, of a config that imports `Lean` from module files
+just copied into the bundle, and on the macOS runner it overlaps
+`ffi-test`'s cargo steps (the script's comment has the runs). The task has
+a time limit of its own, 240 seconds, for the launcher's build, copying the
+executable and the module files, and that settle. Then it checks `editor --version` through `IO.appPath` and
 the real file read (`lean/Editor/Version.lean`): `tests/headless/bundle/
 Info.plist`, which holds only the version, build ID and commit keys with a
 fake stamp, is copied into the staged `Contents/`, and the copy, with an
