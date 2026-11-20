@@ -325,7 +325,7 @@ def fileChecks (_ : Unit) : List Check :=
               !(← log.pathExists) &&
               refused == some .notFound },
     { name :=
-        "unobserved appends, a save and a remove are worked in order and never completed; a failure is kept with its path and taken once; pending falls to 0"
+        "unobserved appends, a save and a remove are worked in order and never completed; a failure is kept with its path and taken once; a flush asked after them is the next completion, and pending is 0 then"
       run :=
         inOwnDirectory fun directory => do
           let source := directory / "mixed.txt"
@@ -340,18 +340,35 @@ def fileChecks (_ : Unit) : List Check :=
               ← Editor.Ffi.filesAppendUnobserved log.toString "b".toUTF8,
               ← Editor.Ffi.filesAppendUnobserved missing.toString "c".toUTF8,
               ← Editor.Ffi.filesRemoveUnobserved source.toString]
-          let mut drained := false
-          for _ in [0:5000] do
-            if (← Editor.Ffi.filesPending) == 0 then
-              drained := true
-              break
-            IO.sleep 1
+          -- A flush is completed behind every request started before it.
+          let flushed ← Editor.Ffi.filesFlush 1071
+          let drained := flushed && (← fileCompleted 1071) && (← Editor.Ffi.filesPending) == 0
           let failure ← Editor.Ffi.filesFailure
           let once := (← Editor.Ffi.filesFailure).isNone
           return once && started.all id && drained && (← IO.FS.readBinFile log) == "ab".toUTF8 &&
               (← IO.FS.readBinFile base) == mixedBytes &&
               !(← source.pathExists) &&
               (failure.map (·.1)) == some missing.toString },
+    { name :=
+        "a hold parks the file worker: a load and a flush started behind it complete after the hold is cancelled, in the order hold, load, flush"
+      run :=
+        inOwnDirectory fun directory => do
+          let file := directory / "held.txt"
+          IO.FS.writeBinFile file mixedBytes
+          unless ← Editor.Ffi.filesHold 1080 do
+            return false
+          unless ← fileCompleted 1080 do
+            discard <| Editor.Ffi.filesCancel 1080
+            return false
+          let loading ← Editor.Ffi.filesLoad 1081 file.toString 1000
+          let flushing ← Editor.Ffi.filesFlush 1082
+          let released ← Editor.Ffi.filesCancel 1080
+          let loaded ← fileCompleted 1081
+          let flushed ← fileCompleted 1082
+          let result ← Editor.Ffi.filesTake 1081
+          let kept ← Editor.Ffi.filesTake 1082
+          return loading && flushing && released && loaded && flushed && result.isSome &&
+              kept.isNone },
     { name :=
         "a file result the bindings cannot read is an error: a status the table does not have, words that are not the status's, and a load with no snapshot"
       run :=

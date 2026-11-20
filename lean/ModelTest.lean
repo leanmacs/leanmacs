@@ -88,6 +88,7 @@ import ModelTest.Editor.InputScheme.Vim
 import ModelTest.Editor.InputScheme.Vim.Default
 import ModelTest.Editor.Invocation
 import ModelTest.Editor.Job.Contract
+import ModelTest.Editor.Job.FlushContract
 import ModelTest.Editor.Job.Jobs
 import ModelTest.Editor.Job.Model
 import ModelTest.Editor.Job.Pool
@@ -690,6 +691,12 @@ The job system is tested here with no Rust library:
   (`Editor/Job/Fake.lean`). A check controls time by moving its own fake
   clock and holds a job on a promise it resolves; it sleeps for nothing, and
   polls only as the bound after which it fails;
+- `flushContractChecks`: the services' flush contract
+  (`Editor/Job/FlushContract.lean`) on the fakes: the fake files, diffs and
+  processes held by their held completions, so a flush asked behind held
+  work has not ended until it is let go, and the fake clock and watches
+  idle; and the contract biting on a file service whose flush completes at
+  its call;
 - `tableChecks`: the job table (`Editor/Job/Table.lean`), which is pure;
 - `ownerChecks`: the shell over the table and the runner
   (`Editor/Job/Jobs.lean`): removing an owner cancels its jobs;
@@ -1451,6 +1458,7 @@ def checks : List Check :=
   typedPathChecks ++ poolChecks ++ programChecks ++ jobModelChecks ++ snapshotReadChecks ++
     waitChecks ++
     runnerChecks ++
+    flushContractChecks ++
     tableChecks ++
     ownerChecks ++
     fileRunnerChecks ++

@@ -40,6 +40,18 @@ def timerChecks (_ : Unit) : List Check :=
         let never ← Editor.Ffi.timersCancel 99
         return accepted && !again && waiting == before + 1 && cancelled && !twice && !never &&
             (← Editor.Ffi.timersPending) == before },
+    { name :=
+        "a timer flush asked behind a wait that is due is completed after it, and does not wait for one an hour away"
+      run := do
+        let due ← Editor.Ffi.timersStart 9 (← Editor.Ffi.timersNow)
+        let later ← Editor.Ffi.timersStart 10 ((← Editor.Ffi.timersNow) + hour)
+        let flushing ← Editor.Ffi.timersFlush 11
+        let first ← pull .completion
+        let second ← pull .completion
+        let waiting ← Editor.Ffi.timersCancel 10
+        return due && later && flushing && (first.map (·.code)) == some 9 &&
+            (second.map (·.code)) == some 11 &&
+            waiting },
     { name := "the timer clock does not go back"
       run := do
         let first ← Editor.Ffi.timersNow

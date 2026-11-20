@@ -92,6 +92,12 @@ cancel. Safe for an id that is unknown. -/
 @[extern "editor_glue_diffs_cancel"]
 opaque diffsCancel (id : UInt64) : IO Bool
 
+/-- Asks the diff service for the request `id` to be completed once every
+diff started before this call has been worked, and returns whether it was
+accepted. It returns at once and keeps no answer. -/
+@[extern "editor_glue_diffs_flush"]
+opaque diffsFlush (id : UInt64) : IO Bool
+
 /-- How many diff requests are waiting or being worked, and how many answers
 (scripts or hunks) have not yet been taken, together. A readout for tests. -/
 @[extern "editor_glue_diffs_pending"]

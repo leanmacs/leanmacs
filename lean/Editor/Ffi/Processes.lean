@@ -371,6 +371,14 @@ its result is gone. -/
 @[extern "editor_glue_processes_cancel"]
 opaque processesCancel (id : UInt64) : IO Bool
 
+/-- Asks the process service for the wait `id` to be completed once every run
+started before this call has ended, every open asked before it has been
+answered, and every streaming child cancelled before it has been reaped,
+and returns whether it was accepted. It returns at once and keeps no reply.
+A live streaming child and its pending read are not waited for. -/
+@[extern "editor_glue_processes_flush"]
+opaque processesFlush (id : UInt64) : IO Bool
+
 /-- How many runs have a child not yet reaped, and how many results have not
 been taken, together. A readout for tests, which use it to see that a
 cancelled run's child was reaped. -/

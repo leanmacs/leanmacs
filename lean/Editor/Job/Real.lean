@@ -173,6 +173,14 @@ would wrap round to an early one. -/
 def word (deadline : Nat) : UInt64 :=
   (min deadline (UInt64.size - 1)).toUInt64
 
+/-- Hands the flush `id` to a library's service through `flush`; a flush the
+library refuses is finished as `cancelled`, since nothing will complete it. -/
+def flushThrough (completions : Completions) (flush : UInt64 → IO Bool) (id : UInt64) :
+    BaseIO Unit := do
+  let started ← (flush id).catchExceptions fun _ => pure false
+  unless started do
+    completions.finish id .cancelled
+
 /-- The clock port answered by the library's timer service. `completions` is
 the table its waits are registered in. -/
 def realTimers (completions : Completions) : Timers :=
@@ -182,8 +190,8 @@ def realTimers (completions : Completions) : Timers :=
       -- Nothing will complete a wait the service did not take.
       unless started do
         completions.finish id .cancelled
-    cancel := fun id =>
-      (discard <| Ffi.timersCancel id : IO Unit).catchExceptions fun _ => pure () }
+    cancel := fun id => (discard <| Ffi.timersCancel id : IO Unit).catchExceptions fun _ => pure ()
+    flush := flushThrough completions Ffi.timersFlush }
 
 /-- The library's snapshots that jobs hold: what each load made, under the
 `JobSnapshotId` its reply named. It is the runner's own state, like the
@@ -426,7 +434,8 @@ def realFiles (completions : Completions) (published : SnapshotReader) (held : H
     cancel := fun id => do
       held.refused.modify (·.erase id)
       (discard <| Ffi.filesCancel id : IO Unit).catchExceptions fun _ => pure ()
-    release := held.release }
+    release := held.release
+    flush := flushThrough completions Ffi.filesFlush }
 where
   /-- Completes the wait `id` at once, with `refusal` kept as what its take
   answers: for a request that never reaches the library. -/
@@ -502,7 +511,8 @@ def realDiffs (completions : Completions) (published : SnapshotReader) (held : H
       | .hunks .. => takeHunks id
     cancel := fun id => do
       refused.refused.modify (·.erase id)
-      (discard <| Ffi.diffsCancel id : IO Unit).catchExceptions fun _ => pure () }
+      (discard <| Ffi.diffsCancel id : IO Unit).catchExceptions fun _ => pure ()
+    flush := flushThrough completions Ffi.diffsFlush }
 where
   /-- Completes the wait `id` at once, with `refusal` kept as what its take
   answers. -/
@@ -831,7 +841,8 @@ def realProcesses (completions : Completions) (refused : RefusedRuns) (timers : 
       refused.refused.modify (·.erase id)
       if let some run← timed.take id then
         disarm completions timers run
-      (discard <| Ffi.processesCancel id : IO Unit).catchExceptions fun _ => pure () }
+      (discard <| Ffi.processesCancel id : IO Unit).catchExceptions fun _ => pure ()
+    flush := flushThrough completions Ffi.processesFlush }
 
 /-- What the watch service's adapter keeps of its own: the refusals of the
 requests that never reached the library, by the id of their wait, until
@@ -963,7 +974,8 @@ def realFileWatches (completions : Completions) (state : RealWatches) : FileWatc
     cancel := fun id => do
       state.refused.modify (·.erase id)
       state.roots.modify (·.erase id)
-      (discard <| Ffi.watchesCancel id : IO Unit).catchExceptions fun _ => pure () }
+      (discard <| Ffi.watchesCancel id : IO Unit).catchExceptions fun _ => pure ()
+    flush := flushThrough completions Ffi.watchesFlush }
 
 /-- What the grep service's adapter keeps of its own: the refusals of the
 requests that never reached the library, by the id of their wait, until

@@ -138,6 +138,13 @@ unknown. -/
 @[extern "editor_glue_watches_cancel"]
 opaque watchesCancel (id : UInt64) : IO Bool
 
+/-- Asks the watch service for the wait `id` to be completed once every start
+asked before this call has returned from the port, and returns whether it
+was accepted. It returns at once and keeps no reply. A pending read is not
+waited for. -/
+@[extern "editor_glue_watches_flush"]
+opaque watchesFlush (id : UInt64) : IO Bool
+
 /-- How many watches are starting or live, and how many waits are not
 answered or not taken, together. A readout for tests. -/
 @[extern "editor_glue_watches_pending"]

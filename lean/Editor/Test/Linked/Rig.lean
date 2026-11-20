@@ -116,7 +116,8 @@ def onChanged (services : Job.Services) (change : Process.Command → Process.Co
           | .read process => processes.take id (.read process)
           | .write process bytes => processes.take id (.write process bytes)
           | .closeInput process => processes.take id (.closeInput process)
-        cancel := processes.cancel } }
+        cancel := processes.cancel
+        flush := processes.flush } }
 
 /-- `services` whose process service starts every child with `PATH` set to
 `path`, after the environment its directory's lookup gives it

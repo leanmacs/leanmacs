@@ -240,13 +240,23 @@ library never calls Lean. A completion may still arrive for a request that
 was cancelled, and whoever pulls the queue ignores an id it no longer waits
 for.
 
+Every service but grep takes a flush (`timersFlush`, `filesFlush`,
+`processesFlush`, `watchesFlush`, `diffsFlush`): a request under an id of
+the caller's, completed once the service has finished the work handed to it
+before that it can finish on its own, its completion queued behind theirs,
+with nothing to take. It is what a caller waits on in place of polling a
+service's pending count, which stays a readout for tests.
+
 The timer service is the first: `timersNow`, `timersStart`, `timersCancel`,
-and `timersPending`, a readout for tests.
+`timersFlush`, and `timersPending`, a readout for tests.
 
 The file service is the second: `filesLoad`, `filesSave`, `filesStamp`,
 `filesList` and `filesMakeDirectory` start a request,
 `filesTake` hands its result over once its completion has arrived,
-`filesCancel` cancels, and `filesPending` is a readout for tests. A request
+`filesCancel` cancels, `filesFlush` flushes, `filesHold` parks the
+service's worker once it is reached until the hold is cancelled, a control
+for tests the editor never asks for, and `filesPending` is a readout for
+tests. A request
 has a result, which a timer's has not, so there is one more step: the
 completion says only that the request `id` is done, and the result is taken
 by that id, once, as one record (`FileResult`): a loaded file's text as a

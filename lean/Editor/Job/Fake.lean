@@ -138,9 +138,14 @@ def cancel (clock : FakeClock) (id : UInt64) : BaseIO Unit :=
         waiting := state.waiting.filter (·.1 != id), withdrawn := state.withdrawn.push id }
     else state
 
+/-- Flushes the clock as the wait `id`: it is due now, so it is completed at
+once, after every wait that `start` or `advance` has already completed. -/
+def flush (clock : FakeClock) (id : UInt64) : BaseIO Unit :=
+  clock.completions.finish id .completed
+
 /-- The clock as the port the runner is given. -/
 def timers (clock : FakeClock) : Timers :=
-  { now := clock.read, start := clock.start, cancel := clock.cancel }
+  { now := clock.read, start := clock.start, cancel := clock.cancel, flush := clock.flush }
 
 /-- The waits of `waiting` that are due at `now`, earliest deadline first and,
 of two with one deadline, the one started first; and the rest, in the order
@@ -425,9 +430,21 @@ def release (files : FakeFiles) (snapshot : JobSnapshotId) : BaseIO Unit :=
       model := state.model.released snapshot
       released := state.released.push snapshot }
 
+/-- Flushes the files as the wait `id`: completed at once, unless completions
+are held, when it is parked behind them and `letGo` completes it after every
+wait held before it. -/
+def flush (files : FakeFiles) (id : UInt64) : BaseIO Unit := do
+  let held ←
+    files.state.modifyGet fun state =>
+        if state.holding then (true, { state with parked := state.parked.push id })
+        else (false, state)
+  unless held do
+    files.completions.finish id .completed
+
 /-- The service as the port the runner is given. -/
 def files (files : FakeFiles) : Files :=
-  { start := files.start, take := files.take, cancel := files.cancel, release := files.release }
+  { start := files.start, take := files.take, cancel := files.cancel, release := files.release,
+    flush := files.flush }
 
 /-- Starts the diff `request` as the wait `id`, and completes the wait unless
 completions are held, as a file request's is. -/
@@ -462,11 +479,17 @@ def cancelDiff (files : FakeFiles) (id : UInt64) : BaseIO Unit :=
         withdrawn := state.withdrawn.push id }
     else state
 
+/-- Flushes the diffs as the wait `id`, as `flush` flushes the files: the
+diffs share the files' held completions. -/
+def flushDiffs (files : FakeFiles) (id : UInt64) : BaseIO Unit :=
+  files.flush id
+
 /-- The fake of the diff port (`Job.Diffs`): the model of a line diff over
 the snapshots this file service's model holds, so a job's load and its diff
 see one table, as the library's two services do. -/
 def diffs (files : FakeFiles) : Diffs :=
-  { start := files.startDiff, take := files.takeDiff, cancel := files.cancelDiff }
+  { start := files.startDiff, take := files.takeDiff, cancel := files.cancelDiff,
+    flush := files.flushDiffs }
 
 /-- Starts the search `request` as the wait `id`, and completes the wait
 unless completions are held, as a file request's is. -/
@@ -705,9 +728,21 @@ def cancel (processes : FakeProcesses) (id : UInt64) : BaseIO Unit :=
           model := state.model.kill id.toNat, withdrawn := state.withdrawn.push id }
       else state
 
+/-- Flushes the processes as the wait `id`: completed at once, unless
+completions are held, when it is parked behind them and `letGo` completes it
+after every wait held before it. -/
+def flush (processes : FakeProcesses) (id : UInt64) : BaseIO Unit := do
+  let held ←
+    processes.state.modifyGet fun state =>
+        if state.holding then (true, { state with parked := state.parked.push id })
+        else (false, state)
+  unless held do
+    processes.completions.finish id .completed
+
 /-- The service as the port the runner is given. -/
 def processes (processes : FakeProcesses) : Processes :=
-  { start := processes.start, take := processes.take, cancel := processes.cancel }
+  { start := processes.start, take := processes.take, cancel := processes.cancel,
+    flush := processes.flush }
 
 /-- The model as it is now. -/
 def model (processes : FakeProcesses) : BaseIO ProcessModel :=
@@ -871,9 +906,14 @@ def cancel (watches : FakeFileWatches) (id : UInt64) : BaseIO Unit :=
           model := state.model.endWatch id.toNat, withdrawn := state.withdrawn.push id }
       else state
 
+/-- Flushes the watches as the wait `id`: completed at once, since the fake
+completes every start at once. -/
+def flush (watches : FakeFileWatches) (id : UInt64) : BaseIO Unit :=
+  watches.completions.finish id .completed
+
 /-- The service as the port the runner is given. -/
 def fileWatches (watches : FakeFileWatches) : FileWatches :=
-  { start := watches.start, take := watches.take, cancel := watches.cancel }
+  { start := watches.start, take := watches.take, cancel := watches.cancel, flush := watches.flush }
 
 /-- The model as it is now. -/
 def model (watches : FakeFileWatches) : BaseIO FileWatchModel :=

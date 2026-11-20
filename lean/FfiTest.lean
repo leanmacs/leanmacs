@@ -4,6 +4,7 @@ import FfiTest.Editor.Display.Real
 import FfiTest.Editor.Event.Queue
 import FfiTest.Editor.ExcerptView
 import FfiTest.Editor.Ffi.Counter
+import FfiTest.Editor.Ffi.Diffs
 import FfiTest.Editor.Ffi.Display
 import FfiTest.Editor.Ffi.Document
 import FfiTest.Editor.Ffi.Events
@@ -80,6 +81,7 @@ namespace FfiTest
 def checks (_ : Unit) : List Check :=
   entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ timerChecks () ++
     fileChecks () ++
+    diffChecks () ++
     processChecks () ++
     watchChecks () ++
     grepChecks () ++

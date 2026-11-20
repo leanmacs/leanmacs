@@ -324,6 +324,22 @@ still arrives, and its result is gone. -/
 @[extern "editor_glue_files_cancel"]
 opaque filesCancel (id : UInt64) : IO Bool
 
+/-- Asks the file service for the request `id` to be completed once every
+file request started before this call, unobserved ones included, has been
+worked, and returns whether it was accepted. It returns at once. Its
+completion is queued behind those of the requests it waited for, and it
+keeps no result. `filesCancel` withdraws it while it waits. -/
+@[extern "editor_glue_files_flush"]
+opaque filesFlush (id : UInt64) : IO Bool
+
+/-- Asks the file service to hold its worker as the request `id`, and
+returns whether it was accepted: once the worker reaches it, behind every
+request started before it, `id` is completed and the worker works nothing
+more until `filesCancel id` lets it go. A control for tests, which the
+editor never asks for. -/
+@[extern "editor_glue_files_hold"]
+opaque filesHold (id : UInt64) : IO Bool
+
 /-- How many file requests are waiting or being worked, unobserved ones
 included, and how many results have not been taken, together. A readout for
 tests, which use it to see that a cancel left nothing behind, and for a

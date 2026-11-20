@@ -78,6 +78,18 @@ def watchChecks (_ : Unit) : List Check :=
             | _ =>
               pure false
           return !malformed && refused },
+    { name := "a watch flush asked behind a start is completed after it, and keeps no reply"
+      run :=
+        inOwnDirectory fun directory => do
+          let started ← Editor.Ffi.watchesStart 1220 1 0 64 directory.toString
+          let flushing ← Editor.Ffi.watchesFlush 1221
+          let first ← watchCompleted 1220
+          let second ← watchCompleted 1221
+          let reply ← Editor.Ffi.watchesTake 1220
+          let kept ← Editor.Ffi.watchesTake 1221
+          let cancelled ← Editor.Ffi.watchesCancel 1220
+          return started && flushing && first && second && reply == some .started && kept.isNone &&
+              cancelled },
     { name :=
         "a watch reply decodes: started, each refusal, and changes as each path's bytes and its kinds' bits; words that do not add up are an error"
       run := do

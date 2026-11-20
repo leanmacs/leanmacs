@@ -1242,6 +1242,7 @@ lean_obj_res editor_glue_events_script_feed(uint8_t queue, uint64_t source_id,
 uint64_t editor_ffi_timers_now(void);
 bool editor_ffi_timers_start(uint64_t id, uint64_t deadline);
 bool editor_ffi_timers_cancel(uint64_t id);
+bool editor_ffi_timers_flush(uint64_t id);
 uint64_t editor_ffi_timers_pending(void);
 
 // `Editor.Ffi.timersNow : IO UInt64`
@@ -1257,6 +1258,10 @@ lean_obj_res editor_glue_timers_start(uint64_t id, uint64_t deadline) {
 // `Editor.Ffi.timersCancel : UInt64 → IO Bool`
 lean_obj_res editor_glue_timers_cancel(uint64_t id) {
   return lean_io_result_mk_ok(lean_box(editor_ffi_timers_cancel(id)));
+}
+
+lean_obj_res editor_glue_timers_flush(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_timers_flush(id)));
 }
 
 // `Editor.Ffi.timersPending : IO UInt64`
@@ -1301,6 +1306,8 @@ bool editor_ffi_files_make_directory(uint64_t id, const uint8_t *path,
                                      size_t path_len);
 bool editor_ffi_files_take(uint64_t id, editor_ffi_raw_file_result *out);
 bool editor_ffi_files_cancel(uint64_t id);
+bool editor_ffi_files_flush(uint64_t id);
+bool editor_ffi_files_hold(uint64_t id);
 uint64_t editor_ffi_files_pending(void);
 bool editor_ffi_files_append(uint64_t id, const uint8_t *path, size_t path_len,
                              const uint8_t *bytes, size_t bytes_len);
@@ -1446,6 +1453,14 @@ lean_obj_res editor_glue_files_cancel(uint64_t id) {
   return lean_io_result_mk_ok(lean_box(editor_ffi_files_cancel(id)));
 }
 
+lean_obj_res editor_glue_files_flush(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_files_flush(id)));
+}
+
+lean_obj_res editor_glue_files_hold(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_files_hold(id)));
+}
+
 // `Editor.Ffi.filesPending : IO UInt64`
 lean_obj_res editor_glue_files_pending(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_files_pending()));
@@ -1465,6 +1480,7 @@ bool editor_ffi_diffs_start_hunks(uint64_t id, const editor_ffi_snapshot *old,
                                   uint64_t limit);
 bool editor_ffi_diffs_take_hunks(uint64_t id, editor_ffi_raw_words *out);
 bool editor_ffi_diffs_cancel(uint64_t id);
+bool editor_ffi_diffs_flush(uint64_t id);
 uint64_t editor_ffi_diffs_pending(void);
 void editor_ffi_document_apply_script(const editor_ffi_document *document,
                                       uint64_t base,
@@ -1517,6 +1533,10 @@ lean_obj_res editor_glue_diffs_take_hunks(uint64_t id) {
 // `Editor.Ffi.diffsCancel : UInt64 → IO Bool`
 lean_obj_res editor_glue_diffs_cancel(uint64_t id) {
   return lean_io_result_mk_ok(lean_box(editor_ffi_diffs_cancel(id)));
+}
+
+lean_obj_res editor_glue_diffs_flush(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_diffs_flush(id)));
 }
 
 // `Editor.Ffi.diffsPending : IO UInt64`
@@ -1578,6 +1598,7 @@ bool editor_ffi_processes_run_head(uint64_t id, const uint8_t *words,
                                    size_t input_len);
 bool editor_ffi_processes_take(uint64_t id, editor_ffi_raw_process_result *out);
 bool editor_ffi_processes_cancel(uint64_t id);
+bool editor_ffi_processes_flush(uint64_t id);
 uint64_t editor_ffi_processes_pending(void);
 void editor_ffi_processes_shutdown(void);
 bool editor_ffi_processes_open(uint64_t id, const uint8_t *words,
@@ -1703,6 +1724,10 @@ lean_obj_res editor_glue_processes_cancel(uint64_t id) {
   return lean_io_result_mk_ok(lean_box(editor_ffi_processes_cancel(id)));
 }
 
+lean_obj_res editor_glue_processes_flush(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_flush(id)));
+}
+
 // `Editor.Ffi.processesPending : IO UInt64`
 lean_obj_res editor_glue_processes_pending(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_processes_pending()));
@@ -1740,6 +1765,7 @@ bool editor_ffi_watches_start(uint64_t id, const uint8_t *words,
 bool editor_ffi_watches_next(uint64_t watch, uint64_t wait);
 bool editor_ffi_watches_take(uint64_t wait, editor_ffi_raw_watch_reply *out);
 bool editor_ffi_watches_cancel(uint64_t id);
+bool editor_ffi_watches_flush(uint64_t id);
 uint64_t editor_ffi_watches_pending(void);
 void editor_ffi_watches_shutdown(void);
 
@@ -1781,6 +1807,10 @@ lean_obj_res editor_glue_watches_take(uint64_t wait) {
 // `Editor.Ffi.watchesCancel : UInt64 → IO Bool`
 lean_obj_res editor_glue_watches_cancel(uint64_t id) {
   return lean_io_result_mk_ok(lean_box(editor_ffi_watches_cancel(id)));
+}
+
+lean_obj_res editor_glue_watches_flush(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_watches_flush(id)));
 }
 
 // `Editor.Ffi.watchesPending : IO UInt64`

@@ -22,7 +22,7 @@ process, its runtime is the only one that schedules editor code.
 | **Dedicated job threads** | Lean | Work that blocks in a system call: the reload job today | Mutate editor state |
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
 | **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state"). As built it owns the renderer alone (the device, the surface, the glyph atlas, the quads kept per row), takes frames from a mailbox, and never lays out. `editor-ffi` starts it when a window opens and ends it when the window closes; idle, it is blocked with no deadline | Run Lean code; call layout or a shaper; hold a lock while it draws; touch the window's loop |
-| **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
+| **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches. Each takes a flush, a wait completed behind the work handed to it before (`rust-library.md`) | Hold editor state; call Lean |
 | **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. The syntax worker is built: one thread named `syntax`, started by `editor-ffi` at the first attach, parked while it has nothing to parse, with no deadline when no refresh is scheduled and until the next refresh's deadline on the job clock otherwise, which reparses each attached document from snapshots and the edit log's patches, and parses its injected layers, each whole in its ranges, and holds no editor state. A result is tagged with the revision it parsed and handed out only if no newer revision has been told by then; a stale one is never delivered, and is only the base of the next reparse (`rust-library.md`, "Syntax, as built"). A round takes the session's state lock briefly at its start, to read the injections, and never the other way round, so an edit's touch and a change of injections never wait for a parse; when only the injections changed and they find new layers, the round delivers again at the same revision (`rust-library.md`, "Injections, indentation and text objects, as built"). Once a text has gone the idle interval unchanged after an edit, the worker parses it whole and delivers again at the same revision only when that tree differs from the one delivered; an edit's touch sets the deadline under the worker's queue lock, which no parse holds (`rust-library.md`, "Syntax, as built"). Highlight queries do not run on the worker: they run at frame time, on the thread that lays the frame out (the editor thread, in Lean's publish), over the rows shown only, from the tree delivered last, carried through the edits since; no lock is nested on that path, and none of it waits for a parse (`rust-library.md`, "Highlights, as built"). The diff is built: the diff service, `editor-diff-imara`'s line diff of two snapshots on a thread of its own (`editor-diffs`), answering a job's `diff` request through the completion queue, with an edit script or with hunks of whole lines, so a long diff holds up neither a load nor the editor thread, which only applies the script it answers or draws the hunks as gutter marks. Fuzzy matching over long lists is built, not as a Rust worker but as a job of the loop's own on Lean's task pool: a prompt with more than `Loop.inlineMatches` (250) candidates to match is matched by a match job that runs the prompt's style there, its fuzzy requests answered by the same stateless call as a request of the job port (`JobRequest.fuzzy`); nucleo's own worker was considered and rejected ("Prompts", below; `rust-library.md`, "Fuzzy matching, as built"). The matcher answers in the call, on the thread that asked: the editor thread for a short list, a pool thread for a long one | Hold editor state |
 
 Rust never calls Lean. The main thread and the services push events onto a
@@ -2071,6 +2071,27 @@ As built:
   table: it pulls the completion queue and finishes the wait each
   completion names, until quit. A completion carries an id whichever
   service queued it.
+- **A flush is a wait like any other** (deterministic-test-concurrency
+  phase 1). Each port has a `flush` (`Timers`, `Files`, `Processes`,
+  `FileWatches`, `Diffs`): the service completes the wait once it has
+  finished the work handed to it before that it can finish on its own,
+  queueing the flush's completion behind the completions of that work
+  ([rust-library.md](rust-library.md) says what each service covers: due
+  waits; every file request, unobserved writes among them; runs ended and
+  cancelled children reaped; starts returned; diffs worked). The pump
+  finishes waits in the order the queue gives them, so when a flush's
+  promise resolves, the promises of the work it covers have resolved.
+  `Services.flushed` registers the wait, hands its id to the service named
+  by the data variant `Service`, and returns its task; a flush a service
+  refuses ends `cancelled`. `awaitWithin` is the one hang-guarded wait: a
+  task's value, or `none` past a patience, which a caller reports as a hang
+  and never as a result. Each fake flushes as its service does: the fake
+  files, diffs and processes park a flush behind their held completions,
+  and the fake clock and watches complete one at once. The contract
+  (`lean/Editor/Job/FlushContract.lean`) runs on the fakes in `model-test`
+  and on the real ports in `contract-test`, the real file service held by
+  its in-process hold (`Ffi.filesHold`), a request that parks its worker
+  until it is cancelled.
 - **Cancelling a job cancels the request**: the timer leaves the library's
   schedule, a file request leaves the file service, a run's child is
   killed with its process group, and a pending watch read is withdrawn.

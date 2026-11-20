@@ -29,6 +29,13 @@ was already queued still arrives. -/
 @[extern "editor_glue_timers_cancel"]
 opaque timersCancel (id : UInt64) : IO Bool
 
+/-- Asks the timer service for the request `id` to be completed once every
+wait due when this is called has been completed, and returns whether it was
+accepted. It returns at once. Its completion is queued behind those of the
+waits it covers; a wait not yet due is not covered. -/
+@[extern "editor_glue_timers_flush"]
+opaque timersFlush (id : UInt64) : IO Bool
+
 /-- How many timer requests are waiting. A readout for tests, which use it to
 see that a request reached the service and that a cancel removed it. -/
 @[extern "editor_glue_timers_pending"]

@@ -160,6 +160,19 @@ project search (`FakeFiles.greps`, `Editor/Job/Fake.lean`) and a real
 implementation over the library's grep service (`Editor/Job/Real.lean`). A
 runner that is given none has `Greps.absent`.
 
+Each of `Timers`, `Files`, `Processes`, `FileWatches` and `Diffs` has a
+`flush`, a field with no default, so a port that forgot it does not
+silently never complete: it asks for a wait to be completed once the
+service has finished the work handed to it before that it can finish on its
+own, returns at once, and keeps no reply. Its `absent` completes it at once.
+A host or a test flushes a service through `Services.flushed`, which takes
+the service as data (`Service`), registers the wait and returns its task;
+since a service queues a flush's completion behind those of the work it
+covers, and the pump finishes waits in queue order, the covered waits have
+ended once that task has. `awaitWithin` is the one hang-guarded wait of a
+task: its value, or `none` past a patience, which is a hang and never a
+result. The flush contract is `Editor/Job/FlushContract.lean`.
+
 `Environments` is the port of the environments a host's jobs share, which
 answers at once and registers no wait (`Environments.inherited`, the
 default, and `sharedEnvironments`, state behind a reference).
@@ -275,6 +288,10 @@ structure Timers where
   /-- Withdraws the wait `id`: the clock will not complete it. Safe for an id
   that is not waiting. -/
   cancel : (id : UInt64) → BaseIO Unit
+  /-- Asks for the wait `id` to be completed once every wait due when this is
+  called has been completed. A wait not yet due is not waited for. It
+  returns at once and never blocks. -/
+  flush : (id : UInt64) → BaseIO Unit
 
 /-- The file port: what the runner's file waits are made of. -/
 structure Files where
@@ -291,6 +308,10 @@ structure Files where
   /-- Gives up the snapshot `snapshot`, which a load's reply named: the
   service holds it no longer. Safe for any id. -/
   release : (snapshot : JobSnapshotId) → BaseIO Unit
+  /-- Asks for the wait `id` to be completed once every file request handed
+  to the service before this call, unobserved writes included, has been
+  worked. It returns at once and never blocks, and keeps no reply. -/
+  flush : (id : UInt64) → BaseIO Unit
 
 /-- The reply of a file service that is not there: every request is refused
 as failed. -/
@@ -312,6 +333,7 @@ def Files.absent (completions : Completions) : Files where
   take _ request := pure (Files.absentReply request)
   cancel _ := pure ()
   release _ := pure ()
+  flush id := completions.finish id .completed
 
 /-- The process port: what the runner's process waits are made of. -/
 structure Processes where
@@ -325,6 +347,11 @@ structure Processes where
   nothing of it, and kills the run's child with its process group if it is
   running. Safe for any id, a timer's included. -/
   cancel : (id : UInt64) → BaseIO Unit
+  /-- Asks for the wait `id` to be completed once every run started before
+  this call has ended and every child cancelled before it has been reaped.
+  A live streaming child and its pending read are not waited for. It
+  returns at once and never blocks. -/
+  flush : (id : UInt64) → BaseIO Unit
 
 /-- The reply of a process service that is not there: every request is
 refused as failed. -/
@@ -339,6 +366,7 @@ def Processes.absent (completions : Completions) : Processes where
   start id _ := completions.finish id .completed
   take _ request := pure (Processes.absentReply request)
   cancel _ := pure ()
+  flush id := completions.finish id .completed
 
 /-- The file-watch port: what the runner's watch waits are made of. -/
 structure FileWatches where
@@ -355,6 +383,10 @@ structure FileWatches where
   complete it and keeps nothing of it. Safe for any id, a timer's
   included. -/
   cancel : (id : UInt64) → BaseIO Unit
+  /-- Asks for the wait `id` to be completed once every start asked before
+  this call has returned: registered or refused. A pending `next` is not
+  waited for. It returns at once and never blocks. -/
+  flush : (id : UInt64) → BaseIO Unit
 
 /-- No file-watch service: every request completes at once, refused as
 failed, through the table `completions`. It is what a runner has when it was
@@ -364,6 +396,7 @@ def FileWatches.absent (completions : Completions) : FileWatches where
   start id _ := completions.finish id .completed
   take _ request := pure (request.refused (.failed "this runner has no file-watch service"))
   cancel _ := pure ()
+  flush id := completions.finish id .completed
 
 /-- The diff port: what the runner's diff waits are made of. -/
 structure Diffs where
@@ -376,6 +409,9 @@ structure Diffs where
   /-- Withdraws the wait `id`: the service will not complete it, and keeps
   nothing of it. Safe for any id, a timer's included. -/
   cancel : (id : UInt64) → BaseIO Unit
+  /-- Asks for the wait `id` to be completed once every diff started before
+  this call has been worked. It returns at once and never blocks. -/
+  flush : (id : UInt64) → BaseIO Unit
 
 /-- No diff service: every request completes at once, refused as failed,
 through the table `completions`. -/
@@ -383,6 +419,7 @@ def Diffs.absent (completions : Completions) : Diffs where
   start id _ := completions.finish id .completed
   take _ request := pure (request.refused (.failed "this runner has no diff service"))
   cancel _ := pure ()
+  flush id := completions.finish id .completed
 
 /-- The grep port: what the runner's search waits are made of. -/
 structure Greps where
@@ -461,6 +498,65 @@ structure Services where
   it now (`JobRequest.snapshot`); `none` for an id that names nothing or
   was released. A runner that is given none answers `none` for every id. -/
   snapshots : SnapshotId → BaseIO (Option String) := fun _ => pure none
+
+/-- A service whose flush a host or a test can wait on
+(`Services.flushed`). -/
+inductive Service where
+  /-- The clock. -/
+  | timers
+  /-- The files. -/
+  | files
+  /-- The processes. -/
+  | processes
+  /-- The file watches. -/
+  | fileWatches
+  /-- The diffs. -/
+  | diffs
+  deriving DecidableEq, Repr, Inhabited
+
+/-- The flush of `target` among `services`. -/
+def Services.flushOf (services : Services) : Service → (UInt64 → BaseIO Unit)
+  | .timers => services.timers.flush
+  | .files => services.files.flush
+  | .processes => services.processes.flush
+  | .fileWatches => services.fileWatches.flush
+  | .diffs => services.diffs.flush
+
+/-- Flushes `target`: registers a wait in the table, hands its id to the
+service's `flush`, and returns the task that ends with the wait: `completed`
+once the service has finished what was handed to it before, and `cancelled`
+if the service refused the flush. Since the pump finishes waits in the order
+the completion queue gives them, and a service queues a flush's completion
+behind those of the work it covers, the covered waits have ended by the time
+this task does. -/
+def Services.flushed (services : Services) (target : Service) : BaseIO (Task Completion) := do
+  let (id, wait) ← services.completions.register
+  services.flushOf target id
+  -- A map run on the resolving thread, so the task has ended once the wait
+  -- has: `IO.hasFinished` of it says whether the flush has been completed.
+  return wait.resultD .cancelled
+
+/-- `task`'s value, or `none` if it has not ended within `patience`
+milliseconds. It is a guard against a hang, never a result: a caller that
+gets `none` reports a hang, and does not pass or fail a property on time.
+It is the one place a deadline meets a flush.
+
+The guard is a dedicated task that reads the clock in steps of 10 ms; it is
+cancelled once `task` ends, and stops at its next step, so it does not hold
+the process open at its end for the rest of `patience`. -/
+def awaitWithin {α : Type} (patience : Nat) (task : Task α) : IO (Option α) := do
+  if ← IO.hasFinished task then
+    return some task.get
+  let guard ←
+    IO.asTask (prio := .dedicated) do
+        let deadline := (← IO.monoMsNow) + patience
+        while (← IO.monoMsNow) < deadline && !(← IO.checkCanceled) do
+          IO.sleep 10
+        return (none : Option α)
+  let first ←
+    IO.waitAny [task.map (sync := true) some, guard.map (sync := true) fun ran => ran.toOption.join]
+  IO.cancel guard
+  return first
 
 instance {α : Type} : Nonempty (Outcome α) :=
   ⟨.cancelled⟩
