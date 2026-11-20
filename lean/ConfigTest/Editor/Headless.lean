@@ -2625,4 +2625,107 @@ def environmentHostChecks (context : Context) : List Check :=
           let (echo, _) ← session.scene
           return echo == (Process.failureMessage "/p/d" (.exited 1 "not trusted")).quote }]
 
+/-- The state directory of the restore checks, in the fake file service's
+model. -/
+def restoreState : System.FilePath :=
+  "/state"
+
+/-- The log of one journal by hand, of a buffer `note` whose base is
+`hello`: it adds ` world`. -/
+def journalledLog : ByteArray :=
+  (Restore.Journal.Record.header { name := "note" }).bytes ++
+    (Restore.Journal.Record.edits #[{ start := 5, stop := 5, inserted := " world" }]).bytes
+
+/-- A model of files holding that journal, under `/state`. -/
+def journalledModel : FileModel :=
+  let model := (({} : FileModel).makeDirectory (Restore.journalsDirectory restoreState)).2
+  (model.withFile (Restore.basePath restoreState 1 0 1) "hello".toUTF8).withFile
+    (Restore.logPath restoreState 1 0 1) journalledLog
+
+/-- Runs `check` against a host over a config directory holding `files`,
+with the real elaborator, the packages `files` and `restore`, the state
+directory `/state`, and a fake file service over `journalledModel`, which
+the check is handed; and stops the host. -/
+def withRestoreHost (context : Context) (files : List (String × String))
+    (check : Headless.Host → IO.Ref (Array String) → Job.FakeFiles → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeConfig directory files
+    let stage ←
+      Stage.new context context.elaborator (Config.Directory.source directory)
+        { packages := #[Files.package, Restore.package] }
+    let fake ← Job.FakeFiles.new stage.collaborators.services.completions journalledModel
+    let stage :=
+      { stage with
+        collaborators :=
+          { stage.collaborators with
+            stateDirectory := some restoreState
+            services := { stage.collaborators.services with files := fake.files } } }
+    onStage stage fun host stage => check host stage.output fake
+
+/-- Runs `check` against a host over a config directory holding `files`,
+with the real elaborator, the packages `files` and `restore`, the library's
+file service (`Stage.overFiles`) and journal, and a temporary state
+directory holding that journal on disk; and stops the host. -/
+def withRestoreFiles (context : Context) (files : List (String × String))
+    (check : Headless.Host → IO.Ref (Array String) → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory =>
+    IO.FS.withTempDir fun state => do
+      writeConfig directory files
+      IO.FS.createDirAll (Restore.journalsDirectory state)
+      IO.FS.writeBinFile (Restore.basePath state 1 0 1) "hello".toUTF8
+      IO.FS.writeBinFile (Restore.logPath state 1 0 1) journalledLog
+      let stage ←
+        Stage.overFiles context (Config.Directory.source directory)
+          { packages := #[Files.package, Restore.package] }
+      let stage :=
+        { stage with
+          collaborators :=
+            { stage.collaborators with
+              stateDirectory := some state
+              journal := Headless.Journal.real stage.collaborators.published.reader } }
+      onStage stage fun host stage => check host stage.output
+
+/-- The index of the first line of `lines` that `holds`, if one does. -/
+def firstLine? (lines : Array String) (holds : String → Bool) : Option Nat :=
+  lines.findIdx? holds
+
+/-- The checks of the restore at start-up in the host (`Editor/Headless.lean`,
+"Restoring a session"), on the real elaborator: it runs before the start-up
+reload, which it holds, and `await` waits for it. The first is over the
+library's file service and shares `fileChecks`' table of waits, so these
+run after them. -/
+def restoreOrderChecks (context : Context) : List Check :=
+  [{  name :=
+        "a host with a session and a config restores first: the restore's second half has run, and the buffer it restored is there, before reload 1 is installed"
+      run :=
+        withRestoreFiles context greetConfig fun host output => do
+          host.send .restore
+          host.send .reload
+          unless ← host.settle patience do
+            return false
+          host.send .show
+          unless ← host.settle patience do
+            return false
+          let lines ← output.get
+          let restored := firstLine? lines fun line =>
+            line.startsWith "job " && (line.splitOn s!" {Restore.filesJob}: ok").length == 2
+          let installed := firstLine? lines (·.startsWith "reload 1: installed")
+          let shown := firstLine? lines fun line => (line.splitOn "\"hello world\"").length == 2
+          return match restored, installed, shown with
+            | some restored, some installed, some _ => restored < installed
+            | _, _, _ => false },
+    { name :=
+        "a reload sent while the restore is in flight is held, and await does not answer settled, until the restore has finished"
+      run :=
+        withRestoreHost context greetConfig fun host output fake => do
+          let hold ← fake.holdTakes
+          host.send .restore
+          host.send .reload
+          let waited ← host.await 300
+          let early := (← output.get).any (·.startsWith "reload 1")
+          hold.resolve ()
+          let settled ← host.settle patience
+          let late := (← output.get).any (·.startsWith "reload 1: installed")
+          return waited == .reloading && !early && settled && late }]
+
 end ConfigTest

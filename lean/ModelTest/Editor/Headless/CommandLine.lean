@@ -91,6 +91,18 @@ def headlessCommandLineChecks : List Check :=
             read installed ["--generate", "--render", "/c", "/t"] ==
               some { bundled true with generate := true } &&
             (read outside ["/s", "/o", "/c", "/t"]).map (·.generate) == some false) },
+    { name :=
+        "--state <dir> names the state directory, among the other options in any order; without it there is none, and with no directory after it, or twice, it is refused"
+      run :=
+        pure
+          (read outside ["--state", "/st", "/s", "/o", "/c", "/t"] ==
+              some { explicit false with state := some "/st" } &&
+            read installed ["--render", "--state", "/st", "--generate", "/c", "/t"] ==
+              some { bundled true with generate := true, state := some "/st" } &&
+            (read outside ["/s", "/o", "/c", "/t"]).map (·.state) == some none &&
+            refused installed ["--state"] &&
+            refused installed ["--state", "/a", "--state", "/b", "/c", "/t"] &&
+            refused installed ["--state", "--render", "/c", "/t"]) },
     { name := "an option given twice is refused with no reason beyond the usage line"
       run :=
         pure

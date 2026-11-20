@@ -3,8 +3,8 @@ import Editor.ModuleLookup
 /-!
 # The headless mode's command line
 
-`editor headless [--render] [--generate] [<sysroot> <olean dir>] <config dir>
-<script file>` (`Editor/Headless.lean`). This module is the pure part of it: what the
+`editor headless [--render] [--generate] [--state <dir>] [<sysroot> <olean dir>]
+<config dir> <script file>` (`Editor/Headless.lean`). This module is the pure part of it: what the
 command line after `headless` asks for, given where the executable is. It
 reads nothing itself, so `model-test` pins it
 (`ModelTest.headlessCommandLineChecks`).
@@ -30,7 +30,12 @@ reads nothing itself, so `model-test` pins it
   nothing there, which is what lets the gate run it on the config
   directories checked in under `tests/`.
 
-The two options come in either order, each at most once. The two
+- **`--state <dir>`**, before the paths, is the state directory
+  (`Collaborators.stateDirectory`): a session is restored from it at start
+  and journalled to it (`Editor/Restore.lean`). Without it there is none,
+  and the headless mode keeps nothing across a run.
+
+The options come in any order, each at most once. The two
 directories are given both or neither, so three or five paths are refused,
 and so is any other argument starting with `--` before the paths. Nothing
 is read from the environment.
@@ -54,11 +59,13 @@ structure Arguments where
   config : String
   /-- The script file. -/
   script : String
+  /-- The state directory (`--state`), if one was given. -/
+  state : Option String := none
   deriving DecidableEq, Repr
 
 /-- The headless mode's command line, after `headless`. -/
 def usage : String :=
-  "headless [--render] [--generate] [<sysroot> <olean dir>] <config dir> <script file>"
+  "headless [--render] [--generate] [--state <dir>] [<sysroot> <olean dir>] <config dir> <script file>"
 
 /-- Why two paths are refused outside a bundle, and what to give: the
 `.olean` directory is a search path, and config is elaborated on the base of
@@ -68,6 +75,19 @@ executable. -/
 def noToolchain : String :=
   "no Lean toolchain: give <sysroot> <olean dir> before the config directory, or run the executable from an app bundle; <olean dir> is a search path, directories joined with `:`, which must hold the core's and every package's of the editor's set unless the build recorded them beside the executable (<executable>.oleans)"
 
+/-- The options before the paths of `arguments`, in order, after those in
+`seen`; the state directory the last `--state` named; the paths; and whether
+every `--state` had a directory after it that is no option. -/
+def split : List String → List String → Option String → List String × Option String × List String × Bool
+  | "--state" :: directory :: rest, seen, _ =>
+    if directory.startsWith "--" then (seen ++ ["--state"], none, rest, false)
+    else split rest (seen ++ ["--state"]) (some directory)
+  | ["--state"], seen, state => (seen ++ ["--state"], state, [], false)
+  | option :: rest, seen, state =>
+    if option.startsWith "--" then split rest (seen ++ [option]) state
+    else (seen, state, option :: rest, true)
+  | [], seen, state => (seen, state, [], true)
+
 /-- What `arguments`, the command line after `headless`, asks for, for an
 executable at `appPath` for which the build recorded the `.olean`
 directories `recorded` (`ModuleLookup.recorded`, which the edge reads); or
@@ -75,11 +95,13 @@ why it is refused: the empty string when the usage alone says it, as for a
 number of paths it does not take. -/
 def read (appPath : String) (arguments : List String) (recorded : List String := []) :
     Except String Arguments :=
-  let (options, paths) := arguments.span (·.startsWith "--")
+  let (options, state, paths, valued) := split arguments [] none
   let render := options.contains "--render"
   let generate := options.contains "--generate"
   -- Each option at most once, and none the mode does not know.
-  let known := options.all (["--render", "--generate"].contains ·) && options.eraseDups == options
+  let known :=
+    valued && options.all (["--render", "--generate", "--state"].contains ·) &&
+      options.eraseDups == options
   let named : Option (ModuleLookup.Given × String × String) :=
     match paths with
     | [config, script] => some ({}, config, script)
@@ -94,7 +116,7 @@ def read (appPath : String) (arguments : List String) (recorded : List String :=
     let directories := ModuleLookup.resolve appPath explicit recorded
     match directories.sysroot, directories.oleans with
     | some sysroot, directory :: rest =>
-      .ok { render, generate, sysroot, oleans := directory :: rest, config, script }
+      .ok { render, generate, sysroot, oleans := directory :: rest, config, script, state }
     | _, _ => .error noToolchain
   | _, _ => .error ""
 

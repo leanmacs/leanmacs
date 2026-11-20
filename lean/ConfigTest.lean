@@ -221,6 +221,13 @@ show:
   ships (`Evil.motions`) and hands it to evil's move command, as it is and
   with a motion of config's own added. It shows what `Editor.lean` lets
   config name; where a motion of the editor's leads is not said here;
+- `restoreOrderChecks`: the restore at start-up in the host, on the real
+  elaborator: over the library's file service and a journal on disk, the
+  restore's second half runs, and its buffer is there, before reload 1 is
+  installed; over a fake file service whose takes are held, a reload sent
+  while the restore is in flight is held, and `await` does not answer
+  settled, until it has finished. They run after `fileChecks`, whose table
+  of waits the first shares;
 - `reloadEchoChecks`: a rejected reload's first error is said in the echo
   area, while the old config runs; a reload that installs says nothing;
   and one rejected before the frame is made is said once it is;
@@ -325,6 +332,7 @@ def checks (context : Context) : List Check :=
     commandPromptChecks context ++
     environmentHostChecks context ++
     fileChecks context ++
+    restoreOrderChecks context ++
     languageChecks context ++
     reloadChecks context ++
     autoReloadChecks context ++

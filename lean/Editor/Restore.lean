@@ -113,6 +113,10 @@ def writeDelay : Nat :=
 def restoreJob : String :=
   "restore"
 
+/-- The name of the job of the restore's second half. -/
+def filesJob : String :=
+  "restore-files"
+
 /-- The name of the job that writes the index once changes are quiet. -/
 def writeJob : String :=
   "restore-write"
@@ -134,10 +138,6 @@ structure Order where
   /-- The snapshot the request names, to release once it is handed. -/
   release : Option SnapshotId := none
   deriving DecidableEq, Repr
-
-/-- What is said of a state-directory-less window run. -/
-def notJournalled : String :=
-  "no state directory: unsaved text is not journalled and no session is kept"
 
 /-- Whether the buffer `id` of `state` is journalled ("The journal
 reconciler", in the module docs). -/

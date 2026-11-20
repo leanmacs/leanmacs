@@ -78,10 +78,6 @@ Pinned by `ModelTest.restoreChecks`, on the loop's driver over the models.
 
 namespace Editor.Restore
 
-/-- The name of the second half of the restore's job. -/
-def filesJob : String :=
-  "restore-files"
-
 /-- The name of the report's buffer. -/
 def reportName : String :=
   "*restore*"

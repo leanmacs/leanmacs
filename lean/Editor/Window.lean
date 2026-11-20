@@ -312,8 +312,16 @@ def Options.configPlan (options : Options) (defaultExists : Bool) : ConfigPlan :
   | some _, _ :: _, some directory =>
     if options.configGiven || defaultExists then .load directory else .skip none
 
+/-- What the window mode says once when it has no state directory: no
+session is kept, and unsaved text is not journalled (`Editor/Restore.lean`). -/
+def notJournalled : String :=
+  "no state directory: unsaved text is not journalled and no session is kept"
+
 /-- What the window mode posts to the editor loop before the first event. -/
 inductive Start where
+  /-- Restore the session of the state directory, holding what follows until
+  it has finished (`Headless.Request.restore`). -/
+  | restore
   /-- Open the file at `path`, which is absolute. -/
   | «open» (path : String)
   /-- Say `text` in the echo area. -/
@@ -322,20 +330,25 @@ inductive Start where
   | reload
   deriving DecidableEq, Repr
 
-/-- What the window mode posts before the first event, in order: the open
-of the file, if one was given; then each of `said`; then a reload when
+/-- What the window mode posts before the first event, in order: the
+restore of the session, when there is a state directory; the open of the
+file, if one was given; then, with no state directory, that unsaved text is
+not journalled (`notJournalled`), and each of `said`; then a reload when
 `plan` loads config. With no file nothing is opened, and the loop shows its
-one empty buffer. -/
+one empty buffer. The restore comes first so that config's `setup` runs
+after it: the host holds what follows until it has finished. -/
 def Options.starts (options : Options) (plan : ConfigPlan) (said : Array String) : Array Start :=
+  let restores := if options.state.isSome then #[Start.restore] else #[]
   let opens :=
     match options.file with
     | some path => #[Start.open path]
     | none => #[]
+  let unjournalled := if options.state.isSome then #[] else #[Start.say notJournalled]
   let reloads :=
     match plan with
     | .load _ => #[Start.reload]
     | .skip _ => #[]
-  opens ++ said.map .say ++ reloads
+  restores ++ opens ++ unjournalled ++ said.map .say ++ reloads
 
 namespace Report
 

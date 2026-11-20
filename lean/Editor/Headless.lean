@@ -674,6 +674,10 @@ inductive Request where
   /-- Say `text` in the echo area (`Running.said`): what the window mode has
   to say before the first event. -/
   | say (text : String)
+  /-- Restore the session of the state directory (`Collaborators.stateDirectory`):
+  start the job `restore`, and hold the requests that follow until it has
+  finished ("Restoring a session", in the module docs). -/
+  | restore
   deriving DecidableEq, Repr
 
 /-- The render loop a host's frames are drawn by, as its driver reads it:
@@ -799,6 +803,43 @@ def drawn (display : Host.Display) : BaseIO String :=
 
 end Host.Display
 
+/-- How a host hands the session journal's orders to its file service
+(`Loop.Stepped.journal`, `Editor/Restore.lean`), and reads back what failed.
+The default does nothing, for a host with no file service. -/
+structure Journal where
+  /-- Hands one order to the file service, unobserved: nothing waits on it. -/
+  perform : Restore.Order → IO Unit := fun _ => pure ()
+  /-- Takes what failed of the orders handed so far, each a path and why,
+  oldest first, once. -/
+  failures : IO (Array (String × String)) := pure #[]
+  /-- How many requests the file service has waiting or being worked: 0 once
+  every order handed is written. -/
+  pending : IO Nat := pure 0
+
+/-- The journal over the library's file service: each order an unobserved
+request (`Ffi.filesAppendUnobserved`, `Ffi.filesRemoveUnobserved`,
+`Ffi.filesSaveUnobserved` of the snapshot `published` holds), its failures
+taken with `Ffi.filesFailure`. -/
+def Journal.real (published : SnapshotReader) : Journal where
+  perform order := do
+    match order.request with
+    | .append path bytes =>
+      discard <| Ffi.filesAppendUnobserved path.toString bytes
+    | .remove path =>
+      discard <| Ffi.filesRemoveUnobserved path.toString
+    | .save (.snapshot id) path _ =>
+      if let some snapshot ← published.find? id then
+        discard <| Ffi.filesSaveUnobserved snapshot path.toString
+    | _ =>
+      pure ()
+  failures := do
+    let mut taken := #[]
+    repeat
+      let some failure ← Ffi.filesFailure | break
+      taken := taken.push failure
+    return taken
+  pending := return (← Ffi.filesPending).toNat
+
 /-- What a host that runs the input scheme `scheme` needs from outside. The
 scheme is a parameter, as it is of the loop (`Loop`): it is in `Type 1`, and
 cannot be a field of what a task is handed. -/
@@ -894,8 +935,14 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   lives. The window mode's is `--state`, or its default under
   `XDG_STATE_HOME` or `HOME` (`Window.Options.stateDirectory`); the
   headless mode reads nothing from the environment and its command line
-  names none, so its is none and it keeps nothing across a restart. -/
+  names none unless it is given `--state`, so by default its is none and
+  it keeps nothing across a restart. With one, the host's first request is
+  `restore` ("Restoring a session", in the module docs). -/
   stateDirectory : Option System.FilePath := none
+  /-- How the session journal's orders reach the file service: the
+  library's (`Journal.real`) for the executable's hosts, nothing by
+  default. -/
+  journal : Journal := {}
   /-- How the host makes its display, over the read half of the table of
   snapshots the text binding publishes (`published`). The headless mode's
   is a recorder in `cells`; a host that draws is handed the real binding. -/
@@ -951,6 +998,7 @@ def Signal.encode : Signal → UInt64 × String
   | .request .agree => (7, "")
   | .request (.open path) => (8, path)
   | .request (.say text) => (9, text)
+  | .request .restore => (10, "")
 
 /-- The signal an event's code and text stand for, if they stand for one. -/
 def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
@@ -965,6 +1013,7 @@ def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
   | 7 => some (.request .agree)
   | 8 => some (.request (.open text))
   | 9 => some (.request (.say text))
+  | 10 => some (.request .restore)
   | _ => none
 
 mutual
@@ -1090,6 +1139,14 @@ structure Running (β σ : Type) (scheme : InputScheme) where
   /-- The key hint delay armed on the job clock, if one is: its wait's id
   and the generation of the hints it makes due (`delayHints`). -/
   hintWait : Option (UInt64 × Nat) := none
+  /-- The id of the job `restore` while a restore is in flight ("Restoring a
+  session", in the module docs). -/
+  restoring : Option Nat := none
+  /-- The driver's requests held while a restore is in flight, oldest
+  first. -/
+  heldRequests : Array Request := #[]
+  /-- The paths whose journal failures were said: each is said once. -/
+  journalSaid : Array String := #[]
 
 namespace Running
 
@@ -1486,6 +1543,35 @@ before the editor thread lets go, the frame is freed here, as before. -/
 def release (previous : Option (Loop scheme)) : BaseIO Unit :=
   discard <| BaseIO.asTask (held previous)
 
+/-- Says each failure of the journal's orders the file service kept, once
+for each path (`journalSaid`): in the echo area and to the log. -/
+def journalFailed (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    IO (Running β σ scheme) := do
+  let mut running := running
+  for (path, detail) in ← collaborators.journal.failures do
+    unless running.journalSaid.contains path do
+      let text := s!"journal: {path}: {detail}"
+      collaborators.log text
+      running := { running.said text with journalSaid := running.journalSaid.push path }
+  return running
+
+/-- Hands each of `orders`, a step's journal orders (`Loop.Stepped.journal`),
+to the file service in order (`Collaborators.journal`), unobserved; then
+releases the snapshots they name, which the service holds its own clones
+of; then says what failed so far (`journalFailed`). -/
+def journaled (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (orders : Array Restore.Order) : IO (Running β σ scheme) := do
+  for order in orders do
+    collaborators.journal.perform order
+  let releases := orders.filterMap (·.release)
+  let mut running := running
+  unless releases.isEmpty do
+    let releasing : EditorM Unit := do
+      for id in releases do
+        discard <| (observing (TextSource.snapshot id).release : TextM (Except TextError Unit))
+    running := (← running.attempt collaborators releasing).2
+  running.journalFailed collaborators
+
 /-- Takes in what a step of the loop handed back: the loop after it is the
 frame, what the step has to log is logged, what its command asked to be
 written is written back to the stores, and the jobs it hands back are
@@ -1526,6 +1612,7 @@ partial def took (collaborators : Collaborators β σ scheme) (running : Running
         collaborators stepped.starts stepped.cancels stepped.spawns
   running ← running.pause collaborators stepped.pause
   running ← running.delayHints collaborators stepped.hintDelay
+  running ← running.journaled collaborators stepped.journal
   if stepped.reload then
     -- What the driver's `reload` request does: one job at a time.
     running ← running.reduce collaborators .requested
@@ -1871,6 +1958,50 @@ out with the new tree. Every other event is `other`'s. -/
 def takenByLoop (event : Ffi.Event) : Bool :=
   event.source.kind == .window || (event.source.kind == .library && event.kind == .parsed)
 
+/-- Does what the driver asked, `request`: a restore starts the job
+`restore` with the state directory, printed `job <id> restore: started`, and
+holds the requests that follow until it has finished ("Restoring a session",
+in the module docs); with no state directory, or no such job registered, it
+does nothing. -/
+def request (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    Request → IO (Running β σ scheme)
+  | .reload => running.reduce collaborators .requested
+  | .run name => running.run collaborators { command := name }
+  | .open path => running.run collaborators { command := Files.openName, arguments := [.str path] }
+  | .say text => return running.said text
+  | .spawn name => running.spawn collaborators name
+  | .show => do
+    running.show collaborators
+    return running
+  | .scene => running.scene collaborators
+  | .agree => running.agree collaborators
+  | .restore => do
+    let some directory := collaborators.stateDirectory | return running
+    let (id?, running) ← running.startJob collaborators Restore.restoreJob [.str directory.toString]
+    let some id := id? | return running
+    collaborators.emit s!"job {id} {Restore.restoreJob}: started"
+    return { running with restoring := some id }
+
+/-- Ends a restore in flight once it has finished: its second half's command
+has run (`Restore.Kept.restored`), or neither of its jobs is in the table
+any more, failed or cancelled. Then the requests held are handled in
+order, as they would have been. -/
+def settleRestore (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    IO (Running β σ scheme) := do
+  if running.restoring.isNone then
+    return running
+  let restored := running.frame.any (·.state.restore.restored)
+  let inFlight :=
+    running.jobs.table.entries.any fun entry =>
+      entry.name == Restore.restoreJob || entry.name == Restore.filesJob
+  unless restored || !inFlight do
+    return running
+  let held := running.heldRequests
+  let mut running := { running with restoring := none, heldRequests := #[] }
+  for request in held do
+    running ← running.request collaborators request
+  return running
+
 /-- Handles one event of the editor queue that the loop does not take
 (`takenByLoop`). -/
 def other (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
@@ -1897,23 +2028,11 @@ def other (collaborators : Collaborators β σ scheme) (running : Running β σ 
     unless event.source.id == collaborators.requests do
       return running
     match Signal.decode? event.code event.text with
-    | some (.request .reload) =>
-      running.reduce collaborators .requested
-    | some (.request (.run name)) =>
-      running.run collaborators { command := name }
-    | some (.request (.open path)) =>
-      running.run collaborators { command := Files.openName, arguments := [.str path] }
-    | some (.request (.say text)) =>
-      return running.said text
-    | some (.request (.spawn name)) =>
-      running.spawn collaborators name
-    | some (.request .show) =>
-      running.show collaborators
-      return running
-    | some (.request .scene) =>
-      running.scene collaborators
-    | some (.request .agree) =>
-      running.agree collaborators
+    | some (.request request) =>
+      -- While a restore is in flight the driver's requests wait for it.
+      if running.restoring.isSome then
+        return { running with heldRequests := running.heldRequests.push request }
+      running.request collaborators request
     | some .marker =>
       return { running with markers := running.markers + 1 }
     | some .stop =>
@@ -1943,10 +2062,12 @@ def handle (collaborators : Collaborators β σ scheme) (running : Running β σ
   else
     let running ← ({ running with stepped := false }).other collaborators event
     -- A step of the loop published its own scene.
-    if running.stopped || running.stepped then
-      return running
-    else
-      running.publish collaborators
+    let running ←
+      if running.stopped || running.stepped then
+        pure running
+      else
+        running.publish collaborators
+    running.settleRestore collaborators
 
 end Running
 
@@ -1957,6 +2078,8 @@ structure Progress where
   markers : Nat := 0
   /-- Whether a reload job is running. -/
   reloading : Bool := false
+  /-- Whether a restore is in flight, the driver's requests held. -/
+  restoring : Bool := false
   /-- How many jobs are running: started, and neither dealt with nor
   cancelled with their owner. -/
   jobs : Nat := 0
@@ -2012,7 +2135,8 @@ def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β
       break
     progress.set
         { markers := running.markers, reloading := running.config.running,
-          jobs := running.jobs.running, titleBar := running.config.titleBar }
+          restoring := running.restoring.isSome, jobs := running.jobs.running
+          titleBar := running.config.titleBar }
   -- Nothing will deal with a result any more: no job runs on unowned, and
   -- no pause waits.
   running.jobs.cancelAll
@@ -2158,11 +2282,13 @@ def waitWhile (host : Host) (patience : Nat) (busy : Progress → Bool) (still :
   return if progress.markers < marker then .unanswered
     else if busy progress then still else .settled
 
-/-- Waits until the editor thread has handled everything sent so far and no
-reload is running, for at most `patience` milliseconds, and says what the
-wait came to. -/
+/-- Waits until the editor thread has handled everything sent so far, no
+reload is running and no restore is in flight, for at most `patience`
+milliseconds, and says what the wait came to. A restore holds the driver's
+requests after it, the start-up reload among them, so a wait for that
+reload waits for the restore first. -/
 def await (host : Host) (patience : Nat) : IO Wait :=
-  host.waitWhile patience (·.reloading) .reloading
+  host.waitWhile patience (fun progress => progress.reloading || progress.restoring) .reloading
 
 /-- Waits until the editor thread has handled everything sent so far and no
 job is running, for at most `patience` milliseconds, and says what the wait
@@ -2227,6 +2353,14 @@ inductive Directive where
   milliseconds, then move the clock on by them, completing every wait then
   due. The driver's own; it sends nothing to the editor thread. -/
   | advance (milliseconds : Nat)
+  /-- Settle, then wait until the file service has worked every request
+  handed to it, the session journal's orders among them. The driver's
+  own. -/
+  | journalled
+  /-- End the process at once, with the status 134 and no shutdown, as an
+  abort would: what the journal handed the system survives it. The
+  driver's own. -/
+  | abort
   deriving DecidableEq, Repr
 
 /-- The name a directive gives after its keyword, which is the first
@@ -2326,6 +2460,10 @@ def directive? (line : String) : Except String (Option Directive) :=
                         else
                           if line == "journal" then .ok (some .journal)
                           else
+                          if line == "journalled" then .ok (some .journalled)
+                          else
+                          if line == "abort" then .ok (some .abort)
+                          else
                             if line == "idle" || line.startsWith "idle " then
                               match (named line 4).bind String.toNat? with
                               | some milliseconds => .ok (some (.idle milliseconds))
@@ -2341,7 +2479,7 @@ def directive? (line : String) : Except String (Option Directive) :=
                                     s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
                               else
                                 .error
-                                  s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, agree, settle, join, idle <milliseconds>, advance <milliseconds>, journal, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
+                                  s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, agree, settle, join, idle <milliseconds>, advance <milliseconds>, journal, journalled, abort, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -2471,6 +2609,12 @@ def journalSince (render : Option Render) (patience : Nat) (after : UInt64) :
   let entries := (← render.journal after).getD #[]
   return (journalLine entries, (entries.back?.map (·.serial)).getD after)
 
+/-- The status `abort` ends the process with: 128 and SIGABRT's 6, as a
+shell reports an abort, without raising the signal, which on a macOS desktop
+brings up the crash reporter. -/
+def abortStatus : UInt8 :=
+  134
+
 /-- Runs `script` against a host of its own, as its driver, and stops the
 host: sends each request in order and waits at each `settle` and each
 `join`. `none` when the script ran to its end, or a command quit the editor
@@ -2490,6 +2634,9 @@ cancelled when the loop ends. -/
 def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
     (script : Array Line) (patience : Nat) : IO (Option Failure) := do
   let host ← start collaborators
+  -- With a state directory, the session is restored first.
+  if collaborators.stateDirectory.isSome then
+    host.send .restore
   -- The serial of the last journal entry a `journal` line counted.
   let mut journaled : UInt64 := 0
   for line in script do
@@ -2526,6 +2673,16 @@ def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β 
           journaled := last
           collaborators.emit said
         pure wait
+      | .journalled =>
+        let wait ← host.await patience
+        if wait == .settled then
+          unless ← within patience (return (← collaborators.journal.pending) == 0) do
+            discard <| host.halt patience
+            return some (.unanswered (some line.number))
+        pure wait
+      | .abort =>
+        (← IO.getStdout).flush
+        IO.Process.exit abortStatus
       | .advance milliseconds =>
         let some clock := collaborators.clock |
           discard <| host.halt patience
@@ -2563,6 +2720,12 @@ def runAndDispose {β σ : Type} {scheme : InputScheme} (collaborators : Collabo
       collaborators.dispose
     catch _ =>
       pure ()
+
+/-- How long a host's end waits for the file service to work what it holds,
+the journal's last orders among them, before it quits the queues, in
+milliseconds. -/
+def drainPatience : Nat :=
+  2000
 
 /-- How long the headless mode waits at each `settle` and each `join`, and
 for the loop to stop, in milliseconds. -/
@@ -2619,6 +2782,7 @@ def shippedOver (packages : Array Package) (base : Array Lean.Name) (sysroot : S
       { read := Config.Directory.read configDir, requires := Config.Lakefile.Toml.requires },
     emit, services, published, held, requests := 1, wakeups := 2, jobs := 3, environment := 4,
     posts := 5, pauseEvents := 6, packages, stateDirectory, log := IO.eprintln
+    journal := Journal.real published.reader
     dispose := files.remove }
 
 /-- The environments every job of a host shares, over `state`
@@ -2761,7 +2925,7 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
     catch _ =>
       return none
   let recorded ← ModuleLookup.recorded appPath readFile
-  let { render := drawn, generate, sysroot, oleans, config := configDir, script := scriptPath } ←
+  let { render := drawn, generate, sysroot, oleans, config := configDir, script := scriptPath, state } ←
     match read appPath arguments recorded with
     | .ok read =>
       pure read
@@ -2783,6 +2947,7 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
       return 1
   let shipped ←
     shipped packages base sysroot oleans configDir IO.println .headless (fakeClock := true)
+        (stateDirectory := state.map System.FilePath.mk)
   let workingDirectory ← IO.currentDir
   -- Only with `--generate` may the headless mode write into the config
   -- directory: then it creates the lakefile and the toolchain file the
@@ -2814,6 +2979,9 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   -- And every watch is ended, and every search.
   Ffi.watchesShutdown
   Ffi.grepShutdown
+  -- And what the journal handed the file service is written, for at most
+  -- `drainPatience`.
+  discard <| within drainPatience (return (← Ffi.filesPending) == 0)
   -- Shutdown: quit lets every task parked in a pull return, the pump among
   -- them, and the exit is explicit, because a task may still be blocked in
   -- the library.

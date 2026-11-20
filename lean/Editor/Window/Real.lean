@@ -169,6 +169,7 @@ def reportLines (opened closed : Nat) : IO (Array String) := do
 /-- The host's request for what the window mode posts before the first
 event. -/
 def Start.request : Start → Headless.Request
+  | .restore => .restore
   | .open path => .open path
   | .say text => .say text
   | .reload => .reload
@@ -320,12 +321,16 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
 
 /-- The window mode's shutdown, which `host` runs once the loop has ended
 and before it closes the window: every child the library started is killed
-and reaped, every watch and every search is ended, and then the queues are
-quit, as the headless mode does. -/
+and reaped, every watch and every search is ended, the file service is
+waited for, bounded, until it holds no request, so the journal's last orders
+are written, and then the queues are quit, as the headless mode does. -/
 def shutdown : IO Unit := do
   Ffi.processesShutdown
   Ffi.watchesShutdown
   Ffi.grepShutdown
+  -- What the journal handed the file service is written first, for at most
+  -- `Headless.drainPatience`.
+  discard <| Headless.within Headless.drainPatience (return (← Ffi.filesPending) == 0)
   Ffi.quit
 
 /-- What the window mode is told of the world, read at the edge, for the

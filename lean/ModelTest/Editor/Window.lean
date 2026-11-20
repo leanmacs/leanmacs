@@ -292,15 +292,27 @@ def windowStartChecks : List Check :=
               some (some (System.FilePath.mk "/xdg-state/leanmacs")) &&
             firstState (Window.parse homeless [] |>.toOption) == some none) },
     { name :=
+        "with a state directory the restore is the first start, before the open, what is said and the reload; with none there is no restore, and that unsaved text is not journalled is said first of what is said"
+      run :=
+        let homeless :=
+          { windowEnvironment with
+            xdgStateHome := none, home := none }
+        let without := (Window.parse homeless ["f"]).toOption
+        pure
+          ((parsed ["--state", "/s", "f"]).map (·.starts (.load "/c") #["a"]) ==
+              some #[.restore, .open "/work/project/f", .say "a", .reload] &&
+            without.map (·.starts (.load "/c") #["a"]) ==
+              some #[.open "/work/project/f", .say Window.notJournalled, .say "a", .reload]) },
+    { name :=
         "the window mode started with no file opens nothing: it posts what it has to say and the reload, and no open; and the editor loop it starts holds one buffer, scratch, empty, with one window on it"
       run :=
         let empty := (parsed []).map (·.starts (.load "/xdg/leanmacs") #["hi"])
         let withFile := (parsed [(inFiles "note.txt").toString]).map (·.starts (.skip none) #[])
         pure <|
-          empty == some #[.say "hi", .reload] &&
-            (parsed ["f"]).map (·.starts (.skip none) #[]) == some #[.open "/work/project/f"] &&
+          empty == some #[.restore, .say "hi", .reload] &&
+            (parsed ["f"]).map (·.starts (.skip none) #[]) == some #[.restore, .open "/work/project/f"] &&
             (parsed ["f"]).map (·.starts (.load "/c") #["a", "b"]) ==
-              some #[.open "/work/project/f", .say "a", .say "b", .reload] &&
+              some #[.restore, .open "/work/project/f", .say "a", .say "b", .reload] &&
             match empty.bind started, withFile.bind started with
             | some opened, some loading =>
               opened.loop.state.buffers.size == 1 &&
