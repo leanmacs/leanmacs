@@ -1,5 +1,5 @@
 //! The echo in the frame's bottom row ([`frame`](editor_layout::frame),
-//! "The bottom row"): when the scene's echo is not empty and no view's
+//! "The bottom row"): when no view's
 //! rectangle covers any of the frame's bottom [`Heights::message`] pixels,
 //! the frame ends with one more view frame, [`ECHO_VIEW`], whose one row is
 //! a status row holding the echo in the face `echo-area` over the default
@@ -140,13 +140,41 @@ fn the_echo_is_the_last_view_in_the_bottom_row_when_no_view_covers_it() {
 }
 
 #[test]
-fn an_empty_echo_lays_nothing_out() {
+fn an_empty_echo_still_paints_the_bottom_row_in_the_echo_area() {
+    // With no message the row is the theme's, not the target's clear
+    // colour: the same row as the echo's, with no glyphs.
     let frame = laid(
         &scene(640, 480, vec![window(1, rect(0, 0, 640, 464))], ""),
         1.0,
     );
-    assert!(echo_of(&frame).is_none());
-    assert_eq!(frame.views.len(), 1);
+    assert_eq!(frame.views.len(), 2);
+    let echo = echo_of(&frame).expect("an echo view");
+    assert_eq!(echo.rect, rect(0, 464, 640, 16));
+    assert_eq!(echo.background, PAPER);
+    let status = echo.status.as_ref().expect("its one row");
+    assert_eq!((status.y, status.height), (0.0, 16.0));
+    assert!(status.line.glyphs.is_empty());
+    assert_eq!(status.background, ECHO_PAPER);
+    // Painted exactly as the row holding a message is, just with no
+    // glyphs.
+    let said = laid(
+        &scene(640, 480, vec![window(1, rect(0, 0, 640, 464))], "saved"),
+        1.0,
+    );
+    let message = echo_of(&said).expect("the message's echo view");
+    let message_status = message.status.as_ref().expect("its one row");
+    assert_eq!(
+        (echo.rect, echo.background, echo.selection),
+        (message.rect, message.background, message.selection),
+    );
+    assert_eq!(
+        (status.y, status.height, status.background),
+        (
+            message_status.y,
+            message_status.height,
+            message_status.background
+        ),
+    );
 }
 
 #[test]
