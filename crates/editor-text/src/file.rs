@@ -74,6 +74,19 @@
 //! does not depend on the order a file system keeps them in, and a model
 //! of the port answers the same.
 //!
+//! # Making a directory
+//!
+//! [`make_directory`] makes the directory at a path and every directory on
+//! the way to it that is not there; one already there is no error. A path
+//! that is not absolute is refused ([`MakeDirectoryError::Relative`])
+//! before the file system is asked. A file, or anything else that is not a
+//! directory, at the path or on the way to it is
+//! [`MakeDirectoryError::NotADirectory`], the port's
+//! [`FsErrorKind::NotAFile`] in the directory's own words. Anything else
+//! the file system refuses is handed on ([`MakeDirectoryError::Fs`]). It is
+//! how a caller saves into a directory that may not be there yet: a save
+//! itself makes none.
+//!
 //! # Saving
 //!
 //! [`save`] saves a [`Snapshot`], so the thread that owns the text hands
@@ -471,6 +484,47 @@ pub fn list(fs: &dyn Fs, path: &Path) -> Result<Vec<Entry>, ListError> {
             .cmp(other.name.as_encoded_bytes())
     });
     Ok(entries)
+}
+
+/// Why a directory was not made ([`make_directory`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MakeDirectoryError {
+    /// The path is not absolute. The file system was not asked.
+    Relative,
+    /// What is at the path, or on the way to it, is not a directory.
+    NotADirectory,
+    /// The file system refused, for another reason.
+    Fs(FsError),
+}
+
+impl fmt::Display for MakeDirectoryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Relative => f.write_str("the path is not absolute"),
+            Self::NotADirectory => {
+                f.write_str("what is there, or on the way to it, is not a directory")
+            }
+            Self::Fs(error) => write!(f, "the file system refused: {error}"),
+        }
+    }
+}
+
+impl Error for MakeDirectoryError {}
+
+/// Makes the directory at `path`, which must be absolute, and every
+/// directory on the way to it that is not there. The module docs say what
+/// is refused.
+pub fn make_directory(fs: &dyn Fs, path: &Path) -> Result<(), MakeDirectoryError> {
+    if !path.is_absolute() {
+        return Err(MakeDirectoryError::Relative);
+    }
+    fs.make_directory(path).map_err(|error| match error.kind {
+        // The port's kind for what is not a directory, when making one.
+        FsErrorKind::NotAFile => MakeDirectoryError::NotADirectory,
+        FsErrorKind::NotFound | FsErrorKind::Denied | FsErrorKind::Exists | FsErrorKind::Other => {
+            MakeDirectoryError::Fs(error)
+        }
+    })
 }
 
 /// What a save expects to find at the path, which it checks before it
@@ -998,6 +1052,77 @@ mod tests {
         let denied = FsError::new(FsErrorKind::Denied, "injected");
         fs.fail(Op::List, denied.clone());
         assert_eq!(list(&fs, Path::new("/w")), Err(ListError::Fs(denied)));
+    }
+
+    #[test]
+    fn a_directory_of_a_path_that_is_not_absolute_is_refused_before_the_file_system_is_asked() {
+        let fs = FakeFs::new();
+
+        for path in ["dir", "dir/sub", ""] {
+            assert_eq!(
+                make_directory(&fs, Path::new(path)),
+                Err(MakeDirectoryError::Relative),
+                "{path:?}"
+            );
+        }
+        assert_eq!(fs.calls(), []);
+    }
+
+    #[test]
+    fn a_directory_is_made_with_its_parents_through_the_port() {
+        let fs = FakeFs::new();
+
+        assert_eq!(
+            make_directory(&fs, Path::new("/state/workspaces/k")),
+            Ok(())
+        );
+        assert_eq!(
+            fs.calls(),
+            [Call::MakeDirectory(PathBuf::from("/state/workspaces/k"))]
+        );
+        assert_eq!(
+            fs.stat(Path::new("/state/workspaces"))
+                .ok()
+                .flatten()
+                .map(|stat| stat.kind),
+            Some(Kind::Directory)
+        );
+    }
+
+    #[test]
+    fn a_directory_refused_by_the_file_system_is_refused_in_its_own_words() {
+        let fs = FakeFs::new();
+        fs.file("/w/a.txt", b"a");
+
+        assert_eq!(
+            make_directory(&fs, Path::new("/w/a.txt/sub")),
+            Err(MakeDirectoryError::NotADirectory)
+        );
+        let denied = FsError::new(FsErrorKind::Denied, "injected");
+        fs.fail(Op::MakeDirectory, denied.clone());
+        assert_eq!(
+            make_directory(&fs, Path::new("/w/b")),
+            Err(MakeDirectoryError::Fs(denied))
+        );
+    }
+
+    #[test]
+    fn each_directory_error_says_what_it_is() {
+        assert_eq!(
+            MakeDirectoryError::Relative.to_string(),
+            "the path is not absolute"
+        );
+        assert_eq!(
+            MakeDirectoryError::NotADirectory.to_string(),
+            "what is there, or on the way to it, is not a directory"
+        );
+        assert_eq!(
+            MakeDirectoryError::Fs(FsError::new(FsErrorKind::Denied, "no")).to_string(),
+            format!(
+                "the file system refused: {}",
+                FsError::new(FsErrorKind::Denied, "no")
+            )
+        );
     }
 
     #[test]

@@ -50,7 +50,8 @@ structure Services where
   /-- What the jobs hold. -/
   held : Job.HeldSnapshots
   /-- The services: the library's timer service, its file service, its
-  process service, its watch service, its diff service and its matcher. -/
+  process service, its watch service, its diff service, its grep service and
+  its matcher. -/
   jobs : Job.Services
   /-- The completion pump, when these services started it (`Services.start`);
   none over a table another's pump runs over (`Services.over`). -/
@@ -59,7 +60,8 @@ structure Services where
 /-- The real services over `completions`, a table of waits whose pump is
 already running or is started by the caller: the library's timer service,
 its file service over a table of snapshots of its own, its process service,
-its watch service, its diff service and its matcher. It starts no pump. -/
+its watch service, its diff service, its grep service over the same table
+and its matcher. It starts no pump. -/
 def Services.over (completions : Job.Completions) : IO Services := do
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
@@ -71,6 +73,7 @@ def Services.over (completions : Job.Completions) : IO Services := do
         Job.realProcesses completions (← Job.RefusedRuns.new) timers (← Job.TimedRuns.new)
       fileWatches := Job.realFileWatches completions (← Job.RealWatches.new)
       diffs := Job.realDiffs completions published.reader held (← Job.RefusedDiffs.new)
+      greps := Job.realGreps completions published.reader held (← Job.RealGreps.new)
       fuzzy := Fuzzy.real }
   return { completions, published, held, jobs, pump := none }
 
@@ -98,13 +101,15 @@ def Services.stop (services : Services) : IO Bool := do
 
 /-- Ends the library's services as a host's `main` does once its script has
 run (`Editor.Headless.main`): every child the process service started is
-killed and reaped, every watch is ended, and the queues are quit, for good
+killed and reaped, every watch is ended, every search is ended, and the
+queues are quit, for good
 and process-wide. The caller exits explicitly afterwards. A test whose
 process held a host ends with it, so that a child a failed check left is
 not left behind. -/
 def shutdown : IO Unit := do
   Ffi.processesShutdown
   Ffi.watchesShutdown
+  Ffi.grepShutdown
   Ffi.quit
 
 /-- How many children the library's process service has started and not yet

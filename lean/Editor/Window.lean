@@ -3,7 +3,7 @@ import Editor.ModuleLookup
 /-!
 # The window mode's command line
 
-`editor [--config <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] [<file>]`
+`editor [--config <dir>] [--state <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] [<file>]`
 opens a window (`Editor/Window/Real.lean`), on `<file>` when one is given.
 This module is the pure part of that: what the command line asks for, given
 what the edge read of the world (`Environment`), whether config is loaded
@@ -36,6 +36,14 @@ before the first event (`Options.starts`). It reads nothing itself, so
   empty. A default directory that does not exist loads nothing and says
   nothing; a given one is reloaded whether it exists or not, so that a
   directory that does not exist is a rejected reload, said in the echo area.
+- **`--state`** is the state directory, where what is kept across a
+  restart lives (the working sets, `Editor/WorkingSet/Disk.lean`). When not
+  given it is `leanmacs` under `$XDG_STATE_HOME`, or under
+  `$HOME/.local/state` when that is unset or empty; none when neither is
+  set, and then nothing is kept across a restart. The host hands it to the
+  loop's first state (`EditorState.stateDirectory`, through
+  `EditorState.hostedBy`). Nothing is made at start: a directory that is
+  not there is made when something is first written in it.
 - **`--no-ime`** runs the window with no input method composing.
 
 Two files, an option it does not know, and an option with no value are
@@ -52,6 +60,8 @@ structure Environment where
   workingDirectory : String
   /-- `$XDG_CONFIG_HOME`, if it is set. -/
   xdgConfigHome : Option String
+  /-- `$XDG_STATE_HOME`, if it is set. -/
+  xdgStateHome : Option String := none
   /-- `$HOME`, if it is set. -/
   home : Option String
   /-- The executable's path. -/
@@ -131,6 +141,9 @@ structure Options where
   config : Option String
   /-- Whether the config directory was given with `--config`. -/
   configGiven : Bool
+  /-- The state directory: given with `--state`, or the default; none when
+  there is no default, because neither variable it is found by is set. -/
+  state : Option String := none
   /-- The Lean toolchain's directory, if one was given. -/
   sysroot : Option String
   /-- The directories of the editor's `.olean` files, in the order they are
@@ -151,7 +164,7 @@ structure Options where
 
 /-- The window mode's command line, as the usage says it. -/
 def usage : String :=
-  "[--config <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] [--report] [--present-mode fifo|fifo-relaxed|immediate|mailbox] [--frame-latency <n>] [<file>]"
+  "[--config <dir>] [--state <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] [--report] [--present-mode fifo|fifo-relaxed|immediate|mailbox] [--frame-latency <n>] [<file>]"
 
 /-- What the window mode says, on stderr after `editor: ` and in the echo
 area, when nothing could draw in the window, for `reason`. -/
@@ -182,6 +195,15 @@ def defaultConfig (environment : Environment) : Option String :=
   | none, some home => some (System.FilePath.mk home / ".config" / "leanmacs").toString
   | none, none => none
 
+/-- The default state directory: `leanmacs` under `$XDG_STATE_HOME`, or
+under `$HOME/.local/state` when that is unset or empty; none when neither is
+set. -/
+def defaultState (environment : Environment) : Option String :=
+  match environment.xdgStateHome.filter (!·.isEmpty), environment.home with
+  | some xdg, _ => some (System.FilePath.mk xdg / "leanmacs").toString
+  | none, some home => some (System.FilePath.mk home / ".local" / "state" / "leanmacs").toString
+  | none, none => none
+
 /-- `path` resolved against the working directory: kept when it is
 absolute. -/
 def resolve (environment : Environment) (path : String) : String :=
@@ -195,6 +217,8 @@ structure Read where
   file : Option String := none
   /-- `--config`'s directory. -/
   config : Option String := none
+  /-- `--state`'s directory. -/
+  state : Option String := none
   /-- `--sysroot`'s directory. -/
   sysroot : Option String := none
   /-- `--oleans`'s directory. -/
@@ -212,6 +236,7 @@ structure Read where
 def readAll (read : Read) : List String → Except String Read
   | [] => .ok read
   | "--config" :: directory :: rest => readAll { read with config := some directory } rest
+  | "--state" :: directory :: rest => readAll { read with state := some directory } rest
   | "--sysroot" :: directory :: rest => readAll { read with sysroot := some directory } rest
   | "--oleans" :: directory :: rest => readAll { read with oleans := some directory } rest
   | "--no-ime" :: rest => readAll { read with composition := false } rest
@@ -226,7 +251,7 @@ def readAll (read : Read) : List String → Except String Read
     | _ => .error s!"{count} is not a frame latency: a number from 1"
   | argument :: rest =>
     if argument.startsWith "-" then
-      if ["--config", "--sysroot", "--oleans"].contains argument then
+      if ["--config", "--state", "--sysroot", "--oleans"].contains argument then
         .error s!"{argument} needs a directory after it"
       else
         if ["--present-mode", "--frame-latency"].contains argument then
@@ -252,12 +277,17 @@ def parse (environment : Environment) (arguments : List String) : Except String 
         file := read.file.map (resolve environment)
         config := read.config <|> defaultConfig environment
         configGiven := read.config.isSome
+        state := (read.state.map (resolve environment)) <|> defaultState environment
         sysroot := directories.sysroot
         oleans := directories.oleans
         composition := read.composition
         report := read.report
         presentMode := read.presentMode
         frameLatency := read.frameLatency }
+
+/-- The state directory the host hands the loop's first state. -/
+def Options.stateDirectory (options : Options) : Option System.FilePath :=
+  options.state.map System.FilePath.mk
 
 /-- Whether config is loaded at start, and what the echo area says if it
 is not. -/

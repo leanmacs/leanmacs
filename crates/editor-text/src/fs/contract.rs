@@ -46,6 +46,11 @@
 //!   directory, file and other: links followed, and a link to nothing is
 //!   other. Listing nothing is refused as [`FsErrorKind::NotFound`], and
 //!   listing a file as [`FsErrorKind::NotAFile`].
+//! - **A directory is made, with its parents.** Making a directory two
+//!   levels below one that is there makes both, and each stats as a
+//!   directory; making it again is no error; a file can be written in it.
+//!   Making a directory where a file is, or under one, is refused as
+//!   [`FsErrorKind::NotAFile`], and the file is as it was.
 //! - **A file is removed**, and its stat is then none.
 //!
 //! # The ground
@@ -189,6 +194,14 @@ pub enum Violation {
     ListOfNothing,
     /// Listing a file was not refused as not a file.
     ListOfAFile,
+    /// A directory made, or a directory on the way to it, did not stat as
+    /// a directory.
+    DirectoryNotMade,
+    /// Making a directory that is there was refused.
+    DirectoryMadeAgainRefused,
+    /// Making a directory where a file is, or under one, was not refused
+    /// as not a file, or changed the file.
+    DirectoryMadeThroughAFile,
     /// A removed file was still there.
     NotRemoved,
 }
@@ -259,6 +272,13 @@ impl fmt::Display for Violation {
             }
             Self::ListOfNothing => "listing nothing was not refused as not found",
             Self::ListOfAFile => "listing a file was not refused as not a file",
+            Self::DirectoryNotMade => {
+                "a directory made, or one on the way to it, did not stat as a directory"
+            }
+            Self::DirectoryMadeAgainRefused => "making a directory that is there was refused",
+            Self::DirectoryMadeThroughAFile => {
+                "making a directory where a file is, or under one, was not refused as not a file, or changed the file"
+            }
             Self::NotRemoved => "a removed file was still there",
         })
     }
@@ -296,6 +316,7 @@ pub fn check(fs: &dyn Fs, ground: &dyn Ground) -> Result<(), Violation> {
     links(fs, ground, root, &file, &joined)?;
     a_link_to_nothing(fs, ground, root)?;
     a_listing(fs, ground, root, &file)?;
+    a_directory_is_made(fs, root, &file, &joined)?;
 
     must("removing a file", fs.remove(&file))?;
     if must("the stat of a removed file", fs.stat(&file))?.is_some() {
@@ -600,6 +621,46 @@ fn a_listing(fs: &dyn Fs, ground: &dyn Ground, root: &Path, file: &Path) -> Resu
     Ok(())
 }
 
+/// Making a directory two levels below the root makes both, each stats as
+/// a directory, making it again is no error, and a file can be written in
+/// it; making one where `file` is, or under it, is refused as not a file,
+/// and `file` still reads as `joined`.
+fn a_directory_is_made(
+    fs: &dyn Fs,
+    root: &Path,
+    file: &Path,
+    joined: &[u8],
+) -> Result<(), Violation> {
+    let made = root.join("made");
+    let deep = made.join("deep");
+    must(
+        "making a directory and its parents",
+        fs.make_directory(&deep),
+    )?;
+    for path in [&made, &deep] {
+        let kind = must("the stat of a directory made", fs.stat(path))?.map(|stat| stat.kind);
+        if kind != Some(Kind::Directory) {
+            return Err(Violation::DirectoryNotMade);
+        }
+    }
+    if fs.make_directory(&deep).is_err() {
+        return Err(Violation::DirectoryMadeAgainRefused);
+    }
+    must(
+        "writing a new file in a directory made",
+        write(fs, &deep.join("in-it"), &[b"x"], None),
+    )?;
+    let through = [file.to_path_buf(), file.join("under").join("deeper")];
+    if !through
+        .iter()
+        .all(|path| refused_as(&fs.make_directory(path), FsErrorKind::NotAFile))
+        || fs.read(file).ok().as_deref() != Some(joined)
+    {
+        return Err(Violation::DirectoryMadeThroughAFile);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -650,6 +711,12 @@ mod tests {
         ListDoesNotFollowLinks,
         /// A listing of a file answers no entries.
         ListOfAFileIsNotRefused,
+        /// Making a directory makes nothing.
+        MakesNoDirectory,
+        /// Making a directory that is there is refused as existing.
+        RefusesADirectoryThatIsThere,
+        /// Making a directory where a file is replaces the file with it.
+        MakesADirectoryOverAFile,
     }
 
     impl Broken {
@@ -803,6 +870,22 @@ mod tests {
                 _ => {}
             }
             Ok(entries)
+        }
+
+        fn make_directory(&self, path: &Path) -> Result<(), FsError> {
+            match self.fault {
+                Fault::MakesNoDirectory => Ok(()),
+                Fault::RefusesADirectoryThatIsThere
+                    if matches!(self.inner.stat(path), Ok(Some(_))) =>
+                {
+                    Err(FsError::new(FsErrorKind::Exists, "it is there"))
+                }
+                Fault::MakesADirectoryOverAFile if self.inner.bytes(path).is_some() => {
+                    self.inner.take_away(path);
+                    self.inner.make_directory(path)
+                }
+                _ => self.inner.make_directory(path),
+            }
         }
 
         fn read_link(&self, path: &Path) -> Result<Option<PathBuf>, FsError> {
@@ -980,6 +1063,30 @@ mod tests {
         assert_eq!(
             verdict_on(Fault::ListDoesNotFollowLinks),
             Err(Violation::ListKindsWrong)
+        );
+    }
+
+    #[test]
+    fn a_directory_that_is_not_made_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::MakesNoDirectory),
+            Err(Violation::DirectoryNotMade)
+        );
+    }
+
+    #[test]
+    fn a_directory_made_again_that_is_refused_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::RefusesADirectoryThatIsThere),
+            Err(Violation::DirectoryMadeAgainRefused)
+        );
+    }
+
+    #[test]
+    fn a_directory_made_over_a_file_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::MakesADirectoryOverAFile),
+            Err(Violation::DirectoryMadeThroughAFile)
         );
     }
 
@@ -1187,6 +1294,18 @@ mod tests {
             (
                 Violation::ListOfAFile,
                 "listing a file was not refused as not a file",
+            ),
+            (
+                Violation::DirectoryNotMade,
+                "a directory made, or one on the way to it, did not stat as a directory",
+            ),
+            (
+                Violation::DirectoryMadeAgainRefused,
+                "making a directory that is there was refused",
+            ),
+            (
+                Violation::DirectoryMadeThroughAFile,
+                "making a directory where a file is, or under one, was not refused as not a file, or changed the file",
             ),
             (Violation::NotRemoved, "a removed file was still there"),
         ];

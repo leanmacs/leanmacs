@@ -226,8 +226,12 @@ run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xa
 # hand-off, or a process that waits for a task still blocked in the library.
 # It bounds each command, not the task, and is set well above the slowest:
 # `contract-test`, whose version-control properties run real git in
-# temporary repositories, takes about 15 s on a developer's Mac and 50 to
-# 60 s on the macOS runner while the gate's other tasks run beside it.
+# temporary repositories, eight at a time. It takes about 9 s on a
+# developer's Mac (about 14 s with every core busy), down from 14 s (29 s)
+# when those properties ran one after another. The 180 s limit was set when
+# contract-test took 50 to 62 s on the macOS runner while the gate's other
+# tasks ran beside it; it is to come down once a run on the runner confirms
+# the new time.
 [tasks.ffi-test]
 description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh) and that a package imports only the core's API (tools/package-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, and the linked test and headless fixtures of each package of the fixture set and of the default set (tools/package-set.sh)"
 depends = ["lean"]

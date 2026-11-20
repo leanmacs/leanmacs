@@ -6,7 +6,12 @@
 -- name, and `SPC ?` the binding search, which lists every binding the view
 -- can reach and runs the one chosen as its key would. `SPC SPC` and
 -- `SPC p f` find a file in the buffer's workspace, and `SPC p p` picks
--- another workspace of the project and finds a file in it.
+-- another workspace of the project and finds a file in it. `SPC s p` and
+-- `SPC /` search the workspace's files for a pattern, and `SPC *` for the
+-- word under the cursor, into an excerpt buffer whose `RET` visits a match.
+-- `SPC k a` adds the selection to a named working set and `SPC k o` (or
+-- `SPC RET`) opens one as an excerpt buffer of its ranges, kept per
+-- workspace across restarts.
 --
 -- The map is `leaderMap`, in a config file of its own, apart from the root's
 -- `setup` (in `init.lean`), so it can be dropped into a config of your own:
@@ -29,15 +34,25 @@ def leaderMap : SetupM Unit := do
   prefixName "<leader> TAB" "tab"
   prefixName "<leader> h" "help"
   prefixName "<leader> p" "project"
+  prefixName "<leader> s" "search"
+  prefixName "<leader> k" "working set"
   -- Top level.
   bindKey "<leader> ." "open-file" (desc := "Find file")
   bindKey "<leader> ," "switch-buffer" (desc := "Switch buffer")
   bindKey "<leader> :" "execute-command" (desc := "Execute command")
   bindKey "<leader> ?" "search-bindings" (desc := "Search bindings")
   bindKey "<leader> SPC" "find-file-in-workspace" (desc := "Find file in workspace")
+  bindKey "<leader> /" "project-search" (desc := "Search workspace")
+  bindKey "<leader> *" "project-search-symbol" (desc := "Search symbol in workspace")
+  bindKey "<leader> RET" "working-set-open" (desc := "Open working set")
   -- project
   bindKey "<leader> p f" "find-file-in-workspace" (desc := "Find file in workspace")
   bindKey "<leader> p p" "find-file-in-project" (desc := "Switch workspace")
+  -- search
+  bindKey "<leader> s p" "project-search" (desc := "Search workspace")
+  -- working set
+  bindKey "<leader> k a" "working-set-add" (desc := "Add to working set")
+  bindKey "<leader> k o" "working-set-open" (desc := "Open working set")
   -- file
   bindKey "<leader> f f" "open-file" (desc := "Find file")
   bindKey "<leader> f s" "save-buffer" (desc := "Save file")

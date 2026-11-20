@@ -371,7 +371,7 @@ def evilMotionChecks : List Check :=
         "from the last character of the text, with a final line feed and with none, every motion key leaves the cursor where Vim's does, with a count as with none: a motion that would leave the text does not move, and the cursor is never past the last character"
       run := evilRows (lastCharacterRows "" ++ lastCharacterRows "\n") },
     { name :=
-        "every key the default tables bind to a motion has a motion of its name in the vocabulary: pressed in a text of three lines, a motion that takes a character with one, none says it has no such motion, and none but the searches says anything in the echo area (a search says its warning or its error: n and N with no last search, and * on the one occurrence of its word)"
+        "every key the default tables bind to a motion has a motion of its name in the vocabulary: pressed in a text of three lines, a motion that takes a character with one, none says it has no such motion, and none but the searches and the marks says anything in the echo area (a search says its warning or its error: n and N with no last search, and * on the one occurrence of its word; a mark that is not set says so)"
       run := do
         let said :=
           Vim.Default.motions.filterMap fun (typed, bound) =>
@@ -385,11 +385,15 @@ def evilMotionChecks : List Check :=
               | .motion name | .charMotion name | .promptMotion name _ => name
               | _ => ""
             let searches := name.startsWith "search" || name.startsWith "word-search"
+            let marks := name == Evil.markExact.name || name == Evil.markLine.name
             match evilDriver "ab cd\ne|f gh\nij kl" with
             | none => some s!"{typed}: no driver"
             | some driver =>
               let echo := (evilFed driver typed).loop.state.echo
-              if echo.isEmpty || searches && echo != Evil.noSuchMotion name then none
+              if
+                  echo.isEmpty || searches && echo != Evil.noSuchMotion name ||
+                    marks && echo == Evil.markNotSet then
+                none
               else some s!"{typed} said {repr echo}"
         unless said.isEmpty do
           throw (IO.userError ("; ".intercalate said))
@@ -484,14 +488,16 @@ def evilMotionChecks : List Check :=
           let program : EditorM Nat := do
             let text ← createText contents
             let before ← Watch.now
-            discard <| Evil.down.target text { head, wanted }
+            discard <| Evil.down.target text { head, view := ⟨0⟩, buffer := ⟨0⟩, wanted }
             return (← Watch.now) - before
           (program.runModel countingModel).1.toOption
         -- How many snapshots the motion took: a released one keeps its slot.
         let taken (fixture : String) (wanted : Option WantedColumn) : Option Nat :=
           let (contents, head) := barred fixture
           let program : EditorM Unit := do
-            discard <| Evil.down.target (← createText contents) { head, wanted }
+            discard <|
+                Evil.down.target (← createText contents)
+                  { head, view := ⟨0⟩, buffer := ⟨0⟩, wanted }
           let (ended, model) := program.runModel editorModel
           ended.toOption.map fun _ => model.texts.snapshots.size
         let some driver := evilDriver "a\t|b\nxy\n0123456789" | throw (IO.userError "no driver")
@@ -557,7 +563,7 @@ def evilMotionChecks : List Check :=
           throw (IO.userError s!"the echo area says {repr echo}")
         return echo != Evil.noSuchMotion "" && evilShown ran == "a|bc" },
     { name :=
-        "the move command called with a motion's name and no count after it moves with no count: every motion of the vocabulary, from the middle of a text of three lines, leaves the cursor where it leaves it when the count is 0, which is how a key with no count calls it, and says the same, which is nothing but for the searches; by the name of the motion one cell on it goes where l does"
+        "the move command called with a motion's name and no count after it moves with no count: every motion of the vocabulary, from the middle of a text of three lines, leaves the cursor where it leaves it when the count is 0, which is how a key with no count calls it, and says the same, which is nothing but for the searches and the marks, which with no mark named say so; by the name of the motion one cell on it goes where l does"
       run := do
         let here := "ab cd\ne|f gh\nij kl"
         let wrong :=
@@ -567,7 +573,11 @@ def evilMotionChecks : List Check :=
             -- A search says its warning or its error, the same with no count
             -- and with the count 0; every other motion says nothing.
             let searches := motion.name.startsWith "search" || motion.name.startsWith "word-search"
-            if alone.isSome && alone == counted && (searches || alone.map (·.2) == some "") then
+            let marks := motion.name == Evil.markExact.name || motion.name == Evil.markLine.name
+            if
+                alone.isSome && alone == counted &&
+                  (searches || marks && alone.map (·.2) == some Evil.unknownMark ||
+                    alone.map (·.2) == some "") then
               none
             else some s!"{motion.name} alone left {repr alone}, and with the count 0 {repr counted}"
         unless wrong.isEmpty do
@@ -621,11 +631,13 @@ def evilMotionChecks : List Check :=
         return !Evil.motions.isEmpty }]
 
 /-- The motion keys of the default tables that take the character the next
-key names (`Bound.charMotion`). -/
+key names (`Bound.charMotion`) as a find does: all but the two that go to a
+mark, whose rows are `evilMarkChecks`' (`ModelTest/Editor/Evil/Marks.lean`). -/
 def charMotionKeys : List String :=
   Vim.Default.motions.filterMap fun (key, bound) =>
     match bound with
-    | .charMotion _ => some key
+    | .charMotion name =>
+      if name == Evil.markExact.name || name == Evil.markLine.name then none else some key
     | _ => none
 
 /-- The rows of the oracle table for `f`, `t`, `F`, `T`, `;` and `,` under an

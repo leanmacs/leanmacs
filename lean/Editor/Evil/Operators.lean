@@ -3,6 +3,7 @@ import Editor.Evil.Motions
 import Editor.Evil.Objects
 import Editor.Evil.Registers
 import Editor.Indent
+import Editor.Jumps
 
 /-!
 # Evil's operators
@@ -151,9 +152,9 @@ order:
 
 | | Cells that are not empty | No cell | Lines |
 |---|---|---|---|
-| `delete` | The register is the cells' text. They are deleted. The cursor goes to their start, rested | Nothing is done, and the register is as it was | The register is the lines, line-wise. They are deleted. The cursor goes to the first non-blank of the line now where the first was |
+| `delete` | The register is the cells' text. They are deleted. The cursor goes to their start, rested | Nothing is done, and the register is as it was | The register is the lines, line-wise. They are deleted, and the buffer's lowercase marks on them erased (`Jumps.deleteRows`). The cursor goes to the first non-blank of the line now where the first was |
 | `yank` | The register is the cells' text. The cursor goes to their start, rested | The register is the empty text. The cursor stays | The register is the lines, line-wise. The cursor goes to the operand's `rest`, rested |
-| `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive` and the text is not empty, when it is the empty text. The selection is a bar where the cells would start | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays. The selection is a bar at that line's start |
+| `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive` and the text is not empty, when it is the empty text. The selection is a bar where the cells would start | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays, and the buffer's lowercase marks on the lines after the first are erased and those on the first kept (`Jumps.deleteRows`), so the edit, which stops at a row's start when the last line is empty, does not erase them. The selection is a bar at that line's start |
 | `replace` | The text of the register the call names (`fetch`) goes in place of the cells, as it is, line breaks included. The cursor goes on the last cell put, or on the first when the text holds a line break, as a character-wise `P` leaves it. The unnamed register is the cells' text | The text is put where the cells would start, as for cells | The text goes in place of the lines, with the buffer's line ending added to a character-wise one; below a last line with no line break its last line break is left out, so the text ends the way it ended. The cursor goes to the first non-blank of the first line put. The unnamed register is the lines, line-wise |
 | `indent` | The rows from the first cell's through the last cell's | The row the cells would start on | The lines |
 
@@ -354,6 +355,7 @@ def delete : Vocabulary.Operator :=
             text.motion .lineFirstNonBlank (← text.offsetOf ⟨first - 1, 0⟩)
           else
             pure 0
+        Jumps.deleteRows call.target.window.buffer first last
         call.target.replaceCarrying ⟨lines.cut, lines.stop⟩ "" operand.before (cursorAt call after)
         settle call after
         store operand.register { text := lines.taken, linewise := true } }
@@ -385,6 +387,9 @@ def change : Vocabulary.Operator :=
           settle call 0
           return
         let lines ← linesOf call.target first last
+        -- The lines after the first are deleted, as Vim's `op_change`
+        -- deletes them, and the first is emptied, keeping its marks.
+        Jumps.deleteRows call.target.window.buffer first last (keepFirst := true)
         -- One line break stays: the lines' content goes, and not the last
         -- line's line break.
         unless lines.start == lines.content do
@@ -521,7 +526,11 @@ gives up, and so does one whose motion failed where the cursor is; one
 whose motion failed after it moved leaves the cursor where the motion got
 to and breaks off ("What an operator takes", in the module docs). A
 doubled operator with a count above 1 on the last line gives up too ("The
-doubled operator on the last line", in the module docs). -/
+doubled operator on the last line", in the module docs). A motion that is a
+jump and did not fail records the place the cursor started from in the
+window's jump list (`Jumps.record`), and once the operator has acted gives
+the window back the previous-context mark it had when the cursor is on
+that place (`Jumps.checkPrevious`). -/
 def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.Motion)
     (objects : Array Vocabulary.TextObject) (call : Call) : EditorM Unit := do
   -- A motion's argument, when it has one, is the string after its name.
@@ -540,6 +549,10 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
   let before ← call.target.selection
   let some range := before.ranges[before.primary]? | throw .badSelection
   let head := range.head
+  -- The previous-context mark before a jump motion records, given back
+  -- once the operator has acted when the cursor did not move.
+  let previous ← Jumps.previousOf call.target.window.id
+  let jumped := kind == "motion" && (motions.find? (·.name == name)).any (·.jumps)
   -- What the echo area is to say once the operator has acted: what the
   -- motion handed back to be said.
   let (operand, said) : Vocabulary.Operand × Option String ←
@@ -548,7 +561,8 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
       let some motion := motions.find? (·.name == name) | giveUp (noSuchMotion name)
       let taken ←
         motion.taken operator.replaces text
-            { head, count := if count == 0 then none else some count, argument }
+            { head, view := call.target.window.id, buffer := call.target.window.buffer
+              count := if count == 0 then none else some count, argument }
       if let some find := taken.find then
         setLastFind find
       if let some search := taken.search then
@@ -566,6 +580,10 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
         call.target.select { ranges := #[⟨reached, reached⟩], shape := before.shape }
         discard <| call.target.window.id.setWanted none
         breakOff (taken.said.getD (cannotMove name))
+      -- A jump under an operator records where the cursor started from, as
+      -- one without does.
+      if motion.jumps then
+        Jumps.record call.target.window.id
       pure
           ({ stretch := ← stretch operator text head taken, head, rest := min head taken.head,
              register, before },
@@ -628,6 +646,9 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
       giveUp noOperatorNamed
   discard <| call.target.window.id.setWanted none
   operator.act call operand
+  -- A motion that failed has given up or broken off by now.
+  if jumped then
+    Jumps.checkPrevious call.target.window.id previous
   if let some said := said then
     message said
 

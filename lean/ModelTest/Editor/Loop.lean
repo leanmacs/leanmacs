@@ -1360,6 +1360,27 @@ def dispatchRollbackChecks : List Check :=
           | .ok (texts, before, after) => texts == #["", "other"] && before == after
           | .error _ => false },
     { name :=
+        "recorded departure (task places-restore-on-rollback): a command that deletes the text a mark and a jump entry are inside and is then refused has the text put back, but the mark and the entry, collapsed by the deletion to its start, are carried past the text the rollback puts back, to its end, and not where they were: the loop restores only the windows' selection and scroll markers"
+      run :=
+        pure <|
+          let collapse : Dispatched := failingAfter fun call => call.target.buffer.text.delete 1 4
+          let keys := dispatchKeys [("C-c x", invoke "collapse")] [("collapse", collapse)]
+          let program : EditorM (String × List Marker × String) := do
+            let state ← holding "abcd" #[⟨0, 0⟩]
+            let text : TextId := ⟨0⟩
+            let mark ← text.mark (.anchor { offset := 3, bias := .after })
+            let entry ← text.mark (.anchor { offset := 3, bias := .after })
+            let (_, state) := state.setLocalMark ⟨0⟩ 'a' (some mark)
+            let (_, state) :=
+              state.setJumps ⟨0⟩ { list := { entries := #[.held ⟨0⟩ entry], index := 1 } }
+            let (loop, _) ← stepsWith keys ({ state } : TestLoop) (presses "C-c x")
+            return (← text.read, [← text.marker mark, ← text.marker entry], loop.state.echo)
+          (program.runModel editorModel).1.toOption ==
+            some
+              ("abcd",
+                [.anchor { offset := 4, bias := .after }, .anchor { offset := 4, bias := .after }],
+                "collapse: refused: bad range") },
+    { name :=
         "a key's command that sets a register and is then refused leaves the register the name had: a register is editor state, and the state is the one from before the command; a command that sets one and runs to its end leaves it set"
       run :=
         pure <|
@@ -2664,7 +2685,78 @@ def dispatchGiveUpChecks : List Check :=
                 loop.state.outbox.answered.isEmpty &&
                   steps.back?.map (·.ended) == some (some (.refused .badRange)))
           (program.runModel editorModel).1.toOption ==
-            some (some "abc", [none, none], "go: refused: bad range", true, true) }]
+            some (some "abc", [none, none], "go: refused: bad range", true, true) },
+    { name :=
+        "after a command that dropped a jump list's entry has run to its end, its marker is given up and the entry kept still answers, with nothing in the echo"
+      run :=
+        pure <|
+          let program : EditorM (List (Option TextError) × String × Bool) := do
+            let state ← threeWindows
+            let text : TextId := ⟨0⟩
+            let dropped ← text.mark (.anchor { offset := 0, bias := .after })
+            let kept ← text.mark (.anchor { offset := 0, bias := .after })
+            let held (marker : MarkerId) : Place := .held ⟨0⟩ marker
+            let (_, state) :=
+              state.setJumps ⟨0⟩ { list := { entries := #[held dropped, held kept], index := 2 } }
+            let (loop, _) ←
+              stepsWith
+                  (ran (asks [.setJumps ⟨0⟩ { list := { entries := #[held kept], index := 1 } }]))
+                  ({ state } : TestLoop) (presses "C-c g")
+            return ([← refusalOf (text.marker dropped), ← refusalOf (text.marker kept)],
+                loop.state.echo, loop.state.wellFormed)
+          (program.runModel editorModel).1.toOption ==
+            some ([some .noSuchMarker, none], "", true) },
+    { name :=
+        "a marker a split's copy of a jump list shares is kept while one window holds it, and given up once none does"
+      run :=
+        pure <|
+          let program : EditorM (List (Option TextError) × String) := do
+            let state ← threeWindows
+            let text : TextId := ⟨0⟩
+            let shared ← text.mark (.anchor { offset := 0, bias := .after })
+            let jumps : Jumps := { list := { entries := #[.held ⟨0⟩ shared], index := 1 } }
+            let (_, state) := state.setJumps ⟨0⟩ jumps
+            let (_, state) := state.setJumps ⟨1⟩ jumps
+            let (closed, _) ←
+              stepsWith (ran (asks [.removeWindow ⟨1⟩])) ({ state } : TestLoop) (presses "C-c g")
+            let whileHeld ← refusalOf (text.marker shared)
+            let (cleared, _) ← stepsWith (ran (asks [.setJumps ⟨0⟩ {}])) closed (presses "C-c g")
+            return ([whileHeld, ← refusalOf (text.marker shared)], cleared.state.echo)
+          (program.runModel editorModel).1.toOption == some ([none, some .noSuchMarker], "") },
+    { name :=
+        "a command that drops a jump list's entry and is then refused gives up nothing: the entry and its marker are as they were"
+      run :=
+        pure <|
+          let program : EditorM (Option TextError × Bool) := do
+            let state ← threeWindows
+            let text : TextId := ⟨0⟩
+            let marker ← text.mark (.anchor { offset := 0, bias := .after })
+            let jumps : Jumps := { list := { entries := #[.held ⟨0⟩ marker], index := 1 } }
+            let (_, state) := state.setJumps ⟨0⟩ jumps
+            let (loop, _) ←
+              stepsWith (bound (failingAfter fun _ => asks [.setJumps ⟨0⟩ {}]))
+                  ({ state } : TestLoop) (presses "C-c g")
+            return (← refusalOf (text.marker marker),
+                (loop.state.window? ⟨0⟩).map (·.jumps) == some jumps)
+          (program.runModel editorModel).1.toOption == some (none, true) },
+    { name :=
+        "after a command that removed a buffer has run to its end, the markers of its marks and of the places held in it are given up before its text is released, with nothing in the echo"
+      run :=
+        pure <|
+          let program : EditorM (List (Option TextError) × String × Bool) := do
+            let (state, text) ← hiddenBuffer
+            let mark ← text.mark (.anchor { offset := 0, bias := .after })
+            let entry ← text.mark (.anchor { offset := 0, bias := .after })
+            let global ← text.mark (.anchor { offset := 0, bias := .after })
+            let (_, state) := state.setLocalMark ⟨2⟩ 'a' (some mark)
+            let (_, state) :=
+              state.setJumps ⟨0⟩ { list := { entries := #[.held ⟨2⟩ entry], index := 1 } }
+            let (_, state) := state.setGlobalMark 'A' (some (.held ⟨2⟩ global))
+            let (loop, _) ←
+              stepsWith (ran (asks [.removeBuffer ⟨2⟩])) ({ state } : TestLoop) (presses "C-c g")
+            return ([← refusalOf text.read], loop.state.echo,
+                loop.state.wellFormed && loop.state.placeMarkers.isEmpty)
+          (program.runModel editorModel).1.toOption == some ([some .noSuchText], "", true) }]
 
 /-- A scheme written for the closed-view checks: the test scheme, with the
 views it was stepped for kept beside its state, in the order they first

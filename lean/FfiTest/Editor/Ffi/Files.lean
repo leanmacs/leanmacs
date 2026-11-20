@@ -269,11 +269,33 @@ def fileChecks (_ : Unit) : List Check :=
           return entries == #[("a.txt", 0), ("b.txt", 0), ("sub", 1)] &&
               refused == some .notADirectory },
     { name :=
+        "a directory is made through the file service, with the one on the way to it, and crosses as made; one where a file is is refused as not a directory"
+      run :=
+        inOwnDirectory fun directory => do
+          IO.FS.writeFile (directory / "a.txt") "a"
+          let deep := directory / "made" / "deep"
+          unless ← Editor.Ffi.filesMakeDirectory 1052 deep.toString do
+            return false
+          unless ← fileCompleted 1052 do
+            return false
+          let some .made ← Editor.Ffi.filesTake 1052 | return false
+          unless ← Editor.Ffi.filesMakeDirectory 1053 (directory / "a.txt" / "sub").toString do
+            return false
+          unless ← fileCompleted 1053 do
+            return false
+          let refused := (← Editor.Ffi.filesTake 1053).bind refusalOf
+          let decoded := (Editor.Ffi.FileResult.decode 0 none (wordBytes []) "").toOption
+          let madeDecoded :=
+            match decoded with
+            | some .made => true
+            | _ => false
+          return (← deep.isDir) && refused == some .notADirectory && madeDecoded },
+    { name :=
         "a file result the bindings cannot read is an error: a status the table does not have, words that are not the status's, and a load with no snapshot"
       run :=
         pure
-          (([(12, []), (0, []), (0, [1, 2]), (0, [2, 0, 0, 0]), (0, [1, 2, 3, 4, 5]), (5, []),
-                  (6, [1]), (7, [1, 2, 3]), (7, [2, 0, 0, 0]), (2, [1])].all
+          (([(12, []), (0, [1, 2]), (0, [2, 0, 0, 0]), (0, [1, 2, 3, 4, 5]), (5, []), (6, [1]),
+                  (7, [1, 2, 3]), (7, [2, 0, 0, 0]), (2, [1])].all
               fun ((status, values) : UInt64 × List UInt64) =>
               (Editor.Ffi.FileResult.decode status none (wordBytes values) "").toOption.isNone) &&
             (Editor.Ffi.FileResult.decode 0 none ⟨#[1, 2, 3]⟩ "").toOption.isNone) }]

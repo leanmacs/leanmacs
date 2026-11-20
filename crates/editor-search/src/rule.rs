@@ -43,8 +43,9 @@ pub fn search(
     forward: bool,
     offset: usize,
 ) -> Result<Searched, Refusal> {
+    let mut compiled = CompiledPattern::new(engine, pattern)?;
     let haystack = Pieces::new(pieces);
-    let mut walk = Walk::new(engine, pattern, &haystack, word)?;
+    let mut walk = Walk::new(&mut compiled.branches, &haystack, word);
     if !haystack.is_position(offset) {
         return Err(Refusal::new(NOT_A_POSITION));
     }
@@ -78,12 +79,56 @@ pub fn matches(
     start: usize,
     stop: usize,
 ) -> Result<Vec<Range<usize>>, Refusal> {
-    let haystack = Pieces::new(pieces);
-    let mut walk = Walk::new(engine, pattern, &haystack, word)?;
-    if start > stop || !haystack.is_position(start) || !haystack.is_position(stop) {
-        return Err(Refusal::new(NOT_A_RANGE));
+    CompiledPattern::new(engine, pattern)?.matches(pieces, word, start, stop)
+}
+
+/// A pattern parsed and compiled once, to be asked of many texts: what a
+/// search of many files compiles before it reads the first, so its engine
+/// compiles each branch once a search, not once a text.
+pub struct CompiledPattern<C> {
+    /// The pattern's top-level branches, in order, each compiled.
+    branches: Vec<Branch<C>>,
+}
+
+impl<C: Compiled> CompiledPattern<C> {
+    /// `pattern` parsed, and each of its top-level branches compiled by
+    /// `engine`. Refused when the pattern does not parse, or when `engine`
+    /// refuses one of its branches.
+    pub fn new<E: Engine<Compiled = C>>(engine: &mut E, pattern: &str) -> Result<Self, Refusal> {
+        let pattern = Pattern::parse(pattern)?;
+        let branches = pattern
+            .branches()
+            .iter()
+            .map(|branch| {
+                Ok(Branch {
+                    word_start: branch.word_start(),
+                    word_end: branch.word_end(),
+                    compiled: engine.compile(branch.sequence())?,
+                })
+            })
+            .collect::<Result<_, Refusal>>()?;
+        Ok(Self { branches })
     }
-    Ok(walk.within(start, stop))
+
+    /// The matches of the pattern in the text made of `pieces` that start
+    /// at or after `start` and before `stop`, in order: what [`matches()`]
+    /// answers, with nothing compiled again.
+    ///
+    /// Refused when `start` and `stop` are not two positions of the text
+    /// in order.
+    pub fn matches(
+        &mut self,
+        pieces: &[&str],
+        word: &dyn Fn(char) -> bool,
+        start: usize,
+        stop: usize,
+    ) -> Result<Vec<Range<usize>>, Refusal> {
+        let haystack = Pieces::new(pieces);
+        if start > stop || !haystack.is_position(start) || !haystack.is_position(stop) {
+            return Err(Refusal::new(NOT_A_RANGE));
+        }
+        Ok(Walk::new(&mut self.branches, &haystack, word).within(start, stop))
+    }
 }
 
 /// A top-level branch, compiled, with the word checks the core makes.
@@ -97,41 +142,27 @@ struct Branch<C> {
 }
 
 /// The walk of a pattern's matches over one text.
-struct Walk<'h, 'a, C> {
+struct Walk<'h, 'a, 'b, C> {
     /// The text.
     haystack: &'h Pieces<'a>,
     /// The text's word class.
     word: &'h dyn Fn(char) -> bool,
-    /// The pattern's top-level branches, in order.
-    branches: Vec<Branch<C>>,
+    /// The pattern's top-level branches, in order, compiled.
+    branches: &'b mut [Branch<C>],
 }
 
-impl<'h, 'a, C: Compiled> Walk<'h, 'a, C> {
-    /// The walk of `pattern` over `haystack`, each branch compiled by
-    /// `engine`.
-    fn new<E: Engine<Compiled = C>>(
-        engine: &mut E,
-        pattern: &str,
+impl<'h, 'a, 'b, C: Compiled> Walk<'h, 'a, 'b, C> {
+    /// The walk of the compiled `branches` over `haystack`.
+    fn new(
+        branches: &'b mut [Branch<C>],
         haystack: &'h Pieces<'a>,
         word: &'h dyn Fn(char) -> bool,
-    ) -> Result<Self, Refusal> {
-        let pattern = Pattern::parse(pattern)?;
-        let branches = pattern
-            .branches()
-            .iter()
-            .map(|branch| {
-                Ok(Branch {
-                    word_start: branch.word_start(),
-                    word_end: branch.word_end(),
-                    compiled: engine.compile(branch.sequence())?,
-                })
-            })
-            .collect::<Result<_, Refusal>>()?;
-        Ok(Self {
+    ) -> Self {
+        Self {
             haystack,
             word,
             branches,
-        })
+        }
     }
 
     /// The next match of the walk from `at` whose start is at most `to`:
@@ -142,7 +173,7 @@ impl<'h, 'a, C: Compiled> Walk<'h, 'a, C> {
         let haystack = self.haystack;
         let word = self.word;
         let mut best: Option<Range<usize>> = None;
-        for branch in &mut self.branches {
+        for branch in self.branches.iter_mut() {
             // A later branch wins only by starting before the best so far.
             let limit = match &best {
                 Some(found) if found.start == at => break,
@@ -310,7 +341,7 @@ mod tests {
     use std::ops::Range;
     use std::rc::Rc;
 
-    use super::{Searched, matches, search};
+    use super::{CompiledPattern, Searched, matches, search};
     use crate::{Compiled, Engine, Literal, LiteralRun, Pieces, Refusal, Sequence};
 
     /// The text's word class, as `editor-text` states it: an ASCII letter
@@ -602,6 +633,54 @@ mod tests {
             self.1.borrow_mut().push((from, to));
             self.0.find(haystack, from, to)
         }
+    }
+
+    /// The fake, counting the sequences it compiles.
+    struct Counting(Rc<RefCell<usize>>);
+
+    impl Engine for Counting {
+        type Compiled = LiteralRun;
+
+        fn compile(&mut self, sequence: &Sequence) -> Result<LiteralRun, Refusal> {
+            *self.0.borrow_mut() += 1;
+            Literal.compile(sequence)
+        }
+    }
+
+    #[test]
+    fn a_compiled_pattern_compiles_each_branch_once_and_answers_matches_in_many_texts() {
+        let compiled = Rc::new(RefCell::new(0));
+        let mut engine = Counting(Rc::clone(&compiled));
+        let mut pattern = CompiledPattern::new(&mut engine, r"\<foo\>\|bar").expect("it compiles");
+        let mut answers = Vec::new();
+        for text in ["foo bar", "food", "x\nbar foo", ""] {
+            let pieces = cut(text, 2);
+            let found = pattern
+                .matches(&pieces, &word, 0, text.len())
+                .expect("a range");
+            answers.push(
+                found
+                    .into_iter()
+                    .map(|m| (m.start, m.end))
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        assert_eq!(*compiled.borrow(), 2, "one compile a branch");
+        assert_eq!(
+            answers,
+            [vec![(0, 3), (4, 7)], vec![], vec![(2, 5), (6, 9)], vec![]]
+        );
+        assert_eq!(
+            pattern.matches(&["ab"], &word, 2, 1).unwrap_err().reason(),
+            "the range is not two positions in order"
+        );
+        assert_eq!(
+            CompiledPattern::new(&mut Literal, r"\(")
+                .err()
+                .map(|r| r.reason().to_owned()),
+            Some(r"E54: Unmatched \(".to_owned())
+        );
     }
 
     #[test]

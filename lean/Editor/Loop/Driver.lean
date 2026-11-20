@@ -149,6 +149,9 @@ structure Loop.Driver.Parked where
   /-- Its own streaming children, out of the shared process model while it
   is held. -/
   children : Array ProcessModel.Child := #[]
+  /-- Its own searches, out of the shared search model while it is held, so
+  that another job's end does not end them. -/
+  searches : Array GrepModel.Search := #[]
   /-- The rest of the job, given the reply to its `next`. -/
   resume :
     Except FileWatchError (Array FileWatch.Change) → Program jobPort (Except String (EditorM Unit))
@@ -170,6 +173,8 @@ structure Loop.Driver.Posting where
   /-- Its own streaming children, out of the shared process model while it
   is held, so that another job's end does not end them. -/
   children : Array ProcessModel.Child := #[]
+  /-- Its own searches, out of the shared search model while it is held. -/
+  searches : Array GrepModel.Search := #[]
   /-- The rest of the job. -/
   resume : Unit → Program jobPort (Except String (EditorM Unit))
 
@@ -253,28 +258,30 @@ def handing (driver : Loop.Driver scheme) (arrived : Array (JobSnapshotId × Tex
   { driver with model := { driver.model with texts := { driver.model.texts with arrived } } }
 
 /-- The driver once the job `id`, called `name`, has run `program` on the
-job model from where the driver's is, seeing only its own watches and its
-own streaming children: kept as not delivered when it ended, as parked when
+job model from where the driver's is, seeing only its own watches, its own
+streaming children and its own searches: kept as not delivered when it ended, as parked when
 it waits at a watch with nothing recorded, and as posting when it posted.
 What its environments said is said in the echo area, in order, as the host
 says it (`Running.said`). The watches' and the children's ids come from the
 shared counters. -/
 def ranOn (driver : Loop.Driver scheme) (id : Nat) (name : String) (key : Option String)
     (program : Program jobPort (Except String (EditorM Unit)))
-    (own : Array FileWatchModel.Watch := #[]) (children : Array ProcessModel.Child := #[]) :
-    Loop.Driver scheme :=
+    (own : Array FileWatchModel.Watch := #[]) (children : Array ProcessModel.Child := #[])
+    (searches : Array GrepModel.Search := #[]) : Loop.Driver scheme :=
   let files := { driver.jobs.files with snapshots := driver.model.texts.snapshots }
   let shared := driver.jobs.fileWatches
   let sharedChildren := driver.jobs.processes.children
   let start :=
     { driver.jobs with
       files, fileWatches := { shared with watches := own }
-      processes := { driver.jobs.processes with children } }
+      processes := { driver.jobs.processes with children }
+      greps := { driver.jobs.greps with searches } }
   -- A job held at a watch or a post takes its children out with it.
   let apart (jobs : JobModel) : JobModel :=
     { jobs with
       fileWatches := { jobs.fileWatches with watches := #[] }
-      processes := { jobs.processes with children := sharedChildren } }
+      processes := { jobs.processes with children := sharedChildren }
+      greps := { jobs.greps with searches := #[] } }
   let saidBy (jobs : JobModel) : Loop scheme :=
     let said := jobs.reported.extract driver.jobs.reported.size jobs.reported.size
     said.foldl (fun loop text => { loop with state := { loop.state with echo := text } })
@@ -302,7 +309,7 @@ def ranOn (driver : Loop.Driver scheme) (id : Nat) (name : String) (key : Option
       parked :=
         driver.parked.push
           { id, name, key, watch, watches := jobs.fileWatches.watches
-            children := jobs.processes.children, resume } }
+            children := jobs.processes.children, searches := jobs.greps.searches, resume } }
   | .posted invocation jobs resume =>
     { driver with
       loop := saidBy jobs
@@ -310,11 +317,11 @@ def ranOn (driver : Loop.Driver scheme) (id : Nat) (name : String) (key : Option
       posting :=
         driver.posting.push
           { id, name, key, invocation, watches := jobs.fileWatches.watches
-            children := jobs.processes.children, resume } }
+            children := jobs.processes.children, searches := jobs.greps.searches, resume } }
 
 /-- Ends the job of `key`, parked, posting or finished and not delivered: its
 command never runs, nor do the posts it has not made, a held job's watches
-are recorded as ended, and each of its streaming children still running as
+and searches are recorded as ended, and each of its streaming children still running as
 killed (`ProcessModel.killed`), as the runner's cancel kills it. Nothing for
 a key no such job has. -/
 def cancel (driver : Loop.Driver scheme) (key : String) : Loop.Driver scheme :=
@@ -336,7 +343,12 @@ def cancel (driver : Loop.Driver scheme) (key : String) : Loop.Driver scheme :=
                 posting.flatMap (·.watches.map (·.id)) }
         processes :=
           { processes with
-            killed := processes.killed ++ (children.filter (!·.done)).map (·.script.command) } } }
+            killed := processes.killed ++ (children.filter (!·.done)).map (·.script.command) }
+        greps :=
+          { driver.jobs.greps with
+            ended :=
+              driver.jobs.greps.ended ++ ending.flatMap (·.searches.map (·.id)) ++
+                posting.flatMap (·.searches.map (·.id)) } } }
 
 /-- How many watches the parked jobs hold open. -/
 def openWatches (driver : Loop.Driver scheme) : Nat :=
@@ -361,7 +373,8 @@ def touch (driver : Loop.Driver scheme) (changes : Array (System.FilePath × Fil
       else
         let (reply, answered, now) := watches.handle driver.jobs.now none (.next ⟨job.watch⟩)
         let driver := { driver with jobs := { driver.jobs with now } }
-        driver.ranOn job.id job.name job.key (job.resume reply) answered.watches job.children)
+        driver.ranOn job.id job.name job.key (job.resume reply) answered.watches job.children
+          job.searches)
     driver
 
 /-- The driver once each of `starts` is started: the job registered under
@@ -509,7 +522,7 @@ def posted (driver : Loop.Driver scheme) (id : Nat) :
     -- of its key reaches it.
     if driver.posting.any (·.id == id) then
       (({ driver with posting := driver.posting.filter (·.id != id) } : Loop.Driver scheme).ranOn
-          job.id job.name job.key (job.resume ()) job.watches job.children,
+          job.id job.name job.key (job.resume ()) job.watches job.children job.searches,
         stepped.toOption)
     else (driver, stepped.toOption)
 

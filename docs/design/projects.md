@@ -390,12 +390,24 @@ list matched against it. Built by project navigation's phase 4
 |---|---|---|
 | What belongs to one checkout | The workspace's store, keyed by location (for a local workspace, its root) | Buffers, shell output, the compilation buffer, its last line, its run in flight and the on-modes it started with, its error list and current location (`compile`), the commands each mode's listing gave at its root, such as mise's tasks (`compile-listings`), running jobs |
 | What belongs to the codebase whichever checkout is open | The project's store, keyed by identity | Command history (`:!` lines, `shell-history`; compile lines, `compile-history`) |
+| What a workspace keeps across a restart | A file under the editor's state directory, one directory a workspace: `<state>/workspaces/<key>/`, the key the workspace's root, absolute, with `%` written `%25` and `/` written `%2F` (`WorkingSet.key`), so one directory per root, reversible, and computable by an agent | Its working sets, `working-sets.json` (navigation-and-windows phase 5) |
 | What belongs to the buffers outside any workspace, which have no project either | The unscoped store, one for the editor (`Workspace.Table.unscoped`) | The `:!` history and the `*shell output*` buffer of such buffers; their compile history (`compile-history`), each directory scope's compile record by directory (`compile-directories`), and their modes' listings by mode and root (`compile-listings`) |
 
 The stores are `Value` trees by name, as a buffer's locals are, so a
 reload leaves them; they live as long as the session. The unscoped store
 is read with `Workspace.Table.getUnscoped` and written with
 `Workspace.setUnscoped`, and is never refused: it is always there.
+
+A workspace is identified by its one root, so a key per root is per
+workspace: the main checkout and each linked worktree keep their own
+working sets. Nothing is kept in the checkout or the git directory: a file
+there would show in `git status`, the version-control interface is meant to
+be neutral, and a workspace that is no repository would have nowhere to
+keep it. While the editor runs, a workspace's working sets are its store
+`working-sets` like any other; only jobs read and write the file, lazily
+and through the job port's file request ([lean-runtime.md](lean-runtime.md),
+"Where state lives"). A removed worktree's directory stays under
+`workspaces/`; clean-up is not built.
 
 What config gives a project, such as its commands and settings for a mode
 (`projectCommands`), is not kept in any store: it is read by the project's
@@ -437,7 +449,19 @@ open when the table has it: found or registered this session.
 ## Who uses it
 
 - `navigation-and-windows` phase 3 (the project and file picker): the
-  workspace root.
+  workspace root. It was not built as a phase of its own: the workspace
+  finder, `find-file-in-workspace`, is it.
+- `navigation-and-windows` phase 4 (built): `project-search` searches what
+  `find-file-in-workspace` would list, by the same rule
+  (`Workspace.FindFile.searched`): the location's workspace, or the
+  buffer's, or the directory a command run for the buffer would use; a
+  location that cannot read files and run commands is refused. It does not
+  list through the workspace's lister: the library's grep service walks the
+  root with ripgrep's `ignore`, which reimplements git's rules where the
+  lister asks git (`git ls-files`). They differ at the edges: a file
+  force-added though an ignore file names it is listed by the finder and
+  left out of a search, and a `.gitignore` is honoured outside a repository
+  too ([rust-library.md](rust-library.md), "Project search, as built").
 - `version-control`: worktree lifecycle makes workspaces; a jj adapter is a
   new step of the finder (a step of `Workspace.find`, a clause of
   `World.find` and a contract property). Phase 1 (built): the status

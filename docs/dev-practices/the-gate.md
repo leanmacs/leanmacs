@@ -158,13 +158,15 @@ fixed seed and write no file. What a motion and a read of one row or a
 range allocate on a megabyte of text is counted there too, in bytes
 (`crates/editor-text/tests/snapshot_cost.rs`).
 
-Loading and saving a file are tested there too, and make no real file: the
+Loading and saving a file, listing a directory and making one are tested
+there too, and make no real file: the
 logic (`crates/editor-text/src/file.rs`) reaches a file system only through
 a port the crate defines, and its tests run on the port's published fake,
 which `mise run lint` holds them to (`crates/editor-text/clippy.toml`). The
 port's real adapter, over `std::fs`, is a crate of its own
 (`crates/editor-fs-std`) whose tests hold it to the port's contract in a
-temporary directory they make and remove. One test runs the logic over the
+temporary directory they make and remove: a directory made with its
+parents, made again, and refused where a file is, among its rules. One test runs the logic over the
 real adapter, the file service's wiring test
 (`crates/editor-ffi/tests/files.rs`), also in a temporary directory of its
 own.
@@ -205,7 +207,22 @@ two cases: a pattern whose characters are in a candidate in order but
 apart matches it, and one with a character the candidate lacks does not.
 No test pins a score. One test runs the rule over the real adapter
 through the C function, for the wiring alone
-(`crates/editor-ffi/tests/fuzzy.rs`). `mise run deny` holds that only the
+(`crates/editor-ffi/tests/fuzzy.rs`). Locating a pattern with errors
+allowed, the crate's second rule (`src/locate.rs`), reaches a library only
+through the `Searcher` port: which span is answered (fewest errors, then
+nearest, earliest, longest, and never one that cuts a character) is tested
+on the published fake, `Scan`, and on searchers that answer canned spans;
+the port's contract, `contract::check_searcher`, against an exhaustive
+oracle, is tested on `Scan` and on searchers written to break each of its
+properties. The crate's `clippy.toml` refuses the clocks, every file of
+the disk and both adapters' constructors in all of it. The searcher's real
+adapter, over `triple_accel` (`crates/editor-fuzzy-triple-accel`), is held
+to that contract, which sweeps generated texts from a fixed seed, and to
+its own two cases: one substitution is found with one error, and a
+pattern with no span near enough reports none. `mise run deny` holds that
+only that adapter depends on the library, and only `editor-ffi` on the
+adapter, whose C function that locates a pattern has one wiring test
+beside the ranking's. `mise run deny` holds that only the
 adapter depends on the library. It checks no licence: the library's is
 MPL-2.0, and whether that is acceptable in this workspace is the owner's
 to confirm.
@@ -307,6 +324,63 @@ the real completion queue, and `crates/editor-ffi/tests/watches_shutdown.rs`,
 a test binary of its own, shuts the process-wide service down.
 `mise run deny` holds that only the adapter depends on `notify`, and that
 only `editor-ffi` depends on the adapter.
+
+Project search is tested there too. The port of the files under a root
+(`crates/editor-grep`) is tested on its published fake, a tree in memory,
+which `mise run lint` holds the crate's tests to
+(`crates/editor-grep/clippy.toml`: no `std::fs`, no `Path` method that
+asks the disk, no clock of the machine's, and not the adapter's
+constructor). The port's contract is tested there on the fake and on
+implementations written to break each rule. The rule of which matches a
+search answers is tested on the fake and the search engine's fake: walk
+order, offsets, open buffers' texts in place of their files, the word
+class, the limits, stopping, and that the pattern is compiled once a
+branch a search, on an engine that counts what it compiles. The service
+that owns each search is tested on the fake behind a gate the test holds
+in front of every read: a delivery's bound and a file cut across
+deliveries, the end delivered last, a search held back while its reader
+takes nothing, cancelling mid-file and before the start is answered, an
+id in use, and shutdown. Nothing sleeps; every wait is bounded. The
+port's real adapter, over ripgrep's `ignore` and `grep-searcher`
+(`crates/editor-grep-ripgrep`), is held to the same contract on real files
+in a temporary directory its test makes and removes, and to its own cases
+there: every match under a root with a `.gitignore` at the root and below
+it, a `.ignore`, `.git/info/exclude`, hidden files, a binary file, CRLF
+rows and a row that is not UTF-8, against a naive scan of the files no
+ignore rule leaves out; the walk's order by name; `holds` asked once a row
+across the reader's blocks; and a NUL past the first block. `mise run
+deny` holds that only the adapter depends on the libraries, and that only
+`editor-ffi` depends on the adapter. `editor-ffi`'s grep service
+(`src/grep.rs`) is tested on the fake: how a start's words and strings
+cross, which are refused, how a delivery and each refusal cross, and a
+start read from words run on a service over the fake; and `mise run lint`
+refuses the adapter's constructor anywhere in that crate but the process's
+one service (`crates/editor-ffi/clippy.toml`). `ffi-test`'s grep checks
+(`FfiTest.grepChecks`) start a search through the C functions in a
+temporary directory, with an open buffer's snapshot in place of a file and
+an ignored file left out, read its deliveries from the real completion
+queue, and check a refused pattern's sentence, cancelling, and the
+decoding of a reply. On the Lean side the job port's search properties
+(`JobContract.grepProperties`) run against the pure model of project
+search and the runner over its fake in `model-test`, and against the
+library's grep service on real files in `contract-test`, beside its
+`grepChecks`; `project-search` itself is pinned on the loop's driver over
+the models (`ModelTest.projectSearchRunChecks`) and over the real bindings
+in a temporary directory (`ContractTest.projectSearchChecks`).
+
+Working sets are pinned the same way. Their decisions are Lean's and run
+in `model-test`: the stored form and its JSON (`ModelTest.workingSetChecks`),
+the re-find ladder against the fuzzy model
+(`ModelTest.workingSetRefindChecks`), and, on the loop's driver over the
+models, where ranges are held (`workingSetPlaceChecks`), the commands
+(`workingSetRunChecks`, the phase's first acceptance criterion) and the
+store under a state directory of the file model's, through a restart
+(`workingSetDiskChecks`, the second). `contract-test` runs both criteria
+once over the real bindings (`ContractTest.workingSetChecks`): the library's
+file service, text store and fuzzy matcher and real git, in a repository and
+a state directory of its own, both temporary, with the file rewritten by
+`IO.FS.writeFile` between two hosts. No check reads `$HOME` or
+`$XDG_STATE_HOME`: every state directory is handed in.
 
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:
@@ -614,11 +688,15 @@ checks:
   The fuzzy matching interface's contract
   (`lean/Editor/Fuzzy/Contract.lean`) runs on its model here
   (`fuzzyFailures`), and `contract-test` runs it on its real binding:
-  which candidates a pattern matches, and that a candidate that is the
-  pattern is first. `fuzzyChecks` are what only the model shows, its
-  order after the exact matches, and the contract seen to report a
-  matcher that ignores case and one that does not put an exact match
-  first. **The model and the binding are not held to agree on the order
+  which candidates a pattern matches, that a candidate that is the
+  pattern is first, and where a pattern is located with errors allowed
+  (within the errors, on character boundaries, the fewest errors in ASCII
+  text against the contract's own oracle, and the pattern where it is
+  expected answered there). `fuzzyChecks` are what only the model shows,
+  its order after the exact matches and its order among located spans of
+  the fewest errors, and the contract seen to report a matcher that
+  ignores case, one that does not put an exact match first, and locators
+  that answer nothing or a span with more errors than the fewest. **The model and the binding are not held to agree on the order
   past the exact matches**, so every check above the port computes what
   it expects with the model. The completion sources' contract
   (`lean/Editor/Completion/Contract.lean`), that a source reads and does
@@ -1179,10 +1257,11 @@ contract against the clipboard a host with no window keeps
 against the library with no clipboard handed in is answered
 `unavailable`, and that one handed a clipboard reaches it. It runs the
 fuzzy matching interface's contract against its real binding
-(`lean/Editor/Fuzzy/Real.lean`), so against the library's matcher, and
-checks that a command run against the library that asks for a ranking is
-answered by it. `ffi-test`'s own `fuzzyChecks` pin that a pattern, a list
-of strings and the ranking cross the boundary. It runs the syntax tree
+(`lean/Editor/Fuzzy/Real.lean`), so against the library's matcher and
+searcher, and checks that a command run against the library that asks for
+a ranking, or where a pattern is located, is answered by it. `ffi-test`'s own `fuzzyChecks` pin that a pattern, a list
+of strings and the ranking cross the boundary, and that a pattern, a text
+and the span it is located at cross. It runs the syntax tree
 interface's contract against its real binding
 (`lean/Editor/SyntaxTree/Real.lean`), over the library's syntax service,
 waiting with a bound for each snapshot's tree before a question of its

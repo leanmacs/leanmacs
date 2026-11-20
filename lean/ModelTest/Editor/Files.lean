@@ -391,6 +391,23 @@ def fileCommandChecks : List Check :=
             ((Files.loadWork Files.limit [.nat 1] ()).runModel { files := commandFiles }).1 matches
               .failed _ },
     { name :=
+        "a visit's load order crosses as arguments and back with its point's first non-blank and whether it records a jump, and they default to the column and recording"
+      run :=
+        pure <|
+          let point : Files.At := { row := 2, column := 3 }
+          let defaults : Files.LoadOrder := { path := "/a", view := ⟨1⟩, point := some point }
+          let set : Files.LoadOrder :=
+            { defaults with
+              point := some { point with firstNonBlank := true }, focus := true, record := false
+              next := ["/b"] }
+          point.firstNonBlank == false && defaults.record == true &&
+            defaults.arguments ==
+              [.str "/a", .nat 1, .nat 2, .nat 3, .bool false, .bool false, .bool true] &&
+            Files.LoadOrder.ofArguments? defaults.arguments == some defaults &&
+            set.arguments ==
+              [.str "/a", .nat 1, .nat 2, .nat 3, .bool true, .bool true, .bool false, .str "/b"] &&
+            Files.LoadOrder.ofArguments? set.arguments == some set },
+    { name :=
         "a load order with paths to open next crosses as arguments and back, and one with none crosses as before"
       run :=
         pure <|
@@ -1210,8 +1227,10 @@ def fileCommandChecks : List Check :=
                   Files.offsetAt text point).runModel
               {}).1.toOption
         pure
-          (offset ⟨1, 2⟩ == some 7 && offset ⟨1, 9⟩ == some 9 && offset ⟨7, 0⟩ == some 3 &&
-            offset ⟨0, 1⟩ == some 1) },
+          (offset { row := 1, column := 2 } == some 7 &&
+            offset { row := 1, column := 9 } == some 9 &&
+            offset { row := 7, column := 0 } == some 3 &&
+            offset { row := 0, column := 1 } == some 1) },
     { name :=
         "a visit of a path no buffer holds loads it, and once the load is delivered the view shows it with one cursor at the row and the character column, and is focused"
       run :=
@@ -1225,7 +1244,8 @@ def fileCommandChecks : List Check :=
                 #[{ name := Files.loadJob
                     arguments :=
                       Files.LoadOrder.arguments
-                        { path := inFiles "note.txt", view := ⟨0⟩, point := some ⟨0, 2⟩
+                        { path := inFiles "note.txt", view := ⟨0⟩,
+                          point := some { row := 0, column := 2 }
                           focus := true } }] &&
               asked.loop.state.frame.focused == ⟨1⟩ &&
               (showing visited).map (·.buffer.name) == some "note.txt" &&
@@ -1264,7 +1284,7 @@ def fileCommandChecks : List Check :=
         let order : Files.LoadOrder := { path := "/a", view := ⟨2⟩, next := ["/b"] }
         let pointed : Files.LoadOrder :=
           { order with
-            point := some ⟨3, 4⟩, focus := true }
+            point := some { row := 3, column := 4 }, focus := true }
         pure
           (Files.LoadOrder.ofArguments? order.arguments == some order &&
             Files.LoadOrder.ofArguments? pointed.arguments == some pointed &&

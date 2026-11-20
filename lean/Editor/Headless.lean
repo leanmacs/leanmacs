@@ -190,7 +190,11 @@ as before, so reload and job completion work as they did.
     a theme and the themes that ship (`themes`); the command prompt and
     the binding search (`execute-command`, `binding-search`); the
     workspace commands and the job a file's open starts to find its
-    workspace (`workspace`); the status buffer's commands, jobs and modes,
+    workspace (`workspace`); project search's commands, its results
+    buffer's mode and its jobs (`project-search`); the working sets'
+    commands, a set's buffer's mode and the jobs that read and write a
+    workspace's sets under the state directory (`working-set`); the status
+    buffer's commands, jobs and modes,
     and the gutter's (`version-control`, `version-control-gutter`); and
     the `code` mode with the languages that ship (`languages`). The ex
     line is handed no key binding: the Vim scheme's keys are its states'
@@ -885,6 +889,13 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   hands here); the headless mode reads nothing from the
   environment, so its is none, and a `~` there says the home is not known. -/
   home : Option System.FilePath := none
+  /-- The state directory, which `start` writes into the editor state
+  (`EditorState.stateDirectory`): where what is kept across a restart
+  lives. The window mode's is `--state`, or its default under
+  `XDG_STATE_HOME` or `HOME` (`Window.Options.stateDirectory`); the
+  headless mode reads nothing from the environment and its command line
+  names none, so its is none and it keeps nothing across a restart. -/
+  stateDirectory : Option System.FilePath := none
   /-- How the host makes its display, over the read half of the table of
   snapshots the text binding publishes (`published`). The headless mode's
   is a recorder in `cells`; a host that draws is handed the real binding. -/
@@ -2021,21 +2032,27 @@ structure Host where
   /-- The loop. -/
   thread : Task (Except IO.Error Unit)
 
+/-- The collaborators whose `start` makes the loop with their working
+directory, home directory and state directory in its first state
+(`EditorState.hostedBy`). -/
+def Collaborators.hosting {β σ : Type} {scheme : InputScheme}
+    (collaborators : Collaborators β σ scheme) : Collaborators β σ scheme :=
+  let made := collaborators.start
+  { collaborators with
+    start := do
+      let loop ← made
+      return { loop with
+          state :=
+            loop.state.hostedBy collaborators.workingDirectory collaborators.home
+              collaborators.stateDirectory } }
+
 /-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`.
 The loop it makes, when it is first needed, has the collaborators' working
-directory and home directory in its state (`Collaborators.workingDirectory`,
-`Collaborators.home`). -/
+directory, home directory and state directory in its state
+(`Collaborators.hosting`). -/
 def start {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme) :
     IO Host := do
-  let made := collaborators.start
-  let collaborators :=
-    { collaborators with
-      start := do
-        let loop ← made
-        return { loop with
-            state :=
-              { loop.state with
-                workingDirectory := collaborators.workingDirectory, home := collaborators.home } } }
+  let collaborators := collaborators.hosting
   let progress ← IO.mkRef {}
   let thread ← IO.asTask (prio := .dedicated) (loop collaborators progress)
   return { requests := collaborators.requests, posted := ← IO.mkRef 0, progress, thread }
@@ -2591,17 +2608,18 @@ It is apart from `shipped`, which makes what it is over, so that the
 collaborators can be made with no pump started. -/
 def shippedOver (packages : Array Package) (base : Array Lean.Name) (sysroot : String)
     (oleans : List String) (configDir : String) (emit : String → IO Unit) (services : Job.Services)
-    (published : Snapshots) (held : Job.HeldSnapshots) (files : Config.Elaborate.ModuleFiles) :
+    (published : Snapshots) (held : Job.HeldSnapshots) (files : Config.Elaborate.ModuleFiles)
+    (stateDirectory : Option System.FilePath := none) :
     Collaborators Config.Elaborate.Base Config.Elaborate.Handle Vim.Default.scheme :=
-  {
-    elaborator :=
+  { elaborator :=
       Config.Elaborate.elaborator
         { sysroot, oleanDirs := oleans.map System.FilePath.mk, imports := base } files,
     source := Config.Directory.source configDir,
     package :=
       { read := Config.Directory.read configDir, requires := Config.Lakefile.Toml.requires },
     emit, services, published, held, requests := 1, wakeups := 2, jobs := 3, environment := 4,
-    posts := 5, pauseEvents := 6, packages, log := IO.eprintln, dispose := files.remove }
+    posts := 5, pauseEvents := 6, packages, stateDirectory, log := IO.eprintln
+    dispose := files.remove }
 
 /-- The environments every job of a host shares, over `state`
 (`Job.sharedEnvironments`), which report what they have to say by posting it
@@ -2625,7 +2643,7 @@ made, and starts the completion pump on a dedicated task, which quitting the
 queues ends. -/
 def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : String)
     (oleans : List String) (configDir : String) (emit : String → IO Unit) (host : Process.Host)
-    (fakeClock : Bool := false) :
+    (fakeClock : Bool := false) (stateDirectory : Option System.FilePath := none) :
     IO (Collaborators Config.Elaborate.Base Config.Elaborate.Handle Vim.Default.scheme) := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
@@ -2638,6 +2656,7 @@ def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : Strin
   let timed ← Job.TimedRuns.new
   let watches ← Job.RealWatches.new
   let refusedDiffs ← Job.RefusedDiffs.new
+  let greps ← Job.RealGreps.new
   -- The headless mode's clock is fake: a script moves it (`advance`).
   let clock ←
     if fakeClock then
@@ -2656,8 +2675,9 @@ def shipped (packages : Array Package) (base : Array Lean.Name) (sysroot : Strin
         processes := Job.realProcesses completions refused timers timed
         fileWatches := Job.realFileWatches completions watches
         diffs := Job.realDiffs completions published.reader held refusedDiffs
+        greps := Job.realGreps completions published.reader held greps
         environments := reportedEnvironments environments 4, fuzzy := Fuzzy.real
-        snapshots := Job.realSnapshots published.reader } published held files
+        snapshots := Job.realSnapshots published.reader } published held files stateDirectory
   return { collaborators with clock }
 
 /-- What generates the lakefile and the toolchain file of the config
@@ -2791,8 +2811,9 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   -- Every child the library started is killed and reaped before the queues
   -- are quit: `run` has returned, so the loop has cancelled every job.
   Ffi.processesShutdown
-  -- And every watch is ended.
+  -- And every watch is ended, and every search.
   Ffi.watchesShutdown
+  Ffi.grepShutdown
   -- Shutdown: quit lets every task parked in a pull return, the pump among
   -- them, and the exit is explicit, because a task may still be blocked in
   -- the library.

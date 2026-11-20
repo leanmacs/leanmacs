@@ -1,7 +1,8 @@
+import Editor.Ffi.Text
 import Editor.Ffi.Words
 
 /-!
-# Bindings: fuzzy ranking
+# Bindings: fuzzy ranking and locating
 
 The bindings of `crates/editor-ffi/src/fuzzy.rs`. The conventions they
 follow, and the tests that pin each, are in the module docs of
@@ -52,5 +53,29 @@ def fuzzyRank (pattern : String) (candidates : Array String) : IO (Array Nat) :=
     return ranking
   | none =>
     throw (IO.userError "the library's words do not spell a fuzzy ranking")
+
+/-- `fuzzyLocate` as it crosses: the pattern and the text borrowed, the
+offset and the limit as scalars, and the span as an option the glue builds,
+as `find`'s. -/
+@[extern "editor_glue_fuzzy_locate"]
+private opaque fuzzyLocateRaw (pattern text : @& String) (near : USize) (maxErrors : UInt32) :
+    IO (Option ByteRange)
+
+/-- The byte span of `text` that `pattern` is located at, expected at the
+byte offset `near` and within `maxErrors` byte edits: the library's
+locating rule (`crates/editor-fuzzy`, `locate`, over `triple_accel`). Of the
+spans with the fewest errors, the one whose start is nearest `near`; none
+for the empty pattern, when no span is within the errors, or when the best
+spans the library reports cut a character.
+
+An offset or a limit too large for the call's scalars is sent as the
+largest one holds, which only widens what is allowed, never cuts it down.
+The call keeps nothing in the library. -/
+def fuzzyLocate (pattern text : String) (near maxErrors : Nat) : IO (Option (Nat × Nat)) := do
+  let near := if near < USize.size then near.toUSize else USize.ofNat (USize.size - 1)
+  let maxErrors :=
+    if maxErrors < UInt32.size then maxErrors.toUInt32 else UInt32.ofNat (UInt32.size - 1)
+  return (← fuzzyLocateRaw pattern text near maxErrors).map fun range =>
+      (range.start.toNat, range.stop.toNat)
 
 end Editor.Ffi

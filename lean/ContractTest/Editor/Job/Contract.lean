@@ -3,6 +3,7 @@ import Editor.Command
 import Editor.Ffi.Diffs
 import Editor.Ffi.Document
 import Editor.Ffi.Files
+import Editor.Ffi.Grep
 import Editor.Ffi.Processes
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Watches
@@ -111,11 +112,12 @@ the runner over the library's file and diff services, on real files.
 before, `held` still holds one, or the file service or the diff service has a
 request or a result left. -/
 def fileFailures (services : Job.Services) (held : Job.HeldSnapshots) : IO (List String) := do
-  let pending : IO UInt64 := return (← Ffi.filesPending) + (← Ffi.diffsPending)
+  let pending : IO UInt64 :=
+    return (← Ffi.filesPending) + (← Ffi.diffsPending) + (← Ffi.grepPending)
   let before := (← Ffi.Snapshot.live, ← pending)
   let failed ←
     JobContract.fileFailures (runFilesOnService services)
-        (JobContract.fileProperties ++ JobContract.diffProperties)
+        (JobContract.fileProperties ++ JobContract.diffProperties ++ JobContract.grepProperties)
   let freed ←
     eventually do
         return (← Ffi.Snapshot.live, ← pending) == before && (← held.size) == 0

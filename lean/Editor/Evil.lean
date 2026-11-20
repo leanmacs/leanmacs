@@ -1,6 +1,7 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Indent
+import Editor.Jumps.Go
 import Editor.Vocabulary
 
 /-!
@@ -27,6 +28,8 @@ registers is moved in by the same commands.
 | `Editor/Evil/Operators.lean` | The operators, as vocabulary entries, their table (`Evil.operators`), and the operate command |
 | `Editor/Evil/Registers.lean` | The registers a yank and a deletion set |
 | `Editor/Evil/Scroll.lean` | The commands that scroll a view, over the scroll policy of `Editor/Scroll.lean` |
+| `Editor/Evil/Jumps.lean` | `C-o` and `C-i`, steps through the window's jump list (`Editor/Jumps.lean`) |
+| `Editor/Evil/Marks.lean` | Marks: `m`, which sets one, and the motions `` ` `` and `'`, which go to one |
 | `Editor/Evil/Compiled.lean` | The commands' registrations, under the names the Vim scheme's invocations carry |
 
 ## The move command
@@ -415,9 +418,17 @@ rule of the call's report, and the selection is one range of the report's
 shape, from the anchor it had where the report says a motion extends the
 selection, and with both ends on the new head otherwise. The wanted column
 it hands the motion is the one the window keeps when this is called, read
-from the editor state. A call that names no motion (`noMotionNamed`) and a
-name with no motion (`noSuchMotion`) are each said in the echo area, and
-nothing moves. -/
+from the editor state. A motion that is a jump (`Vocabulary.Motion.jumps`)
+and did not fail records the place the cursor starts from in the window's
+jump list first (`Jumps.record`), and gives the window back the
+previous-context mark it had when the cursor ends on that place
+(`Jumps.checkPrevious`). A motion that leads out of its text
+(`Vocabulary.To.elsewhere`) is gone to as a jump (`Jumps.goTo`), which shows
+the other buffer or visits the file, and the cursor rests where it lands.
+The motion is told the call's window and its buffer (`Vocabulary.From.view`,
+`From.buffer`). A call that names no motion
+(`noMotionNamed`) and a name with no motion (`noSuchMotion`) are each said
+in the echo area, and nothing moves. -/
 def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   let counted (rest : List Argument) : Option Nat :=
     match rest with
@@ -440,10 +451,31 @@ def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   let kept := ((← editorState).window? view).bind (·.wanted)
   -- The kept column holds only while the cursor is where it was kept.
   let wanted := (kept.filter (·.head == range.head)).map (·.column)
-  let raw ← motion.target text { head := range.head, count, wanted, argument }
+  let raw ←
+    motion.target text
+        { head := range.head, view, buffer := call.target.window.buffer, count, wanted, argument }
+  if let some elsewhere := raw.elsewhere then
+    -- Out of this text: a jump to another buffer or a file, recorded once.
+    Jumps.goTo view elsewhere.place elsewhere.line
+    discard <| view.setWanted none
+    if let .ok target← view.target then
+      let selection ← target.selection
+      if let some range := selection.ranges[selection.primary]? then
+        settle { call with target } range.head
+    if let some said := raw.said then
+      message said
+    return
+  -- A jump records where the cursor starts from, before it moves, and
+  -- gives the previous-context mark back when it did not move.
+  let jumped := motion.jumps && !raw.failed
+  let previous ← Jumps.previousOf view
+  if jumped then
+    Jumps.record view
   let head ← rested (restOf call.report) text raw.head
   let anchor := if call.report.selecting then range.anchor else head
   call.target.select { ranges := #[⟨anchor, head⟩], shape := call.report.shape }
+  if jumped then
+    Jumps.checkPrevious view previous
   let keeps := if head == range.head then raw.unmoved else raw.wanted
   discard <| view.setWanted (keeps.map fun column => { column, head })
   if let some find := raw.find then

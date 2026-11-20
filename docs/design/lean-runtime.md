@@ -1229,11 +1229,12 @@ def package : Package :=
   (`EditorCore.EditorPackage.packages`), which is no module of the editor:
   it is outside `lean/Editor/` and the namespace `Editor`, in a library of
   its own (`lean_lib EditorCore`). It
-  lists 20 packages, each
+  lists 22 packages, each
   defined in its feature's `Compiled.lean`: `completion`, `mode-line`,
   `files`, `minibuffer`, `evil`, `ex`, `buffers`, `frame-commands`, `menu`,
   `window-commands`, `tab-commands`, `themes`,
-  `execute-command`, `binding-search`, `workspace`, `shell`,
+  `execute-command`, `binding-search`, `workspace`, `project-search`,
+  `working-set`, `shell`,
   `at-point`, `version-control`, `version-control-gutter` and `languages`,
   in that order, which keeps each kind of entry where the hosts registered
   it before there were packages. `themes` keeps
@@ -1242,7 +1243,7 @@ def package : Package :=
   `fairy-floss`, are the package `shipped-themes`, which is no package of
   the core's Lake package: it is a Lake package of its own, a default
   package (`packages/shipped-themes/`; [packages.md](packages.md), "The
-  first default package"), and registers after the core's 20, so the theme
+  first default package"), and registers after the core's 22, so the theme
   names read `default`, then the three. The compile mode is the package
   `compile`, the second default package (`packages/compile/`;
   [packages.md](packages.md), "The default package `compile`"): it was
@@ -2055,7 +2056,7 @@ text requests. Config sees it through
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change, and the text typed in the insert session that change began) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
 | The registers: a text and whether it is line-wise, by name. Evil keeps the unnamed one, which every yank and deletion sets | Compiled Lean, a field of the editor state (`EditorState.Remembered.registers`, `lean/Editor/State.lean`), set by a command (`setRegister`), so it is rolled back with a command that does not run to its end | Untouched | Lost |
 | The system clipboard | Outside the editor: reached through the clipboard port. A host with no window keeps one of its own in the process (`lean/Editor/Clipboard/InProcess.lean`) | Untouched | The window system's is the system's; the in-process one is lost |
-| Packages' commands, jobs, key bindings, modes, ex bindings and themes | Compiled Lean, in the registry, each for the owner named after its package ("Packages", under "Config and reload"). The executable ships the command `load-theme` and the theme `default` (`lean/Editor/Themes/Compiled.lean`), the command prompt `execute-command` with its source `commands` (`lean/Editor/ExecuteCommand/Compiled.lean`), the binding search `search-bindings` with its source `bindings` (`lean/Editor/BindingSearch/Compiled.lean`), the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `w!`, `e`, `e!`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file`, `save-buffer`, `edit-file` and `reload-buffer`, and their jobs, `load-file`, `save-file` and `reload-file`, with the file prompt's source `files`, its job `files` and the style `path` as the category `file`'s compiled default (`lean/Editor/Files/Compiled.lean`, `lean/Editor/Completion/Paths.lean`), the minibuffer's commands, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward` and `minibuffer-delete-to-start`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's thirty-seven commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `select-object`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators, text objects and changes, and the seven that scroll a view, `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`, `scroll-line-to-top`, `scroll-line-to-center` and `scroll-line-to-bottom`, the seven editing keys of insert state, `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up` and `insert-down`, and the four of the Edit menu, `clipboard-cut`, `clipboard-copy`, `clipboard-paste` and `select-all` (`lean/Editor/Evil/Clipboard.lean`) (`lean/Editor/Evil/Compiled.lean`), and `workspace-current` with the job `find-workspace`, and `find-file-in-workspace` with its source `workspace-files`, of the category `workspace-file`, and its job `workspace-files` (`lean/Editor/Workspace/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
+| Packages' commands, jobs, key bindings, modes, ex bindings and themes | Compiled Lean, in the registry, each for the owner named after its package ("Packages", under "Config and reload"). The executable ships the command `load-theme` and the theme `default` (`lean/Editor/Themes/Compiled.lean`), the command prompt `execute-command` with its source `commands` (`lean/Editor/ExecuteCommand/Compiled.lean`), the binding search `search-bindings` with its source `bindings` (`lean/Editor/BindingSearch/Compiled.lean`), the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `w!`, `e`, `e!`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file`, `save-buffer`, `edit-file` and `reload-buffer`, and their jobs, `load-file`, `save-file` and `reload-file`, with the file prompt's source `files`, its job `files` and the style `path` as the category `file`'s compiled default (`lean/Editor/Files/Compiled.lean`, `lean/Editor/Completion/Paths.lean`), the minibuffer's commands, `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward` and `minibuffer-delete-to-start`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's thirty-seven commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `select-object`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators, text objects and changes, and the seven that scroll a view, `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`, `scroll-line-to-top`, `scroll-line-to-center` and `scroll-line-to-bottom`, the seven editing keys of insert state, `insert-delete-backward`, `insert-newline`, `insert-tab`, `insert-left`, `insert-right`, `insert-up` and `insert-down`, and the four of the Edit menu, `clipboard-cut`, `clipboard-copy`, `clipboard-paste` and `select-all` (`lean/Editor/Evil/Clipboard.lean`) (`lean/Editor/Evil/Compiled.lean`), and `workspace-current` with the job `find-workspace`, and `find-file-in-workspace` with its source `workspace-files`, of the category `workspace-file`, and its job `workspace-files` (`lean/Editor/Workspace/Compiled.lean`), and the `project-search` package's `project-search`, `project-search-found` (which its job posts each delivery as), `project-search-symbol` and `project-search-visit`, its results buffer's mode `project-search`, and its jobs `project-search` and `project-search-load` (`lean/Editor/ProjectSearch/Compiled.lean`), and the `working-set` package's six commands, a set's buffer's mode `working-set` and its four jobs (`lean/Editor/WorkingSet/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
 | An open prompt: its label, the minibuffer's view, the asking view and the continuation, its candidates with what it has listed of them and the choice, all plain data, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |
 | A save in flight: the snapshot a save writes and the state its text was in | Compiled Lean, with the buffer's file in the editor state, from the save command until the save's result is delivered | Untouched | Lost with the buffer |
 | Asked to quit: whether a command asked the editor to quit | Compiled Lean, a field of the editor state (`EditorState.quitting`), from the command that asks until the step that says stop, or until the scene that withdraws it because a buffer has unsaved changes | Untouched: a quit that is waiting for a save still waits | Not kept: the process has ended |
@@ -2076,6 +2077,7 @@ text requests. Config sees it through
 | The snapshots a job's loads made | The job runner, off the editor thread, until the job's command adopts one or the job is settled | A reload that installs cancels the old config's jobs, which releases them | Lost |
 | Processes, terminals | Rust, behind handles | Untouched | Lost |
 | Closures registered by config | Compiled Lean, tagged with their owner | Replaced by the new config's | Re-registered by `setup` |
+| A workspace's working sets: each range's stored form and where it is held, what is known of the file on disk, the last set used | Compiled Lean, the workspace's store `working-sets` (`lean/Editor/WorkingSet/Places.lean`), its ranges held by anchor markers of their files' buffers | Untouched | Kept: written by jobs to `<state>/workspaces/<key>/working-sets.json` under the state directory, read lazily the first time a working-set command needs them, each range found again in its file's text or shown drifted (`lean/Editor/WorkingSet/Disk.lean`) |
 | Values of types that config defines | See below | Converted or dropped | As for a reload |
 
 Compiled state needs no special mechanism. That is the main simplification
@@ -2125,6 +2127,33 @@ editor's port:
 **Persistence** is a library feature in Lean: a store or a compiled table
 can be marked persistent, and is then written to disk and read back at
 start-up through the same encoding. Agent records are the first user.
+
+**As built, the state directory** (navigation-and-windows phase 5) is where
+what is kept across a restart lives: `--state <dir>`, or `leanmacs` under
+`$XDG_STATE_HOME`, or under `$HOME/.local/state`, and none when neither is
+set (`Window.defaultState`). The host hands it to the loop's first state
+(`EditorState.stateDirectory`, through `EditorState.hostedBy`, with the
+working and home directories); the headless host's is none, so a headless
+run keeps nothing. Working sets are the first state kept there, per
+workspace ([projects.md](projects.md), "What lives where"); session restore
+and the review record on disk are to reuse it. Its rules, which a later
+user follows:
+
+- **Only jobs touch it**, through the job port's file request: a load
+  (`File.load`), a directory made with its parents (`File.makeDirectory`,
+  added for it down the file port), and the file service's atomic
+  temporary-and-rename save of a snapshot, so a reader never sees a torn
+  file.
+- **It is read lazily**, the first time a command needs it, by a job whose
+  command runs the asking command again: a start waits on no disk.
+- **A version rule**: a missing file is empty; one that does not parse, or
+  whose version is newer than the editor's, is left as it is for the run,
+  said once, and never written over. Never fail to start, never lose what
+  is not understood.
+- **No state directory** keeps everything in memory, said once.
+- **Writes are keyed by the workspace's root**, so a newer write cancels an
+  older one still in flight; two editors writing one workspace's file:
+  the last writer wins.
 
 ## Events and reducers
 

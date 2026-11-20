@@ -12,7 +12,7 @@ on an implementation.
 
 ## What it asks
 
-Two things, and each property is one case of one of them:
+Three things, and each property is one case of one of them:
 
 - **Which candidates match** (`whichMatch`): a pattern, candidates, and the
   indices of the candidates the pattern matches. The reply is compared
@@ -26,12 +26,26 @@ Two things, and each property is one case of one of them:
 - **An exact match is first** (`exactFirst`): cases where a candidate is the
   pattern and is not the first candidate, among others that match as well.
   The property reads the first index of the reply only.
+- **Where a pattern is located** (`locating`): a pattern, a text, the
+  offset where it is expected and the errors allowed. Every answer is a
+  span of the text within the errors, with its ends on character
+  boundaries; in an ASCII text it has the fewest errors any span has, and
+  there is one exactly when some span is within the errors; in any text
+  there is none when no span of its bytes is within them; the pattern
+  where it is expected is answered there; and the empty pattern is
+  answered none. The fewest errors are an oracle's of the contract's own,
+  every span of the text measured one by one, so the contract still
+  imports nothing but the port.
 
 ## What it does not ask
 
 The order after the candidates that are the pattern. The model's is the
 candidates' own and a matching library's is its scores, and the two are not
-held to agree on it: nothing above the port may rest on it.
+held to agree on it: nothing above the port may rest on it. Nor which of
+several equally good spans a located pattern is answered at, nor the fewest
+errors in a text that is not ASCII, where a library that counts bytes can
+drop a best span that cuts a character (`Editor/Fuzzy.lean`, "What a
+located pattern is answered at").
 
 ## How the two sides are held together
 
@@ -59,6 +73,78 @@ def whichMatch : String :=
 /-- What the names of the properties about an exact match begin with. -/
 def exactFirst : String :=
   "an exact match is first"
+
+/-- What the names of the properties about a located pattern begin
+with. -/
+def locating : String :=
+  "a located pattern"
+
+/-- The byte-wise Levenshtein distance between `a` and `b`: the oracle's
+measure, written here so the contract depends on no implementation. -/
+def distance (a b : ByteArray) : Nat :=
+  Id.run do
+    let mut row : Array Nat := Array.range (b.size + 1)
+    for i in [0:a.size] do
+      let mut next := Array.replicate (b.size + 1) (i + 1)
+      for j in [0:b.size] do
+        let substituted := row[j]! + (if a.get! i == b.get! j then 0 else 1)
+        next := next.set! (j + 1) (min substituted (min (row[j + 1]! + 1) (next[j]! + 1)))
+      row := next
+    return row[b.size]!
+
+/-- The fewest errors `pattern` has against any span of `text`'s bytes,
+each measured: the oracle. -/
+def fewest (pattern text : ByteArray) : Nat :=
+  Id.run do
+    let mut least := pattern.size
+    for start in [0:text.size + 1] do
+      for stop in [start:text.size + 1] do
+        least := min least (distance pattern (text.extract start stop))
+    return least
+
+/-- Whether the byte offset `index` of `bytes` is a character boundary. -/
+def onBoundary (bytes : ByteArray) (index : Nat) : Bool :=
+  index == bytes.size || (index < bytes.size && (bytes.get! index &&& 0xC0) != 0x80)
+
+/-- What every answer for `pattern` in `text` within `maxErrors` keeps: a
+span of the text within the errors, its ends on character boundaries; in an
+ASCII text the fewest errors, and an answer exactly when some span is
+within the errors; in any text none when no span of its bytes is. -/
+def keeps (pattern text : String) (maxErrors : Nat) (answer : Option (Nat × Nat)) : Bool :=
+  let patternBytes := pattern.toUTF8
+  let bytes := text.toUTF8
+  let least := fewest patternBytes bytes
+  let ascii := patternBytes.data.all (· < 128) && bytes.data.all (· < 128)
+  match answer with
+  | none => least > maxErrors || (!ascii && least ≤ maxErrors)
+  | some (start, stop) =>
+    let errors := distance patternBytes (bytes.extract start stop)
+    start ≤ stop && stop ≤ bytes.size && onBoundary bytes start && onBoundary bytes stop &&
+      errors ≤ maxErrors &&
+      (!ascii || errors == least)
+
+/-- The cases every answer is held to (`keeps`): what the case is, a
+pattern, a text, the offset where it is expected and the errors allowed. -/
+def locateCases : List (String × String × String × Nat × Nat) :=
+  [("it is where it is expected", "needle", "a needle in a haystack", 2, 1),
+    ("one byte substituted", "needle", "a neddle in a haystack", 0, 1),
+    ("one byte inserted", "needle", "a neeedle in a haystack", 0, 2),
+    ("one byte deleted", "needle", "a nedle in a haystack", 0, 1),
+    ("no span is near enough", "needle", "nothing like it", 0, 1),
+    ("the text is empty", "needle", "", 0, 2),
+    ("only a shorter span is within the errors", "abc", "ab", 0, 1),
+    ("two spans, each one error away", "abcd", "xx abxd yy abcx zz", 0, 1),
+    ("two-byte characters against one-byte ones", "café", "un cafe noir", 0, 2),
+    ("wide characters, one of them changed", "漢字です", "これは漢字だす", 0, 3),
+    ("an accented letter against its base letter", "e", "é", 0, 2),
+    ("an expected offset past the text", "needle", "a needle", 100, 1)]
+
+/-- The cases where the pattern is exactly where it is expected: what the
+case is, a pattern, a text, and the offset where the pattern is. -/
+def placedCases : List (String × String × String × Nat) :=
+  [("alone", "needle", "a needle", 2),
+    ("among copies of itself", "needle", "needle needle needle", 7),
+    ("overlapping a copy of itself", "aa", "aaaa", 1), ("after wide characters", "字", "漢字漢字", 9)]
 
 /-- The cases of which candidates match: what the case is, a pattern,
 candidates, and the indices of the candidates the pattern matches, in
@@ -113,11 +199,19 @@ def properties : List Property :=
         holds := do
           let ranked ← Fuzzy.rank pattern candidates
           return ranked.qsort (· < ·) == expected }) ++
-    exactCases.map fun (what, pattern, candidates) =>
+    (exactCases.map fun (what, pattern, candidates) =>
       { name := s!"{exactFirst}: {what}"
         holds := do
           let ranked ← Fuzzy.rank pattern candidates
-          return (ranked[0]?.bind (candidates[·]?)) == some pattern }
+          return (ranked[0]?.bind (candidates[·]?)) == some pattern }) ++
+    (locateCases.map fun (what, pattern, text, near, maxErrors) =>
+      { name := s!"{locating}: is within the errors, on character boundaries, and the fewest errors in ASCII text, when {what}"
+        holds := return keeps pattern text maxErrors (← Fuzzy.locate pattern text near maxErrors) }) ++
+    (placedCases.map fun (what, pattern, text, near) =>
+      { name := s!"{locating}: where it is expected is answered there, {what}"
+        holds := return (← Fuzzy.locate pattern text near 1) == some (near, near + pattern.utf8ByteSize) }) ++
+    [{ name := s!"{locating}: the empty pattern is answered none"
+       holds := return (← Fuzzy.locate "" "text" 0 3) == none }]
 
 /-- The names of `properties` that do not hold. `run` runs one property
 against an implementation. -/

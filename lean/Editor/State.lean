@@ -7,7 +7,9 @@ import Editor.File
 import Editor.Floating
 import Editor.GeneratedView
 import Editor.Invocation
+import Editor.JumpList
 import Editor.Layout
+import Editor.Marks
 import Editor.Scene
 import Editor.State.Outbox
 import Editor.TabBar
@@ -1068,6 +1070,41 @@ leaves them.
   is the place a prompt's sources read paths from (`placeOf`,
   `Completion.Place`).
 
+## The jump list and marks
+
+Where Vim's jumps and marks are (`docs/design/keymaps-and-modes.md`, "The
+jump list and marks") is pure data of the state. The rules of recording
+and moving are `Editor/JumpList.lean`'s and `Editor/Jumps.lean`'s.
+
+- **A place** (`Place`) is held by an anchor marker of an open buffer's
+  text, which the store moves with every edit, or, once that buffer was
+  closed, detached into its file's path, a row and a column.
+- **Each window has its jump list and previous-context mark**
+  (`Window.jumps`, a `Jumps`), set whole by `setJumps`. A split copies
+  them to the new window, which then shares their markers: a marker is
+  given up only when no place holds it.
+- **A buffer has its marks** (`Buffer.marks`, Vim's lowercase marks),
+  set by `setLocalMark`, and **the global marks** are what commands
+  remember (`EditorState.Remembered.globalMarks`, Vim's uppercase marks),
+  set by `setGlobalMark`.
+- **Removing a buffer drops every place held in it**, from every window's
+  jumps and from the global marks: whoever keeps them detaches them first.
+- **The state holds only places that hold** (`wellFormed`): a held place's
+  buffer is open and the marker is of its text, and a buffer's marks are
+  markers of its own text.
+- **The markers are the loop's to give up**, once a command has run to its
+  end (`EditorState.placeMarkers`, `Loop.gaveUp`), so a command that is
+  rolled back has unmarked nothing.
+- **A buffer keeps what its marks follow line deletions and undo by**
+  (`Buffer.markHistory`, `Marks.History`, `Editor/Marks.lean`). The loop
+  reads and sets it once an event has been handled
+  (`EditorState.followMarks`, `Editor/Marks/Follow.lean`): it erases a
+  mark whose line was deleted, puts lowercase marks back after an undo or
+  a redo, and gives up the markers of the marks it erased or replaced.
+  Each step of an undo or a redo follows them too, as it is taken
+  (`BufferId.moved`, `Editor/Api.lean`), setting it by `setMarkHistory`
+  and the marks by `setLocalMark`.
+
 ## Where a new field goes
 
 | What it belongs to | Where |
@@ -1075,6 +1112,7 @@ leaves them.
 | One buffer (its line ending, its modes) | A field of `Buffer` |
 | The file a buffer shows (what the next save expects on disk) | A field of `Buffer.File` |
 | One view (a goal column, a scroll offset) | A field of `Window` |
+| A place in a text that is to follow its edits and outlive its buffer (a jump list's entry, a mark) | A `Place`, held in `Window.jumps`, `Buffer.marks` or `EditorState.Remembered.globalMarks`, or a new field beside them that `EditorState.placeMarkers` reads, so its markers are given up |
 | Something a command asks the loop to hand its host once it has run to its end (a job to start or cancel, an invocation to run next, a reload, a theme) | A field of `EditorState.Outbox` (`Editor/State/Outbox.lean`, "Where a new entry goes"), which the loop empties whole after each command |
 | What commands remember for the whole editor from one command to the next, to put back or repeat (a register, the last find, the last search) | A field of `EditorState.Remembered` ("What commands remember"), set by an operation here and read through one |
 | The whole editor, set and read on its own (the scroll margin, the pending key prefix, a command's choice of auto-reload, asked to quit, the order buffers were used in) | A field of `EditorState` |
@@ -1252,6 +1290,15 @@ structure Buffer where
   /-- Its gutter, which every window of it draws in a column before its text
   ("Buffers", in the module docs); `none`, no column, by default. -/
   gutter : Option Buffer.Gutter := none
+  /-- Its marks, Vim's lowercase marks: each letter with the anchor marker
+  of its text it is held by ("The jump list and marks", in the module
+  docs). No letter is here twice. -/
+  marks : Array (Char × MarkerId) := #[]
+  /-- What its marks follow line deletions and undo by (`Marks.History`,
+  `Editor/Marks.lean`): the lines its marks and the global marks held in
+  it were on, its lowercase marks at the last boundary of its history, and
+  those each node of its history keeps. -/
+  markHistory : Marks.History := {}
   deriving BEq, Repr
 
 /-- Whether the buffer's text is in another state than the one last saved,
@@ -1298,6 +1345,46 @@ structure Window.Wanted where
   head : Nat
   deriving DecidableEq, Repr
 
+/-- Where a jump list's entry or a mark is ("The jump list and marks", in
+the module docs): held by a marker of an open buffer's text, which moves
+with every edit, or, once that buffer was closed, detached into its file's
+path, a row and a column. -/
+inductive Place where
+  /-- At the anchor marker `marker` of the text of the buffer `buffer`. -/
+  | held (buffer : BufferId) (marker : MarkerId)
+  /-- In the file at `path`, at the row `row`, from 0, and the column
+  `column`, in characters from the row's start: a place of a buffer that
+  was closed. -/
+  | file (path : System.FilePath) (row column : Nat)
+  deriving DecidableEq, Repr
+
+/-- The marker a place is held by; `none` for a place detached into a
+file. -/
+def Place.marker? : Place → Option MarkerId
+  | .held _ marker => some marker
+  | .file .. => none
+
+/-- A window's jump list and its previous-context mark ("The jump list and
+marks", in the module docs). -/
+structure Jumps where
+  /-- The jump list, Vim's `w_jumplist`. -/
+  list : JumpList Place := {}
+  /-- The previous-context mark, Vim's `w_pcmark`: where the last jump was
+  made from, which `''` and ``` `` ``` go to; `none` before any jump. -/
+  previous : Option Place := none
+  deriving DecidableEq, Repr
+
+/-- Every place of `jumps`: the list's entries, then the previous-context
+mark. -/
+def Jumps.places (jumps : Jumps) : Array Place :=
+  jumps.list.entries ++ jumps.previous.toArray
+
+/-- `jumps` with each place changed by `change`, and dropped where it
+answers `none`: the list's as `JumpList.filterMap` changes it, which
+carries its index, and the previous-context mark. -/
+def Jumps.filterMap (change : Place → Option Place) (jumps : Jumps) : Jumps :=
+  { list := jumps.list.filterMap change, previous := jumps.previous.bind change }
+
 /-- A window: a view of a buffer. -/
 structure Window where
   /-- The view's name in every scene. -/
@@ -1313,6 +1400,9 @@ structure Window where
   was left at when it was kept; `none` when it keeps none ("The wanted
   column", in the module docs). -/
   wanted : Option Window.Wanted := none
+  /-- Its jump list and previous-context mark ("The jump list and marks",
+  in the module docs). -/
+  jumps : Jumps := {}
   deriving DecidableEq, Repr
 
 /-- One tab of the frame: a whole arrangement of windows of its own, as a
@@ -2000,6 +2090,10 @@ structure EditorState.Remembered where
   /-- The last search, if one was made ("The last search", in the module
   docs). -/
   lastSearch : Option Search := none
+  /-- The global marks, Vim's uppercase marks: each letter with the place
+  it is at, in whichever buffer or file ("The jump list and marks", in the
+  module docs). No letter is here twice. -/
+  globalMarks : Array (Char × Place) := #[]
   deriving DecidableEq, Repr
 
 /-- Everything the editor is showing and editing. -/
@@ -2096,6 +2190,12 @@ structure EditorState where
   (`Editor/TypedPath.lean`). A host that knows it sets it once, with the
   working directory; none until then. -/
   home : Option System.FilePath := none
+  /-- The editor's state directory, where what is kept across a restart
+  lives (`docs/design/lean-runtime.md`, "Where state lives"): the working
+  sets of each workspace (`Editor/WorkingSet/Disk.lean`). A host that has
+  one sets it once, with the working directory; none until then, and a
+  host that has none keeps nothing across a restart. -/
+  stateDirectory : Option System.FilePath := none
   /-- When the tab bar is shown (`Editor/TabBar.lean`): config's choice, as
   the last publish was handed it (`Loop.publish`); while there are two tabs
   or more before any. -/
@@ -2347,6 +2447,8 @@ inductive BufferRefusal where
   | notBeingSaved
   /-- The buffer is not an excerpt buffer. -/
   | notExcerpts
+  /-- The marker is of another text than the buffer's. -/
+  | markerOfAnotherText
   /-- The source buffer `source` of an excerpt buffer's step is no longer in
   the state the step left it in: it was edited, or moved in its history,
   since. -/
@@ -2682,6 +2784,13 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
         else 0
       { across := state.padding, down := state.padding, top, gutter }
 
+/-- Whether `place` is held by a marker of the text of an open buffer, or
+is detached into a file: a place a state may hold. -/
+def placeHolds (state : EditorState) (place : Place) : Bool :=
+  match place with
+  | .held buffer marker => (state.buffer? buffer).any (·.text == marker.text)
+  | .file .. => true
+
 /-- Whether the state keeps the layout invariants ("The window list, the
 layout and their invariants" and "Tabs", in the module docs). For every tab
 of the frame (`Frame.tabs`): its tiled list is not empty, its layout, and
@@ -2696,8 +2805,10 @@ windows (`Tab.contains`). The ids of every window of every tab
 exactly the windows' ids, and each window's buffer exists. And whether an
 open prompt's choice, if it has one, is an index of its listing, whether
 every buffer of the order they were used in (`recent`) is open and is there
-once, and whether the tab bar's view and the candidate list's, once drawn,
-are no window's. -/
+once, whether the tab bar's view and the candidate list's, once drawn,
+are no window's, and whether every place of a window's jumps and of the
+global marks holds (`placeHolds`) and every buffer's marks are markers of
+its own text. -/
 def wellFormed (state : EditorState) : Bool :=
   let ids := state.frame.everyWindow ++ state.minibufferView?.toArray
   let fits (tab : Tab) : Bool :=
@@ -2724,7 +2835,10 @@ def wellFormed (state : EditorState) : Bool :=
     state.recent.all (fun id => (state.buffer? id).isSome) &&
     state.recent.toList.eraseDups.length == state.recent.size &&
     state.tabBar.all (fun drawn => (state.window? drawn.view).isNone) &&
-    state.candidateList.all fun drawn => (state.window? drawn.view).isNone
+    (state.candidateList.all fun drawn => (state.window? drawn.view).isNone) &&
+    (state.windows.all fun window => window.jumps.places.all state.placeHolds) &&
+    (state.remembered.globalMarks.all fun (_, place) => state.placeHolds place) &&
+    state.buffers.all fun slot => slot.all fun buffer => buffer.marks.all (·.2.text == buffer.text)
 
 /-- The name the editor gives its empty buffer with no file: the initial
 state's buffer's, and the one left after the last buffer is closed
@@ -2751,6 +2865,14 @@ def initial (size : Size) (shape : Shape := .exclusive) : TextM EditorState := d
       windows := #[{ id := ⟨0⟩, buffer := ⟨0⟩, scroll, selection }]
       frame := { size, windows := #[⟨0⟩], focused := ⟨0⟩ }
       recent := #[⟨0⟩] }
+
+/-- The state as a host hands it to its loop when it first makes it: with
+the host's working directory, home directory and state directory, which no
+command changes after. -/
+def hostedBy (workingDirectory : System.FilePath) (home stateDirectory : Option System.FilePath)
+    (state : EditorState) : EditorState :=
+  { state with
+    workingDirectory, home, stateDirectory }
 
 /-- The state with every transient float but `keep` closed: each leaves
 `floats` and `windows`, its markers the caller's to give up. The focus is
@@ -3016,6 +3138,33 @@ def setWanted (id : ViewId) (wanted : Option Window.Wanted) (state : EditorState
         windows :=
           state.windows.map fun window =>
             if window.id == id then { window with wanted } else window })
+
+/-- Has the window `id` keep `jumps` as its jump list and previous-context
+mark ("The jump list and marks", in the module docs). Refused, with the
+state unchanged, with `noSuchWindow` for a view with no window, with
+`noSuchBuffer` for a place held in a buffer there is none of, and with
+`markersOfAnotherText` for a place whose marker is not of its buffer's
+text. -/
+def setJumps (id : ViewId) (jumps : Jumps) (state : EditorState) :
+    Except LayoutRefusal Unit × EditorState :=
+  let unheld :=
+    jumps.places.findSome? fun place =>
+      match place with
+      | .held buffer marker =>
+        match state.buffer? buffer with
+        | none => some (LayoutRefusal.noSuchBuffer buffer)
+        | some shown => if shown.text == marker.text then none else some .markersOfAnotherText
+      | .file .. => none
+  if (state.window? id).isNone then (.error (.noSuchWindow id), state)
+  else
+    match unheld with
+    | some refusal => (.error refusal, state)
+    | none =>
+      (.ok (),
+        { state with
+          windows :=
+            state.windows.map fun window =>
+              if window.id == id then { window with jumps } else window })
 
 /-- `state` with the buffer `id` changed by `change`, and what `change`
 said. Refused, with the state unchanged, with `noSuchBuffer` for a buffer
@@ -3501,6 +3650,103 @@ never refused. -/
 def setLastSearch (search : Search) (state : EditorState) : EditorState :=
   { state with remembered.lastSearch := some search }
 
+/-- The marker the buffer `id` holds its mark `char` by, if it has that
+mark ("The jump list and marks", in the module docs). -/
+def localMark? (state : EditorState) (id : BufferId) (char : Char) : Option MarkerId := do
+  let buffer ← state.buffer? id
+  (buffer.marks.find? (·.1 == char)).map (·.2)
+
+/-- The place of the global mark `char`, if it is set ("The jump list and
+marks", in the module docs). -/
+def globalMark? (state : EditorState) (char : Char) : Option Place :=
+  (state.remembered.globalMarks.find? (·.1 == char)).map (·.2)
+
+/-- `marks` with `char` held by `value` in place of what it had, or without
+`char` for none. -/
+private def setMarkIn {α : Type} (marks : Array (Char × α)) (char : Char) (value : Option α) :
+    Array (Char × α) :=
+  let others := marks.filter (·.1 != char)
+  match value with
+  | some held =>
+    if marks.any (·.1 == char) then
+      marks.filterMap fun (kept, was) =>
+        if kept == char then some (char, held) else some (kept, was)
+    else others.push (char, held)
+  | none => others
+
+/-- Has the buffer `id` hold its mark `char` by `marker`, in place of the
+marker it had, or no longer hold it for none ("The jump list and marks", in
+the module docs). The marker it had is the loop's to give up. Refused, with
+the state unchanged, with `noSuchBuffer` for a buffer there is none of, and
+with `markerOfAnotherText` for a marker of another text than the
+buffer's. -/
+def setLocalMark (id : BufferId) (char : Char) (marker : Option MarkerId) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id with
+  | none => (.error (.noSuchBuffer id), state)
+  | some buffer =>
+    if marker.any (·.text != buffer.text) then (.error .markerOfAnotherText, state)
+    else
+      (.ok (),
+        { state with
+          buffers :=
+            state.buffers.set! id.index
+              (some { buffer with marks := setMarkIn buffer.marks char marker }) })
+
+/-- Has the buffer `id` keep `history` beside its marks
+(`Buffer.markHistory`), in place of what it kept. Refused, with the state
+unchanged, with `noSuchBuffer` for a buffer there is none of. -/
+def setMarkHistory (id : BufferId) (history : Marks.History) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with markHistory := history })) state
+
+/-- Sets the global mark `char` at `place`, in place of the place it had,
+or unsets it for none ("The jump list and marks", in the module docs).
+Refused, with the state unchanged, with `noSuchBuffer` for a place held in
+a buffer there is none of, and with `markerOfAnotherText` for a place whose
+marker is not of its buffer's text. -/
+def setGlobalMark (char : Char) (place : Option Place) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  match place with
+  | some (.held buffer marker) =>
+    match state.buffer? buffer with
+    | none => (.error (.noSuchBuffer buffer), state)
+    | some held =>
+      if held.text != marker.text then (.error .markerOfAnotherText, state)
+      else
+        (.ok (),
+          { state with
+            remembered.globalMarks := setMarkIn state.remembered.globalMarks char place })
+  | _ =>
+    (.ok (),
+      { state with remembered.globalMarks := setMarkIn state.remembered.globalMarks char place })
+
+/-- Every marker a place of `state` is held by: those of each window's jump
+list and previous-context mark, of each buffer's marks and of the global
+marks, each once. The loop gives up those of the state from before a
+command that the state after holds none of (`Loop.gaveUp`). -/
+def placeMarkers (state : EditorState) : Array MarkerId :=
+  let all :=
+    state.windows.flatMap (fun window => window.jumps.places.filterMap (·.marker?)) ++
+      state.buffers.flatMap
+        (fun slot => (slot.map fun buffer => buffer.marks.map (·.2)).getD #[]) ++
+      state.remembered.globalMarks.filterMap (·.2.marker?)
+  all.foldl (fun once id => if once.contains id then once else once.push id) #[]
+
+/-- Gives up each marker a place of `before` is held by that no place of
+`after` holds (`placeMarkers`): the one rule by which place markers are
+released, at the end of a command (`Loop.gaveUp`) and when a publish erases
+or replaces marks (`EditorState.followMarks`). It is not refused: the first
+refusal is handed back, and the rest are still given up. -/
+def givenUpPlaces (before after : EditorState) : TextM (Option TextError) := do
+  let mut refusal := none
+  let placed := after.placeMarkers
+  for id in before.placeMarkers do
+    unless placed.contains id do
+      if let .error error← observing (id.text.unmark id) then
+        refusal := refusal <|> some error
+  return refusal
+
 /-- `state` with `rows` as its scroll margin, in place of the one it had
 ("The scroll margin", in the module docs). Nothing else changes, and it is
 never refused. -/
@@ -3630,7 +3876,11 @@ def addExcerptBuffer (name : String) (text : TextId) (history : UndoTree)
 
 /-- Removes the buffer `id`: its slot is empty from then on, its id is never
 used again, and it leaves the order buffers were used in (`recent`). Its
-text is the caller's to release. Refused, with the
+text is the caller's to release. Every place held in it (`Place.held`) is
+dropped with it, from each window's jump list and previous-context mark
+and from the global marks (`remembered.globalMarks`), and its own marks go
+with its slot; a caller that keeps them detaches them into its file first
+(`Jumps.detach`, `Editor/Jumps.lean`). Refused, with the
 state unchanged, with `noSuchBuffer` for a buffer there is none of, and
 with `shown`, and the first such view, while a window shows it. -/
 def removeBuffer (id : BufferId) (state : EditorState) : Except BufferRefusal Unit × EditorState :=
@@ -3638,10 +3888,20 @@ def removeBuffer (id : BufferId) (state : EditorState) : Except BufferRefusal Un
   | none, _ => (.error (.noSuchBuffer id), state)
   | some _, some window => (.error (.shown window.id), state)
   | some _, none =>
+    -- The places held in its text go with it: a caller that keeps them
+    -- detaches them first (`Editor/Jumps.lean`).
+    let kept (place : Place) : Option Place :=
+      match place with
+      | .held buffer _ => if buffer == id then none else some place
+      | .file .. => some place
     (.ok (),
       { state with
         buffers := state.buffers.set! id.index none
-        recent := state.recent.filter (· != id) })
+        recent := state.recent.filter (· != id)
+        windows :=
+          state.windows.map fun window => { window with jumps := window.jumps.filterMap kept }
+        remembered.globalMarks :=
+          state.remembered.globalMarks.filterMap fun (char, place) => (kept place).map (char, ·) })
 
 /-- Gives the buffer `id` the name `name`. Renaming a buffer to its own name
 changes nothing. Refused, with the state unchanged, with `noSuchBuffer` for
@@ -3718,7 +3978,9 @@ def splitWindow (id : ViewId) (scroll selection : MarkerId) (placement : Placeme
       (.ok made,
         { state with
           windows :=
-            state.windows.push { id := made, buffer := target.window.buffer, scroll, selection }
+            state.windows.push
+              { id := made, buffer := target.window.buffer, scroll, selection
+                jumps := target.window.jumps }
           frame :=
             { state.frame with
               docked := (docked.extract 0 (at_ + 1)).push (made, side) ++ docked.extract (at_ + 1) }
@@ -3737,7 +3999,9 @@ def splitWindow (id : ViewId) (scroll selection : MarkerId) (placement : Placeme
       (.ok made,
         { state with
           windows :=
-            state.windows.push { id := made, buffer := target.window.buffer, scroll, selection }
+            state.windows.push
+              { id := made, buffer := target.window.buffer, scroll, selection
+                jumps := target.window.jumps }
           frame :=
             { state.frame.inserted index placement with
               windows := (windows.extract 0 place).push made ++ windows.extract place }

@@ -250,7 +250,7 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
     (generator : Option Config.Generator := none) : IO UInt32 := do
   let shipped ←
     Headless.shipped packages base (options.sysroot.getD "") options.oleans (options.config.getD "")
-        IO.eprintln processes
+        IO.eprintln processes (stateDirectory := options.stateDirectory)
   let collaborators :=
     { shipped with
       display := hostDisplay display platform
@@ -320,16 +320,17 @@ def host (packages : Array Package) (base : Array Lean.Name) (platform : Ffi.Pla
 
 /-- The window mode's shutdown, which `host` runs once the loop has ended
 and before it closes the window: every child the library started is killed
-and reaped, every watch is ended, and then the queues are quit, as the
-headless mode does. -/
+and reaped, every watch and every search is ended, and then the queues are
+quit, as the headless mode does. -/
 def shutdown : IO Unit := do
   Ffi.processesShutdown
   Ffi.watchesShutdown
+  Ffi.grepShutdown
   Ffi.quit
 
 /-- What the window mode is told of the world, read at the edge, for the
-executable at `appPath`: the working directory, the two variables the
-default config directory is found by, and the `.olean` directories the
+executable at `appPath`: the working directory, the variables the default
+config directory and the default state directory are found by, and the `.olean` directories the
 build recorded beside that executable (`ModuleLookup.recorded`, with the
 real file read: a record that is not there, or cannot be read, is none).
 `main` reads it for the running executable, and `ffi-test
@@ -342,7 +343,8 @@ def environmentAt (appPath : String) : IO Environment := do
       return none
   return {
       workingDirectory := (← IO.currentDir).toString
-      xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME", home := ← IO.getEnv "HOME", appPath
+      xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME", xdgStateHome := ← IO.getEnv "XDG_STATE_HOME"
+      home := ← IO.getEnv "HOME", appPath
       recordedOleans := ← ModuleLookup.recorded appPath readFile }
 
 /-- `editor [<file>]`, with the packages its host registers, the base

@@ -1,11 +1,13 @@
 import Editor.Process.Environment
 
 /-!
-# JSON documents, read whole
+# JSON documents, read whole and written
 
 What a tool prints as JSON, read into a tree (`Json.Value`), for the
 compile mode's computed commands (`mise tasks ls --json`,
-`packages/compile/Compile/Shipped.lean`). Pure. It is read here, and not with
+`packages/compile/Compile/Shipped.lean`); and a tree written as a document
+(`Json.render`), for the working sets a workspace keeps on disk
+(`Editor/WorkingSet.lean`). Pure. It is read here, and not with
 `Lean.Data.Json`, which lives in `Lean`, outside config's closure, as
 `Editor/Process/Environment.lean` records for `mise env --json`, whose
 string reader (`Process.string`, `Process.skipSpace`) it shares.
@@ -24,6 +26,13 @@ string reader (`Process.string`, `Process.skipSpace`) it shares.
   is missing`, `<word> is not a JSON value`, and the string reader's own.
 - **Depth** is bounded by fuel (`fuel`), as `Process.members` is, which a
   document cannot run out of: it is more than twice its characters.
+- **Writing** (`Json.render`) is compact: no whitespace between tokens. A
+  string is written with JSON's short escapes for `"`, `\`, a backspace, a
+  form feed, a line feed, a carriage return and a tab, `\u00XX` for every
+  other control character, and every other character as itself, in UTF-8.
+  A number is written as its text. So `parse (render v)` is `v` for every
+  value whose strings hold no NUL and whose numbers are JSON's: the reader
+  refuses a NUL even escaped.
 
 Pinned by `ModelTest.jsonChecks`.
 -/
@@ -182,5 +191,41 @@ def parse (bytes : ByteArray) : Except String Value := do
   unless (Process.skipSpace rest).isEmpty do
     throw "there is more after the value"
   return found
+
+/-- The two hexadecimal digits of `value`, below 256, in lower case. -/
+def hex2 (value : Nat) : String :=
+  let digit (n : Nat) : Char := if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
+  String.ofList [digit (value / 16 % 16), digit (value % 16)]
+
+/-- `text` as a JSON string, quotes included ("Writing", in the module
+docs). -/
+def quoted (text : String) : String :=
+  let body :=
+    text.foldl (init := "") fun out character =>
+      match character with
+      | '"' => out ++ "\\\""
+      | '\\' => out ++ "\\\\"
+      | '\x08' => out ++ "\\b"
+      | '\x0c' => out ++ "\\f"
+      | '\n' => out ++ "\\n"
+      | '\r' => out ++ "\\r"
+      | '\t' => out ++ "\\t"
+      | character =>
+        if character.toNat < 0x20 then out ++ "\\u00" ++ hex2 character.toNat
+        else out.push character
+  "\"" ++ body ++ "\""
+
+/-- `value` as a compact JSON document ("Writing", in the module docs). -/
+partial def render : Value → String
+  | .null => "null"
+  | .bool value => if value then "true" else "false"
+  | .number text => text
+  | .string text => quoted text
+  | .array items => "[" ++ ",".intercalate (items.toList.map render) ++ "]"
+  | .object members =>
+    "{" ++
+      ",".intercalate
+        (members.toList.map fun (name, member) => quoted name ++ ":" ++ render member) ++
+      "}"
 
 end Editor.Json

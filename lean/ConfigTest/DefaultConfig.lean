@@ -10,6 +10,8 @@ import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Headless
 import Editor.InputScheme.Vim.Default
+import Editor.ProjectSearch.Run
+import Editor.WorkingSet.Run
 import Editor.Workspace.FindFile
 import Editor.Workspace.FindInProject
 import EditorCore.EditorPackage
@@ -142,7 +144,7 @@ def defaultConfigChecks (context : Context) : List Check :=
                 !promptOf label recancelled &&
                 switching.any fun line => (line.splitOn said).length == 2 },
     { name :=
-        "the default config: every binding names a command registered compiled or by the config, <leader> f f is bound to open-file, <leader> : to execute-command, described Execute command, and <leader> ? to search-bindings, described Search bindings, <leader> p f and <leader> SPC to find-file-in-workspace, described Find file in workspace, and <leader> p p to find-file-in-project, described Switch workspace"
+        "the default config: every binding names a command registered compiled or by the config, <leader> f f is bound to open-file, <leader> : to execute-command, described Execute command, and <leader> ? to search-bindings, described Search bindings, <leader> p f and <leader> SPC to find-file-in-workspace, described Find file in workspace, <leader> p p to find-file-in-project, described Switch workspace, <leader> s p and <leader> / to project-search, described Search workspace, <leader> * to project-search-symbol, described Search symbol in workspace, <leader> k a to working-set-add, described Add to working set, and <leader> k o and <leader> RET to working-set-open, described Open working set"
       run := do
         let registrations ← defaultBuilt context
         let registry ← defaultRegistry registrations
@@ -177,12 +179,45 @@ def defaultConfigChecks (context : Context) : List Check :=
                 Key.strokeNotations binding.keys == "<leader> SPC" &&
                   binding.command == Workspace.FindFile.name &&
                   binding.desc == some "Find file in workspace") &&
-            registrations.bindings.any fun binding =>
-              Key.strokeNotations binding.keys == "<leader> p p" &&
-                binding.command == Workspace.FindInProject.name &&
-                binding.desc == some "Switch workspace" },
+            registrations.bindings.any
+              (fun binding =>
+                Key.strokeNotations binding.keys == "<leader> p p" &&
+                  binding.command == Workspace.FindInProject.name &&
+                  binding.desc == some "Switch workspace") &&
+            ["<leader> s p", "<leader> /"].all
+              (fun keys =>
+                registrations.bindings.any fun binding =>
+                  Key.strokeNotations binding.keys == keys &&
+                    binding.command == ProjectSearch.name &&
+                    binding.desc == some "Search workspace") &&
+            registrations.bindings.any
+              (fun binding =>
+                Key.strokeNotations binding.keys == "<leader> *" &&
+                  binding.command == ProjectSearch.symbolName &&
+                  binding.desc == some "Search symbol in workspace") &&
+            registrations.bindings.any
+              (fun binding =>
+                Key.strokeNotations binding.keys == "<leader> k a" &&
+                  binding.command == WorkingSet.addName &&
+                  binding.desc == some "Add to working set") &&
+            ["<leader> k o", "<leader> <Enter>"].all fun keys =>
+              registrations.bindings.any fun binding =>
+                Key.strokeNotations binding.keys == keys &&
+                  binding.command == WorkingSet.openName &&
+                  binding.desc == some "Open working set" },
     { name :=
-        "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are SPC f, SPC b, SPC w, SPC TAB, SPC h and SPC p, the last named project"
+        "the default config: SPC k o runs working-set-open, which says the scratch buffer is in no workspace"
+      run := do
+        let files ← configFiles context.defaultConfig
+        withVimHost context files fun session => do
+            session.ask [.reload]
+            session.typed "SPC k o"
+            let ran := (← session.host.join patience) == .settled
+            let lines ← session.sceneLines
+            let said := s!", echo {(WorkingSet.noWorkspace WorkingSet.openName "scratch").quote}"
+            return ran && lines.any fun line => (line.splitOn said).length == 2 },
+    { name :=
+        "the default config: every prefix it binds under the leader has a prefix name, and those prefixes are SPC f, SPC b, SPC w, SPC TAB, SPC h, SPC p, SPC s and SPC k, named project, search and working set"
       run := do
         let registrations ← defaultBuilt context
         let registry ← defaultRegistry registrations
@@ -202,10 +237,14 @@ def defaultConfigChecks (context : Context) : List Check :=
         unless unnamed.isEmpty do
           throw <| IO.userError s!"unnamed prefixes: {unnamed.toList.map Key.notations}"
         let expected :=
-          ["SPC f", "SPC b", "SPC w", "SPC TAB", "SPC h", "SPC p"].map fun text =>
+          ["SPC f", "SPC b", "SPC w", "SPC TAB", "SPC h", "SPC p", "SPC s", "SPC k"].map fun text =>
             (keysOf text).map Key.chord
         return prefixes.size == expected.length && expected.all prefixes.contains &&
             registry.prefixName? Vim.Default.scheme ((keysOf "SPC p").map Key.chord) ==
-              some "project" }]
+              some "project" &&
+            registry.prefixName? Vim.Default.scheme ((keysOf "SPC s").map Key.chord) ==
+              some "search" &&
+            registry.prefixName? Vim.Default.scheme ((keysOf "SPC k").map Key.chord) ==
+              some "working set" }]
 
 end ConfigTest

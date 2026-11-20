@@ -1,0 +1,66 @@
+[package]
+name = "editor-grep-ripgrep"
+version = "0.1.0"
+description = "The project search port's real adapter, over ripgrep's ignore and grep-searcher"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The files port, its fake, its contract and the rule of a search. This
+# crate implements the port, and its tests run the contract and the rule on
+# the adapter.
+editor-grep = { path = "../editor-grep" }
+# ripgrep's walk: a directory tree as ripgrep walks it, honouring
+# `.gitignore`, `.ignore`, `.git/info/exclude`, the global excludes and
+# hidden files, its entries sorted by name. Pinned exactly; 0.4.34 was the
+# newest release on 2026-11-19 (`cargo info ignore`). Unlicense OR MIT. It
+# has one feature, `simd-accel`, off by default and off here: it asks for a
+# nightly-only SIMD path in its glob matching, which the stable toolchain
+# does not build. It brings `globset` (0.4.21, ripgrep's globs, which compile
+# to regexes inside the library through `regex-automata` and
+# `regex-syntax`, already in the lock), `walkdir` 2.5.0 (already in the lock,
+# through notify), `same-file`, `crossbeam-deque` 0.8.8 with
+# `crossbeam-epoch` (its parallel walker's queue, which the adapter does
+# not use; the single-threaded walk still links it), `bstr`, `memchr` and
+# `log`.
+ignore = "=0.4.34"
+# ripgrep's reader: a file read a block at a time, rows numbered, a binary
+# file detected at its first NUL byte, a file with a UTF-16 byte order mark
+# transcoded. Pinned exactly; 0.1.17 was the newest release on 2026-11-19.
+# Unlicense OR MIT. It has no feature of its own to turn on or off here
+# (`simd-accel` and `avx-accel` are empty and kept for compatibility). It
+# brings `encoding_rs` 0.8.44 (MIT OR Apache-2.0, with its data tables
+# under BSD-3-Clause) and `encoding_rs_io` 0.1.8, for the transcoding;
+# `memmap2` 0.9.12, which the adapter never asks for (`MmapChoice::never`);
+# and `bstr`.
+grep-searcher = "=0.1.17"
+# The matcher interface the reader asks of a row. Pinned exactly to the
+# version grep-searcher is built against, 0.1.9, the newest on 2026-11-19.
+# Unlicense OR MIT. No features. The adapter's matcher answers by asking the
+# port's predicate; no regex of the library decides a match.
+grep-matcher = "=0.1.9"
+#
+# Looked at on 2026-11-19 and set aside:
+#
+# - `grep-regex`, which the phase named: it compiles only a pattern string
+#   in Rust's regex syntax, so a Vim pattern would have to be printed back
+#   from `regex-syntax`'s tree, which `editor-search-regex` and `deny.toml`
+#   record never happens; and its `\b` is Unicode's word class, not the
+#   text's, so `\<foo\>` would find different matches on disk than `/`
+#   finds in the buffer.
+# - Running `rg` as a child: a program the app bundle does not ship, and
+#   output to parse.
+# - `git ls-files` with the reading in Lean: git workspaces only, and Lean
+#   has no regex engine.
+# - `walkdir` alone: no ignore files.
+
+[dev-dependencies]
+# The search engine's fake, `Literal`, for the test that runs the rule of a
+# search over the adapter (`tests/ignore.rs`): the needle is a literal.
+editor-search = { path = "../editor-search" }
+# The temporary directory the contract and the ignore tests are checked in:
+# one each test makes and owns, removed when it ends. Pinned exactly, as in
+# `editor-fs-std`, whose manifest says why this library and no other;
+# `deny.toml` lists the crates that may depend on it.
+tempfile = { version = "=3.27.0", default-features = false }

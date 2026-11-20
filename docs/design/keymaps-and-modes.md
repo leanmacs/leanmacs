@@ -885,6 +885,7 @@ structure Command where
 inductive Bound where
   | motion     (name : String)
   | charMotion (name : String)      -- a motion that takes the character the next key names
+  | charCommand (command : Command) -- a command that takes the character the next key names
   | promptMotion (name label : String) -- a motion that takes a text typed in the minibuffer
   | operator   (operator : Operator)
   | textObject (name : String)
@@ -914,7 +915,14 @@ inductive Bound where
   register prefix is: a key that prints names the character, a digit
   included, and `TAB` names a tab. It completes the move, or the operator
   waiting over the motion, with that argument. Any other key resets the
-  edit begun, as `f<Escape>` does in Vim.
+  edit begun, as `f<Escape>` does in Vim. `` ` `` and `'` are motions of
+  this kind too: the character names a mark ("The jump list and marks").
+- **`charCommand`** is a command that takes the character the next key
+  names: `m`. It waits as `charMotion` does, and the character completes
+  `Edit.run` with it as the argument, compiled first, before the count and
+  the register. Typed while an operator waits it resets, as every
+  command's key does, and it is the last change only if its command
+  changes text (`m` changes none).
 - **`register`** is the key that begins a register's name (`"`). See
   Registers.
 - **`repeat`** is the repeat key (`.`). It is a part of speech and not a
@@ -934,6 +942,7 @@ inductive Edit where
   | move    (motion : String) (count : Option Nat) (argument : Option String := none)
   | operate (operator : Operator) (over : Over) (count : Option Nat) (register : Option String)
   | run     (command : Command) (count : Option Nat) (register : Option String)
+            (argument : Option String := none)   -- the character a `charCommand` was given
   | replay  (change : Edit) (inserted : Option String)   -- the last change, and its typed text, editing keys' marks in it
 ```
 
@@ -961,7 +970,7 @@ scheme's one rule for it:
 |---|---|
 | `move m c a` | `move`, with `[.str m, .nat c]`, or `[.str m, .str a, .nat c]` when the motion has an argument |
 | `operate o over c r` | `operate`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""`. A motion's argument, when it has one, is a string right after its name: `[.str o.name, .str "motion", .str m, .str a, .nat c, .str r]` |
-| `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
+| `run cmd c r` | `cmd.name`, with `[.nat c, .str r]`, or `[.str a, .nat c, .str r]` when the command takes a character `a` (`charCommand`) |
 | `replay change inserted` | `repeat`, with `[.bool session, .str text, .str command]` and then the change's own arguments: whether the change began an insert session, the text typed in it, and the command the change compiles to |
 
 **A motion's argument, when it has one, is the string right after the
@@ -2035,8 +2044,11 @@ options (`cpoptions` with `c`, `wrapscan`, `magic`, `noignorecase`):
 - **Under an operator every search is exclusive**, so the two rules for an
   exclusive motion that ends in column 1 apply: `d*` from a line's start to
   the next line's start deletes the line, line-wise.
+- **Every search is a jump** (`Vocabulary.Motion.jumps`): `/`, `?`, `n`,
+  `N`, `*` and `#` record where they start from in the window's jump list
+  when they find a match ("The jump list and marks").
 - **Not built**: search offsets (`/foo/e`), search history, `incsearch`,
-  the jump list, `ignorecase` and `smartcase`.
+  `ignorecase` and `smartcase`.
 
 **The character finds** (`:help f`, `:help t`, `:help ;`):
 
@@ -2891,6 +2903,228 @@ reads no `winheight` or `winwidth`; `equalalways` balances every window,
 where Vim leaves larger ones alone; and focus by direction measures from
 the window's top-left corner, not the cursor ("Open questions").
 
+### The jump list and marks
+
+Vim 9.1's jump list and marks (`:help jumplist`, `:help jump-motions`,
+`:help mark-motions`), as `mark.c`'s `setpcmark`, `cleanup_jumplist`,
+`movemark`, `getmark_buf_fnum` and `mark_adjust`, and `undo.c`'s
+`u_undoredo`, implement them. The list's rules are
+plain data (`lean/Editor/JumpList.lean`); where the places are is editor
+state (`lean/Editor/State.lean`, "The jump list and marks"); the decisions
+over places are `lean/Editor/Jumps.lean`'s, and going to a closed file's
+place `lean/Editor/Jumps/Go.lean`'s; the rules by which marks follow line
+deletions and undo are `lean/Editor/Marks.lean`'s, run by the loop
+(`lean/Editor/Marks/Follow.lean`); the keys are evil's
+(`lean/Editor/Evil/Jumps.lean`, `lean/Editor/Evil/Marks.lean`).
+
+**Places are markers.** A jump list's entry, a mark and the
+previous-context mark are anchor markers of a buffer's text
+([text-and-display.md](text-and-display.md), "Who holds what"), with the
+bias `after`, so they follow every edit made before them, and a line
+broken or opened right at one carries it down with its line, as Vim's
+`mark_col_adjust` carries a mark when a line is split before it. A buffer
+that is closed releases its text and its markers, so the places held in
+it are first **detached** into its file's path, row and column in
+characters; going to one visits the file, and once a buffer holds that
+file again they are held by its markers again. A closed buffer with no
+file has its places dropped.
+
+**The jump motions** record the place the cursor starts from when they do
+not fail, with an operator or without (`Vocabulary.Motion.jumps`): `G`,
+`gg`, `/`, `?`, `n`, `N`, `*`, `#`, `%`, `` ` `` and `'`. `gg`, `*` and `#`
+are not in `:help jump-motions`' list, and Vim 9.1's `nv_goto` and
+`normal_search` set the previous-context mark for them all the same. So do
+the commands that start editing another file: opening a file
+(`open-file`, the `find-file-*` commands and compile's visits, all through
+`Files.open` and `Files.visit`) and `switch-buffer`. `(`, `)`, `{`, `}`,
+`[[`, `]]`, `H`, `M`, `L`, `:s` and `:tag` are not built, and whoever
+builds one sets `jumps` on its entry.
+
+**The jump list**, one per window, of at most 100 entries:
+
+- **Record** (`setpcmark`): the cursor's place is the window's
+  previous-context mark and the list's last entry, the oldest dropped past
+  100, and the index one past the end. Nothing is removed then.
+- **Check** (`checkpcmark`): a jump motion that leaves the cursor on the
+  place it recorded, with an operator or without, gives the window back
+  the previous-context mark it had before, so `G` on the last line, `gg`
+  on the first and `` `a `` with `a` under the cursor leave `''` where it
+  was; the entry the record appended stays in the list. `m'` and ``m` ``
+  set the mark all the same (`Jumps.checkPrevious`).
+- **Clean up** (`cleanup_jumplist`), at the start of every `C-o` and
+  `C-i`: an entry is dropped when a later entry has the same buffer, or
+  file, and the same line, read from the markers then, so entries that
+  edits brought onto one line are one. The index goes with its entry, and
+  one past the end stays one past the end.
+- **`C-o` and `C-i`** (`movemark`, −count and +count, 1 by default; `TAB`
+  is `C-i`'s other spelling): a step that lands outside the list does
+  nothing and says nothing (Vim beeps). From one past the end, the first
+  step after a jump, the cursor's place is recorded first and the step is
+  taken from the entry before it. The step goes to the entry's exact line
+  and column, showing its buffer in the window, or visiting its file; the
+  index moves at once, before the file is loaded, and the visit records no
+  jump of its own.
+- **A split copies the list** to the new window, which then moves through
+  its own.
+- `:help jumplist`'s worked example is pinned step by step on the pure
+  list (`ModelTest.jumpListChecks`) and, scaled to eight lines, by keys
+  (`ModelTest.evilJumpChecks`).
+
+**Marks:**
+
+- **`m{a-z}`** sets a mark of the buffer, **`m{A-Z}`** a global mark, which
+  remembers its buffer and, through it, its file, and **`m'`** and
+  **`` m` ``** the previous-context mark, which is a record of a jump and so
+  also appends to the jump list. Setting a mark is no jump. Any other
+  character says `E191: Argument must be a letter or forward/backward
+  quote`.
+- **`` `{x} ``** goes to the mark's exact position, exclusive under an
+  operator, and **`'{x}`** to its line's first non-blank, line-wise under
+  an operator. Both are jumps, with an operator or without, so **`''`**
+  and **``` `` ```**, which go to the previous-context mark, go back and
+  forth between two places.
+- **A mark not set** says `E20: Mark not set`, and **a character that names
+  no mark** `E78: Unknown mark`. The motion fails, so an operator waiting
+  for it is given up with the message.
+- **A global mark in another buffer**: with no operator, the window shows
+  that buffer, or visits the closed buffer's file, the cursor goes to the
+  mark, and one jump is recorded. Under an operator the motion fails with
+  E20, as `getmark_buf_fnum` gives no line there.
+- **A mark motion reads the marks of the window it is made in** and of the
+  buffer that window shows (`Vocabulary.From.view`, `From.buffer`), which
+  need not be the focused window, nor the only buffer over its text.
+- **A buffer's mark whose line is deleted is erased** (`mark_adjust`):
+  `m a`, `dd` and `` `a `` says E20. A global mark is not: it stays on the
+  line that takes the deleted line's place, as Vim's uppercase marks do
+  (`one_adjust_nodel`; `:help mark-motions`, "The line number of the mark
+  remains correct, even if you insert/delete lines"). Its column is not
+  kept, a recorded departure (below). A line is
+  deleted when one edit takes its row with its line break and either
+  started before the row or stops at a row's start, as `dd` does; or, for
+  the last row, takes it with the line break before it, as `dd` on the
+  last line does. So the first line of `3cc`, and of a charwise delete
+  from a line's start into a later line, keeps its marks, as Vim's
+  `op_change` and `op_delete` truncate that line and delete only the lines
+  after it. The linewise delete and change decide about the marks of
+  their lines themselves, which the edit alone cannot tell apart from a
+  change, and the edit's shape decides nothing for those marks
+  (`Jumps.deleteRows`): the delete erases the marks of all its lines, so
+  `dd` on a buffer's only line erases its mark, as Vim's does; the change
+  erases those of its lines after the first and keeps the first's,
+  recording them as decided (`Marks.History.decided`), so `cc` on the
+  only line keeps its mark, `3cc` erases the marks of its lines after the
+  first, and `m a`, `cj` on a line above an empty one, whose edit stops at
+  that line's start as `dd`'s does, and `` `a `` lands on the changed
+  line, as in Vim. A deletion of part of
+  the line keeps the mark at the column the deletion left. The loop reads each mark's line once an event has been
+  handled and compares it with what the next event changed
+  (`Editor/Marks.lean`, `Editor/Marks/Follow.lean`).
+- **Undo and redo put the lowercase marks back** (`u_undoredo`): each step
+  of the undo tree keeps the buffer's lowercase marks from before it, by
+  row and column, and an undo or a redo across the step sets those marks
+  again while the step keeps the marks from before the move. So `m a`,
+  `dd`, `u` and `` `a `` lands on the mark's line and column, and `C-r`
+  erases it again. A counted undo or redo (`2u`, `3 C-r`) does this step
+  by step, as `u_undoredo` does: each step erases the marks of the lines
+  it deletes, puts back what its step kept, and leaves the step the marks
+  the step before left (`BufferId.followMarks`, run by each undo and redo
+  step). Global marks are not put back, as in Vim.
+
+**Not built**, outside `m`, `` ` `` and `'`: `:jumps` and `:keepjumps`;
+`jumpoptions=stack`; and `g;` and `g,`, the change list. What `m`, `` ` ``
+and `'` do in Vim 9.1 and do not do here is a recorded departure (below).
+
+**Recorded departures**, where the editor differs from Vim on purpose for
+now. Each is pinned by a check of what the editor does today, named
+`recorded departure (task <slug>)` (`ModelTest.evilMarkChecks`, and
+`ModelTest.dispatchRollbackChecks` for the rollback), so a fix that
+matches Vim changes that check deliberately:
+
+- **Outside the linewise delete and change, a line's marks are erased by
+  the edit alone**, where Vim asks which command made it. An edit that
+  takes a line from its start to the start of a later line is `dd`'s, so
+  it erases the line's marks: a backspace or `C-w` at the start of a line
+  that joins away the empty line above it erases that empty line's mark,
+  and so does a charwise delete from a line's start through its line
+  break (`v j $ d`); Vim keeps both on the joined line. And a redo erases
+  by the edit it redoes, so redoing `3cc` keeps a mark of its last line on
+  the line left, where Vim's `u_undoredo` erases it. Task
+  `marks-erase-by-command-not-edit-shape`.
+- **Text typed right at a place is typed before it**: the bias `after`
+  that carries a place down with a line broken at it also moves it past a
+  character typed at it, where Vim leaves a mark's column as it was. Task
+  `marks-typed-text-at-mark-keeps-column`.
+- **A buffer's lowercase marks go when the buffer is closed**, where Vim
+  keeps them, since `:bd` does not wipe the buffer: `m a`, the buffer
+  closed and its file opened again leave `` `a `` saying E20. Task
+  `marks-lowercase-survive-buffer-close`.
+- **The previous-context mark is a place with its buffer**: `''` after a
+  jump into another buffer goes back to that buffer, as a global mark
+  does. Vim's `w_pcmark` is a position of the current buffer. Task
+  `pcmark-is-current-buffer-position`.
+- **A place inside a range a command deleted is not put back** when the
+  command is rolled back: the deletion collapses it to the range's start,
+  and the text the rollback puts back there is inserted before it, so it
+  ends at the end of that text. The loop restores the windows' selection
+  and scroll markers alone ([concurrency.md](concurrency.md), "Rollback").
+  Task `places-restore-on-rollback`.
+- **A global mark whose line is deleted keeps its line but not its
+  column**: its marker stays where the deletion left it, the start of the
+  line that takes the deleted line's place, so on `ab`, `c|d`, `ef`,
+  `m A`, `dd` and `` `A `` lands on column 0 of `ef`, where Vim's
+  `one_adjust_nodel` changes only the mark's line number and keeps its
+  column (`e|f`). And `dd` on the last line collapses the marker onto the
+  end of the line above. Task `global-mark-keeps-column-on-line-delete`.
+- **The numbered marks `'0` to `'9` are not built**: `` `0 `` and `'0`
+  say E78, where Vim's go to the file of the numbered mark that viminfo or
+  shada kept, or say E20 when it is not set. Task
+  `marks-numbered-file-marks`.
+- **The change marks `` `[ `` and `` `] `` are not built**: after `yw`
+  they say E78, where Vim's go to the start and end of the text last
+  changed or yanked, and `m[` says E191, where Vim's sets the mark. Task
+  `marks-change-and-yank-marks`.
+- **The visual marks `` `< `` and `` `> `` are not built**: after a
+  selection is left they say E78, where Vim's go to the start and end of
+  the last selection, and `m<` says E191, where Vim's sets the mark. Task
+  `marks-visual-marks`.
+- **The marks `` `. `` and `` `^ `` are not built**: after an insert they
+  say E78, where Vim's go to where the last change was made and where
+  insert state was last left. Task `marks-last-change-and-insert-marks`.
+- **The mark `` `" `` is not built**: it says E78, where Vim's goes to
+  the cursor's place when the buffer was last left. Task
+  `marks-last-exit-mark`.
+- **The sentence and paragraph marks `` `( ``, `` `) ``, `` `{ `` and
+  `` `} `` are not built**: they and their `'` forms say E78, where Vim's
+  go to the start and end of the current sentence and paragraph. Task
+  `marks-sentence-and-paragraph-marks`.
+- **`m` is not bound in the visual states**: `v m a`, `<Escape>` and
+  `` `a `` says E20, and so does the same from `V`, where Vim's `nv_mark`
+  sets the mark at the cursor there too. Task `marks-set-in-visual-state`.
+- **`:marks` and `:delmarks` are not built**: no ex name of either ships,
+  so the ex line says `marks: not an ex command` and `delmarks: not an ex
+  command` (`Ex.unknown`), where Vim's list the marks and delete those
+  named. Task `marks-ex-commands`.
+- **`g'` and ``g` `` are not bound**: after `m a` and `G`, `g'a` goes
+  nowhere and the `a` appends, where Vim's go to the mark as `'` and
+  `` ` `` do but record no jump. Task `marks-go-without-jump`.
+- **`]'`, `['`, ``]` `` and ``[` `` are not bound**: with marks set on
+  the lines around the cursor each leaves the cursor where it was, where
+  Vim's go to the next or previous lowercase mark, at its line's first
+  non-blank or its exact position. Task `marks-next-previous-lowercase`.
+- **`:mark` and `:k` are not built**: the ex line says `mark: not an ex
+  command` and `k: not an ex command` (`Ex.unknown`), where Vim's set the
+  mark named at the cursor's line. Task `marks-ex-set-mark`.
+- **`:lockmarks` and `:keepmarks` are not built**: the ex line says
+  `lockmarks: not an ex command` and `keepmarks: not an ex command`, and
+  the command after it is not run, where Vim's run it with the marks left
+  where they were (`:lockmarks`) or kept on their lines when lines are
+  filtered (`:keepmarks`). Task `marks-lockmarks-keepmarks`.
+- **Marks are not kept across restarts**: global marks live in the
+  session's state alone (`EditorState.Remembered.globalMarks`), which the
+  editor starts empty and never writes out, where Vim keeps the uppercase
+  and numbered marks in viminfo or shada. Task
+  `marks-persist-across-restarts`.
+
 ### Tab commands as built
 
 Status: built, by window management's phase 5
@@ -2968,7 +3202,7 @@ Which names have something behind them:
 
 | Names | State |
 |---|---|
-| The twenty-eight motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
+| The thirty motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
 | `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (the `evil` package) |
 | `self-insert`, which no table names: typed text | Built and registered |
 | `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-insert`, `minibuffer-delete-backward`, `minibuffer-delete-to-start` | Built and registered (the `minibuffer` package) |
@@ -2982,19 +3216,22 @@ Which names have something behind them:
 | `execute-command`, which no table names | Built and registered (the `execute-command` package; "Running a command by name"). The scheme binds no key to it (the owner, 2026-11-17); the default config binds `SPC :` |
 | `search-bindings`, which no table names | Built and registered (the `binding-search` package; "Searching the bindings"). The scheme binds no key to it, as for `execute-command`; the default config binds `SPC ?` |
 | `find-file-in-workspace` and `find-file-in-project`, which no table names | Built and registered (the `workspace` package). The scheme binds no key to them, as for `execute-command`; the default config binds `SPC p f` and `SPC SPC` to `find-file-in-workspace` and `SPC p p` to `find-file-in-project` |
+| `project-search`, `project-search-symbol` and `project-search-visit`, which no table names | Built and registered (the `project-search` package, `lean/Editor/ProjectSearch/Run.lean`). The scheme binds no key to the first two; the default config binds `SPC s p` and `SPC /` to `project-search` and `SPC *` to `project-search-symbol`. The results buffer's mode, `project-search`, binds its activate role (`RET` in normal state) to `project-search-visit` |
+| `working-set-add`, `working-set-open`, `working-set-visit`, `working-set-remove`, `working-set-note` and `working-set-refresh`, which no table names | Built and registered (the `working-set` package, `lean/Editor/WorkingSet/Run.lean`). The scheme binds no key to them; the default config binds `SPC k a` to `working-set-add` and `SPC k o` and `SPC RET` to `working-set-open`. A set's buffer's mode, `working-set`, binds its activate role (`RET` in normal state) to `working-set-visit`, its refresh role to `working-set-refresh`, and its locals `d` and `n` (after the localleader, `SPC m`) to `working-set-remove` and `working-set-note` |
 | `find-file-in-another-workspace`, which no table names | Built and registered (the `workspace` package). Compiled code binds `C-x C-d` to it in the prompt category `workspace-file` (the `workspace` package), not in a state's table, so it holds in the `minibuffer` state while the workspace finder is open and nowhere else ("The minibuffer", under Modes) |
 | `keyboard-quit` | Built and registered (the `shell` package): `C-g` in normal state cancels the `:!` or filter running in the focused buffer's workspace, and says `<line>: interrupted`, or `Quit` with nothing running ("The ex command line"). `C-g` is also the interrupt key, which lowers the flag before the key is stepped ([concurrency.md](concurrency.md), "Interrupt") |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (the `evil` package; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
 | The window commands `windowKeys` names: `window-split`, `window-split-vertically`, `window-new`, `window-close`, `window-quit`, `window-only`, `window-focus-left`, `-down`, `-up`, `-right`, `window-focus-next`, `-previous`, `-top`, `-bottom`, `-last`, `window-exchange`, `window-rotate`, `window-rotate-back`, `window-balance`, `window-taller`, `window-shorter`, `window-wider`, `window-narrower`, `window-zoom`, `window-promote`, `window-demote`, `window-main-more`, `window-main-fewer`, `window-edge-left`, `-bottom`, `-top`, `-right`, `window-float` | Built and registered (the `window-commands` package, `lean/Editor/WindowCommands.lean`; "Window commands as built") |
 | The tab commands `tabKeys` names: `tab-next`, `tab-previous`, `tab-new`, `tab-close`, `tab-switch`, `tab-select-1` … `tab-select-9`; and `tab-rename`, `tab-move-right`, `tab-move-left`, with no key | Built and registered (the `tab-commands` package, `lean/Editor/TabCommands.lean`; "Tab commands as built") |
+| `jump-backward`, `jump-forward`, `set-mark` | Built and registered (the `evil` package; "The jump list and marks") |
 | `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (the `evil` package, `lean/Editor/Evil/Clipboard.lean`); the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
 
 | Table | Keys |
 |---|---|
-| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse; `n` search-next, `N` search-previous, `*` word-search-forward, `#` word-search-backward, `%` matching-bracket |
+| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line; `f` find-forward, `F` find-backward, `t` till-forward, `T` till-backward, each a motion that takes the character the next key names (`Bound.charMotion`); `;` find-again, `,` find-again-reverse; `n` search-next, `N` search-previous, `*` word-search-forward, `#` word-search-backward, `%` matching-bracket; `` ` `` mark-exact, `'` mark-line, each a motion that takes the character the next key names, a mark |
 | `objects` | `i w` inner-word, `a w` a-word, `i W` inner-bigword, `a W` a-bigword, `i "` `a "`, `i '` `a '`, `` i ` `` `` a ` `` the quote objects, `i (` `i )` `i b` inner-paren, `a (` `a )` `a b` a-paren, `i [` `i ]` inner-bracket, `a [` `a ]` a-bracket, `i {` `i }` `i B` inner-brace, `a {` `a }` `a B` a-brace, `a f` a-function, `i f` inner-function, `a c` a-class, `i c` inner-class, `a a` an-argument, `i a` inner-argument: in normal state's pending keymaps, read only while an operator waits, and in both visual states' keymaps |
 | `operators` | `d` delete, `c` change (enters insert), `y` yank (changes no text) |
-| `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex, `C-g` keyboard-quit; `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
+| `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `:` ex, `C-g` keyboard-quit, `C-o` jump-backward, `C-i` and `TAB` jump-forward; `m` set-mark, a command that takes the character the next key names (`Bound.charCommand`); `.` the repeat key, a part of speech of its own (`Bound.repeat`); `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
 | `insertCommands` | `<Escape>` normal (enters normal); `<Backspace>` insert-delete-backward, `C-w` insert-delete-word-backward, `RET` at-point-return, `TAB` at-point-tab, `<ArrowLeft>` insert-left, `<ArrowRight>` insert-right, `<ArrowUp>` insert-up, `<ArrowDown>` insert-down, `C-SPC` at-point-complete, `C-n` at-point-next, `C-p` at-point-previous, `S-TAB` at-point-backtab, `C-g` at-point-quit (each enters no state, and none is a change dot repeat replays) |
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
@@ -5148,7 +5385,16 @@ runs its command, through a host) and `ConfigTest.defaultConfigChecks`
     `SPC ?` searches the bindings ("Searching the bindings");
     `SPC SPC` finds a file in the buffer's workspace; `SPC p` project
     (`p f` find a file in the workspace, `p p` switch workspace: pick
-    another workspace of the project and find a file in it);
+    another workspace of the project and find a file in it); `SPC s`
+    search (`s p` searches the workspace's files for a pattern, as `SPC /`
+    does) and `SPC *` searches them for the word under the cursor, into an
+    editable excerpt buffer (`project-search`, `project-search-symbol`;
+    [text-and-display.md](text-and-display.md), "As built: the search
+    results buffer");
+    `SPC k` working set (`k a` adds the selection to a named set, `k o`
+    opens one, as `SPC RET` does, as an excerpt buffer of its ranges;
+    [review-and-navigation.md](review-and-navigation.md), "Working
+    sets");
     `SPC f` file (`f f` open, `f s` save); `SPC b` buffer (`b`, `i`, `k`,
     `d`, `s`, `r`); `SPC w` window, Vim's `C-w` keys with `n`, `p`, `c`
     and `w` given back their window meanings; `SPC TAB` tab, Doom's
@@ -5162,7 +5408,15 @@ runs its command, through a host) and `ConfigTest.defaultConfigChecks`
     "project" is the repository and its `SPC SPC`, `SPC p f` and
     `SPC p p` read "Find file in project" and "Switch project"; here the
     finder searches one workspace (worktree) of the project, so they read
-    "Find file in workspace" and "Switch workspace".
+    "Find file in workspace" and "Switch workspace"; for the same reason
+    Doom's `SPC s p`, `SPC /` and `SPC *` ("Search project", "Search
+    symbol in project") read "Search workspace" and "Search symbol in
+    workspace". `SPC k` (working set: `k a` adds the selection to a
+    named set, `k o` opens one) is a prefix Doom leaves free, its letter
+    for "keep"; Doom's `SPC RET` is "Jump to bookmark" (`bookmark-jump`),
+    the nearest thing it has to a named, kept collection of places, so it
+    opens a working set here (checked against Doom's
+    `modules/config/default/+evil-bindings.el`, which binds no `SPC k`).
   - **Pinned** by `ConfigTest.defaultConfigChecks`: a reload installs it
     with no diagnostic, `SPC f f` asks for a path to open and, once that
     is cancelled, `SPC :` opens the command prompt and, once that is
@@ -5170,8 +5424,11 @@ runs its command, through a host) and `ConfigTest.defaultConfigChecks`
     is cancelled, `SPC SPC` open the workspace finder and, once that is
     cancelled, `SPC p p` runs `find-file-in-project`; every binding names a
     registered command, `<leader> :`, `<leader> ?`, `<leader> SPC`,
-    `<leader> p f` and `<leader> p p` among them with their descriptions;
-    and every prefix under the leader has a name, `SPC p` named `project`.
+    `<leader> p f`, `<leader> p p`, `<leader> s p`, `<leader> /` and
+    `<leader> *`, `<leader> k a`, `<leader> k o` and `<leader> RET` among
+    them with their descriptions; `SPC k o` runs `working-set-open`; and
+    every prefix under the leader has a name, `SPC p` named `project`,
+    `SPC s` `search` and `SPC k` `working set`.
 - Built: completion at point from config ("Completion at point").
   `defineAtPoint` registers an at-point source by its name, and config's of
   a shipped name replaces it, so `defineAtPoint (Completion.AtPoint.words

@@ -174,14 +174,18 @@ def fileModelOf (files : Array (String × ByteArray)) (directories : Array Strin
       (({} : FileModel).withDirectory fileRoot))
 
 /-- The files of `model`, as a file property names them: one in `fileRoot`
-by its name, and one anywhere else by its whole path, so that a file written
-where none should be is seen; and each directory directly in `fileRoot` by
-its name, with no bytes, as `ContractTest.filesOf` names one. -/
+by its name, and one outside `fileRoot` by its whole path, so that a file
+written where none should be is seen; and each directory directly in
+`fileRoot` by its name, with no bytes, as `ContractTest.filesOf` names one.
+A file in a directory of `fileRoot`'s is left out, as `ContractTest.filesOf`
+reads no directory's own entries. -/
 def filesIn (model : FileModel) : Array (String × ByteArray) :=
   let named (path : System.FilePath) : String :=
     if path.parent == some fileRoot then path.fileName.getD path.toString else path.toString
+  let deeper (path : System.FilePath) : Bool :=
+    path.parent != some fileRoot && path.toString.startsWith (fileRoot.toString ++ "/")
   (model.directories.filter (·.parent == some fileRoot)).map (fun path => (named path, .empty)) ++
-    model.files.map fun file => (named file.path, file.bytes)
+    (model.files.filter (!deeper ·.path)).map fun file => (named file.path, file.bytes)
 
 /-- A rig whose services have a fake file service over `model`, and that
 service. -/
@@ -191,7 +195,7 @@ def Rig.withFiles (model : FileModel) : BaseIO (Rig × Job.FakeFiles) := do
   return ({ rig with
         services :=
           { rig.services with
-            files := files.files, diffs := files.diffs } },
+            files := files.files, diffs := files.diffs, greps := files.greps } },
       files)
 
 /-- The made-up directory the commands of a process property run in, for the

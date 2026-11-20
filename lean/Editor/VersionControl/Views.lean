@@ -16,7 +16,10 @@ way, kept once so that no buffer's module reaches into another's for them:
   lists one thing per row reads to find the thing on it.
 - **A read-only buffer** (`readOnlyBufferOf`): a buffer of generated text,
   under the first free name of the one asked for, read-only and given a
-  workspace.
+  workspace. It is defined beside the workspace's attach
+  (`Editor/Workspace/Attach.lean`), which this module imports, so that the
+  working sets' drifted quotes (`Editor/WorkingSet/Run.lean`) make theirs
+  the same way without importing a version-control module.
 - **Showing it** (`displayFor`): where the display rules say for an opener,
   asked from the view that started the read, or from the focused one when
   that view is gone.
@@ -55,14 +58,6 @@ def selectionRow (text : TextId) (selection : Selection) : EditorM Nat := do
 /-- The row of `call`'s cursor. -/
 def cursorRowOf (call : Call) : EditorM Nat := do
   selectionRow call.target.buffer.text (← call.target.selection)
-
-/-- A read-only buffer holding `content`, under the first free name of
-`name`, given the workspace at `location`; none when it cannot be made. -/
-def readOnlyBufferOf (name content : String) (location : Location) : EditorM (Option BufferId) := do
-  let .ok id ← createBuffer ((← editorState).freeName name) content | return none
-  discard <| id.setReadOnly true
-  Workspace.setBufferWorkspace id location
-  return some id
 
 /-- Shows the buffer `id` where the display rules say for `opener`, asked
 from `view`, or from the focused view when `view` is gone; focused unless

@@ -5,6 +5,7 @@ import Editor.Ffi.Display
 import Editor.Ffi.Excerpts
 import Editor.Ffi.Files
 import Editor.Ffi.Fuzzy
+import Editor.Ffi.Grep
 import Editor.Ffi.Interrupt
 import Editor.Ffi.Inverse
 import Editor.Ffi.Log
@@ -63,6 +64,7 @@ families that build on them.
 | `Editor/Ffi/Syntax.lean` | `syntax.rs` | "The syntax service" |
 | `Editor/Ffi/Processes.lean` | `processes.rs` | "Services and completions" |
 | `Editor/Ffi/Watches.lean` | `watches.rs` | "Services and completions" |
+| `Editor/Ffi/Grep.lean` | `grep.rs` | "Services and completions" |
 
 `Editor/Ffi/Words.lean` is the word codec the families share (`words.rs`'s
 counterpart), under `Editor.Ffi.Words`; see "Plain data".
@@ -240,8 +242,8 @@ for.
 The timer service is the first: `timersNow`, `timersStart`, `timersCancel`,
 and `timersPending`, a readout for tests.
 
-The file service is the second: `filesLoad`, `filesSave`, `filesStamp` and
-`filesList` start a request,
+The file service is the second: `filesLoad`, `filesSave`, `filesStamp`,
+`filesList` and `filesMakeDirectory` start a request,
 `filesTake` hands its result over once its completion has arrived,
 `filesCancel` cancels, and `filesPending` is a readout for tests. A request
 has a result, which a timer's has not, so there is one more step: the
@@ -249,7 +251,8 @@ completion says only that the request `id` is done, and the result is taken
 by that id, once, as one record (`FileResult`): a loaded file's text as a
 `Snapshot` handle with its stamp and its line endings, a saved file's stamp,
 a file's stamp or none, a directory's entries (`listed`, each a name and a
-kind code: 0 a file, 1 a directory, 2 anything else), or a refusal
+kind code: 0 a file, 1 a directory, 2 anything else), a directory made
+(`made`: done with no words), or a refusal
 (`FileRefusal`). A listing's names cross as a list of strings does: the
 count and each entry's kind and byte length as words, and the names end to
 end as the detail; a name that is not UTF-8 is left out by the library,
@@ -287,6 +290,15 @@ tests. A path in a delivery is its bytes as the platform gave them, which
 on Linux need not be UTF-8: the job runner's real service decides what such
 a change is (`realFileWatches`, `Editor/Job/Real.lean`).
 
+The grep service is the seventh: `grepStart` starts a search of the files
+under a root, as words, the root, the pattern and the overlays' paths end to
+end, and a snapshot handle for each overlay, whose text is searched in place
+of its file; `grepNext` asks for a search's next delivery, under a wait id of
+its own; `grepTake` hands a reply over once its completion has arrived, as a
+status, words, a detail and the paths end to end (`GrepReply`, decoded by
+`GrepReply.decode`); `grepCancel` cancels a search or a wait, `grepShutdown`
+ends every search, and `grepPending` is a readout for tests.
+
 The editor does not call these bindings. The job runner reaches the services
 through the ports it defines (`Job.Timers`, `Editor/Job/Runner.lean`), whose
 real implementations (`Editor/Job/Real.lean`) are the callers, with the
@@ -296,8 +308,8 @@ Tests: the three timer checks of `ffi-test` (`FfiTest.timerChecks`), its
 file checks (`FfiTest.fileChecks`), in directories they make and remove, its
 process checks (`FfiTest.processChecks`), whose children run in directories
 they make and remove, and
-its watch checks (`FfiTest.watchChecks`), in directories they make and
-remove, its check that the completion tag is known (`FfiTest.dataChecks`);
+its watch checks (`FfiTest.watchChecks`) and its grep checks
+(`FfiTest.grepChecks`), in directories they make and remove, its check that the completion tag is known (`FfiTest.dataChecks`);
 `contract-test`, which runs the job port's contract and the checks of the
 real service through the runner (`ContractTest.jobChecks`); the unit tests
 of `timers.rs`, `files.rs` and `processes.rs`, and `tests/timers.rs`,

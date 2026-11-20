@@ -44,6 +44,12 @@
 //!   when nothing is at the path, as [`FsErrorKind::NotAFile`] when what is
 //!   there is not a directory, and as [`FsErrorKind::Denied`] when the
 //!   system does not allow it.
+//! - **[`Fs::make_directory`]** makes the directory at a path and every
+//!   directory on the way to it that is not there. A directory already
+//!   there is no error. It is refused as [`FsErrorKind::NotAFile`] when a
+//!   file, or anything else that is not a directory, is at the path or on
+//!   the way to it, and as [`FsErrorKind::Denied`] when the system does
+//!   not allow it.
 //! - **An error is a kind and a detail** ([`FsError`]). The kind is what
 //!   the crate decides on; the detail is the platform's words, for a
 //!   person.
@@ -160,6 +166,13 @@ pub trait Fs: Send + Sync {
     /// [`FsErrorKind::NotAFile`] when what is there is not a directory, and
     /// as [`FsErrorKind::Denied`] when the system does not allow it.
     fn list(&self, path: &Path) -> Result<Vec<Entry>, FsError>;
+
+    /// Makes the directory at `path` and every directory on the way to it
+    /// that is not there. A directory already at `path` is no error.
+    /// Refused as [`FsErrorKind::NotAFile`] when what is at `path`, or at
+    /// a path on the way to it, is not a directory, and as
+    /// [`FsErrorKind::Denied`] when the system does not allow it.
+    fn make_directory(&self, path: &Path) -> Result<(), FsError>;
 }
 
 /// One thing a directory holds ([`Fs::list`]): its name in the directory
@@ -246,7 +259,8 @@ pub enum FsErrorKind {
     Exists,
     /// What is there is not a file, or a directory on the way to it is not
     /// a directory. For a listing ([`Fs::list`]), what is there is not a
-    /// directory.
+    /// directory; for a directory made ([`Fs::make_directory`]), what is
+    /// there or on the way to it is not a directory.
     NotAFile,
     /// Anything else. The detail says what.
     Other,

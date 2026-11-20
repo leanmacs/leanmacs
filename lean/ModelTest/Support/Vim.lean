@@ -139,7 +139,7 @@ def vimDefaultEdit (text : String) : Option Vim.Edit :=
 with no count and no register, if it runs one. -/
 def vimDefaultCommand (text : String) : Option Vim.Command :=
   match vimDefaultEdit text with
-  | some (.run command none none) => some command
+  | some (.run command none none none) => some command
   | _ => none
 
 /-- What the default Vim scheme reports of view 0 after the keys `text`

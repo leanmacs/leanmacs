@@ -1,4 +1,5 @@
 import Editor.Api
+import Editor.Evil.Marks
 import Editor.Vocabulary
 
 /-!
@@ -380,6 +381,7 @@ operator takes the whole lines of both ends. -/
 def toLine (name : String) (last : Bool) : Vocabulary.Motion :=
   { name
     reach := .lines
+    jumps := true
     target := fun text origin => do
       let final ← lastLine text
       let row :=
@@ -566,6 +568,7 @@ fails where it is (`noPreviousPattern`). It hands back the search it made,
 pattern and direction, to be kept as the last search. -/
 def searchMotion (name : String) (forward : Bool) : Vocabulary.Motion :=
   { name
+    jumps := true
     target := fun text origin => do
       let pattern? :=
         match origin.argument with
@@ -590,6 +593,7 @@ so `N` does not change the direction kept. With no last search it fails
 where it is (`noPreviousPattern`). -/
 def searchAgain (name : String) (reverse : Bool) : Vocabulary.Motion :=
   { name
+    jumps := true
     target := fun text origin => do
       let some last :=
         (←
@@ -661,6 +665,7 @@ direction as the last search. With no word it fails where it is
 (`noStringUnderCursor`). -/
 def wordSearch (name : String) (forward : Bool) : Vocabulary.Motion :=
   { name
+    jumps := true
     target := fun text origin => do
       let cells ← lineCells text origin.head
       let some (start, word) :=
@@ -728,6 +733,7 @@ count as whole lines. -/
 def matchingBracket : Vocabulary.Motion :=
   { name := "matching-bracket"
     reach := .inclusive
+    jumps := true
     target := fun text origin => do
       let taken ← matchingBracketTaken text origin
       return { head := taken.head, failed := taken.failed }
@@ -740,6 +746,6 @@ def motions : Array Vocabulary.Motion :=
     bigwordEnd, lineStart, lineFirstNonBlank, lineEnd, firstLine, lastLineMotion, findForward,
     findBackward, tillForward, tillBackward, findAgain, findAgainReverse, searchForward,
     searchBackward, searchNext, searchPrevious, wordSearchForward, wordSearchBackward,
-    matchingBracket]
+    matchingBracket, markExact, markLine]
 
 end Editor.Evil

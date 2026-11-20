@@ -9,14 +9,20 @@
 //! one both crates' rules fix, whatever the library's scores: of `wq`,
 //! `edit` and `w`, the pattern `w` matches the first and the third, and
 //! the third is the pattern.
+//!
+//! Locating a pattern is the other C function, and the same holds of it:
+//! where a pattern is found is `editor-fuzzy`'s rule over the searcher
+//! `editor-fuzzy-triple-accel` adapts, so the answer is compared with what
+//! `editor_fuzzy::locate::locate` answers over that searcher.
 
 use std::mem::MaybeUninit;
 use std::slice;
 
-use editor_ffi::fuzzy::{self, FuzzyStatus, editor_ffi_fuzzy_rank};
+use editor_ffi::fuzzy::{self, FuzzyStatus, editor_ffi_fuzzy_locate, editor_ffi_fuzzy_rank};
 use editor_ffi::log::RawWords;
-use editor_ffi::text::editor_ffi_text_free;
+use editor_ffi::text::{ByteRange, editor_ffi_text_free};
 use editor_fuzzy_nucleo::NucleoScorer;
+use editor_fuzzy_triple_accel::TripleAccel;
 
 /// The buffer that holds `words`: each as eight bytes, least significant
 /// first.
@@ -119,4 +125,42 @@ fn candidates_that_cannot_be_read_are_refused_with_no_words() {
     // SAFETY: the buffer came from the library in this record, and is
     // handed back once.
     unsafe { editor_ffi_text_free(raw.words, raw.len) };
+}
+
+/// What the C function that locates answers for `pattern` in `text`,
+/// expected at `near` and within `max_errors`: the span, if found.
+fn locate_through_c(pattern: &str, text: &str, near: usize, max_errors: u32) -> Option<ByteRange> {
+    let mut out = MaybeUninit::<ByteRange>::uninit();
+    // SAFETY: each pointer and length are those of a slice alive for the
+    // call, and `out` is writable for one range.
+    let found = unsafe {
+        editor_ffi_fuzzy_locate(
+            pattern.as_ptr(),
+            pattern.len(),
+            text.as_ptr(),
+            text.len(),
+            near,
+            max_errors,
+            out.as_mut_ptr(),
+        )
+    };
+    // SAFETY: the call filled the range when it found one.
+    found.then(|| unsafe { out.assume_init() })
+}
+
+#[test]
+fn a_pattern_is_located_through_c_as_the_locating_rule_locates_it() {
+    let text = "let total = sum(values);\nlet totl = 0;\n";
+    let expected =
+        editor_fuzzy::locate::locate(&mut TripleAccel::new(), "let total = 0;", text, 25, 3).map(
+            |span| ByteRange {
+                start: span.start as u64,
+                end: span.end as u64,
+            },
+        );
+    // The case is not an empty one: the second line, one deletion away.
+    assert_eq!(expected, Some(ByteRange { start: 25, end: 38 }));
+
+    assert_eq!(locate_through_c("let total = 0;", text, 25, 3), expected);
+    assert_eq!(locate_through_c("nowhere near", text, 0, 1), None);
 }

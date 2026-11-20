@@ -50,6 +50,8 @@ import ModelTest.Editor.Display.Model
 import ModelTest.Editor.DisplayRules
 import ModelTest.Editor.Evil
 import ModelTest.Editor.Evil.Clipboard
+import ModelTest.Editor.Evil.Jumps
+import ModelTest.Editor.Evil.Marks
 import ModelTest.Editor.Evil.Motions
 import ModelTest.Editor.Evil.Objects
 import ModelTest.Editor.Evil.Operators
@@ -73,6 +75,7 @@ import ModelTest.Editor.Floating
 import ModelTest.Editor.FrameCommands
 import ModelTest.Editor.Fuzzy.Contract
 import ModelTest.Editor.Fuzzy.Model
+import ModelTest.Editor.Grep.Model
 import ModelTest.Editor.Gutter
 import ModelTest.Editor.Headless.CommandLine
 import ModelTest.Editor.Highlight
@@ -89,6 +92,9 @@ import ModelTest.Editor.Job.Pool
 import ModelTest.Editor.Job.Runner
 import ModelTest.Editor.Job.Table
 import ModelTest.Editor.Json
+import ModelTest.Editor.JumpList
+import ModelTest.Editor.Jumps
+import ModelTest.Editor.Jumps.Go
 import ModelTest.Editor.Key.Notation
 import ModelTest.Editor.Keymap
 import ModelTest.Editor.Language
@@ -96,6 +102,8 @@ import ModelTest.Editor.Language.Compiled
 import ModelTest.Editor.Layout
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
+import ModelTest.Editor.Marks
+import ModelTest.Editor.Marks.Follow
 import ModelTest.Editor.Menu
 import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
@@ -107,6 +115,8 @@ import ModelTest.Editor.Program
 import ModelTest.Editor.ProjectMode
 import ModelTest.Editor.ProjectMode.Format
 import ModelTest.Editor.ProjectMode.Listing
+import ModelTest.Editor.ProjectSearch
+import ModelTest.Editor.ProjectSearch.Run
 import ModelTest.Editor.Scene
 import ModelTest.Editor.Scroll
 import ModelTest.Editor.Setup
@@ -148,6 +158,11 @@ import ModelTest.Editor.Watch.Model
 import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.WindowCommands
+import ModelTest.Editor.WorkingSet
+import ModelTest.Editor.WorkingSet.Disk
+import ModelTest.Editor.WorkingSet.Places
+import ModelTest.Editor.WorkingSet.Refind
+import ModelTest.Editor.WorkingSet.Run
 import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
 import ModelTest.Editor.Workspace.Contract
@@ -242,9 +257,12 @@ The fuzzy matching interface's contract (`Editor/Fuzzy/Contract.lean`) is
 run against its model here (`fuzzyFailures`), and `contract-test` runs the
 same list against the real binding. `fuzzyChecks` are what only the model
 shows: its rule of what matches, and that after the candidates that are
-the pattern its order is the candidates'. They also show the contract
-biting on each of the two things it asks: a matcher written here that
-ignores case, and one that does not put an exact match first.
+the pattern its order is the candidates'; and of a located pattern, its
+order among spans of the fewest errors (nearest, earliest, longest) and
+that it answers no span that cuts a character. They also show the contract
+biting on each of the three things it asks: a matcher written here that
+ignores case, one that does not put an exact match first, and locators
+that answer nothing or a span with more errors than the fewest.
 
 The completion style interface (`Editor/Completion/Style.lean`) is checked
 over the fuzzy model (`styleChecks`): the fuzzy style answers the model's
@@ -303,10 +321,42 @@ that answers a range with the whole text's captures, and a model whose
 trees a test says are not delivered refusing questions of captures with
 `notParsed`.
 
+A window's jump list as plain data (`Editor/JumpList.lean`) is checked
+pure, over line numbers (`jumpListChecks`): a record appends and drops the
+oldest past the limit, a filter-map changes and drops entries and carries
+the index, a clean-up keeps the latest entry of a line and carries the
+index, a step's plan records first from one past the end and
+fails off either end, and `:help jumplist`'s worked example step by step.
+
+The rules of marks across line deletions and undo (`Editor/Marks.lean`)
+are checked pure (`markRuleChecks`): a place's marker is an anchor with
+the bias `after`; a deletion of a whole line with its
+line break removes it and one of part of it does not, the row an edit
+starts at the start of only when the edit stops at a row's start, the last
+row only with the line break before it; a node made keeps the marks at the
+boundary, an undo and a redo across it put back what it kept and swap in
+the marks before the move, and a move across more than one edge or to
+another tree puts back nothing. The loop's following of the editor
+state's marks (`Editor/Marks/Follow.lean`) is checked on the text model
+(`markFollowChecks`): a mark whose line an edit removed is erased, and one
+a command decided about is not; the marker a mark put back replaced is
+given up; an excerpt buffer's marks are not followed; a buffer whose text
+refuses is left as it was, the others followed and the refusal handed
+back; `BufferId.followMarks` erases, leaves an excerpt buffer alone and is
+refused by a text that refuses; and, through the loop, a mark's marker is
+given up once the mark is erased by a charwise delete or by `dd`, or put
+back by an undo, and `m a` on an excerpt buffer sets a mark a charwise
+delete across its line keeps.
+
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that the rectangles of its views are
 the layout's above the minibuffer's strip, and the layout operations, each refused with the state as it
-was when it would break an invariant. The invariants themselves are checked
+was when it would break an invariant. The places of jump lists and marks
+(`placeChecks`, part of `stateChecks`): the defaults, each set and read and
+refused, a split's copy of the jumps, a removed buffer's places dropped,
+what a buffer keeps beside its marks set, the place markers listed
+once, and those a state after no longer holds
+given up (`givenUpPlaces`). The invariants themselves are checked
 to refuse: states built in code that each break one (`spoilings`) are not
 well formed, so `EditorState.wellFormed` is seen to answer false for every
 one of its clauses. The operations the window commands are made of
@@ -368,7 +418,9 @@ registered command:
 - `dispatchRollbackChecks`: a command that fails leaves the texts, the
   windows' markers, the history and the scheme's state as they were, what
   cannot be rolled back is said, a move in the history is not taken back,
-  and a mark of the saved state is;
+  and a mark of the saved state is; and the recorded departure of task
+  `places-restore-on-rollback`, a mark and a jump entry inside the deleted
+  text carried to the end of the text put back;
 - `dispatchInterruptChecks`: on the watch model, an interrupt key that
   arrives while a command runs, before one and between two;
 - `pressedChecks`: the reserved invocation that presses keys
@@ -381,8 +433,9 @@ registered command:
 - `dispatchSlowChecks`: on the watch model's clock, which a command's
   requests move, a command slower than the threshold is logged once;
 - `dispatchGiveUpChecks`: what the loop gives up once a command has run to
-  its end, and not before: a closed window's markers, a removed buffer's
-  text, the snapshot of a save that is no longer in flight, and the
+  its end, and not before: a closed window's markers, the markers of a
+  jump list's entries and marks no place holds any more, before a removed
+  buffer's text, a removed buffer's text, the snapshot of a save that is no longer in flight, and the
   minibuffer of a prompt that was accepted or cancelled;
 - `dispatchMinibufferNoticeChecks`: the loop tells its scheme when a
   command that ran to its end opened the minibuffer's view, in both states
@@ -503,6 +556,19 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   command says when it starts nothing; and the commands and jobs as
   compiled code registers them (`Editor/Files/Compiled.lean`). They touch
   no file;
+- `jumpChecks`: a window's jump list held by markers (`Editor/Jumps.lean`)
+  on that driver, over the model of files: a record, an entry following
+  edits before it on the text model, entries edits brought onto one line
+  being one at the next move, a move past either end, a closed buffer's
+  places detached into its file or dropped, attached again when the file
+  is loaded, opening a file, a visit and switching buffers each recording
+  a jump, a visit at a row's first non-blank or that records none,
+  deleting rows erasing their lowercase marks, and keeping the first
+  row's as decided;
+- `jumpGoChecks`: going through the list to another buffer or a closed
+  file (`Editor/Jumps/Go.lean`) on that driver: the index moving at once,
+  the cursor at the entry once the load lands, and no entry recorded by
+  the visit of a `C-o` or of a jump to a place;
 - `openFilesChecks`: the loop's handling of the files a window asks to open
   (`Event.openFiles`, `Editor/Loop.lean`) on that driver: it runs
   `open-file` with the paths, so two paths leave two buffers and the last
@@ -716,7 +782,7 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is the 20 packages, in order, each accepted, with no package of
+  list is the 22 packages, in order, each accepted, with no package of
   the shipped palettes or of the compile mode among them, in the state
   they make every entry's owner is one of them, the ex names are bound in
   the order the headless fixtures show, the `ex` package's and then
@@ -764,26 +830,31 @@ The Vim scheme (`Editor/InputScheme/Vim.lean`) is checked the same way,
 with no model:
 
 - `vimEditChecks`: what an edit compiles to, the layout of each kind of
-  invocation, and what an edit says of itself;
+  invocation, a command's with a character first, and what an edit says
+  of itself;
 - `vimRegistryChecks`: the registry of Vim states: looking a state up by
   its name, and registering one. A record holds keymaps and so has no
   equality: the checks compare records by their fields (`vimSeen`);
 - `vimGrammarChecks`: the grammar: which keymaps a key is looked up in,
-  and what a key sequence parses to and yields;
+  and what a key sequence parses to and yields, a command that takes a
+  character (`m`) among them;
 - `vimStateChecks`: Vim states: which state a view is in, how one is
   entered, what the scheme reports of a view in a state, what the grammar
   reads of a state's record (typed text, an operator over the selection),
   the last change, and a mode's keys under the Vim scheme: a hand-tuned
   key is typed text in insert state, and `Mode.check` reads every state's
-  keymaps;
+  keymaps; and a command that takes a character awaiting it, and never
+  the last change;
 - `vimHintChecks`: what the Vim scheme lists as able to follow a keymap
   prefix (`Vim.State.continuations`): keys of both tiers, an active prefix
   over a state's binding, the pending keymaps while an operator waits, and
-  nothing after a count, an operator or the register prefix alone;
+  nothing after a count, an operator, the register prefix or a command
+  that takes a character alone;
 - `vimKeyBindingChecks`: the key bindings the Vim scheme lists
   (`Vim.State.keyBindings`): the commands of the walk's tiers in the view's
   state, an active binding first with its description, and no part of
-  speech, no sequence that begins with a count digit, no mode's binding
+  speech, no command that takes a character by its key alone, no sequence
+  that begins with a count digit, no mode's binding
   where typing is text and no binding an active prefix shadows;
 - `vimDefaultChecks`: the default states and bindings
   (`Editor/InputScheme/Vim/Default.lean`), observed through the grammar:
@@ -857,6 +928,41 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   count before it, a change with an insert session and its typed and
   committed text, the editing keys of insert state in a session
   (`insertKeysRepeatRows`), and what is not repeated;
+- `evilJumpChecks`: `C-o`, `C-i` and `TAB` through the jumps that `gg`,
+  `G`, the searches and `%` record (`Editor/Evil/Jumps.lean`), to the
+  exact column, with a count, under an operator, as `:help jumplist`'s
+  example scaled to eight lines, an entry following lines inserted above
+  it, a failed search and the motions that are no jump recording nothing,
+  and a split's copy of the list moved through on its own;
+- `evilMarkChecks`: `m`, `` ` `` and `'` (`Editor/Evil/Marks.lean`): a
+  mark set and gone to, exactly and at its line's first non-blank, as a
+  jump, under an operator, after an insert above it, the marks not set or
+  not named, `''` back and forth, a jump that leaves the cursor in place
+  keeping `''`, `m '` and ``m` ``, a mark motion run in a window
+  that is not focused, and across buffers on the file model: a buffer's
+  own marks, a global mark in another buffer, under an operator, in a
+  closed buffer's file, reopened with one jump recorded, attached again to
+  the reopened buffer's text so that an edit above it carries it, and
+  dropped with a closed buffer that held no file; a mark erased when its
+  line is deleted, on the last line too, a global mark kept on the line
+  that takes its place, kept by a
+  deletion of part of its line, kept on the first line of `3cc` and of a
+  charwise delete across lines, kept on the first line of `cj` and `2cc`
+  above an empty line, erased by `3dd` on every line, by `dd` on
+  a text's only line and by `3cc` on the lines after the first, kept by
+  `cc` on the only line and by a redo of its `dd`, put back by undo at its line and column,
+  erased again by redo and put back again by undo, and put back step by
+  step by a counted undo and redo (`markUndoRows`); and
+  the recorded departures, one check each named for its task: a line's
+  marks erased by the edit's shape, text typed at a mark, a
+  global mark's column on a deleted line, the numbered marks, the change
+  marks, the visual marks, the marks of the last change and insert, the
+  mark of the last exit, the sentence and paragraph marks, `m` in the
+  visual states, `:marks` and `:delmarks` on the ex line, `g'` and
+  ``g` ``, `]'`, `['`, ``]` `` and ``[` ``, `:mark` and `:k`,
+  `:lockmarks` and `:keepmarks` on the ex line, global marks
+  kept in the session alone, a lowercase mark with its buffer closed, and
+  `` ` ` `` after a jump into another buffer;
 - `clipboardCommandChecks`: the Edit menu's Cut, Copy, Paste and Select
   All (`Editor/Evil/Clipboard.lean`), each by its chord and by its menu
   item (`clipRan`), in each Vim state, on the clipboard model.
@@ -1037,6 +1143,44 @@ What the compile mode makes of them is checked in its package
 until the compile mode moved out of the core, with `.compileChecks`,
 `.compileErrorChecks`, `.compileLocationChecks` and
 `.compilePackageChecks`.
+Working sets (`Editor/WorkingSet.lean` and its modules) are checked in Lean
+alone too:
+
+- `workingSetChecks`: the stored form, pure: the document's JSON round trip
+  and the refusals of one it cannot read, a newer version first; a
+  workspace's key; a range captured from a text and its points found
+  again; the headers; and the excerpts' grouping by file and merging;
+- `workingSetRefindChecks`: the re-find ladder
+  (`Editor/WorkingSet/Refind.lean`), against the fuzzy model: exact, moved
+  past lines inserted above, the copy whose context matches over the
+  nearer one and the nearer of two alike, changed with one character
+  edited, drifted when deleted and when a short quote was edited, a long
+  quote found by its ends or drifted without its last lines, text that is
+  not ASCII, and a stored point past the text's end;
+- `workingSetPlaceChecks`: where a range is held while the editor runs
+  (`Editor/WorkingSet/Places.lean`), on the loop's driver over the models
+  with a workspace at `/r`: a held range follows edits through its
+  markers, closing its buffer detaches it as edited, opening the file
+  again holds it again, or leaves it drifted when another program removed
+  its text, and nothing is attached while the workspace's sets are not
+  read;
+- `workingSetRunChecks`: `working-set-add` and `working-set-open`
+  (`Editor/WorkingSet/Run.lean`) on that driver, the first acceptance
+  criterion of navigation-and-windows phase 5: a linewise selection added
+  and opened as the set's buffer, edited through it, visited and returned
+  from; a row of project search's results pinned as its file's range; a
+  selection across two files refused; a cursor's row; a range added twice;
+  overlapping ranges in one excerpt; the prompt; a set there is none of;
+  and `working-set-remove`, `working-set-note` and `working-set-refresh`
+  in the set's buffer;
+- `workingSetDiskChecks`: the sets on disk (`Editor/WorkingSet/Disk.lean`)
+  on that driver with the state directory `/state` and the version-control
+  interface's model at `/r`, the second acceptance criterion: three ranges
+  written with `HEAD`'s commit; a fresh editor over the same files, one of
+  them edited by another program, opening the set as a changed, a moved
+  and a drifted range; the drifted form not moved by a later write; memory
+  only with no state directory; a newer or unparsable store left alone; no
+  repository; and the writes a save and a close make.
 
 Listing a workspace's files is checked in Lean alone too:
 
@@ -1111,6 +1255,8 @@ def checks : List Check :=
     environmentLookupChecks ++
     fileWatchModelChecks ++
     fileWatchRunnerChecks ++
+    grepModelChecks ++
+    grepRunnerChecks ++
     setupChecks ++
     setupHintChecks ++
     registryChecks ++
@@ -1168,6 +1314,9 @@ def checks : List Check :=
     heightChecks ++
     layoutChecks ++
     floatChecks ++
+    jumpListChecks ++
+    markRuleChecks ++
+    markFollowChecks ++
     stateChecks ++
     tabChecks ++
     displayRuleChecks ++
@@ -1209,6 +1358,14 @@ def checks : List Check :=
     indentEditChecks ++
     indentLevelChecks ++
     apiStateChecks ++
+    insertExcerptChecks ++
+    projectSearchChecks ++
+    projectSearchRunChecks ++
+    workingSetChecks ++
+    workingSetRefindChecks ++
+    workingSetPlaceChecks ++
+    workingSetRunChecks ++
+    workingSetDiskChecks ++
     driverChecks ++
     promptChecks ++
     candidateChecks ++
@@ -1232,6 +1389,8 @@ def checks : List Check :=
     atPointAskChecks ++
     atPointByItselfChecks ++
     fileCommandChecks ++
+    jumpChecks ++
+    jumpGoChecks ++
     openFilesChecks ++
     languageOpenChecks ++
     dispatchQuitChecks ++
@@ -1261,6 +1420,8 @@ def checks : List Check :=
     evilIndentChecks ++
     evilUndoChecks ++
     evilRepeatChecks ++
+    evilJumpChecks ++
+    evilMarkChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++
@@ -1359,6 +1520,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model; {Editor.VersionControlContract.properties.length} properties of the version-control interface hold of its model, and the git implementation's status read of each of their repositories on the job model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models; {(Editor.Workspace.FinderContract.properties "/").length} properties of the workspace finder hold of its model and of the finder on the job model; {(Editor.Workspace.MarkerContract.properties "/").length} properties of the mode marker search hold of its model and of the search on the job model; {Editor.VersionControlContract.properties.length} properties of the version-control interface hold of its model, and the git implementation's status read of each of their repositories on the job model"
   (← IO.getStdout).flush
   IO.Process.exit 0

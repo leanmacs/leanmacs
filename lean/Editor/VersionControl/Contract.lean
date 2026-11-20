@@ -18,7 +18,8 @@ cannot drift from git:
   git would (`Repository.jobModel`): the job model holds static scripts, so
   only a read runs there;
 - by `contract-test`, against the git implementation over the library's
-  process service, in a temporary repository written from the property's
+  process service, each property in a temporary repository of its own,
+  eight properties at a time, written from the property's
   repository with git's plumbing (`ContractTest.writeGitRepository`),
   under a user config that asks for copies and for no untracked files,
   which the git implementation's command line pins away

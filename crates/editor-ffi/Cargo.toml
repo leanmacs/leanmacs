@@ -62,14 +62,19 @@ editor-render-wgpu = { path = "../editor-render-wgpu" }
 # `clippy.toml` here keeps the adapter out of everything but that one static
 # and the wiring test.
 editor-fs-std = { path = "../editor-fs-std" }
-# Fuzzy matching: the ranking rule, which the one C function of
-# `src/fuzzy.rs` asks, and the Scorer port it asks it over.
+# Fuzzy matching: the ranking rule and the locating rule, which the two C
+# functions of `src/fuzzy.rs` ask, and the Scorer and Searcher ports they
+# ask them over.
 editor-fuzzy = { path = "../editor-fuzzy" }
 # The real scorer. This is the crate that wires the library together, so
 # it is the one that links the adapter: that C function makes one for each
 # call. Through it the static library Lean links holds nucleo-matcher,
 # which has no system dependency.
 editor-fuzzy-nucleo = { path = "../editor-fuzzy-nucleo" }
+# The real searcher, for the same reason: the C function that locates a
+# pattern makes one for each call. Through it the static library Lean
+# links holds triple_accel, which has no system dependency.
+editor-fuzzy-triple-accel = { path = "../editor-fuzzy-triple-accel" }
 # Syntax trees: the Syntax port, the rule for a query's captures in a
 # range, and the session and worker that reparse a document from its edit
 # log, which the C functions of `src/syntax.rs` forward to.
@@ -116,6 +121,17 @@ editor-watch = { path = "../editor-watch" }
 # `clippy.toml` here keeps the adapter out of everything but that one
 # static. Through it the static library Lean links holds notify.
 editor-watch-notify = { path = "../editor-watch-notify" }
+# The grep service: the Files port, its fake and its contract, the rule of
+# a project search, and the service that owns each search, which the C
+# functions of `src/grep.rs` forward to.
+editor-grep = { path = "../editor-grep" }
+# The real files, walked and read with ripgrep's libraries, for the
+# process's grep service. This is the crate that wires the library
+# together, so it is the one that links the adapter; `clippy.toml` here
+# keeps the adapter out of everything but that one static. Through it the
+# static library Lean links holds ignore and grep-searcher, which have no
+# system dependency.
+editor-grep-ripgrep = { path = "../editor-grep-ripgrep" }
 
 [dev-dependencies]
 # The temporary directory the wiring test (`tests/files.rs`) owns: the one

@@ -307,7 +307,7 @@ reloads a buffer whose file changed on disk, and nothing follows a buffer's
 file with a watch yet: a change is found when a save is asked for.
 
 - **The port.** `editor_text::fs::Fs`, defined by `editor-text` in its own
-  terms, with seven methods. `stat` says what is at a path, following links,
+  terms, with nine methods. `stat` says what is at a path, following links,
   and is none for nothing; it is the one way time and metadata reach the
   core, which reads no clock. `read` gives a file's bytes whole. `write`
   makes a *new* file from pieces, with exactly the permissions given
@@ -324,7 +324,11 @@ file with a watch yet: a change is found when a save is asked for.
   there is refused as not found, and what is not a directory as not a file,
   the port's kind for "not what was asked for", which every operation
   already used for a path through something that is not a directory, so
-  no kind was added and no existing refusal changed. An error is a kind
+  no kind was added and no existing refusal changed. `make_directory`
+  (navigation-and-windows phase 5, for a workspace's working sets kept
+  under the state directory, which need not be there) makes a directory
+  and every directory on the way to it; one already there is no error, and
+  a file at the path or on the way is refused as not a file. An error is a kind
   the core decides on (not found, denied, exists, not a file, other) and
   the platform's words.
 - **The fake.** `editor_text::fs::FakeFs`, published and not test-only: a
@@ -343,8 +347,11 @@ file with a watch yet: a change is found when a save is asked for.
   what a save's stamp rests on: a renamed file keeps its modification time
   and its size. So is a listing: a directory holding a file, a directory, a
   link to a file and a link to nothing lists each once, with the kinds
-  file, directory, file and other, and nothing and a file are refused. The
-  check is shown to bite by eighteen fakes written to break one rule each.
+  file, directory, file and other, and nothing and a file are refused. So
+  is a directory made: two levels made at once, each a directory, made
+  again with no error and written in, and refused where a file is and
+  under one. The check is shown to bite by twenty-one fakes written to
+  break one rule each.
 - **The adapter.** `editor-fs-std`, a crate of its own: `StdFs` over
   `std::fs`, Unix only, made by the one constructor `StdFs::system()`. A
   write is `create_new` with the permissions set on the open file, then
@@ -401,6 +408,13 @@ file with a watch yet: a change is found when a save is asked for.
   deterministic and the Lean model answers the same. `std::fs::read_dir`
   is the library, behind the port, with `std::fs::metadata` of each entry
   for its kind.
+- **A directory made** (`editor_text::file::make_directory`,
+  navigation-and-windows phase 5): a path that is not absolute is refused
+  before the file system is asked; the port's not a file becomes not a
+  directory, and anything else is handed on. `std::fs::create_dir_all` is
+  the library, behind the port; where a file is at the path it says the
+  path exists, which the adapter answers as not a file. A save makes no
+  directory: a caller that saves where one may be missing makes it first.
 - **A stamp alone** (`editor_text::file::stamp`): the stamp of the file at
   a path, or none when nothing is there, from one stat, with nothing read;
   a path that is not absolute is refused before the file system is asked,
@@ -409,7 +423,7 @@ file with a watch yet: a change is found when a save is asked for.
   environment keeps a directory's entry by the stamps of mise's config
   files.
 - **The service** (`editor-ffi`, `src/files.rs`), in the timer service's
-  shape: a load, a save, a stamp or a listing is started with the caller's id and
+  shape: a load, a save, a stamp, a listing or a directory made is started with the caller's id and
   returns at once; **one thread works the requests in the order they were started**,
   so two saves of one file land in order; one completion is queued; the
   result is then taken once by its id, as a status, a snapshot handle for a
@@ -421,7 +435,10 @@ file with a watch yet: a change is found when a save is asked for.
   present or not, then the stamp. A listing's is listed: the count, then
   each entry's kind (0 file, 1 directory, 2 other) and the byte length of
   its name, the names joined as the detail; a name that is not UTF-8 is
-  left out, since Lean cannot name such a file.
+  left out, since Lean cannot name such a file. A directory made is done
+  with no words, and one refused is not absolute, not a directory, denied
+  or failed (`editor_ffi_files_make_directory`, bound as
+  `Ffi.filesMakeDirectory`).
 - **How the tests are kept off the disk.** `editor-text`'s tests, and the
   service's unit tests, run on the fake. That is held by the gate, not by
   review: a `clippy.toml` beside each of the two crates lists `std::fs`,
@@ -1084,7 +1101,7 @@ interface in Lean:
 | Service | Notes |
 |---|---|
 | **Diff** | Line and word diff between two texts or snapshots, producing hunks; apply or revert a hunk. Used for gutter marks, for turning an agent's whole-file "old text / new text" into reviewable hunks, and for external reloads. Built of it: the line diff a reload applies, "Diff, as built for reload", below. |
-| **Search** | Regex and literal search over a rope without copying it; project-wide search on worker threads with streamed results. Built of it: search within a text, "Search, as built", below. |
+| **Search** | Regex and literal search over a rope without copying it; project-wide search on worker threads with streamed results. Built of it: search within a text, "Search, as built", and the search of a workspace's files, "Project search, as built", below. |
 | **Fuzzy matching** | Which candidates a pattern matches, and in what order, for a prompt's candidates and for pickers. Built: "Fuzzy matching, as built", below. |
 
 ### Diff, as built for reload
@@ -1271,7 +1288,8 @@ that cannot be read are one refusal, never a panic.
   What is given up: nucleo's incremental refinement (a longer pattern
   rescans only the last matches) and matching across cores. **Revisit
   when a measured match of the largest list a picker lists (the project
-  file picker, navigation-and-windows phase 3: 100,000 files) takes
+  file picker, the workspace finder, `find-file-in-workspace`: 100,000
+  files) takes
   longer than 50 ms on the worker**; the recorded run is at about 50 ms
   from the key to the listing, most of it Lean's own work over the
   candidates.
@@ -1283,6 +1301,68 @@ Tests: the ranking rule on a canned scorer, and the fake and the contract,
 in `editor-fuzzy`; the adapter's own cases, its limit and the port's
 contract on it, in `editor-fuzzy-nucleo`; the C function's decoding and
 one wiring case, in `editor-ffi`. No test pins a score's value.
+
+**Locating a quote** (navigation-and-windows phase 5, for a working set's
+ranges found again after their file changed, `review-and-navigation.md`)
+is a second question of the same crate, behind a second port
+(`crates/editor-fuzzy/src/locate.rs`).
+
+- `Searcher::spans(pattern, text, max_errors)` reports spans of the text
+  whose byte-wise Levenshtein distance to the pattern is at most
+  `max_errors`, each with its distance; at least one with the fewest
+  errors any span of the text has, and none when no span is within them.
+- `locate(searcher, pattern, text, near, max_errors)` is what the editor
+  asks, and its rule is the crate's: the empty pattern is answered none
+  without asking; a reported span counts when it is within the text, both
+  ends are character boundaries and its errors are within the limit; the
+  answer is the one with the fewest errors, then the start nearest
+  `near`, then the earliest, then the longest. **"Fewest errors" is all
+  an asker may rest on**: which of several equal spans a library reports
+  is its own.
+- **A span that cuts a character is dropped, not moved.** Errors are
+  counted in bytes, as the library counts them, so on text that is not
+  ASCII the library's best span can cut a character, and the answer is
+  then a worse span or none. For the editor that is safe: a quote it
+  cannot place is shown drifted, never moved wrongly.
+- **The fake** is `Scan`: every span whose ends are character boundaries,
+  measured one by one. **The contract** is `contract::check_searcher`:
+  every span reported is within the text, its claimed errors and the
+  limit; the fewest errors reported are an exhaustive oracle's, asked of
+  ASCII texts, where bytes and characters agree; nothing is reported when
+  the oracle finds nothing within the limit; the pattern where it is
+  expected is answered there; an answer's ends are character boundaries;
+  and a sweep of generated texts from a fixed seed. It is seen to bite on
+  searchers written in its tests: one that claims fewer errors than a
+  span has, one that misses the best spans, one that reports past the
+  limit, one that reports nothing, and one that reports past the text.
+- **The adapter** is `crates/editor-fuzzy-triple-accel` (`TripleAccel`),
+  over `triple_accel`, pinned `=0.4.0` (MIT, used unmodified). It asks
+  `levenshtein_search_simd_with_opts` with Levenshtein costs, the best
+  spans and no anchor, and reports each match as a `Span`; it chooses
+  nothing. The library finds every span within `k` edits with no limit on
+  the pattern's length, and its "fewest errors" is exactly what a pure
+  model states. On x86 it takes SIMD paths chosen at run time, through
+  `unsafe`; elsewhere, Apple silicon included, its scalar path, which is
+  O(text × pattern). No triple_accel type is public, and `deny.toml` lets
+  no other crate depend on the library. It is held to the port's contract
+  and to two cases of its own: one substitution is found with one error,
+  and a pattern with no span near enough reports none.
+- **Set aside**: `diff-match-patch-rs` 0.5.1, whose `match_main` is
+  bitap: it refuses a pattern over 32 characters and scores nearness and
+  errors together, which no simple model can state. **Risk**: triple_accel
+  is unmaintained (2021). If it measures slow, or an advisory lands, the
+  port lets another library (`diff-match-patch-rs`, `sassy`) replace it
+  with no change above the port.
+- **Across the boundary** it is a second stateless call,
+  `editor_ffi_fuzzy_locate` (`crates/editor-ffi/src/fuzzy.rs`): the
+  pattern and the text borrowed for the call, the expected offset and the
+  limit as scalars, and whether a span was found with its `ByteRange`, as
+  `find` answers. It makes the adapter for the call and keeps nothing. A
+  pattern or text that is not UTF-8 is answered not found. Lean binds it as
+  `Ffi.fuzzyLocate` (`lean/Editor/Ffi/Fuzzy.lean`); one wiring case in
+  `crates/editor-ffi/tests/fuzzy.rs`, and two in `ffi-test`'s
+  `fuzzyChecks`, an exact place and one substitution after two-byte
+  characters.
 
 ### Search, as built
 
@@ -1427,6 +1507,156 @@ the fake and on engines that break it, in `editor-search`; what only a
 regex shows, a sweep that how a text is cut changes no answer, the
 library's bug, and the port's contract on the adapter, in
 `editor-search-regex`.
+
+### Project search, as built
+
+Built by navigation-and-windows phase 4, for `project-search`: every
+match of a pattern under a workspace's root, honouring ignore files, with
+open buffers searched in their buffer's text.
+
+**The port is the files under a root** (`crates/editor-grep`, `Files`, no
+dependencies). `walk(root, visit)` visits each file under the root by its
+path relative to it, depth first, each directory's entries by the bytes of
+their names (so `a/b` before `a-c`), leaving out an entry whose name
+starts with `.` and one an ignore file excludes, with everything under
+each. A root that is not there, not a directory or not readable is a
+refusal of its own kind; an entry below it that cannot be read is left
+out. `rows(path, holds, visit)` reads a file a row at a time: a row ends
+at a line feed, which is not in its text (a `\r` is); the last row is a
+row with no line feed, and an empty file has none; rows are numbered from
+0 with the byte offset of each start; a row that is not UTF-8 is decoded
+lossily. `holds` is asked of each row once, in order, and only the rows it
+holds for are visited. A file with a NUL byte is binary, and no row of it
+is visited. A visit's `Stop` ends a walk or a read.
+
+**The fake and the contract.** `fake::FakeFiles` is a tree in memory,
+built with `.file(path, bytes)` and `.excluded(path)`, the stand-in for an
+ignore file; it applies the hidden rule itself. `contract::check` names
+each property an implementation breaks, each in a fresh subdirectory made
+through a `Ground` the caller supplies (the fake's tree, or `std::fs` in a
+temporary directory): the walk's order, hidden entries, excluded entries,
+files alone, an empty file, row numbers and offsets, the last row, a
+carriage return, lossy rows, `holds` once a row, `Stop`, a binary file, and
+the root's refusals. It is seen to bite on implementations written in its
+tests. What each ignore file means is not in it, since the fake has none:
+the adapter's own tests pin it.
+
+**The rule of a search** is core logic (`editor_grep::search`, or
+`Search::prepare` then `Search::run`), over the files port and
+`editor-search`'s engine port:
+
+- Before any walk, a root that is not absolute or has a `..` component is
+  refused, and so is a pattern that does not parse or that the engine
+  refuses, with the sentence `/` says (`E54: Unmatched \(`).
+- **One pattern syntax, Vim's, and one match rule.** The pattern is
+  compiled once a search (`editor_search::CompiledPattern`, which compiles
+  each top-level branch once and is asked of many texts; `matches` and
+  `search` of a single text are built on it) and asked of each row as one
+  piece, with the text's word class. A row holds when it has a match that
+  is not empty; an empty match is never answered. So a match on disk is
+  one `/` finds in the buffer, and the `search-match` drawn over the
+  results agrees with what was found.
+- **An open buffer's text is searched in place of its file** when the walk
+  reaches the file's path, compared as spelled: its matches are asked of
+  its pieces, rows counted by line feeds, answered with source `Buffer`. An
+  overlay the walk does not reach is not searched, so ignore rules hold
+  for open buffers too.
+- A file that cannot be read, or is binary, has no match; only the root's
+  refusal ends a search.
+- **Limits**: at most so many files with a match and so many matches. The
+  one past a limit is not answered, the walk stops, and the summary says
+  it was truncated; a file is cut short at the matches limit.
+- `stopped` is asked before each file and each row.
+
+**The service** (`editor_grep::service::Service`, in the shape of the
+watch service) owns each search under an id of the caller's, on a thread
+of its own that makes its port and engine with a factory. A start returns
+at once; the thread refuses what the rule refuses before any walk and
+keeps `Started` or the refusal, completing the id. Each `next(id, wait)`
+is a read, completed when anything is there to deliver: every file found
+and not yet taken, in walk order, up to `bound` matches, a file with more
+than `bound` cut into several deliveries under one path, drained when it
+is taken. The end (the summary, or the root's refusal) comes in the
+delivery that takes the last file, and frees the id. The search waits
+while `bound` matches or more are kept and not taken, so memory is bounded
+and a slow reader slows its search. `cancel` makes its `stopped` true and
+completes nothing more; an id in use is refused; `shutdown` cancels every
+search and waits for every thread.
+
+**The adapter** is `crates/editor-grep-ripgrep`: `RipgrepFiles`, over
+ripgrep's libraries, each pinned exactly to the newest release on
+2026-11-19 (Unlicense OR MIT): `ignore =0.4.34` walks, with
+`standard_filters` (hidden entries, `.gitignore` and `.ignore` in the root
+and above it, `.git/info/exclude`, the global excludes),
+`require_git(false)` (a `.gitignore` is honoured outside a repository),
+`follow_links(false)`, entries sorted by the bytes of their names, on the
+calling thread; `grep-searcher =0.1.17` reads, with line numbers, binary
+detection that quits at a NUL, BOM transcoding, and no memory map; and
+`grep-matcher =0.1.9` is the interface of a private matcher that declares
+no line terminator, so the reader takes its row-by-row path and hands each
+row, without its line feed, to the port's `holds` once. Rows held are kept
+and visited when the read ends, so a NUL found in a later block makes the
+whole file binary. No type of the three is public, and `deny.toml` lets no
+other crate depend on them. `ignore` brings `globset`, which compiles an
+ignore file's globs to regexes inside the library; no crate of the
+workspace makes a pattern string. Set aside, departing from the phase's
+text:
+
+- `grep-regex`: it compiles only a pattern string in Rust's regex syntax,
+  so a Vim pattern would have to be printed back from `regex-syntax`'s
+  tree, which never happens here; and its `\b` is Unicode's word class,
+  not the text's, so `\<foo\>` would find different matches on disk than
+  `/` finds in the buffer.
+- Running `rg` as a child: a program the app bundle does not ship, and
+  output to parse.
+- `git ls-files` with the reading in Lean: git workspaces only, and Lean
+  has no regex engine.
+- `walkdir` alone: no ignore files.
+
+`ignore` reimplements git's rules, where the workspace finder's lister
+asks git (`git ls-files`): a file force-added though an ignore file names
+it is listed by the finder and left out of a search.
+
+**Across the boundary**, `crates/editor-ffi/src/grep.rs` is the seventh
+service behind the completion queue (source 7), in the watch service's
+shape: `editor_ffi_grep_start(id, words, strings, snapshots)` takes the
+limits, the bound and the lengths as words, the root, the pattern and the
+overlays' paths end to end, and a snapshot handle for each overlay, whose
+text is cloned (no text copied) and searched as its chunks;
+`editor_ffi_grep_next(id, wait)`, `editor_ffi_grep_take(wait, out)`,
+`editor_ffi_grep_cancel`, `editor_ffi_grep_pending` and
+`editor_ffi_grep_shutdown` forward to the process's one service, over
+`RipgrepFiles`, `RegexEngine` and `editor_text::is_word_character`. A
+reply is a status (started, each refusal, found), words, a detail and the
+paths; a found reply's words are each file's path length, source and
+matches, then its end (more, complete or truncated with the counts, or the
+walk's refusal). Lean resolves each overlay's `File.Source` to a handle
+before it starts, so a snapshot it no longer holds is refused there and
+never crosses; the bindings are `lean/Editor/Ffi/Grep.lean`.
+
+**Limits and the deliveries** are the caller's: `project-search` asks for
+200 files with a match or 2,000 matches, whichever comes first, and 200
+matches a delivery (`lean/Editor/ProjectSearch.lean`). The walk is
+single-threaded and sorted, so the results come in a stable order; it is
+slower than `rg` on a large tree, and the parallel walker is a later
+optimisation, made only on a measurement. A row of a file that is not
+UTF-8, or of a UTF-16 file, is decoded or transcoded, so its offsets are
+not the buffer's: Lean places the excerpts from the buffer's own text, so
+only the counts can differ.
+
+**Tests**: the port's contract on the fake and on implementations that
+break it, the rule and the service on the fake, in `editor-grep`; the
+contract, every match under a root with real ignore files, the walk's
+order, `holds` once a row across blocks and a late NUL, on real files in a
+temporary directory, in `editor-grep-ripgrep`; how a start and a reply
+cross, in `editor-ffi`; and in Lean, `ffi-test`'s `grepChecks`, the job
+port's `grepProperties` against the model, the fake and the real service,
+and `contract-test`'s `grepChecks` and `projectSearchChecks`.
+
+`crates/editor-grep/clippy.toml` holds the crate's tests, the rule's and
+the service's among them, to the fake: no `std::fs`, no `Path` method that
+asks the disk, no clock of the machine's, and not the adapter's
+constructor.
 
 ## Terminal
 

@@ -268,8 +268,19 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   sorted by offset and mapped in one walk. Measured: 32 bytes allocated for
   each of ten thousand anchors, on a megabyte of text, beyond what the same
   transaction allocates with none.
-- Who holds what, later: a view's selection, a scroll position, a comment's
-  place and a jump-list entry are each a marker Lean holds the id of. A Rust
+- Who holds what: a view's selection, a scroll position, a comment's place,
+  a jump-list entry and a mark are each a marker Lean holds the id of. The
+  jump list's entries, the previous-context mark and the marks are built:
+  anchor markers with the bias `after`, held in the editor state as places
+  (`lean/Editor/State.lean`, "The jump list and marks"), detached into a
+  file's path, row and column when their buffer is closed, and given up by
+  the loop once no place holds them
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "The jump list and
+  marks"). Since a marker moves through the one change set applied and
+  not back, a mark is not left to its marker alone: the loop erases a
+  mark whose line an edit removed and puts the lowercase marks back after
+  an undo or a redo by row and column, from what each buffer keeps beside
+  its marks (`lean/Editor/Marks.lean`). A Rust
   consumer that holds positions of its own (layout's cache keys) maps values
   with the mapper.
 
@@ -1219,6 +1230,15 @@ What it added to excerpt buffers is generic.
   clock's milliseconds at the first, and how long it was on screen
   (`Buffer.Viewed`). `BufferId.setExcerptHeaders` rewrites the headers and
   keeps it.
+- **Inserting excerpts** (`BufferId.insertExcerpts id index list`, built by
+  navigation-and-windows phase 4 for project search's results) splices
+  `list` into the buffer's list before `index` and keeps every excerpt it
+  has: each kept one is set again over its source range as it is now
+  (`TextId.excerpts`), so its text, an edit typed in it and its anchors
+  stay, and its entry, header and viewed record included, is kept. It is
+  one `setExcerpts` of the whole list, so a list that grows a delivery at a
+  time costs one re-assembly a delivery. Pinned by
+  `ModelTest.insertExcerptChecks`.
 - **The viewed record is written by the publish.** Once a scene's views
   are decorated, the loop credits the time since the last publish, on the
   clock the host hands each step (`Loop.Keys.now`, the job clock under
@@ -1239,6 +1259,120 @@ What it added to excerpt buffers is generic.
   sets for an excerpt buffer when a buffer over one of its entries'
   sources is modified (`Loop.contextOf`). Its own tree is never moved, so
   it could not say.
+
+### As built: the search results buffer
+
+Navigation-and-windows phase 4 built `project-search`
+(`lean/Editor/ProjectSearch.lean`, `lean/Editor/ProjectSearch/Run.lean`),
+the second user of excerpt buffers: every match of a pattern under a
+workspace's root, as code, editable in place as wgrep's results are.
+It changed nothing of the excerpt text.
+
+- **One buffer a search**, `*search: <pattern> in <label>*`, emptied and
+  filled again when the same search runs again. It has the mode
+  `project-search`, whose activate key (`RET` in the Vim scheme) visits
+  the match under the cursor in the window it is pressed in, recording a
+  jump first (`TextId.locate`, `Jumps.placeCursor`).
+- **Excerpts of the files' own buffers.** Each file found is placed from
+  its buffer's text as it is when the buffer is ready, not from the rows
+  the library reported: its matches are asked of that text
+  (`TextId.matches`), each match's row and two rows each side make an
+  excerpt, overlapping ones merged, and a header above the first,
+  `<path relative to the root> · <n> matches`. A file whose text holds no
+  match by then is dropped. A file open in a buffer is searched in that
+  buffer's text, unsaved edits included (the snapshot is the library's
+  overlay); one no buffer holds is loaded and taken into a buffer shown
+  nowhere, as the review buffer takes in a file. An edit typed in the
+  results is an edit of the file's buffer, which is then modified, and
+  the results show the modified mark ("The modified mark of an excerpt
+  buffer", above).
+- **It grows a delivery at a time**, each file's excerpts inserted at its
+  place in the walk's order (`BufferId.insertExcerpts`, `Record.slot`), so
+  a file whose load finishes late does not reorder the results. The first
+  excerpts to arrive put each cursor on the results at their start.
+- **Matches are drawn as the last search's.** The search sets the last
+  search to its pattern, as Vim's `:vimgrep` sets the last search pattern,
+  so the loop draws every match in the results in `search-match` and `n`
+  and `N` step between them with no change to the loop; a later `/`
+  changes what is drawn. A pattern of the results buffer's own would need
+  a loop change, and is not built.
+- **What it keeps** is the buffer's value `project-search`
+  (`ProjectSearch.Record`): the root, the label, the pattern, each file in
+  walk order as pending, placed (its buffer and its excerpt count) or
+  dropped, the sentence the search ended with, and the snapshots it was
+  started with, released when it ends or when the next search into the
+  buffer starts.
+- **Not built**: closing the buffers a search took in when the results
+  close; a command that saves every modified buffer, wgrep's finish step.
+
+Pinned by `ModelTest.projectSearchChecks` (the pure decisions),
+`ModelTest.projectSearchRunChecks` (the commands on the loop's driver over
+the models) and `ContractTest.projectSearchChecks` (over the real
+bindings).
+
+### As built: the working set buffer
+
+Navigation-and-windows phase 5 built working sets
+(`lean/Editor/WorkingSet.lean` and `lean/Editor/WorkingSet/`), the third
+user of excerpt buffers: a named list of ranges of a workspace's files,
+each with a note, shown as code and kept across a restart. It changed
+nothing of the excerpt text.
+
+- **Adding** (`working-set-add`, `SPC k a` in the default config): the
+  calling window's primary selection, its extent under the selection's
+  shape, or a cursor's whole row with its line break. In an excerpt buffer
+  (project search's results, a set's own buffer) each end is located in
+  its source (`TextId.locate`), so the range recorded is the file's, held
+  by markers of the file's buffer: a row of the results pins the file's
+  line. Ends in two files, a source with no file (a review's old side, a
+  drifted quote) and a file in no workspace are refused with a sentence.
+  The name is an argument or asked for, the workspace's sets the last used
+  first; a range already in the set is not added again.
+- **One buffer a set**, `*working-set: <name> in <label>*` (`working-set-open`,
+  `SPC k o` and `SPC RET`), made or emptied and filled again, with the mode
+  `working-set`. Opened from an excerpt buffer with no workspace of its
+  own (project search's results), the set is of the workspace of the
+  buffer under the cursor's excerpt.
+- **Its excerpts** are each placed range's lines, from the start of its
+  first row to the end of its last with the line break; ranges are grouped
+  by file in the order of each file's first range, and those of one file
+  whose rows overlap or touch are one excerpt, as project search merges, so
+  no two excerpts are over one source byte. The header is
+  `<path>:<line>`, ` · changed` for a range found with errors, and each
+  note. A file of the set no buffer holds is loaded and taken into a
+  buffer shown nowhere (the job `working-set-files`), and the buffer is
+  filled again when it arrives.
+- **A drifted range** follows the placed ones, in the set's order: a
+  read-only buffer `<path>@drifted` holding its stored quote, given the
+  workspace, its own spans covering its text in the face
+  `working-set-drifted`, which the loop draws in the set's buffer through
+  the excerpt translation with no change to the loop; its header
+  `<path>:<line> · drifted since <first 8 of the commit>` and its note. An
+  edit typed in it is refused as in any read-only buffer, and its stored
+  form is never changed: the next open, or `working-set-refresh`, tries
+  again. The quotes' buffers are removed when the set's buffer is filled
+  again or closed.
+- **In the set's buffer**: `RET` visits the range under the cursor,
+  recording a jump (`Jumps.visitLocated`, lifted from
+  `project-search-visit`); the refresh key fills it again; the local `d`
+  removes the range under the cursor, asking which by note where several
+  share the excerpt, and `n` sets its note. A note's header is rewritten by
+  filling the excerpts again with the cursors kept, not by
+  `BufferId.setExcerptHeaders`: one place makes headers.
+- **When ranges are found again**: when the set is opened or a file of it
+  is opened (`Files.adopt`'s hook), never at start-up, so a start waits on
+  nothing; "still there after a restart" is seen by opening the set.
+- **Not built**: deleting or renaming a set; reordering ranges; tours (the
+  same stored form, read with `fileAt` at the commit); watching the store
+  for another instance's writes (the last writer wins, the save being
+  atomic); a set across workspaces; closing the buffers an open loaded.
+
+Pinned by `ModelTest.workingSetChecks` (the stored form, pure),
+`ModelTest.workingSetRefindChecks` (the ladder),
+`ModelTest.workingSetPlaceChecks`, `ModelTest.workingSetRunChecks` and
+`ModelTest.workingSetDiskChecks` (on the loop's driver over the models), and
+`ContractTest.workingSetChecks` (over the real bindings and real git,
+through a restart).
 
 ## Decorations
 
@@ -3935,7 +4069,9 @@ frame journal and the renderer's counters.
   has one, and a flag.
 - **How many markers a text should hold.** Every transaction costs the ends
   held. There is no bound and no policy, and no marker survives a restart.
-  The command loop, and whatever holds comments and jump lists, decide.
+  The command loop, and whatever holds comments and jump lists, decide. A
+  window's jump list holds at most 100 entries, Vim's limit, and a
+  clean-up drops those that edits brought onto one line.
 - **A marker set by a transaction.** A transaction could name a marker to
   set to its selection after. It does not: the author places its marker
   with a second request, and the one writer path stays one argument

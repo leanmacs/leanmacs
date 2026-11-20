@@ -72,7 +72,7 @@
 //! | Enum | A `u8` tag, converted with a checked function that refuses a tag it does not know ([`events::QueueId::from_tag`], [`snapshot::ColumnUnit::from_tag`], [`motion::motion_of`]) | A `u64` tag in the result record ([`events::EventKind::tag`]) |
 //! | Small structure | Its fields, as scalar arguments | One `#[repr(C)]` record filled through an out-pointer in a single call ([`events::RawEvent`]) |
 //! | Option | A presence flag and a value | The function returns whether there is a value and fills the record only if so |
-//! | Byte range | Two scalars | A record of two `u64`: a start and an end, half-open, in bytes ([`text::ByteRange`]) |
+//! | Byte range | Two scalars | A record of two `u64`: a start and an end, half-open, in bytes ([`text::ByteRange`]; an option of one from [`text::editor_ffi_text_find`] and [`fuzzy::editor_ffi_fuzzy_locate`]) |
 //! | List | *Words*: a buffer of 64-bit numbers, eight bytes each, least significant first, as a pointer and a byte length borrowed for the call. A checked reader takes it apart and refuses a length that is not whole words, a count that runs past the buffer and words left over (the private module `words`) | Words in an owned buffer, pointer and length, in the result record ([`log::RawWords`]); the glue copies it and hands it back with one call to [`text::editor_ffi_text_free`], which frees any buffer the library lent |
 //! | List of handles | A C array of handle pointers and its count, borrowed for the call, which the glue builds from a Lean `Array` of handles; words name a handle by its index in it ([`display::editor_ffi_display_publish`], [`excerpts::editor_ffi_excerpts_set`]) | None yet |
 //! | List of strings | Words, the count and then the byte length of each string, and one string of all of them end to end, both borrowed for the call. Lengths that do not add up to the string, and one that ends inside a character, are refused with the words that cannot be read ([`fuzzy::editor_ffi_fuzzy_rank`], [`syntax::editor_ffi_syntax_highlight`]) | The same words and string, each an owned buffer in one result record ([`syntax::RawStrings`]), which the glue copies and hands back with two calls to [`text::editor_ffi_text_free`] ([`syntax::editor_ffi_syntax_grammars`], [`syntax::editor_ffi_syntax_capture_names`]) |
@@ -131,7 +131,9 @@
 //! pattern and candidates in, and the indices of the candidates the
 //! pattern matches out, best first, as words
 //! ([`fuzzy::editor_ffi_fuzzy_rank`], with its one refusal in
-//! [`fuzzy::FuzzyStatus`]). A search of a snapshot is another call that
+//! [`fuzzy::FuzzyStatus`]); locating a pattern with errors allowed is its
+//! second call, two strings and two scalars in and an option of a byte
+//! range out ([`fuzzy::editor_ffi_fuzzy_locate`]). A search of a snapshot is another call that
 //! keeps nothing, and the example of an answer that is a sentence when the
 //! call refuses: a pattern and scalars in, and words out, or the bytes of
 //! the reason a pattern is refused ([`search::editor_ffi_snapshot_search`],
@@ -157,7 +159,9 @@
 //! `candidates_are_ranked_through_c_as_the_ranking_rule_ranks_them`,
 //! `no_candidates_are_ranked_as_none` and
 //! `candidates_that_cannot_be_read_are_refused_with_no_words` in
-//! `tests/fuzzy.rs`; for a list of handles,
+//! `tests/fuzzy.rs`, with
+//! `a_pattern_is_located_through_c_as_the_locating_rule_locates_it` for
+//! locating; for a list of handles,
 //! `a_scene_published_through_c_is_laid_out_as_layout_lays_it_out`,
 //! `words_that_spell_no_scene_are_refused_and_the_last_frame_is_kept`,
 //! `a_display_nothing_was_published_to_has_no_scene` and, for the faces,
@@ -190,7 +194,8 @@
 //! A service is work the library does for a Lean job that takes time: a
 //! timer ([`timers`]), a load or a save of a file ([`files`]), a
 //! command run to its end ([`processes`]), a watch on a file or a
-//! directory ([`watches`]), and a line diff of two snapshots ([`diffs`]).
+//! directory ([`watches`]), a line diff of two snapshots ([`diffs`]), and a
+//! search of the files under a directory ([`grep`]).
 //! A job that waits must not hold a thread, so a request to
 //! a service is never a blocking call. Every service follows these rules:
 //!
@@ -565,6 +570,7 @@ pub mod events;
 pub mod excerpts;
 pub mod files;
 pub mod fuzzy;
+pub mod grep;
 pub mod interrupt;
 pub mod inverse;
 pub mod log;

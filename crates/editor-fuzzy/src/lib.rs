@@ -28,6 +28,8 @@
 //! | A rule of the order | [`rank`] | The tests here, on a scorer that answers canned scores |
 //! | Something more a scorer is asked (a case rule, a limit) | An argument of [`Scorer::scores`], as data | The tests here |
 //! | A rule every scorer keeps about which candidates match | A property of [`contract`] | Its own tests, on the fake and on scorers written to break it |
+//! | A rule of which located span is answered | [`locate::locate`] | The tests of [`locate`], on the fake and on searchers that answer canned spans |
+//! | A rule every searcher keeps about the spans it reports | A property of [`contract::check_searcher`] | Its own tests, on the fake and on searchers written to break it |
 //!
 //! # The fake and the contract
 //!
@@ -35,8 +37,18 @@
 //! on it. [`contract::check`] is what a real adapter is held to: it passes
 //! on the fake in this crate's tests, and each real adapter runs it in its
 //! own.
+//!
+//! # Locating a pattern
+//!
+//! [`locate::locate`] is the other question: where a pattern is in a text
+//! with some errors allowed, answered as a byte span. Which spans are
+//! within the errors is a [`locate::Searcher`]'s to say, the port an
+//! approximate matching library fills, and which one is answered is
+//! decided there. Its fake is [`locate::Scan`] and its contract
+//! [`contract::check_searcher`]. The module docs have the rule.
 
 pub mod contract;
+pub mod locate;
 
 /// The port: what scores candidates against a pattern.
 pub trait Scorer {

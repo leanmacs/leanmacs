@@ -83,7 +83,15 @@ def stateRequests : List StateRequest :=
     .show ⟨1⟩ ⟨0⟩ (marker 0 0) (marker 0 1), .openWindow ⟨0⟩ (marker 0 8) (marker 0 9) .tab,
     .tab (.select 1), .tab (.rename 1 (some "notes")), .tab (.move 0 1), .tab (.select 0),
     .tab (.close 1), .tab (.close 0), .tab (.select 7), .setLanguage ⟨0⟩ (some "rust"),
-    .setLanguage ⟨0⟩ none, .setLanguage ⟨9⟩ (some "rust")]
+    .setLanguage ⟨0⟩ none, .setLanguage ⟨9⟩ (some "rust"),
+    .setJumps ⟨0⟩ { list := { entries := #[.held ⟨0⟩ (marker 0 7)], index := 1 } },
+    .setJumps ⟨9⟩ {}, .setJumps ⟨0⟩ { previous := some (.held ⟨9⟩ (marker 0 7)) },
+    .setJumps ⟨0⟩ { previous := some (.held ⟨0⟩ (marker 1 7)) },
+    .setLocalMark ⟨0⟩ 'a' (some (marker 0 7)), .setLocalMark ⟨9⟩ 'a' none,
+    .setLocalMark ⟨0⟩ 'b' (some (marker 1 7)), .setGlobalMark 'A' (some (.held ⟨0⟩ (marker 0 7))),
+    .setGlobalMark 'B' (some (.held ⟨9⟩ (marker 0 7))),
+    .setGlobalMark 'C' (some (.held ⟨0⟩ (marker 1 7))), .setGlobalMark 'D' (some (.file "/f" 1 2)),
+    .setGlobalMark 'A' none]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -424,6 +432,34 @@ def stateRequestChecks : List Check :=
               bare == state &&
               replied absent == .inl (.noSuchWindow ⟨9⟩) &&
               same == state },
+    { name :=
+        "the jump and mark requests are the state's operations: setJumps a window's jumps, setLocalMark a buffer's mark and setGlobalMark a global mark, each refused as its operation refuses, with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let jumps : Jumps :=
+              { list := { entries := #[.held ⟨1⟩ (marker 1 5)], index := 1 }
+                previous := some (.held ⟨1⟩ (marker 1 5)) }
+            let (set, after) := state.handle (.setJumps ⟨1⟩ jumps)
+            let (absent, same) := state.handle (.setJumps ⟨9⟩ jumps)
+            let (marked, withMark) := state.handle (.setLocalMark ⟨1⟩ 'a' (some (marker 1 6)))
+            let (noBuffer, same2) := state.handle (.setLocalMark ⟨9⟩ 'a' (some (marker 1 6)))
+            let (global, withGlobal) :=
+              state.handle (.setGlobalMark 'A' (some (.held ⟨0⟩ (marker 0 6))))
+            let (astray, same3) := state.handle (.setGlobalMark 'A' (some (.held ⟨0⟩ (marker 1 6))))
+            replied set == .inr () && after == (state.setJumps ⟨1⟩ jumps).2 &&
+              replied absent == .inl (.noSuchWindow ⟨9⟩) &&
+              same == state &&
+              replied marked == .inr () &&
+              withMark == (state.setLocalMark ⟨1⟩ 'a' (some (marker 1 6))).2 &&
+              replied noBuffer == .inl (.noSuchBuffer ⟨9⟩) &&
+              same2 == state &&
+              replied global == .inr () &&
+              withGlobal == (state.setGlobalMark 'A' (some (.held ⟨0⟩ (marker 0 6)))).2 &&
+              replied astray == .inl .markerOfAnotherText &&
+              same3 == state },
     { name := "a message sets the echo area's text, and the last of two is the one kept"
       run :=
         pure <|

@@ -64,9 +64,22 @@ A motion (`Motion`) is a name and a function from where a cursor is
   by its caller, which leaves the cursor at the position the motion
   answers (`Editor/Evil/Operators.lean`). The move command does not read
   it: the cursor goes to the target the motion answers.
+- **A motion is told the window and the buffer it is made in**
+  (`From.view`, `From.buffer`): the call's target's, which need not be the
+  focused window, nor the only buffer over its text. A motion that reads a
+  window's or a buffer's state, a mark, reads theirs.
+- **A motion may lead out of its text** (`To.elsewhere`): a global mark in
+  another buffer or a closed file. The move command goes there as a jump
+  (`Editor/Jumps/Go.lean`, `Jumps.goTo`); under an operator the motion
+  fails, as Vim's does.
 - **A motion may take an argument** (`From.argument`): the character its
   key's next key named, for `f`, `t`, `F` and `T`. A motion that takes one
   and is given none fails where it is.
+- **A motion says whether it is a jump** (`Motion.jumps`), as Vim's
+  `jump-motions` are: the move command and the operate command record the
+  place the cursor starts from in the window's jump list
+  (`Editor/Jumps.lean`) when it did not fail, so a motion records nothing
+  itself.
 - **What is remembered between motions goes out as data too**: a find
   hands back the character find it made (`To.find`), and its caller keeps
   it as the last one (`EditorState.lastFind`), which `;` and `,` read from
@@ -135,6 +148,7 @@ object, as Vim fails a text object.
 | Something every motion is told of where it starts | A field of `From` |
 | Something every motion says of where it leads | A field of `To`, with a default |
 | How an operator takes a motion | The motion's `reach`, or its `taken` when the position differs too |
+| Something every command that makes a motion does with it (record a jump) | A field of `Motion`, with a default, read by the move and the operate commands |
 | A new operator | An entry, an `Operator` value, in the table its command looks names up in (`Editor/Evil/Operators.lean`) |
 | Something every operator is told of what it acts on | A field of `Operand` |
 | A new text object | An entry, a `TextObject` value, in the table its commands look names up in (`Editor/Evil/Objects.lean`) |
@@ -153,6 +167,14 @@ namespace Editor.Vocabulary
 structure From where
   /-- The position the cursor is at. -/
   head : Nat
+  /-- The window the motion is made in: the call's target's, which need not
+  be the focused window. A motion that reads a window's state reads this
+  window's (`''` its previous-context mark). -/
+  view : ViewId
+  /-- The buffer that window shows: the call's target's. A motion that
+  reads a buffer's state reads this buffer's (`'a` its marks), and does not
+  find it by its text, which several buffers can share. -/
+  buffer : BufferId
   /-- The count typed, if one was. None is not a count of 1. -/
   count : Option Nat := none
   /-- The wanted column the view keeps, when it still holds: when the cursor
@@ -161,6 +183,16 @@ structure From where
   /-- The argument its key gave the motion, if it takes one: a character for
   `f`, a pattern for `/`. -/
   argument : Option String := none
+  deriving DecidableEq, Repr
+
+/-- A place outside the motion's text that a motion leads to
+(`To.elsewhere`). -/
+structure Elsewhere where
+  /-- The place: held in another buffer, or in a closed file. -/
+  place : Place
+  /-- Whether the cursor goes to the first non-blank of its line, as `'`
+  goes, or to the place itself, as `` ` `` goes. -/
+  line : Bool
   deriving DecidableEq, Repr
 
 /-- Where a motion leads. -/
@@ -191,6 +223,10 @@ structure To where
   (`EditorState.lastSearch`), which `n` and `N` repeat; `none` to keep the
   one there was. -/
   search : Option Search := none
+  /-- A place in another buffer or in a closed file the motion leads to,
+  which no head of this text is: a global mark's (`'A`). Its caller goes
+  there as a jump; `none` for a motion that stays in its text. -/
+  elsewhere : Option Elsewhere := none
   deriving DecidableEq, Repr
 
 /-- How an operator takes the cells between the head and a motion's
@@ -241,6 +277,10 @@ structure Motion where
     return {
         head := to.head, reach, failed := to.failed, said := to.said, find := to.find
         search := to.search }
+  /-- Whether the motion is a jump (Vim's `jump-motions`): the command that
+  makes it records the place it starts from in the window's jump list,
+  unless it failed, with an operator or without. -/
+  jumps : Bool := false
 
 /-- What an operator acts on. -/
 inductive Stretch where

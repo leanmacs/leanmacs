@@ -5,6 +5,7 @@ import Editor.Command.Append
 import Editor.Completion.Filtering
 import Editor.Completion.Words
 import Editor.Evil.Clipboard
+import Editor.Evil.Jumps
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
 import Editor.Evil.Scroll

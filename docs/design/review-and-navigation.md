@@ -88,6 +88,22 @@ Two models exist and the editor needs both.
   silently moved. This is rdm's model, and the only one an agent can
   consume, since the reader of a plan comment is usually an agent.
 
+Working sets are the first to use both (navigation-and-windows phase 5,
+`lean/Editor/WorkingSet/`): while the editor runs a range is held by two
+anchor markers of its file's buffer; when the buffer closes it is detached
+into its stored form, a quote with 32 characters of context each side, its
+lines and columns and the commit `HEAD` was at, as rdm's anchor is shaped;
+and when the set or the file is opened again it is found again by the
+ladder above (`WorkingSet.refind`: exact at its point, then the occurrence
+whose context matches best and then the nearest, then a fuzzy span with a
+quarter of the quote's bytes in errors through the fuzzy port's `locate`,
+over `triple_accel`), or shown drifted, its stored form never moved. The
+commit is recorded and named in a drifted range's header; the quote is the
+buffer's text when the form was refreshed, unsaved edits included, so it is
+"against" that commit only in naming when it was taken. Reading the file at
+the commit (`fileAt`) is a tour's, and not built here. The same stored form
+is what a tour will use.
+
 ### Automated reviewers
 
 AI review tools have converged on finding candidates in parallel,
@@ -193,9 +209,9 @@ callers and callees always, not on demand, and brought code to the reader.
 | Feature | What it is | Built on |
 |---|---|---|
 | Pickers | Fuzzy finders over files, symbols, buffers, anything | Fuzzy matching, tables |
-| Jump list | Positions held by anchors, so they survive edits | Anchors |
-| Working sets | Named, pinned collections of locations that persist | Persistent tables, anchors |
-| References and callers as excerpts | Results shown as code in an excerpt buffer, not a list of file names | Excerpt buffers, code index |
+| Jump list | Positions held by anchors, so they survive edits. Built, with Vim's marks: `C-o`, `C-i`, `m`, `` ` `` and `'`, each window's list of anchor markers, a closed buffer's places kept as its file's rows and columns ([keymaps-and-modes.md](keymaps-and-modes.md), "The jump list and marks") | Anchors |
+| Working sets | Named, pinned collections of locations that persist. Built (navigation-and-windows phase 5): `working-set-add` records the selection, a cursor's row, or a row of project search's results as its file's range in a named set of the file's workspace; `working-set-open` shows the set as an excerpt buffer of its ranges' lines, editable in place, `RET` visiting a range; each workspace's sets are kept under the editor's state directory and found again after a restart, in files edited outside the editor, or marked drifted ([text-and-display.md](text-and-display.md), "As built: the working set buffer"; [projects.md](projects.md), "What lives where") | Persistent tables, anchors, quote re-anchoring |
+| References and callers as excerpts | Results shown as code in an excerpt buffer, not a list of file names. Built first for project search (navigation-and-windows phase 4): `project-search` shows every match under the workspace as excerpts of the files' own buffers, editable in place as wgrep's results are ([text-and-display.md](text-and-display.md), "As built: the search results buffer") | Excerpt buffers, code index |
 | Neighbour strip | Callers and callees of the function at the cursor, always visible | Code index, block decorations |
 | Outline and breadcrumbs | The syntax tree's structure | Syntax queries |
 | Tours and maps | An ordered set of locations with notes, written by a person or an agent, validated against the code | Excerpt buffers, anchors, quote re-anchoring |

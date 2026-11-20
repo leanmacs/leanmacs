@@ -149,6 +149,17 @@ with nothing started. It has a fake over the pure model of files
 the library's diff service (`Editor/Job/Real.lean`). A runner that is given
 none has `Diffs.absent`.
 
+`Greps` is the grep port, beside them: start a search request
+(`Editor/Grep.lean`) as a wait, take its reply once the wait has completed,
+and withdraw a wait or cancel a search. A start whose overlay names a
+snapshot the job does not hold is answered `noSuchSnapshot` at once, as a
+diff's is, and a `next` of a search the job does not hold `noSuchSearch`. A
+search does not outlive its job: `Handle.conclude` cancels every search the
+job still holds (`Handle.endGreps`). It has a fake over the pure model of
+project search (`FakeFiles.greps`, `Editor/Job/Fake.lean`) and a real
+implementation over the library's grep service (`Editor/Job/Real.lean`). A
+runner that is given none has `Greps.absent`.
+
 `Environments` is the port of the environments a host's jobs share, which
 answers at once and registers no wait (`Environments.inherited`, the
 default, and `sharedEnvironments`, state behind a reference).
@@ -288,6 +299,7 @@ def Files.absentReply : (request : FileRequest) → request.Reply
   | .save .. => .error (.failed "this runner has no file service")
   | .stamp .. => .error (.failed "this runner has no file service")
   | .list .. => .error (.failed "this runner has no file service")
+  | .makeDirectory .. => .error (.failed "this runner has no file service")
 
 /-- No file service: every request completes at once, refused as failed,
 through the table `completions`. It is what a runner has when it was given
@@ -370,6 +382,28 @@ def Diffs.absent (completions : Completions) : Diffs where
   take _ request := pure (request.refused (.failed "this runner has no diff service"))
   cancel _ := pure ()
 
+/-- The grep port: what the runner's search waits are made of. -/
+structure Greps where
+  /-- Asks for `request` to be worked as the wait `id`, and for the wait to
+  be completed when it can be taken: a start once the search has its pattern
+  compiled or is refused, a `next` once a delivery is there. It returns at
+  once and never blocks. -/
+  start : (id : UInt64) → (request : GrepRequest) → BaseIO Unit
+  /-- The reply to `request`, which was started as the wait `id` and has
+  completed. It is asked once, on the job's thread. -/
+  take : (id : UInt64) → (request : GrepRequest) → BaseIO request.Reply
+  /-- Withdraws the wait `id`, or cancels the search `id`: the service will
+  not complete it, reads nothing more for it and keeps nothing of it. Safe
+  for any id, a timer's included. -/
+  cancel : (id : UInt64) → BaseIO Unit
+
+/-- No grep service: every request completes at once, refused as failed,
+through the table `completions`. -/
+def Greps.absent (completions : Completions) : Greps where
+  start id _ := completions.finish id .completed
+  take _ request := pure (request.refused (.failed "this runner has no grep service"))
+  cancel _ := pure ()
+
 /-- The environments port: what a job's environment requests are answered
 by, at once (`Editor/Process/Environment.lean`). -/
 structure Environments where
@@ -414,6 +448,8 @@ structure Services where
   fileWatches : FileWatches := FileWatches.absent completions
   /-- The diffs. A runner that is given none has `Diffs.absent`. -/
   diffs : Diffs := Diffs.absent completions
+  /-- The searches. A runner that is given none has `Greps.absent`. -/
+  greps : Greps := Greps.absent completions
   /-- The environments its jobs share. A runner that is given none has
   `Environments.inherited`. -/
   environments : Environments := Environments.inherited
@@ -451,6 +487,9 @@ structure Handle where
   /-- The watches the job started and still holds, oldest first. Every
   change to it is one atomic step. -/
   watches : IO.Ref (Array FileWatch.Id)
+  /-- The searches the job started and still holds, oldest first. Every
+  change to it is one atomic step. -/
+  searches : IO.Ref (Array Grep.Id)
   /-- What the job's posts are handed to, on the job's thread: whoever
   spawned it runs each on the editor thread ("Posting a command", in the
   module docs). -/
@@ -486,6 +525,7 @@ def withdraw (handle : Handle) (id : UInt64) : BaseIO Unit := do
   handle.services.processes.cancel id
   handle.services.fileWatches.cancel id
   handle.services.diffs.cancel id
+  handle.services.greps.cancel id
   handle.services.completions.finish id .cancelled
 
 /-- Cancels the job: sets its token, and withdraws the wait it is in, if it
@@ -523,9 +563,18 @@ def endWatches (handle : Handle) : BaseIO Unit := do
   for watch in watches do
     handle.services.fileWatches.cancel watch.number.toUInt64
 
+/-- Cancels every search the job still holds, through the grep service's
+cancel, which stops it reading, and leaves it holding none. Safe to call
+again. -/
+def endGreps (handle : Handle) : BaseIO Unit := do
+  let searches ← handle.searches.modifyGet fun searches => (searches, #[])
+  for search in searches do
+    handle.services.greps.cancel search.number.toUInt64
+
 /-- Leaves `outcome` in the handle, then calls `finished`: the job has ended.
 
-Every streaming child and every watch the job still holds is ended first,
+Every streaming child, every watch and every search the job still holds is
+ended first,
 however the job ended: a job's command has no request that could use
 one.
 
@@ -537,6 +586,7 @@ def conclude (handle : Handle) (finished : BaseIO Unit) (outcome : Outcome (Edit
     BaseIO Unit := do
   handle.endChildren
   handle.endWatches
+  handle.endGreps
   match outcome with
   | .finished _ =>
     pure ()
@@ -592,6 +642,10 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.files.start id (.list path)
     return .later id wait (handle.services.files.take id (.list path))
+  | .file (.makeDirectory path) => do
+    let (id, wait) ← handle.services.completions.register
+    handle.services.files.start id (.makeDirectory path)
+    return .later id wait (handle.services.files.take id (.makeDirectory path))
   | .process (.start command streaming) => do
     let (id, wait) ← handle.services.completions.register
     handle.services.processes.start id (.start command streaming)
@@ -684,6 +738,40 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.diffs.start id request
     return .later id wait (handle.services.diffs.take id request)
+  | .grep (.next search) => do
+    -- A search is named for the job that started it, and for no other.
+    unless (← handle.searches.get).contains search do
+      return .now (.error .noSuchSearch)
+    let (id, wait) ← handle.services.completions.register
+    handle.services.greps.start id (.next search)
+    return .later id wait do
+        let reply ← handle.services.greps.take id (.next search)
+        -- After its last delivery, or a refused read, the service forgets
+        -- the search.
+        match reply with
+        | .ok { ended := none, .. } =>
+          pure ()
+        | _ =>
+          handle.searches.modify (·.filter (· != search))
+        return reply
+  | .grep request => do
+    -- An overlay's snapshot is named for the job that holds it, as a diff's
+    -- source is.
+    for source in request.sources do
+      if let .held snapshot := source then
+        unless (← handle.held.get).contains snapshot do
+          return .now (request.refused .noSuchSnapshot)
+    let (id, wait) ← handle.services.completions.register
+    handle.services.greps.start id request
+    return .later id wait do
+        let reply ← handle.services.greps.take id request
+        -- The search is the job's from here: the runner ends it with the job.
+        match request, reply with
+        | .start .., .ok search =>
+          handle.searches.modify (·.push search)
+        | _, _ =>
+          pure ()
+        return reply
 
 /-- Runs `program` to its end, a request at a time. A request that is
 answered at once is a direct call, and the loop goes on on the same thread.
@@ -753,7 +841,8 @@ def spawn (services : Services) (work : Work) (finished : BaseIO Unit)
     (posted : Invocation → BaseIO Unit := fun _ => pure ()) : BaseIO Handle := do
   let handle : Handle :=
     { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new, held := ← IO.mkRef #[]
-      children := ← IO.mkRef #[], watches := ← IO.mkRef #[], posted }
+      children := ← IO.mkRef #[], watches := ← IO.mkRef #[], searches := ← IO.mkRef #[]
+      posted }
   discard <| BaseIO.asTask (start handle finished work)
   return handle
 

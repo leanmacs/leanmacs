@@ -356,7 +356,9 @@
 //! - **A listing** ([`file::list`]) answers what a directory holds, each
 //!   entry with its kind, links followed, sorted by the bytes of the
 //!   names.
-//! - All three are tested on the port's published fake ([`fs::FakeFs`]) and
+//! - **A directory made** ([`file::make_directory`]) is made with every
+//!   directory on the way to it; one already there is no error.
+//! - All four are tested on the port's published fake ([`fs::FakeFs`]) and
 //!   make no real file; the real adapter is another crate, held to the
 //!   port's contract by its own tests.
 //!

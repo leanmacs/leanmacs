@@ -3,7 +3,10 @@
 //!
 //! [`search`] and [`matches()`] are what the editor asks: a pattern as the
 //! user typed it, a text as the pieces it is held in, and the text's word
-//! class, in; a match, or the matches in a range, out. A pattern is parsed
+//! class, in; a match, or the matches in a range, out. Each parses and
+//! compiles its pattern for the call; [`CompiledPattern`] is a pattern
+//! compiled once and asked of many texts, as a search of many files asks
+//! it. A pattern is parsed
 //! here, by our own parser of a subset of Vim's syntax ([`pattern`]).
 //! What a branch of it matches at a place is an [`Engine`]'s to say, the
 //! port a regex library fills; which match a search answers is decided
@@ -62,6 +65,7 @@
 //! |---|---|---|
 //! | A piece of syntax | [`pattern`]: the parser and the tree, an [`pattern::Atom`] variant for a new kind of atom | The parser's tests, on the module docs' table; the adapter's own tests for what it matches |
 //! | A rule of which match a search answers | [`search`], [`matches()`] | The tests here, on [`Literal`] and on engines written in them |
+//! | A question asked of many texts with one pattern | A method of [`CompiledPattern`], which compiles each branch once | The tests here, on an engine that counts what it compiles |
 //! | A rule every engine keeps about what a literal matches | A property of [`contract`] | Its own tests, on the fake and on engines written to break it |
 //!
 //! # The fake and the contract
@@ -82,7 +86,7 @@ use std::ops::Range;
 
 pub use pattern::{Pattern, Sequence};
 pub use pieces::Pieces;
-pub use rule::{Searched, matches, search};
+pub use rule::{CompiledPattern, Searched, matches, search};
 
 /// The port: what compiles a sequence of a pattern into something that
 /// finds it in a text.

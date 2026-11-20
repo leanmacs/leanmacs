@@ -1,5 +1,6 @@
 import Editor.File.Model
 import Editor.Fuzzy.Contract
+import Editor.Grep.Model
 import Editor.Job
 import Editor.Process.Model
 
@@ -478,7 +479,32 @@ def fileProperties : List FileProperty :=
             match relative with
             | .error .relativePath => true
             | _ => false
-      after := #[("a.txt", rawFile), ("B.txt", otherFile), ("sub", ByteArray.empty)] }]
+      after := #[("a.txt", rawFile), ("B.txt", otherFile), ("sub", ByteArray.empty)] },
+    { name :=
+        "a directory made makes every directory on the way to it, and one there already is no error; a save in it then succeeds; a file at the path or on the way to it is refused notADirectory, and a relative path relativePath"
+      files := #[("a.txt", rawFile)]
+      holds := fun root => do
+        let deep := root / "made" / "deep"
+        let made ← File.makeDirectory deep
+        let again ← File.makeDirectory deep
+        let file ← loaded (root / "a.txt")
+        let savedIn ← File.save (.held file.snapshot) (deep / "c.txt") .absent
+        let listed ← File.list (root / "made")
+        let atFile ← File.makeDirectory (root / "a.txt")
+        let underFile ← File.makeDirectory (root / "a.txt" / "sub")
+        let relative ← File.makeDirectory "relative"
+        let refusedAs (reply : Except FileError Unit) (error : FileError) : Bool :=
+          match reply with
+          | .error refusal => refusal == error
+          | .ok () => false
+        return made.isOk && again.isOk && savedIn.isOk &&
+            (match listed with
+            | .ok entries => entries == #[{ name := "deep", kind := .directory }]
+            | .error _ => false) &&
+            refusedAs atFile .notADirectory &&
+            refusedAs underFile .notADirectory &&
+            refusedAs relative .relativePath
+      after := #[("a.txt", rawFile), ("made", ByteArray.empty)] }]
 
 /-- `files` in the order of their names, to compare two sets of files. -/
 def byName (files : Array (String × ByteArray)) : Array (String × ByteArray) :=
@@ -706,6 +732,163 @@ where
   noSnapshot : Except DiffError Diff.Script → Bool
     | .error .noSuchSnapshot => true
     | _ => false
+
+/-! ## The search requests
+
+A property of the search requests (`Editor/Grep.lean`) is a file property:
+its files are in the directory the job searches, and the same three runs
+reach them (the model, whose files and snapshots a search reads; the fake of
+the file service, whose model answers a search too; and the library's file
+and grep services on real files). The model matches literal patterns only,
+and reads a root `.ignore` of names as its stand-in for every ignore file,
+so the properties say only what both keep: literal matches, hidden files, a
+root `.ignore` of plain names, overlays, refusals, deliveries and limits.
+What only the library shows (regex patterns, `.gitignore` at any depth, a
+binary file found late) is pinned by its own tests
+(`crates/editor-grep-ripgrep`). -/
+
+/-- Limits no property here reaches. -/
+def wideLimits : Grep.Limits :=
+  { files := 100, found := 1000 }
+
+/-- Every file a search of `pattern` under `root` finds, read to its end, and
+how it ended: each file by its name under `root`, its origin and its matches
+as (row, start, stop); or the refusal of its start or of a read. The
+deliveries are checked on the way: each holds at most `bound` matches, and
+only the last holds the end. -/
+def searchedAll (root : System.FilePath) (pattern : String)
+    (overlays : Array (System.FilePath × File.Source) := #[]) (limits := wideLimits) (bound := 64) :
+    JobM (Except GrepError (Array (String × Grep.Origin × Array (Nat × Nat × Nat)) × Grep.End)) :=
+  do
+  let search ←
+    match ← Grep.start root pattern overlays limits bound with
+    | .ok search =>
+      pure search
+    | .error error =>
+      return .error error
+  let mut found := #[]
+  for _ in [0:1000] do
+    match ← Grep.next search with
+    | .error error =>
+      return .error error
+    | .ok delivery =>
+      let size := delivery.found.foldl (· + ·.found.size) 0
+      if size > bound then
+        throw s!"a delivery held {size} matches, over the bound {bound}"
+      for file in delivery.found do
+        let name := (file.path.toString.drop (root.toString.length + 1)).toString
+        found := found.push (name, file.origin, file.found.map fun m => (m.row, m.start, m.stop))
+      if let some ending := delivery.ended then
+        return .ok (found, ending)
+  throw "a search never ended"
+
+/-- `found`'s files, each one's pieces across deliveries joined. -/
+def joined (found : Array (String × Grep.Origin × Array (Nat × Nat × Nat))) :
+    Array (String × Grep.Origin × Array (Nat × Nat × Nat)) :=
+  found.foldl (init := #[]) fun acc (name, origin, found) =>
+    match acc.back? with
+    | some (last, lastOrigin, earlier) =>
+      if last == name then acc.pop.push (last, lastOrigin, earlier ++ found)
+      else acc.push (name, origin, found)
+    | none => acc.push (name, origin, found)
+
+/-- The files of `files` as written. -/
+def written (files : List (String × String)) : Array (String × ByteArray) :=
+  files.toArray.map fun (name, text) => (name, text.toUTF8)
+
+/-- A search property over `files`, which it leaves as they are. -/
+def searchProperty (name : String) (files : List (String × String))
+    (holds : System.FilePath → JobM Bool) : FileProperty :=
+  { name, files := written files, holds, after := written files }
+
+/-- Whether `reply` is a refusal `check` accepts. -/
+def refusedWith {α : Type} (reply : Except GrepError α) (check : GrepError → Bool) : Bool :=
+  match reply with
+  | .error error => check error
+  | .ok _ => false
+
+/-- The properties every implementation of the job port's search requests
+has. -/
+def grepProperties : List FileProperty :=
+  [searchProperty
+      "a search answers every literal match under the root, each file in the walk's order by name, with each match's row and byte offsets"
+      [("b", "x needle\nneedle needle"), ("a-c", "needle"), ("a.b", "é needle\n\nno"),
+        ("none", "nothing")]
+      fun root => do
+      let reply ← searchedAll root "needle"
+      return reply.toOption ==
+          some
+            (#[("a-c", .disk, #[(0, 0, 6)]), ("a.b", .disk, #[(0, 3, 9)]),
+                ("b", .disk, #[(0, 2, 8), (1, 9, 15), (1, 16, 22)])],
+              .complete 3 5),
+    searchProperty "a hidden file and a file a root `.ignore` names are not searched"
+      [(".hidden", "needle"), (".ignore", "skip\n"), ("skip", "needle"), ("keep", "needle")]
+      fun root => do
+      let reply ← searchedAll root "needle"
+      return reply.toOption == some (#[("keep", .disk, #[(0, 0, 6)])], .complete 1 1),
+    searchProperty
+      "an overlay's snapshot is searched in place of its file, and its matches are the buffer's"
+      [("a", "nothing"), ("b", "x needle")] fun root => do
+      let b ← loaded (root / "b")
+      let reply ← searchedAll root "needle" #[(root / "a", .held b.snapshot)]
+      return reply.toOption ==
+          some (#[("a", .buffer, #[(0, 2, 8)]), ("b", .disk, #[(0, 2, 8)])], .complete 2 2),
+    searchProperty
+      "a search whose overlay names no snapshot, one the store never published or one the job does not hold, is refused with noSuchSnapshot"
+      [("a", "needle")] fun root => do
+      let published ← Grep.start root "needle" #[(root / "a", .snapshot ⟨1000⟩)] wideLimits 64
+      let notHeld ← Grep.start root "needle" #[(root / "a", .held ⟨1000000⟩)] wideLimits 64
+      return refusedWith published (· == .noSuchSnapshot) &&
+          refusedWith notHeld (· == .noSuchSnapshot),
+    searchProperty "an unmatched `\\(` is refused as invalid, and a relative root as not absolute"
+      [("a", "needle")] fun root => do
+      let unmatched ← Grep.start root "\\(" #[] wideLimits 64
+      let relative ← Grep.start "relative" "needle" #[] wideLimits 64
+      return refusedWith unmatched
+            (fun
+              | .invalid _ => true
+              | _ => false) &&
+          refusedWith relative
+            (fun
+              | .notAbsolute _ => true
+              | _ => false),
+    searchProperty "a root that is not there is the first read's refusal, notFound"
+      [("a", "needle")] fun root => do
+      let reply ← searchedAll (root / "missing") "needle"
+      return refusedWith reply
+          (fun
+            | .notFound _ => true
+            | _ => false),
+    searchProperty
+      "a delivery holds at most the bound's matches, a file with more is cut across deliveries, and the end comes last"
+      [("a", "n n n n n"), ("b", "n"), ("c", "n n")] fun root => do
+      let reply ← searchedAll root "n" (bound := 2)
+      return match reply with
+        | .ok (found, ending) =>
+          joined found ==
+              #[("a", .disk, #[(0, 0, 1), (0, 2, 3), (0, 4, 5), (0, 6, 7), (0, 8, 9)]),
+                ("b", .disk, #[(0, 0, 1)]), ("c", .disk, #[(0, 0, 1), (0, 2, 3)])] &&
+            ending == .complete 3 8
+        | .error _ => false,
+    searchProperty
+      "the files limit and the matches limit stop a search, and its end says it was truncated"
+      [("a", "n n"), ("b", "n"), ("c", "n")] fun root => do
+      let byFiles ← searchedAll root "n" (limits := { files := 2, found := 100 })
+      let byMatches ← searchedAll root "n" (limits := { files := 100, found := 3 })
+      let exactly ← searchedAll root "n" (limits := { files := 3, found := 4 })
+      return byFiles.toOption ==
+            some
+              (#[("a", .disk, #[(0, 0, 1), (0, 2, 3)]), ("b", .disk, #[(0, 0, 1)])],
+                .truncated 2 3) &&
+          byMatches.toOption ==
+            some
+              (#[("a", .disk, #[(0, 0, 1), (0, 2, 3)]), ("b", .disk, #[(0, 0, 1)])],
+                .truncated 2 3) &&
+          (exactly.toOption.map (·.2)) == some (.complete 3 4),
+    searchProperty "a read of a search the job does not hold is refused with noSuchSearch"
+      [("a", "needle")] fun _ => do
+      let reply ← Grep.next ⟨999999⟩
+      return refusedWith reply (· == .noSuchSearch)]
 
 /-! ## The process requests
 

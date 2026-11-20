@@ -61,6 +61,10 @@ It answers by the library's rules and by its own route.
   is the path, by file name, sorted. Each list request's directory, past
   the relative check, is recorded in `listed`, refused or not: a test counts
   the reads with it.
+- **A directory made is refused in this order**: a path that is not
+  absolute; a file at the path or on the way to it (`notADirectory`).
+  Otherwise the path and every path on the way to it are directories after
+  it, the root included; one already there is no error.
 - It has no temporary file, no link and no permissions: how a save reaches
   the disk is the library's, pinned in Rust on the file port's fake.
 
@@ -263,12 +267,34 @@ def list (model : FileModel) (path : System.FilePath) :
               model.files.filterMap fun file => named file.path .file
           (.ok (entries.qsort (·.name < ·.name)), model)
 
+/-- The model's answer to making the directory at `path`, and the model
+after it: the path and every path on the way to it are directories. A
+refused request leaves the model as it was. -/
+def makeDirectory (model : FileModel) (path : System.FilePath) :
+    Except FileError Unit × FileModel :=
+  if !path.isAbsolute then (.error .relativePath, model)
+  else
+    let rec onTheWay (fuel : Nat) (here : System.FilePath) (found : Array System.FilePath) :
+      Array System.FilePath :=
+      match fuel, here.parent with
+      | fuel + 1, some parent =>
+        if parent == here then found.push here else onTheWay fuel parent (found.push here)
+      | _, _ => found.push here
+    let paths := onTheWay path.components.length path #[]
+    if paths.any (model.file? · |>.isSome) then (.error .notADirectory, model)
+    else
+      let model :=
+        paths.foldl (init := model) fun model here =>
+          if model.directories.contains here then model else model.withDirectory here
+      (.ok (), model)
+
 /-- The model's answer to each file request, and the model after it. -/
 def handle : (request : FileRequest) → FileModel → request.Reply × FileModel
   | .load path limit, model => model.load path limit
   | .save source path expect, model => model.save source path expect
   | .stamp path, model => (model.stamp path, model)
   | .list path, model => model.list path
+  | .makeDirectory path, model => model.makeDirectory path
 
 /-- The model's answer to a diff request (`Editor/Diff.lean`), over the
 snapshots it holds: the script or the hunks of the model of a line diff

@@ -191,10 +191,10 @@ def fileKeys : Loop.Keys TestScheme.scheme :=
         discard <| (⟨1⟩ : ViewId).close
         return none),
       ("visit-note", fun _ => do
-        Files.visit ⟨0⟩ (inFiles "note.txt") ⟨0, 2⟩ true
+        Files.visit ⟨0⟩ (inFiles "note.txt") { row := 0, column := 2 } true
         return none),
       ("visit-missing", fun _ => do
-        Files.visit ⟨0⟩ (inFiles "missing.txt") ⟨1, 0⟩ true
+        Files.visit ⟨0⟩ (inFiles "missing.txt") { row := 1, column := 0 } true
         return none)]
 
 /-- The jobs of the file command checks, by name: the load job, whose loads

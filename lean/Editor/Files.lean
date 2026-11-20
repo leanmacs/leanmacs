@@ -1,5 +1,7 @@
 import Editor.Completion.Paths
+import Editor.Jumps
 import Editor.Language
+import Editor.WorkingSet.Places
 import Editor.Workspace.Attach
 
 /-!
@@ -107,6 +109,16 @@ them are in `Editor/Files/Compiled.lean`.
   it. Its buffer and its window are rolled back, and the text it made is
   not released, as for every command (`Editor/Loop.lean`, "What is not
   undone"). The file is opened again.
+- **Opening a file is a jump** (`docs/design/keymaps-and-modes.md`, "The
+  jump list and marks"): the window the buffer is shown in records one
+  (`Jumps.record`) right before showing it, at once when a buffer holds the
+  path and otherwise when the load is delivered. A visit made by a jump
+  command records none (`LoadOrder.record`, `visit`'s `record`). Once a
+  loaded file's buffer holds it, the places a closed buffer of that file
+  left are held in it again (`Jumps.attach`), and so are the working sets'
+  ranges of the file, found again in its text, or drifted
+  (`WorkingSet.attach`, `Editor/WorkingSet/Places.lean`), once its
+  workspace is attached.
 - **A visit** (`Files.visit view path point focus`) is an open that, once
   the buffer is shown, puts one cursor of the view at a point and, with
   `focus`, focuses the view: at once when a buffer holds the path, and
@@ -343,6 +355,9 @@ structure At where
   /-- The column, in characters (Unicode scalar values) from the row's
   start. -/
   column : Nat
+  /-- Whether the cursor goes to the row's first non-blank in place of the
+  column, as a mark's line does (`'`). -/
+  firstNonBlank : Bool := false
   deriving DecidableEq, Repr
 
 /-- What the load job is started with: the file to load, and the view to
@@ -359,16 +374,24 @@ structure LoadOrder where
   point : Option At := none
   /-- For a visit, whether the view is focused once the file is shown. -/
   focus : Bool := false
+  /-- Whether a jump is recorded in the view when the file is shown
+  (`Jumps.record`): opening a file is a jump, except for a visit a jump
+  command makes (`Editor/Jumps/Go.lean`), which planned the jump list
+  itself. -/
+  record : Bool := true
   deriving DecidableEq, Repr
 
 /-- The order as the arguments a job is started with: the path, then the
-view's number, then, for a visit, the point's row and column and the focus,
-then each path to open next. An order with no point and no path next
+view's number, then, for a visit, the point's row and column, the focus,
+whether it goes to the row's first non-blank and whether it records a
+jump, then each path to open next. An order with no point and no path next
 crosses as the path and the view alone. -/
 def LoadOrder.arguments (order : LoadOrder) : List Argument :=
   [.str order.path.toString, .nat order.view.index] ++
     (match order.point with
-    | some point => [.nat point.row, .nat point.column, .bool order.focus]
+    | some point =>
+      [.nat point.row, .nat point.column, .bool order.focus, .bool point.firstNonBlank,
+        .bool order.record]
     | none => []) ++
     order.next.map (.str ·.toString)
 
@@ -380,9 +403,12 @@ def pathsOf? : List Argument → Option (List System.FilePath)
 
 /-- The order `arguments` are, if they are one (`LoadOrder.arguments`). -/
 def LoadOrder.ofArguments? : List Argument → Option LoadOrder
-  | .str path :: .nat view :: .nat row :: .nat column :: .bool focus :: rest =>
+  |
+  .str path ::
+      .nat view ::
+      .nat row :: .nat column :: .bool focus :: .bool firstNonBlank :: .bool record :: rest =>
     (pathsOf? rest).map fun next =>
-      { path, view := ⟨view⟩, next, point := some ⟨row, column⟩, focus }
+      { path, view := ⟨view⟩, next, point := some { row, column, firstNonBlank }, focus, record }
   | .str path :: .nat view :: rest => (pathsOf? rest).map fun next => { path, view := ⟨view⟩, next }
   | _ => none
 
@@ -462,34 +488,26 @@ def openAll (view : ViewId) : List System.FilePath → EditorM Unit
   | path :: next => do
     let state ← editorState
     if let some buffer := state.findFile path then
+      -- Opening a file is a jump ("Open", in the module docs).
+      Jumps.record (shownIn state view)
       if let .error _← (shownIn state view).show buffer then
         message (notShown path)
       openAll view next
     else if let .error refusal← startJob loadJob (LoadOrder.arguments { path, view, next }) then
       message (notOpening path refusal)
 
-/-- Puts the cursor of `view` at `offset`, one bar with its shape kept. -/
-def placeCursor (view : ViewId) (offset : Nat) : EditorM Unit := do
-  if let .ok selection← view.selection then
-    discard <|
-        view.select
-          { selection with
-            ranges := #[⟨offset, offset⟩], primary := 0 }
-
 /-- The byte offset of `point` in `text` ("Open", in the module docs): the
 start of its row, clamped to the last line, and the bytes of the row's first
-`point.column` characters, clamped to its content. -/
+`point.column` characters, clamped to its content (`Marks.offsetAt`); or,
+when the point says so, the row's first non-blank (`Jumps.offsetOn`). -/
 def offsetAt (text : TextId) (point : At) : TextM Nat := do
-  let row := min point.row ((← text.lineCount) - 1)
-  let content ← text.rowContent row
-  let start ← text.offsetOf ⟨row, 0⟩
-  return start + (String.ofList (content.toList.take point.column)).utf8ByteSize
+  Jumps.offsetOn text (← Marks.offsetAt text point.row point.column) point.firstNonBlank
 
 /-- Puts the cursor of `view`, which shows `buffer`, at `point`, and focuses
 the view with `focus` ("Open", in the module docs). -/
 def placeAt (view : ViewId) (buffer : BufferId) (point : At) (focus : Bool) : EditorM Unit := do
   let some shown := (← editorState).buffer? buffer | return
-  placeCursor view (← offsetAt shown.text point)
+  Jumps.placeCursor view (← offsetAt shown.text point)
   if focus then
     discard <| view.focus
 
@@ -522,7 +540,10 @@ def adopt (path : System.FilePath) (loaded : File.Loaded) (view : Option ViewId 
   let name := state.freeName (path.fileName.getD path.toString)
   let .ok buffer ← addBuffer name text | return none
   let .ok () ← buffer.attachFile path loaded.stamp (loaded.endings.dominant.getD .lf) | return none
+  -- The places of the file a closed buffer left are held in it again.
+  Jumps.attach buffer path
   Workspace.attach buffer path
+  WorkingSet.attach buffer path
   if let some view := view then
     let .ok () ← view.show buffer | return none
   -- The language is recorded before the mode is set, so the mode's entry
@@ -549,6 +570,8 @@ def takeIn (order : LoadOrder) (view : ViewId) (reply : Except FileError File.Lo
     message (notOpened order.path error)
   | .ok loaded =>
     let view := shownIn (← editorState) view
+    if order.record then
+      Jumps.record view
     let some buffer ← adopt order.path loaded (some view) | message (notShown order.path)
     arrived order view buffer
 
@@ -588,12 +611,21 @@ def «open» (view : ViewId) (path : System.FilePath) (next : List System.FilePa
 docs): opens it as `Files.open` does, and once the buffer is shown puts the
 view's cursor at the point (`offsetAt`) and, with `focus`, focuses the
 view. At once when a buffer holds the path; otherwise when the load is
-delivered. A refused load says so and changes nothing else. -/
-def visit (view : ViewId) (path : System.FilePath) (point : At) (focus : Bool) : EditorM Unit := do
+delivered. A refused load says so and changes nothing else.
+
+It records a jump in the view where the buffer is shown, as every open
+does, unless `record` is false: only the jump commands pass false
+(`Jumps.go`, `Editor/Jumps/Go.lean`), whose step through the jump list, or
+whose own record, was made before the visit, and which a record when the
+load lands would undo by appending an entry and moving the index. -/
+def visit (view : ViewId) (path : System.FilePath) (point : At) (focus : Bool)
+    (record : Bool := true) : EditorM Unit := do
   let state ← editorState
-  let order : LoadOrder := { path, view, point := some point, focus }
+  let order : LoadOrder := { path, view, point := some point, focus, record }
   if let some buffer := state.findFile path then
     let shown := shownIn state view
+    if record then
+      Jumps.record shown
     let .ok () ← shown.show buffer | message (notShown path)
     arrived order shown buffer
   else if let .error refusal← startJob loadJob order.arguments then
@@ -763,6 +795,8 @@ def saved (order : SaveOrder) (reply : Except FileError File.Stamp) : EditorM Un
   match reply with
   | .ok _ =>
     message (wrote order.path)
+    -- The working sets that hold ranges of the file are written too.
+    WorkingSet.fileSaved order.buffer
     if let some start := order.after then
       if let .error refusal← startJob start.name start.arguments start.key then
         message s!"{start.name}: {refusal.describe}"

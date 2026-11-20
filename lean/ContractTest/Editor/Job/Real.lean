@@ -9,6 +9,7 @@ import Editor.Display.Recorder
 import Editor.Ffi.Document
 import Editor.Ffi.Events
 import Editor.Ffi.Files
+import Editor.Ffi.Grep
 import Editor.Ffi.Processes
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Syntax
@@ -16,6 +17,7 @@ import Editor.Ffi.Timers
 import Editor.Ffi.Watches
 import Editor.File
 import Editor.FileWatch
+import Editor.Grep
 import Editor.Highlight
 import Editor.Invocation
 import Editor.Job
@@ -39,7 +41,7 @@ import Editor.Watch
 # Contract tests: `Editor/Job/Real.lean`
 
 The tests of `Editor/Job/Real.lean`: `fileWatchChecks`, `processChecks`,
-`jobChecks` and `fileChecks`, what only the runner over the library's services
+`jobChecks`, `fileChecks` and `grepChecks`, what only the runner over the library's services
 shows, and `warmPatience`. The root module `ContractTest` runs them; its module
 doc says what each shows.
 -/
@@ -608,5 +610,67 @@ def fileChecks (completions : Job.Completions) : List Check :=
           return saved && released.isOk && refused &&
               (← IO.FS.readBinFile (directory / "taken.txt")) == noteBytes &&
               !(← (directory / "released.txt").pathExists) }]
+
+/-- The checks of the runner over the library's grep service
+(`realGreps`): what only the library can show. A job's search does not
+outlive the job; and an overlay of a snapshot a command took, published in
+the store's table, is searched in place of a file whose text on disk
+differs. Every file is in a temporary directory its check makes and
+removes. -/
+def grepChecks (completions : Job.Completions) : List Check :=
+  [{  name :=
+        "a job's search does not outlive the job: cancelled while its search is held, the grep service holds nothing more"
+      run := do
+        let directory ← IO.FS.createTempDir
+        try
+          IO.FS.writeFile (directory / "a") "needle\n"
+          let rig ← FileRig.new completions
+          let before ← Ffi.grepPending
+          let handle ←
+            Job.spawn rig.services
+                (reporting fun _ => do
+                  let .ok _ ←
+                    Grep.start directory "needle" #[] JobContract.wideLimits 64 | return false
+                  sleep hour
+                  return true)
+                (pure ())
+          let held ← eventually (return (← Ffi.grepPending) > before)
+          handle.cancel
+          let cancelled ← endedAs handle .cancelled
+          let freed ← eventually (return (← Ffi.grepPending) == before)
+          return held && cancelled && freed
+        finally
+          IO.FS.removeDirAll directory },
+    { name :=
+        "an overlay of a snapshot a command took is searched in place of a file whose text on disk differs, and answered as the buffer's"
+      run := do
+        let directory ← IO.FS.createTempDir
+        try
+          IO.FS.writeFile (directory / "a") "nothing\n"
+          IO.FS.writeFile (directory / "b") "x needle\n"
+          let rig ← FileRig.new completions
+          let first ← Job.spawn rig.services (reporting fun _ => pure 1) (pure ())
+          unless ← eventually first.ended do
+            return false
+          let command : EditorM SnapshotId := do
+            let text ← createText "y\nneedle needle"
+            text.snapshot
+          let display := (← recorderOf rig.published).handle
+          let (.ok snapshot, _) ←
+            Job.finishWith rig.held first command (.over rig.published) display | return false
+          let handle ←
+            Job.spawn rig.services
+                (reporting fun _ => do
+                  let reply ←
+                    JobContract.searchedAll directory "needle"
+                        #[(directory / "a", .snapshot snapshot)]
+                  return reply.toOption ==
+                      some
+                        (#[("a", .buffer, #[(1, 2, 8), (1, 9, 15)]), ("b", .disk, #[(0, 2, 8)])],
+                          .complete 2 3))
+                (pure ())
+          endedAs handle (.finished #["true"])
+        finally
+          IO.FS.removeDirAll directory }]
 
 end ContractTest

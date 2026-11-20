@@ -280,6 +280,12 @@ the repository it starts from, run three ways:
   `.git/hooks/pre-commit` run by `/bin/sh`, its first line printed on its
   standard output and the rest on its standard error. The editor runs git
   under the user's config, so the contract does too, under a hostile one.
+  `contract-test` runs the properties in eight concurrent lanes, each
+  property in its own temporary repository and home, and reports their
+  failures in the list's order, each property that throws failing alone.
+  A new property must therefore not depend on another having run, which
+  it never could: each starts from its own repository. The lanes are bounded, not one per property, because each
+  property's job must end within the contract test's patience.
 
 Its first property is the adapter test that git and the model agree on a
 repository with a staged, an unstaged, an untracked, a renamed and a

@@ -1,0 +1,30 @@
+[package]
+name = "editor-fuzzy-triple-accel"
+version = "0.1.0"
+description = "The searcher port's real adapter, over triple_accel"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The searcher port, its fake and its contract. This crate implements the
+# port, and its test `tests/contract.rs` runs the contract on the adapter.
+editor-fuzzy = { path = "../editor-fuzzy" }
+# The approximate search: every span of a text within `k` byte edits of a
+# pattern, as Levenshtein distance, with no limit on the pattern's length.
+# Kept behind the port: no triple_accel type is public here, and
+# `deny.toml` lets no other crate depend on it. Pinned exactly; 0.4.0 is
+# the newest release (2021), and the crate is no longer maintained, which
+# the port makes cheap to undo. Its licence is MIT, and it is used
+# unmodified. Its default features are its SIMD paths on x86, chosen at
+# run time; on other machines it takes its scalar path.
+#
+# Looked at on 2026-11-19 and set aside:
+#
+# - `diff-match-patch-rs` 0.5.1: its `match_main` is bitap, which refuses
+#   a pattern longer than 32 characters, and scores the nearness and the
+#   errors of a match together, which no simple model can state.
+# - Our own: the distance is twenty lines (the port's fake has one), but
+#   a search that is fast over a window of 32 KiB is what the library is
+#   for.
+triple_accel = "=0.4.0"

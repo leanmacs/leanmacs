@@ -823,7 +823,7 @@ lean_obj_res editor_glue_snapshot_matches(b_lean_obj_arg snapshot,
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
-// ---- Fuzzy ranking ----
+// ---- Fuzzy ranking and locating ----
 //
 // The example of a list of strings crossing. The candidates go to the
 // library as words, their count and then the byte length of each, and as one
@@ -845,6 +845,32 @@ lean_obj_res editor_glue_fuzzy_rank(b_lean_obj_arg pattern,
                         byte_array_bytes(words), byte_array_len(words),
                         string_bytes(strings), string_len(strings), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// Locating a pattern with errors allowed: the pattern and the text are
+// borrowed for the call, and the span found comes back as a `ByteRange`, as
+// `find`'s does. The call keeps nothing in the library either.
+
+bool editor_ffi_fuzzy_locate(const uint8_t *pattern, size_t pattern_len,
+                             const uint8_t *text, size_t text_len, size_t near,
+                             uint32_t max_errors, editor_ffi_byte_range *out);
+
+// `Editor.Ffi.fuzzyLocateRaw : @& String → @& String → USize → UInt32 →
+// IO (Option ByteRange)`
+lean_obj_res editor_glue_fuzzy_locate(b_lean_obj_arg pattern,
+                                      b_lean_obj_arg text, size_t near,
+                                      uint32_t max_errors) {
+  editor_ffi_byte_range found;
+  if (!editor_ffi_fuzzy_locate(string_bytes(pattern), string_len(pattern),
+                               string_bytes(text), string_len(text), near,
+                               max_errors, &found)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  // `ByteRange`: no object fields, then `start` and `stop`.
+  lean_object *range = lean_alloc_ctor(0, 0, 2 * sizeof(uint64_t));
+  lean_ctor_set_uint64(range, uint64_field(0, 0), found.start);
+  lean_ctor_set_uint64(range, uint64_field(0, 1), found.end);
+  return lean_io_result_mk_ok(option_some(range));
 }
 
 // ---- The syntax service ----
@@ -1271,6 +1297,8 @@ bool editor_ffi_files_save(uint64_t id, const editor_ffi_snapshot *snapshot,
                            const editor_ffi_raw_expect *expect);
 bool editor_ffi_files_stamp(uint64_t id, const uint8_t *path, size_t path_len);
 bool editor_ffi_files_list(uint64_t id, const uint8_t *path, size_t path_len);
+bool editor_ffi_files_make_directory(uint64_t id, const uint8_t *path,
+                                     size_t path_len);
 bool editor_ffi_files_take(uint64_t id, editor_ffi_raw_file_result *out);
 bool editor_ffi_files_cancel(uint64_t id);
 uint64_t editor_ffi_files_pending(void);
@@ -1292,6 +1320,13 @@ lean_obj_res editor_glue_files_stamp(uint64_t id, b_lean_obj_arg path) {
 lean_obj_res editor_glue_files_list(uint64_t id, b_lean_obj_arg path) {
   return lean_io_result_mk_ok(lean_box(
       editor_ffi_files_list(id, string_bytes(path), string_len(path))));
+}
+
+// `Editor.Ffi.filesMakeDirectory : UInt64 → @& String → IO Bool`
+lean_obj_res editor_glue_files_make_directory(uint64_t id,
+                                              b_lean_obj_arg path) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_files_make_directory(
+      id, string_bytes(path), string_len(path))));
 }
 
 // `Editor.Ffi.filesSaveRaw : UInt64 → @& Snapshot → @& String → UInt64 →
@@ -1686,6 +1721,104 @@ lean_obj_res editor_glue_watches_pending(void) {
 // and every start in flight has returned.
 lean_obj_res editor_glue_watches_shutdown(void) {
   editor_ffi_watches_shutdown();
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
+// ---- The grep service ----
+//
+// The seventh service behind the completion queue, in the watch service's
+// shape. A start goes in with an id, words, the strings end to end and an
+// array of snapshot handles, one for each overlay (all borrowed for the
+// call; the library clones each handle's text). A reply comes back as one
+// record: a status, words, a detail and the paths end to end, each a buffer
+// the library lends and the glue hands back once copied.
+
+// The library's `RawGrepReply`.
+typedef struct {
+  uint64_t status;
+  uint8_t *words;
+  size_t words_len;
+  uint8_t *detail;
+  size_t detail_len;
+  uint8_t *paths;
+  size_t paths_len;
+} editor_ffi_raw_grep_reply;
+bool editor_ffi_grep_start(uint64_t id, const uint8_t *words, size_t words_len,
+                           const uint8_t *strings, size_t strings_len,
+                           const editor_ffi_snapshot *const *snapshots,
+                           size_t snapshots_len);
+bool editor_ffi_grep_next(uint64_t id, uint64_t wait);
+bool editor_ffi_grep_take(uint64_t wait, editor_ffi_raw_grep_reply *out);
+bool editor_ffi_grep_cancel(uint64_t id);
+uint64_t editor_ffi_grep_pending(void);
+void editor_ffi_grep_shutdown(void);
+
+// `Editor.Ffi.grepStartRaw : UInt64 → @& ByteArray → @& ByteArray → @& Array
+// Snapshot → IO Bool`
+lean_obj_res editor_glue_grep_start(uint64_t id, b_lean_obj_arg words,
+                                    b_lean_obj_arg strings,
+                                    b_lean_obj_arg snapshots) {
+  size_t count = lean_array_size(snapshots);
+  const editor_ffi_snapshot **handles = NULL;
+  if (count != 0) {
+    handles = malloc(count * sizeof *handles);
+    if (handles == NULL) {
+      return lean_io_result_mk_error(lean_mk_io_user_error(
+          lean_mk_string("no memory for the overlays of a search")));
+    }
+    for (size_t index = 0; index < count; index++) {
+      handles[index] =
+          lean_get_external_data(lean_array_get_core(snapshots, index));
+    }
+  }
+  bool started = editor_ffi_grep_start(
+      id, byte_array_bytes(words), byte_array_len(words),
+      byte_array_bytes(strings), byte_array_len(strings), handles, count);
+  free(handles);
+  return lean_io_result_mk_ok(lean_box(started));
+}
+
+// `Editor.Ffi.grepNext : UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_grep_next(uint64_t id, uint64_t wait) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_grep_next(id, wait)));
+}
+
+// `Editor.Ffi.grepTakeRaw : UInt64 → IO (Option RawGrepReply)`. `none` when
+// the service keeps nothing for the wait.
+lean_obj_res editor_glue_grep_take(uint64_t wait) {
+  editor_ffi_raw_grep_reply raw;
+  if (!editor_ffi_grep_take(wait, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *detail =
+      lean_mk_string_from_bytes((const char *)raw.detail, raw.detail_len);
+  // `RawGrepReply`: the object fields `words`, `detail` and `paths`, then
+  // `status`.
+  lean_object *reply = lean_alloc_ctor(0, 3, sizeof(uint64_t));
+  lean_ctor_set(reply, 0, byte_array_copy(raw.words, raw.words_len));
+  lean_ctor_set(reply, 1, detail);
+  lean_ctor_set(reply, 2, byte_array_copy(raw.paths, raw.paths_len));
+  lean_ctor_set_uint64(reply, uint64_field(3, 0), raw.status);
+  editor_ffi_text_free(raw.words, raw.words_len);
+  editor_ffi_text_free(raw.detail, raw.detail_len);
+  editor_ffi_text_free(raw.paths, raw.paths_len);
+  return lean_io_result_mk_ok(option_some(reply));
+}
+
+// `Editor.Ffi.grepCancel : UInt64 → IO Bool`
+lean_obj_res editor_glue_grep_cancel(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_grep_cancel(id)));
+}
+
+// `Editor.Ffi.grepPending : IO UInt64`
+lean_obj_res editor_glue_grep_pending(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_grep_pending()));
+}
+
+// `Editor.Ffi.grepShutdown : IO Unit`. Returns once every search's thread
+// has returned.
+lean_obj_res editor_glue_grep_shutdown(void) {
+  editor_ffi_grep_shutdown();
   return lean_io_result_mk_ok(lean_box(0));
 }
 

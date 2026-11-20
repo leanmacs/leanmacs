@@ -168,7 +168,7 @@ end Greeting.EditorPackage
 - **The module declares `packages : Array Editor.Package`** in the
   namespace of its own name. A Lake package may hold several `Package`
   values, which register in the order the array lists them; the core's
-  holds 20, and `shipped-themes`' and `compile`'s one each.
+  holds 22, and `shipped-themes`' and `compile`'s one each.
 - **A Lake package with no such module contributes nothing.** The build
   asks Lake whether a library of the package holds a module of that name
   (`Package.findModule?`) and whether its source file exists. It reads no
@@ -400,7 +400,7 @@ globs = ["Config.+"]
   Lake packages of a set: the set's lakefile is the one place, and the
   root is generated from it. Each Lake package's entry module still lists
   its own `Package` values, which is what the root reads. The core's lists
-  20, and fewer as features move out.
+  22, and fewer as features move out.
 - **No root is written by hand, the user-side link's included.** That
   check ([lean-runtime.md](lean-runtime.md), "A link on the user's
   machine, measured") links an editor against a staged core of prebuilt
@@ -961,7 +961,7 @@ fixture themes made with `Palette.theme` from palettes written in
 `lean/ConfigTest/Support/Themes.lean`, and the appearance checks define
 theirs. No copy of a palette's values is kept in the core, so no licence
 notice is either. `ConfigTest.shippedChecks` and
-`ModelTest.packageSetChecks` state the core's list alone: 20 packages, the
+`ModelTest.packageSetChecks` state the core's list alone: 22 packages, the
 one theme `default`, and nothing of the compile mode.
 
 ## What moving the shipped themes added to the core's API
@@ -1163,13 +1163,15 @@ cut none. What replaced each edge is an interface the core owns.
 
 ## The module map
 
-Every module under `lean/Editor/`, 266 of them
+Every module under `lean/Editor/`, 285 of them
 (`find lean/Editor -name '*.lean' | wc -l`; 254 at `6ba99de5`, phase 4
 added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
-the three modules of the shipped palettes out, and phase 6 moved the five
-of the compile mode out and added the 18 of the test kit), is **core** or
+the three modules of the shipped palettes out, phase 6 moved the five
+of the compile mode out and added the 18 of the test kit, and the merge of
+`main` that brought the working sets, project search, the jump list and
+marks added 19), is **core** or
 part of a **feature that could become a package**. The counts below add
-up to 266: 187 core and 79 in 19 features.
+up to 285: 194 core and 91 in 21 features.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -1177,8 +1179,8 @@ up to 266: 187 core and 79 in 19 features.
   any module a core module imports for a type it carries (`Editor.Ex.Line`,
   `Editor.Menu`, `Editor.ModeLine`, `Editor.Language`, `Editor.Workspace`,
   the three `Editor.ProjectMode` modules).
-- **A feature** is code reached through a package's registrations: the 20
-  packages of the core's list, as 19 features (the two version-control packages are
+- **A feature** is code reached through a package's registrations: the 22
+  packages of the core's list, as 21 features (the two version-control packages are
   one), with the Vim scheme counted with evil.
 - **Every feature here is in the core's Lake package**,
   and is a core module in the sense of the section above and of the gate's
@@ -1199,18 +1201,19 @@ One row covers modules that share a class and a side of the import rule.
 | The loop and its dispatch: `Editor.Loop`, `Editor.Command.Dispatch`, `Editor.Event.Queue`, `Editor.State.Outbox` | 4 | core | no |
 | The config session: `Editor.Config.Diagnostic`, `.Directory`, `.Display`, `.Elaborate`, `.Owner`, `.Registry`, `.Reload`, `.Session`, `.Stores` | 9 | core | no |
 | What a package registers, read by a test: `Editor.Config.Packages` | 1 | core | in tests |
-| The raw bindings: `Editor.Ffi` and the 26 modules under it | 27 | core | no |
+| The raw bindings: `Editor.Ffi` and the 27 modules under it | 28 | core | no |
 | The real bindings of ports and what runs them: `Editor.Clipboard.Real`, `.Clipboard.InProcess`, `Editor.Command.Real`, `Editor.Display.Real`, `.Display.Recorder`, `Editor.Fuzzy.Real`, `Editor.Job.Real`, `.Job.Runner`, `.Job.Jobs`, `.Job.Table`, `.Job.Pool`, `Editor.SyntaxTree.Real`, `Editor.Text.Real`, `Editor.Watch.Real` | 14 | core | no |
-| The models: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `.Model.Json`, `.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 14 | core | in tests |
+| The models: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `.Model.Json`, `.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 15 | core | in tests |
 | The contracts and cases: `Editor.Clipboard.Contract`, `Editor.Completion.Contract`, `.AtPointContract`, `.DisplayContract`, `.StyleContract`, `Editor.Display.Contract`, `Editor.Fuzzy.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.SyntaxTree.Contract`, `Editor.Text.Contract`, `Editor.Watch.Contract`, `Editor.Api.Cases`, `Editor.File.Cases`, `Editor.UndoTree.Cases` | 15 | core | in tests |
 | The fakes, the test scheme and the loop's driver: `Editor.Completion.Fake`, `Editor.Job.Fake`, `Editor.InputScheme.Test`, `Editor.Loop.Driver` | 4 | core | in tests |
 | The model test kit: `Editor.Test.Completion`, `.Config`, `.Driver`, `.Files`, `.Geometry`, `.Jobs`, `.Keys`, `.Listing`, `.Loop`, `.Models`, `.Prompts`, `.Shell`, `.States`, `.Workspace` | 14 | core | in tests |
 | The linked test kit: `Editor.Test.Linked.Jobs`, `.Rig`, `.Services`, `.Trees` | 4 | core | in tests |
 | The editor API and what is proved of it: `Editor.Api`, `.Api.Theorems`, `Editor.UndoTree`, `.UndoTree.Theorems` | 4 | core | yes |
 | The composite port and a command: `Editor.Command`, `.Call`, `.Control`, `.Registry`, `.Append`, `Editor.Program` | 6 | core | yes |
-| The ports: `Editor.Clipboard`, `Editor.Diff`, `.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Job`, `Editor.Process`, `.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 13 | core | yes |
+| The ports: `Editor.Clipboard`, `Editor.Diff`, `.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
 | The setup port, packages and stores: `Editor.Setup`, `Editor.Package`, `Editor.Store`, `Editor.Value`, `Editor.Json` | 5 | core | yes |
 | The state: `Editor.State`, `.State.Request`, `Editor.Event`, `Editor.DisplayRules`, `Editor.Floating`, `Editor.Layout`, `Editor.GeneratedView`, `Editor.ExcerptView`, `Editor.Gutter`, `Editor.Workspace` | 10 | core | yes |
+| Places, jump lists and marks, which the state holds and the loop follows through edits: `Editor.JumpList`, `Editor.Marks`, `.Marks.Follow`, `Editor.Jumps` | 4 | core | yes |
 | The scene and display types: `Editor.Scene`, `Editor.Scroll`, `Editor.Face`, `.Face.Vocabulary`, `Editor.Appearance`, `Editor.Highlight`, `Editor.TabBar`, `Editor.ModeLine`, `Editor.Menu` | 9 | core | yes |
 | Keys and modes: `Editor.InputScheme`, `Editor.Invocation`, `Editor.Keymap`, `Editor.Key.Notation`, `Editor.Mode`, `Editor.Role`, `Editor.Vocabulary` | 7 | core | yes |
 | Completion: `Editor.Completion`, `.Candidate`, `.Display`, `.Style`, `.AtPoint`, `.Keys`, `.Later`, `.Filtering` | 8 | core | yes |
@@ -1226,12 +1229,12 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Completion.Styles`, `.Displays` | 2 | feature: completion | yes |
 | `Editor.Completion.Compiled` | 1 | feature: completion | no |
 | `Editor.Evil.Compiled` | 1 | feature: evil | no |
-| `Editor.Evil` and 10 of the modules under it (all but `.Compiled`); `Editor.InputScheme.Vim`, `.Vim.Default` | 13 | feature: evil | yes |
+| `Editor.Evil` and 12 of the modules under it (all but `.Compiled`); `Editor.InputScheme.Vim`, `.Vim.Default` | 15 | feature: evil | yes |
 | `Editor.Ex` | 1 | feature: ex | yes |
 | `Editor.Ex.Compiled` | 1 | feature: ex | no |
 | `Editor.ExecuteCommand` | 1 | feature: execute-command | yes |
 | `Editor.ExecuteCommand.Compiled` | 1 | feature: execute-command | no |
-| `Editor.Files`, `Editor.Completion.Paths` | 2 | feature: files | yes |
+| `Editor.Files`, `Editor.Completion.Paths`, `Editor.Jumps.Go` | 3 | feature: files | yes |
 | `Editor.Files.Compiled` | 1 | feature: files | no |
 | `Editor.FrameCommands` | 1 | feature: frame-commands | yes |
 | `Editor.FrameCommands.Compiled` | 1 | feature: frame-commands | no |
@@ -1240,6 +1243,8 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Minibuffer` | 1 | feature: minibuffer | yes |
 | `Editor.Minibuffer.Compiled` | 1 | feature: minibuffer | no |
 | `Editor.ModeLine.Compiled` | 1 | feature: mode-line | no |
+| `Editor.ProjectSearch`, `.ProjectSearch.Run` | 2 | feature: project-search | yes |
+| `Editor.ProjectSearch.Compiled` | 1 | feature: project-search | no |
 | `Editor.Shell` | 1 | feature: shell | yes |
 | `Editor.Shell.Compiled` | 1 | feature: shell | no |
 | `Editor.TabCommands` | 1 | feature: tab-commands | yes |
@@ -1252,6 +1257,8 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.VersionControl` and 16 of the modules under it (all but `.Compiled`, `.Model` and `.Contract`) | 17 | feature: version-control | yes |
 | `Editor.WindowCommands` | 1 | feature: window-commands | yes |
 | `Editor.WindowCommands.Compiled` | 1 | feature: window-commands | no |
+| `Editor.WorkingSet`, `.WorkingSet.Disk`, `.WorkingSet.Places`, `.WorkingSet.Refind`, `.WorkingSet.Run` | 5 | feature: working-set | yes |
+| `Editor.WorkingSet.Compiled` | 1 | feature: working-set | no |
 | `Editor.Workspace.Compiled` | 1 | feature: workspace | no |
 | `Editor.Workspace.Model`, `.Contract` | 2 | feature: workspace | in tests |
 | `Editor.Workspace.Attach`, `.Finder`, `.FindFile`, `.FindInProject`, `.Lister`, `.Modes`, `.Projects`, `.Reach` | 8 | feature: workspace | yes |
@@ -1262,7 +1269,11 @@ For each feature, from each module's `import` lines, which are Lake's
 direct imports (`lake query +<module>:imports`), at the head of the
 packages roadmap's phase 6, with the compile mode moved out and the test
 kit published (the lists were first computed at `6ba99de5`, and computed
-again for this section then):
+again for this section then). The merge of `main` that brought the working
+sets, project search, the jump list and marks added the entries
+`project-search` and `working-set` and amended `buffers`, `evil`, `files`,
+`version-control` and `workspace` for the modules it added and the imports
+of them; the rest were not computed again for it:
 
 - its modules;
 - the core modules that import one of them, each with what it imports (the
@@ -1319,7 +1330,7 @@ again for this section then):
 - **Core modules that import it**: none.
 - **The test kit's modules that import it**: `Test.Files` (`Buffers.Compiled`).
 - **Other features' modules that import it**: ex: `Ex.Compiled` (`Buffers`); version-control: `VersionControl.Commit` (`Buffers`).
-- **Other features it imports**: files (`Files`).
+- **Other features it imports**: files (`Files`); working-set (`WorkingSet.Places`, which `Buffers` imports to detach a closed buffer's ranges).
 - **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (6): `ModelTest`: `Completion.Contract`, `DisplayRules`, `VersionControl.Gutter`, `Support.Buffers`; `ConfigTest`: `Headless`, `Minibuffer`.
 - **The config base imports**: none of its modules directly.
@@ -1355,14 +1366,14 @@ run them.
 
 #### `evil`
 
-- **Modules** (14): `Evil`, `Evil.Clipboard`, `Evil.Compiled`, `Evil.Motions`, `Evil.Objects`, `Evil.Operators`, `Evil.Registers`, `Evil.Repeat`, `Evil.Scroll`, `Evil.Theorems`, `Evil.TreeObjects`, `Evil.Undo`, `InputScheme.Vim`, `InputScheme.Vim.Default`.
+- **Modules** (16): `Evil`, `Evil.Clipboard`, `Evil.Compiled`, `Evil.Jumps`, `Evil.Marks`, `Evil.Motions`, `Evil.Objects`, `Evil.Operators`, `Evil.Registers`, `Evil.Repeat`, `Evil.Scroll`, `Evil.Theorems`, `Evil.TreeObjects`, `Evil.Undo`, `InputScheme.Vim`, `InputScheme.Vim.Default`.
 - **Core modules that import it**: `Headless` (`InputScheme.Vim.Default`).
 - **The test kit's modules that import it**: `Test.Config` (`InputScheme.Vim`).
-- **Other features' modules that import it**: menu: `Menu.Compiled` (`Evil.Clipboard`); themes: `Themes.Check` (`InputScheme.Vim.Default`), `Themes.Picture` (`InputScheme.Vim`).
-- **Other features it imports**: none.
+- **Other features' modules that import it**: menu: `Menu.Compiled` (`Evil.Clipboard`); project-search: `ProjectSearch.Run` (`Evil.Motions`); themes: `Themes.Check` (`InputScheme.Vim.Default`), `Themes.Picture` (`InputScheme.Vim`).
+- **Other features it imports**: files (`Jumps.Go`, which `Evil` imports to go to a mark).
 - **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (27): `ModelTest`: `Api`, `AtPoint`, `ExcerptView`, `Face.Vocabulary`, `InputScheme.Contract`, `Loop`, `Menu`, `Minibuffer`, `State`, `TabBar`, `TabCommands`, `WindowCommands`, `Workspace.FindInProject`, `Support.AtPoint`, `Support.Evil`, `Support.Excerpt`, `Support.OperatorRows`, `Support.Views`, `Support.Vim`, `Support.Windows`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `Indent`, `Support.Syntax`; `FfiTest`: `ExcerptView`; `ContractTest`: `SyntaxTree.Real`.
-- **The config base imports**: `Evil.Clipboard`, `Evil.Operators`, `Evil.Repeat`, `Evil.Scroll`, `Evil.Theorems`, `Evil.TreeObjects`, `Evil.Undo`, `InputScheme.Vim.Default`.
+- **The config base imports**: `Evil.Clipboard`, `Evil.Jumps`, `Evil.Operators`, `Evil.Repeat`, `Evil.Scroll`, `Evil.Theorems`, `Evil.TreeObjects`, `Evil.Undo`, `InputScheme.Vim.Default`.
 - **Reaches by name** (not exhaustive): every command the Vim scheme's default tables name is looked up when its key is pressed, evil's own and other features'; the `menu` package names `undo` and `redo` as strings; the face vocabulary and the completeness check name the cursor face of each Vim state (`Themes/Check.lean`); the headless and window hosts are typed by `Vim.Default.scheme` (the section on input schemes, below).
 
 #### `ex`
@@ -1391,11 +1402,11 @@ run them.
 
 #### `files`
 
-- **Modules** (3): `Completion.Paths`, `Files`, `Files.Compiled`.
+- **Modules** (4): `Completion.Paths`, `Files`, `Files.Compiled`, `Jumps.Go`.
 - **Core modules that import it**: `Loop` (`Files`).
 - **The test kit's modules that import it**: `Test.Files` (`Completion.Paths`, `Files`, `Files.Compiled`); `Test.Linked.Rig` (`Files`, `Files.Compiled`); `Test.Workspace` (`Files`).
-- **Other features' modules that import it**: buffers: `Buffers` (`Files`); ex: `Ex` (`Files`), `Ex.Compiled` (`Files`); menu: `Menu.Compiled` (`Files`); shell: `Shell` (`Files`); version-control: `VersionControl.Gutter` (`Files`), `VersionControl.Review` (`Files`), `VersionControl.Show` (`Files`), `VersionControl.Stage` (`Files`), `VersionControl.Status` (`Files`); workspace: `Workspace.FindFile` (`Files`).
-- **Other features it imports**: workspace (`Workspace.Attach`).
+- **Other features' modules that import it**: buffers: `Buffers` (`Files`); evil: `Evil` (`Jumps.Go`); ex: `Ex` (`Files`), `Ex.Compiled` (`Files`); menu: `Menu.Compiled` (`Files`); project-search: `ProjectSearch.Run` (`Files`, `Jumps.Go`); shell: `Shell` (`Files`); working-set: `WorkingSet.Disk` (`Files`), `WorkingSet.Run` (`Files`, `Jumps.Go`); version-control: `VersionControl.Gutter` (`Files`), `VersionControl.Review` (`Files`), `VersionControl.Show` (`Files`), `VersionControl.Stage` (`Files`), `VersionControl.Status` (`Files`); workspace: `Workspace.FindFile` (`Files`).
+- **Other features it imports**: workspace (`Workspace.Attach`); working-set (`WorkingSet.Places`, which `Files` imports to hold a file's ranges again when it opens).
 - **Modules of packages outside the core that import it**: compile: `CompileTest.Compile` (`Files`).
 - **Test modules outside its own tests that import it** (20): `ModelTest`: `Buffers`, `Command.Dispatch`, `Completion.Contract`, `DisplayRules`, `Ex`, `Loop`, `Menu`, `State`, `VersionControl.Stage`, `Window`, `Workspace.Attach`, `Workspace.FindFile`, `Support.Buffers`, `Support.VersionControl`; `ConfigTest`: `Bench`, `Ex`, `Headless`, `Loop`, `VersionControl.Gutter`, `Support.Configs`.
 - **The config base imports**: none of its modules directly.
@@ -1461,6 +1472,18 @@ run them.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the default order of the mode line names its segments (`ModeLine.Order.standard`: `state`, `buffer`, `modified`, `changed`, `directory`).
 
+#### `project-search`
+
+- **Modules** (3): `ProjectSearch`, `ProjectSearch.Compiled`, `ProjectSearch.Run`.
+- **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
+- **Other features' modules that import it**: none.
+- **Other features it imports**: evil (`Evil.Motions`); files (`Files`, `Jumps.Go`); workspace (`Workspace.FindFile`).
+- **Modules of packages outside the core that import it**: none.
+- **Test modules outside its own tests that import it** (5): `ModelTest`: `WorkingSet.Run`, `Support.WorkingSet`; `ConfigTest`: `DefaultConfig`, `Headless`; `ContractTest`: `WorkingSet.Run`.
+- **The config base imports**: none of its modules directly.
+- **Reaches by name** (not exhaustive): the default config binds `project-search` and `project-search-symbol`; `working-set-add` pins a row of its results buffer as its file's range, found as `project-search-visit` finds it (`WorkingSet/Run.lean`).
+
 #### `shell`
 
 - **Modules** (2): `Shell`, `Shell.Compiled`.
@@ -1512,7 +1535,7 @@ the user asks `load-theme` for one.
 - **Modules** (20): `VersionControl`, `VersionControl.Blame`, `VersionControl.Commit`, `VersionControl.Compiled`, `VersionControl.Contract`, `VersionControl.Git`, `VersionControl.Gutter`, `VersionControl.HistoryRead`, `VersionControl.Hunk`, `VersionControl.Log`, `VersionControl.Model`, `VersionControl.Plumbing`, `VersionControl.Porcelain`, `VersionControl.Review`, `VersionControl.ReviewHunks`, `VersionControl.Show`, `VersionControl.Stage`, `VersionControl.Status`, `VersionControl.Views`, `VersionControl.Worktrees`.
 - **Core modules that import it**: `Loop` (`VersionControl.Gutter`).
 - **The test kit's modules that import it**: none.
-- **Other features' modules that import it**: workspace: `Workspace.FindInProject` (`VersionControl.Git`), `Workspace.Projects` (`VersionControl`).
+- **Other features' modules that import it**: working-set: `WorkingSet.Disk` (`VersionControl`, `VersionControl.Git`); workspace: `Workspace.FindInProject` (`VersionControl.Git`), `Workspace.Projects` (`VersionControl`).
 - **Other features it imports**: buffers (`Buffers`); files (`Files`); workspace (`Workspace.Attach`, `Workspace.Reach`).
 - **Modules of packages outside the core that import it**: none.
 - **Test modules outside its own tests that import it** (8): `ModelTest`: `the root`, `Workspace.FindInProject`, `Workspace.Projects`, `Support.Git`, `Support.VersionControl`; `ContractTest`: `the root`, `Support.Git`, `Support.VersionControl`.
@@ -1531,12 +1554,24 @@ the user asks `load-theme` for one.
 - **The config base imports**: none of its modules directly.
 - **Reaches by name** (not exhaustive): the Vim scheme's `C-w` table and the default config name its commands (`window-split`, `window-close` and the rest).
 
+#### `working-set`
+
+- **Modules** (6): `WorkingSet`, `WorkingSet.Compiled`, `WorkingSet.Disk`, `WorkingSet.Places`, `WorkingSet.Refind`, `WorkingSet.Run`.
+- **Core modules that import it**: none.
+- **The test kit's modules that import it**: none.
+- **Other features' modules that import it**: buffers: `Buffers` (`WorkingSet.Places`); files: `Files` (`WorkingSet.Places`).
+- **Other features it imports**: files (`Files`, `Jumps.Go`); version-control (`VersionControl`, `VersionControl.Git`); workspace (`Workspace.Attach`).
+- **Modules of packages outside the core that import it**: none.
+- **Test modules outside its own tests that import it** (3): `ModelTest`: `Support.WorkingSet`; `ConfigTest`: `DefaultConfig`, `Headless`.
+- **The config base imports**: none of its modules directly.
+- **Reaches by name** (not exhaustive): the default config binds `working-set-add` and `working-set-open`. Its ranges are held while the editor runs through `files` and `buffers`, which import `WorkingSet.Places` to hold them again when a file opens and detach them when its buffer closes: moving it out would need a hook the core offers for both, where the import is now.
+
 #### `workspace`
 
 - **Modules** (11): `Workspace.Attach`, `Workspace.Compiled`, `Workspace.Contract`, `Workspace.FindFile`, `Workspace.FindInProject`, `Workspace.Finder`, `Workspace.Lister`, `Workspace.Model`, `Workspace.Modes`, `Workspace.Projects`, `Workspace.Reach`.
 - **Core modules that import it**: none.
 - **The test kit's modules that import it**: `Test.Linked.Rig` (`Workspace.Compiled`); `Test.Listing` (`Workspace.Model`, `Workspace.Modes`); `Test.Shell` (`Workspace.Attach`); `Test.Workspace` (`Workspace.Attach`, `Workspace.Model`, `Workspace.Modes`).
-- **Other features' modules that import it**: files: `Files` (`Workspace.Attach`); version-control: `VersionControl.Views` (`Workspace.Attach`), `VersionControl.Worktrees` (`Workspace.Reach`).
+- **Other features' modules that import it**: files: `Files` (`Workspace.Attach`); project-search: `ProjectSearch.Run` (`Workspace.FindFile`); version-control: `VersionControl.Views` (`Workspace.Attach`), `VersionControl.Worktrees` (`Workspace.Reach`); working-set: `WorkingSet.Run` (`Workspace.Attach`).
 - **Other features it imports**: files (`Files`); version-control (`VersionControl`, `VersionControl.Git`).
 - **Modules of packages outside the core that import it**: compile: `Compile` (`Workspace.Modes`), `CompileTest.Compile` (`Workspace.Attach`, `Workspace.Model`, `Workspace.Modes`), `CompileTest.Compile.Shipped` (`Workspace.Model`, `Workspace.Modes`), `CompileTest.Linked.Compile.Shipped` (`Workspace.Modes`).
 - **Test modules outside its own tests that import it** (13): `ModelTest`: `the root`, `Completion.Contract`, `ProjectMode.Listing`, `VersionControl.Gutter`, `VersionControl.Worktrees`, `Support.FindFile`, `Support.VersionControl`; `ConfigTest`: `Bench`, `DefaultConfig`, `Headless`, `VersionControl.Gutter`; `ContractTest`: `the root`, `Workspace`.
@@ -1624,11 +1659,11 @@ so it is part of what the fixtures pin:
 - **The ex candidates for `e`** in `tests/headless/ex/expected` are the ex
   names in the order they were first bound (`Registry.exNames`), which the
   fuzzy rank keeps among equal scores. The names are bound by `ex`, then
-  `version-control`, the sixth and the eighteenth packages of the core's
-  list, then by `compile`, which registers after the core's twenty.
+  `version-control`, the sixth and the twentieth packages of the core's
+  list, then by `compile`, which registers after the core's twenty-two.
 
 `ModelTest.packageSetChecks` pins what a model test can see of the core's
-list: its 20 names in order, with no package of the palettes or of the
+list: its 22 names in order, with no package of the palettes or of the
 compile mode among them; the ex names in bound order, the `ex` package's
 and then version control's twelve; and that the one theme it registers is
 `default`. It is the test of the core's entry module
@@ -1637,7 +1672,7 @@ and then version control's twelve; and that the one theme it registers is
 
 **Packages register by dependency, which puts a default package after the
 core's.** The default set holds two, so the generated root registers the
-core's 20, then `shipped-themes`, then `compile`.
+core's 22, then `shipped-themes`, then `compile`.
 
 - **No fixture line changed when the palettes moved.** The package was
   thirteenth of the core's 22, directly after `themes`, and registered
@@ -1681,6 +1716,22 @@ core's 20, then `shipped-themes`, then `compile`.
   `config` were written against the editor with the compile mode in the
   core and moved with no byte changed ("The default package `compile`",
   above).
+
+**Two lines of two standing fixtures changed when `main`'s working sets
+were merged in**, and only by names added: `tests/headless/expected`,
+lines 4 and 9, and `tests/headless/bundle/expected`, line 3 (the
+`commands:` lines). The `evil` package's three new commands,
+`jump-backward`, `jump-forward` and `set-mark`, follow `select-all`, the
+last it registered before; and the two new packages, `project-search` and
+`working-set`, which register directly after `workspace`, put their ten
+commands after `find-file-in-another-workspace` and before `shell`'s,
+`project-search`, `project-search-found`, `project-search-symbol`,
+`project-search-visit`, then `working-set-add`, `working-set-open`,
+`working-set-visit`, `working-set-remove`, `working-set-note` and
+`working-set-refresh`. That is where `main` placed them in its compiled
+arrays, so only the compile package's nine stay where phase 6 moved them.
+Neither package binds an ex name, so `tests/headless/ex/expected` did not
+change.
 
 ## Build times
 

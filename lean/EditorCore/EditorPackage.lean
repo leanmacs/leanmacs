@@ -11,11 +11,13 @@ import Editor.Language.Compiled
 import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
 import Editor.ModeLine.Compiled
+import Editor.ProjectSearch.Compiled
 import Editor.Shell.Compiled
 import Editor.TabCommands.Compiled
 import Editor.Themes.Compiled
 import Editor.VersionControl.Compiled
 import Editor.WindowCommands.Compiled
+import Editor.WorkingSet.Compiled
 import Editor.Workspace.Compiled
 
 /-!
@@ -82,6 +84,9 @@ language table read as they did:
   theme, so the themes of a Lake package that requires the core (the
   palettes of `shipped-themes`, `packages/shipped-themes/`) follow
   `default`, as the theme prompt lists them;
+- `project-search` and `working-set` come after `workspace`: project
+  search reads the workspace's rule of what is searched, and their
+  commands follow the workspace's in the command prompt;
 - `ex` comes before `version-control`: each binds its own ex names, and
   the ex names' completion lists them in the order they were bound, the
   `ex` package's first;
@@ -108,7 +113,7 @@ def packages : Array Package :=
   #[Completion.package, ModeLine.package, Files.package, Minibuffer.package, Evil.package,
     Ex.package, Buffers.package, FrameCommands.package, Menu.package, WindowCommands.package,
     TabCommands.package, Themes.package, ExecuteCommand.package, BindingSearch.package,
-    Workspace.package, Shell.package, AtPoint.package, VersionControl.package,
-    VersionControl.gutterPackage, Language.package]
+    Workspace.package, ProjectSearch.package, WorkingSet.package, Shell.package, AtPoint.package,
+    VersionControl.package, VersionControl.gutterPackage, Language.package]
 
 end EditorCore.EditorPackage

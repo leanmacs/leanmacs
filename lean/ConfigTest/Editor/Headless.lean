@@ -74,6 +74,7 @@ import Editor.Process.Environment
 import Editor.Program
 import Editor.ProjectMode
 import Editor.ProjectMode.Listing
+import Editor.ProjectSearch.Compiled
 import Editor.Scene
 import Editor.Setup
 import Editor.State
@@ -82,12 +83,14 @@ import Editor.TabBar
 import Editor.TabCommands
 import Editor.TabCommands.Compiled
 import Editor.Text
+import Editor.Text.Model
 import Editor.Text.Real
 import Editor.Themes
 import Editor.Themes.Compiled
 import Editor.Watch
 import Editor.Window
 import Editor.WindowCommands.Compiled
+import Editor.WorkingSet.Compiled
 import Editor.Workspace
 import Editor.Workspace.Attach
 import Editor.Workspace.Compiled
@@ -2254,6 +2257,54 @@ def shippedChecks (_ : Unit) : List Check :=
               registry.jobs.any
                 (fun entry =>
                   entry.registration.name == name && entry.owner == Workspace.package.owner) },
+    { name :=
+        "the executable's hosts start with project-search, project-search-found, project-search-symbol and project-search-visit registered by the project-search package, the mode project-search, and the jobs project-search and project-search-load, registered by it"
+      run := do
+        let registry := shippedRegistry
+        let owner := ProjectSearch.package.owner
+        return [ProjectSearch.name, ProjectSearch.foundName, ProjectSearch.symbolName,
+                  ProjectSearch.visitName].all
+              (fun name => (registry.find? name).any (·.owner == owner)) &&
+            registry.modes.any
+              (fun entry => entry.mode.name == ProjectSearch.modeName && entry.owner == owner) &&
+            [ProjectSearch.job, ProjectSearch.loadJob].all fun name =>
+              registry.jobs.any fun entry =>
+                entry.registration.name == name && entry.owner == owner },
+    { name :=
+        "the headless host handed a state directory starts its loop with it, as its working directory and home, and one handed none starts with none"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let services : Job.Services := { completions, timers := clock.timers }
+        let published ← Snapshots.new
+        let held ← Job.HeldSnapshots.new
+        -- The module files' directory is made only when a config file is
+        -- written, and no config is loaded here.
+        let files ← Config.Elaborate.ModuleFiles.temporary
+        let over (stateDirectory : Option System.FilePath) :=
+          (Headless.shippedOver #[] #[`Editor] "" [] "" (fun _ => pure ()) services published held
+              files stateDirectory).hosting
+        let given := ((over (some "/state")).start.runModel {}).1
+        let none_ := ((over none).start.runModel {}).1
+        return (match given, none_ with
+          | .ok given, .ok none_ =>
+            given.state.stateDirectory == some "/state" && none_.state.stateDirectory == none &&
+              given.state.workingDirectory == "/"
+          | _, _ => false) },
+    { name :=
+        "the executable's hosts start with working-set-add, working-set-open, working-set-visit, working-set-remove, working-set-note and working-set-refresh registered by the working-set package, the mode working-set, and the jobs working-set-files, working-set-load, working-set-write and working-set-save, registered by it"
+      run := do
+        let registry := shippedRegistry
+        let owner := WorkingSet.package.owner
+        return [WorkingSet.addName, WorkingSet.openName, WorkingSet.visitName,
+                  WorkingSet.removeName, WorkingSet.noteName, WorkingSet.refreshName].all
+              (fun name => (registry.find? name).any (·.owner == owner)) &&
+            registry.modes.any
+              (fun entry => entry.mode.name == WorkingSet.modeName && entry.owner == owner) &&
+            [WorkingSet.filesJob, WorkingSet.loadJob, WorkingSet.writeJob, WorkingSet.saveJob].all
+              fun name =>
+              registry.jobs.any fun entry =>
+                entry.registration.name == name && entry.owner == owner },
     { name :=
         "the executable's hosts start with find-file-in-another-workspace registered by the workspace package and one binding of it, the package's, C-x C-d in the prompt category workspace-file, described Find in another workspace; the global keymap does not bind C-x"
       run := do
