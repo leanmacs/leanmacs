@@ -15,6 +15,13 @@ The tests of session restore over the real bindings: `restoreRunChecks`,
 with the library's text store and file service in a temporary directory,
 through a restart: typing is journalled by the file service, unobserved,
 and a second loop restores it; and two tabs, the first split, come back.
+
+A restore check's directory is removed only once its journal has drained
+(`withJournalledDirectory`, over the checks' `Journal` port): the second
+loop hands the stale index's remove to the file service as its last order,
+unobserved, and nothing else waits for it, so without the drain that remove
+can land while the directory is being removed, which then fails. The first
+check pins the drain with a journal that holds its orders (`HeldJournal`).
 -/
 
 namespace ContractTest
@@ -133,8 +140,14 @@ def HeldJournal.journal (held : HeldJournal) : Journal :=
 to drain (`drained`) before the directory is removed, even when `body`
 throws, so no order the body handed out lands during the removal. `true`
 only when `body` held and the journal drained. -/
-def withJournalledDirectory (_drained : IO Bool) (body : System.FilePath → IO Bool) : IO Bool :=
-  IO.FS.withTempDir body
+def withJournalledDirectory (drained : IO Bool) (body : System.FilePath → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let emptied ← IO.mkRef false
+    let held ←
+      tryFinally (body directory)
+          (do
+            emptied.set (← drained))
+    return held && (← emptied.get)
 
 /-- The loop of a host started fresh over `rig`, with `state` as its state
 directory, once each of `invocations` has run and settled, the journal's
@@ -146,7 +159,8 @@ def runRestoring (rig : ProjectRig) (state : System.FilePath) (invocations : Lis
     return { loop with state := loop.state.hostedBy "/" none (some state) }
   let (started, texts) ← begin.runReal (RealTexts.over rig.published) rig.display
   let .ok loop := started | return none
-  runSettledFrom rig loop texts invocations restoreKeys restoreJobs (journal := performOrder rig)
+  runSettledFrom rig loop texts invocations restoreKeys restoreJobs (journal :=
+      (Journal.real rig).perform)
 
 /-- The checks of session restore over the real bindings, in a directory of
 their own, temporary. -/
@@ -178,7 +192,7 @@ def restoreRunChecks (services : Job.Services) : List Check :=
     { name :=
         "typing in a file's buffer is journalled by the library's file service, the base and the log on disk replaying to the text; a second loop over the same state directory, with no shutdown between, restores the buffer modified, at its file"
       run :=
-        IO.FS.withTempDir fun directory => do
+        withJournalledDirectory filesDrained fun directory => do
           let state := directory / "state"
           let a := directory / "a.txt"
           IO.FS.writeFile a "first line\nsecond line\n"
@@ -218,7 +232,7 @@ def restoreRunChecks (services : Job.Services) : List Check :=
     { name :=
         "two tabs, the first split, are restored on the real text binding and file service: a second loop over the same state directory has both tabs, the split, the second tab's name, and every window on the file's buffer"
       run :=
-        IO.FS.withTempDir fun directory => do
+        withJournalledDirectory filesDrained fun directory => do
           let state := directory / "state"
           let a := directory / "a.txt"
           IO.FS.writeFile a "first line\nsecond line\n"
