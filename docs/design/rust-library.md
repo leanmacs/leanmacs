@@ -307,7 +307,7 @@ reloads a buffer whose file changed on disk, and nothing follows a buffer's
 file with a watch yet: a change is found when a save is asked for.
 
 - **The port.** `editor_text::fs::Fs`, defined by `editor-text` in its own
-  terms, with nine methods. `stat` says what is at a path, following links,
+  terms, with ten methods. `stat` says what is at a path, following links,
   and is none for nothing; it is the one way time and metadata reach the
   core, which reads no clock. `read` gives a file's bytes whole. `write`
   makes a *new* file from pieces, with exactly the permissions given
@@ -328,7 +328,16 @@ file with a watch yet: a change is found when a save is asked for.
   (navigation-and-windows phase 5, for a workspace's working sets kept
   under the state directory, which need not be there) makes a directory
   and every directory on the way to it; one already there is no error, and
-  a file at the path or on the way is refused as not a file. An error is a kind
+  a file at the path or on the way is refused as not a file. `append`
+  (session-restore phase 1, for the journal of unsaved text the editor
+  adds to as it goes) adds
+  pieces to the end of a file, and makes the file with the platform's
+  default permissions where nothing is; a directory at the path, or a file
+  on the way to it, is refused as not a file, and a directory on the way
+  that is not there as not found, so no kind was added. **An append is not
+  synced**: the bytes are handed to the system before it returns, and a
+  crash may lose the last of them, which a record added to often can
+  bear and a save cannot. An error is a kind
   the core decides on (not found, denied, exists, not a file, other) and
   the platform's words.
 - **The fake.** `editor_text::fs::FakeFs`, published and not test-only: a
@@ -350,12 +359,15 @@ file with a watch yet: a change is found when a save is asked for.
   file, directory, file and other, and nothing and a file are refused. So
   is a directory made: two levels made at once, each a directory, made
   again with no error and written in, and refused where a file is and
-  under one. The check is shown to bite by twenty-one fakes written to
-  break one rule each.
+  under one. So is an append: where nothing is it makes a file of the
+  pieces, a second adds at the end, and a directory, a path under a file
+  and a directory that is not there are refused. The check is shown to
+  bite by twenty-five fakes written to break one rule each.
 - **The adapter.** `editor-fs-std`, a crate of its own: `StdFs` over
   `std::fs`, Unix only, made by the one constructor `StdFs::system()`. A
   write is `create_new` with the permissions set on the open file, then
-  synced; a rename syncs the directory and ignores a failure of that. It is
+  synced; an append opens with `append` and `create` and is not synced; a
+  rename syncs the directory and ignores a failure of that. It is
   held to the contract by its own test, in a temporary directory the test
   makes, against a ground that asks the system directly; its other test is
   how it names the system's errors. It runs nothing of the logic.
@@ -422,8 +434,17 @@ file with a watch yet: a change is found when a save is asked for.
   whether a file changed without loading it: Lean's lookup of a child's
   environment keeps a directory's entry by the stamps of mise's config
   files.
+- **An append and a remove** (`editor_text::file::append` and
+  `editor_text::file::remove`, session-restore phase 1): one call of the
+  port each,
+  a path that is not absolute refused before the file system is asked. An
+  append makes the file where nothing is and makes no directory: the
+  directory not being there is not found, and a directory at the path, or
+  a file on the way, not a file. **A remove of nothing is no error**: what
+  was asked is so already; a directory is refused as not a file.
 - **The service** (`editor-ffi`, `src/files.rs`), in the timer service's
-  shape: a load, a save, a stamp, a listing or a directory made is started with the caller's id and
+  shape: a load, a save, a stamp, a listing, a directory made, an append or
+  a remove is started with the caller's id and
   returns at once; **one thread works the requests in the order they were started**,
   so two saves of one file land in order; one completion is queued; the
   result is then taken once by its id, as a status, a snapshot handle for a
@@ -438,7 +459,24 @@ file with a watch yet: a change is found when a save is asked for.
   left out, since Lean cannot name such a file. A directory made is done
   with no words, and one refused is not absolute, not a directory, denied
   or failed (`editor_ffi_files_make_directory`, bound as
-  `Ffi.filesMakeDirectory`).
+  `Ffi.filesMakeDirectory`). An append and a remove are done with no words
+  (`editor_ffi_files_append`, `editor_ffi_files_remove`), and one refused
+  is not absolute, not found, not a file, denied or failed.
+- **Unobserved requests** (session-restore phase 1): an append, a remove, and a
+  save that expects whatever is there may be asked with no id
+  (`editor_ffi_files_append_unobserved`,
+  `editor_ffi_files_remove_unobserved`,
+  `editor_ffi_files_save_unobserved`), for what the editor writes as it
+  goes with no job waiting on each write. One runs **in order with the
+  observed requests**, on the one thread, so a record appended after a save
+  lands after it; it is never completed and keeps no result, and it cannot
+  be cancelled, having no id. **The failures readout**: one that fails is
+  kept as its path and why, in the refusal's own words, oldest first, and
+  each is taken once (`editor_ffi_files_failure`, a record of two buffers
+  the caller hands back as it does a result's detail). The count of
+  pending requests includes an unobserved one while it waits or is worked,
+  so it falls to 0 once the queue has drained; a failure kept is not
+  counted.
 - **How the tests are kept off the disk.** `editor-text`'s tests, and the
   service's unit tests, run on the fake. That is held by the gate, not by
   review: a `clippy.toml` beside each of the two crates lists `std::fs`,
