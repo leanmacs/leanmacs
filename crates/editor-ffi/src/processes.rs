@@ -720,7 +720,7 @@ pub extern "C" fn editor_ffi_processes_shutdown() {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -732,7 +732,7 @@ mod tests {
 
     /// The words and the string of `command` with `limit`, as Lean lays
     /// them out.
-    fn laid_out(command: &Command, limit: u64) -> (Vec<u8>, String) {
+    pub(crate) fn laid_out(command: &Command, limit: u64) -> (Vec<u8>, String) {
         let environment = &command.environment;
         let mut words = vec![
             limit,

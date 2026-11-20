@@ -445,6 +445,8 @@ dependencies = [
  "editor-fuzzy-triple-accel",
  "editor-grep",
  "editor-grep-ripgrep",
+ "editor-launch",
+ "editor-launch-std",
  "editor-layout",
  "editor-platform",
  "editor-platform-arboard",
@@ -509,6 +511,20 @@ dependencies = [
  "grep-matcher",
  "grep-searcher",
  "ignore",
+ "tempfile",
+]
+
+[[package]]
+name = "editor-launch"
+version = "0.1.0"
+
+[[package]]
+name = "editor-launch-std"
+version = "0.1.0"
+dependencies = [
+ "editor-launch",
+ "objc2-core-foundation",
+ "rustix",
  "tempfile",
 ]
 

@@ -419,6 +419,26 @@
 # `tempfile`'s entry, for its two wiring tests' temporary directories: with
 # it taken out, it fails on that edge ("crate 'tempfile = 3.27.0' is
 # explicitly banned").
+#
+# For the launcher (2026-11-20, the session-restore roadmap's phase 3),
+# whose entries came in the commit in which `editor-ffi` came to depend on
+# its two crates, for the editor's exec and its view of the main bundle.
+# `editor-launch`, the core: with it added to `editor-platform-winit`'s
+# dependencies, it fails ("crate 'editor-launch = 0.1.0' is explicitly
+# banned"), and with the wrapper `editor-ffi` taken out, it fails on that
+# edge. `editor-launch-std`, its adapters and the `leanmacs` binary: with
+# the entry's wrapper naming another crate, it fails ("crate
+# 'editor-launch-std = 0.1.0' is explicitly banned"). It joined the
+# wrappers of `tempfile`'s entry, for its contract, fallback and identity
+# tests: with it taken out, it fails on that edge ("crate 'tempfile =
+# 3.27.0' is explicitly banned"). `objc2-core-foundation`, which the
+# adapters name for the main bundle (src/identity.rs), got its entry in the
+# same commit; it was already in the graph, by the objc2 crates, winit,
+# fontique, notify and wgpu-hal, and its wrappers beside the adapter are
+# those crates, by the objc2 entries' recipe (`cargo tree --target all -i
+# objc2-core-foundation -e normal,build,dev --depth 1`): with it added to
+# `editor-ffi`'s dependencies, it fails ("crate 'objc2-core-foundation =
+# 0.3.2' is explicitly banned").
 
 [graph]
 all-features = false
@@ -450,7 +470,7 @@ deny = [
   { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },
   { crate = "fontique", wrappers = ["editor-shape-parley", "parley", "parley_engine"], reason = "fontique is Parley's font library and stays behind the Shaper port with it: beside Parley's own crates, only the adapter may name its types" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
-  { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi", "editor-process-std", "editor-watch-notify", "editor-release-std", "editor-grep-ripgrep"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test, the process adapter's contract test, whose children run and write there, the watch adapter's contract test, which watches and writes there, the project search adapter's contract and ignore tests, which write files and ignore files there, editor-ffi's wiring tests, and release tooling's wiring tests, a git repository made for the resolvers and the mount point of the .dmg's check; editor-text's, editor-process's, editor-watch's, editor-grep's and editor-release's tests run on their fakes and make no file" },
+  { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi", "editor-process-std", "editor-watch-notify", "editor-release-std", "editor-grep-ripgrep", "editor-launch-std"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test, the process adapter's contract test, whose children run and write there, the watch adapter's contract test, which watches and writes there, the project search adapter's contract and ignore tests, which write files and ignore files there, editor-ffi's wiring tests, and release tooling's wiring tests, a git repository made for the resolvers and the mount point of the .dmg's check, and the launcher's contract, fallback and identity tests, whose helpers and fake bundle are there; editor-text's, editor-process's, editor-watch's, editor-grep's and editor-release's tests run on their fakes and make no file" },
   { crate = "editor-process", wrappers = ["editor-process-std", "editor-ffi"], reason = "the Processes port and the process service have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-process-std", wrappers = ["editor-ffi"], reason = "the process adapter is linked only by the crate that wires the library together, for the process's process service; everything else reaches a process through the port, and editor-process's tests through its fake" },
   { crate = "editor-watch", wrappers = ["editor-watch-notify", "editor-ffi"], reason = "the Watch port and the watch service have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
@@ -489,5 +509,8 @@ deny = [
   { crate = "imara-diff", wrappers = ["editor-diff-imara"], reason = "the diff library stays behind the line diff port: only its adapter crate may name its types" },
   { crate = "editor-diff", wrappers = ["editor-diff-imara", "editor-ffi"], reason = "the line diff port and the core that makes a script have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose diff service makes a script over the adapter and whose text binding applies one; a third is a decision, so it is made here" },
   { crate = "editor-release", wrappers = ["editor-release-std"], reason = "release tooling: the build ID, the commit and the .dmg's plan are reached only by their adapters' crate and its `leanmacs-release` binary; the editor never links it" },
+  { crate = "editor-launch", wrappers = ["editor-launch-std", "editor-ffi"], reason = "the launcher's core (the hand-over record, the launcher's decision and the watcher's) has two users: its adapters' crate, which implements the ports, runs the contract and holds the `leanmacs` binary, and the crate that wires the library together, whose exec takes the core's `Invocation`; a third is a decision, so it is made here" },
+  { crate = "editor-launch-std", wrappers = ["editor-ffi"], reason = "the launcher's real adapters are linked into the library only by the crate that wires it together, for the editor's exec and its view of the main bundle, so the editor and the launcher exec the same way; everything else reaches the launcher's world through the core's ports, and its tests through the core's fakes" },
+  { crate = "objc2-core-foundation", wrappers = ["editor-launch-std", "fontique", "notify", "objc2-app-kit", "objc2-core-graphics", "objc2-core-services", "objc2-core-text", "objc2-core-video", "objc2-foundation", "objc2-quartz-core", "objc2-ui-kit", "raw-window-metal", "wgpu-hal", "winit-appkit", "winit-common", "winit-uikit"], reason = "CoreFoundation is named by the launcher's adapters alone, for the main bundle's path and identifier (src/identity.rs); every other crate of the workspace reaches the system through a port; the other wrappers are the third-party crates that depend on it" },
   { crate = "editor-diff-imara", wrappers = ["editor-ffi"], reason = "the line diff's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
 ]

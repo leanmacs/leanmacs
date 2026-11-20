@@ -1,0 +1,42 @@
+# What no line of `editor-launch` may name, its tests included: the world.
+# The crate is the launcher's core. It reads and writes files only through
+# the `Files` port, waits on and kills processes only through `Pids`,
+# starts them only through `Spawn` and `Exec`, and learns its own path only
+# through `Platform` (`src/ports.rs`); its tests run on the published fakes
+# (`src/fake.rs`). The real adapters, and the `leanmacs` binary that wires
+# them, are `editor-launch-std`, which has no `clippy.toml`.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none. So this file governs
+# every target of this crate and no other. `disallowed_methods` is on by
+# default at `warn`, and `mise run lint` denies warnings, so a line that
+# names one of these fails the gate.
+#
+# Seen to bite once by hand, on 2026-11-20: with a test added to
+# `src/handover.rs` that calls `std::fs::read("/etc/hosts")`, `cargo clippy
+# -p editor-launch --all-targets -- -D warnings` fails with "use of a
+# disallowed method `std::fs::read`". With the test taken out it passes.
+#
+# It is a list of names, as `crates/editor-release/clippy.toml` says of its
+# own: a call through a library this crate does not depend on is a
+# reviewer's to look for, and the crate has no dependency.
+
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "the crate starts programs through the `Spawn` and `Exec` ports; a test uses `fake::FakeSpawn` and `fake::FakeExec`" },
+  { path = "std::process::id", reason = "the crate learns its pid through the `Pids` port; a test uses `fake::FakePids`" },
+  { path = "std::process::exit", reason = "the crate answers an `Outcome`; the binary exits with it" },
+  { path = "std::env::var", reason = "the crate reads no environment: its inputs are its arguments and the record" },
+  { path = "std::env::var_os", reason = "the crate reads no environment: its inputs are its arguments and the record" },
+  { path = "std::env::args", reason = "the crate is handed its arguments; the binary reads them" },
+  { path = "std::env::args_os", reason = "the crate is handed its arguments; the binary reads them" },
+  { path = "std::env::current_exe", reason = "the crate learns its own path through the `Platform` port; a test uses `fake::FakePlatform`" },
+  { path = "std::fs::read", reason = "the crate reads files through the `Files` port; a test uses `fake::FakeFiles`" },
+  { path = "std::fs::read_to_string", reason = "the crate reads files through the `Files` port; a test uses `fake::FakeFiles`" },
+  { path = "std::fs::write", reason = "the crate writes files through the `Files` port; a test uses `fake::FakeFiles`" },
+  { path = "std::fs::rename", reason = "the crate renames files through the `Files` port; a test uses `fake::FakeFiles`" },
+  { path = "std::fs::remove_file", reason = "the crate removes files through the `Files` port; a test uses `fake::FakeFiles`" },
+  { path = "std::fs::metadata", reason = "the crate asks whether a file exists through the `Files` port; a test uses `fake::FakeFiles`" },
+  { path = "std::path::Path::exists", reason = "the crate asks whether a file exists through the `Files` port; a test uses `fake::FakeFiles`" },
+  { path = "std::thread::sleep", reason = "the crate waits through the `Clock` port; a test uses `fake::FakeClock`" },
+  { path = "std::time::Instant::now", reason = "the crate reads the time through the `Clock` port; a test uses `fake::FakeClock`" },
+]

@@ -1,0 +1,8 @@
+leanmacs-handover 1
+session /Users/a/Library/Application Support/Leanmacs/session/session-3.json
+shipped /Applications/Leanmacs.app/Contents/MacOS/editor
+candidate /Users/a/Library/Application Support/Leanmacs/executables/7/editor
+candidate /Applications/Leanmacs.app/Contents/MacOS/editor
+argument --state
+argument /tmp/état	tab
+argument two\nlines and a \\ back

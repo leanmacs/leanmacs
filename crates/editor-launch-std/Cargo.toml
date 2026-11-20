@@ -1,0 +1,39 @@
+[package]
+name = "editor-launch-std"
+version = "0.1.0"
+description = "The app launcher's real adapters, over std, rustix and CoreFoundation, the leanmacs launcher binary and its test helper"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The ports, their fakes and contract, and the core this crate wires: the
+# hand-over record, the launcher's decision and the watcher's.
+editor-launch = { path = "../editor-launch" }
+# The pid calls std has no form of: `kill` of a process that is not this
+# one's child, `kill(pid, 0)`, kqueue's `EVFILT_PROC`/`NOTE_EXIT` on macOS
+# (the `event` feature) and `pidfd_open` with `poll` on Linux, to wait for
+# the end of a process that is not this one's child. Pinned exactly, as in
+# `editor-process-std`, whose manifest says why rustix and not `libc` or
+# `nix`; the `event` feature is new to the graph and adds no crate. No
+# rustix type is public here, and no port type names it.
+rustix = { version = "=1.1.6", default-features = false, features = ["std", "process", "event"] }
+
+# The main bundle's path and identifier (`src/identity.rs`), which
+# CoreFoundation reads from `CFProcessPath`: `CFBundleGetMainBundle`,
+# `CFBundleCopyBundleURL`, `CFURLGetFileSystemRepresentation` (as
+# `CFURL::to_file_path`) and `CFBundleGetIdentifier`. Pinned exactly: 0.3.2
+# was already in `Cargo.lock`, by AppKit's, Foundation's, winit's and
+# notify's bindings, on 2026-11-20, so this adds no crate. Default features
+# off, with only the three types used and `std` for `to_file_path`; its
+# `objc2` feature stays off here. Its types are private to this crate, and
+# `deny.toml` keeps every other crate of the workspace from naming it.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFBundle", "CFURL", "CFString"] }
+
+[dev-dependencies]
+# The temporary directories of the contract, the fallback and the
+# identity tests. Pinned exactly, as in `editor-fs-std`, whose manifest says
+# why this library and no other; `deny.toml` lists the crates that may
+# depend on it.
+tempfile = { version = "=3.27.0", default-features = false }

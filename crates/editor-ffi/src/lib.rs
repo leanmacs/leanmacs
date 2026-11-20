@@ -575,6 +575,7 @@ pub mod fuzzy;
 pub mod grep;
 pub mod interrupt;
 pub mod inverse;
+pub mod launch;
 pub mod log;
 pub mod main_thread;
 pub mod marker;

@@ -132,6 +132,11 @@ editor-grep = { path = "../editor-grep" }
 # static library Lean links holds ignore and grep-searcher, which have no
 # system dependency.
 editor-grep-ripgrep = { path = "../editor-grep-ripgrep" }
+# The editor's restart: the exec and CoreFoundation's main bundle
+# (`src/launch.rs`), forwarded to the launcher's own adapters so the editor
+# and the launcher exec the same way; and the `Invocation` the exec takes.
+editor-launch = { path = "../editor-launch" }
+editor-launch-std = { path = "../editor-launch-std" }
 
 [dev-dependencies]
 # The temporary directory the wiring test (`tests/files.rs`) owns: the one

@@ -1,0 +1,13 @@
+[package]
+name = "editor-launch"
+version = "0.1.0"
+description = "The app launcher's core: the hand-over record, the launcher's choice of an executable and the watcher's fallback, over ports, with their fakes and contract"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No dependency and no dev-dependency: the ports name no library, and every
+# test runs on the published fakes. The real adapters and the `leanmacs`
+# binary are `editor-launch-std`; `editor-ffi` reaches the exec and the main
+# bundle through that crate (deny.toml).
+[dependencies]
