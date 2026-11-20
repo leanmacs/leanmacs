@@ -222,8 +222,10 @@ properties. The crate's `clippy.toml` refuses the clocks, every file of
 the disk and both adapters' constructors in all of it. The searcher's real
 adapter, over `triple_accel` (`crates/editor-fuzzy-triple-accel`), is held
 to that contract, which sweeps generated texts from a fixed seed, and to
-its own two cases: one substitution is found with one error, and a
-pattern with no span near enough reports none. `mise run deny` holds that
+its own three cases: one substitution is found with one error, a
+pattern with no span near enough reports none, and an empty text reports
+the empty span exactly when the whole pattern is within the errors
+allowed. `mise run deny` holds that
 only that adapter depends on the library, and only `editor-ffi` on the
 adapter, whose C function that locates a pattern has one wiring test
 beside the ranking's. `mise run deny` holds that only the

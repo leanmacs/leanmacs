@@ -1445,14 +1445,21 @@ is a second question of the same crate, behind a second port
   over `triple_accel`, pinned `=0.4.0` (MIT, used unmodified). It asks
   `levenshtein_search_simd_with_opts` with Levenshtein costs, the best
   spans and no anchor, and reports each match as a `Span`; it chooses
-  nothing. The library finds every span within `k` edits with no limit on
+  nothing. An empty text it asks of `levenshtein_search_naive_with_opts`
+  instead, with the same arguments: on x86 the SIMD search of 0.4.0
+  reports no span of an empty text (it never reports the anti-diagonal
+  that ends at offset 0, the empty text's only span), which the
+  contract's sweep caught on the ubuntu leg, and the scalar search has no
+  such gap. The library finds every span within `k` edits with no limit on
   the pattern's length, and its "fewest errors" is exactly what a pure
   model states. On x86 it takes SIMD paths chosen at run time, through
   `unsafe`; elsewhere, Apple silicon included, its scalar path, which is
   O(text × pattern). No triple_accel type is public, and `deny.toml` lets
   no other crate depend on the library. It is held to the port's contract
-  and to two cases of its own: one substitution is found with one error,
-  and a pattern with no span near enough reports none.
+  and to three cases of its own: one substitution is found with one
+  error, a pattern with no span near enough reports none, and an empty
+  text reports the empty span exactly when the whole pattern is within
+  the errors allowed.
 - **Set aside**: `diff-match-patch-rs` 0.5.1, whose `match_main` is
   bitap: it refuses a pattern over 32 characters and scores nearness and
   errors together, which no simple model can state. **Risk**: triple_accel
