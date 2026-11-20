@@ -6,7 +6,7 @@ run bump-kept: ok
 run bump-unkept: ok
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
-spawn hold: job 17
+spawn hold: job 11
 key arrived: i KeyI -
 key arrived: x KeyX -
 key arrived: <Escape> Escape -

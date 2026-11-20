@@ -2461,8 +2461,9 @@ inductive Directive where
   /-- Settle, then wait until the session index is written: no write or
   save of it running, none pending, no job running but those the script
   spawned, and the file service holding no request. On a fake clock it
-  moves the clock past each write's delay as it comes, so a write a
-  finished job started is written too. It needs no `join`, so a script
+  moves the clock past a write's delay once no other job is running, so
+  what they change is in the one write, and a write a finished job started
+  is written too. It needs no `join`, so a script
   with a long job of its own running can wait for the index. The driver's
   own. -/
   | indexed
@@ -2803,9 +2804,12 @@ def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β 
                     !progress.indexing && progress.background == 0 &&
                       (← collaborators.journal.pending) == 0 then
                   return true
-                -- A write sleeps on the clock: it is moved past the delay.
+                -- A write sleeps on the clock: once no other job is running,
+                -- so that what they change is in the one write, the clock
+                -- is moved past its delay.
                 if let some clock := collaborators.clock then
-                  if progress.indexing && (← clock.dueWithin Restore.writeDelay) then
+                  if progress.indexing && progress.background == 0 &&
+                      (← clock.dueWithin Restore.writeDelay) then
                     clock.advance Restore.writeDelay
                 return false
           unless written do
