@@ -771,6 +771,29 @@ run = [
   # in the input, the prompt still open (`candidates/expected`). It touches
   # no file.
   "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/candidates/expected -",
+  # The command prompt, on a config of its own (tests/headless/
+  # command-prompt): `execute-command` lists config's commands that the
+  # typed text starts, in the order registered, under config's style for
+  # the category `command`, each with the keys that reach it; `load-theme`,
+  # accepted from it, asks in turn, and config's theme accepted there is in
+  # force; and config's command that names `ExecuteCommand.label` says it,
+  # so config reaches the prompt's module (`command-prompt/expected`). It
+  # touches no file.
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/command-prompt/config ../tests/headless/command-prompt/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/command-prompt/expected -",
+  # The binding search, on a config of its own (tests/headless/
+  # binding-search): `search-bindings` lists config's binding with its
+  # keys, command and description, accepting it runs it as its key would,
+  # and config's command that names `BindingSearch.label` says it
+  # (`binding-search/expected`). It touches no file.
+  "out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/binding-search/config ../tests/headless/binding-search/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/binding-search/expected -",
+  # The default config `mise run install` ships (config/default), on the
+  # editor of the default set (tests/headless/default-config): the binding
+  # search lists its `SPC f f  open-file`, and `SPC :` and `SPC ?`, run
+  # from the search as their keys would run, open the command prompt and
+  # the binding search (`default-config/expected`). The config is copied
+  # into a temporary directory, which a trap removes, so nothing is written
+  # into the checkout.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp -R ../config/default \"$dir/config\" && out=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean \"$dir/config\" ../tests/headless/default-config/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/default-config/expected -",
   # The themes of an editor with no package but the core's
   # (tests/headless/core-themes), run on the editor built from the set
   # tests/empty-set, which is the default set with its packages, the

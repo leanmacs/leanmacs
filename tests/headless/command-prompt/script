@@ -1,0 +1,34 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, to list commands in the command prompt
+# (`execute-command`), to run a command through it that asks in turn, and to
+# run a command of config's that names a declaration of the prompt's module.
+# What it prints must be exactly `expected`. It touches no file.
+
+reload
+settle
+
+# `execute-command`, called with no name, asks `Command: ` with every
+# registered command's name as its candidates. Config's style `starts` keeps
+# those the text starts, in the order they were registered: with `zz-`
+# typed, config's `zz-other`, shown with the key that reaches it, `SPC f f`,
+# then `zz-mine`, which no key reaches. `<Escape>` cancels.
+run execute-command
+commit zz-
+scene
+key <Escape> Escape -
+
+# The command accepted runs as a step of its own with no argument, so
+# `load-theme`, which asks for its own, asks in turn; config's theme,
+# `zz-dark`, accepted there, is the one in force: the scene line ends with
+# its name. No key is bound to either command.
+run execute-command
+commit load-theme
+key <Enter> Enter -
+commit zz-dark
+key <Enter> Enter -
+scene
+
+# Config's command that names `ExecuteCommand.label` says the prompt's
+# label in the echo area: config reaches the command prompt's module.
+run prompt-label
+scene

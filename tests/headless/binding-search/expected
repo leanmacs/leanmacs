@@ -1,0 +1,18 @@
+reload 1: installed, 1 files, 2 commands
+run search-bindings: ok
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 2, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 0x0: "SPC y", scroll 0, selections 5..5, padding 8 0
+status 1: minibuffer.prompt "Binding: "
+view 2 0,0 0x0: "SPC y y  yy-said  Say it", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..24 minibuffer.annotation 18..24
+status 2: -
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "said", echo padding 8, preedit -, published 6, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+run search-label: ok
+scene 0x0, focused 0, echo "the binding search asks \"Binding: \"", echo padding 8, preedit -, published 8, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

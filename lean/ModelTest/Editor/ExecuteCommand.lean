@@ -18,6 +18,7 @@ import Editor.Loop.Driver
 import Editor.Minibuffer
 import Editor.Minibuffer.Compiled
 import Editor.State
+import Editor.Test.Config
 import Editor.Test.Driver
 import Editor.Test.Keys
 import Editor.Test.Loop
@@ -143,6 +144,19 @@ def executeCommandChecks : List Check :=
               names.contains ExecuteCommand.name &&
               names.contains Themes.loadName &&
               names.back? == some "marked" },
+    { name :=
+        "the command prompt's candidates are the names of the registry the loop is told of: with zz-mine registered by config they end with it, after compiled code's; once config's commands are replaced with none, as a reload whose config no longer registers zz-mine replaces them, it is no candidate and compiled code's are"
+      run :=
+        let compiled : Config.Registry :=
+          ({} : Config.Registry).replace .compiled
+            (executeCommands.map fun (name, _) => registration name name).toArray
+        let mine := compiled.replace .config #[registration "zz-mine" "mine"]
+        let listed (registry : Config.Registry) : Option (Array String) :=
+          (executeDriver { executeKeys with registered := registry.registered }).bind fun driver =>
+            (candidatesOf (calling driver)).map (·.all.map (·.text))
+        pure
+          (listed mine == some (names.push "zz-mine") &&
+            listed (mine.replace .config #[]) == some names) },
     { name :=
         "each of the command prompt's candidates is annotated with the keys that reach its command in the asking view, joined by commas, and the first description among them: marked with C-c m, C-c n  Mark it, the minibuffer's accept with C-e y, and load-theme, which no key reaches, with none"
       run :=

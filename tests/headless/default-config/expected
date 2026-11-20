@@ -1,0 +1,32 @@
+reload 1: installed, 2 files, 0 commands
+run search-bindings: ok
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 2, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 1 0,0 0x0: "open", scroll 0, selections 4..4, padding 8 0
+status 1: minibuffer.prompt "Binding: "
+view 2 0,0 0x0: "s-o  open-file\nSPC .  open-file               Find file\nSPC f f  open-file             Find file\no  open-below\nO  open-above\nSPC <Enter>  working-set-open  Open working set\nSPC k o  working-set-open      Open working set\nC-f  scroll-page-down", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..14 minibuffer.match 2..3 minibuffer.match 6..9 minibuffer.candidate 15..55 minibuffer.match 22..26 minibuffer.annotation 46..55 minibuffer.candidate 56..96 minibuffer.match 65..69 minibuffer.annotation 87..96 minibuffer.candidate 97..110 minibuffer.match 97..98 minibuffer.match 101..104 minibuffer.candidate 111..124 minibuffer.match 114..118 minibuffer.candidate 125..172 minibuffer.match 139..140 minibuffer.match 151..154 minibuffer.annotation 156..172 minibuffer.candidate 173..220 minibuffer.match 179..180 minibuffer.match 195..198 minibuffer.annotation 204..220 minibuffer.candidate 221..242 minibuffer.match 229..230 minibuffer.match 233..234 minibuffer.match 236..237 minibuffer.match 241..242
+status 2: -
+key arrived: <Escape> Escape -
+run search-bindings: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 4, echo "", echo padding 8, preedit -, published 9, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 4 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 4: minibuffer.prompt "Command: "
+view 2 0,0 0x0: "open-file            s-o, SPC ., SPC f f  Find file\nsave-buffer          s-s, SPC f s, SPC b s  Save file\nedit-file\nreload-buffer        SPC b r  Revert buffer\nauto-reload-mode\nminibuffer-accept\nminibuffer-cancel\nminibuffer-next\nminibuffer-previous\nminibuffer-insert", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..51 minibuffer.annotation 21..51 minibuffer.candidate 52..105 minibuffer.annotation 73..105 minibuffer.candidate 106..115 minibuffer.candidate 116..159 minibuffer.annotation 137..159 minibuffer.candidate 160..176 minibuffer.candidate 177..194 minibuffer.candidate 195..212 minibuffer.candidate 213..228 minibuffer.candidate 229..248 minibuffer.candidate 249..266
+status 2: -
+key arrived: <Escape> Escape -
+run search-bindings: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 6, echo "", echo padding 8, preedit -, published 16, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+view 6 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
+status 6: minibuffer.prompt "Binding: "
+view 2 0,0 0x0: "C-s-f  toggle-fullscreen\ns-m  minimise-window\ns-q  quit\ns-o  open-file\ns-s  save-buffer\ns-z  undo\ns-Z  redo\ns-x  clipboard-cut\ns-c  clipboard-copy\ns-v  clipboard-paste", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..24 minibuffer.candidate 25..45 minibuffer.candidate 46..55 minibuffer.candidate 56..70 minibuffer.candidate 71..87 minibuffer.candidate 88..97 minibuffer.candidate 98..107 minibuffer.candidate 108..126 minibuffer.candidate 127..146 minibuffer.candidate 147..167
+status 2: -

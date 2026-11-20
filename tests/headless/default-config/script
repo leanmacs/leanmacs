@@ -1,0 +1,36 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# a copy of the default config `mise run install` ships (config/default, a
+# starter SPC map), to reach the command prompt and the binding search
+# through the keys it binds. What it prints must be exactly `expected`. The
+# gate copies the config into a fresh temporary directory, so nothing is
+# written into the checkout.
+#
+# A script's `key` cannot press the space bar, so the keys are pressed
+# through the binding search, which runs a binding it accepts as its key
+# would: the scheme is fed the binding's keys from rest.
+
+reload
+settle
+
+# `search-bindings` lists the default config's bindings: with `open`
+# typed, those whose text holds it, `SPC f f  open-file` among them.
+# `<Escape>` cancels.
+run search-bindings
+commit open
+scene
+key <Escape> Escape -
+
+# `SPC :`, accepted from the search, opens the command prompt: the
+# minibuffer's status line is `Command: `. `<Escape>` cancels.
+run search-bindings
+commit SPC :  execute-command
+key <Enter> Enter -
+scene
+key <Escape> Escape -
+
+# `SPC ?`, accepted from the search, opens the binding search again: the
+# minibuffer's status line is `Binding: `.
+run search-bindings
+commit SPC ?  search-bindings
+key <Enter> Enter -
+scene

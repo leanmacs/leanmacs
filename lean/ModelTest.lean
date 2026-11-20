@@ -635,7 +635,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   nobody registered, or a prompt already open, is said in the echo area;
 - `executeCommandChecks`: the command prompt (`Editor/ExecuteCommand.lean`)
   on that driver, from keys that bind neither it nor `load-theme`: it lists
-  the registered commands' names in order; accepting `load-theme` runs it
+  the registered commands' names in order, and of a registry the loop is
+  told of, a command config no longer registers is no longer listed;
+  accepting `load-theme` runs it
   as a step of its own, which asks in turn, and accepting a theme there
   loads it; a typed fragment runs the first command the style lists for it,
   a text nothing matches is said and an empty one runs nothing; a prompt
