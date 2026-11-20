@@ -855,7 +855,8 @@ The config session's decisions are tested here too, with no elaborator:
   refusal;
 - `packageSetBuildChecks`: a user's package-set build and its commands
   (`Editor/PackageSet/Build.lean`, `Editor/PackageSet/Compiled.lean`):
-  when a reload starts it and when it says it cannot; the order carried
+  when a reload starts it and when it says it cannot, an editor in a
+  bundle starting none for the lakefile generated for it; the order carried
   as text; the requires resolved; the user's Lean, Lake and compiler
   variables removed from every command it runs, and the build record set
   over them; git required and absent or failing, for

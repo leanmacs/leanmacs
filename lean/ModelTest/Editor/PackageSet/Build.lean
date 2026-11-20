@@ -143,6 +143,32 @@ def packageSetBuildChecks : List Check :=
           (decide (runningWith generatedFacts) generatedFacts false == .nothing &&
             decide (runningWith pathManifest) pathManifest false == .nothing) },
     { name :=
+        "an editor in a bundle, whose shipped fingerprint names its set in Contents/Resources/lean/set, starts no build for the lakefile generated for it; one naming another set directory starts one"
+      run :=
+        let appPath := "/A.app/Contents/MacOS/editor"
+        let bundleSet := "/A.app/Contents/Resources/lean/set"
+        let directory : Option String :=
+          Id.run (ModuleLookup.setDirectory? appPath (fun _ => pure none) fun _ => pure true)
+        let running : Running :=
+          Id.run
+            (PackageSet.at appPath "/c" (directory.map ("default-set", ·)) (some "/t") (some "/d")
+              (fun path => pure (if path == coreRecordPath appPath then some "c0\n" else none))
+              fun _ => pure true)
+        let generatedFor (directory : String) : Facts :=
+          {
+            lakefile :=
+              .toml (Config.LakePackage.lakefile { name := "default-set", directory })
+                #[{ name := "default-set", source := .path directory }] }
+        let facts := generatedFor bundleSet
+        let elsewhere := generatedFor setDirectory
+        pure
+          (directory == some bundleSet &&
+            Fingerprint.ofFacts running.config facts running.setName == running.fingerprint &&
+            decide { running with facts } facts false == .nothing &&
+            (match decide { running with facts := elsewhere } elsewhere false with
+            | .build _ => true
+            | _ => false)) },
+    { name :=
         "a reload whose fingerprint differs starts one build with its order; none with a build in flight, with no data directory or no core, and with no lake it says so"
       run :=
         let facts := lakefileWith #[hello]
