@@ -24,7 +24,9 @@
 #   H. A probe failure: `init-throws` links, its `initialize` throws, the
 #      probe fails, nothing is published, and the editor keeps running.
 #
-# It ends `user-sets-check: ok`, with the time of each step.
+# It ends `user-sets-check: ok`, with the time of each step, once no
+# process a step started is still running (tools/leftovers.sh); on its way
+# out, whatever the outcome, it kills any that is.
 set -eu
 
 lean_dir=$(pwd -P)
@@ -36,9 +38,8 @@ launcher=$repo/target/release/leanmacs
 fixtures=$repo/tests/user-sets
 core=$(cat "$shipped.core")
 
-tmp=$(mktemp -d)
-tmp=$(cd "$tmp" && pwd -P)
-trap 'rm -rf "$tmp"' EXIT
+no_leftovers "$tmp" || fail "an editor, a launcher or a watcher it started is still running"
+echo "user-sets-test: ok"
 export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 export HOME="$tmp/home" XDG_DATA_HOME="$tmp/xdg-data" XDG_STATE_HOME="$tmp/xdg-state" XDG_CONFIG_HOME="$tmp/xdg-config"
 mkdir -p "$HOME"
@@ -186,4 +187,5 @@ test -z "$(ls "$tmp/h/data/editors")" || fail "H published $(ls "$tmp/h/data/edi
 ended=$(date +%s)
 echo "user-sets-check: H, a probe failure publishes nothing: ok ($((ended - started)) s)"
 
+no_leftovers "$tmp" || fail "an editor, a launcher or a watcher it started is still running"
 echo "user-sets-check: ok"

@@ -28,7 +28,9 @@
 #      dependency, with no git on the PATH, says git is required and how to
 #      get it, and fetches and builds nothing.
 #
-# It prints `user-sets-test: ok` and the time of each step on success.
+# It prints `user-sets-test: ok` and the time of each step on success, once
+# no process a step started is still running (tools/leftovers.sh); on its
+# way out, whatever the outcome, it kills any that is.
 set -eu
 
 lean_dir=$(pwd -P)
@@ -41,7 +43,12 @@ fixtures=$repo/tests/user-sets
 
 tmp=$(mktemp -d)
 tmp=$(cd "$tmp" && pwd -P)
-trap 'rm -rf "$tmp"' EXIT
+# `no_leftovers` and `reap` (tools/leftovers.sh): every process a step
+# starts names $tmp, and none may outlive this script. A signal ends it
+# through the EXIT trap, so an interrupted run reaps too.
+. "$repo/tools/leftovers.sh"
+trap 'reap "$tmp"; rm -rf "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
 export HOME="$tmp/home" XDG_DATA_HOME="$tmp/xdg-data" XDG_STATE_HOME="$tmp/xdg-state" XDG_CONFIG_HOME="$tmp/xdg-config"
 mkdir -p "$HOME"
 
@@ -127,4 +134,5 @@ printf '%s\n' "$out" | grep -q 'packages: git is required to fetch x, and none w
 test ! -e "$tmp/data-c" || fail "C wrote into its data directory"
 echo "user-sets-test: C, git missing is said and nothing is fetched: ok"
 
+no_leftovers "$tmp" || fail "an editor, a launcher or a watcher it started is still running"
 echo "user-sets-test: ok"

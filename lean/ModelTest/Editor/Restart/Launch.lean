@@ -48,6 +48,15 @@ def restartLaunchChecks : List Check :=
             cold.removedAtStart (stateDirectory := true) == none &&
             ({} : Launch).removedAtStart (stateDirectory := false) == none) },
     { name :=
+        "a headless run that ends by itself, its script run or a command having quit it, removes the record it was handed, so its watcher sees it go and starts no fallback; one that handed the session on removes nothing, since the record is the next run's; a run handed none removes nothing"
+      run :=
+        let handed : Launch :=
+          { restore := some "/s/session/session-1.json", handedOver := some "/s/session/handover" }
+        pure
+          (handed.removedAtEnd (handedOn := false) == some "/s/session/handover" &&
+            handed.removedAtEnd (handedOn := true) == none &&
+            ({} : Launch).removedAtEnd (handedOn := false) == none) },
+    { name :=
         "the probe removes the record it was handed, once main is reached, and prints the executable it is"
       run :=
         let cold : Launch :=

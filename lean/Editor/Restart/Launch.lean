@@ -75,6 +75,20 @@ the hand-shake tells its watcher this run started. -/
 def Launch.removedAtStart (launch : Launch) (stateDirectory : Bool) : Option System.FilePath :=
   if stateDirectory then none else launch.handedOver
 
+/-- The record a headless run started with `launch` removes as it ends by
+itself (its script run to its end, a command having quit it, or a wait
+that ran out), once what it hands the file service is written: the one it
+was handed, unless the run handed the session on (`handedOn`), when that
+path holds the next run's record. A run that ends by itself is no failed
+start, so its watcher, seeing the record go, starts no fallback
+(`crates/editor-launch/src/watch.rs`). The restore removes it at its
+hand-shake, or at a clean end of the loop (`Editor/Restore.lean`), but a
+script may end before either, and then the watcher would start the next
+candidate on the record's arguments, and the launcher, finding the record
+gone, the shipped default with none: a window no one waits for. -/
+def Launch.removedAtEnd (launch : Launch) (handedOn : Bool) : Option System.FilePath :=
+  if handedOn then none else launch.handedOver
+
 /-- The record the probe removes once `main` is reached: the one it was
 handed, so a cold start under watch that probes (`leanmacs … --probe`)
 ends with no record left for its watcher to fall back on. -/

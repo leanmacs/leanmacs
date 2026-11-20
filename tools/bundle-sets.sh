@@ -8,7 +8,9 @@
 #   tools/bundle-sets.sh <check> <bundle> <work dir> <repository>
 #
 # `<work dir>` is an empty directory of the caller's, removed by it; HOME
-# points inside it. Each check prints one line when it passes.
+# points inside it. Each check prints one line when it passes, and one that
+# starts an editor passes only once nothing it started is still running
+# (tools/leftovers.sh).
 #
 # - `pieces`: `lean`, `lake`, `clang` and `ld64.lld` are in the bundle's
 #   toolchain and executable, with `Init`, `Std`, `Lean` and `Lake`,
@@ -84,6 +86,15 @@ fail() {
   exit 1
 }
 
+# `no_leftovers` (tools/leftovers.sh): every process a check starts names
+# the work directory, and each check that starts one passes only once none
+# is still running. The caller, which owns the directory, reaps on its way
+# out.
+. "$repo/tools/leftovers.sh"
+settled() {
+  no_leftovers "$work" || fail "$check: an editor, a launcher or a watcher it started is still running"
+}
+
 # Generates the config directory `$1` on a first launch with the data
 # directory `$2`, from tests/headless/generate's `init.lean`, and requires
 # the generated lakefile to name the bundle's set. The environment is `$3`
@@ -153,6 +164,7 @@ first-launch)
   test ! -e "$work/data/editors" || fail "the first launch built an editor"
   env -i "$launcher" --data "$work/data" --probe | grep -qxF "executable $app/Contents/MacOS/editor" ||
     fail "after the first launch the launcher does not start the shipped default"
+  settled
   echo 'bundle-sets: the first launch, on a config of init.lean alone, generated the lakefile naming the bundle'"'"'s set, started the shipped default and built nothing'
   exit 0
   ;;
@@ -201,6 +213,7 @@ if [ "$check" = default-set ]; then
   cmp -s "$work/install/editor.core" "$app/Contents/Resources/editor.core" ||
     fail "the editor built from the bundle has another core than the bundle's"
   "$work/install/editor" --probe | grep -qxF 'probe: ok' || fail "the editor built from the bundle did not start"
+  settled
   echo "bundle-sets: the unchanged default set built from the bundle alone, read-only, with decoys first on the PATH, compiled nothing of it, and its editor has the bundle's core ($((ended - started)) s)"
   exit 0
 fi
@@ -231,6 +244,7 @@ if [ "$check" = c-glue ]; then
   }
   test "$(ls "$work/data/editors/$core" | tr '\n' ' ')" = "1 " || fail "c-glue's build did not publish version 1"
   untouched
+  settled
   echo "bundle-sets: installed c-glue, whose C the bundled clang compiled, into the bundled editor, and its command answered from its C function ($((ended - started)) s)"
   exit 0
 fi
@@ -276,4 +290,5 @@ test "$(ls "$work/data/editors/$core" | tr '\n' ' ')" = "1 2 " ||
 untouched
 probe=$(env -i "$launcher" --data "$work/data" --probe | grep '^executable ')
 test "$probe" = "executable $work/data/editors/$core/2/editor" || fail "the launcher chose $probe, not version 2"
+settled
 echo "bundle-sets: installed hello-init from a path into the bundled editor and ran its command, dropped compile and started the result, from the bundle's own toolchain, read-only, with decoys first on the PATH ($((ended - started)) s)"

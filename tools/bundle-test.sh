@@ -59,7 +59,10 @@
 #    bundled editor's own build; and a package with C, compiled by the
 #    bundled `clang`.
 #
-# It prints a line for each step that passed.
+# It prints a line for each step that passed, and `bundle-test: ok` once no
+# process a step started is still running (tools/leftovers.sh); on its way
+# out, whatever the outcome, it kills any that is, before it removes its
+# temporary directory.
 set -eu
 
 lean_dir=$(pwd -P)
@@ -70,15 +73,28 @@ shipped_editor=$repo/packages/.lake/build/bin/editor
 
 dir=$(mktemp -d)
 dir=$(cd "$dir" && pwd -P)
+# `no_leftovers` and `reap` (tools/leftovers.sh): every process the steps
+# start names $dir, and none may outlive this script.
+. "$repo/tools/leftovers.sh"
 cleanup() {
+  reap "$dir"
   chmod -R u+w "$dir" 2>/dev/null || true
   rm -rf "$dir"
 }
 trap cleanup EXIT
+# A signal ends the script through the EXIT trap, so an interrupted run
+# reaps too.
+trap 'exit 1' HUP INT TERM
 
 fail() {
   echo "bundle-test: $*" >&2
   exit 1
+}
+
+# Passes, once nothing a step started is still running.
+passed() {
+  no_leftovers "$dir" || fail "an editor, a launcher or a watcher it started is still running"
+  echo 'bundle-test: ok'
 }
 
 # 1. The stage.
@@ -171,7 +187,7 @@ sh "$repo/tools/bundle-sets.sh" first-launch "$app" "$dir/first" "$repo"
 # archive's system libraries was never measured.
 if [ "$(uname)" != Darwin ]; then
   echo 'bundle-test: the builds from the bundle alone are macOS only; skipped'
-  echo 'bundle-test: ok'
+  passed
   exit 0
 fi
 chmod -R a-w "$lean"
@@ -180,4 +196,4 @@ for check in default-set sets c-glue; do
   sh "$repo/tools/bundle-sets.sh" "$check" "$app" "$dir/$check" "$repo"
 done
 
-echo 'bundle-test: ok'
+passed

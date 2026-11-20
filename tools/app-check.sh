@@ -125,7 +125,10 @@
 #    old bundle, which must still verify.
 #
 # It writes nothing outside the temporary directory but that second build,
-# which is shown to write nothing. It opens no window and needs no person.
+# which is shown to write nothing. It opens no window and needs no person,
+# and it ends `app-check: ok` only once no process a step started is still
+# running (tools/leftovers.sh); on its way out, whatever the outcome, it
+# kills any that is, before it removes its temporary directory.
 # It is macOS on arm64 only, as the bundle is.
 #
 # `$1` is the core's directory, `lean/`, and `$2` the default package
@@ -144,11 +147,16 @@ built="$set_dir/.lake/build/Leanmacs.app"
 trace="$set_dir/.lake/build/Leanmacs.app.trace"
 
 dir=$(mktemp -d)
-# The read-only bits step 5d sets are put back first.
-trap 'chmod -R u+w "$dir" 2>/dev/null || true; rm -rf "$dir"' EXIT
 # The temporary directory's own path, its links resolved: CoreFoundation
 # names the main bundle so (step 5c).
 dir=$(cd "$dir" && pwd -P)
+# `no_leftovers` and `reap` (tools/leftovers.sh): every process a step
+# starts names $dir, and none may outlive this script. Each is killed
+# first, then the read-only bits step 5d sets are put back. A signal ends
+# the script through the EXIT trap, so an interrupted run reaps too.
+. "$lean_dir/../tools/leftovers.sh"
+trap 'reap "$dir"; chmod -R u+w "$dir" 2>/dev/null || true; rm -rf "$dir"' EXIT
+trap 'exit 1' HUP INT TERM
 
 fail() {
   echo "app-check: $*" >&2
@@ -701,4 +709,5 @@ done
 codesign --verify --strict --deep "$cloned" || fail "after a missing or malformed stamp, the bundle does not verify"
 step "a missing or malformed build ID or commit failed the build, naming the variable, and left the old bundle"
 
+no_leftovers "$dir" || fail "an editor, a launcher or a watcher it started is still running"
 echo "app-check: ok, $(du -sh "$built" | awk '{ print $1 }') bundle"

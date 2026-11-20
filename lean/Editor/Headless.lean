@@ -3300,6 +3300,12 @@ other command line is status 2, with the usage on stderr after the reason,
 if there is one beyond the number of paths: two paths outside a bundle say
 there is no toolchain.
 
+A run the launcher handed a record (`--handed-over`) and that ends without
+handing the session on removes that record before it exits, if its
+hand-shake has not (`Restart.Launch.removedAtEnd`): its script ended
+before its restore's hand-shake, and a run that ends by itself is no
+failed start, so the launcher's watcher must start no fallback.
+
 Before the loop starts it warms the pool, so the first burst of jobs finds
 every thread made, and starts the completion pump on a dedicated task. The
 host's jobs wait on the library's timer service and its file service, which
@@ -3419,6 +3425,13 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   -- them, and the exit is explicit, because a task may still be blocked in
   -- the library.
   Ffi.quit
+  -- A run that ended by itself removes the record it was handed, if its
+  -- hand-shake has not, so its watcher starts no fallback.
+  if let some record := launch.removedAtEnd (handedOn := handOver.isSome) then
+    try
+      IO.FS.removeFile record
+    catch _ =>
+      pure ()
   -- A restart's exec, once everything is shut down, through the
   -- collaborators' exec: it returns only when it failed, said.
   if let some plan := handOver then

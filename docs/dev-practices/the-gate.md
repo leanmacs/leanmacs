@@ -2052,6 +2052,21 @@ inside it, but the fixture packages' own `.lake/` under `tests/user-sets/`.
   says git is required and how to get it, and writes nothing in the data
   directory.
 
+**Nothing it starts outlives it** (`tools/leftovers.sh`), here and in
+`bundle-test`, `app-check` and `user-sets-check` alike. Every process a
+step starts names the check's temporary directory on its command line:
+the launcher, the editor, the launcher's watcher and its record. Before
+the check says `ok`, none may still be running, the watchers given 10 s to
+see their records go; on its way out, whatever the outcome, an interrupt
+included, the check kills any that is before it removes the directory. A
+watcher left behind falls back when its editor ends, and with its record
+removed under it the launcher starts the shipped default cold with no
+arguments: a window on the desktop that no one waits for (found
+2026-11-20, six such windows from staged bundles). A headless run the
+launcher handed a record removes it as it ends by itself, if its
+hand-shake has not (`Restart.Launch.removedAtEnd`), so its watcher starts
+no fallback.
+
 Measured on macOS arm64 (2026-11-20): about 17 s, cold fixture packages
 included; A's three processes about 13 s.
 
