@@ -54,7 +54,7 @@ it: a binding is of its own type, so the core cannot tell what command it
 runs, and only the scheme knows which keys it would take as something else
 (the Vim scheme's count digits). It defaults to none. The binding search
 lists them, and the command prompt shows each command's keys from them
-(`Editor/BindingSearch.lean`, `packages/execute-command/ExecuteCommand.lean`). The contract's
+(`packages/binding-search/BindingSearch.lean`, `packages/execute-command/ExecuteCommand.lean`). The contract's
 `keyBindingsWalk` holds every listed sequence to the walk.
 
 Which keys print text is the same for every scheme (`Key.printed?`): a

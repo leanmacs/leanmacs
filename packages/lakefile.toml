@@ -13,7 +13,8 @@
 # directory here and a `require` below: the mode line's segments
 # (mode-line/), the shipped themes (shipped-themes/), the command prompt
 # (execute-command/, with its interface package execute-command-api/,
-# which it requires), the compile mode (compile/), then the languages
+# which it requires), the binding search (binding-search/, with
+# binding-search-api/), the compile mode (compile/), then the languages
 # (languages/). They register in that order, after the core's. Every other
 # feature is still a package of the core's Lake package
 # (lean/EditorCore/EditorPackage.lean). This is also the lakefile a user's
@@ -47,13 +48,20 @@ path = "shipped-themes"
 name = "execute-command"
 path = "execute-command"
 
+# The binding search, `search-bindings`: the fourth default package. It
+# requires its interface package, binding-search-api, which so is in the
+# set too and registers nothing.
+[[require]]
+name = "binding-search"
+path = "binding-search"
+
 # The compile mode, `compile` into a workspace's compilation buffer, with
-# the modes that ship (cargo, lake, mise): the fourth default package.
+# the modes that ship (cargo, lake, mise): the fifth default package.
 [[require]]
 name = "compile"
 path = "compile"
 
-# The languages that ship and the `code` mode: the fifth default package.
+# The languages that ship and the `code` mode: the sixth default package.
 [[require]]
 name = "languages"
 path = "languages"

@@ -193,7 +193,7 @@ from the next command.
     `Loop.Registered.keyBindings`), which the loop fills per step from the
     input scheme, in the scheme's state of that step, not from the
     registry: the binding search and the command prompt ask
-    (`Editor/BindingSearch.lean`, `packages/execute-command/ExecuteCommand.lean`);
+    (`packages/binding-search/BindingSearch.lean`, `packages/execute-command/ExecuteCommand.lean`);
   - config's auto-reload setting (`autoReload`): whether auto-reload is in
     effect where no command chose (`Files.autoReloadOn`,
     `Editor/Files.lean`), a command's choice being the state's;

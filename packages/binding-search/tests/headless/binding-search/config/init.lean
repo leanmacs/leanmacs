@@ -1,5 +1,5 @@
 import Editor
-import Editor.BindingSearch
+import BindingSearch
 open Editor
 
 -- A config for the binding search, `search-bindings`. It chooses a style of

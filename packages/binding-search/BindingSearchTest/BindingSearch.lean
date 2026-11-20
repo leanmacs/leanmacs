@@ -1,20 +1,18 @@
+import BindingSearch
+import BindingSearch.Compiled
+import BindingSearchTest.Check
 import Editor.Api
-import Editor.BindingSearch
-import Editor.BindingSearch.Compiled
 import Editor.Command.Call
 import Editor.Completion
 import Editor.Completion.Candidate
 import Editor.Completion.Style
 import Editor.Config.Packages
-import Editor.Config.Registry
 import Editor.Event
 import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Keymap
-import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Minibuffer
-import Editor.Minibuffer.Compiled
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Keys
@@ -22,16 +20,22 @@ import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.Prompts
 import Editor.Test.Sources
-import ModelTest.Check
 
 /-!
-# Model tests: `Editor/BindingSearch.lean`
+# Model tests: `BindingSearch.lean`
 
-The model tests of `Editor/BindingSearch.lean`: `bindingSearchChecks`. The
-root module `ModelTest` runs them; its module doc says what each shows.
+The model tests of `BindingSearch.lean`: `bindingSearchChecks`. They were
+the core's (`ModelTest.bindingSearchChecks`) while the binding search was
+a module of the core, and moved here with their sentences as they were.
+The test driver's root, `BindingSearchTest/Model.lean`, runs them.
+
+They run on the core's test kit: the loop's driver (`Editor.Test.Driver`,
+`Editor.Test.Loop`), the minibuffer's package as the kit's prompts bring it
+(`Editor.Test.Prompts`), and the source contract's runner
+(`Editor.Test.Sources`).
 -/
 
-namespace ModelTest
+namespace BindingSearchTest
 
 open Editor
 open Editor.Test
@@ -134,8 +138,8 @@ def reversingBindings : Completion.Style :=
     hits := fun _ candidates =>
       pure ((Array.range candidates.size).reverse.map Completion.Hit.ofIndex) }
 
-/-- The checks of the binding search (`Editor/BindingSearch.lean`,
-`Editor/BindingSearch/Compiled.lean`), on the loop's driver over the
+/-- The checks of the binding search (`BindingSearch.lean`,
+`BindingSearch/Compiled.lean`), on the loop's driver over the
 editor's models and the test scheme: it lists every binding the scheme
 reaches with its keys, command and description, runs the one accepted as
 its key would, and the style chosen for the category `binding` decides the
@@ -249,4 +253,4 @@ def bindingSearchChecks : List Check :=
                 promptRows answered == promptRows named }] ++
     (sourceHolds BindingSearch.source).map fun (name, held) => { name, run := pure held }
 
-end ModelTest
+end BindingSearchTest

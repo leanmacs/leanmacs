@@ -2746,6 +2746,12 @@ def shippedChecks (_ : Unit) : List Check :=
         return (registry.find? "execute-command").isNone && (registry.source? "commands").isNone &&
             registry.sourcesIn "command" == #[] },
     { name :=
+        "the executable's hosts start with nothing of the binding-search package: no command search-bindings, no source bindings, and no source in the category binding, registered by a package of the core's Lake package"
+      run := do
+        let registry := shippedRegistry
+        return (registry.find? "search-bindings").isNone && (registry.source? "bindings").isNone &&
+            registry.sourcesIn "binding" == #[] },
+    { name :=
         "the executable's hosts start with the shipped completion styles, fuzzy and orderless, and the shipped completion display, minibuffer, registered by the completion package, and with the shipped sources of each shipped prompt's category the sources in the order of that prompt's defaults"
       run := do
         let registry := shippedRegistry

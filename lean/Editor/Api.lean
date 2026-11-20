@@ -582,7 +582,7 @@ it answers none. It makes no request of the library. Pinned by
 `keyBindings` answers the key sequences that reach a command in a view, as
 the input scheme says in the scheme's state of the step that asks, each
 with the command's name and description (`KeyBinding`). The binding search
-lists them (`Editor/BindingSearch.lean`), and the command prompt shows a
+lists them (`packages/binding-search/BindingSearch.lean`), and the command prompt shows a
 command's keys from them. Where no loop runs the command, and for a
 command a job runs, it answers `#[]`.
 

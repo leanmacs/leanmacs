@@ -1,6 +1,5 @@
 import Editor.Api.Theorems
 import Editor.AtPoint
-import Editor.BindingSearch
 import Editor.Command.Append
 import Editor.Completion.Filtering
 import Editor.Completion.Words
@@ -127,10 +126,10 @@ outside the core (`packages/execute-command/`), and config reaches it with
 `import ExecuteCommand`, a module of the set's base through the package's
 entry module (`Editor/Main.lean`, "The base"); a command of config's then
 calls it with `ExecuteCommand.executeCommand`, over `commandNames`, which
-is here. So is the binding search (`Editor/BindingSearch.lean`):
-`search-bindings`, which a command of config's calls with
-`BindingSearch.searchBindings`, over `keyBindings`; its registration
-(`Editor/BindingSearch/Compiled.lean`) is not imported.
+is here. Nor is the binding search, `search-bindings`: it is the package
+`packages/binding-search/`, which config reaches with `import
+BindingSearch` the same way, and a command of config's calls it with
+`BindingSearch.searchBindings`, over `keyBindings`, which is here.
 
 How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they

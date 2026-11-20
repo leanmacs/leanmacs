@@ -6,6 +6,8 @@ mode-line	implementation	-
 shipped-themes	implementation	-
 execute-command-api	interface	-
 execute-command	implementation	execute-command-api
+binding-search-api	interface	-
+binding-search	implementation	binding-search-api
 compile	implementation	-
 languages	implementation	-
 word-count	implementation	-

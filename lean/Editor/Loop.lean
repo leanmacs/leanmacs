@@ -286,7 +286,7 @@ loop has little of its own to do.
   so a prefix left pending cannot extend them, and the Vim scheme still
   knows which state each view is in. Keys that complete nothing are said
   (`Loop.notBound`). The binding search runs the binding accepted this way
-  (`Editor/BindingSearch.lean`), so it runs as its key would: the scheme's
+  (`packages/binding-search/BindingSearch.lean`), so it runs as its key would: the scheme's
   own invocation, with no count and no register, and the scheme's state
   changed as the key changes it.
 - **Which keys reach a command** (`RegistryRequest.keyBindings`) is answered

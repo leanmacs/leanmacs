@@ -13,6 +13,10 @@ name = "execute-command"
 path = "@REPO@/packages/execute-command"
 
 [[require]]
+name = "binding-search"
+path = "@REPO@/packages/binding-search"
+
+[[require]]
 name = "languages"
 path = "@REPO@/packages/languages"
 

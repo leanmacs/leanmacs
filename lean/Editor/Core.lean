@@ -1,7 +1,6 @@
 import Editor.Api.Cases
 import Editor.Api.Theorems
 import Editor.AtPoint.Compiled
-import Editor.BindingSearch.Compiled
 import Editor.Clipboard.Contract
 import Editor.Completion.AtPointContract
 import Editor.Completion.Compiled

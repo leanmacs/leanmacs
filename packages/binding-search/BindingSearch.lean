@@ -1,3 +1,4 @@
+import BindingSearchApi
 import Editor.Api
 import Editor.Command.Call
 
@@ -8,9 +9,15 @@ import Editor.Command.Call
 scheme reaches in the asking view, and runs the one accepted as its key
 would. It is what Embark's `embark-bindings` and Doom's `SPC h b b` do. It is
 written over the editor API (`keyBindings`, `matchByCategory`, `invoke`,
-`Editor/Api.lean`). `Editor.lean` imports this module, so config calls it.
-The command as compiled code registers it is in
-`Editor/BindingSearch/Compiled.lean`.
+the core's `lean/Editor/Api.lean`). It is the library of the default
+package `binding-search`, a Lake package outside the core
+(`packages/binding-search/`): an editor built from a set that holds it
+elaborates config on the set's base, which holds this module through the
+entry module `BindingSearch/EditorPackage.lean`, so config calls it with
+`import BindingSearch`. The command as compiled code registers it is in
+`BindingSearch/Compiled.lean`. The name it is registered under is the
+interface package `binding-search-api`'s (`packages/binding-search-api/`),
+whose contract check this package's tests run.
 
 - **The candidates are every key sequence the walk reaches from rest in the
   asking view's state whose binding runs a command by name** (`source`),
@@ -57,20 +64,24 @@ A new order or search is config's style for `binding`. Searching the
 descriptions too would mean putting them in the text; the style sees texts
 only.
 
-Pinned by `ModelTest.bindingSearchChecks`, on the loop's driver over the
-editor's models and the test scheme; by `ModelTest.pressedChecks`, for the
-reserved keys invocation under the test scheme and the Vim scheme; by
-the headless fixture `tests/headless/binding-search`, on the default
-editor with a config of its own; and by the headless fixture
+Pinned by `BindingSearchTest.bindingSearchChecks`
+(`BindingSearchTest/BindingSearch.lean`), on the core's test kit: the
+loop's driver over the editor's models and the test scheme; by the core's
+`ModelTest.pressedChecks`, for the reserved keys invocation under the test
+scheme and the Vim scheme; by the headless fixture
+`tests/headless/binding-search`, run on the default set's editor and the
+fixture set's; and by the core's headless fixture
 `tests/headless/default-config`, which runs `SPC ?` under the shipped
 default config.
 -/
 
 namespace Editor.BindingSearch
 
-/-- The name the binding search is registered under. -/
+/-- The name the binding search is registered under: the one the interface
+package declares (`BindingSearchApi.searchBindingsName`), so a rename on
+either side is a build error or a contract failure. -/
 def name : String :=
-  "search-bindings"
+  BindingSearchApi.searchBindingsName
 
 /-- The label of the prompt the command asks for a binding with. -/
 def label : String :=
