@@ -20,6 +20,12 @@ processes.
   screen.
 - A config that fails to reload shows only its first error in the window;
   the rest go to stderr.
+- Installing or removing a package rebuilds the editor and restarts it;
+  packages are not loaded or unloaded while it runs.
+- The app ships only the Lean toolchain. A package with native code needs
+  your own tooling (the Xcode command line tools, or rustup's Cargo for Rust,
+  from a checkout only) or a prebuilt binary. A Rust crate from outside this
+  repository is not supported yet.
 
 ## Download
 
@@ -49,13 +55,14 @@ version, build ID and commit.
 
 ## Config
 
-Config is a small Lean package in `~/.config/leanmacs` (or
-`$XDG_CONFIG_HOME/leanmacs`):
+Config is Lean modules in `~/.config/leanmacs` (or
+`$XDG_CONFIG_HOME/leanmacs`), and that directory is also a Lake package
+whose `lakefile.toml` names the packages your editor is built from:
 
 ```
 init.lean            defines `setup`, which the editor runs
 Config/Keys.lean     other files, imported as `Config.Keys`
-lakefile.toml        generated when absent
+lakefile.toml        your package set; generated when absent
 lean-toolchain       generated when absent
 ```
 
@@ -101,24 +108,22 @@ from a checkout with `mise run config-migrate [-- <dir>]`.
 
 ### Packages
 
-The config directory's `lakefile.toml` is your package set. Edit it by hand,
-or use `:package-install`, `:package-remove` (a default package such as
-`compile` included) and `:package-update`; each edits the lakefile and
-rebuilds. When a reload finds the set changed, the editor builds a new
-executable in the background, shows the build in `*package-build*`, and
-restarts into it with your buffers, windows and tabs. If the build fails,
-the errors stay in that buffer and the current editor keeps running. Builds
-live under `~/.local/share/leanmacs/editors`; the app starts the newest,
-falling back to the one before, then to the editor it shipped with.
-
-The app builds pure-Lean packages from the toolchain it ships. A git or
-Reservoir package needs `git`. The app ships no C headers, macOS SDK or
-Cargo, so a package with native code needs your own tooling (the Xcode
-command line tools, or Cargo from rustup) or a prebuilt binary, and says so
-in its documentation.
+A package is a Lake package of Lean code written against the same API as
+config. The editor ships with two default packages, `shipped-themes` and
+`compile`. Add, update and remove packages with `:package-install`,
+`:package-update` and `:package-remove`, or by editing `lakefile.toml` and
+running `:reload`. The editor rebuilds itself in the background, shows the
+build in `*package-build*`, and restarts into the new build with your
+buffers, windows and tabs. If the build fails, the current editor keeps
+running. Git and Reservoir packages need `git`.
 
 Packages run with your authority, as config does: a package's code, its
 `initialize` included, can do anything you can.
+
+- [Installing packages](docs/packages/installing-packages.md): the
+  commands, editing the lakefile, failed builds and editor updates.
+- [Writing a package](docs/packages/writing-a-package.md): from a config
+  file to a package, with a worked example.
 
 Started from Finder, the app gets launchd's environment, so set
 `XDG_CONFIG_HOME` with `launchctl setenv` rather than in your shell.
