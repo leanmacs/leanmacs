@@ -617,6 +617,60 @@ def systemLibraryArgs (file : FilePath) : IO (Array String) := do
   let text ← IO.FS.readFile file
   return ((text.split Char.isWhitespace).filter (!·.isEmpty)).toArray.map (·.toString)
 
+/-- The directory of the link stubs in the repository `root`:
+`<root>/link-stubs`, which `tools/stage-bundle.sh` writes into an app
+bundle's `Contents/Resources/lean` from the shipped editor
+(`tools/link-stubs.sh`). -/
+def linkStubsDir (root : FilePath) : FilePath :=
+  root / "link-stubs"
+
+/-- The link arguments that name the system's libraries from the link stubs
+in `stubs`, whose entries are `names` and whose `platform-version` file
+holds `version`: the two search paths, then a framework for each
+`<name>.framework` and a library for each `lib<name>.tbd`, in order of
+their names, then the platform version, `<minos> <sdk>`, so the
+executable records the SDK version the shipped editor's own link recorded.
+These are the arguments `tools/user-link/package/lakefile.lean` proved in
+phase 1 (`docs/design/lean-runtime.md`, "A link on the user's machine,
+measured"). A `platform-version` that is not two words is refused. -/
+def stubLinkArgs (stubs : FilePath) (names : Array String) (version : String) :
+    Except String (Array String) := do
+  let named :=
+    (names.qsort (· < ·)).flatMap fun name =>
+      if name.endsWith ".framework" then
+        #["-framework", (name.dropEnd ".framework".length).toString]
+      else
+        if name.startsWith "lib" && name.endsWith ".tbd" then
+          #[s!"-l{((name.drop 3).dropEnd 4).toString}"]
+        else #[]
+  let line := ((version.splitOn "\n").headD "").trimAscii.toString
+  let [minos, sdk] := line.splitOn " "
+    | throw s!"{stubs / "platform-version"} must hold `<minos> <sdk>`, but holds {repr line}"
+  return #["-F", stubs.toString, "-L", stubs.toString] ++ named ++
+      #[s!"-Wl,-platform_version,macos,{minos},{sdk}"]
+
+#guard
+  (stubLinkArgs "/s" #["platform-version", "libobjc.tbd", "AppKit.framework", "libiconv.tbd"]
+        "26.0 26.2\n").toOption ==
+    some
+      #["-F", "/s", "-L", "/s", "-framework", "AppKit", "-liconv", "-lobjc",
+        "-Wl,-platform_version,macos,26.0,26.2"]
+
+#guard (stubLinkArgs "/s" #[] "26.0\n").toOption.isNone
+
+/-- Whether the editor's link names the system's libraries from link stubs:
+on macOS, when Lake links with the toolchain's own compiler (no `LEAN_CC`),
+whose linker finds no framework in an SDK; otherwise it passes the system
+libraries the Rust archive needs as rustc printed them. -/
+def linksFromStubs (isOSX customCc : Bool) : Bool :=
+  isOSX && !customCc
+
+#guard linksFromStubs true false
+
+#guard !linksFromStubs true true
+
+#guard !linksFromStubs false false
+
 /-- Links an executable at `file`, rooted at the module `root`, as the
 editor is linked: `root`'s object and those of every module it imports,
 with their symbols exported, so interpreted config can find compiled
@@ -625,7 +679,14 @@ gives a `lean_exe`), the glue of every package library it imports among
 them (a library's `moreLinkObjs`); then the core's glue and the one Rust
 archive of the set `set` (`editorRust`); then `linkArgs`, with the
 workspace's toolchain's library directory (`editorLinkArgs`), then the
-system libraries that archive needs. `root` may be a module of any package of the
+system libraries that archive needs: as rustc printed them, for a
+compiler that finds them in the macOS SDK or on Linux; or, on macOS with
+the toolchain's own `clang` (no `LEAN_CC`), whose linker finds no
+framework, from the link stubs in `<repository>/link-stubs`
+(`linksFromStubs`, `stubLinkArgs`), which an app bundle ships, so a user's
+set links from the app alone (`docs/design/lean-runtime.md`, "The app
+ships the toolchain"). With no stubs there that link fails, saying so.
+`root` may be a module of any package of the
 workspace: the core's glue is this package's target, built in its build
 directory. -/
 def linkAsEditor (set : Package) (root : Module) (file : FilePath) : FetchM (Job FilePath) := do
@@ -634,8 +695,22 @@ def linkAsEditor (set : Package) (root : Module) (file : FilePath) : FetchM (Job
   let rustJob ← (set.facet `editorRust).fetch
   let libraries := systemLibrariesFile (rustDir (← repositoryRoot) (rustKey (← setRustCrates set)))
   let entry ← editorLinkArgs
+  let fromStubs := linksFromStubs Platform.isOSX (← getLeanInstall).customCc
+  let stubs := linkStubsDir (← repositoryRoot)
   ((infoJob.zipWith Prod.mk glueJob).zipWith Prod.mk rustJob).mapM fun ((info, glue), rust) => do
-      let system ← systemLibraryArgs libraries
+      let system ←
+        if fromStubs then
+          unless ← stubs.isDir do
+            error
+                s!"linking with the toolchain's own clang needs link stubs at {stubs} (tools/link-stubs.sh), and there are none: set LEAN_CC to a compiler that links against the macOS SDK, or build from an app bundle, which ships them"
+          let names := (← stubs.readDir).map (·.fileName)
+          match stubLinkArgs stubs names (← IO.FS.readFile (stubs / "platform-version")) with
+          | .ok args =>
+            pure args
+          | .error message =>
+            error message
+        else
+          systemLibraryArgs libraries
       addPureTrace entry "linkArgs"
       addPureTrace system "native-static-libs"
       buildLeanExeSync file ((info.objs.push glue).push rust) info.libs

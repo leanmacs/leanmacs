@@ -178,4 +178,69 @@ env -i "$launcher" --data "$dir/data" --probe | diff "$dir/per-user-expected" - 
 test -z "$(ls -A "$dir/data/launch")" || fail "the launcher left a cold record"
 echo 'bundle-test: the launcher started the per-user editor of the bundle core, with the app as its main bundle, and left no cold record'
 
+# 6. The first launch: a fresh data directory and a config of `init.lean`
+# alone start the shipped default, with no build.
+first=$dir/first-config
+mkdir "$first"
+cp "$generate/config/init.lean" "$first/init.lean"
+out=$(cd "$dir/elsewhere" && env -i "$launcher" --data "$dir/first-data" headless --state "$dir/first-state" \
+  --data "$dir/first-data" --generate "$first" "$dir/generate-script") || fail "the first launch exited non-zero"
+# The state directory's jobs print their own lines; the rest is the
+# fixture's.
+printf '%s\n' "$out" | grep -v '^job ' | diff "$generate/expected" - ||
+  fail "the first launch differs from tests/headless/generate/expected"
+! printf '%s\n' "$out" | grep -q 'packages:' || fail "the first launch said something of its packages: $out"
+test ! -e "$dir/first-data/editors" || fail "the first launch built an editor"
+env -i "$launcher" --data "$dir/first-data" --probe | grep -qxF "executable $app/Contents/MacOS/editor" ||
+  fail "after the first launch the launcher does not start the shipped default"
+echo 'bundle-test: the first launch, on a config of init.lean alone, started the shipped default and built nothing'
+
+# 7. The unchanged default set, built from the bundle alone (macOS only:
+# the app is macOS on arm64 only, and whether the Linux toolchain's clang
+# links the Rust archive's system libraries was never measured). The
+# bundle's lean/ is made read-only and listed; a config directory holds the
+# generated lakefile; the environment is empty but for a PATH whose first
+# directory holds decoys of every tool a build could reach for, decoy CC
+# and LEAN_SYSROOT, HOME inside the temporary directory and the bundle's
+# build record. The bundle's own lake must install an editor whose core is
+# the bundle's, which starts, compiling nothing of the bundle (a compile
+# would fail writing into the read-only tree, and the listing is compared)
+# and running no decoy.
+if [ "$(uname)" != Darwin ]; then
+  echo 'bundle-test: the build from the bundle alone is macOS only; skipped'
+  echo 'bundle-test: ok'
+  exit 0
+fi
+decoys=$dir/decoys
+mkdir "$decoys" "$dir/home"
+for tool in lean lake clang cc ld xcrun cargo git; do
+  printf '#!/bin/sh\necho %s >>"%s"\nexit 1\n' "$tool" "$dir/decoys.log" >"$decoys/$tool"
+  chmod +x "$decoys/$tool"
+done
+: >"$dir/decoys.log"
+listing() {
+  find "$lean" -print0 | xargs -0 stat -f '%N %z %m' | sort
+}
+chmod -R a-w "$lean"
+listing >"$dir/listing-before"
+build=$dir/build-config
+mkdir "$build"
+cp "$dir/generate-config/init.lean" "$dir/generate-config/lakefile.toml" "$dir/generate-config/lean-toolchain" "$build/"
+record=$(cat "$app/Contents/Resources/editor.build")
+started=$(date +%s)
+# shellcheck disable=SC2086 # the record's lines are NAME=value words
+env -i PATH="$decoys:/usr/bin:/bin" HOME="$dir/home" CC="$decoys/cc" LEAN_SYSROOT="$decoys" \
+  EDITOR_INSTALL_DIR="$dir/install" $record \
+  "$lean/toolchain/bin/lake" -d "$build" build :editorInstall >"$dir/build.log" 2>&1 || {
+  cat "$dir/build.log" >&2
+  fail "the unchanged default set did not build from the bundle alone"
+}
+ended=$(date +%s)
+listing | diff "$dir/listing-before" - >&2 || fail "the build from the bundle changed the bundle"
+test ! -s "$dir/decoys.log" || fail "the build from the bundle ran $(tr '\n' ' ' <"$dir/decoys.log")"
+cmp -s "$dir/install/editor.core" "$app/Contents/Resources/editor.core" ||
+  fail "the editor built from the bundle has another core than the bundle's"
+"$dir/install/editor" --probe | grep -qxF 'probe: ok' || fail "the editor built from the bundle did not start"
+echo "bundle-test: the unchanged default set built from the bundle alone, read-only, with decoys first on the PATH, compiled nothing of it, and its editor has the bundle's core ($((ended - started)) s)"
+
 echo 'bundle-test: ok'

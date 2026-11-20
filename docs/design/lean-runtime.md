@@ -160,6 +160,21 @@ lean/link-stubs/                           macOS: the system libraries' link stu
   (`lean/Editor/PackageSet/Build.lean`); and the core's lakefile asks Lake
   for its toolchain (`Lake.findInstall?`), never the `PATH`
   (`leanSystemLibDir`, `editorLinkArgs`).
+- **The link uses the bundled `clang` and `ld64.lld` with link stubs.**
+  The toolchain ships no stub of any Apple framework, so on macOS, when
+  Lake links with the toolchain's own compiler (no `LEAN_CC`), the
+  editor's link names the system's libraries from
+  `Contents/Resources/lean/link-stubs`: `-F` and `-L` the directory, a
+  `-framework` or `-l` for each stub, and `-Wl,-platform_version,macos,
+  <minos>,<sdk>` from its `platform-version` (`linkAsEditor`,
+  `stubLinkArgs`). `tools/stage-bundle.sh` writes them from the shipped
+  editor with `tools/link-stubs.sh`, as phase 1 proved ("A link on the
+  user's machine, measured"). With `LEAN_CC` set, a checkout's link, the
+  archive's `native-static-libs` line is passed as before. The stubs hold
+  only what the shipped editor imports, and the toolchain has no C library
+  headers, so a package's C that calls another system function or
+  includes `<stdio.h>` needs the user's own tooling
+  ([packages.md](packages.md), "Who can build it").
 - **Fetching a git or Reservoir package uses the system `git`**, which the
   app does not ship (decided 2026-11-18); a missing one is reported
   ([packages.md](packages.md), "The build, as a job").
