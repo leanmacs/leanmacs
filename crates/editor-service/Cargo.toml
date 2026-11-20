@@ -1,0 +1,13 @@
+[package]
+name = "editor-service"
+version = "0.1.0"
+description = "The conventions every service of the Rust library keeps, published for the crates of packages: registering a service, completing a request on the completion queue through the Completer port, and the plain-data buffers that cross the boundary"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No dependency and no dev-dependency: this crate is what `editor-ffi` and
+# the crate of every package that holds Rust depend on, so it depends on
+# nothing of the editor's (docs/design/packages.md, "Rust in a package").
+# `deny.toml` gives it no entry: any crate may depend on it.
+[dependencies]
