@@ -32,6 +32,17 @@ def shippedPackageNames : Array String :=
 every package of it is accepted, and what it registers is all theirs. -/
 def packageSetChecks : List Check :=
   [{  name :=
+        "the shipped set keeps exactly two stores across a restart, the shell's history and version control's reviews, and reports exactly the jobs a person waits on: the search, the shell's run, and version control's apply, hunk apply and commit"
+      run :=
+        let (state, _) : ModelState × Array String :=
+          Config.State.ofPackages EditorCore.EditorPackage.packages
+        pure <|
+          state.registry.codecs.map (fun (owner, codec) => (owner.name, codec.name)) ==
+              #[("shell", "shell-history"), ("version-control", "vc-review")] &&
+            (state.registry.jobs.filter (·.registration.reported)).map (·.registration.name) ==
+              #["project-search", "shell-run", "vc-status-apply", "vc-hunk-apply",
+                "vc-commit-run"] },
+    { name :=
         "every package of the shipped set is accepted, and their names are the 23 of the package table, each once, in its order, with no package of the shipped palettes and none of the compile mode among them"
       run :=
         let (state, refused) : ModelState × Array String :=

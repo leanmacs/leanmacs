@@ -23,7 +23,8 @@ reads.
   whose activate key (`RET` in the Vim scheme's normal state) runs
   `project-search-visit`.
 - **The jobs**: `project-search`, the search, keyed by its
-  results buffer's name; and `project-search-load`, which loads the files a
+  results buffer's name, reported: one running when the process ends is
+  said stopped by the next start's restore; and `project-search-load`, which loads the files a
   delivery found that no buffer holds.
 
 Pinned by `ModelTest.projectSearchRunChecks`, on the models, and by
@@ -43,7 +44,7 @@ def package : Package :=
       commandWith symbolName symbolCommand
       commandWith visitName visitCommand
       defineMode mode
-      workJob job searchWork
+      workJob job searchWork (reported := true)
       workJob loadJob loadWork }
 
 end Editor.ProjectSearch

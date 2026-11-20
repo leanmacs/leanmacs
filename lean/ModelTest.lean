@@ -819,7 +819,9 @@ The config session's decisions are tested here too, with no elaborator:
   the shipped palettes or of the compile mode among them, in the state
   they make every entry's owner is one of them, the ex names are bound in
   the order the headless fixtures show, the `ex` package's and then
-  version control's, and the one theme is `default`.
+  version control's, and the one theme is `default`; and the set keeps
+  exactly the shell's history and version control's reviews across a
+  restart, and reports exactly the jobs a person waits on.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -1130,7 +1132,8 @@ repository (`Editor/VersionControl/Model.lean`) and the job model:
   of a diff, and what a commit made outside the editor and HEAD moving
   while a fetch or a diff runs change;
 - `reviewBufferChecks`: the review buffer
-  (`Editor/VersionControl/Review.lean`) on that driver, its read run over
+  (`Editor/VersionControl/Review.lean`) on that driver (and `vc-review`
+  kept across a restart without its buffer's number), its read run over
   the version-control interface's model (`Model.readHandler`): the four
   criteria of the excerpts roadmap's phase 4, its refusals, refresh, the
   old buffers a round that ends early removes, the rounds its store keeps,

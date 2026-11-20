@@ -60,7 +60,13 @@ The `version-control` package:
   `VersionControl.reviewDiffWork`); `vc-log-read`, which reads a log and
   shows it (`VersionControl.logReadWork`), and `vc-blame-read`, which reads a
   blame and shows it (`VersionControl.blameReadWork`). A host that is not handed them shows no
-  status, and says so when one is asked for.
+  status, and says so when one is asked for. `vc-status-apply`,
+  `vc-hunk-apply` and `vc-commit-run` are reported: one running when the
+  process ends is said stopped by the next start's restore.
+- **Kept across a restart**: a workspace's reviews (`vc-review`), their
+  rounds and decisions, the number of their review buffer dropped, which
+  means nothing in the next process. Not the status, commit, worktree and
+  log records, which hold buffer numbers.
 - **The modes**: `vc-status`, the status buffer's major mode
   (`VersionControl.mode`), `vc-commit`, the message buffer's
   (`VersionControl.commitMode`), `vc-worktrees`, the worktree list's
@@ -140,18 +146,19 @@ def package : Package :=
       commandWith blameName blameCommand
       commandWith blameVisitName blameVisitCommand
       workJob readJob readWork
-      workJob applyJob applyWork
+      workJob applyJob applyWork (reported := true)
       workJob showJob showWork
       workJob hunkFetchJob hunkFetchWork
       workJob hunkDiffJob hunkDiffWork
-      workJob hunkApplyJob hunkApplyWork
-      workJob commitJob commitWork
+      workJob hunkApplyJob hunkApplyWork (reported := true)
+      workJob commitJob commitWork (reported := true)
       workJob worktreesReadJob listWork
       workJob worktreeFindJob visitFindWork
       workJob reviewReadJob reviewReadWork
       workJob reviewDiffJob reviewDiffWork
       workJob logReadJob logReadWork
       workJob blameReadJob blameReadWork
+      reviewStore.keptAcrossRestart (keep := fun kept => { kept with buffer := none })
       for mode in [mode, commitMode, worktreesMode, reviewMode, logMode, blameMode] do
         defineMode mode
       defineSegment reviewSegment.name reviewSegment.fields

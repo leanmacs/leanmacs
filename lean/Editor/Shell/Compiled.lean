@@ -17,7 +17,11 @@ the owner `shell` when its loop starts, before any config
   flight in the focused buffer's scope (`Shell.interruptCommand`).
 - **The job**: `shell-run`, which runs the child and finishes with what
   came of it (`Shell.runWork`). A host that is not handed it runs no `:!`,
-  and says so when one is asked for.
+  and says so when one is asked for. It is reported: one running when the
+  process ends is said stopped by the next start's restore.
+- **Kept across a restart**: the history (`shell-history`), whole. Not the
+  output buffers (`shell-output`), which hold buffer numbers, nor the run
+  in flight (`shell-running`), which the report says stopped.
 
 This module is apart from `Editor/Shell.lean` because it is what a host is
 handed, not what config calls.
@@ -34,6 +38,7 @@ def package : Package :=
       commandWith commandName command
       commandWith filterName filterCommand
       commandWith interruptName interruptCommand
-      workJob runJob runWork }
+      workJob runJob runWork (reported := true)
+      historyStore.keptAcrossRestart }
 
 end Editor.Shell

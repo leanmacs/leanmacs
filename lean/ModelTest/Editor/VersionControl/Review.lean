@@ -13,6 +13,7 @@ import Editor.Text.Model
 import Editor.VersionControl
 import Editor.VersionControl.Contract
 import Editor.VersionControl.Model
+import Editor.VersionControl.Compiled
 import Editor.VersionControl.Review
 import Editor.VersionControl.ReviewHunks
 import ModelTest.Check
@@ -206,6 +207,21 @@ and the version-control interface's model, its read over the model
 (`Model.readHandler`). -/
 def reviewBufferChecks : List Check :=
   [{  name :=
+        "vc-review is kept across a restart with its rounds and decisions, the number of its review buffer dropped"
+      run :=
+        pure <|
+          let kept : VersionControl.ReviewStore :=
+            { buffer := some 4
+              rounds :=
+                #[{ against := "main", base := "b", head := "h"
+                    hunks :=
+                      #[{ path := "a", header := "@@", decision := .kept, viewed := #[] }] }] }
+          let codec :=
+            VersionControl.package.registered.codecs.find?
+              (·.name == VersionControl.reviewStore.name)
+          (codec.map (·.keep (VersionControl.reviewStore.encode kept))) ==
+            some (some (VersionControl.reviewStore.encode { kept with buffer := none })) },
+    { name :=
         "criterion 1 on the models: vc-review opens one review buffer of HEAD's change against the named branch, its excerpts' headers in the policy's order (the test file, then B, A, C and D), shown and focused"
       run :=
         pure <|

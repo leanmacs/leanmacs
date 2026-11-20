@@ -27,6 +27,8 @@ config (`Editor/Config/Packages.lean`).
 - **The job**: `compile-run`, which runs the child, posts its output
   as it comes and finishes with how it ended (`Compile.runWork`). A host
   that is not handed it runs no compile, and says so when one is asked for.
+  It is reported: one running when the process ends is said stopped by the
+  next start's restore.
   The job `compile-list`, which runs a contribution's listing, is the
   `workspace` package's (`Editor/Workspace/Compiled.lean`,
   `Editor/ProjectMode/Listing.lean`): a host handed this package and not
@@ -77,7 +79,7 @@ def package : Package :=
       commandWith nextName (stepCommand nextName true)
       commandWith previousName (stepCommand previousName false)
       commandWith gotoName gotoCommand
-      workJob runJob runWork
+      workJob runJob runWork (reported := true)
       defineMode mode
       for contribution in shipped do
         compileContribution contribution

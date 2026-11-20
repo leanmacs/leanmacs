@@ -21,6 +21,7 @@ import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Scene
 import Editor.Shell
+import Editor.Shell.Compiled
 import Editor.State
 import Editor.Test.Driver
 import Editor.Test.Keys
@@ -104,6 +105,18 @@ project, and `/x` in none. -/
 def shellChecks : List Check :=
   let main : Option Location := some (.local "/r")
   [{  name :=
+        "the shell keeps its history across a restart, whole, and neither its output buffers nor its run in flight; its run is reported"
+      run :=
+        pure <|
+          let registered := Shell.package.registered
+          let codec? (name : String) := registered.codecs.find? (·.name == name)
+          let lines := #[":!make", "ls"]
+          (codec? Shell.historyStore.name).map (·.keep (Shell.historyStore.encode lines)) ==
+              some (some (Shell.historyStore.encode lines)) &&
+            (codec? Shell.outputStore.name).isNone &&
+            (codec? Shell.runningStore.name).isNone &&
+            (registered.jobs.find? (·.name == Shell.runJob)).map (·.reported) == some true },
+    { name :=
         "criterion 3: `:!make` runs /bin/sh -c make in the buffer's workspace root; in a buffer with no workspace, in its file's directory; in one with neither, in the editor's working directory"
       run :=
         pure <|
