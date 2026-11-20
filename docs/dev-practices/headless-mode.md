@@ -1,8 +1,30 @@
 # The headless mode
 
 ```sh
-editor headless [--render] [--generate] [--state <dir>] [<sysroot> <olean dir>] <config dir> <script file>
+editor headless [--render] [--generate] [--state <dir>] [--resume <k>] [<sysroot> <olean dir>] <config dir> <script file>
 ```
+
+**A restart** (`:restart`, `lean/Editor/Restore/Restart.lean`) hands the
+session to a new process: the script's `restarted` waits until this run has
+handed it over and stops the script here, the run prints `restart: the
+session is handed over` (with ` (no launcher, so no fallback)` when no
+launcher started it) and execs, and the next process restores the session
+and runs the script from the line after that `restarted`, on the same
+standard output. **`--resume <k>`** is how: a run hands the next its own
+command line with `--resume` one more than its own, and a run started with
+`--resume <k>` skips the script through its k-th `restarted`. Through the
+app's launcher (`target/release/leanmacs --default <editor> -- headless …`,
+`crates/editor-launch-std`) the restart has the launcher's fallback; run
+directly it has none.
+
+**The launch flags** come before `headless`, and only a launcher gives them:
+`--launched-by <launcher>`, `--shipped <exe>`, `--restore <index>` (the
+index a restart handed over, restored in place of the highest),
+`--handed-over <record>` and `--failed <exe>`
+(`lean/Editor/Restart/Launch.lean`). **`editor --probe`** alone prints
+`probe: ok`, `launched-by <launcher>` (or `none`) and CoreFoundation's main
+bundle, `bundle <path> identifier <id>` (or `bundle none`), and exits 0: a
+restart's probe, run before it hands anything over.
 
 **`--state <dir>`** names the state directory (`docs/design/lean-runtime.md`,
 "As built, the state directory"): the run restores the session of the last
@@ -541,6 +563,7 @@ timers.
 | `indexed` | Waits as `settle` does, then, for up to 30 seconds, until the session index is written: no write or save of it running, no job running but those the script started with `spawn`, and the library's file service holding no request. Each write of the index waits on the job clock (`Restore.writeDelay`), and a job that ends can start another, so once no other job is running it moves the clock past the write's delay, and again for each write that follows: what the jobs changed is then in one write, and the scene count is the same from run to run. It needs no `join`, so a script with a long job of its own running can wait for the index. |
 | `workspaces` | Prints the workspace table: `workspace <label> at <location>:` and each value of its store as ` <name>=<value>`, a line for each workspace; then `project <name>:` and its values, for each project; then `unscoped:` and the values of the store of the buffers outside any workspace. |
 | `abort` | Ends the process at once with the status 134 and no shutdown, as an abort would, once what was printed is flushed: no job is cancelled and no file request waited for. It is not the signal SIGABRT, which on a macOS desktop raises the crash reporter. |
+| `restarted` | Waits, for up to 30 seconds, until the loop has ended with the session handed over (a `:restart` the script asked for): the script stops in this process, which prints `restart: the session is handed over`, shuts down and execs the plan. The next process, started with `--resume`, runs the script from the line after. With no hand-over within the wait, the run fails, naming the line. |
 | `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. The editor loop steps the key through its input scheme, and runs the command a completed sequence is bound to. |
 | `commit <text>` | Sends the rest of the line, trimmed, as an input method's composition would end with it, the same way as `key`. The editor loop inserts it at the focused window's cursors where the view takes typed text: under the Vim scheme, in insert state and in the minibuffer. In normal state it is dropped. A `commit` with no text is refused. |
 | `resize <width> <height>` | Sends a resize of the frame to that many physical pixels across and down, at a scale of 1, the same way as `key`. The next scene's frame has that size and its views are laid out in it. Anything but two numbers is refused. Until a script resizes, the frame is 0 by 0, no view shows a row, and nothing scrolls (above). |

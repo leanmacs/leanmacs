@@ -244,7 +244,8 @@ judge; when either was set, as in CI, it takes the values given. In a
 temporary directory removed by a trap it copies the bundle with `ditto`, so what follows runs on a relocated
 copy; verifies the copy's signature with `codesign --verify --strict
 --deep`; reads its `Info.plist` with `plutil` (it lints,
-`CFBundleExecutable` is an executable file under `Contents/MacOS`,
+`CFBundleExecutable` is `leanmacs`, the launcher, an executable file under
+`Contents/MacOS` beside the `editor` it starts,
 `LSArchitecturePriority` starts with arm64, `LSMinimumSystemVersion` is no
 later than this machine's macOS, and `CFBundleDocumentTypes` is exactly two
 entries, each with `CFBundleTypeRole` `Editor` and one content type,
@@ -260,11 +261,12 @@ address (which fails as `cannot read` that path); `CFBundleShortVersionString`
 is the line of `lean/app/version`, read from the file the build reads,
 `CFBundleVersion` the expected build ID and `LeanmacsCommit` the expected
 commit; `LSApplicationCategoryType` is `public.app-category.developer-tools`
-and `NSHumanReadableCopyright` is not empty) and the executable with `lipo`
-(arm64 alone); converts the icon back to an iconset with `iconutil -c
+and `NSHumanReadableCopyright` is not empty) and the launcher and the editor
+each with `lipo` (arm64 alone) and `vtool` (a `minos` no later than
+`LSMinimumSystemVersion`); converts the icon back to an iconset with `iconutil -c
 iconset`, which must hold exactly the ten standard images, each read by
 ImageIO (`sips`) at its nominal size, 16 to 1024 pixels; and runs the
-copy's `Contents/MacOS/editor headless` on `tests/headless/bundle` with no
+copy's `editor headless`, through the launcher, on `tests/headless/bundle` with no
 directory argument, an empty environment (`env -i`) and `/` as the working
 directory, which must exit 0 and print exactly `expected` (the fixture's
 root imports `Lean`, so the bundle carries Lean's module files); runs its
@@ -275,7 +277,13 @@ which must load the config, say that no lakefile is generated, and leave a
 since the bundle holds no package set to require; and runs the
 copy's `editor --version` the same way, which must print exactly the
 version, `build <ID>` and `commit <SHA>` lines, so the Lean plist reader
-reads the keys the build writes. Last, it builds
+reads the keys the build writes; then the launcher's `--probe` of the
+copy's editor, and of a copy of the editor outside the bundle started with
+`--default`, each with an empty environment from `/`, must print `probe:
+ok`, the launcher, and the copy as CoreFoundation's main bundle with the
+app's real identifier, so an editor outside the bundle has the app's
+identity (`docs/design/lean-runtime.md`, "The app's identity across an
+exec"). Last, it builds
 `editorApp` again and checks that the bundle's executable, its
 `CodeResources` and the build's trace file keep their modification times
 and inodes: the second build copied and signed nothing. Lake's output is
@@ -310,7 +318,8 @@ must print them. Last, it builds with `LEANMACS_BUILD_ID` unset, `2026` and
 `2001020304050x`, and with `LEANMACS_COMMIT` unset, in upper case and 39
 digits long: each build must fail naming the variable and leave the old
 bundle, which must still verify. It ends `app-check: ok` with the bundle's
-size, and takes under a minute (37 s on 2026-11-17).
+size, and takes about a minute (37 s on 2026-11-17; 70 s on 2026-11-20 with
+the launcher, on an Apple M5 Max).
 
 To see the stamp taken from the environment, as CI gives it, run it once
 with both variables set, then rebuild from HEAD:
@@ -329,6 +338,56 @@ any change to `editorApp`, to `tools/stage-bundle.sh` or to module lookup
 (`lean/Editor/ModuleLookup.lean`): such a change is not done until this
 ends `app-check: ok`. CI's build job runs it on every push to main, before
 it packs the disk image ([`ci.md`](ci.md)).
+
+## The restart on a desktop
+
+```sh
+mise run restart-check
+```
+
+This builds `Leanmacs.app` (`mise run app`) and checks, on this desktop,
+what the gate cannot: that a restart keeps the app's identity to
+LaunchServices (`tools/restart-check.sh packages`;
+`docs/design/lean-runtime.md`, "The app's identity across an exec"). macOS
+only. It opens windows, and needs no person. In a temporary directory
+removed by a trap, it copies the bundle, sets the copy's
+`CFBundleIdentifier` to `org.leanmacs.restart-check`, signs it ad hoc and
+verifies it, so the owner's `Leanmacs.app` and a running editor are never
+touched; copies the copy's editor to `elsewhere/editor`, outside the
+bundle; writes `bad`, which prints `probe: ok` for `--probe` and otherwise
+exits 3; and writes the config `tests/restart-check/config/init.lean`,
+which restarts into `elsewhere/editor` on entering a `*.restart-elsewhere`
+file and into `bad` on a `*.restart-bad` one, each only for a buffer this
+run opened (`Buffer.historyRestored` is false), so a restored buffer never
+restarts again. Then:
+
+- **A.** It launches the copy cold, `open -n -a <copy> --args --state …
+  --config … --sysroot … --oleans …` (the copy's two module directories,
+  given so that the editor outside the bundle loads the config too, as a
+  restart hands its options on), waits for `lsappinfo` to list an instance
+  of the identifier and records its pid, P.
+- **B.** It sends the copy an open-file event for `x.restart-elsewhere`
+  (`open -a <copy> <file>`): P's config restarts into `elsewhere/editor`,
+  after AppKit has checked in. It waits for the hand-over record to appear
+  and then go (the hand-shake), and asserts one instance of the identifier,
+  with pid P, `bundle path` the copy and name `Leanmacs`, and that P now
+  runs `elsewhere/editor` (`ps -o comm=`).
+- **C.** An open-file event for `after.txt` must reach that executable:
+  within 10 s the newest index lists it.
+- **D.** An open-file event for `y.restart-bad`: P restarts into `bad`,
+  which fails; the launcher's watcher, a process LaunchServices did not
+  launch, starts the previous executable, `elsewhere/editor`, as a new pid
+  Q. It asserts the hand-shake, one instance, with pid Q and the copy's
+  bundle path, that Q runs `elsewhere/editor`, and that an open-file event
+  for `after2.txt` reaches Q.
+
+It ends Q and prints `restart-check: ok` with both pids and paths; a
+failure names the step and prints what `lsappinfo` says of the identifier.
+It takes about 15 s. Its first run, on 2026-11-20 on an Apple M5 Max under
+macOS 27.2.1, passed every step; `docs/design/lean-runtime.md` keeps its
+output. Run it after a change to the launcher (`crates/editor-launch`,
+`crates/editor-launch-std`), to how the editor execs, to the bundle's
+`Info.plist`, or to the window's start-up.
 
 ## The disk image, on demand
 

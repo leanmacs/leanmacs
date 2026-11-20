@@ -1094,6 +1094,46 @@ requests do not wait for, and the command list grows with every package.
   it `kept` back at 2 and `unkept` at 0; and the summary and `*restore*`
   saying the restart stopped `hold`.
 
+`ffi-test` runs **the restart** as processes (`tests/headless/restart/`;
+`lean/Editor/Restore/Restart.lean`), after the `launcher` task has built the
+launcher and its test helper, release (`target/release/leanmacs`). Each
+entry copies `note.txt` into a temporary directory, gives `--state` there,
+writes the script there from its template, and prints the output with the
+temporary directory written `@DIR@`, the editor's path `@EDITOR@`, and its
+job lines and command list dropped:
+
+- **Through the launcher**: `leanmacs --default <editor> -- headless …` on
+  `script`, which opens the file, types, splits the window and makes a
+  second tab, then `:restart`s and waits at `restarted`. The second
+  process, started by the launcher with the session handed over and
+  `--resume 1`, runs the script from there. Both print exactly
+  `restart-expected`: the summary that the window was closed and reopened,
+  the buffer with its unsaved text, the split and the hidden tab. Then no
+  hand-over record is left, `session-1.json` is gone, `session-2.json` is
+  there, and the journals are only run 2's.
+- **With no launcher**: the same script, the editor run directly
+  (`restart-direct-expected`, which says there is no fallback); the same
+  files are left.
+- **The probe refuses**: `probe-script` restarts into a program that exits
+  3 whatever it is given; the echo says it did not start, the script goes
+  on in the same process with the session as it was (`probe-expected`),
+  and no record is written.
+- **The fallback**: `fallback-script` restarts, through the launcher, into
+  a program that prints `probe: ok` for `--probe` and otherwise exits 3.
+  The launcher's watcher marks it failed and starts the previous
+  executable, the editor, which restores the session and names it
+  (`fallback-expected`); its standard error says `leanmacs: @DIR@/bad ended
+  before it restored the session; starting @EDITOR@`, and no record is
+  left. The first process's status is the failed program's.
+- **The fallback after a kill**: the same, with the program sending itself
+  `SIGKILL` (`killed-expected`).
+
+The launcher's own tests run under `mise run test`: the core's on its fakes
+(`crates/editor-launch`), and on real processes the ports' contract, the
+fallback with a candidate that exits and one that kills itself, and, on
+macOS, CoreFoundation's main bundle in a fake bundle the launcher starts an
+editor from, inside it and outside it (`crates/editor-launch-std/tests/`).
+
 `ffi-test` runs **a view that follows its cursor**, as a process, the same
 way (`tests/headless/view/`). The entry copies `lines.txt`, 120 lines
 `000` to `119`, each ended by a line feed, so that line n starts at byte
@@ -1273,6 +1313,20 @@ tree's `editor --version`, outside a bundle, must say it is a development
 build. The model tests pin the plist reader and the three outputs against a
 fake file read (`ModelTest.versionChecks`), and `mise run app-check` runs
 the real bundle's `--version` against the real plist.
+
+Since session-restore phase 3 the staged bundle holds **the app's
+launcher** too, `Contents/MacOS/leanmacs` (`crates/editor-launch-std`, built
+by Cargo, release, first), and every run above goes through it with its
+arguments passed through: so its layout rule (the default is the `editor`
+beside it) and its pass-through hold on both legs, and the exec'd editor
+still finds the bundle's modules. Then, with the fixture `Info.plist` in
+place, whose `CFBundleIdentifier` is `org.leanmacs.bundle-test`, **the
+probe**: `leanmacs --probe`, with an empty environment, must print `probe:
+ok`, `launched-by <bundle>/Contents/MacOS/leanmacs` and, on macOS, `bundle
+<bundle> identifier org.leanmacs.bundle-test` (`bundle none` elsewhere);
+and so must `leanmacs --default <dir>/outside/editor -- --probe`, a copy of
+the editor outside the bundle, which an explicit `--default` starts: the
+real editor sees the app as its main bundle from outside it.
 
 What the gate checks of drawing, then: frames a bound display publishes
 reach a render loop with the input they answer (`editor-ffi`'s tests,

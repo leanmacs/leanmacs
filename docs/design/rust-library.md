@@ -112,6 +112,12 @@ job reads as it comes and whose standard input it writes to (phase 2;
   relative program, shut down) and the platform's words naming the program
   and the directory. The port is pull-based and blocking, so backpressure is the core not
   reading, and a write is held by the pipe it writes to.
+- **The app's identity**: the service adds `CFProcessPath` to every
+  command's `unset` (`Command::without_app_identity`), whatever the command
+  said, so a program the editor runs never takes the app as its own main
+  bundle; the launcher sets it in the editor's environment on macOS ("The
+  app's launcher", below). The fake matches a script whether or not a
+  command's `unset` names it.
 - **The rules of a child**: `wait` blocks until the child has ended, then
   ends every process still in its group, then reaps the child, and answers
   the same if asked again; `kill` ends the whole group, may be called from
@@ -803,6 +809,57 @@ reply's decoding; `contract-test` (`ContractTest.fileWatchChecks`) also
 checks that a change whose path is not UTF-8 is delivered as missed on the
 watch's own path, and skips that, saying so on stderr, where the volume
 refuses such a name (APFS does).
+
+## The app's launcher
+
+As built (session-restore phase 3): `crates/editor-launch`, the core, and
+`crates/editor-launch-std`, its real adapters and the `leanmacs` binary,
+the app bundle's `CFBundleExecutable` (`docs/design/lean-runtime.md`,
+"Restart, as built" and "The app's identity across an exec").
+
+- **The ports** speak of a pid as the core's `Pid`: `Files` (read, an
+  atomic write, rename, remove, whether a path exists), `Clock` (the time,
+  a sleep), `Pids` (this process's pid, a wait for any process's end with a
+  timeout, a kill), `Spawn` (a start that is nobody's child, answering its
+  pid), `Exec` (which answers only when the exec failed) and `Platform` (the
+  launcher's own path, whether this is macOS, a line on standard error). An
+  `Invocation` is a program, its arguments, and the variables set and unset.
+- **The rules** are the core's: `launch::run` (the default, explicit
+  `--default` over the bundle's layout; a cold start; a hand-over's
+  candidates, a missing one marked failed, an exec refused moving to the
+  next in the same process with its watcher killed; with none left the
+  record renamed `handover.failed` and status 1; a record of a later
+  format left as it is and the default started cold; `CFProcessPath` set to
+  the launcher on macOS on every exec of an editor), and `watch::watch`
+  (the record gone: 0; the process ended with the record there: the
+  candidate marked failed and the launcher exec'd again; 60 s over: a
+  `SIGKILL` first). The core's `clippy.toml` refuses `std::fs`,
+  `std::process` and `std::env`.
+- **The fakes** (`fake`): files that are a map, a clock that moves only when
+  waited on, processes that end on a script on the same clock, starts and
+  execs recorded, the exec's sentinel answer `Faked` after which the core
+  returns so a test reads what was exec'd.
+- **The contract** (`contract`): the file and clock properties run on the
+  fakes and on the real adapters; the process properties on real processes
+  alone, with `launch-probe --contract` as the helper (a wait and a kill of
+  a process that is not the caller's child, a detached start with another
+  parent, and an exec that keeps the pid, hands on exactly its arguments,
+  applies its variables and answers a missing program `NotFound` with the
+  process carrying on). `tests/fallback.rs` runs the launcher and its
+  watcher end to end on real processes, a candidate that exits and one that
+  kills itself; `tests/identity.rs` checks the main bundle in a fake bundle
+  on macOS.
+- **The adapters**: `std::fs`, writing beside the target and renaming;
+  `std::time`; rustix for the pids, kqueue's `EVFILT_PROC`/`NOTE_EXIT` on
+  macOS and `pidfd_open` with `poll` on Linux, polling `kill(pid, 0)` every
+  50 ms where neither can be had; a double `std::process` spawn for the
+  detached watcher, its intermediate the launcher's own `--detach` mode,
+  which hands it the launcher's standard output and reports its pid; and
+  `CommandExt::exec`. `identity::main_bundle` reads CoreFoundation's main
+  bundle through `objc2-core-foundation`, whose types stay inside the
+  crate.
+- **The editor's exec and main bundle** (`editor-ffi`'s `launch`) forward
+  to these adapters, so the editor and the launcher exec the same way.
 
 ## What Lean's runtime provides directly
 

@@ -24,6 +24,18 @@ storage, layout, rendering, the window and processes.
 - Config written in Lean, loaded at start and again on `:reload`. A config
   that fails to elaborate is rejected, its first error is shown in the
   bottom row, and the old config keeps running.
+- Unsaved text is journalled as you type, under the state directory
+  (`~/.local/state/leanmacs`). After a crash or a kill, the next start
+  restores the buffers with their unsaved text, the windows, tabs and jump
+  lists.
+- `:restart` starts the editor again in a new process with the session as
+  it was: every buffer, its unsaved text, the windows and the tabs. The
+  window closes and reopens. After an update installed over the app,
+  `:restart` takes the session to the new build. A build that does not
+  start is refused before anything is handed over; one that fails before
+  it has restored the session falls back to the executable that was
+  running when it is still there, and otherwise leaves the session for the
+  next start.
 
 ### Limitations
 

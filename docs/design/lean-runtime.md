@@ -434,6 +434,85 @@ for at most 2 s (`Headless.drainPatience`), until the file service holds no
 request, so the journal's last orders (a clean end's removes and its ended
 index) are written, then quits the queues.
 
+**Restart, as built** (session-restore phase 3;
+`lean/Editor/Restore/Restart.lean`, `crates/editor-launch`,
+`crates/editor-launch-std`). `:restart` re-execs the running executable and
+`:restart <exe>` (`Editor.restart (into := …)`, which packages phase 8's
+install calls) another, with the session handed over:
+
+1. **The probe.** The command `restart` runs `<target> --probe` through the
+   process service, in the editor's own environment, for at most 10 s
+   (`Restore.probePatience`). It must exit 0 with the first line `probe:
+   ok`: `--probe` (`lean/Editor/Executable.lean`) returns once `main` is
+   reached, so every module initialiser has run, packages' `initialize`
+   among them. Otherwise the restart is refused, said with how the probe
+   ended and its first line of standard error, and the editor keeps
+   running. That catches what fails before `main`: a bad link, a bad
+   signature, a missing library, an `initialize` that throws. With no state
+   directory, before the restore has finished, while a restart is in
+   flight, or for an executable that is not an absolute path, `:restart` is
+   refused at once.
+2. **The hand-over in flight** (`Restore.Kept.handing`). From the probe's
+   success the loop drops the user's input (keys, committed text, a
+   preedit, the pointer) and says `restart: handing the session over; the
+   window closes and reopens` in the echo area, with ` (no launcher, so no
+   fallback)` for a run no launcher started; the editor does not leave
+   meanwhile (`EditorState.leaves`). Once no save is in flight, the
+   reconciler hands back its journal orders and starts `restart-save`, which
+   saves this run's index, not ended, over `session-<run>.json`, then the
+   hand-over record (`<state>/session/handover`,
+   `lean/Editor/Restart/Handover.lean`), each a snapshot saved by the file
+   service, whose one queue works them after every journal order handed
+   before them: the host hands a step's journal orders to the file service
+   before it starts the step's jobs. A save refused is said, the record
+   removed, and the hand-over given up.
+3. **The end that execs.** The save's command hands the host the plan
+   (`Loop.Stepped.handOver`). A host that counted a journal failure since
+   the hand-over began runs `restart-abandon` instead, which says it and
+   writes a new generation of every journal. Otherwise the host ends its
+   loop, shuts down as at any end (the children, the watches, the searches,
+   the bounded drain of the file service, the queues), the window mode
+   closes its window, and execs the plan (`Restart.real`, over
+   `Ffi.exec`): with a launcher, `<launcher> --handover <record>`; with
+   none, the first candidate with `--restore <index> --handed-over <record>`
+   and the host's arguments. An exec that fails is said on stderr and the
+   process exits 1; the session is restored at the next start.
+4. **The next run** is given `--launched-by`, `--shipped`, `--restore`,
+   `--handed-over` and a `--failed` for each executable that failed, first
+   on its command line, which the executable strips before it chooses its
+   mode (`Restart.Launch.strip`). Its restore takes the named index in place
+   of the highest (`Document.choose`); one that is missing or does not
+   parse is said and the version rule decides. Its summary starts
+   `restore: restarted, so the window was closed and reopened;` and names
+   the executables it fell back past. Once the handed index is restored and
+   its own index written it removes the record: **the hand-shake**. A run
+   that ends cleanly before it removes the record too. A
+   `session/handover.failed` the restore finds (every candidate failed) is
+   said in `*restore*` with its candidates, and removed.
+
+**The launcher and its fallback.** `leanmacs`, the bundle's
+`CFBundleExecutable`, starts an editor by `exec`: cold, the default
+(`Contents/MacOS/editor` beside it, or an explicit `--default`) with
+`--launched-by` and `--shipped`; from a hand-over record, the first
+candidate neither marked failed nor missing (the new executable, the
+previous, the shipped default, each once). Just before each hand-over's exec
+it spawns its **watcher**, detached (an intermediate that starts it and
+exits, so it is nobody's child) with the editor's standard streams, which
+waits for the record to go (exit 0), for the process to end with the record
+still there (whatever its status: it marks the candidate `failed` and execs
+the launcher again, which starts the next), or for 60 s (it kills the
+process first). An exec that is refused marks the candidate failed and the
+next is tried in the same process. With none left the record is renamed
+`handover.failed` and the launcher exits 1: the index is not ended, so the
+next start restores it by phase 1's rule. A record of a later format is
+left as it is and the default started with no hand-over. The whole decision
+is `editor-launch`'s core, on ports, pinned on fakes; the real adapters are
+held to the ports' contract and run end to end in `tests/fallback.rs`.
+
+**The window closes and reopens.** It is not handed across the exec: the
+window mode closes it once its loop has ended for the hand-over, and the
+next run opens its own.
+
 **`editor [<file>]`, as built** (the display pipeline's last phase;
 `lean/Editor/Window.lean`, `lean/Editor/Window/Real.lean`). The window mode
 is the headless host's editor loop handed real collaborators: the real
@@ -637,6 +716,72 @@ Rules found the hard way:
   objects from `main`.
 - **Rust objects are Lean external objects with finalisers**, never bare
   integers, so a handle cannot be used after it is freed.
+
+### The app's identity across an exec
+
+macOS knows an app by its bundle: LaunchServices registered the process it
+launched by its pid, and the Dock icon, the menu bar's name, file
+associations and the open-file events Finder sends follow from the bundle
+CoreFoundation's main bundle is (`CFBundleGetMainBundle`, which
+`NSBundle.mainBundle` and AppKit's check-in are built on). An executable
+outside the bundle, as packages phase 8's per-user executable will be, is
+by default its own directory's "bundle", with no identifier.
+
+**Decided** (session-restore phase 3, decision 1): exec through a launcher
+inside the bundle, which sets `CFProcessPath=<bundle>/Contents/MacOS/leanmacs`
+in the exec's environment. CoreFoundation's `_CFProcessPath` honours that
+variable in a process that is not restricted, which an ad-hoc-signed app
+without the hardened runtime is not, so the main bundle is the app wherever
+the executable lives. `IO.appPath` (`_NSGetExecutablePath`) is unaffected,
+so `ModuleLookup` still finds an executable's own modules by its real path.
+The process service removes `CFProcessPath` from every child's environment,
+so a program the editor runs never takes the app as its own bundle.
+
+- **Why a launcher, not a direct exec of the per-user executable.** A cold
+  start from Finder must reach an executable outside the signed bundle,
+  which may sit in a read-only `/Applications`, so it can never be
+  `CFBundleExecutable` itself; the fallback needs a process that outlives a
+  failing executable; and the identity is set in one place.
+- **Why `exec`, not a child.** LaunchServices registered the launched pid. A
+  child would check in as a second instance, with a second Dock icon, and
+  miss the open-documents event of a cold start, which goes to the launched
+  process.
+- **Everyday use runs this path**: every start passes through the
+  launcher's exec. Until phase 8 a cold start runs the shipped default.
+
+**What is checked, where.**
+
+| Where | What |
+|---|---|
+| The gate, macOS leg: `crates/editor-launch-std/tests/identity.rs` | In a fake bundle: the launcher's cold start runs the bundle's editor as the app; a hand-over to an editor outside the bundle, and an explicit `--default` outside it, is the app too, in the launcher's own pid; the same editor run directly is not |
+| The gate, both legs: `mise run bundle-test` | The real editor, through the staged bundle's launcher, inside the bundle and outside it with `--default`: `--probe` prints the launcher and, on macOS, the staged bundle and its identifier (`bundle none` elsewhere) |
+| On demand and each push to main: `mise run app-check` | The same two probes on the real bundle, expecting its real identifier; `CFBundleExecutable` is `leanmacs`, and the launcher and the editor are each arm64 with a `minos` no later than the bundle's |
+| On demand, on a desktop: `mise run restart-check` | LaunchServices' record of the process (one instance, its pid, its `bundlepath` and name) after a restart into an editor outside the bundle once AppKit had checked in, open-file events reaching the new executable, and the fallback's identity when the watcher, which LaunchServices did not launch, starts the previous executable |
+
+**Argued, not observed: the Dock icon's pixels.** `restart-check` checks
+LaunchServices' `bundlepath` and name for the running process; the Dock
+draws the icon from that bundle's `CFBundleIconFile`, so the pixels are not
+compared. No tool reads the Dock's drawn icon back without the
+Accessibility permission, which a person would have to grant.
+
+**`restart-check`'s run** (2026-11-20, an Apple M5 Max, macOS 27.2.1,
+arm64), every step passed:
+
+```text
+restart-check: A. launched cold as pid 50627
+restart-check: B. pid 50627 restarted into <tmp>/elsewhere/editor, one instance, bundlepath <tmp>/Leanmacs.app
+restart-check: C. after.txt reached pid 50627
+restart-check: D. <tmp>/bad failed, the watcher started <tmp>/elsewhere/editor as pid 51058, one instance, bundlepath <tmp>/Leanmacs.app, and after2.txt reached it
+restart-check: ok (P 50627, Q 51058, <tmp>/Leanmacs.app, <tmp>/elsewhere/editor)
+```
+
+So an exec after AppKit's check-in keeps the identity, and decision 1's
+contingency (handing over with `open -n -a <bundle> --args --handover
+<record>` in place of an exec) is not needed.
+
+**A risk to recheck.** The hardened runtime that notarization requires may
+mark the process restricted, and CoreFoundation then ignores
+`CFProcessPath` (task `recheck-cfprocesspath-under-hardened-runtime`).
 
 ## Config and reload
 
@@ -2075,9 +2220,10 @@ text requests. Config sees it through
 | Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's window list and layout, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds and is the one writer of: a command changes it by requests the loop answers. Buffers are kept in slots, so a buffer's id is never used again, and neither is a view's | Untouched | Restored after a run that did not end cleanly (`lean/Editor/Restore/Run.lean`): each buffer's file, line ending, modes and unsaved text; and every window of every tab, tiled, docked and floating, with the layouts, zooms, names, the focused and last-focused windows, the tab in view, each window's selection, scroll and jump list (`lean/Editor/Restore/Frame.lean`). The start window keeps its id; every other gets a new one. A window whose buffer is not kept shows `scratch`, said. The wanted column, secondary cursors, marks, registers and buffer-local values are not restored. The rest is lost unless its owner persists it |
 | The session index, format 2: each buffer's file, line ending, modes and live journal, the place and jump list of every window on it, and the focused view; the frame's tabs and windows (`frame`); the workspace table with the cells whose store has a codec (`workspaces`); the declared stores' cells kept across a restart (`stores`); and the reported jobs running (`jobs`), with how many others run that their owner does not restart (`otherJobs`, recorded by the next write another change starts) | Compiled Lean keeps what it last wrote and what it mirrors (`EditorState.restore`, `Restore.Kept`); the job `restore-write` writes it, debounced, to `<state>/session/session-<run>.json`, one file a run, written only by that run (`lean/Editor/Restore/Document.lean`) | Untouched | Kept: read by the next start; a clean end writes it saying `ended`, and then nothing is restored |
 | Store values kept across a restart and not yet met: config's declared cells and the table cells whose codec config registers, which the restore reads before config's `setup` | The config state's `parked` (`Config.State.parked`, `lean/Editor/Config/Reload.lean`) for declared cells, and `Restore.Kept.parked` for table cells | Config's first install that declares a parked store with a codec meets it (kept, migrated or reset, said); the others are dropped, said. A rejected reload keeps them | Carried into every index written until claimed or dropped, so a config whose `setup` throws loses nothing |
+| A restart in flight: its plan, whether its save has started (`Restore.Kept.handing`); and the hand-over record, `<state>/session/handover`: the index the next run restores, the shipped executable, the candidates in order, the editor's arguments and the launcher's `failed` lines | The plan, compiled Lean in the editor state; the record, a text file the job `restart-save` writes once, which the launcher and its watcher read and rewrite (`crates/editor-launch/src/handover.rs`) and the next run removes at the hand-shake | Untouched | The record is what crosses it: the next run removes it once it has restored the index it names and written its own; when every candidate failed the launcher renames it `handover.failed`, which the next start says and removes |
 | Unsaved text: the journal of each buffer with unsaved changes | A base, the text whole, and a log of JSON lines, one record of edits per event, under `<state>/session/journals/` (`lean/Editor/Restore/Journal.lean`), written by the file service from the orders the loop hands it after each publish | Untouched | Kept: replayed at start-up after a run that did not end cleanly; removed when its buffer is saved or closed, and at a clean end |
 | A buffer's local values: plain trees by name (`Value`), as a store's cell holds | Compiled Lean, a field of the buffer in the editor state, set and read by a command (`BufferId.setValue`, `BufferId.value?`) | Untouched: a tree names no type of config's | Lost |
-| A job running: one a person waits on registers itself reported (`workJob … (reported := true)`: the shell's run, the compile run, project search, version control's apply, hunk apply and commit); one its owner starts again after a restart registers itself restarted (`workJob … (restarted := true)`: the files' `check-files` and `follow-file`, the workspace's `find-workspace`, `find-mode-markers` and `compile-list`, the gutter's three and the restore's four) | The host's job table, off the editor thread; the reported ones are handed to the loop each step (`Loop.Keys.running`), and how many others run that are not restarted (`Loop.Keys.otherJobs`) | Config's jobs are cancelled by an install; a package's run on | Not restarted: the next start's restore says each reported job that was running was stopped by the restart, and how many others were, a package's or config's, in `*restore*` and the summary; a restarted job is not said, as its owner starts it again |
+| A job running: one a person waits on registers itself reported (`workJob … (reported := true)`: the shell's run, the compile run, project search, version control's apply, hunk apply and commit); one its owner starts again after a restart registers itself restarted (`workJob … (restarted := true)`: the files' `check-files` and `follow-file`, the workspace's `find-workspace`, `find-mode-markers` and `compile-list`, the gutter's three and the restore's six, a restart's probe and save among them) | The host's job table, off the editor thread; the reported ones are handed to the loop each step (`Loop.Keys.running`), and how many others run that are not restarted (`Loop.Keys.otherJobs`) | Config's jobs are cancelled by an install; a package's run on | Not restarted: the next start's restore says each reported job that was running was stopped by the restart, and how many others were, a package's or config's, in `*restore*` and the summary; a restarted job is not said, as its owner starts it again |
 | A buffer's changed-on-disk mark: what the last check of its file found that is not the file it holds, and whether the user was told (`Buffer.File.changed`) | Compiled Lean, a field of the buffer's file in the editor state, set by the command a check finishes with (`BufferId.markChanged`, `BufferId.tellChanged`) and cleared by a load, a reload or a save | Untouched | Lost: a check after a restart finds the file as it is |
 | What the loop saw at its last publish (`Loop.seen`): the focus, the buffers shown, modified and open, which decide the files due a check | Compiled Lean, a field of the loop | Untouched | Lost |
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change, and the text typed in the insert session that change began) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
@@ -2212,7 +2358,16 @@ follows:
   highest run, reading a newer format leniently, and removes only earlier
   indexes of a format it understands, once its own first index is
   written.
-- **No state directory** keeps everything in memory, said once.
+- **No state directory** keeps everything in memory, said once; and
+  `:restart` is refused.
+- **One file is outside the editor's hands: the hand-over record**
+  (session-restore phase 3), `<state>/session/handover`, which a restart
+  writes once by a job's snapshot save and which the app's launcher and its
+  watcher, programs outside the editor, read and rewrite (a `failed` line
+  each) and rename to `handover.failed` when every candidate failed. The
+  next run removes the record at the hand-shake, and a start that finds
+  `handover.failed` says it in `*restore*` and removes it. The launcher
+  refuses a record of a later format and leaves it as it is.
 - **Writes are keyed by the workspace's root**, so a newer write cancels an
   older one still in flight; two editors writing one workspace's file:
   the last writer wins.

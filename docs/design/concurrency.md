@@ -2165,6 +2165,30 @@ of 4.2 to 6.8 µs (`journal_order/4KiB/start` 3.3 / 6.6, `middle` 3.3 /
 6.3, `end` 3.3 / 6.2; `1MiB` 3.2 / 6.1, 3.4 / 4.3, 3.5 / 4.5; `10MiB` 3.3 /
 4.2, 3.5 / 6.5, 3.6 / 6.8), as before and under the 20 µs expected.
 
+**A restart in flight** (session-restore phase 3;
+`lean/Editor/Restore/Restart.lean`). From the restart's probe succeeding
+until its exec, or until the hand-over is given up (`Restore.Kept.handing`):
+
+- **The user's input is dropped.** The loop drops the keys, committed text,
+  preedits and pointer input it is handed, and says the hand-over again in
+  the echo area, so no edit can follow the index the hand-over writes. A
+  resize, the focus and the queue's other events are handled as ever, and
+  so are jobs' results.
+- **Leaving waits.** `EditorState.leaves` is false meanwhile, as it is while
+  a save is in flight: a quit or a close request does not end the loop
+  under the hand-over.
+- **The restart waits for a save in flight** before it writes the session,
+  as a quit does: otherwise a save that lands after the index would remove
+  a journal the index names. Its save, `restart-save`, starts on the
+  publish after the save's result.
+- **Its saves follow the journal.** A step's journal orders are handed to
+  the file service before the step's jobs are started, and the service
+  works its one queue in order, so the index and the record are written
+  after every journal order handed before them.
+- **A journal write that failed since the hand-over began** gives it up: the
+  host runs `restart-abandon` in place of the exec, which writes a new
+  generation of every journalled buffer.
+
 ## Events
 
 The Rust library delivers events as plain data: a key was pressed, a

@@ -374,6 +374,18 @@ globs = ["Config.+"]
   needs-a-rebuild diagnostic and its fixture
   (`tests/headless/needs-rebuild`, a config whose lakefile requires the
   fixture package `greeting`) are the half of that this phase built.
+- **What phase 8 does with the launcher** (session-restore phase 3,
+  `crates/editor-launch`). The per-user executable lives outside the
+  bundle, so the bundle's launcher, `Contents/MacOS/leanmacs`, starts it:
+  its cold-start rule (today the shipped `Contents/MacOS/editor`, or
+  `--default`) gains "the newest per-user executable", with the previous one
+  and then the shipped default as its fallbacks. The install ends with
+  `Editor.restart (into := some <new executable>)`, which probes the new
+  executable, writes the session and hands it over through the launcher, so
+  the new build starts with the session as it was, keeps the app's
+  identity (`CFProcessPath`), and falls back to the previous executable,
+  then the shipped default, when it fails before restoring the session
+  (`docs/design/lean-runtime.md`, "Restart, as built").
 
 - **It imports the core's config base, `Editor`**, for the link alone, as
   every root that links the elaborator does ("The core and its root",

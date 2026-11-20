@@ -108,11 +108,23 @@ What it holds:
 
 ```
 Leanmacs.app/Contents/Info.plist
-Leanmacs.app/Contents/MacOS/editor                         a copy of the editor executable
+Leanmacs.app/Contents/MacOS/leanmacs                       the launcher, the bundle's CFBundleExecutable
+Leanmacs.app/Contents/MacOS/editor                         a copy of the editor executable, the shipped default
 Leanmacs.app/Contents/Resources/Leanmacs.icns              the icon, made from lean/app/Leanmacs.png
 Leanmacs.app/Contents/Resources/lean/toolchain/lib/lean/   the toolchain's modules
 Leanmacs.app/Contents/Resources/lean/editor/               the editor's modules
 ```
+
+Two executables: the app's launcher, `leanmacs` (`crates/editor-launch-std`,
+built by Cargo, release, as the facet's `launcher` target), which LaunchServices
+starts, and the editor it starts by `exec` with `CFProcessPath` pointing
+CoreFoundation at the bundle, the shipped default. A restart execs the
+launcher again with the session handed over, and it starts the executable
+the hand-over names, outside the bundle as well
+([`docs/design/lean-runtime.md`](../design/lean-runtime.md), "Restart, as
+built" and "The app's identity across an exec"). The launcher passes every
+argument through, so `Leanmacs.app/Contents/MacOS/leanmacs headless …` is
+the bundle's headless mode.
 
 The modules are the closure of the default set's config base, the modules
 config is elaborated on (`Editor`, then the entry module of each default
