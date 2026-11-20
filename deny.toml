@@ -439,6 +439,24 @@
 # objc2-core-foundation -e normal,build,dev --depth 1`): with it added to
 # `editor-ffi`'s dependencies, it fails ("crate 'objc2-core-foundation =
 # 0.3.2' is explicitly banned").
+#
+# The crate of a package that holds Rust (docs/design/packages.md, "Rust in
+# a package") is a member of this workspace, so the entries above already
+# refuse its edge to any editor crate they name. `editor-service`, the
+# conventions every service keeps, has no entry: any crate may depend on
+# it, `editor-ffi` and every package's crate among them. That a package's
+# crate depends on nothing else of the editor's, so neither on `editor-ffi`
+# nor on another package's crate, is held over the crate the package-set
+# build generates from a set, with a `deny.toml` it writes beside that
+# crate, in which the generated crate is the one wrapper of `editor-ffi`
+# and of each package crate (tools/rust-bans-check.sh, run by `ffi-test`
+# on the fixture set, on the default set, and on tests/rust-bans, where it
+# must fail). It cannot be held here, as probed on 2026-11-19 with
+# cargo-deny 0.19.9: nothing in this graph depends on `editor-ffi` or on a
+# package's crate, and `{ crate = "editor-ffi", wrappers = [] }` bans the
+# crate outright though it has no parent, while a wrapper naming a crate
+# absent from the graph passes the ban but fails `-D unused-wrapper`
+# ("wrapper for banned crate was not encountered").
 
 [graph]
 all-features = false
