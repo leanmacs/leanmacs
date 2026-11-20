@@ -2126,7 +2126,9 @@ package's test, build, format check and run.
 written by hand (`tests/graph-targets/graph`): a node that propagates
 reaching every node that requires it, directly or through one that does
 not propagate; a node that does not, itself alone; a nested node, a
-prefix of another's name, the fallback, and a union, each case's
+prefix of another's name, the fallback, a union, and the same reach
+when a node that does not propagate is named before one whose walk
+passes through it (`order`, here and in tests/hook-targets/), each case's
 `expected` exactly; and refuses each graph under
 `tests/graph-targets/bad/` with exit 2. It runs the Lean adapter over a graph
 written by hand (`tests/hook-targets/graph`, its packages under `/repo`):

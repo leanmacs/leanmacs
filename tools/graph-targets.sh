@@ -89,9 +89,12 @@ printf '%s\n' "$graph" | GRAPH_PATHS=$paths awk -F "$tab" -v root="$root" -v fal
   }
 
   # Marks `node` reached and every node that requires it, directly or
-  # through another.
+  # through another. The walk keeps its own set of the nodes it has
+  # entered: a node already reached by a path of its own, without its
+  # requirers, must still pass the walk on.
   function reachRequirers(node,    k, by, j) {
-    if (node in reached) return
+    if (node in walked) return
+    walked[node] = 1
     reached[node] = 1
     k = split(requirers[node], by, " ")
     for (j = 1; j <= k; j++) reachRequirers(by[j])
