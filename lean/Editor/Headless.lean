@@ -2808,8 +2808,9 @@ def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β 
                 -- so that what they change is in the one write, the clock
                 -- is moved past its delay.
                 if let some clock := collaborators.clock then
-                  if progress.indexing && progress.background == 0 &&
-                      (← clock.dueWithin Restore.writeDelay) then
+                  if
+                      progress.indexing && progress.background == 0 &&
+                        (← clock.dueWithin Restore.writeDelay) then
                     clock.advance Restore.writeDelay
                 return false
           unless written do
