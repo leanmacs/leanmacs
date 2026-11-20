@@ -627,6 +627,7 @@ impl<P: Processes + 'static> Service<P> {
         limit: u64,
         overflow: Overflow,
     ) -> bool {
+        let command = command.without_app_identity();
         let mut state = self.inner.state();
         if state.in_use(id) {
             return false;
@@ -805,6 +806,7 @@ impl<P: Processes + 'static> Service<P> {
     /// `id` and completed; after shutdown it is refused as shut down at
     /// once.
     pub fn open(&self, id: u64, command: Command, streaming: Streaming) -> bool {
+        let command = command.without_app_identity();
         let mut state = self.inner.state();
         if state.in_use(id) {
             return false;
@@ -2191,6 +2193,7 @@ mod streaming {
     use super::*;
     use crate::fake::{Blocked, FakeProcesses, Hold, Script, Step};
     use crate::frame::{Frames, Framing};
+    use crate::{APP_IDENTITY, Environment};
 
     /// How long a test waits for something that should happen at once.
     const DEADLINE: Duration = Duration::from_secs(5);
@@ -2226,6 +2229,48 @@ mod streaming {
 
     fn lines(lines: &[&str]) -> Frames {
         Frames::Lines(lines.iter().map(|line| line.as_bytes().to_vec()).collect())
+    }
+
+    #[test]
+    fn every_child_is_started_without_the_apps_identity_whatever_its_command_said() {
+        let mut cleared = command("run");
+        cleared.environment = Environment {
+            clear: true,
+            set: vec![("A".into(), "1".into())],
+            unset: vec!["B".into()],
+        };
+        let fake = FakeProcesses::scripted([
+            (cleared.clone(), Ok(Script::ends(Exit::Code(0)))),
+            (command("stream"), Ok(Script::ends(Exit::Code(0)))),
+        ]);
+        let (service, completed) = service(&fake);
+
+        assert!(service.start(1, cleared, ROOMY));
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert!(matches!(
+            opened(
+                &service,
+                &completed,
+                2,
+                command("stream"),
+                lines_with(Input::Closed, ROOMY)
+            ),
+            Some(StreamReply::Opened)
+        ));
+
+        let unsets: Vec<Vec<String>> = fake
+            .record()
+            .spawned
+            .iter()
+            .map(|(_, command)| command.environment.unset.clone())
+            .collect();
+        assert_eq!(
+            unsets,
+            [
+                vec!["B".to_owned(), APP_IDENTITY.to_owned()],
+                vec![APP_IDENTITY.to_owned()]
+            ]
+        );
     }
 
     /// Opens `command` as the child `id` and takes the open's reply.

@@ -25,6 +25,13 @@
 //! - **The environment** ([`Environment`]) is the editor's own, emptied
 //!   first if `clear` is set, then with `unset` removed, then with `set`
 //!   applied.
+//! - **The app's identity**: the service adds [`APP_IDENTITY`]
+//!   (`CFProcessPath`) to every command's `unset`, whatever the command
+//!   said, before it spawns ([`Command::without_app_identity`]). The
+//!   launcher sets it in the editor's environment on macOS so that
+//!   CoreFoundation's main bundle is the app; a child would otherwise take
+//!   the app as its own bundle. The fake matches a script whether or not a
+//!   command's `unset` names it.
 //! - **[`Processes::spawn`]** starts the child in a new process group whose
 //!   id is the child's, with its standard output and error piped, and its
 //!   standard input closed, or a pipe when the spawn asks for one
@@ -74,6 +81,7 @@
 //! | Something more a running child is asked | A method of [`Child`], with its rule in the list above | Its property in [`contract::check`], with a fake written to break it in `tests/contract.rs` |
 //! | Another failure the editor decides on | A variant of [`RefusalKind`] | The property that asks for it |
 //! | A rule of the service (what a run comes to, what cancelling means) | [`service::Service`] | The service's unit tests, on the fake, and a service property of [`contract`] where a real process must show it |
+//! | Another variable no child may inherit from the editor | Beside [`APP_IDENTITY`], added to `unset` by [`Command::without_app_identity`], which the service applies to every command | The service's unit test `every_child_is_started_without_the_apps_identity_whatever_its_command_said` |
 //! | Another way for a test to set the fake up | A method of [`fake::FakeProcesses`] | The fake's tests |
 
 use std::path::PathBuf;
@@ -130,7 +138,27 @@ impl Command {
         self.environment = environment;
         self
     }
+    /// The same command with [`APP_IDENTITY`] among the variables it
+    /// removes, once. The service starts every child so.
+    #[must_use]
+    pub fn without_app_identity(mut self) -> Self {
+        if !self
+            .environment
+            .unset
+            .iter()
+            .any(|name| name == APP_IDENTITY)
+        {
+            self.environment.unset.push(APP_IDENTITY.to_owned());
+        }
+        self
+    }
 }
+
+/// The variable the app's launcher sets in the editor's environment on
+/// macOS, which points CoreFoundation's main bundle at the app. The
+/// service removes it from every child's ([`Command::without_app_identity`]),
+/// so a program the editor runs never takes the app as its own bundle.
+pub const APP_IDENTITY: &str = "CFProcessPath";
 
 /// The environment a child gets: the editor's own, emptied first if
 /// `clear` is set, then with `unset` removed, then with `set` applied.

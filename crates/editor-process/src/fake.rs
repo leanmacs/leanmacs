@@ -562,9 +562,15 @@ impl FakeProcesses {
         fake
     }
 
-    /// Expects `command`: each spawn of it does what `script` says.
+    /// Expects `command`: each spawn of it does what `script` says. A spawn
+    /// matches it whether or not its `unset` names
+    /// [`APP_IDENTITY`](crate::APP_IDENTITY), which the service adds to
+    /// every command.
     pub fn script(&self, command: Command, script: Result<Script, Refusal>) {
-        self.shared.state().scripts.insert(command, script);
+        self.shared
+            .state()
+            .scripts
+            .insert(command.without_app_identity(), script);
     }
 
     /// What the fake has seen so far.
@@ -922,16 +928,20 @@ impl Processes for FakeProcesses {
 
     fn spawn(&self, command: &Command, input: Input) -> Result<FakeChild, Refusal> {
         let mut state = self.shared.state();
-        let script = state.scripts.get(command).cloned().unwrap_or_else(|| {
-            Err(Refusal::new(
-                RefusalKind::NotFound,
-                format!(
-                    "cannot start `{}` in {}: the fake has no script for it",
-                    command.program,
-                    command.directory.display()
-                ),
-            ))
-        })?;
+        let script = state
+            .scripts
+            .get(&command.clone().without_app_identity())
+            .cloned()
+            .unwrap_or_else(|| {
+                Err(Refusal::new(
+                    RefusalKind::NotFound,
+                    format!(
+                        "cannot start `{}` in {}: the fake has no script for it",
+                        command.program,
+                        command.directory.display()
+                    ),
+                ))
+            })?;
         let id = state.next_id;
         let after = |n: usize| id + u32::try_from(n).unwrap_or(u32::MAX);
         let members: Vec<u32> = (1..=script.members).map(after).collect();
