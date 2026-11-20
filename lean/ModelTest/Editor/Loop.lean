@@ -232,6 +232,33 @@ def loopChecks : List Check :=
               committed.loop.state.echo == Restart.handingLine false &&
               resized.loop.state.frame.size == ⟨641, 479⟩ },
     { name :=
+        "while a restart hands the session over, a pointer press and a preedit leave the selection, the focus and the preedit as they were and say the hand-over again"
+      run :=
+        pure <|
+          match evilDriver "a|b" with
+          | none => false
+          | some driver =>
+            let plan : Restart.Plan := { record := "/s/session/handover", handover := default }
+            let handing :=
+              { driver with
+                loop :=
+                  { driver.loop with
+                    state :=
+                      { driver.loop.state with
+                        echo := "", restore := { handing := some { plan } } } } }
+            let fed (driver : EvilDriver) (event : Event) : EvilDriver :=
+              (driver.feed { event, stamp := 0 }).1
+            let unchanged (after : EvilDriver) : Bool :=
+              evilSelection after == evilSelection handing &&
+                after.loop.state.frame.focused == handing.loop.state.frame.focused &&
+                after.loop.state.preedit == none &&
+                after.loop.state.echo == Restart.handingLine false
+            let pressed :=
+              fed handing
+                (.pointer { action := .press, x := 3.0, y := 4.0, button := some .primary })
+            let composed := fed handing (.preedit "ka")
+            unchanged pressed && unchanged composed },
+    { name :=
         "a layout a restore holds is not chosen while the config generation is the restore's, and is once config has installed past it; with no hold, a handed layout is chosen as before"
       run :=
         pure <|
