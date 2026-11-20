@@ -104,6 +104,24 @@ dir = "lean"
 run = [
   "sh ../tools/toolchain-check.sh",
   "status=0; out=$(sh ../tools/toolchain-check.sh lake-manifest.json 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF tools/lean-fmt/lean-toolchain; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # What the pre-commit hook runs for a staged change (tools/hook-targets.sh;
+  # docs/dev-practices/the-gate.md, "The pre-commit hook"), decided over a
+  # package graph written by hand (tests/hook-targets/graph, its packages
+  # under /repo): for each case under tests/hook-targets/cases/, the
+  # decision for the staged paths `paths` must be exactly `expected`: a
+  # package's own checks, those of an interface package and every package
+  # that requires it through interface packages, the core's for any other
+  # Lean-relevant path, or nothing for a change no Lean step reads. Lake is
+  # not asked and nothing is built.
+  "for case in impl-only interface prefix nested core core-wins docs-only set-files set-manifest core-fixture tooling rust-outside rust-inside new-package two-packages; do c=../tests/hook-targets/cases/$case; out=$(sh ../tools/hook-targets.sh --lines ../tests/hook-targets/graph --root /repo $(cat \"$c/paths\")) || { echo \"lean-test: hook-targets failed on the case $case\"; exit 1; }; { if [ -n \"$out\" ]; then printf '%s\\n' \"$out\"; fi; } | diff \"$c/expected\" - || { echo \"lean-test: hook-targets decided otherwise on the case $case\"; exit 1; }; done",
+  # And it cannot pass by deciding over nothing: a graph of lines not of
+  # four fields, with a layer it does not know, requiring a package that is
+  # no line, or holding no line, is exit 2 with the message beside it
+  # (tests/hook-targets/bad/), and so is a command line with no path or an
+  # option it does not take. Their output is shown only when it is not that.
+  "for bad in three-fields bad-layer unknown-require empty; do b=../tests/hook-targets/bad/$bad; status=0; out=$(sh ../tools/hook-targets.sh --lines \"$b/graph\" --root /repo tests/packages/impl-a/ImplA.lean 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF \"$(cat \"$b/message\")\"; } || { printf '%s\\n' \"$out\"; echo \"lean-test: hook-targets exited $status on tests/hook-targets/bad/$bad\"; exit 1; }; done",
+  "status=0; out=$(sh ../tools/hook-targets.sh --lines ../tests/hook-targets/graph --root /repo 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'no path'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  "status=0; out=$(sh ../tools/hook-targets.sh --graph ../tests/hook-targets/graph lean/X.lean 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage:'; } || { printf '%s\\n' \"$out\"; exit 1; }",
   'PATH="$PWD/no-cargo:$PATH" lake test --wfail',
   # The same for each package of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps"): its Lake test
