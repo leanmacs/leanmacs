@@ -80,6 +80,62 @@ def performOrder (rig : ProjectRig) (order : Restore.Order) : IO Unit := do
   | _ =>
     pure ()
 
+/-- What a restore check hands the journal's orders to, and how it waits
+until every order handed is worked. -/
+structure Journal where
+  /-- Hands one order to be worked, without waiting for it. -/
+  perform : Restore.Order → IO Unit
+  /-- Waits until every order handed to `perform` has been worked; `false`
+  if that does not happen within `patience`. -/
+  drained : IO Bool
+
+/-- Whether the library's file service holds no request within `patience`:
+it works requests in order, so every order handed to it has been worked. -/
+def filesDrained : IO Bool :=
+  eventually (return (← Ffi.filesPending) == 0)
+
+/-- The checks' journal over the library's file service, as a host's. -/
+def Journal.real (rig : ProjectRig) : Journal :=
+  { perform := performOrder rig
+    drained := filesDrained }
+
+/-- A journal that holds every order handed to it until `drained`, which
+works them in order on the real filesystem, logging `worked <kind> <path>`
+for each: an order in flight for as long as a check wants. -/
+structure HeldJournal where
+  /-- The orders handed and not yet worked. -/
+  held : IO.Ref (Array Restore.Order)
+  /-- What `drained` worked, in order. -/
+  events : IO.Ref (Array String)
+
+/-- A held journal holding nothing, having worked nothing. -/
+def HeldJournal.new : IO HeldJournal :=
+  return { held := ← IO.mkRef #[], events := ← IO.mkRef #[] }
+
+/-- The `Journal` port over `held`. -/
+def HeldJournal.journal (held : HeldJournal) : Journal :=
+  { perform := fun order => held.held.modify (·.push order)
+    drained := do
+      for order in ← held.held.swap #[] do
+        match order.request with
+        | .remove path =>
+          IO.FS.removeFile path
+          held.events.modify (·.push s!"worked remove {path}")
+        | .append path bytes =>
+          let handle ← IO.FS.Handle.mk path .append
+          handle.write bytes
+          held.events.modify (·.push s!"worked append {path}")
+        | _ =>
+          pure ()
+      return true }
+
+/-- Runs `body` in a fresh temporary directory, then waits for the journal
+to drain (`drained`) before the directory is removed, even when `body`
+throws, so no order the body handed out lands during the removal. `true`
+only when `body` held and the journal drained. -/
+def withJournalledDirectory (_drained : IO Bool) (body : System.FilePath → IO Bool) : IO Bool :=
+  IO.FS.withTempDir body
+
 /-- The loop of a host started fresh over `rig`, with `state` as its state
 directory, once each of `invocations` has run and settled, the journal's
 orders handed to the library's file service. -/
@@ -96,6 +152,30 @@ def runRestoring (rig : ProjectRig) (state : System.FilePath) (invocations : Lis
 their own, temporary. -/
 def restoreRunChecks (services : Job.Services) : List Check :=
   [{  name :=
+        "a restore check's state directory is removed only once every order its journal handed out has been worked: a stale index's remove still held when the body ends is worked before the directory goes, and the directory is gone after"
+      run := do
+        let journal ← HeldJournal.new
+        let used ← IO.mkRef (none : Option System.FilePath)
+        let held ←
+          withJournalledDirectory journal.journal.drained fun directory => do
+              let session := directory / "state" / "session"
+              IO.FS.createDirAll session
+              IO.FS.writeFile (session / "session-1.json") "{}"
+              IO.FS.writeFile (session / "session-2.json") "{}"
+              journal.journal.perform { request := .remove (session / "session-1.json") }
+              used.set (some directory)
+              return true
+        let some directory ← used.get | return false
+        let events ← journal.events.get
+        let left ← journal.held.get
+        let gone := !(← directory.pathExists)
+        let expected := #[s!"worked remove {directory / "state" / "session" / "session-1.json"}"]
+        unless held && events == expected && gone && left.isEmpty do
+          throw <|
+              IO.userError
+                s!"the scaffold returned {held}, worked {events}, left the directory {if gone then "gone" else "there"} and {left.size} orders held"
+        return true },
+    { name :=
         "typing in a file's buffer is journalled by the library's file service, the base and the log on disk replaying to the text; a second loop over the same state directory, with no shutdown between, restores the buffer modified, at its file"
       run :=
         IO.FS.withTempDir fun directory => do
