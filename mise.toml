@@ -533,8 +533,12 @@ run = [
   # directory reaches that package, not the core and not nothing. A
   # package whose directory were outside the repository, or outside the
   # paths a Lean step reads, would fail here rather than be skipped by the
-  # hook. The graph is asked for once, then decided over with `--lines`.
-  "n=0; f=$(mktemp) && trap 'rm -f \"$f\"' EXIT && lake -d ../tests/packages query :editorPackageGraph > \"$f\" && root=$(git rev-parse --show-toplevel) && tab=$(printf '\\t') && while IFS=$tab read -r name layer dir requires; do out=$(sh ../tools/hook-targets.sh --lines \"$f\" --root \"$root\" \"${dir#\"$root\"/}/lakefile.toml\") && printf '%s\\n' \"$out\" | grep -qxF \"package $name\" || { printf '%s\\n' \"$out\"; echo \"ffi-test: a file in the directory of $name does not reach $name\"; exit 1; }; n=$((n + 1)); done < \"$f\" && test \"$n\" -eq 6 || { echo \"ffi-test: the hook targets $n of the 6 packages of the fixture set\"; exit 1; }",
+  # hook. The graph is asked for once, then decided over with `--lines`;
+  # the count of packages is the count Lake names for the set
+  # (`editorPackages`), so a package added to a set changes no number
+  # here, and only tests/hook-targets/fixture-set-graph pins what the
+  # fixture set holds.
+  "n=0; f=$(mktemp) && trap 'rm -f \"$f\"' EXIT && lake -d ../tests/packages query :editorPackageGraph > \"$f\" && root=$(git rev-parse --show-toplevel) && tab=$(printf '\\t') && while IFS=$tab read -r name layer dir requires; do out=$(sh ../tools/hook-targets.sh --lines \"$f\" --root \"$root\" \"${dir#\"$root\"/}/lakefile.toml\") && printf '%s\\n' \"$out\" | grep -qxF \"package $name\" || { printf '%s\\n' \"$out\"; echo \"ffi-test: a file in the directory of $name does not reach $name\"; exit 1; }; n=$((n + 1)); done < \"$f\" && total=$(lake -d ../tests/packages query :editorPackages | wc -l | tr -d ' ') && test \"$n\" -gt 0 && test \"$n\" -eq \"$total\" || { echo \"ffi-test: the hook targets $n of the ${total:-?} packages Lake names for the fixture set\"; exit 1; }",
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
   # developer's shell must not reach it.
