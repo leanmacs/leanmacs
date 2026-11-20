@@ -106,20 +106,29 @@ reach a step only through `env:`, never inside `run:`). Its steps:
 4. rust-cache, in an entry of this job's own.
 5. Restore `lean/.lake` with `ci`'s key and restore-keys: the exact key is
    the one `ci (macos-26)` just saved for this commit, so no Lean module is
-   rebuilt.
+   rebuilt. It is never saved here: the bundle, about 3.9 GB with the
+   Lean toolchain, is built under `packages/.lake` and enters no cache.
 6. "App check": `mise run app-check`, which builds the bundle stamped with
    the run's build ID and commit (`mise run app`) and checks it
    ([`on-demand-checks.md`](on-demand-checks.md)).
 7. "Pack": `mise run dmg`, which packs `dist/Leanmacs-<build-id>.dmg`.
 8. "Check the dmg": `mise run dmg-check`, which mounts the image and checks
-   its entries, their bytes, the app's signature, stamp and `--version`.
-9. Upload `dist/*.dmg` as the workflow artifact `Leanmacs-dmg`, kept 14
+   its entries, their bytes, the app's signature, stamp and `--version`,
+   and builds the default set from the read-only volume alone.
+9. "Disk": `df -h . "$RUNNER_TEMP"`, so the runner's free disk after the
+   bundle (3.9 GB, cloned for `app-check`'s copy and the image's staging,
+   so it exists once on APFS) and the image (about 1.2 GB) is on record in
+   the log.
+10. Upload `dist/*.dmg` as the workflow artifact `Leanmacs-dmg`, kept 14
    days, failing if there is no `.dmg` (`if-no-files-found: error`).
 
 Every step runs unconditionally, so a failed check uploads nothing. The
 artifact is on `main`'s runs only; a branch or a pull request builds no
 `.dmg`. Download it from the run's "Artifacts" list: a zip holding
-`Leanmacs-<build-id>.dmg`.
+`Leanmacs-<build-id>.dmg`. The job's limit is 120 minutes; on the owner's
+Mac (2026-11-20) `app-check` took about 4 minutes, `dmg` 97 s and
+`dmg-check` 39 s. The first run on `main` after the toolchain shipped
+(packages roadmap, phase 9) is where the runner's own times and disk show.
 
 ### `release`: the nightly
 
@@ -145,7 +154,8 @@ with the same `# zizmor: ignore[self-repository]` as `build`.
 `LEANMACS_COMMIT` from its inputs. It runs on macOS because it mounts the
 `.dmg` to read the published app's `Info.plist` with `hdiutil` and
 `plutil`, the tools `dmg-check` already trusts; the repository is public,
-so macOS minutes are free. Its steps:
+so macOS minutes are free. Its limit is 60 minutes: it downloads one image
+of about 1.2 GB and uploads it twice. Its steps:
 
 1. Check out `ref`, without leaving the token in `.git/config`.
 2. mise-action, installing Rust alone. Its tool cache is the job's only
@@ -163,7 +173,12 @@ so macOS minutes are free. Its steps:
    are the run's build ID and commit, detaches it, and writes to
    `target/nightly` the two images, `Leanmacs.dmg.sha256`, `build.json`
    and the release notes, made from the same ID and commit it checked. A
-   mismatch fails here, before anything is uploaded.
+   mismatch fails here, before anything is uploaded, and so does an image
+   of 2 GiB (2,147,483,648 bytes) or more, which GitHub refuses as a
+   release asset: `the image is <n> bytes, and GitHub refuses a release
+   asset of 2 GiB (2147483648 bytes) or more`, checked before the image is
+   mounted (`ASSET_LIMIT`). On 2026-11-20 the image was 1,216,656,359
+   bytes, 56.7% of the limit.
 5. "Render the download page": `mise run site -- target/nightly/build.json
    target/site`, with no token (`crates/editor-release`, `site`). It
    reads the `build.json` the step above wrote, the very file the publish

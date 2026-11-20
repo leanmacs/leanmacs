@@ -62,6 +62,9 @@ pub const SWAPPED: [&str; 3] = [FIXED, SHA256, BUILD_JSON];
 /// How many build-ID copies of the image the release keeps, the newest by
 /// build ID.
 pub const KEEP: usize = 10;
+/// GitHub's limit on a release asset's size: an asset of 2 GiB or more is
+/// refused, so [`prepare`] refuses such an image before anything else.
+pub const ASSET_LIMIT: u64 = 2_147_483_648;
 /// The server when `GITHUB_SERVER_URL` is unset.
 pub const DEFAULT_SERVER: &str = "https://github.com";
 /// The repository when `GITHUB_REPOSITORY` is unset.
@@ -679,6 +682,9 @@ pub enum PrepareError {
     Shasum(String),
     /// The image's path has no file name.
     NoFileName(PathBuf),
+    /// The image, of this many bytes, is [`ASSET_LIMIT`] or more, which
+    /// GitHub refuses as a release asset.
+    TooLarge(u64),
 }
 
 impl fmt::Display for PrepareError {
@@ -688,6 +694,10 @@ impl fmt::Display for PrepareError {
             Self::Run { command, source } => write!(f, "`{command}` failed: {source}"),
             Self::Shasum(output) => write!(f, "shasum printed `{output}`, not a SHA-256"),
             Self::NoFileName(path) => write!(f, "{} names no file", path.display()),
+            Self::TooLarge(size) => write!(
+                f,
+                "the image is {size} bytes, and GitHub refuses a release asset of 2 GiB ({ASSET_LIMIT} bytes) or more"
+            ),
         }
     }
 }
@@ -697,7 +707,7 @@ impl Error for PrepareError {
         match self {
             Self::Stamp(error) => Some(error),
             Self::Run { source, .. } => Some(source),
-            Self::Shasum(_) | Self::NoFileName(_) => None,
+            Self::Shasum(_) | Self::NoFileName(_) | Self::TooLarge(_) => None,
         }
     }
 }
@@ -717,7 +727,8 @@ pub struct Inputs<'a> {
 }
 
 /// Prepares the nightly of build `id` from `commit`, published to
-/// `target`: checks the image's file name and the app's stamp
+/// `target`: refuses an image of [`ASSET_LIMIT`] or more before running
+/// anything, then checks the image's file name and the app's stamp
 /// ([`read_stamp`], [`check_stamp`]), reads the image's SHA-256, copies it
 /// to `<out>/Leanmacs-<id>.dmg` and `<out>/Leanmacs.dmg`, and returns the
 /// texts of [`BUILD_JSON`], [`SHA256`] and [`NOTES`], made from the same
@@ -734,6 +745,9 @@ pub fn prepare(
     commit: &Commit,
     target: &Target,
 ) -> Result<Prepared, PrepareError> {
+    if inputs.size >= ASSET_LIMIT {
+        return Err(PrepareError::TooLarge(inputs.size));
+    }
     let name = inputs
         .image
         .file_name()
@@ -1703,6 +1717,40 @@ mod tests {
         assert_eq!(prepared.notes, notes(&build(), &leanmacs()));
         let names: Vec<&str> = prepared.texts().iter().map(|(n, _)| *n).collect();
         assert_eq!(names, ["build.json", "Leanmacs.dmg.sha256", "notes.md"]);
+    }
+
+    #[test]
+    fn prepare_refuses_an_image_of_github_s_asset_limit_or_more_before_running_anything() {
+        let mut process = mounted(ID, SHA, &[]);
+        let error = prepare(
+            &mut process,
+            &Inputs {
+                size: 2_147_483_648,
+                ..inputs()
+            },
+            &id(),
+            &commit(),
+            &leanmacs(),
+        )
+        .expect_err("refused");
+        assert_eq!(error, PrepareError::TooLarge(2_147_483_648));
+        assert_eq!(
+            error.to_string(),
+            "the image is 2147483648 bytes, and GitHub refuses a release asset of 2 GiB (2147483648 bytes) or more"
+        );
+        assert!(process.runs.is_empty());
+        let mut process = mounted(ID, SHA, &[]);
+        prepare(
+            &mut process,
+            &Inputs {
+                size: 2_147_483_647,
+                ..inputs()
+            },
+            &id(),
+            &commit(),
+            &leanmacs(),
+        )
+        .expect("one byte under the limit is prepared");
     }
 
     #[test]

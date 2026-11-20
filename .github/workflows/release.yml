@@ -41,7 +41,9 @@ jobs:
     # hdiutil and plutil, the tools dmg-check trusts. A leg of ci.yml's
     # matrix.
     runs-on: macos-26
-    timeout-minutes: 30
+    # It downloads one image of about 1.2 GB and uploads it twice
+    # (docs/dev-practices/ci.md, "`release`: the nightly").
+    timeout-minutes: 60
     # The release's assets and the tag. Only the last step holds the token.
     permissions:
       contents: write

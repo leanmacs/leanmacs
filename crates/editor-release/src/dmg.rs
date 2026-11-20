@@ -167,8 +167,9 @@ fn overlaps(a: &Path, b: &Path) -> bool {
 }
 
 /// The programs that pack `inputs` into `<out>/Leanmacs-<id>.dmg`, in
-/// order: clear `staging`, make it and `out`, copy the app with `ditto`
-/// (which keeps its signature, links and extended attributes), copy the
+/// order: clear `staging`, make it and `out`, copy the app with `ditto
+/// --clone` (which keeps its signature, links and extended attributes, and
+/// on APFS clones each file, so the 3.9 GB bundle costs no disk), copy the
 /// licence and the README, link `/Applications`, pack the folder with
 /// `hdiutil create` as a compressed (`UDZO`) HFS+ image, replacing an image
 /// of the same name, and clear `staging` again.
@@ -208,6 +209,7 @@ pub fn plan(
         clear.clone(),
         Invocation::new("mkdir").arg("-p").arg(staging).arg(out),
         Invocation::new("ditto")
+            .arg("--clone")
             .arg(inputs.app)
             .arg(staging.join(APP)),
         Invocation::new("cp")
@@ -492,7 +494,7 @@ mod tests {
             [
                 "rm -rf /w/target/dmg/staging",
                 "mkdir -p /w/target/dmg/staging /w/dist",
-                "ditto /w/lean/.lake/build/Leanmacs.app /w/target/dmg/staging/Leanmacs.app",
+                "ditto --clone /w/lean/.lake/build/Leanmacs.app /w/target/dmg/staging/Leanmacs.app",
                 "cp /w/LICENSE /w/target/dmg/staging/LICENSE",
                 "cp /w/packaging/macos/README.txt /w/target/dmg/staging/README.txt",
                 "ln -s /Applications /w/target/dmg/staging/Applications",

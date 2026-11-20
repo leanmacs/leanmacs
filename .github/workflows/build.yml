@@ -79,8 +79,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # ci.yml's Lake entry, with ci.yml's key and restore-keys: the exact
       # key is the one the `ci (macos-26)` leg just saved for this commit,
-      # so no Lean module is rebuilt. Never saved here: lean/.lake now holds
-      # the bundle, about 600 MB, which must not enter the cache.
+      # so no Lean module is rebuilt. Never saved here: the bundle, about
+      # 3.9 GB with the Lean toolchain, is built under packages/.lake and
+      # must never enter a cache.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: lean/.lake
@@ -90,7 +91,8 @@ jobs:
       # Builds the bundle stamped with the run's build ID and commit
       # (`mise run app`), then checks it: its signature, its Info.plist and
       # stamp, its headless mode and `editor --version` from a relocated
-      # copy with an empty environment, and the rebuild rules in a clone
+      # copy with an empty environment, a user's package set built from the
+      # copy's own toolchain, and the rebuild rules in a clone
       # (tools/app-check.sh). It ends `app-check: ok`.
       - name: App check
         run: mise run app-check
@@ -101,10 +103,16 @@ jobs:
         run: mise run dmg
         shell: bash
       # Mounts the image and checks its four entries, their bytes, the
-      # app's signature, stamp and `--version` (crates/editor-release-std,
+      # app's signature, stamp and `--version`, and builds the default set
+      # from the read-only volume (crates/editor-release-std,
       # tests/dmg_mount.rs).
       - name: Check the dmg
         run: mise run dmg-check
+        shell: bash
+      # The runner's disk after the bundle, its checked copy and the image,
+      # on record in the log (docs/dev-practices/ci.md, "`build`: the .dmg").
+      - name: Disk
+        run: df -h . "$RUNNER_TEMP"
         shell: bash
       # The .dmg as a workflow artifact, kept 14 days. A run with no .dmg
       # fails here rather than uploading nothing.
