@@ -33,6 +33,10 @@
 //! - **Cancelling.** A request still waiting is never worked and never
 //!   completed. One being worked is worked to its end, and its script is
 //!   dropped and not completed. A script already kept is dropped.
+//! - **A flush is a barrier** ([`Diffs::flush`]), the file service's
+//!   marker on the shared queue ([`Requests`]): completed when the worker
+//!   reaches it, behind the completions of every diff started before it.
+//!   It keeps no answer, and a cancel withdraws it while it waits.
 //! - **What it is given**: the two snapshots, cloned from the caller's
 //!   handles, which copies none of their text; and nothing it could write
 //!   editor state with.
@@ -66,6 +70,7 @@
 //! | [`editor_ffi_diffs_take`] | Fills a [`RawWords`] and returns true, or returns false when the service keeps no script for the id |
 //! | [`editor_ffi_diffs_start_hunks`] | As `start`, for the hunks of the two texts |
 //! | [`editor_ffi_diffs_take_hunks`] | Fills a [`RawWords`] with the hunks and returns true, or returns false when the service keeps no hunks for the id |
+//! | [`editor_ffi_diffs_flush`] | Asks for an id to be completed once every diff started before it is worked; keeps no answer. False, starting nothing, as for a start |
 //! | [`editor_ffi_diffs_cancel`] | Cancels, and says whether there was anything to cancel |
 //! | [`editor_ffi_diffs_pending`] | Requests waiting or being worked, and answers (scripts or hunks) not yet taken |
 
@@ -202,6 +207,21 @@ impl<E: LineDiff + Default> Diffs<E> {
         started
     }
 
+    /// Asks for the request `id` to be completed once every diff started
+    /// before this call has been worked, and returns whether it was
+    /// accepted. It returns at once. An id in use is refused. It keeps no
+    /// answer: its completion is the whole answer. Cancelling it while it
+    /// waits withdraws it.
+    pub fn flush(&self, id: u64) -> bool {
+        let mut state = self.state();
+        let in_use = state.answers.contains_key(&id)
+            || state.working.is_some_and(|(working, _)| working == id);
+        let started = !in_use && state.requests.start_flush(id);
+        drop(state);
+        self.changed.notify_all();
+        started
+    }
+
     /// Hands over the script of the request `id`, once. `None` when the
     /// service keeps no script for it: a request for hunks keeps its
     /// answer.
@@ -277,10 +297,20 @@ impl<E: LineDiff + Default> Diffs<E> {
                     .unwrap_or_else(PoisonError::into_inner);
                 continue;
             };
-            // The diff service starts no unobserved request and no flush:
-            // each is work, with an id.
-            let (Some(id), Queued::Work(request)) = (id, queued) else {
+            // The diff service starts no unobserved request: each has an id.
+            let Some(id) = id else {
                 continue;
+            };
+            let request = match queued {
+                Queued::Work(request) => request,
+                // Every diff started before it has been worked: it is
+                // completed now, and keeps no answer.
+                Queued::Flush => {
+                    drop(state);
+                    complete(id);
+                    state = self.state();
+                    continue;
+                }
             };
             state.working = Some((id, false));
             drop(state);
@@ -468,6 +498,20 @@ pub unsafe extern "C" fn editor_ffi_diffs_take_hunks(id: u64, out: *mut RawWords
     true
 }
 
+/// Asks the process's diff service for the request `id` to be completed
+/// once every diff started before this call has been worked, and returns
+/// whether it was accepted. It returns at once and never blocks. Its
+/// completion is queued from [`SERVICE`] behind those of the diffs it
+/// waited for, and it keeps no answer. Cancelling it while it waits
+/// withdraws it.
+///
+/// Returns false, starting nothing, if `id` is in use, or if the operating
+/// system refused the service its thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_diffs_flush(id: u64) -> bool {
+    service_started() && DIFFS.flush(id)
+}
+
 /// Cancels the diff request `id`, and returns whether there was anything
 /// to cancel. It is safe for an id that is unknown.
 #[unsafe(no_mangle)]
@@ -487,12 +531,17 @@ pub extern "C" fn editor_ffi_diffs_pending() -> u64 {
 mod tests {
     use std::sync::Arc;
     use std::sync::mpsc;
+    use std::time::Duration;
 
     use editor_diff::fake::Lcs;
     use editor_text::Text;
 
     use super::*;
     use crate::words::tests::words_of;
+
+    /// How long a test waits for a completion that should come at once:
+    /// a guard against a hang, never a result.
+    const DEADLINE: Duration = Duration::from_secs(5);
 
     fn snapshot(text: &str) -> editor_text::Snapshot {
         Text::from(text).snapshot()
@@ -521,6 +570,61 @@ mod tests {
         assert_eq!(diffs.pending(), 0);
         diffs.stop();
         thread.join().unwrap();
+    }
+
+    /// The service's thread is held inside the completion of diff 1 while
+    /// diff 2 and the flush are started: it is the only completer, so a
+    /// flush completed at its call, or ahead of diff 2, is seen every time.
+    #[test]
+    fn a_flush_is_completed_after_every_diff_started_before_it() {
+        let diffs = Arc::new(Diffs::<Lcs>::new());
+        let (sent, completed) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let service = Arc::clone(&diffs);
+        let thread = thread::spawn(move || {
+            service.run(move |id| {
+                sent.send(id).unwrap();
+                if id == 1 {
+                    released.recv().unwrap();
+                }
+            });
+        });
+        assert!(diffs.start(1, snapshot("a\n"), snapshot("b\n"), 10));
+        assert_eq!(completed.recv_timeout(DEADLINE).unwrap(), 1);
+        assert!(diffs.start(2, snapshot("a\n"), snapshot("a\n"), 10));
+        assert!(diffs.flush(3));
+        // Its id is in use while it waits.
+        assert!(!diffs.flush(3));
+        assert!(!diffs.start(3, snapshot(""), snapshot(""), 1));
+
+        assert!(completed.try_recv().is_err());
+        release.send(()).unwrap();
+
+        assert_eq!(
+            [
+                completed.recv_timeout(DEADLINE).unwrap(),
+                completed.recv_timeout(DEADLINE).unwrap()
+            ],
+            [2, 3]
+        );
+        // It keeps no answer.
+        assert_eq!(diffs.take(3), None);
+        assert_eq!(diffs.take_hunks(3), None);
+        assert!(diffs.take(1).is_some());
+        assert!(diffs.take(2).is_some());
+        assert_eq!(diffs.pending(), 0);
+        diffs.stop();
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn a_flush_cancelled_while_it_waits_is_never_completed() {
+        let diffs = Diffs::<Lcs>::new();
+        assert!(diffs.flush(4));
+        assert_eq!(diffs.pending(), 1);
+        assert!(diffs.cancel(4));
+        assert!(!diffs.cancel(4));
+        assert_eq!(diffs.pending(), 0);
     }
 
     #[test]

@@ -1250,7 +1250,11 @@ no dependencies).
   (`src/diffs.rs`): one thread of its own works the oldest request with no
   lock held, so a long diff holds up neither a load nor the editor thread.
   It is given two snapshot handles, cloned, and nothing it could write
-  editor state with. The script crosses back as words.
+  editor state with. The script crosses back as words. **A flush**
+  (`editor_ffi_diffs_flush`, deterministic-test-concurrency phase 1) is the
+  file service's marker on the same shared queue: completed when the
+  worker reaches it, so every diff started before it has been worked and
+  completed first. It keeps no answer.
 - **Applying a script** is `editor_ffi_document_apply_script`: one
   transaction, its inserts copied rope to rope from a snapshot a piece at a
   time, refused (`Moved`) when the document's revision is not the one the
