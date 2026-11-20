@@ -746,6 +746,18 @@ A job cannot change editor state. There is no `JobM` operation that does.
 Interpreted jobs run in parallel: in the experiments, 16 CPU-bound
 interpreted jobs finished in 2.3 s where one takes 1.2 s.
 
+**A job running at a restart is not restarted** (session-restore phase 2,
+decision 5). A job a person waits on registers itself reported
+(`workJob … (reported := true)`): the shell's run, the compile run,
+project search, and version control's apply, hunk apply and commit. The
+host hands the loop the reported jobs running each step
+(`Loop.Keys.running`), the session index lists them, and after a run that
+did not end cleanly the restore says each was stopped by the restart, in
+`*restore*` and in the summary (`; N jobs stopped`). Watchers, reads,
+completion and the restore's own jobs are not reported: their reconcilers
+start them again, or they are not missed. The index is written debounced,
+so a job that starts and the process aborts within 500 ms is not said.
+
 As built (`lean/Editor/Job.lean`), a job reaches time, files, processes
 and changes on disk:
 
@@ -2108,6 +2120,18 @@ under 7 µs at 4 KiB, 1 MiB and 10 MiB, at the start, middle and end
 200 characters at the end of the 10 MiB file, headless, had a median key to
 frame of 17242 µs with the journal and 17189 µs without (0.3%), and 17423
 against 17434 µs in the small file, within the 5% expected.
+
+**Measured again with phase 2's state** (session-restore phase 2, decision
+10): the reconciler now also mirrors the frame, the workspace table, the
+stores and the jobs, but compares three revisions (the host's cells', the
+table's and the config generation) with the ones last mirrored and runs a
+codec only when one moved, and a store's value is rendered only by the
+debounced write. With a state of two tabs, five windows, 100 jump entries
+and a 10,000-line `shell-history` whose codec the reconciler is handed,
+`journal-bench` gave a median of 3.2 to 3.6 µs a key and a 99th percentile
+of 4.2 to 6.8 µs (`journal_order/4KiB/start` 3.3 / 6.6, `middle` 3.3 /
+6.3, `end` 3.3 / 6.2; `1MiB` 3.2 / 6.1, 3.4 / 4.3, 3.5 / 4.5; `10MiB` 3.3 /
+4.2, 3.5 / 6.5, 3.6 / 6.8), as before and under the 20 µs expected.
 
 ## Events
 

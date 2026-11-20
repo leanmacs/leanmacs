@@ -43,6 +43,14 @@ def setup : SetupM Unit := do
   counter.command "bump" fun n => pure (n + 1)
 ```
 
+A store's cells outlive a reload, not the process. A store is kept across a
+restart only when `setup` registers a codec for it,
+`counter.keptAcrossRestart` (`Store.codec`, `Editor/Store/Codec.lean`): the
+session index writes its cells through the codec's `keep`, and the next
+start's restore meets them with the store's declaration by the install rule
+above (`StoreDeclaration.meet`). A store with no codec starts empty after a
+restart.
+
 A command works on one store. There is no request of the editor's port that
 reads or writes a cell. The port is a composite of sub-ports
 (`Editor/Command.lean`), and a store sub-port could be one of them, but

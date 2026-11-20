@@ -1134,13 +1134,13 @@ and moving are `Editor/JumpList.lean`'s and `Editor/Jumps.lean`'s.
 
 | What it belongs to | Where |
 |---|---|
-| One buffer (its line ending, its modes) | A field of `Buffer` |
+| One buffer (its line ending, its modes, whether a restore made it) | A field of `Buffer` |
 | The file a buffer shows (what the next save expects on disk) | A field of `Buffer.File` |
 | One view (a goal column, a scroll offset) | A field of `Window` |
 | A place in a text that is to follow its edits and outlive its buffer (a jump list's entry, a mark) | A `Place`, held in `Window.jumps`, `Buffer.marks` or `EditorState.Remembered.globalMarks`, or a new field beside them that `EditorState.placeMarkers` reads, so its markers are given up |
 | Something a command asks the loop to hand its host once it has run to its end (a job to start or cancel, an invocation to run next, a reload, a theme) | A field of `EditorState.Outbox` (`Editor/State/Outbox.lean`, "Where a new entry goes"), which the loop empties whole after each command |
 | What commands remember for the whole editor from one command to the next, to put back or repeat (a register, the last find, the last search) | A field of `EditorState.Remembered` ("What commands remember"), set by an operation here and read through one |
-| The whole editor, set and read on its own (the scroll margin, the pending key prefix, a command's choice of auto-reload, asked to quit, the order buffers were used in) | A field of `EditorState` |
+| The whole editor, set and read on its own (the scroll margin, the pending key prefix, a command's choice of auto-reload, asked to quit, the order buffers were used in, how many times the workspace table changed) | A field of `EditorState` |
 | What the last publish was handed or measured, or drew itself (the row heights, the padding, when the tab bar shows, the tab bar's and the candidate list's views) | A field of `EditorState`, set by a publish (`Loop.publish`, `Editor/Loop.lean`) |
 | What a reconciler of the loop keeps in step after each publish (the files followed for auto-reload, the gutter's tracked files and watched repositories, the open prompt's job keys, the session's journals) | A field of `EditorState` beside `following`, `tracked`, `refWatches`, `completionKeys` and `restore`, written by that reconciler; its type plain data here, or in a leaf module this one imports (`Editor/Restore/Kept.lean`) |
 | One checkout or one codebase (compilation state, command history) | A value in a workspace's or a project's store (`Workspace.Table`) |

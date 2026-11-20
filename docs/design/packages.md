@@ -210,6 +210,26 @@ package reached only through another after the package that requires it,
 so the build walks the `require`s itself. The fixture set shows it
 ("The fixture set", below).
 
+### What a package keeps across a restart
+
+A package's `setup` registers what it keeps across a restart, as config's
+may, with two registrations of the setup port (session-restore phase 2;
+[lean-runtime.md](lean-runtime.md), "Persistence across a restart"):
+
+- **`store.keptAcrossRestart (keep := …)`** keeps a store across a
+  restart: a declared store's cell, or a workspace, project or unscoped
+  store of the table under that name. Use it for a store whose value means
+  something in the next process, such as a history or review decisions;
+  `keep` drops what does not, such as a buffer number. A store with no
+  codec is never written and starts empty. A package registers before the
+  restore, so its cells are met with its codec at once: kept, migrated by
+  its `migrate`, or reset, said in `*restore*`. The shipped `shell` and
+  `version-control` packages keep `shell-history` and `vc-review`.
+- **`workJob name work (reported := true)`** marks a job a person waits on,
+  such as a build, a search or a commit: one running when the process ends
+  uncleanly is said stopped by the next start's restore. Leave it off for a
+  watcher, a read or anything a reconciler starts again.
+
 ### The generated root
 
 `EditorSetRoot`, written to `<set>/.lake/build/root/EditorSetRoot.lean`,
@@ -1250,16 +1270,17 @@ toolchain (packages phases 8 and 9).
 
 ## The module map
 
-Every module under `lean/Editor/`, 297 of them
+Every module under `lean/Editor/`, 303 of them
 (`find lean/Editor -name '*.lean' | wc -l`; 254 at `6ba99de5`, phase 4
 added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
 the three modules of the shipped palettes out, phase 6 moved the five
 of the compile mode out and added the 18 of the test kit, phase 7 added
 six to the config session, and the merge of
 `main` that brought the working sets, project search, the jump list and
-marks added 19, and session-restore phase 1 added six), is **core** or
-part of a **feature that could become a package**. The counts below add
-up to 297: 204 core and 93 in 22 features.
+marks added 19, session-restore phase 1 added six, and phase 2 six more,
+the store codec and five of the reconciler's records and formats), is
+**core** or part of a **feature that could become a package**. The counts
+below add up to 303: 210 core and 93 in 22 features.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -1287,7 +1308,7 @@ One row covers modules that share a class and a side of the import rule.
 | `Editor.Core` | 1 | core | no |
 | The hosts and the executable's modules: `Editor.Main`, `Editor.Headless`, `.Headless.CommandLine`, `Editor.Window`, `.Window.Real`, `Editor.WindowCheck`, `.WindowCheck.Real`, `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup` | 10 | core | no |
 | The loop and its dispatch: `Editor.Loop`, `Editor.Command.Dispatch`, `Editor.Event.Queue`, `Editor.State.Outbox` | 4 | core | no |
-| The session's journal reconciler, which the loop runs after each publish, and the data and formats it keeps: `Editor.Restore`, `.Restore.Kept`, `.Restore.Journal`, `.Restore.Document` | 4 | core | no |
+| The session's journal reconciler, which the loop runs after each publish, and the data and formats it keeps: `Editor.Restore`, `.Restore.Kept`, `.Restore.Journal`, `.Restore.Document`, `.Restore.Records`, `.Restore.Indexed`, `.Restore.Frame`, `.Restore.Workspaces`, `.Restore.Value` | 9 | core | no |
 | The config session: `Editor.Config.Diagnostic`, `.Directory`, `.Display`, `.Elaborate`, `.ExactPath`, `.LakePackage`, `.Lakefile`, `.Lakefile.Toml`, `.Owner`, `.Registry`, `.Reload`, `.Session`, `.Stores` | 13 | core | no |
 | What a package registers, read by a test: `Editor.Config.Packages` | 1 | core | in tests |
 | The raw bindings: `Editor.Ffi` and the 27 modules under it | 28 | core | no |
@@ -1300,7 +1321,7 @@ One row covers modules that share a class and a side of the import rule.
 | The editor API and what is proved of it: `Editor.Api`, `.Api.Theorems`, `Editor.UndoTree`, `.UndoTree.Theorems` | 4 | core | yes |
 | The composite port and a command: `Editor.Command`, `.Call`, `.Control`, `.Registry`, `.Append`, `Editor.Program` | 6 | core | yes |
 | The ports: `Editor.Clipboard`, `Editor.Diff`, `.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
-| The setup port, packages and stores: `Editor.Setup`, `Editor.Package`, `Editor.Store`, `Editor.Value`, `Editor.Json` | 5 | core | yes |
+| The setup port, packages and stores: `Editor.Setup`, `Editor.Package`, `Editor.Store`, `.Store.Codec`, `Editor.Value`, `Editor.Json` | 6 | core | yes |
 | The state: `Editor.State`, `.State.Request`, `Editor.Event`, `Editor.DisplayRules`, `Editor.Floating`, `Editor.Layout`, `Editor.GeneratedView`, `Editor.ExcerptView`, `Editor.Gutter`, `Editor.Workspace` | 10 | core | yes |
 | Places, jump lists and marks, which the state holds and the loop follows through edits: `Editor.JumpList`, `Editor.Marks`, `.Marks.Follow`, `Editor.Jumps` | 4 | core | yes |
 | The scene and display types: `Editor.Scene`, `Editor.Scroll`, `Editor.Face`, `.Face.Vocabulary`, `Editor.Appearance`, `Editor.Highlight`, `Editor.TabBar`, `Editor.ModeLine`, `Editor.Menu` | 9 | core | yes |
@@ -1659,7 +1680,7 @@ the user asks `load-theme` for one.
 
 #### `restore`
 
-- **Modules** (2): `Restore.Compiled`, `Restore.Run`. The journal's reconciler, `Restore`, with `Restore.Kept`, `Restore.Journal` and `Restore.Document`, is core: the loop runs it after each publish and the state holds what it keeps.
+- **Modules** (2): `Restore.Compiled`, `Restore.Run`. The journal's reconciler, `Restore`, with `Restore.Kept`, `Restore.Journal`, `Restore.Document` and phase 2's `Restore.Records`, `Restore.Indexed`, `Restore.Frame`, `Restore.Workspaces` and `Restore.Value`, is core: the loop runs it after each publish and the state holds what it keeps.
 - **Core modules that import it**: none.
 - **The test kit's modules that import it**: none.
 - **Other features' modules that import it**: none.

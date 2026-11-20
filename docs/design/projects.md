@@ -394,7 +394,16 @@ list matched against it. Built by project navigation's phase 4
 | What belongs to the buffers outside any workspace, which have no project either | The unscoped store, one for the editor (`Workspace.Table.unscoped`) | The `:!` history and the `*shell output*` buffer of such buffers; their compile history (`compile-history`), each directory scope's compile record by directory (`compile-directories`), and their modes' listings by mode and root (`compile-listings`) |
 
 The stores are `Value` trees by name, as a buffer's locals are, so a
-reload leaves them; they live as long as the session. The unscoped store
+reload leaves them; they live as long as the session, and **across a
+restart only by opt-in** (session-restore phase 2): the session index
+records every workspace and project of the table, with the cells of the
+stores whose owner registered a codec (`Store.keptAcrossRestart`,
+[lean-runtime.md](lean-runtime.md), "Persistence across a restart"), and a
+restore puts the table back before any buffer is attached, so a restored
+file buffer finds its workspace. Of the shipped stores, `shell-history`
+and `vc-review` opt in; the others hold buffer numbers or a run in
+flight, or are per run, and start empty. The directory cache is not kept:
+the next run asks again. The unscoped store
 is read with `Workspace.Table.getUnscoped` and written with
 `Workspace.setUnscoped`, and is never refused: it is always there.
 

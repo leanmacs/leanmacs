@@ -1129,7 +1129,10 @@ the reconciler (`Restore.journalOrders`) through handing its orders to the
 library's file service (`Headless.Journal.real`), in nanoseconds: the
 editor thread's share of the journal. The buffer's journal is under
 `directory`; the loop's own work around an insert, its scene and its
-history, is not timed. -/
+history, is not timed. The state is phase 2's: two tabs of five windows,
+four on the file, one of them with 100 jump entries, and an unscoped
+`shell-history` of 10,000 lines, whose codec the reconciler is handed, so
+what it keeps of the frame and the stores is there to cost. -/
 def journalTimes (directory : System.FilePath) (size : Nat) (position : String) (inserts : Nat) :
     IO (Array Nat) := do
   let published ← Snapshots.new
@@ -1142,7 +1145,31 @@ def journalTimes (directory : System.FilePath) (size : Nat) (position : String) 
     let history := { (← UndoTree.over text) with saved := none }
     let (_, state) := initial.addBuffer path.toString text history
     let (_, state) := state.attachFile ⟨1⟩ path { seconds := 0, nanoseconds := 0, size } .lf
+    -- Two tabs, five windows: views 0 to 2 in the first, 3 and 4 in the
+    -- second, all but view 0 on the file.
+    let mut windows := state.windows
+    for view in [1:5] do
+      let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+      let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩] })
+      let mut jumps : Jumps := {}
+      if view == 1 then
+        let mut entries := #[]
+        for entry in [0:100] do
+          entries :=
+            entries.push
+              (Place.held ⟨1⟩ (← text.mark (.anchor { offset := entry, bias := .after })))
+        jumps := { list := { entries, index := entries.size } }
+      windows := windows.push { id := ⟨view⟩, buffer := ⟨1⟩, scroll, selection, jumps }
+    let history : Array String := (Array.range 10000).map fun line => s!":!echo {line}"
     return { state with
+        windows, nextView := 5
+        frame :=
+          { state.frame with
+            windows := #[⟨0⟩, ⟨1⟩, ⟨2⟩],
+            tabsAfter := #[{ windows := #[⟨3⟩, ⟨4⟩], focused := ⟨3⟩ }] }
+        workspaces :=
+          state.workspaces.setUnscopedValue Shell.historyStore.name
+            (Shell.historyStore.encode history)
         stateDirectory := some directory, restore := { run := some 1, restored := true } }
   let (made, texts) ← made.runReal (RealTexts.over published)
   let .ok first := made | throw (IO.userError "bench-journal: the state could not be made")
@@ -1156,7 +1183,14 @@ def journalTimes (directory : System.FilePath) (size : Nat) (position : String) 
       texts := (← ((TextSource.snapshot id).release : TextM Unit).runReal texts).2
     return texts
   -- The first reconcile writes the base and the header.
-  let (reconciled, after) ← (Restore.journalOrders state true false).runReal texts
+  let context : Restore.Context :=
+    {
+      registered :=
+        {
+          codec? := fun name =>
+            if name == Shell.historyStore.name then some ("shell", Shell.historyStore.codec)
+            else none } }
+  let (reconciled, after) ← (Restore.journalOrders state true false context).runReal texts
   let .ok reconciled :=
     reconciled | throw (IO.userError "bench-journal: the first reconcile was refused")
   state := reconciled.state
@@ -1178,7 +1212,7 @@ def journalTimes (directory : System.FilePath) (size : Nat) (position : String) 
     texts := after
     state := (state.setHistory ⟨1⟩ history).2
     let began ← IO.monoNanosNow
-    let (reconciled, after) ← (Restore.journalOrders state true false).runReal texts
+    let (reconciled, after) ← (Restore.journalOrders state true false context).runReal texts
     let .ok reconciled := reconciled | throw (IO.userError "bench-journal: a reconcile was refused")
     texts ← perform reconciled.orders after
     times := times.push ((← IO.monoNanosNow) - began)

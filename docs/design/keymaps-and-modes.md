@@ -2647,6 +2647,12 @@ operation by a case of `lean/Editor/Api/Cases.lean`).
 - **Why an undo does not step back.** The selection before a step that
   began in insert state is the bar the insert began at, and the cell
   after that bar is the one the cursor was on.
+- **After a restore** a buffer's history starts at the restore: undo
+  trees are not kept across a restart (session-restore phase 2, decision
+  1), and a buffer the restore made or reopened is marked
+  (`Buffer.historyRestored`). `u` at its root says `nothing to undo: no
+  history before the restore` (`Evil.nothingBeforeRestore`) in place of
+  `nothing to undo`, so the user knows the history was there before.
 - **One step is what the loop closed**: a command in normal state, and a
   whole insert session ("Insert sessions"). With no step to take the
   command says so in the echo area and changes nothing.
@@ -2904,6 +2910,17 @@ where Vim leaves larger ones alone; and focus by direction measures from
 the window's top-left corner, not the cursor ("Open questions").
 
 ### The jump list and marks
+
+**Across a restart** (session-restore phase 2, decision 9) each window's
+jump list and previous-context mark are kept in the session index with
+its place, each entry as a place in characters: the kept buffer's key, or
+a file's path, with its row and column, as `Jumps.detach` writes one. A
+restore holds an entry of a kept buffer by a new anchor marker, makes a
+path's a file place, attached once the buffer of that path is restored
+(`Jumps.attach`), and drops an entry of a buffer that is not kept and has
+no file, as `detach` drops it; the list's index moves back past each entry
+dropped before it. Marks are not restored
+(rdm:task/session-restore-marks-and-registers).
 
 Vim 9.1's jump list and marks (`:help jumplist`, `:help jump-motions`,
 `:help mark-motions`), as `mark.c`'s `setpcmark`, `cleanup_jumplist`,
