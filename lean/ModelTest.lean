@@ -163,6 +163,8 @@ import ModelTest.Editor.WorkingSet.Disk
 import ModelTest.Editor.WorkingSet.Places
 import ModelTest.Editor.WorkingSet.Refind
 import ModelTest.Editor.WorkingSet.Run
+import ModelTest.Editor.Restore.Document
+import ModelTest.Editor.Restore.Journal
 import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
 import ModelTest.Editor.Workspace.Contract
@@ -1182,6 +1184,21 @@ alone too:
   only with no state directory; a newer or unparsable store left alone; no
   repository; and the writes a save and a close make.
 
+Session restore is checked in Lean alone too:
+
+- `journalFormatChecks`: a buffer's journal (`Editor/Restore/Journal.lean`),
+  pure and over the text model: a log of a header and records round-trips
+  through its bytes, a byte that is not UTF-8, a NUL and every width of
+  character among them; a torn last line dropped and said; a line of an
+  unknown kind or a newer format stops the reading before it; a log with no
+  header; and edits read from a text's log and replayed make the text.
+- `restoreDocumentChecks`: the session index
+  (`Editor/Restore/Document.lean`), pure: the format-1 round trip; a newer
+  format read leniently with each unknown key named; a bad entry skipped; a
+  file that is not JSON; which index is restored (the highest run, whatever
+  its format, none when it ended) and which are removed or left; the next
+  run's number; and the names of indexes and journals.
+
 Listing a workspace's files is checked in Lean alone too:
 
 - `workspaceListerChecks`: which command lists a workspace's files
@@ -1366,6 +1383,8 @@ def checks : List Check :=
     workingSetPlaceChecks ++
     workingSetRunChecks ++
     workingSetDiskChecks ++
+    journalFormatChecks ++
+    restoreDocumentChecks ++
     driverChecks ++
     promptChecks ++
     candidateChecks ++
