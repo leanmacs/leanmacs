@@ -103,6 +103,23 @@ def flushContractChecks : List Check :=
           failed.length == 1 &&
             failed.all (·.startsWith s!"the fake file service: {FlushContract.heldBehind.name}") do
           throw <| IO.userError s!"{failed}"
+        return true },
+    { name :=
+        "the flush contract bites on a file service whose flush never completes: the idle property reports a hang"
+      run := do
+        let fakes ← FlushFakes.new
+        let stuck : Services :=
+          { fakes.services with files := { fakes.services.files with flush := fun _ => pure () } }
+        -- The flush never ends, so the guard always runs out: a short one.
+        let rig : FlushContract.FlushRig :=
+          { name := "the fake file service", flush := stuck.flushed .files, patience := 50 }
+        let failed ← FlushContract.failures [rig]
+        let idle := s!"the fake file service: {FlushContract.idle.name}"
+        unless
+          failed.length == 1 &&
+            failed.all fun failure =>
+              failure.startsWith idle && (failure.splitOn "a hang").length > 1 do
+          throw <| IO.userError s!"{failed}"
         return true }]
 
 end ModelTest

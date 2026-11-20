@@ -51,6 +51,10 @@ structure FlushRig where
   gives back how to let it go and whether that work has ended; none for a
   port the rig cannot hold. -/
   held : Option (IO (IO Unit × IO Bool)) := none
+  /-- How long a property waits for a flush that should end, as a guard
+  against a hang: `patience`, but for a check that a flush that never ends
+  is reported as a hang. -/
+  patience : Nat := patience
 
 /-- One property of a flush: whether it holds on a rig, or why not, thrown. -/
 structure Property where
@@ -59,19 +63,19 @@ structure Property where
   /-- Observes it on a rig. -/
   holds : FlushRig → IO Bool
 
-/-- What a flush came to within `patience`, said for a failure. -/
-def said : Option Completion → String
+/-- What a flush came to within `waited` milliseconds, said for a failure. -/
+def said (waited : Nat) : Option Completion → String
   | some .completed => "completed"
   | some .cancelled => "cancelled"
-  | none => s!"a hang: it had not ended within {patience} ms"
+  | none => s!"a hang: it had not ended within {waited} ms"
 
 /-- An idle service's flush is completed. -/
 def idle : Property where
   name := "a flush of an idle service is completed"
   holds rig := do
-    let ended ← awaitWithin patience (← rig.flush)
+    let ended ← awaitWithin rig.patience (← rig.flush)
     unless ended == some .completed do
-      throw <| IO.userError s!"the flush came to {said ended}"
+      throw <| IO.userError s!"the flush came to {said rig.patience ended}"
     return true
 
 /-- With work the service cannot finish held, a flush has not ended; once the
@@ -86,12 +90,12 @@ def heldBehind : Property where
     let flushed ← rig.flush
     let early ← IO.hasFinished flushed
     release
-    let outcome ← awaitWithin patience flushed
+    let outcome ← awaitWithin rig.patience flushed
     let workEnded ← ended
     unless !early && outcome == some .completed && workEnded do
       throw <|
           IO.userError
-            s!"the flush had {if early then "ended" else "not ended"} while the work was held, then came to {said outcome}, and the work had {if workEnded then "ended" else "not ended"}"
+            s!"the flush had {if early then "ended" else "not ended"} while the work was held, then came to {said rig.patience outcome}, and the work had {if workEnded then "ended" else "not ended"}"
     return true
 
 /-- Every property, in the order they run. -/
