@@ -54,8 +54,9 @@ were.
 - `projectModeChecks`: the shipped modes (`Compile/Shipped.lean`), on that
   driver, with only the shipped contributions registered;
 - `compilePackageChecks`: the `Package` value (`Compile/Compiled.lean`):
-  the ex names it binds, each to a command it registers, and what the
-  package registers on its own, each entry for the owner `compile`.
+  the ex names it binds, each to a command it registers, what the
+  package registers on its own, each entry for the owner `compile`, and
+  its run, `compile-run`, reported as stopped by a restart.
 -/
 
 /-- Every check of the test driver, in the order they run. -/

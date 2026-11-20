@@ -20,7 +20,8 @@ the ex names it binds are its own to bind, and what it registers on its
 own, read through the core's test double for that
 (`Config.State.ofPackages`, `Editor/Config/Packages.lean`): its commands,
 its job, its mode, its ex names with what each takes, no key, and the
-contributions that ship, each for the owner `compile`. -/
+contributions that ship, each for the owner `compile`; and its run reported
+as stopped by a restart (`workJob … (reported := true)`). -/
 def compilePackageChecks : List Check :=
   [{  name :=
         "the package compile binds the ex names compile, compile-command, recompile, kill-compilation, next-error and previous-error, in that order, each to a command it registers"
@@ -59,6 +60,16 @@ def compilePackageChecks : List Check :=
             registry.bindings.isEmpty &&
             registry.contributions.map (fun entry => (entry.contribution.mode, entry.owner)) ==
               #[("cargo-mode", Compile.package.owner), ("lake-mode", Compile.package.owner),
-                ("mise-mode", Compile.package.owner)]) }]
+                ("mise-mode", Compile.package.owner)]) },
+    { name :=
+        "the package compile's job compile-run is reported as stopped by a restart, and it registers no other reported job"
+      run :=
+        let (state, _) : Config.State Unit Unit × Array String :=
+          Config.State.ofPackages #[Compile.package]
+        let registry := state.registry
+        pure
+          ((registry.jobs.filter (·.registration.reported)).map (·.registration.name) ==
+              #[Compile.runJob] &&
+            registry.reported Compile.runJob) }]
 
 end CompileTest
