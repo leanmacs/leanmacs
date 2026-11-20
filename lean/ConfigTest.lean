@@ -344,7 +344,8 @@ open Editor
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   checkChecks () ++ lakefileChecks () ++ lakefileEntryChecks () ++ packageSetEditChecks () ++
-    directoryChecks () ++ moduleFilesChecks () ++
+    directoryChecks () ++
+    moduleFilesChecks () ++
     hostChecks context ++
     threadChecks context ++
     jobChecks context ++
