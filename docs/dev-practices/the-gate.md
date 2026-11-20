@@ -1247,9 +1247,10 @@ package-set build recorded beside it (`<editor>.oleans`;
 editor reads it at. It must exit 0, which it does only when that config
 loaded, so the default directory holds the modules config is elaborated
 on. The gate runs it for the default set's editor and for the fixture
-set's, and then requires the fixture set's record to name five
-directories in order, the core's, `greeting`'s, `greeting-loud`'s,
-`shipped-themes`' and `compile`'s, each holding its package's modules.
+set's, and then requires the fixture set's record to name seven
+directories in order, the core's, `greeting-api`'s, `greeting`'s,
+`greeting-loud`'s, `echo`'s, `shipped-themes`' and `compile`'s, each
+holding its package's modules.
 The editor searches every recorded directory, after any its command line
 gives, which is a search path, directories joined with `:`
 (`lean/Editor/ModuleLookup.lean`).
@@ -1796,7 +1797,8 @@ package's tests are by convention are in
 
 - **The gate gives every step the fixture set**, `tests/packages/`, which
   requires the fixture package `greeting-loud`, through it `greeting`, the
-  fixture package `echo`, which holds Rust, and the default set. So the default packages, `shipped-themes` and
+  fixture interface package `greeting-api`, the fixture package `echo`,
+  which holds Rust, and the default set. So the default packages, `shipped-themes` and
   `compile`, are tested, built, format-checked and run through it. `run`
   is also given the default set itself, `packages/`, so those packages'
   linked tests and fixtures hold of the default set's editor, the one
@@ -1834,7 +1836,7 @@ package's tests are by convention are in
   `shipped-themes` and `themes`, the linked test of `compile` with its
   line, `compile linked test: 7 checks passed`, its fixtures `config`,
   `ex-names` and `shipped-formats`, and `package-set: ran 4 linked tests
-  and 9 headless fixtures over 5 packages`; and over the default set, the
+  and 9 headless fixtures over 6 packages`; and over the default set, the
   two default packages' linked tests and seven fixtures and `package-set:
   ran 2 linked tests and 7 headless fixtures over 2 packages`. A fixture or a linked test that is
   renamed, moved or no longer found by the naming convention fails that
@@ -1886,7 +1888,8 @@ package's tests are by convention are in
   `expected` is exit 2, naming what is missing, and so is a set whose
   packages hold no linked test and no fixture at all.
 - **The fixture's own checks.** `greeting`: three checks in its driver
-  (`GreetingTest/Greeting.lean`); a linked test
+  (`GreetingTest/Greeting.lean`), and the contract check of
+  `greeting-api`, which it implements; a linked test
   (`GreetingTest/Linked.lean`) with a check of each kind the core has an
   executable for, one that reads its text back from the Rust library, as
   `ffi-test` does, and one that starts the headless host on the real
@@ -1894,8 +1897,11 @@ package's tests are by convention are in
   the package's command and sees the key run it, as `config-test` does;
   and the fixture
   `hello`, where its command runs on the fixture set's editor.
-  `greeting-loud`: three checks in its driver and the fixture `reply`,
-  which shows it registered after `greeting`. `echo`: in its driver
+  `greeting-loud`: two checks in its driver, on greeting-api's fake, and
+  the fixture `reply`, which shows it registered after `greeting`.
+  `greeting-api`: four checks in its driver, that it declares
+  `greeting-reply`, that its fake keeps its contract, and that the
+  contract refuses a package that lacks the name or misspells it. `echo`: in its driver
   (`EchoTest/Model.lean`), the three vectors of its pure CRC-32 and the
   seven properties of its port's contract against the pure model, and one
   check of the model's own; in its linked test (`EchoTest/Linked.lean`),

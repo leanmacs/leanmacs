@@ -426,8 +426,9 @@ globs = ["Config.+"]
   editors with that default and requires config to load (`ffi-test
   window-host-direct`), and checks each record: the default set's names
   three directories, the core's, then `shipped-themes`' and `compile`'s,
-  and the fixture set's five, the core's, `greeting`'s, `greeting-loud`'s,
-  `shipped-themes`' and `compile`'s, each holding its package's modules.
+  and the fixture set's seven, the core's, `greeting-api`'s, `greeting`'s,
+  `greeting-loud`'s, `echo`'s, `shipped-themes`' and `compile`'s, each
+  holding its package's modules.
 - **A directory given on the command line is a search path**, one
   directory or several joined with `:`, and outside a bundle the recorded
   directories are searched after the ones given (`ModuleLookup.resolve`).
@@ -760,18 +761,20 @@ over the process service, a major mode, ex names and contributions.
 
 ### The fixture set
 
-Three packages and a set under `tests/packages/`, used by tests alone. They
+Four packages and a set under `tests/packages/`, used by tests alone. They
 showed the path a default package and a user's package take before any
 feature moved, and they still show what the default package does not: a
 package that requires another package, and a linked test that starts a
-host. The set requires the default set, so its editor holds the default
-packages too.
+host, and an interface package with its fake and its contract check
+([extension-points.md](extension-points.md), "Three layers"). The set
+requires the default set, so its editor holds the default packages too.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `echo`, then the default set, and through it `shipped-themes` and `compile` |
-| `tests/packages/greeting/` | The Lake package `greeting`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean`), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
-| `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting` and registers `greeting-reply` again with another text; its test driver and the fixture `tests/headless/reply` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it `shipped-themes` and `compile` |
+| `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
+| `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
+| `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
 | `tests/packages/echo/` | The Lake package `echo`, which holds Rust ("Rust in a package", below): its crate `echo-service` (`rust/`), its glue (`ffi/glue.c`), the port of its service with a pure model, a contract and the Rust-backed binding, its test driver (`EchoTest/Model.lean`) and its linked test (`EchoTest/Linked.lean`). It registers no package |
 
 - **A package outside the core is built by the package-set build and its
