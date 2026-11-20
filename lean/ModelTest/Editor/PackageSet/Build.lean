@@ -207,6 +207,25 @@ def packageSetBuildChecks : List Check :=
               check #[replied (tool order "git") 1] "exited with status 1"
                 #[("git", #["--version"])]) },
     { name :=
+        "a Reservoir dependency is fetched with git: with no git, the build says git is required to fetch it and starts no lake command"
+      run :=
+        let facts := lakefileWith #[{ name := "b", source := .reservoir "lc" none }]
+        match orderFor facts with
+        | none => pure false
+        | some order =>
+          match buildDriver (runningWith facts) #[] with
+          | none => pure false
+          | some driver =>
+            let done := built driver order
+            pure
+              (order.fetched == #["b"] &&
+                done.loop.state.echo.startsWith
+                  "packages: git is required to fetch b, and none works here (" &&
+                (done.loop.state.echo.splitOn "cannot start `git`").length == 2 &&
+                startedRuns done == #[] &&
+                !(startedRuns done).any (·.1 == order.lake) &&
+                failedWith done "git is required") },
+    { name :=
         "with a Rust crate in the set and no Cargo, the build says Cargo is required for that crate and how to get it, and builds nothing; with no crate no Cargo is run"
       run :=
         let facts := lakefileWith #[hello]

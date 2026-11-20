@@ -856,7 +856,8 @@ The config session's decisions are tested here too, with no elaborator:
 - `packageSetBuildChecks`: a user's package-set build and its commands
   (`Editor/PackageSet/Build.lean`, `Editor/PackageSet/Compiled.lean`):
   when a reload starts it and when it says it cannot; the order carried
-  as text; the requires resolved; git required and absent or failing;
+  as text; the requires resolved; git required and absent or failing, for
+  a git and for a Reservoir dependency;
   Cargo required for a Rust crate and none run for a set with no crate; a
   failing build shown, its staging directory removed and nothing
   published; a failing probe; a success that writes the record, publishes
