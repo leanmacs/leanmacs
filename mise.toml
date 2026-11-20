@@ -276,6 +276,16 @@ run = [
   # lists the fixture package after the core and the default set's
   # packages, and its modules are found.
   "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main EditorCore.EditorPackage ShippedThemes.EditorPackage Compile.EditorPackage UserLink.EditorPackage '",
+  # The core's lakefile is elaborated against the toolchain of the `lake`
+  # that runs it, never a `lean` found on the PATH (`leanSystemLibDir` in
+  # lean/lakefile.lean; docs/design/lean-runtime.md, "Build"): an app
+  # bundle's `lake` runs with no `lean` on the PATH, or a user's other one.
+  # In a fresh workspace, so its `.lake/config` holds no elaboration of
+  # the core's lakefile from before, whose `lakefile.toml` requires the
+  # default set, `lake query :editorRoot` must write the set's root with a
+  # `lean` that exits 1 first on the PATH. Everything it writes is in its
+  # temporary directory.
+  "t=$(mktemp -d) && trap 'rm -rf \"$t\"' EXIT && mkdir \"$t/no-lean\" && printf '#!/bin/sh\\nexit 1\\n' >\"$t/no-lean/lean\" && chmod +x \"$t/no-lean/lean\" && cp lean-toolchain \"$t/lean-toolchain\" && printf 'name = \"probe\"\\n\\n[[require]]\\nname = \"default-set\"\\npath = \"%s/packages\"\\n' \"$(cd .. && pwd -P)\" >\"$t/lakefile.toml\" && { root=$(PATH=\"$t/no-lean:$PATH\" lake -d \"$t\" query :editorRoot 2>\"$t/err\") && test -f \"$root\"; } || { cat \"$t/err\"; exit 1; }",
   # The shipped themes and the compile mode are Lake packages in the
   # default set, and no packages of the core: the root generated for the
   # default set (packages/) imports the config base, the executable's

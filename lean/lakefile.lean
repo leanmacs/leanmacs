@@ -348,13 +348,27 @@ target glue.o pkg : FilePath := do
   buildLeanO oFile srcJob #[] #["-O2", "-Wall", "-Wextra", "-Werror"]
 
 /-- The directory of the static libraries Lean's runtime needs (libgmp, libuv
-and the rest), inside the Lean toolchain Lake itself is using. -/
+and the rest), inside the Lean toolchain Lake itself is using, as this
+lakefile is elaborated: for the core's own `lean_exe`s, whose `moreLinkArgs`
+are fixed then. It asks Lake as Lake finds its own toolchain
+(`Lake.findInstall?`), which takes the `lean` beside the running `lake`
+first, so it never reads the `PATH`: an app bundle's `lake`, run with no
+`lean` on the `PATH`, or with a user's other Lean there, elaborates this
+lakefile against its own toolchain (`docs/design/lean-runtime.md`, "Build").
+The editor's own link asks the workspace's toolchain as it runs instead
+(`editorLinkArgs`). -/
 def leanSystemLibDir : FilePath :=
   run_io
     do
-      let some lean ←
-        findLeanInstall? | throw <| IO.userError "cannot find the Lean toolchain to link against"
+      let (_, some lean, _) ←
+        Lake.findInstall? | throw <| IO.userError "cannot find the Lean toolchain to link against"
       return lean.systemLibDir
+
+/-- The link arguments of `linkArgs`, with the static libraries'
+directory `systemLibDir`. -/
+def entryArgs (systemLibDir : FilePath) : Array String :=
+  #["-L", systemLibDir.toString] ++
+    if Platform.isOSX then #["-Wl,-e,_editor_entry"] else #["-Wl,--wrap=main"]
 
 /-- The link arguments every executable linked with the Rust library needs
 beyond its objects.
@@ -379,8 +393,14 @@ after these (`linkAsEditor`; the core's executables, `coreSystemLibraries`).
 So a package's crate that needs a system library links with no edit
 here. -/
 def linkArgs : Array String :=
-  #["-L", leanSystemLibDir.toString] ++
-    if Platform.isOSX then #["-Wl,-e,_editor_entry"] else #["-Wl,--wrap=main"]
+  entryArgs leanSystemLibDir
+
+/-- `linkArgs` for a link that runs now: with the static libraries'
+directory of the toolchain the workspace builds with
+(`getLeanSystemLibDir`), not the one this lakefile was elaborated with, so
+a set's editor links against the Lean that compiled it. -/
+def editorLinkArgs : FetchM (Array String) :=
+  return entryArgs (← getLeanSystemLibDir)
 
 /-- The system libraries the core's own archive needs (`rustlib`), as a
 response file the compiler driver reads (`@<file>`; clang and GCC both take
@@ -596,8 +616,9 @@ with their symbols exported, so interpreted config can find compiled
 definitions and `@[extern]` symbols (`-rdynamic`, what `supportInterpreter`
 gives a `lean_exe`), the glue of every package library it imports among
 them (a library's `moreLinkObjs`); then the core's glue and the one Rust
-archive of the set `set` (`editorRust`); then `linkArgs`, then the system
-libraries that archive needs. `root` may be a module of any package of the
+archive of the set `set` (`editorRust`); then `linkArgs`, with the
+workspace's toolchain's library directory (`editorLinkArgs`), then the
+system libraries that archive needs. `root` may be a module of any package of the
 workspace: the core's glue is this package's target, built in its build
 directory. -/
 def linkAsEditor (set : Package) (root : Module) (file : FilePath) : FetchM (Job FilePath) := do
@@ -605,12 +626,13 @@ def linkAsEditor (set : Package) (root : Module) (file : FilePath) : FetchM (Job
   let glueJob ← glue.o.fetch
   let rustJob ← (set.facet `editorRust).fetch
   let libraries := systemLibrariesFile (rustDir (← repositoryRoot) (rustKey (← setRustCrates set)))
+  let entry ← editorLinkArgs
   ((infoJob.zipWith Prod.mk glueJob).zipWith Prod.mk rustJob).mapM fun ((info, glue), rust) => do
       let system ← systemLibraryArgs libraries
-      addPureTrace linkArgs "linkArgs"
+      addPureTrace entry "linkArgs"
       addPureTrace system "native-static-libs"
       buildLeanExeSync file ((info.objs.push glue).push rust) info.libs
-          (#["-rdynamic"] ++ info.args ++ linkArgs ++ system)
+          (#["-rdynamic"] ++ info.args ++ entry ++ system)
 
 /-- The text of a set's root module, for the entry modules `entries` in the
 order they register and the config base `base` (`setBase`). It imports the
