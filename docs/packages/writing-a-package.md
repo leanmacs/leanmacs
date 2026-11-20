@@ -288,7 +288,9 @@ Then:
    ([installing-packages.md](installing-packages.md)).
 3. Delete `Config/WordCount.lean` and its import and call in `init.lean`.
    Config's command of a name is found before a package's, so while the
-   config file still registers `word-count`, config's runs.
+   config file still registers `word-count`, config's runs
+   (`ModelTest.packageChecks`, "config's command of a package's command's
+   name runs in its place").
 
 The build runs in the background and the editor restarts into the new
 executable. Until then, a config file that imports the package's module is
