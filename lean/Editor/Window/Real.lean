@@ -382,6 +382,7 @@ def environmentAt (appPath : String) : IO Environment := do
   return {
       workingDirectory := (← IO.currentDir).toString
       xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME", xdgStateHome := ← IO.getEnv "XDG_STATE_HOME"
+      xdgDataHome := ← IO.getEnv "XDG_DATA_HOME"
       home := ← IO.getEnv "HOME", appPath
       recordedOleans := ← ModuleLookup.recorded appPath readFile }
 
@@ -439,7 +440,8 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
       pure none
   -- What it knows of its own package set, and the reload's package port,
   -- read here at the edge.
-  let packageSet ← Headless.runningAt origin appPath (options.config.getD "") options.sysroot none
+  let packageSet ←
+    Headless.runningAt origin appPath (options.config.getD "") options.sysroot options.data
   let package ←
     match options.config with
     | some directory =>

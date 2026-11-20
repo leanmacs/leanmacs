@@ -1401,12 +1401,12 @@ def package : Package :=
   (`EditorCore.EditorPackage.packages`), which is no module of the editor:
   it is outside `lean/Editor/` and the namespace `Editor`, in a library of
   its own (`lean_lib EditorCore`). It
-  lists 23 packages, each
+  lists 24 packages, each
   defined in its feature's `Compiled.lean`: `completion`, `mode-line`,
   `files`, `minibuffer`, `evil`, `ex`, `buffers`, `frame-commands`, `menu`,
   `window-commands`, `tab-commands`, `themes`,
   `execute-command`, `binding-search`, `workspace`, `project-search`,
-  `working-set`, `restore`, `shell`,
+  `working-set`, `restore`, `package-set`, `shell`,
   `at-point`, `version-control`, `version-control-gutter` and `languages`,
   in that order, which keeps each kind of entry where the hosts registered
   it before there were packages. `themes` keeps
@@ -2569,6 +2569,11 @@ slower, and it would tie the executable to a toolchain directory.
   with the config session: the base is safe to import beside a running
   editor thread only because every module in it is linked, so its
   initialisers are not run at import. An interpreted package's would be.
+  Decided for Lean (packages phase 8): a user's packages are compiled into
+  a rebuilt per-user executable, fetched by Lake with the system's git, and
+  trusted like config ([packages.md](packages.md), "User package sets").
+  For a package's Rust the decision and what is still refused are in
+  [packages.md](packages.md), "Who can build it".
 - **Overriding compiled features** beyond re-registration.
 - **Memory growth** with many packages loaded and with background jobs
   holding old environments.

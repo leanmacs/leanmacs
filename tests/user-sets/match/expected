@@ -1,0 +1,5 @@
+reload 1: installed, 1 files, 0 commands
+run tab-new: ok
+scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 1, theme "default"
+view 1 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

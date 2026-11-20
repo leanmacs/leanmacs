@@ -444,12 +444,21 @@ where
           (state.1.push pkg.keyName, state.2)
       (state.1, state.2.push pkg)
 
+/-- The repository the core is in: the directory above the core's. -/
+def repositoryRoot : FetchM FilePath := do
+  let some core := (← getWorkspace).findPackageByKey? __name__
+    | error "the core's package is not in the workspace"
+  return core.dir / ".."
+
 /-- The Rust crates of the set `set`, in the order their packages register
 (`setPackages`): a package declares its crate with a target named
 `editorRustCrate` whose value is the path of the crate's manifest. The
 target's value is read through its own declaration (its fetch function and
 its query format), so this names no type of the package's, and no list is
-kept by hand. -/
+kept by hand. A crate whose manifest is outside the repository is refused
+with its reason: its dependencies are not in the core's lock, and
+`editor-service` has no published name for it to depend on
+(`docs/design/packages.md`, "Who can build it"). -/
 def setRustCrates (set : Package) : FetchM (Array RustCrate) := do
   let ws ← getWorkspace
   let mut crates : Array RustCrate := #[]
@@ -460,19 +469,18 @@ def setRustCrates (set : Package) : FetchM (Array RustCrate) := do
       | error s!"the package {owner} declares `editorRustCrate`, but not as a target"
     let data ← (← config.fetchFn ⟨dep, rfl⟩).await
     let manifest ← IO.FS.realPath (config.format .text data)
-    crates := crates.push { owner, name := ← crateName manifest, manifest }
+    let name ← crateName manifest
+    let root := (← IO.FS.realPath (← repositoryRoot)).toString
+    unless manifest.toString.startsWith (root ++ "/") do
+      error
+          s!"{owner}'s Rust crate {name} is outside the editor's Cargo workspace ({root}): building a third party's Rust is not supported yet; see docs/design/packages.md, 'Who can build it'"
+    crates := crates.push { owner, name, manifest }
   return crates
 
 /-- The line `editorRustCrates` prints for `crate`: its Lake package, its
 name and its manifest, separated by tabs. -/
 def RustCrate.line (crate : RustCrate) : String :=
   s!"{crate.owner}\t{crate.name}\t{crate.manifest}"
-
-/-- The repository the core is in: the directory above the core's. -/
-def repositoryRoot : FetchM FilePath := do
-  let some core := (← getWorkspace).findPackageByKey? __name__
-    | error "the core's package is not in the workspace"
-  return core.dir / ".."
 
 /-- The Rust crates of a package set, one a line
 (`lake -d <set dir> query :editorRustCrates`; `setRustCrates`): the Lake
@@ -488,18 +496,93 @@ cargo-deny over it. -/
 package_facet editorRustCrate pkg : FilePath := do
   return Job.pure (← writeRustCrate (← repositoryRoot) (← setRustCrates pkg))
 
+/-- Where the Rust archive of a set's editor comes from
+(`docs/design/packages.md`, "Who can build it"). -/
+inductive RustSource where
+  /-- Built by Cargo: the core's archive (`rustlib`) or the crate generated
+  from the set's crates (`buildRust`). -/
+  | cargo
+  /-- The core's archive as it is already built, read and never built: no
+  Cargo runs. -/
+  | prebuilt
+  deriving DecidableEq, Repr
+
+/-- Where the archive of a set comes from, given its crates and whether the
+set is in the repository: a set outside it that holds no crate, a user's,
+reuses the core's archive as it is built, so a user's set with no Rust
+links with no Cargo (decided 2026-11-20: the editor never ships Cargo);
+every other set is built by Cargo, the checkout's own sets among them, so
+a change to the core's Rust is built. -/
+def rustSource (crates : Array RustCrate) (inRepository : Bool) : RustSource :=
+  if crates.isEmpty && !inRepository then .prebuilt else .cargo
+
+#guard rustSource #[] false == .prebuilt
+
+#guard rustSource #[] true == .cargo
+
+#guard
+  rustSource #[{ owner := "echo", name := "echo-service", manifest := "/r/echo/Cargo.toml" }]
+      false ==
+    .cargo
+
+/-- Whether the directory of `pkg` is inside the repository `root`. -/
+def isInRepository (root : FilePath) (pkg : Package) : IO Bool := do
+  let root := (← IO.FS.realPath root).toString
+  let dir := (← IO.FS.realPath pkg.dir).toString
+  return dir == root || dir.startsWith (root ++ "/")
+
+/-- The core's archive as it is already built, in the repository `root`
+(`target/release/libeditor_rust.a`, with its system libraries beside the
+generated crate, `target/editor-rust/core/native-static-libs`), read and
+never built: no Cargo runs, and nothing is written. Its trace is the
+archive's content and the libraries' line, as `buildRust` gives it. With
+either missing the build fails, saying so. -/
+def prebuiltRust (root : FilePath) : FetchM (Job FilePath) :=
+  Job.async do
+    let archive := root / "target" / "release" / s!"lib{(rustCrateName "core").replace "-" "_"}.a"
+    let libraries := systemLibrariesFile (rustDir root "core")
+    unless (← archive.pathExists) && (← libraries.pathExists) do
+      error
+          s!"the core's Rust archive is not built ({archive} and {libraries}): a set with no Rust reuses it and runs no Cargo"
+    setTrace (← computeTrace archive)
+    addPureTrace (← IO.FS.readFile libraries) "native-static-libs"
+    return archive
+
+/-- The core's own archive for the set `pkg`: `rustlib`, built by Cargo,
+for a set in the repository; the prebuilt one (`prebuiltRust`) for one
+outside it, a user's. -/
+def coreArchive (pkg : Package) : FetchM (Job FilePath) := do
+  let root ← repositoryRoot
+  if ← isInRepository root pkg then
+    rustlib.fetch
+  else
+    prebuiltRust root
+
+/-- Where the archive of the set `pkg` comes from (`lake -d <set dir> query
+:editorRustSource`; `rustSource`): `cargo` or `prebuilt`, one line. It
+builds nothing. -/
+package_facet editorRustSource pkg : String := do
+  let source := rustSource (← setRustCrates pkg) (← isInRepository (← repositoryRoot) pkg)
+  return Job.pure (if source == .prebuilt then "prebuilt" else "cargo")
+
 /-- The one Rust archive of a set's editor (`lake -d <set dir> build
 :editorRust`): the crate generated from the set's Rust crates, built
 (`buildRust`), whose dependencies are `editor-ffi` and each package crate.
-A set with no package crate has the core's (`rustlib`). The system
-libraries the archive needs are beside the generated crate
-(`systemLibrariesFile`). -/
+A set with no package crate has the core's: built by Cargo (`rustlib`) for
+a set in the repository, and reused as it is built, with no Cargo, for a
+user's (`rustSource`, `prebuiltRust`). The system libraries the archive
+needs are beside the generated crate (`systemLibrariesFile`). -/
 package_facet editorRust pkg : FilePath := do
   let crates ← setRustCrates pkg
-  if crates.isEmpty then
-    rustlib.fetch
-  else
-    buildRust (← repositoryRoot) crates
+  let root ← repositoryRoot
+  match rustSource crates (← isInRepository root pkg) with
+  | .prebuilt =>
+    prebuiltRust root
+  | .cargo =>
+    if crates.isEmpty then
+      rustlib.fetch
+    else
+      buildRust root crates
 
 /-- The link arguments, one a token, in the file of system libraries
 `file` (`systemLibrariesFile`). -/
@@ -695,10 +778,11 @@ their sets hold, and any change to the core gives a new one
 the objects of every module of the core's two libraries (`Editor` and
 `EditorCore`; the whole libraries, so a package that imports a core module
 the default set does not link still has its core's identity), the core's
-glue (`glue.o`), the core's Rust archive (`rustlib`) and the version of the
-Lean toolchain Lake runs on. The objects' traces are Lake's input hashes,
+glue (`glue.o`), the core's Rust archive (`coreArchive`: `rustlib`, or
+the same archive reused for a user's set) and the version of the Lean
+toolchain Lake runs on. The objects' traces are Lake's input hashes,
 which change when a module's source, its imports or the compiler change. -/
-def coreIdentity : FetchM (Job String) := do
+def coreIdentity (pkg : Package) : FetchM (Job String) := do
   let some core := (← getWorkspace).findPackageByKey? __name__
     | error "the core's package is not in the workspace"
   let mut libraries : Array (Job (Array Module)) := #[]
@@ -711,7 +795,7 @@ def coreIdentity : FetchM (Job String) := do
         let jobs ← libraries.flatten.mapM (·.oExport.fetch)
         return (Job.collectArray jobs).map fun _ => jobs.map (·.getTrace.hash)
   let glueJob ← glue.o.fetch
-  let rustJob ← rustlib.fetch
+  let rustJob ← coreArchive pkg
   let inputs :=
     (objects.zipWith (fun hashes _ => hashes) glueJob).zipWith (fun hashes _ => hashes) rustJob
   inputs.mapM fun hashes => do
@@ -747,7 +831,7 @@ package_facet editor pkg : FilePath := do
   writeSetRecord pkg executable
   writeIfChanged (executable.toString ++ ".build") (← buildRecordText)
   let identity ←
-    (← coreIdentity).mapM fun identity =>
+    (← coreIdentity pkg).mapM fun identity =>
         writeIfChanged (executable.toString ++ ".core") s!"{identity}\n"
   return (← linkAsEditor pkg (← setRoot pkg) executable).add identity
 

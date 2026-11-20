@@ -5,7 +5,7 @@ import Editor.PackageSet.Fingerprint
 # Edits of a config's `lakefile.toml`
 
 The text edits behind `:package-install`, `:package-remove` and
-`:package-update <name> <rev>` (`Editor/PackageSet/Commands.lean`;
+`:package-update <name> <rev>` (`Editor/PackageSet/Compiled.lean`;
 `docs/design/packages.md`, "User package sets"). Each takes the
 lakefile's text and its `[[require]]` tables as the last reload read them
 with Lake's loader (`PackageSet.Facts`), and answers the new text or why

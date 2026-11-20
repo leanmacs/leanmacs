@@ -1,0 +1,12 @@
+# A config whose lakefile names a git dependency
+# (tests/user-sets/git-missing/script): with no working git the package-set
+# build stops before fetching anything and says git is required.
+name = "config"
+
+[[require]]
+name = "x"
+git = "https://example.invalid/x"
+
+[[lean_lib]]
+name = "Config"
+globs = ["Config.+"]

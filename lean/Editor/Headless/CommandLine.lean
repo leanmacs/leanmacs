@@ -69,11 +69,16 @@ structure Arguments where
   /-- How many `restarted` directives of the script this run has passed
   (`--resume`): 0 for a run that no restart started. -/
   resume : Nat := 0
+  /-- The data directory (`--data`), if one was given: where a user's
+  package-set build installs its editors (`docs/design/packages.md`,
+  "User package sets"). The headless mode has none unless it is given, so
+  no script can build into a user's own. -/
+  data : Option String := none
   deriving DecidableEq, Repr
 
 /-- The headless mode's command line, after `headless`. -/
 def usage : String :=
-  "headless [--render] [--generate] [--state <dir>] [--resume <k>] [<sysroot> <olean dir>] <config dir> <script file>"
+  "headless [--render] [--generate] [--state <dir>] [--data <dir>] [--resume <k>] [<sysroot> <olean dir>] <config dir> <script file>"
 
 /-- Why two paths are refused outside a bundle, and what to give: the
 `.olean` directory is a search path, and config is elaborated on the base of
@@ -85,7 +90,7 @@ def noToolchain : String :=
 
 /-- The options that take a value after them. -/
 def valuedOptions : List String :=
-  ["--state", "--resume"]
+  ["--state", "--data", "--resume"]
 
 /-- The options before the paths of `arguments`, in order, after those in
 `seen`; each valued option's last value, after those in `values`; the
@@ -129,10 +134,12 @@ def read (appPath : String) (arguments : List String) (recorded : List String :=
   let generate := options.contains "--generate"
   let state := (values.find? (·.1 == "--state")).map (·.2)
   let resume := (values.find? (·.1 == "--resume")).map (·.2)
+  let data := (values.find? (·.1 == "--data")).map (·.2)
   -- Each option at most once, and none the mode does not know; a resume a
   -- number.
   let known :=
-    valued && options.all (["--render", "--generate", "--state", "--resume"].contains ·) &&
+    valued &&
+      options.all (["--render", "--generate", "--state", "--data", "--resume"].contains ·) &&
       options.eraseDups == options &&
       resume.all (·.toNat?.isSome)
   let named : Option (ModuleLookup.Given × String × String) :=
@@ -150,7 +157,7 @@ def read (appPath : String) (arguments : List String) (recorded : List String :=
     match directories.sysroot, directories.oleans with
     | some sysroot, directory :: rest =>
       .ok {
-          render, generate, sysroot, oleans := directory :: rest, config, script, state
+          render, generate, sysroot, oleans := directory :: rest, config, script, state, data
           resume := (resume.bind (·.toNat?)).getD 0 }
     | _, _ => .error noToolchain
   | _, _ => .error ""

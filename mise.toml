@@ -311,6 +311,34 @@ run = [
   # under target/, as `:editorRust` above does. LEAN_CC is set as `lean`
   # sets it, so the link's environment record is unchanged.
   "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/packages/greeting/tests/headless/hello && EDITOR_INSTALL_DIR=\"$dir/v\" LEAN_CC=/usr/bin/cc lake -d ../tests/packages build --wfail -q :editorInstall && test \"$(cat \"$dir/v/editor.oleans\")\" = lib/lean && out=$(\"$dir/v/editor\" headless \"$(lean --print-prefix)\" '' $f/config $f/script) && printf '%s\\n' \"$out\" | diff $f/expected - && { test \"$(uname)\" != Darwin || codesign --verify --strict \"$dir/v/editor\"; } && status=0 && { out=$(EDITOR_INSTALL_DIR=\"$dir/v\" LEAN_CC=/usr/bin/cc lake -d ../tests/packages build -q :editorInstall 2>&1) || status=$?; } && test \"$status\" -ne 0 && printf '%s\\n' \"$out\" | grep -qF \"$dir/v already exists\" || { printf '%s\\n' \"$out\"; echo 'ffi-test: the install of the fixture set did not run its fixture, or took a directory that exists'; exit 1; }",
+  # A user's package set (docs/design/packages.md, "User package sets").
+  # A set outside the repository that holds no Rust crate links with no
+  # Cargo: the core's archive, as `lean` built it, is reused
+  # (`rustSource`, decided 2026-11-20: the editor never ships Cargo). A set
+  # written in a fresh temporary directory, requiring the default set, is
+  # resolved and its editor linked with a `cargo` that always fails first
+  # on the PATH (lean/no-cargo/cargo), and its archive's source is
+  # `prebuilt` while the default set's is `cargo`; the link reads only what
+  # `lean` built, and writes only the temporary directory. The default
+  # set's editor then reads as up to date, so nothing it shares was built
+  # again.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp lean-toolchain \"$dir/\" && printf 'name = \"config\"\\n\\n[[require]]\\nname = \"default-set\"\\npath = \"%s\"\\n' \"$(cd ../packages && pwd)\" > \"$dir/lakefile.toml\" && test \"$(lake -d ../packages query :editorRustSource)\" = cargo && PATH=\"$PWD/no-cargo:$PATH\" lake -d \"$dir\" update -q --keep-toolchain && test \"$(PATH=\"$PWD/no-cargo:$PATH\" lake -d \"$dir\" query :editorRustSource)\" = prebuilt && PATH=\"$PWD/no-cargo:$PATH\" LEAN_CC=/usr/bin/cc lake -d \"$dir\" build -q --wfail :editor && cmp \"$dir/.lake/build/bin/editor.core\" ../packages/.lake/build/bin/editor.core && LEAN_CC=/usr/bin/cc lake -d ../packages build --no-build -q :editor || { echo 'ffi-test: a user set with no Rust crate did not link without Cargo'; exit 1; }",
+  # A Rust crate outside the repository is refused with its reason
+  # (`setRustCrates`; docs/design/packages.md, "Who can build it"): a copy
+  # of the fixture package `echo` in a temporary directory, in a set there,
+  # makes `lake query :editorRustCrates` fail saying so
+  # (tools/rust-outside-check.sh).
+  "sh ../tools/rust-outside-check.sh",
+  # The package-set build in the headless mode (tests/user-sets/): a config
+  # whose lakefile names a git dependency, with a data directory in a
+  # temporary directory and a PATH that holds no git, says git is required
+  # and how to get it, builds nothing and writes nothing in the data
+  # directory, and the next command still answers; the paths of the
+  # checkout are written @REPO@, and the build buffer's cursor, which
+  # depends on their length, @SELECTIONS@. And a generated lakefile, which
+  # requires the set the editor was built from, starts no build.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && mkdir \"$dir/empty\" && repo=$(cd .. && pwd -P) && sysroot=$(lean --print-prefix) && f=../tests/user-sets/git-missing && out=$(PATH=\"$dir/empty\" ../packages/.lake/build/bin/editor headless --data \"$dir/data\" \"$sysroot\" .lake/build/lib/lean $f/config $f/script) && printf '%s\\n' \"$out\" | sed \"s|$repo|@REPO@|g\" | grep -v '^job ' | sed '/Package build of/s/selections [0-9]*\\.\\.[0-9]*/selections @SELECTIONS@/' | diff $f/expected - && test ! -e \"$dir/data\"",
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/user-sets/match && cp -R $f/config \"$dir/config\" && out=$(../packages/.lake/build/bin/editor headless --generate --data \"$dir/data\" \"$(lean --print-prefix)\" .lake/build/lib/lean \"$dir/config\" $f/script) && printf '%s\\n' \"$out\" | diff $f/expected - && test -e \"$dir/config/lakefile.toml\" && test ! -e \"$dir/data\"",
   # The config base of a set is the set's (lean/Editor/Main.lean, "The
   # base"; the facet `editorBase`): `Editor`, the core's base, then the
   # entry module of each package of the set outside the core, so that

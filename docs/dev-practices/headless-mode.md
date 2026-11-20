@@ -1,7 +1,7 @@
 # The headless mode
 
 ```sh
-editor headless [--render] [--generate] [--state <dir>] [--resume <k>] [<sysroot> <olean dir>] <config dir> <script file>
+editor headless [--render] [--generate] [--state <dir>] [--data <dir>] [--resume <k>] [<sysroot> <olean dir>] <config dir> <script file>
 ```
 
 **A restart** (`:restart`, `lean/Editor/Restore/Restart.lean`) hands the
@@ -34,6 +34,17 @@ text to it as it changes (`lean/Editor/Restore.lean`). Without it the run
 has none and keeps nothing. With one, a change to the session index waits
 on the job clock to be written (`restore-write`), so a `join` after it is
 preceded by an `advance` that fires the write.
+
+**`--data <dir>`** names the data directory, where a user's package-set
+build installs its editors (`docs/design/packages.md`, "User package
+sets"). Without it the headless mode has none and never builds a package
+set, so no script can reach a user's own. With one, a reload whose config
+lakefile or manifest differs from the running editor's starts the job
+`package-build`, whose output goes to the buffer `*package-build*`, and
+the commands `package-install`, `package-remove` and `package-update` (ex
+names of the same) edit the config's `lakefile.toml`. The fixtures under
+`tests/user-sets/` (`git-missing`, `match`) and `tools/user-sets-test.sh`
+run them.
 
 This is the editor with no window. It loads the config in a directory, runs
 a script against it and prints what happened. It writes nothing into the

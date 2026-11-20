@@ -110,6 +110,7 @@ import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
 import ModelTest.Editor.ModeLine.Compiled
 import ModelTest.Editor.ModuleLookup
+import ModelTest.Editor.PackageSet.Build
 import ModelTest.Editor.PackageSet.Edit
 import ModelTest.Editor.PackageSet.Fingerprint
 import ModelTest.Editor.PackageSet.Running
@@ -848,10 +849,19 @@ The config session's decisions are tested here too, with no elaborator:
   table is, install of a path, a git and a Reservoir require, remove, the
   default set expanded without one of its packages, a rev set, and each
   refusal;
+- `packageSetBuildChecks`: a user's package-set build and its commands
+  (`Editor/PackageSet/Build.lean`, `Editor/PackageSet/Compiled.lean`):
+  when a reload starts it and when it says it cannot; the order carried
+  as text; the requires resolved; git required and absent or failing;
+  Cargo required for a Rust crate and none run for a set with no crate; a
+  failing build shown, its staging directory removed and nothing
+  published; a failing probe; a success that writes the record, publishes
+  version 1 and restarts into it; what is pruned; and the three commands'
+  edits, their refusals and the reload after them;
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
-  list is the 22 packages, in order, each accepted, with no package of
+  list is the 24 packages, in order, each accepted, with no package of
   the shipped palettes or of the compile mode among them, in the state
   they make every entry's owner is one of them, the ex names are bound in
   the order the headless fixtures show, the `ex` package's and then
@@ -1455,6 +1465,7 @@ def checks : List Check :=
     packageSetFingerprintChecks ++
     packageSetRunningChecks ++
     packageSetEditChecks ++
+    packageSetBuildChecks ++
     headlessCommandLineChecks ++
     executableModeChecks ++
     versionChecks ++

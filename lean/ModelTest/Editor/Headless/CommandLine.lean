@@ -130,6 +130,15 @@ def headlessCommandLineChecks : List Check :=
           (refused installed ["--generate", "--generate", "/c", "/t"] &&
             refused installed ["--render", "--render", "/c", "/t"]) },
     { name :=
+        "--data <dir> names the data directory, read and refused as --state is; without it there is none"
+      run :=
+        pure
+          ((read outside ["--data", "/d", "--state", "/st", "/s", "/o", "/c", "/t"]).map (·.data) ==
+              some (some "/d") &&
+            (read outside ["/s", "/o", "/c", "/t"]).map (·.data) == some none &&
+            refused installed ["--data"] &&
+            refused installed ["--data", "/a", "--data", "/b", "/c", "/t"]) },
+    { name :=
         "no path, one, three and five, and an option it does not know, are refused with no reason beyond the usage line, inside a bundle and outside one"
       run :=
         pure

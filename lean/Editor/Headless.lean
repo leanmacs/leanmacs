@@ -15,6 +15,7 @@ import Editor.Job.Jobs
 import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Loop
+import Editor.PackageSet.Build
 import Editor.Restart.Real
 import Editor.SyntaxTree.Real
 import Editor.Text.Real
@@ -1219,6 +1220,12 @@ structure Running (β σ : Type) (scheme : InputScheme) where
   /-- What the host has to say in the echo area once the frame is made: a
   reload's error said before there was a frame (`said`). -/
   unsaid : Option String := none
+  /-- What a reload read of the package set before there was a frame, to
+  set in the editor state once it is made (`withFacts`). -/
+  unsetFacts : Option PackageSet.Facts := none
+  /-- Whether what a reload had to say of the package set instead of
+  building it has been said: it is said once (`afterReload`). -/
+  saidPackages : Bool := false
   /-- The jobs started with a key, by their key: the id each runs as
   (`JobStart.key`). -/
   keyed : Array (String × Nat) := #[]
@@ -1320,18 +1327,6 @@ def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ
       discard <| running.display.handle (.frame (.appearance appearance))
   return running
 
-/-- Takes the finished reload job's outcome and feeds it to the reducer. This
-is where a reload is installed: on the editor thread, between two events. -/
-def finish (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
-    IO (Running β σ scheme) := do
-  let some promise := running.job | return running
-  let outcome :=
-    promise.result?.get.getD
-      { base := none,
-        diagnostics := #[Config.failure "reload" "the reload job ended without an outcome"],
-        built := none }
-  { running with job := none }.reduce collaborators (.finished outcome)
-
 /-- Starts `work` as a job of `owner` called `name`: its id, and the jobs with
 it. It runs on the pool; its posts wait in the mailbox, and when it has
 ended the runner posts a wake-up to the editor queue, with the job's id.
@@ -1361,6 +1356,61 @@ def startJob (collaborators : Collaborators β σ scheme) (running : Running β 
   let some (owner, work) := running.config.work? name arguments | return (none, running)
   let (id, running) ← running.startWork collaborators owner name work
   return (some id, running)
+
+/-- Sets what the last reload read of the package set in the editor state
+(`PackageSet.Running.facts`), now when the frame is made and once it is
+made otherwise (`framed`). -/
+def withFacts (running : Running β σ scheme) (facts : PackageSet.Facts) : Running β σ scheme :=
+  match running.frame with
+  | some frame =>
+    { running with
+      frame :=
+        some
+          { frame with
+            state := { frame.state with packageSet := { frame.state.packageSet with facts } } } }
+  | none => { running with unsetFacts := some facts }
+
+/-- What the host does about the package set after a reload
+(`docs/design/packages.md`, "User package sets"): it keeps what the reload
+read in the editor state (`withFacts`), and asks `PackageSet.decide`
+whether to start the build. A build is started as the job
+`package-build`, keyed so, printed `job <id> package-build: started`, and
+said (`PackageSet.startedLine`); what there is to say instead is said
+once (`saidPackages`). -/
+def afterReload (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (facts : PackageSet.Facts) : IO (Running β σ scheme) := do
+  let running := running.withFacts facts
+  let inFlight := running.keyed.any (·.1 == PackageSet.buildJob)
+  let own := { collaborators.packageSet with facts }
+  match PackageSet.decide own facts inFlight with
+  | .nothing =>
+    return running
+  | .say text =>
+    if running.saidPackages then
+      return running
+    return { running.said text with saidPackages := true }
+  | .build order =>
+    let (id?, running) ← running.startJob collaborators PackageSet.buildJob [.str order.encode]
+    match id? with
+    | some id =>
+      collaborators.emit s!"job {id} {PackageSet.buildJob}: started"
+      return { running.said PackageSet.startedLine with
+          keyed := running.keyed.push (PackageSet.buildJob, id) }
+    | none =>
+      return running
+
+/-- Takes the finished reload job's outcome and feeds it to the reducer. This
+is where a reload is installed: on the editor thread, between two events. -/
+def finish (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    IO (Running β σ scheme) := do
+  let some promise := running.job | return running
+  let outcome :=
+    promise.result?.get.getD
+      { base := none,
+        diagnostics := #[Config.failure "reload" "the reload job ended without an outcome"],
+        built := none }
+  let running ← { running with job := none }.reduce collaborators (.finished outcome)
+  running.afterReload collaborators outcome.facts
 
 /-- Cancels the job started with `key`, if one is running or has finished and
 not been delivered (`Job.Jobs.cancel`), and forgets the key. -/
@@ -1633,6 +1683,10 @@ def framed (collaborators : Collaborators β σ scheme) (running : Running β σ
   let running :=
     match made, running.unsaid with
     | some _, some text => { running.said text with unsaid := none }
+    | _, _ => running
+  let running :=
+    match made, running.unsetFacts with
+    | some _, some facts => { running.withFacts facts with unsetFacts := none }
     | _, _ => running
   return (running.frame, running)
 
@@ -3266,7 +3320,7 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   let recorded ← ModuleLookup.recorded appPath readFile
   let
     { render := drawn, generate, sysroot, oleans, config := configDir, script := scriptPath, state,
-      resume }
+      resume, data }
     ←
     match read appPath arguments recorded with
     | .ok read =>
@@ -3306,7 +3360,7 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   -- more than this run's.
   let launch := { launch with arguments := "headless" :: handedOn arguments resume }
   let packageSet ←
-    runningAt origin appPath configDir (if sysroot.isEmpty then none else some sysroot) none
+    runningAt origin appPath configDir (if sysroot.isEmpty then none else some sysroot) data
   let package ← packageFilesAt configDir packageSet.setName
   let collaborators :=
     { shipped with

@@ -1,0 +1,13 @@
+# The script `ffi-test` runs on the default set's editor with `--data` in a
+# temporary directory and a PATH that holds no git: the reload finds the
+# lakefile names a git dependency, which the running editor was not linked
+# with, and starts the package-set build, which says git is required and how
+# to get it, and builds nothing. The editor keeps running: a command run
+# after it still answers.
+
+reload
+settle
+join
+scene
+run tab-new
+scene

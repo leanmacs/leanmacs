@@ -977,6 +977,101 @@ as the last reload read them with Lake's loader:
 
 `config-test` reads every text these edits make back with Lake's loader.
 
+### The build, as a job
+
+A reload whose fingerprint differs from the running editor's starts the
+job `package-build` (`lean/Editor/PackageSet/Build.lean`; the host asks
+`PackageSet.decide` after each reload, `Headless.afterReload`), whether
+the config was installed or refused. It starts none while one is in
+flight, when the editor has no data directory or knows no core identity,
+or when it has no `lake`; then it says once: "the package set changed, but
+this editor has no lake to build it (`<sysroot>/bin/lake`)", which is what
+the app says until phase 9 ships the toolchain. `:reload` retries a failed
+build.
+
+**The config directory is the set's root**: the build runs
+`<sysroot>/bin/lake` in it, as Lean's language server does, so Lake
+writes `<config>/.lake/` and `<config>/lake-manifest.json`, and git
+dependencies are cloned into `<config>/.lake/packages`. The root's Lake
+name is `config`, so a per-user editor's `Origin.setName` is `config`; its
+shipped set's name is carried in `editor.packages` as `set <name>`.
+
+The steps, each through the job port's process and file requests, so each
+is pinned on the models (`ModelTest.packageSetBuildChecks`):
+
+1. **Git**, when the lakefile directly names a git or Reservoir
+   dependency: `git --version`. Not found, or a non-zero exit (macOS's
+   command-line-tools shim), stops the build: "git is required to fetch
+   `<names>`, and none works here (`<how>`): install it with
+   `xcode-select --install` on macOS, or from https://git-scm.com, then
+   :reload; this editor keeps running".
+2. **Resolve**: `lake update --keep-toolchain <names>` for the requires the
+   manifest lacks or whose entry has another url or revision; for
+   `:package-update`, the named package or every git and Reservoir one.
+   Measured on Lake 5.0.0: a `require` missing from the manifest fails the
+   build (`dependency 'b' not in manifest`), `lake update b` adds only
+   `b`, and a stale entry for a removed require does not fail the build.
+3. **Rust**: `lake query :editorRustCrates`, and `cargo --version` only
+   when the set holds a crate ("Who can build it").
+4. **Build and install**: `lake build :editorInstall` with
+   `EDITOR_INSTALL_DIR=<data>/editors/staging-<k>` and the environment of
+   `editor.build`, its output streamed into the buffer `*package-build*`.
+5. **Record**: the new editor's `editor.core` is read, and
+   `editor.packages` written beside it: the requires as the reload read
+   them, the pins read again after the resolve, and the set's name.
+6. **Probe**: `<staging>/editor --probe` must print `probe: ok` within
+   10 s, which catches a bad link, a bad signature or an `initialize` that
+   throws before anything is published.
+7. **Publish**: `/bin/mv <staging> <data>/editors/<core>/<n>`, atomic
+   within one file system.
+8. **Prune**: this core's versions older than `n-1`, every other core's
+   directory but the running executable's, and leftover `staging-*`.
+9. **Restart** into the new editor through the restore's restart
+   (`Editor.restart`), with the session handed over; with no state
+   directory, "built `<exe>`; it starts at the next launch".
+
+Every failure removes the staging directory, ends the buffer with `Package
+build failed: <how> after <t>`, says `packages: <how>; this editor keeps
+running` and publishes nothing, so the previous executable stays the
+launcher's choice. The buffer is read-only, starts with a header line, is
+shown through the display rules for the opener `package-build`, has the
+child's output appended as it arrives (batched every 50 ms) and ends with
+`Package build finished after <t>` or the failure.
+
+### Where per-user editors live
+
+```
+<data>/editors/<core>/<n>/       an installed editor (see "The install")
+  editor.packages                the fingerprint it was built from
+<data>/editors/staging-<k>/      a build's install before it is published
+```
+
+`<data>` is the window mode's `--data`, else `leanmacs` under
+`$XDG_DATA_HOME`, else under `$HOME/.local/share`; the headless mode has
+one only when `--data` is given, so no script can build into a user's
+own. `<core>` is the core's identity, so an editor linked against another
+core is never started; `<n>` is one more than the largest version there
+(`lean/Editor/PackageSet/Layout.lean`). At most two versions are kept per
+core, about 420 MB each.
+
+### The package commands
+
+The core package `package-set` (`lean/Editor/PackageSet/Compiled.lean`,
+the 24th, right after `restore`) registers `:package-install <name>
+<path>|<git url> [<rev>]` or `<scope>/<name> [<version>]`,
+`:package-remove <name>` and `:package-update [<name> [<rev>]]`. Each edit
+("The lakefile's edits") is computed from the lakefile as the last reload
+read it, and written by the job `package-edit`, which reads the file again
+first and refuses one that changed since ("the lakefile changed since the
+last reload; :reload and try again"); its command then asks for a reload,
+which compares the fingerprints and starts the build. `:package-update`
+with no rev edits nothing: the lakefile names what is required and the
+manifest pins the revision, so it starts the build with `lake update` for
+the named package, or every git and Reservoir one.
+
+A config file named `Config/EditorPackage.lean` would be taken as the
+`config` package's entry module and linked; nothing refuses it yet.
+
 ## What a package may import
 
 The core's API is the set of core modules a package may name in an `import`
@@ -1148,7 +1243,7 @@ fixture themes made with `Palette.theme` from palettes written in
 `lean/ConfigTest/Support/Themes.lean`, and the appearance checks define
 theirs. No copy of a palette's values is kept in the core, so no licence
 notice is either. `ConfigTest.shippedChecks` and
-`ModelTest.packageSetChecks` state the core's list alone: 23 packages, the
+`ModelTest.packageSetChecks` state the core's list alone: 24 packages, the
 one theme `default`, and nothing of the compile mode.
 
 ## What moving the shipped themes added to the core's API
@@ -1496,13 +1591,48 @@ the protocol again in Lean.
 
 ### Who can build it
 
-The default packages are built in CI and shipped prebuilt, so a package of
-the default set may hold Rust. A user's package set is linked on the user's
-machine with the Lean toolchain alone (phase 1 of the packages roadmap), so
-a third party's package that holds Rust needs Cargo there, or archives
-built ahead for each platform. Which, and how a set refuses a Rust package
-it cannot build, is the work of the user package sets and the bundled
-toolchain (packages phases 8 and 9).
+**Decided (packages phase 8; the owner, 2026-11-20): the editor never
+ships Cargo**, not with the app and not with the toolchain phase 9 ships.
+
+- **A set with no Rust crate needs no Cargo.** Its link reuses the core's
+  Rust archive as it is already built (`libeditor_rust.a`, with its record
+  of system libraries `target/editor-rust/core/native-static-libs`): no
+  `cargo fetch`, no `cargo rustc`, nothing written under the checkout's
+  `target/` (`rustSource` and `prebuiltRust` in `lean/lakefile.lean`; the
+  facet `:editorRustSource` says `prebuilt`). This holds of every set
+  outside the repository, a user's; the checkout's own sets are built by
+  Cargo, so a change to the core's Rust is built. `ffi-test` links such a
+  set with a `cargo` that always fails first on the PATH.
+- **A set with a Rust package needs the user's own Cargo**, installed with
+  rustup. The package-set build checks `cargo --version` only then, and
+  when it is missing or broken it stops before building: "Cargo is
+  required to build `<package>`'s Rust crate `<crate>` … install it with
+  rustup from https://rustup.rs, then :reload; this editor keeps running"
+  (`cargoRequired`, `lean/Editor/PackageSet/Build.lean`). This is the same
+  stance as git's: require the system tool, say so when it is needed,
+  never ship it.
+- **Why not archives built ahead for each platform.** An editor links one
+  Rust archive, so it holds one copy of Rust's standard library ("One Rust
+  archive per editor"), so a package's crate cannot arrive as a prebuilt
+  static library of its own. An archive built ahead would have to be the
+  whole editor's archive for that exact combination of crates, core and
+  platform, which no package author can build; a dynamic library loaded at
+  run time was refused earlier (`@[extern]` binds at link time). So a
+  third party's Rust reaches an editor only by compiling the generated
+  crate on the user's machine, with Cargo.
+
+**Built, and refused.** A user's set builds the package crates the editor's
+own Cargo workspace holds: every package crate under the repository, such
+as the fixture `echo`, whose dependencies the core's `Cargo.lock` pins. A
+crate whose manifest is outside the repository is refused by
+`setRustCrates`, so `:editorRustCrates` and the build stop early with:
+"`<package>`'s Rust crate `<crate>` is outside the editor's Cargo workspace
+(`<repo>`): building a third party's Rust is not supported yet; see
+docs/design/packages.md, 'Who can build it'". Two pieces are missing for
+such a crate: its dependencies are not in the core's lock (the build is
+`cargo fetch --locked` then `--offline`), and `editor-service` has no
+published name for it to depend on. `ffi-test` checks the refusal on a
+copy of `echo` outside the repository (`tools/rust-outside-check.sh`).
 
 ## The module map
 
@@ -1524,8 +1654,8 @@ below add up to 303: 210 core and 93 in 22 features.
   any module a core module imports for a type it carries (`Editor.Ex.Line`,
   `Editor.Menu`, `Editor.ModeLine`, `Editor.Language`, `Editor.Workspace`,
   the three `Editor.ProjectMode` modules).
-- **A feature** is code reached through a package's registrations: the 23
-  packages of the core's list, as 22 features (the two version-control packages are
+- **A feature** is code reached through a package's registrations: the 24
+  packages of the core's list, as 23 features (the two version-control packages are
   one), with the Vim scheme counted with evil.
 - **Every feature here is in the core's Lake package**,
   and is a core module in the sense of the section above and of the gate's

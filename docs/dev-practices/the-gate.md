@@ -1953,6 +1953,21 @@ package's tests are by convention are in
   is up to date after `lean`, so the install builds nothing; it writes the
   temporary directory, and runs Cargo's own up-to-date check under
   `target/` as `:editorRust` does.
+- **A user's set with no Rust needs no Cargo.** `ffi-test` writes a set in
+  a temporary directory that requires the default set, resolves it and
+  links its editor with a `cargo` that always fails first on the PATH
+  (`lean/no-cargo/cargo`): `:editorRustSource` says `prebuilt` for it and
+  `cargo` for the default set, the two editors' `editor.core` are equal,
+  and the default set's editor still reads as up to date
+  ([packages.md](../design/packages.md), "Who can build it").
+- **A Rust crate outside the repository is refused**
+  (`tools/rust-outside-check.sh`): a copy of `echo` in a temporary
+  directory makes `lake query :editorRustCrates` fail with the reason.
+- **The package-set build in the headless mode** (`tests/user-sets/`):
+  `git-missing`, run with `--data` in a temporary directory and a PATH
+  with no git, says git is required and how to get it, writes nothing in
+  the data directory, and still answers the next command; `match`, run
+  with `--generate`, starts no build.
 
 ## The Rust bans check
 

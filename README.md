@@ -166,6 +166,38 @@ leanmacs elaborates it.
   lets a file use a module another file made it load, and the server wants
   each file to import what it uses.
 
+### Packages
+
+The config directory's `lakefile.toml` is your package set: the packages
+your editor is linked from. Edit it by hand, or with three commands, each of
+which edits the lakefile and rebuilds:
+
+- `:package-install <name> <path>`, `:package-install <name> <git url>
+  [<rev>]` or `:package-install <scope>/<name> [<version>]` adds a package;
+- `:package-remove <name>` drops one, a default package such as `compile`
+  among them;
+- `:package-update [<name> [<rev>]]` moves a package to its newest
+  revision, or to `<rev>`.
+
+When a reload finds the lakefile or `lake-manifest.json` changed, the
+editor builds a new executable in the background, shows the build in
+`*package-build*`, and restarts into it with your buffers, unsaved text,
+windows and tabs as they were. When the build fails, the errors are in that
+buffer and the editor you are using keeps running; `:reload` tries again.
+Builds are kept under `~/.local/share/leanmacs/editors` (or
+`$XDG_DATA_HOME/leanmacs`), and the app starts the newest one, falling back
+to the one before it, then to the editor it shipped with.
+
+A git or Reservoir package needs `git` (`xcode-select --install` on macOS,
+or https://git-scm.com); a package with Rust in it needs Cargo, installed
+with rustup (https://rustup.rs). The editor ships neither, and says when
+one is needed. A set with no Rust needs no Cargo.
+
+If the config directory is a git repository, ignore its `.lake/`.
+
+Packages run with your authority, as config does: a package's code, its
+`initialize` included, can do anything you can.
+
 ### Converting an older config
 
 Config used to be `.lean` files directly in the directory, with no header,

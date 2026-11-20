@@ -11,7 +11,7 @@ data directories are, and the `lake` of its toolchain. An executable host
 reads them once, at the edge, beside the executable (`at`, over a file read
 and a test of existence it is handed), and sets them in the editor state
 (`EditorState.packageSet`) and in its reload's package port; nothing
-changes them after.
+changes them after, but what each reload reads of the config (`facts`).
 
 ## The records beside the executable
 
@@ -52,6 +52,11 @@ structure Running where
   /-- The user's data directory: where per-user editors are installed
   (`Editor/PackageSet/Layout.lean`); none for a host that has none. -/
   data : Option String := none
+  /-- What the last reload read of the config directory as a package set:
+  the one field the host sets again, after each reload, so the package
+  commands edit the lakefile as it was read
+  (`Editor/PackageSet/Compiled.lean`). -/
+  facts : Facts := {}
   deriving DecidableEq, Repr, BEq, Inhabited
 
 /-- The record of the core's identity beside the executable at `appPath`. -/

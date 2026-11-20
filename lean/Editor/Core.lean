@@ -21,7 +21,7 @@ import Editor.Language.Compiled
 import Editor.Main
 import Editor.Menu.Compiled
 import Editor.ModeLine.Compiled
-import Editor.PackageSet.Edit
+import Editor.PackageSet.Compiled
 import Editor.ProjectSearch.Compiled
 import Editor.Restore.Compiled
 import Editor.TabCommands.Compiled

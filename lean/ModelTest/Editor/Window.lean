@@ -101,6 +101,23 @@ def windowOptionChecks : List Check :=
             (parsed ["--state", "here"]).map (·.state) == some (some "/work/project/here") &&
             (parsed ["--state", "/s"]).map (·.stateDirectory) ==
               some (some (System.FilePath.mk "/s"))) },
+    { name :=
+        "the data directory is --data's, resolved against the working directory; else leanmacs under XDG_DATA_HOME, else under HOME's .local/share when that is unset or empty; and none when neither is set"
+      run :=
+        let unset := { windowEnvironment with xdgDataHome := none }
+        let xdg := { windowEnvironment with xdgDataHome := some "/xdg-data" }
+        let empty := { windowEnvironment with xdgDataHome := some "" }
+        let homeless :=
+          { windowEnvironment with
+            xdgDataHome := none, home := none }
+        pure
+          ((parsed [] xdg).map (·.data) == some (some "/xdg-data/leanmacs") &&
+            (parsed [] unset).map (·.data) == some (some "/home/ada/.local/share/leanmacs") &&
+            (parsed [] empty).map (·.data) == some (some "/home/ada/.local/share/leanmacs") &&
+            (parsed [] homeless).map (·.data) == some none &&
+            (parsed ["--data", "/d"] xdg).map (·.data) == some (some "/d") &&
+            (parsed ["--data", "here"]).map (·.data) == some (some "/work/project/here") &&
+            refused ["--data"]) },
     { name := "--state with no directory after it is refused, with the usage"
       run := pure (refused ["--state"] && refused ["f", "--state"]) },
     { name :=
@@ -116,7 +133,8 @@ def windowOptionChecks : List Check :=
           (parsed [] ==
               some
                 { file := none, config := some "/xdg/leanmacs", configGiven := false,
-                  state := some "/home/ada/.local/state/leanmacs", sysroot := none,
+                  state := some "/home/ada/.local/state/leanmacs",
+                  data := some "/home/ada/.local/share/leanmacs", sysroot := none,
                   oleans := ["/opt/core/lib/lean"], composition := true } &&
             (parsed ["--no-ime"]).map (·.file) == some none) },
     { name :=
@@ -147,7 +165,8 @@ def windowOptionChecks : List Check :=
               some
                 { file := some "/work/project/f", config := some "/xdg/leanmacs",
                   configGiven := false, state := some "/home/ada/.local/state/leanmacs",
-                  sysroot := none, oleans := ["/opt/core/lib/lean"], composition := true } &&
+                  data := some "/home/ada/.local/share/leanmacs", sysroot := none,
+                  oleans := ["/opt/core/lib/lean"], composition := true } &&
             (parsed ["f"] unset).bind (·.config) == some "/home/ada/.config/leanmacs" &&
             (parsed ["f"] empty).bind (·.config) == some "/home/ada/.config/leanmacs" &&
             (parsed ["f"] neither).map (·.config) == some none) },
@@ -157,7 +176,8 @@ def windowOptionChecks : List Check :=
         let given : Option Window.Options :=
           some
             { file := some "/work/project/f", config := some "/c", configGiven := true,
-              state := some "/home/ada/.local/state/leanmacs", sysroot := some "/s"
+              state := some "/home/ada/.local/state/leanmacs",
+              data := some "/home/ada/.local/share/leanmacs", sysroot := some "/s"
               oleans := ["/o", "/opt/core/lib/lean"], composition := false }
         pure
           ((parsed ["--config", "/c", "--sysroot", "/s", "--oleans", "/o", "--no-ime", "f"]).map
