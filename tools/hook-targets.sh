@@ -23,12 +23,16 @@
 # are read from a file and the root is given instead: the gate hands it a
 # graph written by hand (tests/hook-targets/).
 #
-# The rule, for each path, the reach of every path then unioned:
+# The rule, for each path, the reach of every path then unioned; this
+# script chooses the paths and turns Lake's graph into the lines the
+# decision shared with the Rust hook reads, and that decision is
+# tools/graph-targets.sh's:
 #
 # - A path no Lean step reads reaches nothing: one outside `lean/`,
 #   `packages/`, `tests/`, `config/`, `mise.toml`, a `Cargo.toml`,
 #   `Cargo.lock`, Rust and C sources, and this hook's own tools
-#   (`tools/hook-targets.sh`, `tools/lean-hook.sh`, `tools/package-set.sh`).
+#   (`tools/hook-targets.sh`, `tools/graph-targets.sh`, `tools/lean-hook.sh`,
+#   `tools/package-set.sh`).
 #   hk.pkl's `lean` step lists the same patterns, so a commit of docs or
 #   plans alone does not run the step at all.
 # - A path inside a package's directory (the longest that holds it, so a
@@ -47,7 +51,8 @@
 #
 # It prints nothing when nothing is reached, the line `core` when the core
 # is, and otherwise a line `package <name>` for each package reached, in
-# the graph's order. It reads no lakefile and no source text, and asks Lake
+# the graph's order (tools/graph-targets.sh's output, with the fallback
+# `core` and the label `package`). It reads no lakefile and no source text, and asks Lake
 # nothing when no path is one a Lean step reads. It exits 2, so that it
 # cannot pass by deciding over nothing, for a command line it does not
 # take, for no path, when Lake fails the query, for a graph that holds no
@@ -88,7 +93,7 @@ for path in "$@"; do
   case $path in
     lean/* | packages/* | tests/* | config/* | mise.toml | Cargo.lock | Cargo.toml | */Cargo.toml | \
       *.rs | *.c | *.h | *.cc | *.cpp | *.hpp | \
-      tools/hook-targets.sh | tools/lean-hook.sh | tools/package-set.sh)
+      tools/hook-targets.sh | tools/graph-targets.sh | tools/lean-hook.sh | tools/package-set.sh)
       relevant="$relevant$path
 "
       ;;
@@ -124,73 +129,29 @@ if [ -z "$graph" ]; then
 fi
 
 tab=$(printf '\t')
-# The paths reach awk through the environment, which, unlike `-v`, keeps
-# a backslash as it is.
-printf '%s\n' "$graph" | HOOK_PATHS=$relevant awk -F "$tab" -v root="$root" '
+# The graph as the shared decision reads it (tools/graph-targets.sh): an
+# interface package propagates, an implementation package does not. A
+# line that is not four fields or has a layer this does not know is
+# refused here, where the layers are known.
+normalized=$(printf '%s\n' "$graph" | awk -F "$tab" '
   {
     if (NF != 4 || $1 == "" || $3 == "" || $4 == "") {
       print "hook-targets: not a line of four fields: " $0 > "/dev/stderr"
-      bad = 1
       exit 2
     }
     if ($2 != "interface" && $2 != "implementation") {
       print "hook-targets: the package " $1 " is in the layer `" $2 "`; a package is interface or implementation" > "/dev/stderr"
-      bad = 1
       exit 2
     }
-    n++
-    name[n] = $1
-    layer[$1] = $2
-    dir[$1] = $3
-    requires[$1] = $4
+    print $1 "\t" $3 "\t" ($2 == "interface" ? "yes" : "no") "\t" $4
   }
+') || exit 2
 
-  # Marks `pkg` reached and every package that requires it, directly or
-  # through another.
-  function reachRequirers(pkg,    k, by, j) {
-    if (pkg in reached) return
-    reached[pkg] = 1
-    k = split(requirers[pkg], by, " ")
-    for (j = 1; j <= k; j++) reachRequirers(by[j])
-  }
-
-  END {
-    if (bad) exit 2
-    for (i = 1; i <= n; i++) {
-      if (requires[name[i]] == "-") continue
-      k = split(requires[name[i]], req, " ")
-      for (j = 1; j <= k; j++) {
-        if (!(req[j] in layer)) {
-          print "hook-targets: " name[i] " requires " req[j] ", which is no package of the graph" > "/dev/stderr"
-          exit 2
-        }
-        requirers[req[j]] = requirers[req[j]] " " name[i]
-      }
-    }
-    # Each package directory relative to the root, with a slash after it;
-    # a package outside the repository holds no staged path.
-    prefix = root "/"
-    for (i = 1; i <= n; i++) {
-      d = dir[name[i]]
-      if (substr(d, 1, length(prefix)) == prefix) rel[name[i]] = substr(d, length(prefix) + 1) "/"
-    }
-    m = split(ENVIRON["HOOK_PATHS"], paths, "\n")
-    for (p = 1; p <= m; p++) {
-      if (paths[p] == "") continue
-      best = ""
-      for (i = 1; i <= n; i++) {
-        if (!(name[i] in rel)) continue
-        r = rel[name[i]]
-        if (substr(paths[p], 1, length(r)) == r && (best == "" || length(r) > length(rel[best]))) best = name[i]
-      }
-      if (best == "") core = 1
-      else if (layer[best] == "interface") reachRequirers(best)
-      else reached[best] = 1
-    }
-    if (core) {
-      print "core"
-      exit 0
-    }
-    for (i = 1; i <= n; i++) if (name[i] in reached) print "package " name[i]
-  }
-'
+# The relevant paths, one a line, become the decision's arguments.
+set --
+while IFS= read -r path; do
+  [ -n "$path" ] && set -- "$@" "$path"
+done <<PATHS
+$relevant
+PATHS
+printf '%s\n' "$normalized" | sh "$(dirname "$0")/graph-targets.sh" --lines - --root "$root" --fallback core --label package "$@"

@@ -21,12 +21,15 @@
 # hand (tests/rust-targets/). `--print-graph` prints Cargo's graph as the
 # decision reads it, and decides nothing.
 #
-# The rule, for each path, the reach of every path then unioned:
+# The rule, for each path, the reach of every path then unioned; this
+# script chooses the paths and turns Cargo's graph into the lines the
+# decision shared with the Lean hook reads, and that decision is
+# tools/graph-targets.sh's:
 #
 # - A path the Rust step does not read reaches nothing: one that is not a
 #   Rust source, a `Cargo.toml`, `Cargo.lock`, a `clippy.toml`, `mise.toml`
 #   or this hook's own tools and fixtures (`tools/rust-targets.sh`,
-#   `tools/rust-hook.sh`, `tests/rust-targets/`). hk.pkl's `rust` step
+#   `tools/graph-targets.sh`, `tools/rust-hook.sh`, `tests/rust-targets/`). hk.pkl's `rust` step
 #   lists the same patterns.
 # - A path inside a crate's directory (the longest that holds it) reaches
 #   that crate and every crate that depends on it, directly or through
@@ -42,7 +45,9 @@
 # in the graph's order. It exits 2, so that it cannot pass by deciding over
 # nothing, for a command line it does not take, for no path, when Cargo or
 # yq fails, for a graph that holds no line, a line that is not three
-# fields, or a dependency that is no line of the graph.
+# fields, or a dependency that is no line of the graph (which
+# tools/graph-targets.sh reports as `<crate> requires <name>, which is no
+# crate of the graph`).
 set -eu
 
 usage() {
@@ -92,7 +97,7 @@ relevant=
 for path in "$@"; do
   case $path in
     *.rs | Cargo.toml | */Cargo.toml | Cargo.lock | clippy.toml | */clippy.toml | mise.toml | \
-      tools/rust-targets.sh | tools/rust-hook.sh | tests/rust-targets/*)
+      tools/rust-targets.sh | tools/graph-targets.sh | tools/rust-hook.sh | tests/rust-targets/*)
       relevant="$relevant$path
 "
       ;;
@@ -121,65 +126,24 @@ if [ -z "$graph" ]; then
 fi
 
 tab=$(printf '\t')
-# The paths reach awk through the environment, which, unlike `-v`, keeps
-# a backslash as it is.
-printf '%s\n' "$graph" | RUST_PATHS=$relevant awk -F "$tab" -v root="$root" '
+# The graph as the shared decision reads it (tools/graph-targets.sh): every
+# crate propagates to the crates that depend on it. A line that is not
+# three fields is refused here.
+normalized=$(printf '%s\n' "$graph" | awk -F "$tab" '
   {
     if (NF != 3 || $1 == "" || $2 == "" || $3 == "") {
       print "rust-targets: not a line of three fields: " $0 > "/dev/stderr"
-      bad = 1
       exit 2
     }
-    n++
-    name[n] = $1
-    dir[$1] = $2
-    deps[$1] = $3
+    print $1 "\t" $2 "\tyes\t" $3
   }
+') || exit 2
 
-  # Marks `crate` reached, and every crate that depends on it.
-  function reach(crate,    k, by, j) {
-    if (crate in reached) return
-    reached[crate] = 1
-    k = split(dependents[crate], by, " ")
-    for (j = 1; j <= k; j++) reach(by[j])
-  }
-
-  END {
-    if (bad) exit 2
-    for (i = 1; i <= n; i++) {
-      if (deps[name[i]] == "-") continue
-      k = split(deps[name[i]], dep, " ")
-      for (j = 1; j <= k; j++) {
-        if (!(dep[j] in dir)) {
-          print "rust-targets: " name[i] " depends on " dep[j] ", which is no crate of the graph" > "/dev/stderr"
-          exit 2
-        }
-        dependents[dep[j]] = dependents[dep[j]] " " name[i]
-      }
-    }
-    # Each crate directory relative to the root, with a slash after it; a
-    # crate outside the repository holds no staged path.
-    prefix = root "/"
-    for (i = 1; i <= n; i++) {
-      d = dir[name[i]]
-      if (substr(d, 1, length(prefix)) == prefix) rel[name[i]] = substr(d, length(prefix) + 1) "/"
-    }
-    m = split(ENVIRON["RUST_PATHS"], paths, "\n")
-    for (p = 1; p <= m; p++) {
-      if (paths[p] == "") continue
-      best = ""
-      for (i = 1; i <= n; i++) {
-        if (!(name[i] in rel)) continue
-        r = rel[name[i]]
-        if (substr(paths[p], 1, length(r)) == r && (best == "" || length(r) > length(rel[best]))) best = name[i]
-      }
-      if (best == "") workspace = 1
-      else reach(best)
-    }
-    if (workspace) {
-      print "workspace"
-      exit 0
-    }
-    for (i = 1; i <= n; i++) if (name[i] in reached) print "crate " name[i]
-  }
-'
+# The relevant paths, one a line, become the decision's arguments.
+set --
+while IFS= read -r path; do
+  [ -n "$path" ] && set -- "$@" "$path"
+done <<PATHS
+$relevant
+PATHS
+printf '%s\n' "$normalized" | sh "$(dirname "$0")/graph-targets.sh" --lines - --root "$root" --fallback workspace --label crate "$@"

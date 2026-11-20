@@ -42,7 +42,7 @@ local changed = new Mapping<String, Step> {
     // crate's and its dependents', any other the whole workspace's
     // (docs/dev-practices/the-gate.md, "The pre-commit hook").
     ["rust"] {
-        glob = rust_sources + List("mise.toml", "**/clippy.toml", "tools/rust-targets.sh", "tools/rust-hook.sh", "tests/rust-targets/**")
+        glob = rust_sources + List("mise.toml", "**/clippy.toml", "tools/rust-targets.sh", "tools/graph-targets.sh", "tools/rust-hook.sh", "tests/rust-targets/**")
         check = "sh tools/rust-hook.sh {{files}}"
         exclusive = true
     }
@@ -65,7 +65,7 @@ local changed = new Mapping<String, Step> {
     // The packages come from Lake's graph, so a new package needs no edit
     // here.
     ["lean"] {
-        glob = rust_sources + c_sources + List("lean/**", "packages/**", "tests/**", "config/**", "mise.toml", "tools/hook-targets.sh", "tools/lean-hook.sh", "tools/package-set.sh")
+        glob = rust_sources + c_sources + List("lean/**", "packages/**", "tests/**", "config/**", "mise.toml", "tools/hook-targets.sh", "tools/graph-targets.sh", "tools/lean-hook.sh", "tools/package-set.sh")
         check = "sh tools/lean-hook.sh {{files}}"
         exclusive = true
     }

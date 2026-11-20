@@ -2058,7 +2058,13 @@ what runs is decided from the staged paths and Lake's package graph by
 `tools/hook-targets.sh` (`lake -d ../tests/packages query
 :editorPackageGraph`: each package of the fixture set with its layer, its
 directory and the packages of the set it requires), and run by
-`tools/lean-hook.sh`, which prints the decision first: `lean-hook: core`,
+`tools/lean-hook.sh`. The decision itself, which nodes of a graph the
+staged paths reach, is one tool both hooks share,
+`tools/graph-targets.sh`: `hook-targets.sh` and the Rust hook's
+`rust-targets.sh` only choose the paths their step reads and turn their
+tool's graph into its lines (a name, a directory, whether a change to the
+node reaches the nodes that require it, and what it requires). The Lean
+hook's dispatcher prints the decision first: `lean-hook: core`,
 `lean-hook: packages <names>` or `lean-hook: nothing`. The full gate is
 not targeted: `hk check`, `mise run ci` and CI run every check, whatever
 changed. **Targeting may skip a check at commit time; the gate never
@@ -2069,7 +2075,7 @@ does.**
 | Files inside one implementation package's directory (`packages/compile/`, `tests/packages/greeting/`) | That package's checks alone (`lean-packages`, below) |
 | Files inside an interface package's directory (`tests/packages/greeting-api/`) | That package's checks and those of every package that requires it, directly or through any other package, an implementation package included: Lake puts every package a package requires, directly or not, in its workspace, so the package can import the interface, which the layer imports check allows. No other package's |
 | Rust or C inside a package's directory (`tests/packages/echo/rust/`) | That package's Lean checks, as above; the `rust` or `c` step runs as for any Rust or C |
-| Any other file a Lean step reads: the core (`lean/`), a set's own lakefile or manifest, the core's fixtures under `tests/`, `config/`, `mise.toml`, Rust or C outside a package, the hook's own tools (`tools/hook-targets.sh`, `tools/lean-hook.sh`, `tools/package-set.sh`) | The core's whole chain, `mise run lean-fmt` and `mise run ffi-test`, which run every package's checks too, as before the hook was targeted |
+| Any other file a Lean step reads: the core (`lean/`), a set's own lakefile or manifest, the core's fixtures under `tests/`, `config/`, `mise.toml`, Rust or C outside a package, the hook's own tools (`tools/hook-targets.sh`, `tools/graph-targets.sh`, `tools/lean-hook.sh`, `tools/package-set.sh`) | The core's whole chain, `mise run lean-fmt` and `mise run ffi-test`, which run every package's checks too, as before the hook was targeted |
 | Only files no Lean step reads: `docs/`, plans and notes, other tools | No Lean step: no file matches the step's glob |
 
 A path inside two packages' directories belongs to the inner one. A
@@ -2116,7 +2122,13 @@ package's test, build, format check and run.
   links `shipped-themes` and `compile`. A change to one of those packages
   does not rerun them at commit time.
 
-**Pinned by the gate.** `lean-test` runs the decision over a graph
+**Pinned by the gate.** `lean-test` runs the shared decision over a graph
+written by hand (`tests/graph-targets/graph`): a node that propagates
+reaching every node that requires it, directly or through one that does
+not propagate; a node that does not, itself alone; a nested node, a
+prefix of another's name, the fallback, and a union, each case's
+`expected` exactly; and refuses each graph under
+`tests/graph-targets/bad/` with exit 2. It runs the Lean adapter over a graph
 written by hand (`tests/hook-targets/graph`, its packages under `/repo`):
 each case under `tests/hook-targets/cases/` gives the staged paths and the
 exact decision, for one implementation package, an interface package

@@ -135,6 +135,21 @@ dir = "lean"
 run = [
   "sh ../tools/toolchain-check.sh",
   "status=0; out=$(sh ../tools/toolchain-check.sh lake-manifest.json 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF tools/lean-fmt/lean-toolchain; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # The decision both pre-commit hooks share (tools/graph-targets.sh;
+  # docs/dev-practices/the-gate.md, "The pre-commit hook"): which nodes of
+  # a graph the staged paths reach, over a graph written by hand
+  # (tests/graph-targets/graph, its nodes under /repo). For each case
+  # under tests/graph-targets/cases/, the decision must be exactly
+  # `expected`: a path in a node's directory reaches that node and, when
+  # the node propagates, every node that requires it, directly or through
+  # any other; any other path reaches the fallback. And it cannot pass by
+  # deciding over nothing: each graph under tests/graph-targets/bad/ is
+  # exit 2 with the message beside it. The adapters' own cases below
+  # (tests/hook-targets/, and tests/rust-targets/ in `test`) hold their
+  # graphs and relevance rules to it.
+  "for case in propagates stops through prefix nested fallback fallback-wins union; do c=../tests/graph-targets/cases/$case; out=$(sh ../tools/graph-targets.sh --lines ../tests/graph-targets/graph --root /repo --fallback all --label node $(cat \"$c/paths\")) || { echo \"lean-test: graph-targets failed on the case $case\"; exit 1; }; { if [ -n \"$out\" ]; then printf '%s\\n' \"$out\"; fi; } | diff \"$c/expected\" - || { echo \"lean-test: graph-targets decided otherwise on the case $case\"; exit 1; }; done",
+  "for bad in three-fields bad-propagates unknown-require empty; do b=../tests/graph-targets/bad/$bad; status=0; out=$(sh ../tools/graph-targets.sh --lines \"$b/graph\" --root /repo --fallback all --label node a/mid/X 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF \"$(cat \"$b/message\")\"; } || { printf '%s\\n' \"$out\"; echo \"lean-test: graph-targets exited $status on tests/graph-targets/bad/$bad\"; exit 1; }; done",
+  "status=0; out=$(sh ../tools/graph-targets.sh --lines ../tests/graph-targets/graph --root /repo --fallback all --label node 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'no path'; } || { printf '%s\\n' \"$out\"; exit 1; }",
   # What the pre-commit hook runs for a staged change (tools/hook-targets.sh;
   # docs/dev-practices/the-gate.md, "The pre-commit hook"), decided over a
   # package graph written by hand (tests/hook-targets/graph, its packages
