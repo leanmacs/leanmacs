@@ -136,6 +136,7 @@ built from one:
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
 | `editorPackageImports` | a package, the set | For `lake query`: each direct import of a core module by a module of those packages, one a line, with the module's kind (`library`, `test`, `linked`, `linked-test`); what the package imports check reads |
 | `editorLayerImports` | a package, the set | For `lake query`: each direct import of a workspace module by a module of the core or of those packages, one a line, with the layer of the importing and the imported package (`core`, `interface`, `implementation`); what the layer imports check reads |
+| `editorPackageGraph` | a package, the set | For `lake query`: the same packages as `editorPackages`, one a line, with each one's layer, directory and the packages of the set it requires; what the pre-commit hook decides over (`tools/hook-targets.sh`) |
 | `editorRustCrates` | a package, the set | For `lake query`: the set's package crates, one a line ("Rust in a package", below) |
 | `editorRustCrate` | a package, the set | For `lake query`: writes the crate generated from the set's package crates and prints its directory; builds nothing |
 | `editorRust` | a package, the set | The set's one Rust archive: the generated crate, built, or the core's (`rustlib`) for a set with no package crate |

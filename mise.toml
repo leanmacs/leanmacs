@@ -450,6 +450,25 @@ run = [
   # would miss the test module's import and fail here, and refuses on
   # Lake's graph.
   "status=0; out=$(sh ../tools/layer-imports-check.sh ../tests/layer-imports 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/layer-imports/graph-expected -; } || { echo \"ffi-test: the layer imports check exited $status on tests/layer-imports\"; exit 1; }",
+  # The package graph the pre-commit hook decides over
+  # (tools/hook-targets.sh; the facet `editorPackageGraph`;
+  # docs/dev-practices/the-gate.md, "The pre-commit hook"). On the fixture
+  # set, its names, layers and requires must be exactly
+  # tests/hook-targets/fixture-set-graph, in the set's order: `greeting-api`
+  # is the interface package, and `greeting-loud` requires `greeting` and
+  # `greeting-api`, the core not among them. One `lake query`, which builds
+  # nothing.
+  "lake -d ../tests/packages query :editorPackageGraph | cut -f1,2,4 | diff ../tests/hook-targets/fixture-set-graph - || { echo 'ffi-test: editorPackageGraph is not tests/hook-targets/fixture-set-graph'; exit 1; }",
+  # The decision over that graph as the hook asks for it, from Lake and
+  # git: a change to the interface package's module reaches it and the two
+  # packages that require it, and no other.
+  "out=$(sh ../tools/hook-targets.sh ../tests/packages tests/packages/greeting-api/GreetingApi.lean) && test \"$out\" = \"$(printf 'package greeting-api\\npackage greeting\\npackage greeting-loud')\" || { printf '%s\\n' \"$out\"; echo 'ffi-test: hook-targets did not reach greeting-api, greeting and greeting-loud alone'; exit 1; }",
+  # And every package of the set is one the hook targets: a file in its
+  # directory reaches that package, not the core and not nothing. A
+  # package whose directory were outside the repository, or outside the
+  # paths a Lean step reads, would fail here rather than be skipped by the
+  # hook. The graph is asked for once, then decided over with `--lines`.
+  "n=0; f=$(mktemp) && trap 'rm -f \"$f\"' EXIT && lake -d ../tests/packages query :editorPackageGraph > \"$f\" && root=$(git rev-parse --show-toplevel) && tab=$(printf '\\t') && while IFS=$tab read -r name layer dir requires; do out=$(sh ../tools/hook-targets.sh --lines \"$f\" --root \"$root\" \"${dir#\"$root\"/}/lakefile.toml\") && printf '%s\\n' \"$out\" | grep -qxF \"package $name\" || { printf '%s\\n' \"$out\"; echo \"ffi-test: a file in the directory of $name does not reach $name\"; exit 1; }; n=$((n + 1)); done < \"$f\" && test \"$n\" -eq 6 || { echo \"ffi-test: the hook targets $n of the 6 packages of the fixture set\"; exit 1; }",
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
   # developer's shell must not reach it.

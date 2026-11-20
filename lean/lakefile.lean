@@ -889,6 +889,33 @@ package_facet editorLayerImports pkg : Array String := do
         kept := kept.push line
     return kept
 
+/-- The packages of a set as a graph, for the pre-commit hook
+(`tools/hook-targets.sh`; `lake -d <set dir> query :editorPackageGraph`;
+`docs/dev-practices/the-gate.md`, "The pre-commit hook"). For each package
+a gate step runs over (`editorPackages`), in the same order, each after the
+packages it requires, one line, its fields separated by tabs: its name, its
+layer (`layerOf`), its directory, and the names of the packages it requires
+directly that are themselves such packages, separated by spaces, or `-`
+when there is none (the core is never one). It builds nothing. -/
+package_facet editorPackageGraph pkg : Array String := do
+  let ws ← getWorkspace
+  let isGatePackage (dep : Package) : Bool :=
+    dep.keyName != __name__ && dep.remoteUrl.isEmpty && !dep.leanLibs.isEmpty
+  let mut lines : Array String := #[]
+  for dep in setPackages ws pkg do
+    unless isGatePackage dep do
+      continue
+    let required :=
+      dep.depConfigs.filterMap fun cfg =>
+        match ws.findPackageByName? cfg.name with
+        | some req =>
+          if isGatePackage req then some (req.baseName.toString (escape := false)) else none
+        | none => none
+    let requires := if required.isEmpty then "-" else " ".intercalate required.toList
+    lines :=
+      lines.push s!"{dep.baseName.toString (escape := false)}\t{layerOf dep}\t{dep.dir}\t{requires}"
+  return Job.pure lines
+
 /-- The checks of the boundary with the Rust library (`FfiTest.lean`), linked
 exactly like the editor (`linkAsEditor`): `supportInterpreter` exports the
 executable's symbols, so interpreted config can find compiled definitions
