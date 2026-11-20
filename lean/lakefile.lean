@@ -1615,8 +1615,10 @@ would be left unsealed, and any write after signing breaks the seal.
 Extended attributes are cleared first, since `codesign --verify --strict`
 refuses them.
 
-The trace mixes the executable's, the shipped list's (`editorShipped`, a
-hash of its text, whose job carries the trace of every module it lists),
+The trace mixes the executable's, the shipped list's (`editorShipped`: a
+hash of the place of each line, not of the path it is copied from, so a
+clone of the checkout elsewhere has the same trace; the list's job carries
+the trace of every module it lists),
 the stage script's, this lakefile's, the version file's and the artwork's traces with
 the toolchain's, the platform's and the property list's, so the bundle is rebuilt, from nothing,
 only when one of them changed, or when the bundle is gone. The property
@@ -1652,9 +1654,11 @@ package_facet editorApp pkg : FilePath := do
       addPlatformTrace
       -- The list names each file shipped; the content of each is in the
       -- trace of the module or target that built it, which the list's job
-      -- carries.
+      -- carries. Only each line's place is hashed, not the file it is
+      -- copied from, so a checkout in another directory has the same trace.
       let shippedText := "\n".intercalate shipped.toList ++ "\n"
-      addTrace (.ofHash (pureHash shippedText) "editorShipped")
+      let places := shipped.map fun line => (line.splitOn "\t").getLastD line
+      addTrace (.ofHash (pureHash places) "editorShipped")
       let version ←
         match parseAppVersion (← IO.FS.readFile versionFile) with
         | .ok version =>

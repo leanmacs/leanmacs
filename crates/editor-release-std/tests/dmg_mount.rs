@@ -18,10 +18,20 @@
 //!    as `leanmacs-release` resolves them, and its
 //!    `CFBundleShortVersionString` the line of `lean/app/version`;
 //! 5. its `editor --version`, run with an empty environment, must print
-//!    those three.
+//!    those three;
+//! 6. a user's package set builds from the read-only volume alone
+//!    (`docs/design/lean-runtime.md`, "The app ships the toolchain"): the
+//!    image's `leanmacs headless --generate`, on a temporary config of
+//!    `tests/headless/generate`'s `init.lean`, writes a lakefile naming the
+//!    volume's set; the volume's own `lake -d <config> build :editorInstall`,
+//!    with an empty environment but `PATH=/usr/bin:/bin`, `HOME` in the
+//!    temporary directory and the app's `editor.build`, exits 0, installing
+//!    an editor whose core is the app's and whose `--probe` prints
+//!    `probe: ok`. The volume is read-only, so the build compiled nothing
+//!    of the app.
 //!
-//! It writes nothing but the mount point, which goes with the temporary
-//! directory.
+//! It writes nothing but the mount point and step 6's config, home and
+//! install, which go with the temporary directory.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -208,8 +218,82 @@ fn the_packed_image_holds_the_app_the_link_the_licence_and_the_readme() {
         format!("Leanmacs {version}\nbuild {id}\ncommit {sha}\n"),
         "editor --version"
     );
+    // 6. A user's package set, built from the read-only volume alone.
+    let config = dir.path().join("config");
+    let home = dir.path().join("home");
+    fs::create_dir_all(&config).expect("the config directory");
+    fs::create_dir_all(&home).expect("the home directory");
+    let generate = workspace.join("tests").join("headless").join("generate");
+    fs::copy(
+        generate.join("config").join("init.lean"),
+        config.join("init.lean"),
+    )
+    .expect("init.lean");
+    let launcher = app.join("Contents").join("MacOS").join("leanmacs");
+    output(
+        "env",
+        &[
+            "-i",
+            launcher.to_str().expect("UTF-8"),
+            "headless",
+            "--generate",
+            config.to_str().expect("UTF-8"),
+            generate.join("script").to_str().expect("UTF-8"),
+        ],
+    );
+    let resources = app.join("Contents").join("Resources");
+    // As the editor names it: its own path with its links resolved.
+    let set = fs::canonicalize(resources.join("lean").join("set")).expect("the volume's set");
+    let lakefile = fs::read_to_string(config.join("lakefile.toml")).expect("a generated lakefile");
+    assert_eq!(
+        lakefile,
+        fs::read_to_string(generate.join("expected-lakefile-bundle"))
+            .expect("expected-lakefile-bundle")
+            .replace("@SET@", set.to_str().expect("UTF-8")),
+        "the generated lakefile names the volume's set"
+    );
+    let install = dir.path().join("install");
+    let record = fs::read_to_string(resources.join("editor.build")).expect("editor.build");
+    let lake = resources
+        .join("lean")
+        .join("toolchain")
+        .join("bin")
+        .join("lake");
+    let built = Command::new(&lake)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", &home)
+        .env("EDITOR_INSTALL_DIR", &install)
+        .envs(record.lines().filter_map(|line| line.split_once('=')))
+        .args([
+            "-d",
+            config.to_str().expect("UTF-8"),
+            "build",
+            ":editorInstall",
+        ])
+        .output()
+        .expect("the volume's lake starts");
+    assert!(
+        built.status.success(),
+        "the default set did not build from the volume: {}{}",
+        String::from_utf8_lossy(&built.stdout),
+        String::from_utf8_lossy(&built.stderr)
+    );
+    assert_eq!(
+        fs::read(install.join("editor.core")).expect("the installed editor's core"),
+        fs::read(resources.join("editor.core")).expect("the app's core"),
+        "the editor built from the volume has the app's core"
+    );
+    let probe = output(
+        install.join("editor").to_str().expect("UTF-8"),
+        &["--probe"],
+    );
+    assert!(
+        probe.lines().any(|line| line == "probe: ok"),
+        "the editor built from the volume did not start: {probe}"
+    );
     println!(
-        "dmg-check: {} holds the app (build {id}, commit {sha}), the link, the licence and the README",
+        "dmg-check: {} holds the app (build {id}, commit {sha}), the link, the licence and the README, and the default set built from the read-only volume alone",
         image.display()
     );
 }

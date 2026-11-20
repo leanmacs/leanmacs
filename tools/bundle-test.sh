@@ -20,14 +20,9 @@
 #    Rust archive, on macOS the link stubs, and the records
 #    `editor.core`, `editor.oleans` and `editor.build` in
 #    `Contents/Resources`.
-# 2. **The pieces.** Each tool the toolchain runs a build with is there and
-#    executable (`lean`, `lake`, `clang`, `ld64.lld`), with `Init`, `Std`
-#    and `Lean`, the static libraries, the Rust archive and its system
-#    libraries, the core's and each default package's built modules and the
-#    core's glue, the set's lakefile and, on macOS, the link stubs. It
-#    prints `bundle-test: the bundle holds lean, lake, clang, ld64.lld,
-#    Init, Std, Lean, the static libraries, the Rust archive, the built core
-#    and default packages`.
+# 2. **The pieces** (tools/bundle-sets.sh `pieces`): each tool a build
+#    runs, `Init`, `Std` and `Lean`, the static libraries, the Rust archive,
+#    the built core and default packages, the link stubs and the records.
 # 3. **The headless runs.** The fixture tests/headless/bundle, whose config
 #    imports `Lean` and names a declaration of Lean's elaborator, and three
 #    fixtures of the default packages (packages/shipped-themes/tests/
@@ -53,6 +48,16 @@
 #    `--default`, both see the app as their main bundle; and with a
 #    per-user editor under the bundle's core in a data directory, the
 #    launcher starts that one and leaves no cold record.
+# 6. **The first launch** (tools/bundle-sets.sh `first-launch`): a fresh
+#    data directory and a config of `init.lean` alone start the shipped
+#    default and build nothing.
+# 7. to 9. **From the bundle alone**, macOS only (tools/bundle-sets.sh
+#    `default-set`, `sets` and `c-glue`), with the bundle's `lean/`
+#    read-only and decoys of every tool first on the PATH: the unchanged
+#    default set built by the bundle's `lake`, compiling nothing of it; a
+#    package installed from a path and a default package dropped by the
+#    bundled editor's own build; and a package with C, compiled by the
+#    bundled `clang`.
 #
 # It prints a line for each step that passed.
 set -eu
@@ -86,35 +91,9 @@ launcher=$app/Contents/MacOS/leanmacs
 lean=$app/Contents/Resources/lean
 echo "bundle-test: staged the bundle ($(($(date +%s) - started)) s)"
 
-# 2. The pieces.
-for tool in lean lake clang ld64.lld; do
-  test -f "$lean/toolchain/bin/$tool" && test -x "$lean/toolchain/bin/$tool" ||
-    fail "the bundle has no executable $tool in its toolchain"
-done
-for path in \
-  toolchain/lib/lean/Init.olean toolchain/lib/lean/Std.olean toolchain/lib/lean/Lean.olean \
-  toolchain/lib/lean/Lake.olean toolchain/include/lean/lean.h \
-  toolchain/lib/lean/libInit.a toolchain/lib/lean/libStd.a toolchain/lib/lean/libLean.a \
-  toolchain/lib/lean/libleanrt.a toolchain/lib/lean/libleancpp.a \
-  toolchain/lib/libgmp.a toolchain/lib/libuv.a \
-  target/release/libeditor_rust.a target/editor-rust/core/native-static-libs \
-  lean/lakefile.lean lean/lean-toolchain lean/lake-manifest.json \
-  lean/.lake/build/lib/lean/Editor.olean lean/.lake/build/lib/lean/Editor.trace \
-  lean/.lake/build/ir/Editor.c.o.export lean/.lake/build/ffi/glue.o \
-  set/lakefile.toml set/lake-manifest.json set/lean-toolchain \
-  set/shipped-themes/lakefile.toml set/shipped-themes/.lake/build/lib/lean/ShippedThemes/EditorPackage.olean \
-  set/compile/lakefile.toml set/compile/.lake/build/lib/lean/Compile/EditorPackage.olean; do
-  test -f "$lean/$path" || fail "the bundle has no Contents/Resources/lean/$path"
-done
-if [ "$(uname)" = Darwin ]; then
-  test -f "$lean/link-stubs/platform-version" || fail "the bundle has no link stubs"
-fi
-for record in editor.core editor.oleans editor.build; do
-  test -f "$app/Contents/Resources/$record" || fail "the bundle has no Contents/Resources/$record"
-done
-! grep -q '^LEAN_CC=' "$app/Contents/Resources/editor.build" ||
-  fail "the bundle's editor.build sets LEAN_CC, so its builds would not use the bundled clang"
-echo 'bundle-test: the bundle holds lean, lake, clang, ld64.lld, Init, Std, Lean, the static libraries, the Rust archive, the built core and default packages'
+# 2. The pieces (tools/bundle-sets.sh).
+mkdir "$dir/pieces"
+sh "$repo/tools/bundle-sets.sh" pieces "$app" "$dir/pieces" "$repo"
 
 # 3. The headless runs, through the launcher, with an empty environment,
 # from a working directory outside the bundle.
@@ -179,73 +158,26 @@ test -z "$(ls -A "$dir/data/launch")" || fail "the launcher left a cold record"
 echo 'bundle-test: the launcher started the per-user editor of the bundle core, with the app as its main bundle, and left no cold record'
 
 # 6. The first launch: a fresh data directory and a config of `init.lean`
-# alone start the shipped default, with no build.
-first=$dir/first-config
-mkdir "$first"
-cp "$generate/config/init.lean" "$first/init.lean"
-out=$(cd "$dir/elsewhere" && env -i "$launcher" --data "$dir/first-data" headless --state "$dir/first-state" \
-  --data "$dir/first-data" --generate "$first" "$dir/generate-script") || fail "the first launch exited non-zero"
-# The state directory's jobs print their own lines; the rest is the
-# fixture's.
-printf '%s\n' "$out" | grep -v '^job ' | diff "$generate/expected" - ||
-  fail "the first launch differs from tests/headless/generate/expected"
-! printf '%s\n' "$out" | grep -q 'packages:' || fail "the first launch said something of its packages: $out"
-test ! -e "$dir/first-data/editors" || fail "the first launch built an editor"
-env -i "$launcher" --data "$dir/first-data" --probe | grep -qxF "executable $app/Contents/MacOS/editor" ||
-  fail "after the first launch the launcher does not start the shipped default"
-echo 'bundle-test: the first launch, on a config of init.lean alone, started the shipped default and built nothing'
+# alone start the shipped default, with no build (tools/bundle-sets.sh).
+mkdir "$dir/first"
+sh "$repo/tools/bundle-sets.sh" first-launch "$app" "$dir/first" "$repo"
 
-# 7. The unchanged default set, built from the bundle alone (macOS only:
-# the app is macOS on arm64 only, and whether the Linux toolchain's clang
-# links the Rust archive's system libraries was never measured). The
-# bundle's lean/ is made read-only and listed; a config directory holds the
-# generated lakefile; the environment is empty but for a PATH whose first
-# directory holds decoys of every tool a build could reach for, decoy CC
-# and LEAN_SYSROOT, HOME inside the temporary directory and the bundle's
-# build record. The bundle's own lake must install an editor whose core is
-# the bundle's, which starts, compiling nothing of the bundle (a compile
-# would fail writing into the read-only tree, and the listing is compared)
-# and running no decoy.
+# 7 to 9, from the bundle alone, with its lean/ read-only and decoys of
+# every tool first on the PATH (tools/bundle-sets.sh): the unchanged default
+# set built by the bundle's lake; a package installed from a path and a
+# default package dropped, by the bundled editor's own build; and a package
+# with C, compiled by the bundled clang. macOS only: the app is macOS on
+# arm64 only, and whether the Linux toolchain's clang links the Rust
+# archive's system libraries was never measured.
 if [ "$(uname)" != Darwin ]; then
-  echo 'bundle-test: the build from the bundle alone is macOS only; skipped'
+  echo 'bundle-test: the builds from the bundle alone are macOS only; skipped'
   echo 'bundle-test: ok'
   exit 0
 fi
-decoys=$dir/decoys
-mkdir "$decoys" "$dir/home"
-for tool in lean lake clang cc ld xcrun cargo git; do
-  printf '#!/bin/sh\necho %s >>"%s"\nexit 1\n' "$tool" "$dir/decoys.log" >"$decoys/$tool"
-  chmod +x "$decoys/$tool"
-done
-: >"$dir/decoys.log"
-listing() {
-  find "$lean" -print0 | xargs -0 stat -f '%N %z %m' | sort
-}
 chmod -R a-w "$lean"
-listing >"$dir/listing-before"
-build=$dir/build-config
-mkdir "$build"
-cp "$dir/generate-config/init.lean" "$dir/generate-config/lakefile.toml" "$dir/generate-config/lean-toolchain" "$build/"
-record=$(cat "$app/Contents/Resources/editor.build")
-started=$(date +%s)
-# shellcheck disable=SC2086 # the record's lines are NAME=value words
-env -i PATH="$decoys:/usr/bin:/bin" HOME="$dir/home" CC="$decoys/cc" LEAN_SYSROOT="$decoys" \
-  EDITOR_INSTALL_DIR="$dir/install" $record \
-  "$lean/toolchain/bin/lake" -d "$build" build :editorInstall >"$dir/build.log" 2>&1 || {
-  cat "$dir/build.log" >&2
-  fail "the unchanged default set did not build from the bundle alone"
-}
-ended=$(date +%s)
-listing | diff "$dir/listing-before" - >&2 || fail "the build from the bundle changed the bundle"
-test ! -s "$dir/decoys.log" || fail "the build from the bundle ran $(tr '\n' ' ' <"$dir/decoys.log")"
-cmp -s "$dir/install/editor.core" "$app/Contents/Resources/editor.core" ||
-  fail "the editor built from the bundle has another core than the bundle's"
-"$dir/install/editor" --probe | grep -qxF 'probe: ok' || fail "the editor built from the bundle did not start"
-echo "bundle-test: the unchanged default set built from the bundle alone, read-only, with decoys first on the PATH, compiled nothing of it, and its editor has the bundle's core ($((ended - started)) s)"
-
-# 8. A package installed from a path and a default package dropped, by the
-# bundled editor's own build, from the bundle alone (tools/bundle-sets.sh).
-mkdir "$dir/sets"
-sh "$repo/tools/bundle-sets.sh" "$app" "$dir/sets" "$repo"
+for check in default-set sets c-glue; do
+  mkdir "$dir/$check"
+  sh "$repo/tools/bundle-sets.sh" "$check" "$app" "$dir/$check" "$repo"
+done
 
 echo 'bundle-test: ok'

@@ -280,8 +280,9 @@ the two to be HEAD's committer time in UTC and HEAD's SHA as git itself
 prints them (`TZ=UTC git log -1 --date=format-local:%Y%m%d%H%M%S
 --format=%cd`, `git rev-parse HEAD`), so the stamping tool is not its own
 judge; when either was set, as in CI, it takes the values given. In a
-temporary directory removed by a trap it copies the bundle with `ditto`, so what follows runs on a relocated
-copy; verifies the copy's signature with `codesign --verify --strict
+temporary directory removed by a trap it copies the bundle with `ditto
+--clone`, so what follows runs on a relocated copy, which costs no disk on
+APFS; verifies the copy's signature with `codesign --verify --strict
 --deep`; reads its `Info.plist` with `plutil` (it lints,
 `CFBundleExecutable` is `leanmacs`, the launcher, an executable file under
 `Contents/MacOS` beside the `editor` it starts,
@@ -311,9 +312,10 @@ directory, which must exit 0 and print exactly `expected` (the fixture's
 root imports `Lean`, so the bundle carries Lean's module files); runs its
 `editor headless --generate` the same way on a copy of
 `tests/headless/generate`, whose config directory holds `init.lean` alone,
-which must load the config, say that no lakefile is generated, and leave a
-`lean-toolchain` equal to `lean/lean-toolchain` and no `lakefile.toml`,
-since the bundle holds no package set to require; and runs the
+which must load the config, print exactly its `expected`, and leave a
+`lean-toolchain` equal to `lean/lean-toolchain` and a `lakefile.toml`
+equal to `tests/headless/generate/expected-lakefile-bundle` naming the
+copy's `Contents/Resources/lean/set`; and runs the
 copy's `editor --version` the same way, which must print exactly the
 version, `build <ID>` and `commit <SHA>` lines, so the Lean plist reader
 reads the keys the build writes; then the launcher's `--probe` of the
@@ -322,7 +324,19 @@ copy's editor, and of a copy of the editor outside the bundle started with
 ok`, the launcher, and the copy as CoreFoundation's main bundle with the
 app's real identifier, so an editor outside the bundle has the app's
 identity (`docs/design/lean-runtime.md`, "The app's identity across an
-exec"). Last, it builds
+exec"). Then **a user's package set from the copy alone**
+(`tools/bundle-sets.sh`, whose header says each check, as
+`bundle-test` runs them on a staged bundle; [`the-gate.md`](the-gate.md),
+"The bundle test"): the copy holds every piece a build needs; a first
+launch on a config of `init.lean` alone generates the lakefile and builds
+nothing; and, with the copy's `Contents/Resources/lean` made read-only
+and decoys of `lean`, `lake`, `clang`, `cc`, `ld`, `xcrun`, `cargo` and
+`git` first on the `PATH` (and decoy `LEAN_CC`, `CC` and `LEAN_SYSROOT`),
+the copy's own `lake` builds the unchanged default set compiling nothing
+of the copy, the copy's editor installs `hello-init` from a path and runs
+its command, drops the default package `compile` and starts the result,
+and builds the C FFI fixture `c-glue` with the bundled `clang`, whose
+command answers from its C function. Last, it builds
 `editorApp` again and checks that the bundle's executable, its
 `CodeResources` and the build's trace file keep their modification times
 and inodes: the second build copied and signed nothing. Lake's output is
@@ -357,8 +371,12 @@ must print them. Last, it builds with `LEANMACS_BUILD_ID` unset, `2026` and
 `2001020304050x`, and with `LEANMACS_COMMIT` unset, in upper case and 39
 digits long: each build must fail naming the variable and leave the old
 bundle, which must still verify. It ends `app-check: ok` with the bundle's
-size, and takes about a minute (37 s on 2026-11-17; 70 s on 2026-11-20 with
-the launcher, on an Apple M5 Max).
+size, and takes about four minutes, the steps' times printed beside them
+(37 s on 2026-11-17; 70 s on 2026-11-20 with the launcher; 247 s on
+2026-11-20 with the toolchain, on an Apple M5 Max: the package-set checks
+about 50 s, each of the clone's seven rebuilds about 25 s, as each stages
+and signs the whole toolchain again). Its time limit is 600 s. On
+2026-11-20 it ended `app-check: ok, 3.6G bundle`.
 
 To see the stamp taken from the environment, as CI gives it, run it once
 with both variables set, then rebuild from HEAD:
@@ -372,7 +390,7 @@ mise run app
 It writes nothing outside its temporary directory but that second build,
 which is shown to write nothing, opens no window and needs no person. It is
 not part of the gate because the gate does not build the bundle, which is
-about 800 MB and must be signed, and runs on Linux too. It is the check for
+about 3.9 GB and must be signed, and runs on Linux too. It is the check for
 any change to `editorApp`, to `tools/stage-bundle.sh` or to module lookup
 (`lean/Editor/ModuleLookup.lean`): such a change is not done until this
 ends `app-check: ok`. CI's build job runs it on every push to main, before
@@ -456,9 +474,22 @@ it owns, and detaches it however it ends. Then:
   build's ID, its `LeanmacsCommit` this build's commit, and its
   `CFBundleShortVersionString` the line of `lean/app/version`;
 - its `editor --version`, run with an empty environment, must print those
-  three.
+  three;
+- a user's package set must build from the read-only volume alone: the
+  image's `leanmacs headless --generate`, on a temporary config of
+  `tests/headless/generate`'s `init.lean`, writes a lakefile naming the
+  volume's set, and the volume's own `lake -d <config> build
+  :editorInstall`, with an empty environment but `PATH=/usr/bin:/bin`,
+  `HOME` in the temporary directory and the app's `editor.build`, exits 0
+  and installs an editor with the app's core that starts. The volume is
+  read-only, so nothing of the app was compiled.
 
-It writes nothing but the mount point and takes a few seconds. It does not
+It writes nothing but the mount point, the config, a home and the install,
+all in its temporary directory, and takes about 40 s (2026-11-20: 39 s, an
+image of 1,216,656,359 bytes; `mise run dmg` packed it in 97 s). It ends
+`dmg-check: <image> holds the app (build <id>, commit <sha>), the link,
+the licence and the README, and the default set built from the read-only
+volume alone`. It does not
 depend on `dmg`, so CI's build job, which runs `dmg` then `dmg-check`,
 packs once. It is not part of the gate, which builds no bundle.
 

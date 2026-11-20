@@ -17,8 +17,8 @@
 # the tool that stamps the bundle is not the only judge of what it reads
 # from HEAD. Then, in a temporary directory removed by a trap:
 #
-# 1. copies the bundle there with `ditto`, so everything after runs on a
-#    relocated copy;
+# 1. copies the bundle there with `ditto --clone`, so everything after runs
+#    on a relocated copy, which costs no disk on APFS;
 # 2. verifies the copy's signature with `codesign --verify --strict --deep`;
 # 3. reads its `Info.plist` as the system does (`plutil`): it lints, its
 #    `CFBundleExecutable` is `leanmacs`, the launcher, an executable file
@@ -53,11 +53,11 @@
 #    toolchain and `.olean` files from its own path, Lean's among them;
 # 5a. runs the copy's `editor headless --generate` the same way on a copy of
 #    the fixture `tests/headless/generate`, whose config directory holds
-#    `init.lean` alone: the config must load, printing the fixture's
-#    `expected` and the information that no lakefile is generated; the
-#    directory must then hold a `lean-toolchain` that is
-#    `lean/lean-toolchain` byte for byte, and no `lakefile.toml`, since the
-#    bundle holds no package set for a lakefile to require;
+#    `init.lean` alone: the config must load, printing exactly the
+#    fixture's `expected`; the directory must then hold a `lean-toolchain`
+#    that is `lean/lean-toolchain` byte for byte, and a `lakefile.toml`
+#    equal to `tests/headless/generate/expected-lakefile-bundle` with
+#    `@SET@` the copy's `Contents/Resources/lean/set`, the set the app ships;
 # 5b. runs the copy's `editor --version` the same way, through the launcher,
 #    with an empty environment from `/`: it must print exactly `Leanmacs
 #    <version>`, `build <build ID>` and `commit <commit>`, so the Lean plist
@@ -70,6 +70,13 @@
 #    launcher's `CFProcessPath` gives an editor outside the bundle the app's
 #    identity (docs/design/lean-runtime.md, "The app's identity across an
 #    exec");
+# 5d. runs tools/bundle-sets.sh's checks on the copy: the pieces a
+#    package-set build needs; the first launch, which builds nothing; and,
+#    with the copy's `Contents/Resources/lean` read-only and decoys of every
+#    tool first on the PATH, the unchanged default set built by the copy's
+#    `lake`, compiling nothing of it; `hello-init` installed from a path and
+#    run, and the default package `compile` dropped, by the editor's own
+#    build; and the C FFI fixture `c-glue`, compiled by the bundled `clang`;
 # 6. builds `editorApp` again and checks that it copied and signed
 #    nothing: the bundle's executable, its `CodeResources` and the build's
 #    trace file keep their modification times and inodes. Lake's output is
@@ -137,7 +144,8 @@ built="$set_dir/.lake/build/Leanmacs.app"
 trace="$set_dir/.lake/build/Leanmacs.app.trace"
 
 dir=$(mktemp -d)
-trap 'rm -rf "$dir"' EXIT
+# The read-only bits step 5d sets are put back first.
+trap 'chmod -R u+w "$dir" 2>/dev/null || true; rm -rf "$dir"' EXIT
 # The temporary directory's own path, its links resolved: CoreFoundation
 # names the main bundle so (step 5c).
 dir=$(cd "$dir" && pwd -P)
@@ -200,7 +208,7 @@ fi
 
 # 1. A relocated copy.
 app="$dir/Leanmacs.app"
-ditto "$built" "$app"
+ditto --clone "$built" "$app"
 step "copied the bundle to a temporary directory"
 
 # 2. The signature.
@@ -444,22 +452,22 @@ printf '%s\n' "$out"
 printf '%s\n' "$out" | diff "$fixtures/expected" - || fail "the headless mode printed other than tests/headless/bundle/expected"
 step "the copy's headless mode, with an empty environment from /, printed tests/headless/bundle/expected"
 
-# 5a. The generated files: the toolchain file, and no lakefile.
+# 5a. The generated files: the toolchain file, and the lakefile naming the
+# set the copy ships.
 generate=$(cd "$lean_dir/../tests/headless/generate" && pwd)
 cp -R "$generate/config" "$dir/generate-config"
 cp "$generate/script" "$dir/generate-script"
 out=$(cd / && env -i "$app/Contents/MacOS/$executable" headless --generate "$dir/generate-config" "$dir/generate-script") ||
   fail "the headless mode with --generate from the copy failed"
 printf '%s\n' "$out"
-printf '%s\n' "$out" | grep -v '^diagnostic: config:0:0: information: ' | diff "$generate/expected" - ||
+printf '%s\n' "$out" | diff "$generate/expected" - ||
   fail "the headless mode with --generate printed other than tests/headless/generate/expected"
-printf '%s\n' "$out" | grep -q '^diagnostic: config:0:0: information: no lakefile.toml is generated' ||
-  fail "the headless mode with --generate did not say that no lakefile is generated"
 cmp -s "$dir/generate-config/lean-toolchain" "$lean_dir/lean-toolchain" ||
   fail "the generated lean-toolchain is not lean/lean-toolchain"
-[ ! -e "$dir/generate-config/lakefile.toml" ] ||
-  fail "a lakefile.toml was generated, though the bundle holds no package set to require"
-step "the copy's headless mode with --generate loaded the config, and generated lean-toolchain and no lakefile"
+sed "s|@SET@|$app/Contents/Resources/lean/set|" "$generate/expected-lakefile-bundle" |
+  diff - "$dir/generate-config/lakefile.toml" ||
+  fail "the generated lakefile.toml is not expected-lakefile-bundle naming the copy's set"
+step "the copy's headless mode with --generate loaded the config, and generated lean-toolchain and a lakefile naming the copy's set"
 
 # 5b. What the copy says of its build, read from its own Info.plist.
 # Whether the bundle at $1 says version $2, build $3 and commit $4.
@@ -489,6 +497,23 @@ printf 'probe: ok\nlaunched-by %s\nbundle %s identifier %s\nexecutable %s\n' "$a
   fail "the launcher's probe of an editor outside the bundle printed other than the copy and its identifier"
 step "the bundle's editor and a copy outside it, started by the launcher, both see the copy, $identifier, as their main bundle"
 
+# 5d. A user's package set from the copy alone (tools/bundle-sets.sh): the
+# pieces a build needs are there; a first launch builds nothing; and, with
+# the copy's Contents/Resources/lean read-only and decoys of every tool
+# first on the PATH, the unchanged default set builds compiling nothing of
+# it, a package installed from a path runs its command and a default one
+# dropped starts, and a package with C builds with the bundled clang.
+for check in pieces first-launch; do
+  mkdir "$dir/sets-$check"
+  sh "$lean_dir/../tools/bundle-sets.sh" "$check" "$app" "$dir/sets-$check" "$lean_dir/.."
+done
+chmod -R a-w "$app/Contents/Resources/lean"
+for check in default-set sets c-glue; do
+  mkdir "$dir/sets-$check"
+  sh "$lean_dir/../tools/bundle-sets.sh" "$check" "$app" "$dir/sets-$check" "$lean_dir/.."
+done
+step "the copy holds every piece a package-set build needs, starts at first launch with no build, builds the default set compiling nothing of it, installs hello-init and runs its command, drops compile and starts the result, and builds c-glue's C, all from its own toolchain with its resources read-only"
+
 # 6. A second build copies and signs nothing.
 marks() {
   stat -f '%m %i' "$built/Contents/MacOS/editor" "$built/Contents/_CodeSignature/CodeResources" "$trace"
@@ -505,6 +530,7 @@ mkdir -p "$clone/tools" "$clone/target/release" "$clone/target/editor-rust" "$cl
 cp -Rpc "$lean_dir" "$clone/lean"
 cp -Rpc "$set_dir" "$clone/packages"
 cp -p "$lean_dir/../tools/stage-bundle.sh" "$clone/tools/stage-bundle.real"
+cp -p "$lean_dir/../tools/link-stubs.sh" "$clone/tools/link-stubs.sh"
 # The default set's Rust archive and the crate generated for it, with the
 # system libraries it needs and the root lock it is seeded from: the fake
 # `cargo` below builds nothing, so they must be there already.

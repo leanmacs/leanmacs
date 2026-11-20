@@ -243,7 +243,9 @@ run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
 description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh) and that a package imports only the core's API (tools/package-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, its restart through the launcher (tests/headless/restart), and the linked test and headless fixtures of each package of the fixture set and of the default set (tools/package-set.sh)"
 depends = ["lean", "launcher"]
 dir = "lean"
-timeout = "180s"
+# Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max), with
+# `bundle-test`'s builds from a staged bundle running beside it.
+timeout = "300s"
 run = [
   # The host's modules import no feature module, on Lake's module graph
   # (tools/host-imports-check.sh; docs/dev-practices/the-gate.md, "The host
@@ -1206,9 +1208,9 @@ run = "id=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-r
 # with no final newline. It ends `app-check: ok`.
 # It opens no window and needs no person.
 [tasks.app-check]
-description = "Opt-in, never part of ci; macOS on arm64 only: verify the built Leanmacs.app's signature and run its headless mode from a copy in a temporary directory, with no directory argument, an empty environment and / as the working directory (tools/app-check.sh, tests/headless/bundle)"
+description = "Opt-in, never part of ci; macOS on arm64 only: verify the built Leanmacs.app's signature and run its headless mode from a copy in a temporary directory, with no directory argument, an empty environment and / as the working directory, then build a user's package set from the copy's own toolchain with its resources read-only: the default set, a package installed and a default one dropped, and a package with C (tools/app-check.sh, tools/bundle-sets.sh, tests/headless/bundle)"
 depends = ["app"]
-timeout = "300s"
+timeout = "600s"
 run = "tools/app-check.sh lean packages"
 
 # The app's identity across a restart, on a desktop (tools/restart-check.sh;
@@ -1254,7 +1256,7 @@ run = "cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -
 # lean/app/version's line; and its `editor --version`, run with an empty
 # environment, must print those three.
 [tasks.dmg-check]
-description = "Opt-in, never part of ci; macOS only: mount dist/Leanmacs-<build-id>.dmg and check its root, its files, the app's signature, Info.plist and `editor --version` (crates/editor-release-std/tests/dmg_mount.rs)"
+description = "Opt-in, never part of ci; macOS only: mount dist/Leanmacs-<build-id>.dmg and check its root, its files, the app's signature, Info.plist and `editor --version`, and build the default set from the read-only volume alone (crates/editor-release-std/tests/dmg_mount.rs)"
 run = 'id=$(cargo run --quiet --locked -p editor-release-std --bin leanmacs-release -- build-id) && dmg="$PWD/dist/Leanmacs-$id.dmg" && { [ -f "$dmg" ] || { echo "dmg-check: no $dmg: run \`mise run dmg\`" >&2; exit 1; }; } && LEANMACS_DMG="$dmg" cargo test --locked -p editor-release-std --test dmg_mount -- --ignored --nocapture'
 
 # Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl:
