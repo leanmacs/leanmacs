@@ -358,6 +358,31 @@ def refusedToolchain? (lake how : String) : Option String := do
   guard (how == Ended.describe (.signal 9) || (how.splitOn "not permitted").length > 1)
   return s!"macOS refused to run the bundled toolchain ({lake}); remove the quarantine flag: xattr -dr com.apple.quarantine {bundle}"
 
+/-- How a step of the build that runs `lake` failed: macOS refused to run
+the bundle's `lake` (`refusedToolchain?`'s text), or it ended any other
+way (`how`). -/
+inductive LakeFailure where
+  /-- macOS refused to run it; `text` says so and what to do. -/
+  | refused (text : String)
+  /-- It ended as `how` says. -/
+  | ended (how : String)
+  deriving DecidableEq, Repr
+
+/-- How a run of the `lake` at `lake` that failed as `how` failed: the one
+place the build decides that macOS refused it (`refusedToolchain?`). -/
+def LakeFailure.of (lake how : String) : LakeFailure :=
+  match refusedToolchain? lake how with
+  | some text => .refused text
+  | none => .ended how
+
+/-- What the build says of the step `step` that failed as `failure`: a
+refusal as it is, whichever step it stopped, else the step followed by how
+it ended. -/
+def LakeFailure.describe (failure : LakeFailure) (step : String) : String :=
+  match failure with
+  | .refused text => text
+  | .ended how => s!"{step} {how}"
+
 /-- The lines of `frames`, decoded. -/
 def framesOf : Process.Frames → Array String
   | .lines lines => lines.map File.decodeBytes
@@ -432,18 +457,17 @@ def toolFailure (order : Order) (program : String) : JobM (Option String) := do
     return some (Ended.describe ran.exit)
 
 /-- Runs `command` as a streaming child, posting its lines to the buffer
-as they come: none when it exits 0, else how it ended, followed by what its
-output said is missing of a package's native tooling (`missingTooling?`);
-or, for a bundle's `lake` that macOS refused to run, that
-(`refusedToolchain?`). -/
-def streamed (command : Process.Command) : JobM (Option String) := do
-  let refused (how : String) : String := (refusedToolchain? command.program how).getD how
+as they come: none when it exits 0, else how it failed (`LakeFailure.of`):
+for a bundle's `lake` that macOS refused to run, that; else how it ended,
+followed by what its output said is missing of a package's native tooling
+(`missingTooling?`). -/
+def streamed (command : Process.Command) : JobM (Option LakeFailure) := do
   match
     ←
       Process.request
           (.start command { stdout := .lines, stderr := .lines, bound := lineBound }) with
   | .error error =>
-    return some (refused error.describe)
+    return some (LakeFailure.of command.program error.describe)
   | .ok child =>
     -- What the output said is missing of a package's native tooling, at
     -- its first line that says so.
@@ -451,7 +475,7 @@ def streamed (command : Process.Command) : JobM (Option String) := do
     for _ in [0:1000000000] do
       match ← Process.read child with
       | .error error =>
-        return some error.describe
+        return some (.ended error.describe)
       | .ok delivery =>
         let lines := framesOf delivery.stdout ++ framesOf delivery.stderr
         unless lines.isEmpty do
@@ -464,15 +488,16 @@ def streamed (command : Process.Command) : JobM (Option String) := do
         | some (.exited exit) =>
           let how := Ended.describe exit
           return some
-              (refusedToolchain? command.program how |>.getD
-                ((missing.map (s!"{how}: " ++ ·)).getD how))
+              (match LakeFailure.of command.program how with
+              | .refused text => .refused text
+              | .ended how => .ended ((missing.map (s!"{how}: " ++ ·)).getD how))
         | some (.lineTooLong _ bound) =>
-          return some s!"wrote a line longer than {bound} bytes"
+          return some (.ended s!"wrote a line longer than {bound} bytes")
         | some (.failed detail) =>
-          return some detail
+          return some (.ended detail)
         | none =>
           pure ()
-    return some "it never ended"
+    return some (.ended "it never ended")
 
 /-- The text of the file at `path`, read with `cat`; none when it cannot be
 read. -/
@@ -506,20 +531,17 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
       return ← fail (gitRequired order.fetched how)
   -- 2. Resolve.
   unless order.resolve.isEmpty do
-    if let some how←
+    if let some failure←
         streamed (lakeCommand order (#["update", "--keep-toolchain"] ++ order.resolve)) then
-      return ←
-          fail
-              (if (bundleOfLake? order.lake).isSome && how.startsWith "macOS refused" then how
-              else s!"lake update {how}")
+      return ← fail (failure.describe "lake update")
   -- 3. Rust: the set's crates, then Cargo, which every link runs.
   let crates ←
     match ← runOf (lakeCommand order #["query", ":editorRustCrates"]) queryPatience with
     | .error how =>
       return ←
           fail
-              ((refusedToolchain? order.lake how).getD
-                s!"lake query :editorRustCrates could not run: {how}")
+              ((LakeFailure.of order.lake how).describe
+                "lake query :editorRustCrates could not run:")
     | .ok ran =>
       match ran.exit with
       | .code 0 =>
@@ -529,8 +551,8 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
         post { command := outputName, arguments := said.map .str }
         return ←
             fail
-                ((refusedToolchain? order.lake (Ended.describe exit)).getD
-                  s!"lake query :editorRustCrates {Ended.describe exit}")
+                ((LakeFailure.of order.lake (Ended.describe exit)).describe
+                  "lake query :editorRustCrates")
   unless crates.isEmpty do
     if let some how← toolFailure order "cargo" then
       return ← fail (cargoRequired crates how)
@@ -543,14 +565,11 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
   let staging := stagingDirectory order.data (nextStaging present)
   let removeStaging : JobM Unit :=
     discard <| runOf (rootCommand "/bin/rm" #["-rf", staging]) checkPatience
-  if let some how←
+  if let some failure←
       streamed
         (lakeCommand order #["build", ":editorInstall"] #[("EDITOR_INSTALL_DIR", staging)]) then
     removeStaging
-    return ←
-        fail
-            (if (bundleOfLake? order.lake).isSome && how.startsWith "macOS refused" then how
-            else s!"lake build {how}")
+    return ← fail (failure.describe "lake build")
   -- 5. The new editor's core, and its record.
   let some core := (← readText (staging ++ "/editor.core")).bind coreIn
     |

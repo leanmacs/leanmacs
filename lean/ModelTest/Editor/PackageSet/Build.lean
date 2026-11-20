@@ -429,6 +429,22 @@ def packageSetBuildChecks : List Check :=
                     reply := .ok { exit := .signal 9, stdout := .empty, stderr := .empty } })
                 (streams.push resolve))
         | _ => pure false },
+    { name :=
+        "how a step running lake failed is decided once: macOS refusing a bundle's lake is said as it is at every step, and any other end after the step"
+      run :=
+        let bundled := "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain/bin/lake"
+        let killed := Ended.describe (.signal 9)
+        let refusal := (refusedToolchain? bundled killed).getD ""
+        pure
+          (LakeFailure.of bundled killed == .refused refusal &&
+            LakeFailure.of bundled "could not start: Operation not permitted" ==
+              .refused ((refusedToolchain? bundled "Operation not permitted").getD "") &&
+            LakeFailure.of "/t/bin/lake" killed == .ended killed &&
+            LakeFailure.of bundled "exited with status 1" == .ended "exited with status 1" &&
+            (LakeFailure.refused refusal).describe "lake build" == refusal &&
+            (LakeFailure.refused refusal).describe "lake update" == refusal &&
+            (LakeFailure.ended "exited with status 1").describe "lake build" ==
+              "lake build exited with status 1") },
     { name := "a probe that fails removes the staging directory and publishes nothing"
       run :=
         let facts := lakefileWith #[hello]
