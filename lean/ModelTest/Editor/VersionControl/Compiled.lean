@@ -17,7 +17,8 @@ open Editor
 
 /-- The checks of the `version-control` package
 (`Editor/VersionControl/Compiled.lean`): the ex names it binds are its own
-to bind, and the gutter's package binds none. -/
+to bind, and the gutter's package binds none; the gutter's jobs are
+restarted by their owner, and none of version control's. -/
 def versionControlPackageChecks : List Check :=
   [{  name :=
         "the package version-control binds its twelve vc- ex names, in order, each to a command it registers, vc-show, vc-review, vc-log and vc-blame taking text, and the gutter's package binds none"
@@ -32,6 +33,14 @@ def versionControlPackageChecks : List Check :=
               (fun binding => registered.commands.any (·.name == binding.command)) &&
             (registered.ex.filter (·.takes == .text)).map (·.name) ==
               #["vc-show", "vc-review", "vc-log", "vc-blame"] &&
-            VersionControl.gutterPackage.registered.ex.isEmpty) }]
+            VersionControl.gutterPackage.registered.ex.isEmpty) },
+    { name :=
+        "the gutter's package registers its three jobs, vc-gutter-head, vc-gutter-diff and vc-gutter-refs, as restarted by their owner, since its reconciler starts them again for every buffer tracked once restored; the package version-control registers none, so a read or a show running at a restart is counted among the other jobs"
+      run :=
+        pure
+          (((VersionControl.gutterPackage.registered.jobs.filter (·.restarted)).map (·.name)) ==
+              #[VersionControl.headJob, VersionControl.diffJob, VersionControl.refsJob] &&
+            VersionControl.gutterPackage.registered.jobs.size == 3 &&
+            (VersionControl.package.registered.jobs.filter (·.restarted)).isEmpty) }]
 
 end ModelTest

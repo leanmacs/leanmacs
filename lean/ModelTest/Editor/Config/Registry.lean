@@ -116,13 +116,15 @@ def inCategory (text command category : String) : Config.KeyBinding :=
 /-- The checks of the registry (`Editor/Config/Registry.lean`). -/
 def registryChecks : List Check :=
   [{  name :=
-        "the codec of a store's name is the latest owner's, an owner's codecs are replaced with its other entries, and the loop is told the codec with its owner's name and which jobs are reported"
+        "the codec of a store's name is the latest owner's, an owner's codecs are replaced with its other entries, and the loop is told the codec with its owner's name and which jobs are reported; the registry says which jobs are restarted by their owner"
       run :=
         pure <|
           let theirs : Store Nat := { counter with version := 4 }
           let registrations : Config.Registrations :=
             { codecs := #[counter.codec],
-              jobs := #[{ jobRegistration "waited" "w" with reported := true }] }
+              jobs :=
+                #[{ jobRegistration "waited" "w" with reported := true },
+                  { jobRegistration "rewatched" "r" with restarted := true }] }
           let registry :=
             (({} : Config.Registry).replaceOwned other registrations).replaceCodecs .config
               #[theirs.codec]
@@ -140,6 +142,10 @@ def registryChecks : List Check :=
               some ("config", 4) &&
             registered.reported "waited" &&
             !registered.reported "nobody" &&
+            !registered.reported "rewatched" &&
+            registry.restarted "rewatched" &&
+            !registry.restarted "waited" &&
+            !registry.restarted "nobody" &&
             !(({} : Config.Registry).replaceJobs .config
                     #[jobRegistration "plain" "p"]).registered.reported
                 "plain" },

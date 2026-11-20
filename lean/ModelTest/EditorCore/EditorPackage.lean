@@ -32,7 +32,7 @@ def shippedPackageNames : Array String :=
 every package of it is accepted, and what it registers is all theirs. -/
 def packageSetChecks : List Check :=
   [{  name :=
-        "the shipped set keeps exactly two stores across a restart, the shell's history and version control's reviews, and reports exactly the jobs a person waits on: the search, the shell's run, and version control's apply, hunk apply and commit"
+        "the shipped set keeps exactly two stores across a restart, the shell's history and version control's reviews, reports exactly the jobs a person waits on: the search, the shell's run, and version control's apply, hunk apply and commit, and leaves exactly the jobs their owner starts again to it: the files' check and follow, the workspace's find, marker search and listing, the restore's four and the gutter's three"
       run :=
         let (state, _) : ModelState × Array String :=
           Config.State.ofPackages EditorCore.EditorPackage.packages
@@ -41,7 +41,11 @@ def packageSetChecks : List Check :=
               #[("shell", "shell-history"), ("version-control", "vc-review")] &&
             (state.registry.jobs.filter (·.registration.reported)).map (·.registration.name) ==
               #["project-search", "shell-run", "vc-status-apply", "vc-hunk-apply",
-                "vc-commit-run"] },
+                "vc-commit-run"] &&
+            (state.registry.jobs.filter (·.registration.restarted)).map (·.registration.name) ==
+              #["check-files", "follow-file", "find-workspace", "find-mode-markers", "compile-list",
+                "restore", "restore-files", "restore-write", "restore-save", "vc-gutter-head",
+                "vc-gutter-diff", "vc-gutter-refs"] },
     { name :=
         "every package of the shipped set is accepted, and their names are the 23 of the package table, each once, in its order, with no package of the shipped palettes and none of the compile mode among them"
       run :=

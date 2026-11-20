@@ -473,6 +473,10 @@ structure JobRegistration where
   the next start's restore (`workJob … (reported := true)`,
   `Editor/Setup.lean`). -/
   reported : Bool := false
+  /-- Whether its owner starts it again after a restart anyway, so one
+  running when the process ends is not counted as stopped by the next
+  start's restore (`workJob … (restarted := true)`, `Editor/Setup.lean`). -/
+  restarted : Bool := false
 
 /-- A job entry of the registry: a registered job and its owner. -/
 structure JobEntry where
@@ -1015,6 +1019,12 @@ latest job entry of that name says. -/
 def reported (registry : Registry) (name : String) : Bool :=
   (registry.findJob? name).any (·.registration.reported)
 
+/-- Whether the job called `name` is started again by its owner after a
+restart anyway, so not counted as stopped by it: the latest job entry of
+that name says. -/
+def restarted (registry : Registry) (name : String) : Bool :=
+  (registry.findJob? name).any (·.registration.restarted)
+
 /-- The entry `name` runs: the latest one of that name. -/
 def find? (registry : Registry) (name : String) : Option Entry :=
   registry.entries.findRev? (·.registration.name == name)
@@ -1529,8 +1539,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
       { collected with commands := collected.commands.push { name, action := .store store step } })
   | .keepAcrossRestart codec, collected =>
     ((), { collected with codecs := collected.codecs.push codec })
-  | .job name work reported, collected =>
-    ((), { collected with jobs := collected.jobs.push { name, work, reported } })
+  | .job name work reported restarted, collected =>
+    ((), { collected with jobs := collected.jobs.push { name, work, reported, restarted } })
   | .bind keys command states desc category, collected =>
     ((),
       { collected with

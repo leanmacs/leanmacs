@@ -71,7 +71,7 @@ run against the handler that collects what it registers
 (`Editor/Config/Registry.lean`). -/
 def setupChecks : List Check :=
   [{  name :=
-        "a setup's codecs across a restart are collected in order, by the store's name, version and keep; one that keeps a store twice is refused; a job registered as reported is collected with its flag, and every other job without it"
+        "a setup's codecs across a restart are collected in order, by the store's name, version and keep; one that keeps a store twice is refused; a job registered as reported, and one registered as restarted, is collected with its flag, and every other job without either"
       run :=
         pure <|
           let setup : SetupM Unit := do
@@ -80,6 +80,8 @@ def setupChecks : List Check :=
             workJob "waited" (fun _ => Work.of (fun _ => pure ()) fun _ => pure ()) (reported :=
                 true)
             workJob "watched" fun _ => Work.of (fun _ => pure ()) fun _ => pure ()
+            workJob "rewatched" (fun _ => Work.of (fun _ => pure ()) fun _ => pure ()) (restarted :=
+                true)
           let twice : SetupM Unit := do
             counter.keptAcrossRestart
             counter.keptAcrossRestart
@@ -88,8 +90,8 @@ def setupChecks : List Check :=
             collected.codecs.map (fun codec => (codec.name, codec.declaration.version)) ==
                 #[("counter", 1)] &&
               (collected.codecs.map (·.keep (.nat 4))) == #[some (.nat 5)] &&
-              collected.jobs.map (fun job => (job.name, job.reported)) ==
-                #[("waited", true), ("watched", false)] &&
+              collected.jobs.map (fun job => (job.name, job.reported, job.restarted)) ==
+                #[("waited", true, false), ("watched", false, false), ("rewatched", false, true)] &&
               refusal twice == some "the store `counter` is kept across a restart twice"
           | .error _ => false },
     { name :=

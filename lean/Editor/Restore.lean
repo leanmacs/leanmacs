@@ -61,6 +61,13 @@ one written and no write is pending, the reconciler starts `restore-write`
 then renders the index then and saves it over this run's file
 (`Editor/Restore/Run.lean`). So a burst of changes is one write.
 
+The count of other jobs running (`Document.otherJobs`) is left out of that
+comparison (`Document.compared`): a change of the count alone starts no
+write, and the next write, which another change starts, records the count
+then. Otherwise a job's start and its end would each start a write, and a
+job that ends after the write its start caused would start another, which
+waits on the clock with nothing left to move it.
+
 The index holds, for each buffer that holds a file and each buffer
 journalled, its file, line ending, modes, live journal and the place of
 each window on it (`Restore.Place`), with its jump list; and the places a
@@ -96,8 +103,9 @@ none:
   refused and reset (`store <name>: <why>`), and the names dropped. Until
   then they are carried into every index written.
 - **The jobs** are the reported jobs running, as the host last handed them,
-  and how many other jobs run, a count only (`otherJobs`): config's jobs
-  the registry does not report.
+  and how many other jobs run, a count only (`otherJobs`): those the
+  registry neither reports nor says are restarted by their owner
+  (`Restore.otherJobs`).
 - **The held layout** (`Kept.heldLayout`), which a restore sets so that the
   host's default does not rearrange the layout it put back, is let go once
   the config generation is past it (`Loop.publish`, `Editor/Loop.lean`).
@@ -171,18 +179,18 @@ def saveJob : String :=
 def modesName : String :=
   "restore-modes"
 
-/-- How many of the jobs running, each its owner's name and its name
-(`jobs`), the index counts as other jobs (`Document.otherJobs`): config's
-jobs the registry does not report (`reported`). A package's job is
-reported when a person waits on it (`workJob … (reported := true)`), and
-otherwise its reconciler starts it again or it is not missed, as its
-package decided when it registered it: its watchers, reads and the
-restore's own jobs among them, which would otherwise be counted at every
-restart. Config's jobs are the user's, which no one sorted that way, so
-each one running is counted. What a host hands the reconciler
-(`Loop.Keys.otherJobs`). -/
-def otherJobs (reported : String → Bool) (jobs : Array (String × String)) : Nat :=
-  (jobs.filter fun (owner, name) => owner == Config.Owner.config.name && !reported name).size
+/-- How many of the jobs running, by their names (`names`), the index
+counts as other jobs (`Document.otherJobs`): every one the registry neither
+reports by name (`reported`, `workJob … (reported := true)`) nor says its
+owner starts again after a restart anyway (`restarted`,
+`workJob … (restarted := true)`), whoever registered it. A job left
+unflagged is one a restart stops for good, a save, a write or a read, so
+it is counted; a watcher a reconciler arms again for each buffer restored,
+and the restore's own jobs, which the next start runs again, are flagged
+restarted, since they would otherwise be said stopped at every restart.
+What a host hands the reconciler (`Loop.Keys.otherJobs`). -/
+def otherJobs (reported restarted : String → Bool) (names : Array String) : Nat :=
+  (names.filter fun name => !reported name && !restarted name).size
 
 /-- A journal order: a file request the host hands the file service with
 nothing to wait for, and the snapshot to release once it is handed. -/
@@ -243,6 +251,12 @@ def Document.of (state : EditorState) (run : Nat) (ended : Bool := false) : Text
       frame := some (← Frame.Record.of state)
       workspaces := kept.table.map (·.withParked kept.parked), stores := kept.stores
       jobs := kept.jobs, otherJobs := kept.otherJobs }
+
+/-- What tells an index from the last one written ("The index", in the
+module docs): `document` rendered with its count of other jobs left out,
+so that a change of the count alone starts no write. -/
+def Document.compared (document : Document) : String :=
+  { document with otherJobs := 0 }.render
 
 /-- What the host holds of the declared stores' cells for the index: a
 revision it bumps whenever they change, and the cells kept across a
@@ -492,7 +506,7 @@ def journalOrders (state : EditorState) (enabled leaving : Bool) (context : Cont
   if kept.writing then
     return { state, orders, answered }
   let document ← Document.of state run
-  if some document.render == kept.written then
+  if some document.compared == kept.written then
     return { state, orders, answered }
   return {
       state := { state with restore := { kept with writing := true } }, orders, answered

@@ -301,24 +301,31 @@ def journalReconcileChecks : List Check :=
             (indexOf started 1).map (·.jobs) == some #[job] &&
               (indexOf ended 1).map (·.jobs) == some #[] },
     { name :=
-        "the other jobs counted are config's not reported: config's reported job, and a package's job reported or not, are not"
+        "the other jobs counted are every job running that is neither reported nor restarted by its owner, whoever registered it"
       run :=
         pure <|
-          Restore.otherJobs (· == "waited")
-              #[("config", "mine"), ("config", "waited"), ("config", "theirs"),
-                ("files", "follow-file"), ("shell", "waited"), ("restore", writeJob)] ==
-            2 },
+          Restore.otherJobs (· == "waited") (fun name => name == "follow-file" || name == writeJob)
+              #["mine", "waited", "save-file", "follow-file", "working-set-write", writeJob,
+                "waited"] ==
+            3 },
     { name :=
-        "how many other jobs run, not reported, is a count the index lists, changed by their start and their end"
+        "a change of how many other jobs run starts no write of the index; the next write another change starts lists the count, and so does the one after it ends"
       run :=
         pure <|
           match driver with
           | none => false
           | some begun =>
-            let started := drained (evilFed (withRunning #[] (drained begun) (otherJobs := 2)) "l")
-            let ended := drained (evilFed (withRunning #[] started) "l")
-            (indexOf started 1).map (·.otherJobs) == some 2 &&
-              (indexOf ended 1).map (·.otherJobs) == some 0 },
+            let quiet := drained begun
+            let started := evilFed (withRunning #[] quiet (otherJobs := 2)) "l"
+            let typed := drained (evilFed (drained started) (typing "a"))
+            let ended := evilFed (withRunning #[] typed) "l"
+            let typedAgain := drained (evilFed (drained ended) (typing "b"))
+            (indexOf quiet 1).map (·.otherJobs) == some 0 && pendingNamed started writeJob == 0 &&
+              (indexOf (drained started) 1).map (·.otherJobs) == some 0 &&
+              (indexOf typed 1).map (·.otherJobs) == some 2 &&
+              pendingNamed ended writeJob == 0 &&
+              (indexOf (drained ended) 1).map (·.otherJobs) == some 2 &&
+              (indexOf typedAgain 1).map (·.otherJobs) == some 0 },
     { name :=
         "from an empty state directory the restore makes session/journals/, and typing gives a base at the first edit and then one record per event, which replay to the text"
       run :=

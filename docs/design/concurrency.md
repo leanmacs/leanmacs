@@ -747,26 +747,48 @@ Interpreted jobs run in parallel: in the experiments, 16 CPU-bound
 interpreted jobs finished in 2.3 s where one takes 1.2 s.
 
 **A job running at a restart is not restarted** (session-restore phase 2,
-decision 5). A job a person waits on registers itself reported
-(`workJob … (reported := true)`): the shell's run, the compile run,
-project search, and version control's apply, hunk apply and commit. The
-host hands the loop the reported jobs running each step
-(`Loop.Keys.running`), the session index lists them, and after a run that
-did not end cleanly the restore says each was stopped by the restart, in
-`*restore*` and in the summary (`; N jobs stopped`). A package's other
-jobs, its watchers, reads, completion and the restore's own, are not
-reported: their reconcilers start them again, or they are not missed, as
-the package decided when it registered each. Config's jobs are the user's,
-which no one sorts that way, so each of them running that is not reported
-is counted (amended in phase 2's review, so no job of the user's goes
-unsaid): the host hands the count (`Loop.Keys.otherJobs`,
-`Restore.otherJobs`), the index records it alone (`otherJobs`), and the
-restore says `and M other jobs were running: the restart stopped them` in
-`*restore*` and counts them in the summary's `; N jobs stopped` with the
-reported ones. A package's unflagged jobs are not counted, since its
-watchers run for as long as a buffer or a workspace is open, and would be
-said stopped at every restart. The index is written debounced, so a job
-that starts and the process aborts within 500 ms is not said.
+decision 5, as amended in its review). Every job running when the process
+ends uncleanly is said stopped by the next start's restore, except one its
+owner starts again anyway. A job is one of three kinds, as its owner says
+when it registers it:
+
+- **Reported** (`workJob … (reported := true)`): a job a person waits on,
+  named. The shell's run, the compile run, project search, and version
+  control's apply, hunk apply and commit. The host hands the loop the
+  reported jobs running each step (`Loop.Keys.running`), the index lists
+  them (`jobs`), and the restore names each in `*restore*`.
+- **Restarted** (`workJob … (restarted := true)`): a job its owner starts
+  again after the restart anyway, never said. `follow-file`, which
+  auto-reload's reconciler arms for each file buffer open, and
+  `check-files`, since the restore stats each file it puts back and the
+  loop checks every file buffer when the frame gains the focus; the
+  workspace's `find-workspace`, `find-mode-markers` and `compile-list`,
+  which a file's open starts, as the restore's open of each file it puts
+  back does; the gutter's `vc-gutter-head`, `vc-gutter-diff` and
+  `vc-gutter-refs`, which its reconciler starts for each buffer it tracks;
+  and the restore's own four, since the next start runs its own restore
+  and writes its own index. These run whenever a buffer opens, or for as
+  long as one is open, so counting them would say something stopped at
+  every restart, which is noise, not news.
+- **Every other job**, a package's or config's: counted. A Files save, a
+  working-set write, version control's reads and shows, a completion
+  source's job, config's own jobs. Nothing starts one of them again, so
+  its work was lost, and the person is told how much: the host hands the
+  count (`Loop.Keys.otherJobs`, `Restore.otherJobs`), the index records it
+  alone (`otherJobs`), and the restore says `and M other jobs were
+  running: the restart stopped them` in `*restore*`.
+
+The summary's `; N jobs stopped` counts the reported and the other jobs
+together. A change of the count alone starts no write of the index
+(`Document.compared`): the count is recorded by the next write another
+change starts. Otherwise each job's start and its end would start a
+write, so a run of short jobs would keep the index writing, and a job that
+ends after the write its start caused would start one more; in the
+headless fixtures, that write waits on a clock the script no longer
+moves. So the count is as current as the index's last write: a job that
+starts and the process aborts before the next write, or within the
+write's 500 ms debounce, is not said, and one that ended since is still
+counted.
 
 As built (`lean/Editor/Job.lean`), a job reaches time, files, processes
 and changes on disk:

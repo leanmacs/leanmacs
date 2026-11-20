@@ -71,6 +71,7 @@ import ModelTest.Editor.File.Cases
 import ModelTest.Editor.File.Model
 import ModelTest.Editor.FileWatch.Model
 import ModelTest.Editor.Files
+import ModelTest.Editor.Files.Compiled
 import ModelTest.Editor.Floating
 import ModelTest.Editor.FrameCommands
 import ModelTest.Editor.Fuzzy.Contract
@@ -118,6 +119,7 @@ import ModelTest.Editor.ProjectMode.Listing
 import ModelTest.Editor.ProjectSearch
 import ModelTest.Editor.ProjectSearch.Run
 import ModelTest.Editor.Restore
+import ModelTest.Editor.Restore.Compiled
 import ModelTest.Editor.Restore.Document
 import ModelTest.Editor.Restore.Frame
 import ModelTest.Editor.Restore.Journal
@@ -174,6 +176,7 @@ import ModelTest.Editor.WorkingSet.Refind
 import ModelTest.Editor.WorkingSet.Run
 import ModelTest.Editor.Workspace
 import ModelTest.Editor.Workspace.Attach
+import ModelTest.Editor.Workspace.Compiled
 import ModelTest.Editor.Workspace.Contract
 import ModelTest.Editor.Workspace.FindFile
 import ModelTest.Editor.Workspace.FindInProject
@@ -811,7 +814,15 @@ The config session's decisions are tested here too, with no elaborator:
   `version-control` package its twelve, the gutter's package none
   (`Editor/VersionControl/Compiled.lean`), each to a command it registers;
   the compile mode's six are its package's, outside the core
-  (`CompileTest.compilePackageChecks`, `packages/compile/`);
+  (`CompileTest.compilePackageChecks`, `packages/compile/`); and the
+  gutter's three jobs restarted by their owner, none of version control's;
+- `filesPackageChecks`, `workspacePackageChecks` and
+  `restorePackageChecks`: which jobs each package leaves to its owner to
+  start again after a restart, never counted as stopped: the `files`
+  package `check-files` and `follow-file` (`Editor/Files/Compiled.lean`),
+  the `workspace` package `find-workspace`, `find-mode-markers` and
+  `compile-list` (`Editor/Workspace/Compiled.lean`), and the `restore`
+  package its four (`Editor/Restore/Compiled.lean`);
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the
@@ -821,7 +832,10 @@ The config session's decisions are tested here too, with no elaborator:
   the order the headless fixtures show, the `ex` package's and then
   version control's, and the one theme is `default`; and the set keeps
   exactly the shell's history and version control's reviews across a
-  restart, and reports exactly the jobs a person waits on.
+  restart, reports exactly the jobs a person waits on, and leaves exactly
+  the files' check and follow, the workspace's find, marker search and
+  listing, the restore's four and the gutter's three to their owners to
+  start again.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -1278,8 +1292,10 @@ Session restore is checked in Lean alone too:
   one whose codec refuses its value reset and the loss said; an install
   that settles a deferred mode no config registers as well says both, in
   one sentence, whether the cell is dropped or reset; a reported
-  job's start and end each change the jobs listed; and so does the count
-  of other jobs, config's not reported alone.
+  job's start and end each change the jobs listed; the other jobs counted
+  are those neither reported nor restarted, whoever registered them; and a
+  change of their count alone starts no write, the next write recording
+  it.
 - `restoreChecks`: restoring a session (`Editor/Restore/Run.lean`) on that
   driver, from what a first loop wrote or a check wrote by hand: buffers,
   texts, line endings, modes and the focused cursor come back; a file
@@ -1400,6 +1416,9 @@ def checks : List Check :=
     languagePackageChecks ++
     exPackageChecks ++
     versionControlPackageChecks ++
+    filesPackageChecks ++
+    workspacePackageChecks ++
+    restorePackageChecks ++
     packageSetChecks ++
     windowTallyChecks ++
     windowLoopChecks ++

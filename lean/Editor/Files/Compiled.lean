@@ -45,7 +45,14 @@ starts, before any config (`Editor/Config/Packages.lean`).
   text names. Each is started by its command with an order as its
   arguments, and registered as its work (`workJob`), since its finishing
   command is built from the order. They are the package's jobs, so a
-  reload does not cancel one: a save that was started is ended.
+  reload does not cancel one: a save that was started is ended. And
+  `follow-file`, which auto-reload's reconciler starts for each file
+  buffer open (`Editor/Loop.lean`, "Auto-reload"), and `check-files` are
+  registered restarted (`workJob … (restarted := true)`): the reconciler
+  arms `follow-file` again for each file buffer a restore puts back, and
+  the restore stats each file it puts back and the loop checks every file
+  buffer when the frame gains the focus, so one running at a restart is
+  not counted as stopped by it. The others are counted, a save among them.
 - **The source**: the file source, `files`, of the category `file`
   (`Completion.Paths.shipped`, `Editor/Completion/Paths.lean`), which
   `open-file`'s prompt asks for.
@@ -57,7 +64,8 @@ This module is apart from `Editor/Files.lean` because it is what a host is
 handed, not what config calls: `Editor.lean` imports the commands, so that
 config calls them, and not this.
 
-Pinned by `ModelTest.fileCommandChecks`, on the models, and by
+Pinned by `ModelTest.fileCommandChecks`, on the models, by
+`ModelTest.filesPackageChecks` (the jobs restarted), and by
 `ConfigTest.fileChecks`, through the headless host on real files.
 -/
 
@@ -76,8 +84,8 @@ def package : Package :=
       workJob loadJob (loadWork limit)
       workJob saveJob saveWork
       workJob reloadJob (reloadWork limit)
-      workJob checkJob checkWork
-      workJob followJob followWork
+      workJob checkJob checkWork (restarted := true)
+      workJob followJob followWork (restarted := true)
       sourceJob Completion.Paths.job Completion.Paths.gather
       for source in Completion.Paths.shipped do
         defineSource source

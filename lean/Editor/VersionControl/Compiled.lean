@@ -179,13 +179,16 @@ def package : Package :=
 `vc-gutter-moved`, which its watch job posts
 (`Editor/VersionControl/Gutter.lean`), and its jobs, `vc-gutter-head`,
 `vc-gutter-diff` and `vc-gutter-refs`. A host that is not handed it tracks
-no buffer, and its windows have no gutter. -/
+no buffer, and its windows have no gutter. Its jobs are registered
+restarted (`workJob … (restarted := true)`): its reconciler starts them
+again for each buffer it tracks once a restore puts it back, so one
+running at a restart is not counted as stopped by it. -/
 def gutterPackage : Package :=
   { name := "version-control-gutter"
     setup := do
       commandWith movedName movedCommand
-      workJob headJob headWork
-      workJob diffJob diffWork
-      workJob refsJob refsWork }
+      workJob headJob headWork (restarted := true)
+      workJob diffJob diffWork (restarted := true)
+      workJob refsJob refsWork (restarted := true) }
 
 end Editor.VersionControl

@@ -179,7 +179,9 @@ structure Kept where
   staleIndexes : Array System.FilePath := #[]
   /-- Whether this run's index has been written once. -/
   indexWritten : Bool := false
-  /-- The last index document a write rendered, as its text. -/
+  /-- The last index document a write rendered, as its text, its count of
+  other jobs left out (`Document.compared`), so that a change of the count
+  alone starts no write. -/
   written : Option String := none
   /-- Whether a write of the index is pending: started and not yet
   rendered. -/

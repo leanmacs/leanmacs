@@ -827,7 +827,7 @@ def writeNow (state : String) : EditorM Unit := do
   let rendered := document.render
   setKept
       { kept with
-        written := some rendered, writing := false }
+        written := some document.compared, writing := false }
   let text ← createText rendered
   let snapshot ← (text.snapshot : TextM SnapshotId)
   ((TextSource.text text).release : TextM Unit)

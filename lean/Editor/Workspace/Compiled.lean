@@ -50,6 +50,12 @@ picks a workspace of the project to find files in
   lists them again on accept and chooses (`FindInProject.chooseWork`);
   and `project-workspace-find`, which finds a worktree not yet found
   (`FindInProject.findWork`).
+- **Which jobs a restart counts.** `find-workspace`, `find-mode-markers`
+  and `compile-list` are registered restarted (`workJob …
+  (restarted := true)`): a file's open starts them, and a restore opens
+  every file buffer it puts back the same way (`Files.takeIn`), so it
+  starts them again; one running at a restart is not counted as stopped
+  by it. The finder's and the picker's jobs are counted.
 - **The sources**: `workspace-files`, in the category
   `workspace-file`, and `project-workspaces`, in the category
   `project-workspace`, which the package gives no style or display of
@@ -80,9 +86,9 @@ def package : Package :=
       commandWith FindInProject.escapeName FindInProject.escapeCommand
       bindKeys FindInProject.escapeKeys FindInProject.escapeName (desc :=
           some FindInProject.escapeDesc) (category := some FindFile.category)
-      workJob findJob findWork
-      workJob markerJob markerWork
-      workJob Compile.listJob Compile.listWork
+      workJob findJob findWork (restarted := true)
+      workJob markerJob markerWork (restarted := true)
+      workJob Compile.listJob Compile.listWork (restarted := true)
       sourceJob FindFile.job FindFile.answer
       sourceJob FindInProject.job FindInProject.answer
       workJob FindInProject.chooseJob FindInProject.chooseWork

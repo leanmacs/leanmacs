@@ -13,12 +13,16 @@ the owner `restore` when its loop starts, before any config
 registered.
 
 - **The jobs**: `restore` and `restore-files`, the two halves of a restore;
-  `restore-write` and `restore-save`, which write this run's index.
+  `restore-write` and `restore-save`, which write this run's index. Each is
+  restarted (`workJob … (restarted := true)`): the next start runs its own
+  restore and writes its own index, so one running at a restart is not
+  counted as stopped by it.
 - **The command**: `restore-modes`, which sets a major mode a restore
   deferred until config registered it.
 - **The mode**: `restore-report`, the report's buffer's (`*restore*`).
 
-Pinned by `ModelTest.restoreChecks`, on the models, and by
+Pinned by `ModelTest.restoreChecks`, on the models, by
+`ModelTest.restorePackageChecks` (the jobs restarted), and by
 `ModelTest.packageSetChecks` over the package table.
 -/
 
@@ -30,9 +34,9 @@ def package : Package :=
     setup := do
       commandWith modesName modesCommand
       defineMode { name := reportMode }
-      workJob restoreJob restoreWork
-      workJob filesJob filesWork
-      workJob writeJob writeWork
-      workJob saveJob saveWork }
+      workJob restoreJob restoreWork (restarted := true)
+      workJob filesJob filesWork (restarted := true)
+      workJob writeJob writeWork (restarted := true)
+      workJob saveJob saveWork (restarted := true) }
 
 end Editor.Restore

@@ -260,9 +260,10 @@ def startedJobs (driver : Loop.Driver scheme) : Array (String × Option String) 
 /-- What a step of the driver's loop is handed: its `keys`, told which names
 a job is registered under, and, after the running jobs its keys hold, each
 job started and not delivered that the registry says is reported, as the
-compiled owner's: the driver keeps no owners, so of the other jobs the
-session index counts (`Restore.otherJobs`), config's, it holds none, and
-hands the count its keys hold. -/
+compiled owner's: the driver keeps no owners. Of the other jobs the
+session index counts (`Restore.otherJobs`) it hands the count its keys
+hold, and counts none of its own: it is not told which jobs are restarted
+by their owner. -/
 def handed (driver : Loop.Driver scheme) : Loop.Keys scheme :=
   let reported := driver.keys.registered.reported
   { driver.keys with

@@ -371,12 +371,13 @@ which on a macOS desktop raises the crash reporter.
 
 **What the session index is handed.** The reported jobs running
 (`Running.reported`, each with its owner and key), how many others run
-(`Running.otherJobs`, a count only of config's jobs not reported) and the
-config state's cells kept across a restart (`Config.State.keptCells`, made
-only when the reconciler forces them, at its revision `cellsRevision`) are
-in the keys of every step (`Loop.Keys.running`, `Loop.Keys.otherJobs`,
-`Loop.Keys.stores`), and the cells a restore read (`Loop.Stepped.restoredCells`) are taken in with the write a
-step asked for (`Config.State.restoreCells`). The script's `workspaces`
+(`Running.otherJobs`, a count only of the jobs neither reported nor
+restarted by their owner) and the config state's cells kept across a
+restart (`Config.State.keptCells`, made only when the reconciler forces
+them, at its revision `cellsRevision`) are in the keys of every step
+(`Loop.Keys.running`, `Loop.Keys.otherJobs`, `Loop.Keys.stores`), and the
+cells a restore read (`Loop.Stepped.restoredCells`) are taken in with the
+write a step asked for (`Config.State.restoreCells`). The script's `workspaces`
 prints the workspace table.
 
 ## One loop at a time
@@ -1488,11 +1489,11 @@ def reported (running : Running β σ scheme) : Array Restore.RunningJob :=
       key := (running.keyed.find? (·.2 == entry.id)).map (·.1) }
 
 /-- How many jobs running the session index counts as other jobs
-(`Restore.otherJobs`): config's that the registry does not report
-(`Loop.Keys.otherJobs`). -/
+(`Restore.otherJobs`): those the registry neither reports nor says are
+restarted by their owner (`Loop.Keys.otherJobs`). -/
 def otherJobs (running : Running β σ scheme) : Nat :=
-  Restore.otherJobs running.config.registry.reported
-    (running.jobs.table.entries.map fun entry => (entry.owner.name, entry.name))
+  Restore.otherJobs running.config.registry.reported running.config.registry.restarted
+    (running.jobs.table.entries.map (·.name))
 
 /-- What a step of the loop is handed, from the registry as it is now: the
 active keymaps of each view (`Config.Registry.activeMaps`: the modes of the

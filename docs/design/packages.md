@@ -227,8 +227,12 @@ may, with two registrations of the setup port (session-restore phase 2;
   `version-control` packages keep `shell-history` and `vc-review`.
 - **`workJob name work (reported := true)`** marks a job a person waits on,
   such as a build, a search or a commit: one running when the process ends
-  uncleanly is said stopped by the next start's restore. Leave it off for a
-  watcher, a read or anything a reconciler starts again.
+  uncleanly is named as stopped by the next start's restore.
+- **`workJob name work (restarted := true)`** marks a job its package
+  starts again after a restart anyway, such as a watcher a reconciler arms
+  for each buffer open: one running then is not said. Every job with
+  neither flag, a save, a write or a read, is counted by the restore as
+  stopped (`and M other jobs were running: the restart stopped them`).
 
 ### The generated root
 

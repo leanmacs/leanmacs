@@ -46,8 +46,9 @@ Format 2 added, beside the buffers, each absent when there is none:
   tree's JSON (`Editor/Restore/Value.lean`);
 - `jobs`: the reported jobs running when it was written, each
   `{"owner":o,"name":n,"key":k}`, `key` absent for a job with none;
-- `otherJobs`: how many other jobs were running then, a count only:
-  config's jobs not reported (`Restore.otherJobs`);
+- `otherJobs`: how many other jobs were running then, a count only: those
+  neither reported nor restarted by their owner (`Restore.otherJobs`), as
+  of the last write another change started;
 - and in a place, `run`.
 
 Nothing of format 1 changed shape or meaning. The number moved to 2 so that
@@ -148,8 +149,8 @@ structure Document where
   stores : Array KeptCell := #[]
   /-- The reported jobs running when it was written. -/
   jobs : Array RunningJob := #[]
-  /-- How many other jobs were running when it was written: config's not
-  reported (`Restore.otherJobs`). -/
+  /-- How many other jobs were running when it was written: those neither
+  reported nor restarted by their owner (`Restore.otherJobs`). -/
   otherJobs : Nat := 0
   deriving BEq, Repr
 

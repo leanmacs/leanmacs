@@ -587,9 +587,12 @@ inductive SetupRequest where
   /-- Register `work` as the job called `name`: given the arguments it is
   started with, a job that finishes with the command that takes its result
   to the editor (`Editor/Job.lean`). `reported` says whether one running
-  when the process ends is reported as stopped by the next start's restore
-  (`Editor/Restore/Run.lean`). -/
-  | job (name : String) (work : List Argument → Work) (reported : Bool := false)
+  when the process ends is named as stopped by the next start's restore
+  (`Editor/Restore/Run.lean`), and `restarted` whether its owner starts it
+  again after a restart anyway, so it is not counted as stopped. -/
+  |
+  job (name : String) (work : List Argument → Work) (reported : Bool := false)
+    (restarted : Bool := false)
   /-- Bind the key sequence `keys`, as written, placeholders in place, to
   the command called `command`, holding in the scheme's states named in
   `states`, or as the leader rule says when it names none, described by
@@ -815,10 +818,14 @@ starts nothing, as for `job`.
 
 `reported` is for a job a person waits on, such as a build or a search: one
 running when the process ends uncleanly is named by the next start's
-restore as stopped by the restart (`Editor/Restore/Run.lean`). -/
-def workJob (name : String) (work : List Argument → Work) (reported : Bool := false) :
-    SetupM Unit :=
-  ExceptT.lift (Program.request (port := setupPort) (.job name work reported))
+restore as stopped by the restart (`Editor/Restore/Run.lean`). `restarted`
+is for a job its owner starts again after a restart anyway, such as a
+watcher a reconciler arms for each buffer open: one running then is not
+counted. Every other job running then is counted, in the restore's
+`and M other jobs were running: the restart stopped them`. -/
+def workJob (name : String) (work : List Argument → Work) (reported : Bool := false)
+    (restarted : Bool := false) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.job name work reported restarted))
 
 /-- Registers the job called `name` that answers a completion source that
 answers later (`Editor/Completion/Later.lean`): `answer` is given the query
