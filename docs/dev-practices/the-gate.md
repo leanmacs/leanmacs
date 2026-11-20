@@ -1795,8 +1795,8 @@ package's tests are by convention are in
 | `run <sysroot> <core olean dir>` | The package's linked test, in its directory, with those two arguments. Then each `<package>/tests/headless/<name>/` on the set's editor: `editor headless <sysroot> <core olean dir> <name>/config <name>/script` must print exactly `<name>/expected` | `ffi-test` |
 
 - **The gate gives every step the fixture set**, `tests/packages/`, which
-  requires the fixture package `greeting-loud`, through it `greeting`, and
-  the default set. So the default packages, `shipped-themes` and
+  requires the fixture package `greeting-loud`, through it `greeting`, the
+  fixture package `echo`, which holds Rust, and the default set. So the default packages, `shipped-themes` and
   `compile`, are tested, built, format-checked and run through it. `run`
   is also given the default set itself, `packages/`, so those packages'
   linked tests and fixtures hold of the default set's editor, the one
@@ -1826,12 +1826,15 @@ package's tests are by convention are in
   <module> of <package>`, `package-set: headless fixture <name> of
   <package>`) and a last line with the counts, and `ffi-test` keeps the
   output and requires, over the fixture set, the fixture package's linked
-  test, `hello`, `reply`, the linked test of `shipped-themes` with the
+  test, `hello`, `reply`, the linked test of `echo` with its line (`echo
+  linked test: the contract's 7 properties hold on the Rust-backed
+  binding, each request completed through the completion queue`), the
+  linked test of `shipped-themes` with the
   line its pictures print, its fixtures `load-theme`, `package-names`,
   `shipped-themes` and `themes`, the linked test of `compile` with its
   line, `compile linked test: 7 checks passed`, its fixtures `config`,
-  `ex-names` and `shipped-formats`, and `package-set: ran 3 linked tests
-  and 9 headless fixtures over 4 packages`; and over the default set, the
+  `ex-names` and `shipped-formats`, and `package-set: ran 4 linked tests
+  and 9 headless fixtures over 5 packages`; and over the default set, the
   two default packages' linked tests and seven fixtures and `package-set:
   ran 2 linked tests and 7 headless fixtures over 2 packages`. A fixture or a linked test that is
   renamed, moved or no longer found by the naming convention fails that
@@ -1892,7 +1895,17 @@ package's tests are by convention are in
   and the fixture
   `hello`, where its command runs on the fixture set's editor.
   `greeting-loud`: three checks in its driver and the fixture `reply`,
-  which shows it registered after `greeting`. `ffi-test` also runs the
+  which shows it registered after `greeting`. `echo`: in its driver
+  (`EchoTest/Model.lean`), the three vectors of its pure CRC-32 and the
+  seven properties of its port's contract against the pure model, and one
+  check of the model's own; in its linked test (`EchoTest/Linked.lean`),
+  the same seven properties against the binding over its crate, each
+  request's completion waited for on the linked test kit's table of
+  waits, which only the completion pump ends, from the completion queue.
+  Its crate's own tests (`cargo test`): a test of the service for each
+  property on `editor-service`'s fake completer, the zlib adapter's
+  vectors, and the C functions over the real completion queue
+  (`rust/tests/wiring.rs`). `ffi-test` also runs the
   `hello` script on the default set's editor, which must answer `run
   greeting-hello: no such command`.
 - **Seen to bite, once each by hand** (2026-11-19): a failing check in
@@ -1906,6 +1919,40 @@ package's tests are by convention are in
   fails saying which line the package steps did not print.
 - **`run` builds nothing**, so `ffi-test` still only runs what `lean`
   built, and may run beside `lean-fmt`.
+- **A set's Rust crates.** `ffi-test` requires the fixture set's package
+  crates to be `echo`'s `echo-service` (`lake -d ../tests/packages query
+  :editorRustCrates`, its first two fields) and the default set's to be
+  none, so the fixture set's editor and `echo`'s linked test link the
+  archive generated from `editor-ffi` and `echo-service`, and the default
+  set's editor the core's ([packages.md](../design/packages.md), "Rust in a
+  package").
+
+## The Rust bans check
+
+```sh
+cd lean && sh ../tools/rust-bans-check.sh ../tests/packages
+```
+
+Part of `mise run ffi-test`. A package's crate depends on `editor-service`
+and on nothing else of the editor's, so neither on `editor-ffi` nor on
+another package's crate. The root `deny.toml` cannot hold that, since
+nothing in the root graph depends on either (its header says why), so the
+check runs cargo-deny's bans over the crate the package-set build generates
+from the set (`lake -d <set dir> query :editorRustCrate`), with the
+`deny.toml` the build writes beside it: the generated crate is the one
+wrapper of `editor-ffi` and of each package crate, and
+`editor-release-std` is banned. Offline, bans alone, stale wrappers errors.
+
+- **It holds of the fixture set and of the default set**: exit 0 on each.
+- **It bites**: on `tests/rust-bans/`, a set that requires the core and two
+  packages whose crates are no members of the root workspace, `bans-ffi`,
+  which depends on `editor-ffi`, and `bans-peer`, which depends on
+  `bans-ffi`'s crate, it must exit 1 with `crate 'editor-ffi = 0.1.0' is
+  explicitly banned` and `crate 'bans-ffi = 0.1.0' is explicitly banned`.
+  Nothing compiles those crates: cargo-deny reads metadata.
+- It exits 2 for a command line it does not take and when Lake fails the
+  query. It writes the generated crates under `target/editor-rust/` and
+  Lake's configuration in the sets' `.lake`, which no other task reads.
 
 ## The toolchain check
 

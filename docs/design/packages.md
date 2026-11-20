@@ -135,12 +135,17 @@ built from one:
 | `editorBase` | a package, the set | For `lake query`: the set's config base, one module a line: `Editor`, then the entry module of each package of the set outside the core |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
 | `editorPackageImports` | a package, the set | For `lake query`: each direct import of a core module by a module of those packages, one a line, with the module's kind (`library`, `test`, `linked`, `linked-test`); what the package imports check reads |
+| `editorRustCrates` | a package, the set | For `lake query`: the set's package crates, one a line ("Rust in a package", below) |
+| `editorRustCrate` | a package, the set | For `lake query`: writes the crate generated from the set's package crates and prints its directory; builds nothing |
+| `editorRust` | a package, the set | The set's one Rust archive: the generated crate, built, or the core's (`rustlib`) for a set with no package crate |
 
 `linkAsEditor` is the one link: a root module's object and those of every
-module it imports, with their symbols exported (`-rdynamic`), then the glue
-and the Rust archive, then the link arguments. `editor` and `editorLinked`
-both call it, and the core's test executables are `lean_exe`s configured
-to the same line. The editor built this way has the same size, minimum
+module it imports, with their symbols exported (`-rdynamic`), the glue of
+every package library among them, then the core's glue and the set's one
+Rust archive (`editorRust`), then the link arguments and the system
+libraries that archive needs. `editor` and `editorLinked` both call it, the
+latter for the set of the module's package, and the core's test
+executables are `lean_exe`s configured to the same line. The editor built this way has the same size, minimum
 macOS and link line as the `lean_exe` it replaced, but for its root's
 object.
 
@@ -754,7 +759,7 @@ over the process service, a major mode, ex names and contributions.
 
 ### The fixture set
 
-Two packages and a set under `tests/packages/`, used by tests alone. They
+Three packages and a set under `tests/packages/`, used by tests alone. They
 showed the path a default package and a user's package take before any
 feature moved, and they still show what the default package does not: a
 package that requires another package, and a linked test that starts a
@@ -763,9 +768,10 @@ packages too.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then the default set, and through it `shipped-themes` and `compile` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `echo`, then the default set, and through it `shipped-themes` and `compile` |
 | `tests/packages/greeting/` | The Lake package `greeting`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean`), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting` and registers `greeting-reply` again with another text; its test driver and the fixture `tests/headless/reply` |
+| `tests/packages/echo/` | The Lake package `echo`, which holds Rust ("Rust in a package", below): its crate `echo-service` (`rust/`), its glue (`ffi/glue.c`), the port of its service with a pure model, a contract and the Rust-backed binding, its test driver (`EchoTest/Model.lean`) and its linked test (`EchoTest/Linked.lean`). It registers no package |
 
 - **A package outside the core is built by the package-set build and its
   command runs.** The fixture set's editor prints `run greeting-hello: ok`
@@ -779,8 +785,12 @@ packages too.
   `greeting` after `greeting-loud` there, and with the root's entries in
   that order the scene of `reply` showed `greeting`'s text. With the
   build's order it shows `greeting-loud`'s.
-- **Every fixture lakefile is TOML**, turns every Lean linter on with
-  `warningAsError`, as the core does, and names default targets. A
+- **Every fixture lakefile is TOML but `echo`'s**, turns every Lean linter
+  on with `warningAsError`, as the core does, and names default targets.
+  `echo`'s is Lean, because a TOML lakefile cannot declare a target that
+  compiles C, `moreLinkObjs`, or the crate's target; so are those of the
+  two packages of `tests/rust-bans/`, which declare a crate and hold no
+  Lean. A
   package's test driver is not a default target, as the core's
   `model-test` is not: `mise run lean` links with the system compiler,
   which a TOML lakefile has no flags for.
@@ -793,8 +803,9 @@ packages too.
 
 **Every Lake root has its `lake-manifest.json` committed**: the core, the
 default set, each default package (`shipped-themes`, `compile`), the
-fixture set, each fixture package, the empty set, the user-side link's set
-and its package, and the formatter's host.
+fixture set, each fixture package (`echo` among them), the empty set, the
+user-side link's set and its package, the Rust bans check's set
+(`tests/rust-bans/`) and its two packages, and the formatter's host.
 
 - **A set's manifest holds path entries only.** With it present, a
   dependency the manifest does not hold fails the build (`dependency … not
@@ -823,9 +834,9 @@ and its package, and the formatter's host.
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
 `lean/` holds a copy of it** (the default set and its packages
-`shipped-themes` and `compile`, the fixture set and its two packages, the
-empty set, the user-side link's set and its package, and the formatter's
-host): `lean-fmt` refuses a root with no
+`shipped-themes` and `compile`, the fixture set and its three packages, the
+empty set, the user-side link's set and its package, the Rust bans check's
+set and its two packages, and the formatter's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file when Lake is run in that
 directory. `tools/toolchain-check.sh`, first in `lean-test`, fails when a
 tracked copy differs from the pin, naming it. A bump of the pin
@@ -1204,43 +1215,80 @@ cut none. What replaced each edge is an interface the core owns.
 
 ## Rust in a package
 
-Status: **proposal**, decided 2026-11-19; not built
-(`phase/packages/phase-11-rust-in-packages`).
+Status: **built** (`phase/packages/phase-11-rust-in-packages`). Third-party
+packages that hold Rust, built on a user's machine, are still packages
+phases 8 and 9's ("Who can build it", below).
 
 A package may need code that exists as a Rust crate, as the agent client
 protocol does: the ACP client could run on the protocol's Rust SDK instead
 of writing JSON-RPC and the protocol's types again in Lean
-([agent-hosting.md](agent-hosting.md), "Open questions"). Today no package
-can bring Rust. The editor's Rust is one static library, `editor-ffi`, which
-gathers the `editor-*` crates; the core's lakefile builds it with Cargo
-(`rustlib`) and links it, with the C glue (`lean/ffi/glue.c`), into the one
-executable (`linkAsEditor`). A Lean binding is an `@[extern]` declaration
-of a glue function (`editor_glue_…`), which turns Lean objects into plain
-data and calls a Rust function of the C ABI (`editor_ffi_…`).
+([agent-hosting.md](agent-hosting.md), "Open questions"). A package brings
+Rust as a crate of its own, a C file of glue and Lean bindings, and the
+package-set build links all of it into the one executable. A Lean binding is
+an `@[extern]` declaration of a glue function, which turns Lean objects into
+plain data and calls a Rust function of the C ABI, as the core's are
+(`editor_glue_…` over `editor_ffi_…`). The fixture package `echo`
+(`tests/packages/echo/`) is the proof.
 
 ### One Rust archive per editor, generated from the set
 
 The package-set build writes the executable's root module from the set's
 Lake packages ("The generated root", above). It writes a Rust crate the same
-way:
+way (`lean/lakefile.lean`):
 
-- A package that holds Rust has a crate of its own in its directory
-  (`packages/acp/rust/`, say), and says so in its lakefile.
-- The set's build writes a one-file crate whose dependencies are
-  `editor-ffi` and each such package's crate, of crate type `staticlib`, and
-  links its archive where `rustlib` is linked now. The editor holds one
-  archive, so one copy of Rust's standard library and one allocator.
-- The system libraries the link needs come from that crate's
-  `--print native-static-libs`, so a package's crate that needs a framework
-  adds it without an edit to the core's `linkArgs`.
-- A package's glue is a C file of its own, compiled by its own lakefile and
-  linked beside the core's glue. Its Lean modules declare `@[extern]`
-  functions of its glue, as the core's bindings do.
+| Facet | Gives |
+|---|---|
+| `editorRustCrates` (package, query) | One line per package crate of the set, in register order: the Lake package, the crate's name and its manifest, tab-separated. Empty for a set with no Rust |
+| `editorRustCrate` (package, query) | Writes the generated crate and prints its directory. Builds nothing |
+| `editorRust` (package) | Builds the generated crate's archive and gives its path. The system libraries it needs are beside the generated crate |
+
+- **A package declares its crate** in its lakefile, with a target named
+  `editorRustCrate` whose value is the path of the crate's manifest. The
+  build walks the set's packages (`setPackages`), finds the target by name,
+  runs it through its own declaration and reads the crate's name from the
+  manifest with Lake's TOML reader: no list is kept by hand.
+- **The generated crate** is keyed by the set's package crates, not by the
+  set: `target/editor-rust/core/` (crate `editor-rust`, archive
+  `target/release/libeditor_rust.a`) for a set with none, and
+  `target/editor-rust/<packages>/` (`editor-rust-<packages>`) otherwise,
+  `echo`'s being `editor-rust-echo`, archive `libeditor_rust_echo.a`. So
+  the core's executables, the default set, `tests/empty-set` and every
+  linked test of a package without Rust share one archive, the core's
+  (`rustlib`). Its `Cargo.toml` is a `staticlib` whose dependencies are
+  `editor-ffi` and each package crate, by absolute path; its `lib.rs`
+  re-exports each, so each is linked; its `Cargo.lock` is seeded from the
+  root's whenever the root's changes. The build runs `cargo fetch --locked`
+  over the root, then `cargo rustc --offline` over the generated crate into
+  the root's target directory, so dependencies are built once for every
+  generated crate (a second key builds its own library alone, about 3 s).
+  Every package crate is a member of the root workspace (`Cargo.toml`), so
+  the root lock holds its versions and the gate's Rust tasks cover it.
+- **The link** (`linkAsEditor`) takes the set's one archive, after the
+  core's glue and every package's glue, and then the system libraries
+  rustc printed for that archive (`--print native-static-libs`, written to
+  `native-static-libs` beside the generated crate), so a package's crate
+  that needs a system library links with no edit to the core's
+  `linkArgs`, which keeps only the toolchain's library directory and the
+  entry point. The core's `lean_exe`s read the core's line as a response
+  file (`@…/native-static-libs`). `echo`'s crate links the system's zlib
+  this way.
+- **A package's glue** is a C file of its own, compiled by a target of its
+  own lakefile against the toolchain's `lean.h`, and the `moreLinkObjs` of
+  the library that holds its binding alone, so Lake links it into exactly
+  the executables that import the binding. Its test driver imports no
+  binding and links no glue and no Rust.
+
+Such a package's lakefile is Lean, not TOML (the exception to "every fixture
+lakefile is TOML"): a TOML lakefile cannot declare a target that compiles C,
+`moreLinkObjs`, or the crate's target.
 
 Not chosen:
 
 - **An archive per package.** Each Rust static library carries its own copy
   of the standard library, and two in one executable clash on its symbols.
+- **An archive per set, generated into the set's `.lake`.** Sets with the
+  same crates would each bundle an 80 MB archive, and Cargo's target
+  directory must be shared anyway to reuse dependency builds.
 - **A library loaded when the editor runs** (`dlopen`). It needs no relink
   and no Cargo, which suits a third party's prebuilt binary, but
   `@[extern]` binds at link time, so every call would go through a table of
@@ -1252,21 +1300,58 @@ Not chosen:
 A package's crate runs work the way the core's services do
 ([rust-library.md](rust-library.md)): `start` with the caller's id, which
 never blocks; one completion event for each request, on the completion
-queue; `cancel`; and plain data only, never a call into Lean. Today those
-conventions live inside `editor-ffi`. They move to a small public crate
-that `editor-ffi` and every package's crate depend on: registering a
-service, posting to the completion queue, the plain-data types. It is the
-Rust counterpart of an interface package ([extension-points.md](extension-points.md)):
-a package's crate depends on it, never on `editor-ffi` or on another
-package's crate.
+queue; `cancel`; and plain data only, never a call into Lean. Those
+conventions are the crate `editor-service`, which `editor-ffi` and every
+package's crate depend on:
+
+- `queue`: the two event queues, their events and the fake source, moved
+  out of `editor-ffi`, which re-exports them. The editor holds one archive,
+  so one copy of the crate and one of each queue.
+- `service`: `Service::named("echo")`, made in a `static`, takes an id from
+  a process-wide counter that starts at 1024 on first use (the core's
+  services keep their fixed ids, 1 to 7), and `Service::complete` posts a
+  completion from the library's source with that id. A service reports
+  through the port `Completer`, whose published fake is
+  `RecordingCompleter` and whose contract, `completer_contract`, runs on the
+  fake and on the real queue (`crates/editor-service/tests/queue.rs`).
+- `buffer`: the plain-data buffers that cross the boundary, lent, borrowed
+  and reclaimed; a package's crate exports its own `<pkg>_ffi_free`.
+
+It is the Rust counterpart of an interface package
+([extension-points.md](extension-points.md)): a package's crate depends on
+it, never on `editor-ffi` or on another package's crate.
+
+**The rule is held by cargo-deny over the generated crate.** The package
+crates are members of the root workspace, so the root `deny.toml` already
+refuses an edge from one to any editor crate it has an entry for, and
+`editor-service` has none. But nothing in the root graph depends on
+`editor-ffi` or on a package crate, and cargo-deny bans a crate with no
+parents under `wrappers = []` and fails a wrapper it never meets under
+`-D unused-wrapper`, so the root cannot say "only the generated crate". The
+generator writes a `deny.toml` beside the generated crate in which the
+generated crate is the one wrapper of `editor-ffi` and of each package
+crate, and `tools/rust-bans-check.sh <set dir>` runs cargo-deny's bans over
+it. `ffi-test` runs it on the fixture set and the default set, and on
+`tests/rust-bans/`, a set of two packages whose crates depend on
+`editor-ffi` and on each other, where it must fail with both "explicitly
+banned".
 
 ### Behind a port, so it stays replaceable
 
 A package's Rust is an adapter. Its Lean side is a binding behind a port,
 with a pure model and a contract check run against both, as every port is
-(`AGENTS.md`). The port is declared by an interface package, so an
+(`AGENTS.md`). The port is to be declared by an interface package, so an
 implementation backed by Rust and one written in Lean are both
-implementation packages, and either can replace the other.
+implementation packages, and either can replace the other. Interface
+packages are not built yet, so the fixture `echo` holds its port
+(`Echo.lean`), pure model (`Echo/Model.lean`), contract
+(`Echo/Contract.lean`) and binding (`Echo/Real.lean`) in one package: its
+test driver runs the contract against the model, and its linked test
+against the binding over the linked test kit's table of waits and
+completion pump, where each request completes through the completion
+queue. Its port holds no Rust, so splitting it out later is a move of
+modules. No command uses its service: a package cannot add a service to
+the job runner's `Job.Services` yet, which is the ACP roadmap's.
 
 The port is phrased in the editor's terms, not the crate's. For ACP the
 crate holds the JSON-RPC connection on its own threads and hands Lean

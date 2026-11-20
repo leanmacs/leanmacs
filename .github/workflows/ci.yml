@@ -83,8 +83,8 @@ jobs:
       # in target/. rust-cache prunes the workspace's own crates before it
       # saves (it keeps only each profile's build/, .fingerprint/ and deps/
       # entries for non-workspace packages; cache-workspace-crates is off),
-      # so the workspace crates and the target/release/libeditor_ffi.a
-      # Lake's `rustlib` builds are rebuilt on every run; the Lean modules
+      # so the workspace crates and the Rust archives Lake's `editorRust`
+      # builds (target/release/libeditor_rust*.a) are rebuilt on every run; the Lean modules
       # still come from Lake's cache below. Saved even when the gate fails, so a red main still moves the cache to the
       # current Cargo.lock. Saved only from main: caches saved under a
       # branch or a PR's refs/pull/N/merge are invisible to main, but every

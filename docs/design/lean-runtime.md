@@ -210,7 +210,7 @@ The staged pieces the relink used:
 | `core/lib/` | The `.olean` file of each module the built editor's link names, less its root (`lean/.lake/build/lib/lean`) | 217 | 163.7 MB |
 | `core/obj/` | The object of each of those modules, `.c.o.export` (`lean/.lake/build/ir`) | 217 | 17.3 MB |
 | `core/glue.o` | The glue object, as `mise run lean` compiled it | 1 | 0.1 MB |
-| `core/libeditor_ffi.a` | The Rust archive (`target/release`) | 1 | 82.0 MB |
+| `core/libeditor_ffi.a`, now `core/libeditor_rust.a` | The Rust archive (`target/release`): as measured, `editor-ffi`'s; now the crate the package-set build generates for the default set, which holds no package crate, so the core's ([packages.md](packages.md), "Rust in a package"). Beside it now `core/native-static-libs`, the system libraries rustc printed for it, which the link passes when it links against an SDK | 1 | 82.0 MB |
 | `core/lakefile.toml`, `core/lake-manifest.json` | `tools/user-link/core`: they make `core/` a Lake package with no target | 2 | 772 bytes |
 | `stubs/` | `tools/link-stubs.sh` on the built `editor`: 14 stubs and `platform-version` | 15 | 8,681 bytes |
 | `package/` | As measured, `tests/user-link/package`: `lakefile.lean`, `Main.lean`, `UserLinkFixture.lean`. Now the package's sources (`UserLinkFixture.lean`, `UserLink/EditorPackage.lean`), `tools/user-link/package/lakefile.lean` and the generated `EditorSetRoot.lean`: 4 files, 9,183 bytes | 3 | 10,028 bytes |
@@ -276,6 +276,8 @@ and its response file, with the 217 objects under `<stage>/core/obj` cut:
 -L <stage>/toolchain/lib/libc -fuse-ld=lld -lleancpp -lInit -lStd -lLean -lleanrt -lc++ -lLake
 -lLeanExport -lgmp -luv -lssl -lcrypto -Wl,-dead_strip
 ```
+
+(As measured; the archive is now `<stage>/core/libeditor_rust.a`.)
 
 The first two objects are the package's own modules, and `-rdynamic` is
 from `supportInterpreter`. From the editor's objects to `-dependency_info`

@@ -42,6 +42,17 @@ completions"):
 - **Plain data only.** The service never calls Lean: a dedicated Lean task,
   the completion pump, pulls the queue.
 
+These conventions are a crate of their own, `editor-service`, which
+`editor-ffi` and the crate of every package that holds Rust depend on: the
+two event queues (`queue`, which `editor-ffi`'s `events` re-exports), the
+registering of a service and its completion (`Service`, whose id a
+process-wide counter gives from 1024 up; the core's services keep their
+fixed ids below it and report with `events::complete`), the port a service
+reports through (`Completer`, with the fake `RecordingCompleter` and the
+contract `completer_contract`), and the buffers that cross the boundary
+(`buffer`). A package's crate depends on it and on nothing else of the
+editor's ([packages.md](packages.md), "Rust in a package").
+
 ## Timers
 
 The first service behind the completion queue
@@ -1802,7 +1813,9 @@ upstream's own crate vendored unmodified under `vendor/`
 MIT; `vendor/README.md`), whose build compiles
 the generated `parser.c` (and the grammar's scanner, if it has one) with
 `cc` when Cargo builds the library; the objects end up in
-`libeditor_ffi.a`, which Lake links. Nothing is fetched, generated or
+the editor's one Rust archive, the crate the package-set build generates
+from `editor-ffi` and the set's package crates (`libeditor_rust.a` for a
+set with none), which Lake links. Nothing is fetched, generated or
 loaded at run time. Lean is vendored because no crates.io crate builds
 against the pinned library: the one Lean grammar crate, `tree-sitter-lean4`,
 has a normal dependency on tree-sitter 0.25, which cannot coexist with
