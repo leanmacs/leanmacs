@@ -72,7 +72,7 @@ the buffer with `Package build failed: <how> after <t>`, says `packages:
 `*package-build*` (`bufferName`) is made read-only by the job's first post
 (`startedName`), its text replaced by a header line, and shown through the
 display rules for the opener `package-build`; output is appended as it
-arrives, batched as the compile mode's is (`batchPause`), and the job's
+arrives, one post for each delivery of the child's lines, and the job's
 end appends `Package build finished after <t>` or `Package build failed:
 <how> after <t>`.
 -/
@@ -103,10 +103,6 @@ def opener : String :=
 /-- The most bytes a line of a child's output may be. -/
 def lineBound : Nat :=
   65536
-
-/-- How long the job pauses after each post of output, in milliseconds. -/
-def batchPause : Nat :=
-  50
 
 /-- How long `git --version` and `cargo --version` may take. -/
 def checkPatience : Nat :=
@@ -394,7 +390,7 @@ def streamed (command : Process.Command) : JobM (Option String) := do
         | some (.failed detail) =>
           return some detail
         | none =>
-          sleep batchPause
+          pure ()
     return some "it never ended"
 
 /-- The text of the file at `path`, read with `cat`; none when it cannot be

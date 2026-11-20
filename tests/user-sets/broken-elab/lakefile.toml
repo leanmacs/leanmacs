@@ -1,0 +1,12 @@
+# A fixture package of a user's package set, for tools/user-sets-test.sh
+# and tools/user-sets-check.sh (docs/design/packages.md, "User package
+# sets"): see BrokenElab.lean for what it shows. It is built in place, into its own
+# .lake/, as the fixture set's packages are.
+name = "broken-elab"
+
+[[require]]
+name = "editor-core"
+path = "../../../lean"
+
+[[lean_lib]]
+name = "BrokenElab"

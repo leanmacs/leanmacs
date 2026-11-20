@@ -17,7 +17,9 @@ check that the core imports no module of a feature that moves out of it,
 the check that a package imports only the core's API, the checks of the Lean/Rust boundary, the contract checks against
 the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); the headless mode run from a staged app
-bundle (`mise run bundle-test`); the C format check; and the workflow lint
+bundle (`mise run bundle-test`); a user's package set built, installed and
+restarted into end to end through the launcher (`mise run
+user-sets-test`); the C format check; and the workflow lint
 (`mise run workflow-lint`: actionlint, zizmor and the structural check of
 the CI workflow). `hk check` runs the same task, and CI runs it, unchanged,
 on `macos-26` and on `ubuntu-24.04` for every push and pull request
@@ -1971,6 +1973,49 @@ package's tests are by convention are in
   with no git, says git is required and how to get it, writes nothing in
   the data directory, and still answers the next command; `match`, run
   with `--generate`, starts no build.
+
+## The user sets test
+
+`mise run user-sets-test` (`tools/user-sets-test.sh`, part of `ci`, after
+`lean` and `launcher`, with a time limit of 600 s) runs a user's package
+set end to end through the app's launcher
+([packages.md](../design/packages.md), "User package sets"). Everything it
+writes is in a fresh temporary directory, with `HOME` and `XDG_*` pointed
+inside it, but the fixture packages' own `.lake/` under `tests/user-sets/`.
+
+- **A, install, a failing link, a dropped default package**
+  (`tests/user-sets/install-script`), three processes started by
+  `leanmacs --data … --default packages/.lake/build/bin/editor -- headless
+  --state … --data …`. The shipped default loads a lakefile that requires
+  the default set and starts no build, and refuses the config, which
+  imports `HelloInit`; it opens a file, types, splits and opens a tab, and
+  `:package-install hello-init <dir>` builds the set and restarts into
+  version 1, which restores the session (the unsaved text, the split, the
+  tab, the summary) and answers `hello-init: initialize ran`.
+  `:package-install broken-link <dir>` fails at the link: the echo says
+  the editor keeps running, and it does. `:package-remove broken-link`
+  matches version 1 and builds nothing. `:package-remove compile` expands
+  the default set and restarts into version 2, where `run compile` has no
+  such command. Its output, with the paths, the core's identity and the
+  publish counts written `@DIR@`, `@REPO@`, `@CORE@` and `@N@`, and job
+  lines and the build buffer's views left out, must equal
+  `expected-install`; the build buffer's views must hold `Package build
+  failed: lake build exited with status 1` and the linker's
+  `leanmacs_no_such_symbol`; the lakefile must equal `expected-lakefile`
+  (the core, the shipped themes and `hello-init`, by absolute path); the
+  data directory must hold exactly versions 1 and 2 of the core and no
+  staging directory; the launcher's probe must choose version 2; no
+  hand-over or cold record may be left; and the default set's editor must
+  read as up to date.
+- **B, a set that fails to elaborate** (`elab-script`): on the shipped
+  default, the build buffer ends failed with Lean's `Type mismatch`, the
+  editor keeps running, and nothing is published.
+- **C, git missing**, through the launcher, with no git on the PATH: it
+  says git is required and how to get it, and writes nothing in the data
+  directory.
+
+Measured on macOS arm64 (2026-11-20): about 17 s, cold fixture packages
+included; A's three processes about 13 s.
 
 ## The Rust bans check
 

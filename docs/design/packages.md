@@ -1036,7 +1036,9 @@ build failed: <how> after <t>`, says `packages: <how>; this editor keeps
 running` and publishes nothing, so the previous executable stays the
 launcher's choice. The buffer is read-only, starts with a header line, is
 shown through the display rules for the opener `package-build`, has the
-child's output appended as it arrives (batched every 50 ms) and ends with
+child's output appended as it arrives (a post for each delivery of its
+lines; no pause on the job clock, which the headless mode's is fake) and
+ends with
 `Package build finished after <t>` or the failure.
 
 ### Where per-user editors live

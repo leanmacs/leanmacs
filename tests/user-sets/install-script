@@ -1,0 +1,71 @@
+# The script of tools/user-sets-test.sh, A, run through the launcher with
+# `@NOTE@` a file of two lines, `@HELLO@` the fixture package `hello-init`
+# and `@LINK@` the fixture package `broken-link`. Three processes run it,
+# each going on after the last `restarted` the one before passed.
+
+# P1, the shipped default: its lakefile requires the default set, the set
+# it was built from, so no build starts; the config imports `HelloInit`,
+# which is not linked, and is refused.
+reload
+settle
+resize 640 480
+key : Semicolon shift
+commit e @NOTE@
+key <Enter> Enter -
+indexed
+key i KeyI -
+key x KeyX -
+key <Escape> Escape -
+run window-split-vertically
+run tab-new
+indexed
+journalled
+key : Semicolon shift
+commit package-install hello-init @HELLO@
+key <Enter> Enter -
+restarted 300
+
+# P2, version 1: the session as it was, the config installed, and the
+# package's command answering with what its `initialize` set.
+settle
+reload
+settle
+resize 640 480
+indexed
+journalled
+scene
+run hello-init
+scene
+# A package whose link fails: the build is shown failed and this editor
+# keeps running.
+key : Semicolon shift
+commit package-install broken-link @LINK@
+key <Enter> Enter -
+indexed 300
+settle
+indexed 300
+scene
+run hello-init
+# Removing it again matches version 1: no build.
+key : Semicolon shift
+commit package-remove broken-link
+key <Enter> Enter -
+indexed 300
+settle
+indexed 300
+scene
+# Dropping a default package expands the default set: version 2.
+key : Semicolon shift
+commit package-remove compile
+key <Enter> Enter -
+restarted 300
+
+# P3, version 2: compile is gone, hello-init is still there.
+settle
+reload
+settle
+resize 640 480
+indexed
+run compile
+run hello-init
+scene

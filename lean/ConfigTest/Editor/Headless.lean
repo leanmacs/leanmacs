@@ -1078,7 +1078,7 @@ def jobChecks (context : Context) : List Check :=
               (← stage.output.get) ==
                 #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"] },
     { name :=
-        "spawn and join are directives of a script, a spawn with no name is refused, and a join that ran out is described with its line"
+        "spawn and join are directives of a script, join, restarted and indexed with an optional patience in seconds, a spawn with no name and a patience that is no number are refused, and a join that ran out is described with its line"
       run :=
         let refusal (text : String) : String :=
           match Headless.script text with
@@ -1088,7 +1088,15 @@ def jobChecks (context : Context) : List Check :=
         pure
           ((Headless.script "spawn count\n  join  \nspawn  two words\n").toOption ==
               some
-                #[⟨1, .request (.spawn "count")⟩, ⟨2, .join⟩, ⟨3, .request (.spawn "two words")⟩] &&
+                #[⟨1, .request (.spawn "count")⟩, ⟨2, .join none⟩,
+                  ⟨3, .request (.spawn "two words")⟩] &&
+            (Headless.script "join 300\nrestarted\nrestarted 300\n").toOption ==
+              some #[⟨1, .join (some 300)⟩, ⟨2, .restarted none⟩, ⟨3, .restarted (some 300)⟩] &&
+            (Headless.script "indexed\nindexed 300\n").toOption ==
+              some #[⟨1, .indexed none⟩, ⟨2, .indexed (some 300)⟩] &&
+            (refusal "indexed soon\n").startsWith "line 1: " &&
+            (refusal "join soon\n").startsWith "line 1: " &&
+            (refusal "restarted x\n").startsWith "line 1: " &&
             (refusal "reload\nspawn\n").startsWith "line 2: " &&
             (working.splitOn "line 12").length == 2 &&
             working != Headless.Failure.describe 30000 (.reloading (some 12)) &&
@@ -1213,7 +1221,7 @@ The command line itself is covered by one run of the real executable on the
 fixture under `tests/headless`, in the `ffi-test` task. -/
 def scriptChecks (context : Context) : List Check :=
   [{  name :=
-        "restarted is a directive with its line's number, refused with anything after it, and the error message of a line that is no directive lists it; a run resumed past k restarteds runs the script from the line after the k-th"
+        "restarted is a directive with its line's number, refused with anything after it but a number of seconds, and the error message of a line that is no directive lists it; a run resumed past k restarteds runs the script from the line after the k-th"
       run :=
         let script :=
           #[⟨1, .request .scene⟩, ⟨2, .restarted⟩, ⟨3, .settle⟩, ⟨4, .restarted⟩,
@@ -1234,7 +1242,7 @@ restarted now" with
               Headless.script
                 "scene
 wait 2" with
-            | .error message => (message.splitOn " restarted,").length == 2
+            | .error message => (message.splitOn " restarted [<seconds>],").length == 2
             | .ok _ => false) &&
             Headless.resumed script 0 == script &&
             Headless.resumed script 1 == #[⟨3, .settle⟩, ⟨4, .restarted⟩, ⟨5, .request .show⟩] &&
@@ -1252,7 +1260,7 @@ wait 2" with
               | .ok _ => false) &&
             match Headless.script "scene\nwait 2" with
             | .error message =>
-              (message.splitOn ", indexed,").length == 2 &&
+              (message.splitOn ", indexed [<seconds>],").length == 2 &&
                 (message.splitOn " workspaces,").length == 2
             | .ok _ => false },
     { name :=

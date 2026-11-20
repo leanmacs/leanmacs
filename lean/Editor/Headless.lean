@@ -2585,8 +2585,10 @@ inductive Directive where
   reload is running. This one is the driver's own. -/
   | settle
   /-- Wait until the editor thread has handled everything asked so far and no
-  job is running. The driver's own, too. -/
-  | join
+  job is running, for at most this many seconds, or the driver's patience
+  (`settlePatience`) with none (`join <seconds>`, for a script that waits
+  on a package-set build). The driver's own, too. -/
+  | join (seconds : Option Nat := none)
   /-- Send a press of this key, with no text, as the window would. -/
   | key (key : Key)
   /-- Send this text, as an input method's composition would end with it. -/
@@ -2617,8 +2619,10 @@ inductive Directive where
   what they change is in the one write, and a write a finished job started
   is written too. It needs no `join`, so a script
   with a long job of its own running can wait for the index. The driver's
-  own. -/
-  | indexed
+  own. It waits at most this many seconds for the index, or the driver's
+  patience with none (`indexed <seconds>`, for a package-set build, a job
+  that is not the script's own). -/
+  | indexed (seconds : Option Nat := none)
   /-- End the process at once, with the status 134 and no shutdown, as an
   abort would: what the journal handed the system survives it. The
   driver's own. -/
@@ -2626,8 +2630,10 @@ inductive Directive where
   /-- Wait until the loop has ended for a restart (`Progress.handOver`): the
   script stops in this process, and the next run, started with
   `--resume`, goes on after this line ("Restarting", in the module docs).
-  The driver's own. -/
-  | restarted
+  The driver's own. It waits at most this many seconds, or the driver's
+  patience with none (`restarted <seconds>`, for a restart a package-set
+  build starts). -/
+  | restarted (seconds : Option Nat := none)
   deriving DecidableEq, Repr
 
 /-- The name a directive gives after its keyword, which is the first
@@ -2699,7 +2705,13 @@ def directive? (line : String) : Except String (Option Directive) :=
       else
         if line == "settle" then .ok (some .settle)
         else
-          if line == "join" then .ok (some .join)
+          if line == "join" || line.startsWith "join " then
+            match named line 4 with
+            | none => .ok (some (.join none))
+            | some text =>
+              match text.toNat? with
+              | some seconds => .ok (some (.join (some seconds)))
+              | none => .error s!"`{line}` is not a join: expected join [<seconds>], one number"
           else
             if line.startsWith "run " then
               match named line 4 with
@@ -2729,13 +2741,29 @@ def directive? (line : String) : Except String (Option Directive) :=
                           else
                             if line == "journalled" then .ok (some .journalled)
                             else
-                              if line == "indexed" then .ok (some .indexed)
+                              if line == "indexed" || line.startsWith "indexed " then
+                                match named line 7 with
+                                | none => .ok (some (.indexed none))
+                                | some text =>
+                                  match text.toNat? with
+                                  | some seconds => .ok (some (.indexed (some seconds)))
+                                  | none =>
+                                    .error
+                                      s!"`{line}` is not an indexed: expected indexed [<seconds>], one number"
                               else
                                 if line == "workspaces" then .ok (some (.request .workspaces))
                                 else
                                   if line == "abort" then .ok (some .abort)
                                   else
-                                    if line == "restarted" then .ok (some .restarted)
+                                    if line == "restarted" || line.startsWith "restarted " then
+                                      match named line 9 with
+                                      | none => .ok (some (.restarted none))
+                                      | some text =>
+                                        match text.toNat? with
+                                        | some seconds => .ok (some (.restarted (some seconds)))
+                                        | none =>
+                                          .error
+                                            s!"`{line}` is not a restarted: expected restarted [<seconds>], one number"
                                     else
                                       if line == "idle" || line.startsWith "idle " then
                                         match (named line 4).bind String.toNat? with
@@ -2752,7 +2780,7 @@ def directive? (line : String) : Except String (Option Directive) :=
                                               s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
                                         else
                                           .error
-                                            s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, agree, settle, join, idle <milliseconds>, advance <milliseconds>, journal, journalled, indexed, abort, restarted, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
+                                            s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, agree, settle, join [<seconds>], idle <milliseconds>, advance <milliseconds>, journal, journalled, indexed [<seconds>], abort, restarted [<seconds>], key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -2772,7 +2800,7 @@ def resumed (script : Array Line) (resume : Nat) : Array Line :=
       script.foldl
         (fun (passed, kept) line =>
           if passed ≥ resume then (passed, kept.push line)
-          else if line.directive == .restarted then (passed + 1, kept) else (passed, kept))
+          else if line.directive matches .restarted _ then (passed + 1, kept) else (passed, kept))
         (0, #[])
     kept
 
@@ -2957,8 +2985,8 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
         continue
       | .settle =>
         host.await patience
-      | .join =>
-        host.join patience
+      | .join seconds =>
+        host.join ((seconds.map (· * 1000)).getD patience)
       | .idle milliseconds =>
         let wait ← host.await patience
         if wait == .settled then
@@ -2978,11 +3006,11 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
             discard <| host.halt patience
             return (some (.unanswered (some line.number)), none)
         pure wait
-      | .indexed =>
+      | .indexed seconds =>
         let wait ← host.await patience
         if wait == .settled then
           let written ←
-            within patience do
+            within ((seconds.map (· * 1000)).getD patience) do
                 let progress ← host.progress.get
                 if
                     !progress.indexing && progress.background == 0 &&
@@ -3004,9 +3032,9 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
       | .abort =>
         (← IO.getStdout).flush
         IO.Process.exit abortStatus
-      | .restarted =>
+      | .restarted seconds =>
         -- The loop ends by itself once it has handed the session over.
-        let ended ← within patience (IO.hasFinished host.thread)
+        let ended ← within ((seconds.map (· * 1000)).getD patience) (IO.hasFinished host.thread)
         let plan := (← host.progress.get).handOver
         match ended, plan with
         | true, some plan =>
