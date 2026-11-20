@@ -1,0 +1,13 @@
+# The script the gate has the fixture set's editor run in its headless mode
+# for the package `word-count` (tools/package-set.sh run): it types three
+# words into the scratch buffer and runs the package's command, which says
+# the count in the echo area, exactly `expected`. It touches no file.
+
+reload
+settle
+
+key i KeyI -
+commit one two  three
+key <Escape> Escape -
+run word-count
+scene

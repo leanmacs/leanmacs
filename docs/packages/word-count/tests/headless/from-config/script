@@ -1,0 +1,16 @@
+# The after stage of the guide to writing a package: the package is in the
+# editor, and config imports its module `WordCount`. Config binds a key to
+# the package's command and names the package's `WordCount.count` in a
+# command of its own; the key and that command both run. It touches no file.
+
+reload
+settle
+
+key i KeyI -
+commit one two  three
+key <Escape> Escape -
+key c KeyC control
+key w KeyW -
+scene
+run word-count-scratch
+scene

@@ -1249,9 +1249,10 @@ package-set build recorded beside it (`<editor>.oleans`;
 editor reads it at. It must exit 0, which it does only when that config
 loaded, so the default directory holds the modules config is elaborated
 on. The gate runs it for the default set's editor and for the fixture
-set's, and then requires the fixture set's record to name five
+set's, and then requires the fixture set's record to name seven
 directories in order, the core's, `greeting`'s, `greeting-loud`'s,
-`shipped-themes`' and `compile`'s, each holding its package's modules.
+`echo`'s, `shipped-themes`', `compile`'s and `word-count`'s, each holding
+its package's modules.
 The editor searches every recorded directory, after any its command line
 gives, which is a search path, directories joined with `:`
 (`lean/Editor/ModuleLookup.lean`).
@@ -1523,8 +1524,9 @@ each one the host reaches and exits 1.
   any form. The queries build nothing and write nothing under `lean/`.
 - **The gate runs it on the fixture set too**
   (`host-imports-check.sh --set ../tests/packages`), whose root imports
-  three entry modules, the core's and the two fixture packages': the form
-  a set with packages outside the core takes.
+  seven entry modules, the core's, the three fixture packages', the two
+  default packages' and the writing guide's example package's: the form a
+  set with packages outside the core takes.
 - **The user-side link's set is asked for its root.** `ffi-test` also
   requires `lake -d ../tests/user-link query :editorRoot` to give a file,
   and that root's imports to be the config base, the executable's entry,
@@ -1738,8 +1740,11 @@ package's tests are by convention are in
 
 - **The gate gives every step the fixture set**, `tests/packages/`, which
   requires the fixture package `greeting-loud`, through it `greeting`, the
-  fixture package `echo`, which holds Rust, and the default set. So the default packages, `shipped-themes` and
-  `compile`, are tested, built, format-checked and run through it. `run`
+  fixture package `echo`, which holds Rust, the default set, and the
+  example package of the guide to writing a package, `word-count`
+  (`docs/packages/word-count/`). So the default packages, `shipped-themes`
+  and `compile`, and the code the guide quotes are tested, built,
+  format-checked and run through it. `run`
   is also given the default set itself, `packages/`, so those packages'
   linked tests and fixtures hold of the default set's editor, the one
   that is shipped.
@@ -1755,8 +1760,8 @@ package's tests are by convention are in
 - **The default packages' tests are required to have run.** `lean-test`
   keeps the `test` step's output and requires the line the step prints as
   it reaches each of them, `package-set: test shipped-themes (<its
-  directory>)` and `package-set: test compile (<its directory>)`, matched
-  on what comes before the directory. The step stops at the first driver
+  directory>)` and `package-set: test compile (<its directory>)`, and the
+  same line for `word-count`, matched on what comes before the directory. The step stops at the first driver
   that fails, so those lines and exit 0 say each package's driver ran and
   passed: the themes hold under the core's completeness check, and the
   compile mode's 98 model checks hold on the core's test kit.
@@ -1775,8 +1780,9 @@ package's tests are by convention are in
   line its pictures print, its fixtures `load-theme`, `package-names`,
   `shipped-themes` and `themes`, the linked test of `compile` with its
   line, `compile linked test: 7 checks passed`, its fixtures `config`,
-  `ex-names` and `shipped-formats`, and `package-set: ran 4 linked tests
-  and 9 headless fixtures over 5 packages`; and over the default set, the
+  `ex-names` and `shipped-formats`, the three fixtures of `word-count`,
+  `as-config`, `count` and `from-config`, and `package-set: ran 4 linked
+  tests and 12 headless fixtures over 6 packages`; and over the default set, the
   two default packages' linked tests and seven fixtures and `package-set:
   ran 2 linked tests and 7 headless fixtures over 2 packages`. A fixture or a linked test that is
   renamed, moved or no longer found by the naming convention fails that
@@ -1847,7 +1853,10 @@ package's tests are by convention are in
   Its crate's own tests (`cargo test`): a test of the service for each
   property on `editor-service`'s fake completer, the zlib adapter's
   vectors, and the C functions over the real completion queue
-  (`rust/tests/wiring.rs`). `ffi-test` also runs the
+  (`rust/tests/wiring.rs`). `word-count`: five checks in its driver
+  (`WordCountTest/WordCount.lean`), of its word count and of what it
+  registers, and its three fixtures, the stages of the guide that quotes
+  it (`docs/packages/writing-a-package.md`). `ffi-test` also runs the
   `hello` script on the default set's editor, which must answer `run
   greeting-hello: no such command`.
 - **Seen to bite, once each by hand** (2026-11-19): a failing check in
@@ -2081,8 +2090,9 @@ sh tools/toolchain-check.sh
 
 First in `mise run lean-test`. `lean/lean-toolchain` is the pin every task
 reads, and each Lake root outside `lean/` holds a copy of it: the default
-set, the fixture set, each fixture package, the empty set, the user-side
-link's set and its package, and the formatter's host
+set, the fixture set, each fixture package, the writing guide's example
+package, the empty set, the user-side link's set and its package, and the
+formatter's host
 ([packages.md](../design/packages.md), "The toolchain copies"). The check
 compares every tracked file named `lean-toolchain` with the pin, byte for
 byte, prints each that differs and exits 1.

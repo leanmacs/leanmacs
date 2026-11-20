@@ -1,0 +1,15 @@
+# The live stage of the guide to writing a package: the same code as the
+# package, as a config file (`config/Config/WordCount.lean`) that
+# `config/init.lean` imports. Config's command of a name is found before a
+# package's, so although the fixture set's editor also links the package,
+# the reload's count, 2 files and 1 command, says config registered
+# `word-count`, and the command that runs is config's. It touches no file.
+
+reload
+settle
+
+key i KeyI -
+commit one two  three
+key <Escape> Escape -
+run word-count
+scene

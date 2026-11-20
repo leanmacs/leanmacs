@@ -1,0 +1,23 @@
+# The example package of docs/packages/writing-a-package.md, quoted whole
+# there: change the guide with it. The fixture set (tests/packages/) requires
+# it, so the gate tests, builds, format-checks and runs it headless.
+name = "word-count"
+testDriver = "«word-count-test»"
+defaultTargets = ["WordCount", "WordCountTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+
+[[require]]
+name = "editor-core"
+path = "../../../lean"
+
+[[lean_lib]]
+name = "WordCount"
+globs = ["WordCount.*"]
+
+[[lean_lib]]
+name = "WordCountTest"
+globs = ["WordCountTest.+"]
+
+[[lean_exe]]
+name = "word-count-test"
+root = "WordCountTest.Model"

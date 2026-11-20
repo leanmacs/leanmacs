@@ -428,8 +428,9 @@ globs = ["Config.+"]
   editors with that default and requires config to load (`ffi-test
   window-host-direct`), and checks each record: the default set's names
   three directories, the core's, then `shipped-themes`' and `compile`'s,
-  and the fixture set's five, the core's, `greeting`'s, `greeting-loud`'s,
-  `shipped-themes`' and `compile`'s, each holding its package's modules.
+  and the fixture set's seven, the core's, `greeting`'s, `greeting-loud`'s,
+  `echo`'s, `shipped-themes`', `compile`'s and `word-count`'s, each
+  holding its package's modules.
 - **A directory given on the command line is a search path**, one
   directory or several joined with `:`, and outside a bundle the recorded
   directories are searched after the ones given (`ModuleLookup.resolve`).
@@ -771,14 +772,17 @@ showed the path a default package and a user's package take before any
 feature moved, and they still show what the default package does not: a
 package that requires another package, and a linked test that starts a
 host. The set requires the default set, so its editor holds the default
-packages too.
+packages too, and the example package of the guide to writing a package,
+`docs/packages/word-count/`, so the gate's package steps cover the code the
+guide quotes.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `echo`, then the default set, and through it `shipped-themes` and `compile` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `echo`, then the default set, and through it `shipped-themes` and `compile`, then `word-count` |
 | `tests/packages/greeting/` | The Lake package `greeting`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean`), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting` and registers `greeting-reply` again with another text; its test driver and the fixture `tests/headless/reply` |
 | `tests/packages/echo/` | The Lake package `echo`, which holds Rust ("Rust in a package", below): its crate `echo-service` (`rust/`), its glue (`ffi/glue.c`), the port of its service with a pure model, a contract and the Rust-backed binding, its test driver (`EchoTest/Model.lean`) and its linked test (`EchoTest/Linked.lean`). It registers no package |
+| `docs/packages/word-count/` | The Lake package `word-count`, the example the guide to writing a package (`docs/packages/writing-a-package.md`) quotes: the command `word-count` (`WordCount.lean`), its entry module, its test driver (`WordCountTest/Model.lean`, which runs `WordCountTest/WordCount.lean`) and three fixtures: `count`, the command compiled in; `as-config`, the same code as a config file; and `from-config`, a config that imports the package's module. It has no linked test |
 
 - **A package outside the core is built by the package-set build and its
   command runs.** The fixture set's editor prints `run greeting-hello: ok`
@@ -810,7 +814,8 @@ packages too.
 
 **Every Lake root has its `lake-manifest.json` committed**: the core, the
 default set, each default package (`shipped-themes`, `compile`), the
-fixture set, each fixture package (`echo` among them), the empty set, the
+fixture set, each fixture package (`echo` among them), the writing guide's
+example package (`docs/packages/word-count/`), the empty set, the
 user-side link's set and its package, the Rust bans check's set
 (`tests/rust-bans/`) and its two packages, and the formatter's host.
 
@@ -842,7 +847,7 @@ user-side link's set and its package, the Rust bans check's set
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
 `lean/` holds a copy of it** (the default set and its packages
 `shipped-themes` and `compile`, the fixture set and its three packages, the
-empty set, the user-side link's set and its package, the Rust bans check's
+writing guide's example package `word-count`, the empty set, the user-side link's set and its package, the Rust bans check's
 set and its two packages, and the formatter's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file when Lake is run in that
 directory. `tools/toolchain-check.sh`, first in `lean-test`, fails when a

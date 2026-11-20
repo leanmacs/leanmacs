@@ -39,3 +39,10 @@ path = "echo"
 [[require]]
 name = "default-set"
 path = "../../packages"
+
+# The example package of the guide to writing a package
+# (docs/packages/writing-a-package.md), kept beside the guide that quotes it:
+# required here so that every package step covers it.
+[[require]]
+name = "word-count"
+path = "../../docs/packages/word-count"
