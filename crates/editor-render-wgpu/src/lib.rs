@@ -46,6 +46,8 @@ mod raster;
 mod surface;
 
 #[cfg(test)]
+mod rasterizer_tests;
+#[cfg(test)]
 mod settings_tests;
 #[cfg(test)]
 mod weight_tests;
@@ -54,6 +56,7 @@ use std::error::Error;
 use std::fmt;
 
 use editor_platform::NativeWindow;
+use editor_raster::{Fallback, GlyphImage, GlyphRequest, Rasterize};
 use editor_render::port::{DrawRequest, Drawn, Renderer};
 
 use crate::painter::Painter;
@@ -105,6 +108,27 @@ impl Image {
     }
 }
 
+/// What a renderer's glyph images are made by: the rasteriser it was
+/// handed ([`HeadlessRenderer::rasterizing_with`],
+/// [`WgpuRenderer::rasterizing_with`]), and swash, at the settings'
+/// weight, for every glyph that one declines.
+type Rasterizers = Fallback<Box<dyn Rasterize + Send>, SwashRasterizer>;
+
+/// The rasteriser a renderer asks first until it is handed one: it
+/// declines every glyph, so swash draws them all.
+struct Declines;
+
+impl Rasterize for Declines {
+    fn rasterize(&mut self, _: &GlyphRequest<'_>) -> Option<GlyphImage> {
+        None
+    }
+}
+
+/// `first`, falling back to swash at `dilation` ([`Weight::dilation`]).
+fn rasterizers(first: Box<dyn Rasterize + Send>, dilation: f32) -> Rasterizers {
+    Fallback::new(first, SwashRasterizer::dilated(dilation))
+}
+
 /// The headless adapter of the `Renderer` port: it draws a frame into a
 /// picture in memory, with no window and no GPU.
 ///
@@ -115,7 +139,7 @@ impl Image {
 /// whose fonts have no bytes, is drawn without its glyphs.
 pub struct HeadlessRenderer {
     /// What turns a frame into quads.
-    painter: Painter<SwashRasterizer>,
+    painter: Painter<Rasterizers>,
     /// The picture of the frame last drawn.
     image: Image,
     /// How much the coverage of dark text is raised ([`Weight::contrast`]).
@@ -125,12 +149,23 @@ pub struct HeadlessRenderer {
 impl HeadlessRenderer {
     /// A renderer that has drawn nothing: its picture is of no size.
     pub fn new(settings: Settings) -> Self {
-        let rasterizer = SwashRasterizer::dilated(settings.weight.dilation);
+        let rasterizer = rasterizers(Box::new(Declines), settings.weight.dilation);
         Self {
             painter: Painter::new(rasterizer, &settings, true, PAGE_SIZE),
             image: cpu::cleared(0, 0),
             contrast: settings.weight.contrast,
         }
+    }
+
+    /// The renderer, drawing its glyphs with `rasterizer`, and with swash
+    /// at its settings' weight for every glyph `rasterizer` declines. Made
+    /// after a draw, the next draw makes every glyph image again and
+    /// builds every row again.
+    pub fn rasterizing_with(mut self, rasterizer: impl Rasterize + Send + 'static) -> Self {
+        let dilation = self.painter.rasterizer().fallback().dilation();
+        self.painter
+            .set_rasterizer(rasterizers(Box::new(rasterizer), dilation));
+        self
     }
 
     /// The picture of the frame last drawn, the size of its target.
@@ -186,7 +221,7 @@ impl Error for NoAdapter {}
 /// image on demand, on a real adapter (`mise run render-gpu`).
 pub struct WgpuRenderer {
     /// What turns a frame into quads.
-    painter: Painter<SwashRasterizer>,
+    painter: Painter<Rasterizers>,
     /// The GPU.
     device: gpu::Device,
     /// What wgpu said of the last draw it refused.
@@ -295,7 +330,7 @@ impl WgpuRenderer {
         let mut device = device.map_err(|gpu::Unavailable(reason)| NoAdapter { reason })?;
         device.contrast = settings.weight.contrast;
         let painter = Painter::new(
-            SwashRasterizer::dilated(settings.weight.dilation),
+            rasterizers(Box::new(Declines), settings.weight.dilation),
             &settings,
             device.per_channel(),
             PAGE_SIZE,
@@ -305,6 +340,17 @@ impl WgpuRenderer {
             device,
             refused: None,
         })
+    }
+
+    /// The renderer, drawing its glyphs with `rasterizer`, and with swash
+    /// at its settings' weight for every glyph `rasterizer` declines. Made
+    /// after a draw, the next draw makes every glyph image again and
+    /// builds every row again.
+    pub fn rasterizing_with(mut self, rasterizer: impl Rasterize + Send + 'static) -> Self {
+        let dilation = self.painter.rasterizer().fallback().dilation();
+        self.painter
+            .set_rasterizer(rasterizers(Box::new(rasterizer), dilation));
+        self
     }
 
     /// What the window's surface offered, what the run asked for

@@ -1517,3 +1517,32 @@ fn the_dividers_are_filled_first_so_a_view_over_one_covers_it_and_the_target_cli
     let image = composited(&covered);
     assert_eq!(pixel_at(&image, 15, 15), [0xff, 0xff, 0xff, 0xff]);
 }
+
+#[test]
+fn a_rasteriser_swapped_in_after_a_draw_is_asked_for_every_glyph_again() {
+    let shown = frame_of(vec![plain_row(0.0, &[1, 2, 3], 1)]);
+    let mut painter = painter();
+    painter.paint(&shown, target(1.0));
+    // Another fake, whose images are another size: what is drawn from it
+    // is told from what the first drew.
+    painter.set_rasterizer(FakeRasterizer {
+        size: Some((3, 4)),
+        ..FakeRasterizer::new()
+    });
+    let drawn = painter.paint(&shown, target(1.0));
+    // The row is built again, and every glyph is asked of the new one.
+    assert_eq!((drawn.rows_rebuilt, drawn.rows_reused), (1, 0));
+    assert_eq!((drawn.glyphs_rasterised, drawn.glyphs_reused), (3, 0));
+    assert_eq!(
+        asked_keys(&painter),
+        vec![mask_key(1), mask_key(2), mask_key(3)]
+    );
+    // And the picture is the new one's.
+    let glyphs = quads_of(&painter, QuadKind::Mask, BLACK);
+    assert_eq!(glyphs.len(), 3);
+    for (quad, id) in glyphs.iter().zip([1, 2, 3]) {
+        assert_eq!((quad.width, quad.height), (3, 4));
+        let made = painter.rasterizer().image(mask_key(id)).expect("an image");
+        assert_eq!(read(&painter, quad), made.data, "glyph {id}");
+    }
+}

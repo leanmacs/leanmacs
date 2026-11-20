@@ -57,6 +57,10 @@
 //! Each row pins the glyph images it draws, and lets them go when it is
 //! dropped ([`glyphs`](crate::glyphs), "In use is never evicted").
 //!
+//! A rasteriser handed over after a paint ([`Painter::set_rasterizer`])
+//! empties the glyph cache and the rows kept: the next paint builds every
+//! row again.
+//!
 //! # What a paint answers
 //!
 //! What it did, counted: the rows it built, the rows it took from what
@@ -377,10 +381,21 @@ impl<Z: Rasterize> Painter<Z> {
         self.glyphs.stats()
     }
 
-    /// The rasteriser: for tests, which look at what a fake was asked.
-    #[cfg(test)]
+    /// The rasteriser: what makes the glyph images.
     pub fn rasterizer(&self) -> &Z {
         &self.rasterizer
+    }
+
+    /// Makes `rasterizer` the one glyph images are made by from here on.
+    /// Every image the cache holds is let go, and every row kept with it:
+    /// their quads read atlas slots and pin keys of the rasteriser before,
+    /// so the next paint builds every row again, as for a frame of another
+    /// generation.
+    pub fn set_rasterizer(&mut self, rasterizer: Z) {
+        self.rasterizer = rasterizer;
+        self.glyphs.clear();
+        self.rows = RowCache::new();
+        self.generation = None;
     }
 }
 

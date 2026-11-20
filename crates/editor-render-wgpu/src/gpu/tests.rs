@@ -683,8 +683,27 @@ fn a_renderer_rasterises_at_its_settings_dilation() {
             ..Settings::default()
         };
         let renderer = WgpuRenderer::over(&noop(), settings, true).expect("the no-op adapter");
-        assert_eq!(renderer.painter.rasterizer().dilation(), dilation);
+        assert_eq!(
+            renderer.painter.rasterizer().fallback().dilation(),
+            dilation
+        );
+        // And handed a rasteriser, its fallback is still made at it.
+        let handed = renderer.rasterizing_with(FakeRasterizer::new());
+        assert_eq!(handed.painter.rasterizer().fallback().dilation(), dilation);
     }
+}
+
+#[test]
+fn a_renderer_handed_a_rasteriser_draws_with_no_validation_error() {
+    let mut renderer = WgpuRenderer::over(&noop(), Settings::default(), true)
+        .expect("the no-op adapter")
+        .rasterizing_with(FakeRasterizer::new());
+    let drawn = renderer.draw(&DrawRequest {
+        frame: &std::sync::Arc::new(dressed()),
+        target: target(1.0),
+    });
+    assert!(drawn.presented, "{:?}", renderer.refused());
+    assert!(drawn.glyphs_rasterised > 0);
 }
 
 #[test]
