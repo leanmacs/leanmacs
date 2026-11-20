@@ -159,10 +159,14 @@
 //!   refused, as a start is.
 //! - **A flush is a barrier** ([`Service::flush`]): a wait of the
 //!   caller's, completed once every run started before it has ended (its
-//!   result kept, or cancelled and its child reaped), every open asked
-//!   before it answered, and every streaming child cancelled or forgotten
-//!   before it reaped; at once, on the caller's thread, when there is
-//!   nothing to wait for. A run's thread, after its own completion, and a
+//!   result kept and its completion queued, or cancelled and its child
+//!   reaped), every open asked before it answered and its completion
+//!   queued, and every streaming child cancelled or forgotten before it
+//!   reaped; at once, on the caller's thread, when there is nothing to
+//!   wait for. A run's result is kept, and an open answered, before its
+//!   completion is queued, so a flush waits on a ticket each run and each
+//!   open holds until then, not on the run. A run's thread, after its own
+//!   completion, and a
 //!   streaming child's waiter, once its child is reaped, completes each
 //!   flush it was the last thing for, in the order they were asked;
 //!   shutdown completes the rest once every child is reaped. A live
@@ -396,6 +400,9 @@ enum Run<C> {
     /// A streaming child, from its registering until its last delivery has
     /// been taken, or until it is cancelled and reaped.
     Streaming {
+        /// Its open's ticket, which a flush waits on while it is cancelled
+        /// and not yet reaped.
+        ticket: u64,
         /// The child.
         child: Arc<C>,
         /// Its streams, its input and its pending read.
@@ -418,11 +425,11 @@ enum Wait {
     /// This reply, kept.
     Kept(StreamReply),
     /// A flush ([`Service::flush`]), the `order`th asked, waiting for the
-    /// runs and children `awaited` to be done.
+    /// runs and children whose tickets are `awaited` to be done.
     Flush {
         /// How many flushes were asked before it.
         order: u64,
-        /// The runs and children it still waits for.
+        /// The tickets of the runs and children it still waits for.
         awaited: HashSet<u64>,
     },
 }
@@ -437,6 +444,17 @@ struct State<C> {
     waits: HashMap<u64, Wait>,
     /// How many runs' threads have not finished.
     active: usize,
+    /// The ticket of each run whose completion has not been queued, or
+    /// that was cancelled and whose child has not been reaped; and of each
+    /// open not yet answered and its completion queued, or cancelled
+    /// before it was and its child not reaped. A run is kept, and an open
+    /// answered, before its completion is queued, so a flush waits on
+    /// these, not on `runs`.
+    in_flight: HashSet<u64>,
+    /// The next run's or open's ticket. A ticket, not the id, since an id
+    /// is free again once its result is taken, which may be before its
+    /// completion is queued.
+    tickets: u64,
     /// How many flushes have been asked: the next one's order.
     flushes: u64,
 }
@@ -447,14 +465,24 @@ impl<C> State<C> {
         self.runs.contains_key(&id) || self.waits.contains_key(&id)
     }
 
-    /// Marks the run or child `id` done for every flush, and removes and
-    /// returns the flushes it was the last thing for, in the order they
-    /// were asked: for the caller to complete with no lock held.
-    fn settle(&mut self, id: u64) -> Vec<u64> {
+    /// A fresh ticket, in flight.
+    fn ticket(&mut self) -> u64 {
+        let ticket = self.tickets;
+        self.tickets += 1;
+        self.in_flight.insert(ticket);
+        ticket
+    }
+
+    /// Marks the run or child whose ticket is `ticket` done for every
+    /// flush, and removes and returns the flushes it was the last thing
+    /// for, in the order they were asked: for the caller to complete with
+    /// no lock held.
+    fn settle(&mut self, ticket: u64) -> Vec<u64> {
+        self.in_flight.remove(&ticket);
         let mut done = Vec::new();
         for (&wait, kept) in &mut self.waits {
             if let Wait::Flush { order, awaited } = kept
-                && awaited.remove(&id)
+                && awaited.remove(&ticket)
                 && awaited.is_empty()
             {
                 done.push((*order, wait));
@@ -630,6 +658,8 @@ impl<P: Processes + 'static> Service<P> {
                     runs: HashMap::new(),
                     waits: HashMap::new(),
                     active: 0,
+                    in_flight: HashSet::new(),
+                    tickets: 0,
                     flushes: 0,
                 }),
                 finished: Condvar::new(),
@@ -717,17 +747,18 @@ impl<P: Processes + 'static> Service<P> {
         }
         state.runs.insert(id, Run::Starting { cancelled: false });
         state.active += 1;
+        let ticket = state.ticket();
         drop(state);
         let inner = Arc::clone(&self.inner);
         let started = thread::Builder::new()
             .name("editor-process".into())
-            .spawn(move || inner.run(id, &command, input, limit, overflow))
+            .spawn(move || inner.run(id, ticket, &command, input, limit, overflow))
             .is_ok();
         if !started {
             let mut state = self.inner.state();
             state.runs.remove(&id);
             state.active -= 1;
-            let flushed = state.settle(id);
+            let flushed = state.settle(ticket);
             drop(state);
             self.inner.finished.notify_all();
             self.inner.complete_all(flushed);
@@ -777,6 +808,7 @@ impl<P: Processes + 'static> Service<P> {
                 stream,
                 cancelled,
                 reaped,
+                ..
             }) => {
                 *cancelled = true;
                 let (child, stream, reaped) = (Arc::clone(child), Arc::clone(stream), *reaped);
@@ -833,6 +865,7 @@ impl<P: Processes + 'static> Service<P> {
                 stream,
                 cancelled,
                 reaped,
+                ..
             } => {
                 *cancelled = true;
                 // Abandoned with its waits, so its pending read is dropped
@@ -882,18 +915,16 @@ impl<P: Processes + 'static> Service<P> {
         if state.in_use(id) {
             return false;
         }
-        let awaited: HashSet<u64> = state
-            .runs
-            .iter()
-            .filter(|(_, run)| match run {
-                Run::Starting { .. } | Run::Running { .. } => true,
-                Run::Streaming {
-                    cancelled, reaped, ..
-                } => *cancelled && !*reaped,
-                Run::Kept(_) => false,
-            })
-            .map(|(&run, _)| run)
-            .collect();
+        let mut awaited = state.in_flight.clone();
+        awaited.extend(state.runs.values().filter_map(|run| match run {
+            Run::Streaming {
+                ticket,
+                cancelled: true,
+                reaped: false,
+                ..
+            } => Some(*ticket),
+            _ => None,
+        }));
         if awaited.is_empty() {
             drop(state);
             (self.inner.complete)(id);
@@ -906,8 +937,9 @@ impl<P: Processes + 'static> Service<P> {
     }
 
     /// The runs and the streaming children not over, a cancelled one being
-    /// over once its child is reaped; the results not taken; and the waits
-    /// on streaming children not answered or not taken.
+    /// over once its child is reaped; the results not taken; the waits on
+    /// streaming children not answered or not taken; and the flushes
+    /// waiting.
     pub fn pending(&self) -> usize {
         let state = self.inner.state();
         state.runs.len() + state.waits.len()
@@ -943,17 +975,18 @@ impl<P: Processes + 'static> Service<P> {
         }
         state.runs.insert(id, Run::Starting { cancelled: false });
         state.active += 1;
+        let ticket = state.ticket();
         drop(state);
         let inner = Arc::clone(&self.inner);
         let started = thread::Builder::new()
             .name("editor-process-stream".into())
-            .spawn(move || Inner::stream(&inner, id, &command, streaming))
+            .spawn(move || Inner::stream(&inner, id, ticket, &command, streaming))
             .is_ok();
         if !started {
             let mut state = self.inner.state();
             state.runs.remove(&id);
             state.active -= 1;
-            let flushed = state.settle(id);
+            let flushed = state.settle(ticket);
             drop(state);
             self.inner.finished.notify_all();
             self.inner.complete_all(flushed);
@@ -1169,6 +1202,7 @@ impl<P: Processes + 'static> Inner<P> {
     fn run(
         &self,
         id: u64,
+        ticket: u64,
         command: &Command,
         input: Option<Vec<u8>>,
         limit: u64,
@@ -1186,13 +1220,13 @@ impl<P: Processes + 'static> Inner<P> {
                 Ok(child) => match self.own(id, child, input, limit, overflow) {
                     Some(result) => result,
                     None => {
-                        self.finish(id, None);
+                        self.finish(id, ticket, None);
                         return;
                     }
                 },
             },
         };
-        self.finish(id, Some(result));
+        self.finish(id, ticket, Some(result));
     }
 
     /// Registers `child` as the run `id`'s, kills it if the run was
@@ -1315,8 +1349,9 @@ impl<P: Processes + 'static> Inner<P> {
 
     /// Ends the run `id` as `result`: kept and completed, or dropped if it
     /// was cancelled. `None` is a run cancelled before it came to anything.
-    /// A flush it was the last thing for is completed after it.
-    fn finish(&self, id: u64, result: Option<RunResult>) {
+    /// Only once its completion is queued is its `ticket` done, and a
+    /// flush it was the last thing for completed after it.
+    fn finish(&self, id: u64, ticket: u64, result: Option<RunResult>) {
         let mut state = self.state();
         let cancelled = match state.runs.remove(&id) {
             Some(Run::Starting { cancelled } | Run::Running { cancelled, .. }) => cancelled,
@@ -1327,19 +1362,28 @@ impl<P: Processes + 'static> Inner<P> {
         if let Some(result) = kept {
             state.runs.insert(id, Run::Kept(result));
         }
-        state.active -= 1;
-        let flushed = state.settle(id);
         drop(state);
-        self.finished.notify_all();
         if !cancelled {
             (self.complete)(id);
         }
+        self.end(ticket);
+    }
+
+    /// Ends a thread that holds `ticket` to its end: the ticket is done,
+    /// shutdown is told, and each flush it was the last thing for is
+    /// completed.
+    fn end(&self, ticket: u64) {
+        let mut state = self.state();
+        state.active -= 1;
+        let flushed = state.settle(ticket);
+        drop(state);
+        self.finished.notify_all();
         self.complete_all(flushed);
     }
 
     /// The streaming child `id`'s thread, its waiter: the module docs'
     /// steps for a streaming child.
-    fn stream(inner: &Arc<Self>, id: u64, command: &Command, streaming: Streaming) {
+    fn stream(inner: &Arc<Self>, id: u64, ticket: u64, command: &Command, streaming: Streaming) {
         let refusal = refusal_before_spawn(command).or_else(|| {
             (streaming.bound == 0).then(|| {
                 Refusal::new(
@@ -1359,7 +1403,7 @@ impl<P: Processes + 'static> Inner<P> {
         let mut child = match child {
             Ok(child) => child,
             Err(refusal) => {
-                inner.refuse_stream(id, refusal);
+                inner.refuse_stream(id, ticket, refusal);
                 return;
             }
         };
@@ -1392,20 +1436,16 @@ impl<P: Processes + 'static> Inner<P> {
         state.runs.insert(
             id,
             Run::Streaming {
+                ticket,
                 child: Arc::clone(&child),
                 stream: Arc::clone(&stream),
                 cancelled,
                 reaped: false,
             },
         );
-        // A live child's open is answered here, so a flush waits for it no
-        // longer; a cancelled one's waits for its reap.
-        let flushed = if cancelled {
-            Vec::new()
-        } else {
+        if !cancelled {
             state.waits.insert(id, Wait::Kept(StreamReply::Opened));
-            state.settle(id)
-        };
+        }
         drop(state);
         if cancelled {
             // Outside the state lock: a read refuses a cancelled child, so
@@ -1413,7 +1453,11 @@ impl<P: Processes + 'static> Inner<P> {
             child.kill();
             stream.abandon();
         } else {
+            // A live child's open is answered once its completion is
+            // queued, so a flush waits for it no longer; a cancelled one's
+            // waits for its reap.
             (inner.complete)(id);
+            let flushed = inner.state().settle(ticket);
             inner.complete_all(flushed);
         }
         for (output, which) in outputs.into_iter().zip([Stream::Out, Stream::Err]) {
@@ -1472,11 +1516,8 @@ impl<P: Processes + 'static> Inner<P> {
                 *reaped = true;
             }
         }
-        state.active -= 1;
-        let flushed = state.settle(id);
         drop(state);
-        inner.finished.notify_all();
-        inner.complete_all(flushed);
+        inner.end(ticket);
     }
 
     /// Keeps `reply` under the wait `wait` and completes it, unless the
@@ -1492,8 +1533,9 @@ impl<P: Processes + 'static> Inner<P> {
     }
 
     /// Ends the streaming child `id`, which was refused before it ran, as
-    /// `refusal`: kept and completed, unless it was cancelled.
-    fn refuse_stream(&self, id: u64, refusal: Refusal) {
+    /// `refusal`: kept and completed, unless it was cancelled. Only then is
+    /// its `ticket` done.
+    fn refuse_stream(&self, id: u64, ticket: u64, refusal: Refusal) {
         let mut state = self.state();
         let cancelled = !matches!(
             state.runs.remove(&id),
@@ -1504,14 +1546,11 @@ impl<P: Processes + 'static> Inner<P> {
                 .waits
                 .insert(id, Wait::Kept(StreamReply::Refused(refusal)));
         }
-        state.active -= 1;
-        let flushed = state.settle(id);
         drop(state);
-        self.finished.notify_all();
         if !cancelled {
             (self.complete)(id);
         }
-        self.complete_all(flushed);
+        self.end(ticket);
     }
 }
 
@@ -1723,7 +1762,7 @@ fn read(mut output: impl Output, limit: u64, overflow: Overflow, child: &impl Ch
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::sync::mpsc::{self, Receiver};
+    use std::sync::mpsc::{self, Receiver, Sender};
     use std::time::Duration;
 
     use super::*;
@@ -1767,6 +1806,90 @@ mod tests {
 
     /// The id of [`flushed`]'s flush: one no test names otherwise.
     const FLUSH: u64 = u64::MAX;
+
+    /// A service over `fake` whose completion of `held` tells the first
+    /// receiver it has begun and then waits for the sender to be told or
+    /// dropped. The second receiver has the ids whose completions have
+    /// returned, in order.
+    pub(super) fn holding(
+        fake: &FakeProcesses,
+        held: u64,
+    ) -> (
+        Service<FakeProcesses>,
+        Receiver<u64>,
+        Receiver<()>,
+        Sender<()>,
+    ) {
+        let (sender, completed) = mpsc::channel();
+        let (began, entered) = mpsc::channel();
+        let (release, gate) = mpsc::channel::<()>();
+        let sender = Mutex::new(sender);
+        let began = Mutex::new(began);
+        let gate = Mutex::new(gate);
+        let service = Service::new(fake.clone(), move |id| {
+            if id == held {
+                began
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .send(())
+                    .ok();
+                gate.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .recv()
+                    .ok();
+            }
+            sender
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(id)
+                .ok();
+        });
+        (service, completed, entered, release)
+    }
+
+    /// Asks for the flush `flush` once the held completion has begun, then
+    /// lets it go, and gives back whether nothing was completed while it
+    /// was held and the next two completions after, in order.
+    pub(super) fn flush_behind_a_held_completion(
+        service: &Service<FakeProcesses>,
+        completed: &Receiver<u64>,
+        entered: &Receiver<()>,
+        release: Sender<()>,
+        flush: u64,
+    ) -> (bool, Vec<u64>) {
+        assert_eq!(entered.recv_timeout(DEADLINE), Ok(()), "it is completed");
+        let asked = service.flush(flush);
+        // Read while the completion is held, and checked once it is let
+        // go: a check that fails while it is held would leave the
+        // service's drop waiting for it.
+        let nothing = completed.try_recv().is_err();
+        drop(release);
+        assert!(asked);
+        let after = [
+            completed.recv_timeout(DEADLINE),
+            completed.recv_timeout(DEADLINE),
+        ]
+        .into_iter()
+        .map_while(Result::ok)
+        .collect();
+        (nothing, after)
+    }
+
+    /// The run's result is kept and its thread is in its completion, held
+    /// there: a flush asked now waits for that completion.
+    #[test]
+    fn a_flush_asked_while_a_run_is_being_completed_is_completed_after_it() {
+        let fake = FakeProcesses::scripted([(command("x"), Ok(Script::ends(Exit::Code(0))))]);
+        let (service, completed, entered, release) = holding(&fake, 1);
+        assert!(service.start(1, command("x"), ROOMY));
+
+        let (nothing, after) =
+            flush_behind_a_held_completion(&service, &completed, &entered, release, 2);
+
+        assert!(nothing, "the flush waits for the run's completion");
+        assert_eq!(after, [1, 2]);
+        assert_eq!(service.take(1), Some(ran(Exit::Code(0), b"", b"")));
+    }
 
     fn ran(exit: Exit, stdout: &[u8], stderr: &[u8]) -> RunResult {
         RunResult::Ran {
@@ -1984,12 +2107,15 @@ mod tests {
         let mut state = service.inner.state();
         state.runs.insert(3, Run::Starting { cancelled: true });
         state.active += 1;
+        let ticket = state.ticket();
         drop(state);
 
         let inner = Arc::clone(&service.inner);
-        thread::spawn(move || inner.run(3, &command("x"), None, ROOMY, Overflow::Refuse))
-            .join()
-            .expect("the run ends");
+        thread::spawn(move || {
+            inner.run(3, ticket, &command("x"), None, ROOMY, Overflow::Refuse);
+        })
+        .join()
+        .expect("the run ends");
 
         let record = fake.record();
         assert_eq!(record.killed, [record.spawned[0].0]);
@@ -3253,6 +3379,47 @@ mod streaming {
 
     /// The id of [`flushed`]'s flush: one no test names otherwise.
     const FLUSH: u64 = u64::MAX;
+
+    /// The open is answered and its thread is in its completion, held
+    /// there: a flush asked now waits for that completion, though the live
+    /// child it opened is not waited for.
+    #[test]
+    fn a_flush_asked_while_an_open_is_being_answered_is_completed_after_it() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilKilled)),
+        )]);
+        let (service, completed, entered, release) = super::tests::holding(&fake, 1);
+        assert!(service.open(1, command("x"), lines_with(Input::Closed, ROOMY)));
+
+        let (nothing, after) = super::tests::flush_behind_a_held_completion(
+            &service, &completed, &entered, release, 2,
+        );
+
+        assert!(nothing, "the flush waits for the open's completion");
+        assert_eq!(after, [1, 2]);
+        assert_eq!(service.take_stream(1), Some(StreamReply::Opened));
+        assert!(service.cancel(1));
+    }
+
+    /// As above, for an open refused at its spawn.
+    #[test]
+    fn a_flush_asked_while_a_refused_open_is_being_answered_is_completed_after_it() {
+        let fake = FakeProcesses::new();
+        let (service, completed, entered, release) = super::tests::holding(&fake, 1);
+        assert!(service.open(1, command("unscripted"), lines_with(Input::Closed, ROOMY)));
+
+        let (nothing, after) = super::tests::flush_behind_a_held_completion(
+            &service, &completed, &entered, release, 2,
+        );
+
+        assert!(nothing, "the flush waits for the open's completion");
+        assert_eq!(after, [1, 2]);
+        assert_eq!(
+            refusal_kind(service.take_stream(1)),
+            Some(RefusalKind::NotFound)
+        );
+    }
 
     /// Whether both readers of the child `child` come to let go of its
     /// streams. A reader completes a read before it lets go, so after this
