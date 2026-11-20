@@ -65,4 +65,34 @@ where
     | "--failed" :: value :: rest => go { launch with failed := launch.failed.push value } rest
     | rest => (launch, rest)
 
+/-- The hand-over record a run started with `launch` removes as it starts,
+before anything else: one handed over (`--handed-over`) to a run with no
+state directory, which has no restore to finish, so its hand-shake is its
+start. A run with a state directory removes it at its restore's hand-shake
+(`Editor/Restore.lean`). A record handed with no `--restore` is the
+launcher's cold start under watch (`crates/editor-launch/src/launch.rs`):
+the hand-shake tells its watcher this run started. -/
+def Launch.removedAtStart (launch : Launch) (stateDirectory : Bool) : Option System.FilePath :=
+  if stateDirectory then none else launch.handedOver
+
+/-- The record the probe removes once `main` is reached: the one it was
+handed, so a cold start under watch that probes (`leanmacs … --probe`)
+ends with no record left for its watcher to fall back on. -/
+def Launch.probeRemoves (launch : Launch) : Option System.FilePath :=
+  launch.handedOver
+
+/-- What `editor --probe` prints for a run launched with `launch`, which is
+the executable at `executable` and sees `bundle` as CoreFoundation's main
+bundle (its path and identifier, or none): `probe: ok`, the launcher,
+the bundle, and the executable, so a check can see which executable a
+launcher chose. -/
+def probeLines (launch : Launch) (executable : String) (bundle : Option (String × Option String)) :
+    List String :=
+  let seen :=
+    match bundle with
+    | some (path, identifier) => s!"bundle {path} identifier {identifier.getD "none"}"
+    | none => "bundle none"
+  ["probe: ok", s!"launched-by {(launch.launchedBy.map (·.toString)).getD "none"}", seen,
+    s!"executable {executable}"]
+
 end Editor.Restart

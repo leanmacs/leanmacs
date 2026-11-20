@@ -64,8 +64,9 @@
 #    reader (lean/Editor/Version.lean) reads the keys the build writes;
 # 5c. runs the launcher's `--probe` of the copy's editor, and of a copy of
 #    the editor outside the bundle with `--default`, each with an empty
-#    environment from `/`: each must print `probe: ok`, the launcher, and the
-#    copy as CoreFoundation's main bundle with the app's identifier, so the
+#    environment from `/`: each must print `probe: ok`, the launcher, the
+#    copy as CoreFoundation's main bundle with the app's identifier, and the
+#    executable the launcher started, so the
 #    launcher's `CFProcessPath` gives an editor outside the bundle the app's
 #    identity (docs/design/lean-runtime.md, "The app's identity across an
 #    exec");
@@ -477,13 +478,14 @@ step "the copy's editor --version, with an empty environment from /, printed ver
 # copy of it outside the bundle started with --default, each see the copy as
 # CoreFoundation's main bundle, with its identifier.
 identifier=$(read_key CFBundleIdentifier)
-printf 'probe: ok\nlaunched-by %s\nbundle %s identifier %s\n' "$app/Contents/MacOS/leanmacs" "$app" "$identifier" >"$dir/probe-expected"
+printf 'probe: ok\nlaunched-by %s\nbundle %s identifier %s\nexecutable %s\n' "$app/Contents/MacOS/leanmacs" "$app" "$identifier" "$app/Contents/MacOS/editor" >"$dir/probe-expected"
 (cd / && env -i "$app/Contents/MacOS/leanmacs" --probe) | diff "$dir/probe-expected" - ||
   fail "the launcher's probe of the bundle's editor printed other than the copy and its identifier"
 mkdir "$dir/outside"
 cp "$app/Contents/MacOS/editor" "$dir/outside/editor"
+printf 'probe: ok\nlaunched-by %s\nbundle %s identifier %s\nexecutable %s\n' "$app/Contents/MacOS/leanmacs" "$app" "$identifier" "$dir/outside/editor" >"$dir/outside-expected"
 (cd / && env -i "$app/Contents/MacOS/leanmacs" --default "$dir/outside/editor" -- --probe) |
-  diff "$dir/probe-expected" - ||
+  diff "$dir/outside-expected" - ||
   fail "the launcher's probe of an editor outside the bundle printed other than the copy and its identifier"
 step "the bundle's editor and a copy outside it, started by the launcher, both see the copy, $identifier, as their main bundle"
 

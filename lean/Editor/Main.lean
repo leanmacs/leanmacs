@@ -30,7 +30,11 @@ initialiser has run, packages' `initialize` among them, so reaching it is
 the probe: it prints `probe: ok`, then `launched-by <launcher>` (or
 `launched-by none`), then `bundle <path> identifier <id>` from
 CoreFoundation's main bundle (`Ffi.mainBundle`, `identifier none` when it
-has none), or `bundle none` where there is none, and returns 0. The launch
+has none), or `bundle none` where there is none, then `executable <its own
+path>`, so a check sees which executable a launcher chose
+(`Restart.probeLines`); it removes the hand-over record it was handed, so
+a cold start under the launcher's watch that probes leaves none
+(`Restart.Launch.probeRemoves`), and returns 0. The launch
 flags (`Editor/Restart/Launch.lean`) are stripped before the mode is chosen
 (`Editor/Executable.lean`); `run` adds the running executable
 (`IO.appPath`) and hands the launch to the headless and window modes.
@@ -181,13 +185,13 @@ def run (packages : Array Package) (base : Array Lean.Name) (origin : Config.Lak
       IO.eprintln text
     pure status
   | .probe launch =>
-    IO.println "probe: ok"
-    IO.println s!"launched-by {(launch.launchedBy.map (·.toString)).getD "none"}"
-    match ← Ffi.mainBundle with
-    | some (path, identifier) =>
-      IO.println s!"bundle {path} identifier {identifier.getD "none"}"
-    | none =>
-      IO.println "bundle none"
+    for line in Restart.probeLines launch (← IO.appPath).toString (← Ffi.mainBundle) do
+      IO.println line
+    if let some record := launch.probeRemoves then
+      try
+        IO.FS.removeFile record
+      catch _ =>
+        pure ()
     pure 0
   | .headless launch rest =>
     let launch := { launch with running := some (← IO.appPath) }

@@ -23,8 +23,11 @@ index a restart handed over, restored in place of the highest),
 `--handed-over <record>` and `--failed <exe>`
 (`lean/Editor/Restart/Launch.lean`). **`editor --probe`** alone prints
 `probe: ok`, `launched-by <launcher>` (or `none`) and CoreFoundation's main
-bundle, `bundle <path> identifier <id>` (or `bundle none`), and exits 0: a
-restart's probe, run before it hands anything over.
+bundle, `bundle <path> identifier <id>` (or `bundle none`), and the
+executable it is, `executable <path>`, and exits 0: a restart's probe, run
+before it hands anything over, and how a check sees which executable a
+launcher chose. A probe handed a hand-over record (`--handed-over`) removes
+it, so a cold start under the launcher's watch leaves none.
 
 **`--state <dir>`** names the state directory (`docs/design/lean-runtime.md`,
 "As built, the state directory"): the run restores the session of the last

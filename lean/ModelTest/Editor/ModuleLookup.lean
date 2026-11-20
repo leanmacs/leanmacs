@@ -110,6 +110,17 @@ def moduleLookupChecks : List Check :=
             read built [] == ([], [s!"{built}.oleans"]) &&
             read installed record == ([], [])) },
     { name :=
+        "an executable outside a bundle started with --shipped <bundle>/Contents/MacOS/editor takes that bundle's toolchain when none is given; a given one, or a shipped default outside a bundle, wins"
+      run :=
+        let perUser := "/d/editors/c0/2/editor"
+        let shipped := some "/Applications/Leanmacs.app/Contents/MacOS/editor"
+        pure
+          ((ModuleLookup.resolve perUser {} ["/d/editors/c0/2/lib/lean"] shipped).sysroot ==
+              some "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain" &&
+            (ModuleLookup.resolve perUser { sysroot := some "/s" } [] shipped).sysroot ==
+              some "/s" &&
+            (ModuleLookup.resolve perUser {} [] (some "/w/editor")).sysroot == none) },
+    { name :=
         "a relative line of the record names a directory under the executable's own, so a per-user install can be renamed into place; an absolute line is kept as it is"
       run :=
         let reader (files : List (String × String)) (path : System.FilePath) : Id (Option String) :=

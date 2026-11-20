@@ -38,6 +38,27 @@ def restartLaunchChecks : List Check :=
       run :=
         pure <|
           Launch.strip ["--shipped", "/e", "--restore"] ==
-            (({ shipped := some "/e" } : Launch), ["--restore"]) }]
+            (({ shipped := some "/e" } : Launch), ["--restore"]) },
+    { name :=
+        "a run handed a record with no --restore is a cold start under watch: with no state directory it removes the record at once, with one at its restore's hand-shake; a run handed none removes nothing"
+      run :=
+        let cold : Launch := { handedOver := some "/d/launch/cold-7" }
+        pure
+          (cold.removedAtStart (stateDirectory := false) == some "/d/launch/cold-7" &&
+            cold.removedAtStart (stateDirectory := true) == none &&
+            ({} : Launch).removedAtStart (stateDirectory := false) == none) },
+    { name :=
+        "the probe removes the record it was handed, once main is reached, and prints the executable it is"
+      run :=
+        let cold : Launch :=
+          { launchedBy := some "/A.app/Contents/MacOS/leanmacs",
+            handedOver := some "/d/launch/cold-7" }
+        pure
+          (cold.probeRemoves == some "/d/launch/cold-7" && ({} : Launch).probeRemoves == none &&
+            probeLines cold "/d/editors/c0/2/editor" (some ("/A.app", some "io.x")) ==
+              ["probe: ok", "launched-by /A.app/Contents/MacOS/leanmacs",
+                "bundle /A.app identifier io.x", "executable /d/editors/c0/2/editor"] &&
+            probeLines {} "/e" none ==
+              ["probe: ok", "launched-by none", "bundle none", "executable /e"]) }]
 
 end ModelTest

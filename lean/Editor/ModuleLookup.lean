@@ -151,20 +151,30 @@ def recorded {m : Type → Type} [Monad m] (appPath : String)
     return []
   return ((← readFile (recordPath appPath)).map (recordedAt appPath)).getD []
 
-/-- The directories for an executable at `appPath`, given `explicit` and
-the directories `recorded` for it by the build that linked it. The
+/-- The directories for an executable at `appPath`, given `explicit`, the
+directories `recorded` for it by the build that linked it, and the shipped
+default it was launched with (`--shipped`), if any: outside a bundle with
+no toolchain given, a shipped default in a bundle lends that bundle's
+toolchain, so a per-user editor the app's launcher started loads config. The
 toolchain is the one given, else the bundle's in a bundle, else none. The
 `.olean` directories are, in a bundle, the ones given (`searchPath`), else
 the bundle's one; outside a bundle, the ones given and then every recorded
 one, so none when nothing was given and nothing recorded. -/
-def resolve (appPath : String) (explicit : Given) (recorded : List String := []) : Directories :=
+def resolve (appPath : String) (explicit : Given) (recorded : List String := [])
+    (shipped : Option String := none) : Directories :=
   let given := (explicit.oleans.map searchPath).getD []
   match bundle? appPath with
   | some bundle =>
     let resources := bundle / "Contents" / "Resources" / "lean"
     { sysroot := explicit.sysroot <|> some (resources / "toolchain").toString
       oleans := if explicit.oleans.isSome then given else [(resources / "editor").toString] }
-  | none => { sysroot := explicit.sysroot, oleans := given ++ recorded }
+  | none =>
+    -- A per-user editor the app's launcher started: the shipped default's
+    -- bundle holds the toolchain.
+    let shippedToolchain :=
+      ((shipped.bind bundle?).map fun bundle =>
+        (bundle / "Contents" / "Resources" / "lean" / "toolchain").toString)
+    { sysroot := explicit.sysroot <|> shippedToolchain, oleans := given ++ recorded }
 
 /-- The file the package-set build writes beside an executable it links, to
 say where the package set it was built from is ("The set", in the module

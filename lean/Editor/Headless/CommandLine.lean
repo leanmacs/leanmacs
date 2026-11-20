@@ -124,11 +124,12 @@ def handedOn (arguments : List String) (resume : Nat) : List String :=
 
 /-- What `arguments`, the command line after `headless`, asks for, for an
 executable at `appPath` for which the build recorded the `.olean`
-directories `recorded` (`ModuleLookup.recorded`, which the edge reads); or
+directories `recorded` (`ModuleLookup.recorded`, which the edge reads),
+launched with the shipped default `shipped` (`ModuleLookup.resolve`); or
 why it is refused: the empty string when the usage alone says it, as for a
 number of paths it does not take. -/
-def read (appPath : String) (arguments : List String) (recorded : List String := []) :
-    Except String Arguments :=
+def read (appPath : String) (arguments : List String) (recorded : List String := [])
+    (shipped : Option String := none) : Except String Arguments :=
   let (options, values, paths, valued) := split arguments [] []
   let render := options.contains "--render"
   let generate := options.contains "--generate"
@@ -153,7 +154,7 @@ def read (appPath : String) (arguments : List String) (recorded : List String :=
     -- Four paths give both directories and two give neither, so both are
     -- known together: in a bundle, or given. Outside a bundle two paths
     -- name no toolchain, whatever the build recorded for the executable.
-    let directories := ModuleLookup.resolve appPath explicit recorded
+    let directories := ModuleLookup.resolve appPath explicit recorded shipped
     match directories.sysroot, directories.oleans with
     | some sysroot, directory :: rest =>
       .ok {

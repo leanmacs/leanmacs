@@ -3322,7 +3322,7 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
     { render := drawn, generate, sysroot, oleans, config := configDir, script := scriptPath, state,
       resume, data }
     ←
-    match read appPath arguments recorded with
+    match read appPath arguments recorded (launch.shipped.map (·.toString)) with
     | .ok read =>
       pure read
     | .error reason =>
@@ -3330,6 +3330,13 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
         IO.eprintln s!"editor: {reason}"
       IO.eprintln s!"usage: editor {usage}"
       return 2
+  -- A cold start under the launcher's watch with no state directory: its
+  -- start is its hand-shake.
+  if let some record := launch.removedAtStart (stateDirectory := state.isSome) then
+    try
+      IO.FS.removeFile record
+    catch _ =>
+      pure ()
   let directives ←
     try
       let text ← IO.FS.readFile scriptPath

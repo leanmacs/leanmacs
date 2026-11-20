@@ -399,7 +399,7 @@ rule; AppKit's terminate on macOS), once `shutdown` had run. -/
 def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.LakePackage.Origin)
     (launch : Restart.Launch) (arguments : List String) : IO UInt32 := do
   let appPath := (← IO.appPath).toString
-  let environment ← environmentAt appPath
+  let environment := { (← environmentAt appPath) with shipped := launch.shipped.map (·.toString) }
   let options ←
     match parse environment arguments with
     | .ok options =>
@@ -407,6 +407,13 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
     | .error message =>
       IO.eprintln message
       return 2
+  -- A cold start under the launcher's watch with no state directory: its
+  -- start is its hand-shake.
+  if let some record := launch.removedAtStart (stateDirectory := options.state.isSome) then
+    try
+      IO.FS.removeFile record
+    catch _ =>
+      pure ()
   let defaultExists ←
     match options.config with
     | some directory =>

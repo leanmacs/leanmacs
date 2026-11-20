@@ -78,6 +78,9 @@ structure Environment where
   xdgStateHome : Option String := none
   /-- `$XDG_DATA_HOME`, if it is set. -/
   xdgDataHome : Option String := none
+  /-- The shipped default the launcher named (`--shipped`), if any: a
+  per-user editor takes its bundle's toolchain (`ModuleLookup.resolve`). -/
+  shipped : Option String := none
   /-- `$HOME`, if it is set. -/
   home : Option String
   /-- The executable's path. -/
@@ -329,7 +332,7 @@ def parse (environment : Environment) (arguments : List String) : Except String 
   | .ok read =>
     let directories :=
       ModuleLookup.resolve environment.appPath { sysroot := read.sysroot, oleans := read.oleans }
-        environment.recordedOleans
+        environment.recordedOleans environment.shipped
     .ok {
         file := read.file.map (resolve environment)
         config := read.config <|> defaultConfig environment
