@@ -569,6 +569,7 @@ set, holds its three themes.
 
 | Path | What |
 |---|---|
+| `README.md` | What the package gives, and a walk through its source and tests in reading order, for a package author |
 | `lakefile.toml` | The package: it requires the core by path, declares the library `ShippedThemes`, the test library `ShippedThemesTest` and the test driver `shipped-themes-test`, and turns every linter on, as a fixture package does |
 | `ShippedThemes.lean` | The library's root: `ShippedThemes.themes` and the `Package` value `ShippedThemes.package`, still named `shipped-themes`, whose `setup` defines the three themes and nothing else |
 | `ShippedThemes/Solarized.lean`, `ShippedThemes/FairyFloss.lean` | The palettes, each with its licence notice beside it (`Solarized-LICENSE.txt`, `FairyFloss-LICENSE.txt`) |
@@ -639,6 +640,7 @@ over the process service, a major mode, ex names and contributions.
 
 | Path | What |
 |---|---|
+| `README.md` | What the package gives, and a walk through its source and tests in reading order, for a package author |
 | `lakefile.toml` | The package: it requires the core by path, declares the library `Compile` with `globs = ["Compile.*"]`, the test library `CompileTest` and the test driver `compile-test`, and turns every linter on |
 | `Compile.lean` | The commands and the run: `compile`, `compile-command`, `recompile`, `kill-compilation`, the output's commands, the locations and the steps over them, the mode `compilation` (from `lean/Editor/Compile.lean`) |
 | `Compile/Errors.lean`, `Compile/Contribution.lean`, `Compile/Shipped.lean` | The matcher and the sites it yields; the offers and the formats in use; `cargo-mode`, `lake-mode` and `mise-mode` with rustc's and Lean's formats |
