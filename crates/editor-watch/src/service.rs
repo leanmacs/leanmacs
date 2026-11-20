@@ -75,8 +75,8 @@
 //!   comes to [`RefusalKind::ShutDown`] and is completed at once; cancels
 //!   every watch and every start in flight, and drops every registration,
 //!   in one step, so a start held in the port does not keep the live
-//!   watches' registrations; then waits for every start in flight to
-//!   return from the port, each dropping what it registered. It is
+//!   watches' registrations; then waits for every start's thread to
+//!   finish, each dropping what it registered. It is
 //!   idempotent, and dropping the last handle of a service does it.
 //! - **Locks**: a registration is never dropped, and the closure never
 //!   called, while the service's lock is held. A registration is taken out
@@ -85,12 +85,15 @@
 //! - **Threads**: one timer thread for the service, a short-lived one for
 //!   each start, and the adapter's for each registration.
 //! - **A flush is a barrier** ([`Service::flush`]): a wait of the
-//!   caller's, completed once every start asked before it has returned
-//!   from the port (registered and completed, refused, or dropped as
-//!   cancelled); at once, on the caller's thread, when no start is in
-//!   flight. A start's thread, after its own completion, completes each
-//!   flush it was the last thing for, in the order they were asked;
-//!   shutdown, which waits for every start in flight, completes the rest.
+//!   caller's, completed once the thread of every start asked before it
+//!   has finished: registered or refused and its completion queued, or
+//!   cancelled and what it registered dropped. A start leaves `Starting`
+//!   before then, so the flush waits on a ticket each start holds until
+//!   its thread finishes, not on the watch. It is completed at once, on
+//!   the caller's thread, when no start's thread is running. A start's
+//!   thread, after its own completion, completes each flush it was the
+//!   last thing for, in the order they were asked; shutdown, which waits
+//!   for every start's thread, completes the rest.
 //!   A pending read is not covered: it waits on the disk, not on the
 //!   service. A flush keeps no reply, its id is in use while it waits, and
 //!   a cancel withdraws it.
@@ -191,11 +194,11 @@ enum Wait {
     /// This reply, kept.
     Kept(WatchReply),
     /// A flush ([`Service::flush`]), the `order`th asked, waiting for the
-    /// starts `awaited` to return from the port.
+    /// starts whose tickets are `awaited` to be done.
     Flush {
         /// How many flushes were asked before it.
         order: u64,
-        /// The starts it still waits for.
+        /// The tickets of the starts it still waits for.
         awaited: HashSet<u64>,
     },
 }
@@ -224,8 +227,14 @@ struct State<R> {
     registrations: HashMap<Key, Shared<R>>,
     /// The next registration's serial.
     serial: u64,
-    /// How many starts' threads have not returned.
-    active: usize,
+    /// The ticket of each start whose thread has not finished: it has yet
+    /// to come back from the port, drop what it registered if it was
+    /// cancelled, and queue its completion if it was not. A start leaves
+    /// `watches` before then, so a flush and shutdown wait on these.
+    starts: HashSet<u64>,
+    /// The next start's ticket. A ticket, not the start's id, since the id
+    /// of a cancelled start is free again before its thread is done.
+    tickets: u64,
     /// How many flushes have been asked: the next one's order.
     flushes: u64,
 }
@@ -236,14 +245,15 @@ impl<R> State<R> {
         self.watches.contains_key(&id) || self.waits.contains_key(&id)
     }
 
-    /// Marks the start `id` returned for every flush, and removes and
-    /// returns the flushes it was the last thing for, in the order they
-    /// were asked: for the caller to complete with no lock held.
-    fn settle(&mut self, id: u64) -> Vec<u64> {
+    /// Marks the start whose ticket is `ticket` done for every flush, and
+    /// removes and returns the flushes it was the last thing for, in the
+    /// order they were asked: for the caller to complete with no lock held.
+    fn settle(&mut self, ticket: u64) -> Vec<u64> {
+        self.starts.remove(&ticket);
         let mut done = Vec::new();
         for (&wait, kept) in &mut self.waits {
             if let Wait::Flush { order, awaited } = kept
-                && awaited.remove(&id)
+                && awaited.remove(&ticket)
                 && awaited.is_empty()
             {
                 done.push((*order, wait));
@@ -313,7 +323,7 @@ struct Inner<W: Watch, C: Clock> {
     state: Mutex<State<W::Registration>>,
     /// Told when the timer thread has something new to look at.
     timer: Condvar,
-    /// Told whenever a start's thread returns.
+    /// Told whenever a start's thread finishes.
     finished: Condvar,
 }
 
@@ -362,7 +372,8 @@ impl<W: Watch, C: Clock> Service<W, C> {
                 waits: HashMap::new(),
                 registrations: HashMap::new(),
                 serial: 0,
-                active: 0,
+                starts: HashSet::new(),
+                tickets: 0,
                 flushes: 0,
             }),
             timer: Condvar::new(),
@@ -419,18 +430,19 @@ impl<W: Watch, C: Clock> Service<W, C> {
         state
             .watches
             .insert(id, Held::Starting { cancelled: false });
-        state.active += 1;
+        let ticket = state.tickets;
+        state.tickets += 1;
+        state.starts.insert(ticket);
         drop(state);
         let starting = Arc::clone(inner);
         let started = thread::Builder::new()
             .name("editor-watch-start".into())
-            .spawn(move || starting.start(id, target, coalescing))
+            .spawn(move || starting.start(id, ticket, target, coalescing))
             .is_ok();
         if !started {
             let mut state = inner.state();
             state.watches.remove(&id);
-            state.active -= 1;
-            let flushed = state.settle(id);
+            let flushed = state.settle(ticket);
             drop(state);
             inner.finished.notify_all();
             inner.complete_all(flushed);
@@ -532,8 +544,8 @@ impl<W: Watch, C: Clock> Service<W, C> {
     }
 
     /// Refuses every later start, cancels every watch and every start in
-    /// flight, drops every registration, and then waits for every start in
-    /// flight to return from the port. Safe to call again.
+    /// flight, drops every registration, and then waits for the thread of
+    /// every start in flight to finish. Safe to call again.
     pub fn shutdown(&self) {
         self.inner().shutdown();
     }
@@ -546,8 +558,9 @@ impl<W: Watch, C: Clock> Service<W, C> {
     }
 
     /// Asks for the wait `id` to be completed once every start asked before
-    /// this call has returned from the port: registered and completed,
-    /// refused, or dropped as cancelled. A pending read is not waited for:
+    /// this call is done: registered and completed, refused and completed,
+    /// or cancelled and what it registered dropped. Its completion is
+    /// queued after theirs. A pending read is not waited for:
     /// it waits on the disk, not on the service. It returns at once and
     /// keeps no reply. An id in use is refused; one with no start in
     /// flight is completed at once, on the caller's thread. It is counted
@@ -559,12 +572,7 @@ impl<W: Watch, C: Clock> Service<W, C> {
         if state.in_use(id) {
             return false;
         }
-        let awaited: HashSet<u64> = state
-            .watches
-            .iter()
-            .filter(|(_, held)| matches!(held, Held::Starting { .. }))
-            .map(|(&watch, _)| watch)
-            .collect();
+        let awaited = state.starts.clone();
         if awaited.is_empty() {
             drop(state);
             (inner.complete)(id);
@@ -593,8 +601,9 @@ impl<W: Watch, C: Clock> Inner<W, C> {
     /// A start's thread: refuses what the core refuses, registers through
     /// the port or shares a registration, and keeps the reply; or, if the
     /// start was cancelled meanwhile, drops what it registered and keeps
-    /// nothing.
-    fn start(self: Arc<Self>, id: u64, target: Target, coalescing: Coalescing) {
+    /// nothing. Only then, once its completion is queued, is the start
+    /// `ticket` done for the flushes waiting on it.
+    fn start(self: Arc<Self>, id: u64, ticket: u64, target: Target, coalescing: Coalescing) {
         let (dropped, completed) = match Self::key(&target, coalescing) {
             Err(refusal) => {
                 let mut state = self.state();
@@ -602,15 +611,12 @@ impl<W: Watch, C: Clock> Inner<W, C> {
             }
             Ok(key) => self.register(id, target, coalescing, key),
         };
-        let mut state = self.state();
-        state.active -= 1;
-        let flushed = state.settle(id);
-        drop(state);
-        self.finished.notify_all();
         drop(dropped);
         if completed {
             (self.complete)(id);
         }
+        let flushed = self.state().settle(ticket);
+        self.finished.notify_all();
         self.complete_all(flushed);
     }
 
@@ -813,7 +819,7 @@ impl<W: Watch, C: Clock> Inner<W, C> {
         // from the port, and drops what it registered itself.
         let mut state = self
             .finished
-            .wait_while(self.state(), |state| state.active > 0)
+            .wait_while(self.state(), |state| !state.starts.is_empty())
             .unwrap_or_else(PoisonError::into_inner);
         let flushed = state.take_every_flush();
         drop(state);
@@ -880,7 +886,7 @@ fn route<W: Watch, C: Clock>(service: &Weak<Inner<W, C>>, serial: u64, notice: N
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
-    use std::sync::mpsc::{self, Receiver};
+    use std::sync::mpsc::{self, Receiver, Sender};
     use std::sync::{Mutex, PoisonError};
     use std::thread;
     use std::time::Duration;
@@ -1535,6 +1541,107 @@ mod tests {
         assert_eq!(service.take(2), None);
         assert_eq!(service.take(1), Some(WatchReply::Started));
         assert_eq!(service.pending(), 1, "the live watch");
+    }
+
+    /// A service over `fake` on `clock` whose completion of `held` tells
+    /// the first receiver it has begun and then waits for the sender to be
+    /// told or dropped. The second receiver has the ids whose completions
+    /// have returned, in order.
+    fn holding(
+        fake: &FakeWatch,
+        clock: &ManualClock,
+        held: u64,
+    ) -> (Fake, Receiver<u64>, Receiver<()>, Sender<()>) {
+        let (sender, completed) = mpsc::channel();
+        let (began, entered) = mpsc::channel();
+        let (release, gate) = mpsc::channel::<()>();
+        let sender = Mutex::new(sender);
+        let began = Mutex::new(began);
+        let gate = Mutex::new(gate);
+        let service = Service::new(fake.clone(), clock.clone(), move |id| {
+            if id == held {
+                began
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .send(())
+                    .ok();
+                gate.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .recv()
+                    .ok();
+            }
+            sender
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(id)
+                .ok();
+        });
+        (service, completed, entered, release)
+    }
+
+    /// Asks for the flush `flush` while the completion of the start `start`
+    /// is held, then lets it go, and gives back whether nothing was
+    /// completed while it was held and every completion after, in order.
+    fn flush_behind_a_held_completion(
+        service: &Fake,
+        completed: &Receiver<u64>,
+        entered: &Receiver<()>,
+        release: Sender<()>,
+        flush: u64,
+    ) -> (bool, Vec<u64>) {
+        assert_eq!(
+            entered.recv_timeout(DEADLINE),
+            Ok(()),
+            "the start completes"
+        );
+        let asked = service.flush(flush);
+        // Read while the completion is held, and checked once it is let
+        // go: a check that fails while it is held would leave the
+        // service's drop waiting for it.
+        let nothing = completed.try_recv().is_err();
+        drop(release);
+        assert!(asked);
+        let after = [
+            completed.recv_timeout(DEADLINE),
+            completed.recv_timeout(DEADLINE),
+        ]
+        .into_iter()
+        .map_while(Result::ok)
+        .collect();
+        (nothing, after)
+    }
+
+    /// The start has registered and left `Starting`, and its thread is in
+    /// its completion, held there: a flush asked now is one the start was
+    /// asked before, so it waits, and is completed after it.
+    #[test]
+    fn a_flush_asked_while_a_live_start_is_being_completed_is_completed_after_it() {
+        let (fake, _ground, clock) = fake();
+        let (service, completed, entered, release) = holding(&fake, &clock, 1);
+        assert!(service.start(1, file("/w/f"), AT_ONCE));
+
+        let (nothing, after) =
+            flush_behind_a_held_completion(&service, &completed, &entered, release, 2);
+
+        assert!(nothing, "the flush waits for the start's completion");
+        assert_eq!(after, [1, 2]);
+        assert_eq!(service.take(1), Some(WatchReply::Started));
+    }
+
+    /// As above, for a start refused: its refusal is kept, and its thread
+    /// is in its completion.
+    #[test]
+    fn a_flush_asked_while_a_refused_start_is_being_completed_is_completed_after_it() {
+        let (fake, _ground, clock) = fake();
+        let (service, completed, entered, release) = holding(&fake, &clock, 1);
+        assert!(service.start(1, file("relative"), AT_ONCE));
+
+        let (nothing, after) =
+            flush_behind_a_held_completion(&service, &completed, &entered, release, 2);
+
+        assert!(nothing, "the flush waits for the start's completion");
+        assert_eq!(after, [1, 2]);
+        assert_eq!(refusal(service.take(1)), Some(RefusalKind::NotAbsolute));
     }
 
     #[test]
