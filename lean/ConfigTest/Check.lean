@@ -4,6 +4,7 @@ import Editor.Config.Elaborate
 import Editor.Config.Session
 import Editor.Job.Real
 import Editor.Job.Runner
+import ExtensionFixture
 
 /-!
 # Config tests: the check
@@ -14,7 +15,9 @@ once and runs the list it is given; and `usage`, the command line `main` does
 not understand. Every test module that writes a check imports this one (the root
 module `ConfigTest` describes the layout).
 
-It imports the config base, `Editor`, for the link alone: the checks
+It imports the config base, `Editor`, and the fixtures `ConfigFixture` and
+`ExtensionFixture`, which the base the checks share holds too, for the
+link alone: the checks
 elaborate config on that base with the real elaborator
 (`Editor/Config/Elaborate.lean`, "The base"), whose import of the base at
 runtime needs every module of it linked into this executable. The adapter
@@ -36,8 +39,8 @@ structure Check where
 /-- What every check is given. -/
 structure Context where
   /-- The real elaborator, whose `base` hands back, and grows, the one base
-  the checks share (`sharing`): `Editor` and `ConfigFixture` to start
-  with. -/
+  the checks share (`sharing`): `Editor`, `ConfigFixture` and
+  `ExtensionFixture` to start with. -/
   elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle
   /-- What `ConfigFixture.bump` returned to compiled code before the base was
   imported. -/
@@ -121,7 +124,8 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
       let elaborator :=
         sharing (← IO.mkRef none)
           (Config.Elaborate.elaborator
-            { sysroot, oleanDirs := oleanDirs oleanDir, imports := #[`Editor, `ConfigFixture] }
+            { sysroot, oleanDirs := oleanDirs oleanDir,
+              imports := #[`Editor, `ConfigFixture, `ExtensionFixture] }
             files)
       -- The one import of the base, made before any check runs.
       discard <| elaborator.base none #[]

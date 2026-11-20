@@ -61,6 +61,14 @@ imports its `.olean` again at runtime as part of the base config is
 elaborated on. -/
 lean_lib ConfigFixture
 
+/-- An extension point and a compiled package that reads it
+(`ExtensionFixture.lean`), for the checks that config elaborated at runtime
+registers at a compiled package's extension point. `config-test` imports
+it, so it is linked into that executable, and the same executable imports
+its `.olean` again at runtime as part of the base config is elaborated
+on. -/
+lean_lib ExtensionFixture
+
 /-- Whether the build is for Linux, read from the target triple of the Lean
 toolchain Lake runs on (`aarch64-unknown-linux-gnu`): `System.Platform` has a
 flag for macOS and for Windows and none for Linux. -/

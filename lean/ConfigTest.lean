@@ -11,6 +11,7 @@ import ConfigTest.Editor.Evil
 import ConfigTest.Editor.Evil.TreeObjects
 import ConfigTest.Editor.Ex
 import ConfigTest.Editor.ExecuteCommand
+import ConfigTest.Editor.Extension
 import ConfigTest.Editor.Face
 import ConfigTest.Editor.Files
 import ConfigTest.Editor.Headless
@@ -209,6 +210,13 @@ show:
   workspace finder and `SPC p p` the project's workspace picker; each of its bindings names a
   registered command; and each prefix it binds under the leader has a
   prefix name (`Registry.prefixName?`);
+- `extensionChecks`: extension points (`Editor/Extension.lean`) with the
+  real elaborator, over the fixture `ExtensionFixture`, which declares an
+  extension point and a compiled package that reads it: a config
+  elaborated at runtime registers at that point, the compiled package
+  reads config's value typed and runs its interpreted program, and a
+  reload without the registration replaces config's value and keeps the
+  package's;
 - `indentChecks`: `=` and the indented new lines through a host of the Vim
   scheme that ships, over the library's Rust grammar: `gg=G` on the
   mangled Rust indent fixture (`tests/syntax/rust/indent.rs`, read from the
@@ -353,6 +361,7 @@ def checks (context : Context) : List Check :=
     hintChecks context ++
     keyHintChecks context ++
     defaultConfigChecks context ++
+    extensionChecks context ++
     -- Last, the checks whose config imports `Lean`: the base the checks
     -- share then holds it, and every environment made from that base
     -- after them costs a few times more.
