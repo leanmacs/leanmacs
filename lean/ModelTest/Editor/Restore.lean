@@ -117,6 +117,32 @@ def withRunning (running : Array RunningJob) (driver : EvilDriver) : EvilDriver 
 def keptOf (name : String) (value : Nat) : KeptCell :=
   { owner := "config", name, version := 1, value := .nat value }
 
+/-- `driver` with `cells` parked with their scopes at the config generation
+0, as a restore parks the table cells no codec met (`Kept.parked`). -/
+def withParked (cells : Array (Document.Scope × KeptCell)) (driver : EvilDriver) : EvilDriver :=
+  let state := driver.loop.state
+  { driver with
+    loop :=
+      { driver.loop with
+        state :=
+          { state with
+            restore :=
+              { state.restore with
+                parked := cells, parkedAt := 0 } } } }
+
+/-- `driver` told that config has installed `generation` times, with the
+codecs `codec?`. -/
+def installedWith (generation : Nat) (codec? : String → Option (String × StoreCodec))
+    (driver : EvilDriver) : EvilDriver :=
+  { driver with
+    keys :=
+      { driver.keys with
+        registered := { driver.keys.registered with generation, codec? } } }
+
+/-- The names of the unscoped cells the index of the run `run` lists. -/
+def unscopedNames (driver : EvilDriver) (run : Nat) : Option (Array String) :=
+  ((indexOf driver run).bind (·.workspaces)).map (·.unscoped.map (·.name))
+
 end JournalReconcileTest
 
 open JournalReconcileTest in
@@ -154,6 +180,28 @@ def journalReconcileChecks : List Check :=
               quiet.loop.state.restore.stores == #[keptOf "kept" 2] &&
               unchanged.loop.state.restore.stores == #[keptOf "kept" 2] &&
               (indexOf unchanged 1).map (·.stores) == some #[keptOf "kept" 2] },
+    { name :=
+        "a parked table cell an install registers no codec for is dropped once config installs past it: said once in the echo area, no longer parked, and no longer in the next index"
+      run :=
+        pure <|
+          match driver with
+          | none => false
+          | some begun =>
+            let parked := withParked #[(.unscoped, keptOf "gone" 5)] (drained begun)
+            let waiting := drained (evilFed parked "l")
+            let dropped := evilFed (installedWith 1 (fun _ => none) waiting) "l"
+            let quiet := drained dropped
+            -- A later mirror, a revision moved, says nothing again.
+            let later :=
+              mirrored quiet.loop.state ({ configGeneration := 1, stores := { revision := 7 } } :
+                  Context)
+            unscopedNames waiting 1 == some #["gone"] &&
+              waiting.loop.state.restore.parked.size == 1 &&
+              dropped.loop.state.echo ==
+                "restore: the session kept gone, but no codec is registered for it now; dropped" &&
+              dropped.loop.state.restore.parked.isEmpty &&
+              unscopedNames quiet 1 == some #[] &&
+              later.2 == none && later.1.restore.parked.isEmpty },
     { name := "a reported job's start and its end each change the jobs the index lists"
       run :=
         pure <|

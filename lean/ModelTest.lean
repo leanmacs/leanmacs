@@ -1271,8 +1271,9 @@ Session restore is checked in Lean alone too:
   write fires once for a burst; every window's place is recorded; the
   index after a split, a tab and a jump carries the frame and the jumps;
   a change of the host's cells is mirrored and written once, and an
-  unchanged revision reads nothing; and a reported job's start and end
-  each change the jobs listed.
+  unchanged revision reads nothing; a parked table cell an install
+  registers no codec for dropped, said once, and gone from the next index;
+  and a reported job's start and end each change the jobs listed.
 - `restoreChecks`: restoring a session (`Editor/Restore/Run.lean`) on that
   driver, from what a first loop wrote or a check wrote by hand: buffers,
   texts, line endings, modes and the focused cursor come back; a file
