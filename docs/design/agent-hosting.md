@@ -262,8 +262,10 @@ pins that with the mode off no watch is open; the phase is
 ## Open questions
 
 - **JSON throughput** of the ACP client in Lean under a fast-streaming
-  agent. If it is too slow, parsing moves into the Rust library (where the
-  ACP Rust SDK, licence and fit unchecked, becomes an option).
+  agent. If it is too slow, parsing moves into Rust (where the ACP Rust
+  SDK, licence and fit unchecked, becomes an option). The ACP package
+  would hold that Rust itself, behind a port in the editor's terms
+  ([packages.md](packages.md), "Rust in a package"; proposal).
 - **A detached supervisor**: should agent processes be children of the
   editor, or of a small separate process that outlives it, as VS Code now
   does? Persisted records plus resume may be enough at first.

@@ -1166,6 +1166,88 @@ cut none. What replaced each edge is an interface the core owns.
   core's vocabulary holds, and no core module imports it for them. No edge
   was cut here; they stayed in the core's vocabulary when the mode moved.
 
+## Rust in a package
+
+Status: **proposal**, decided 2026-11-19; not built
+(`phase/packages/phase-11-rust-in-packages`).
+
+A package may need code that exists as a Rust crate, as the agent client
+protocol does: the ACP client could run on the protocol's Rust SDK instead
+of writing JSON-RPC and the protocol's types again in Lean
+([agent-hosting.md](agent-hosting.md), "Open questions"). Today no package
+can bring Rust. The editor's Rust is one static library, `editor-ffi`, which
+gathers the `editor-*` crates; the core's lakefile builds it with Cargo
+(`rustlib`) and links it, with the C glue (`lean/ffi/glue.c`), into the one
+executable (`linkAsEditor`). A Lean binding is an `@[extern]` declaration
+of a glue function (`editor_glue_…`), which turns Lean objects into plain
+data and calls a Rust function of the C ABI (`editor_ffi_…`).
+
+### One Rust archive per editor, generated from the set
+
+The package-set build writes the executable's root module from the set's
+Lake packages ("The generated root", above). It writes a Rust crate the same
+way:
+
+- A package that holds Rust has a crate of its own in its directory
+  (`packages/acp/rust/`, say), and says so in its lakefile.
+- The set's build writes a one-file crate whose dependencies are
+  `editor-ffi` and each such package's crate, of crate type `staticlib`, and
+  links its archive where `rustlib` is linked now. The editor holds one
+  archive, so one copy of Rust's standard library and one allocator.
+- The system libraries the link needs come from that crate's
+  `--print native-static-libs`, so a package's crate that needs a framework
+  adds it without an edit to the core's `linkArgs`.
+- A package's glue is a C file of its own, compiled by its own lakefile and
+  linked beside the core's glue. Its Lean modules declare `@[extern]`
+  functions of its glue, as the core's bindings do.
+
+Not chosen:
+
+- **An archive per package.** Each Rust static library carries its own copy
+  of the standard library, and two in one executable clash on its symbols.
+- **A library loaded when the editor runs** (`dlopen`). It needs no relink
+  and no Cargo, which suits a third party's prebuilt binary, but
+  `@[extern]` binds at link time, so every call would go through a table of
+  pointers, and the signed app would have to relax library validation. It
+  stays an option for third-party packages only.
+
+### The service conventions as a crate of their own
+
+A package's crate runs work the way the core's services do
+([rust-library.md](rust-library.md)): `start` with the caller's id, which
+never blocks; one completion event for each request, on the completion
+queue; `cancel`; and plain data only, never a call into Lean. Today those
+conventions live inside `editor-ffi`. They move to a small public crate
+that `editor-ffi` and every package's crate depend on: registering a
+service, posting to the completion queue, the plain-data types. It is the
+Rust counterpart of an interface package ([extension-points.md](extension-points.md)):
+a package's crate depends on it, never on `editor-ffi` or on another
+package's crate.
+
+### Behind a port, so it stays replaceable
+
+A package's Rust is an adapter. Its Lean side is a binding behind a port,
+with a pure model and a contract check run against both, as every port is
+(`AGENTS.md`). The port is declared by an interface package, so an
+implementation backed by Rust and one written in Lean are both
+implementation packages, and either can replace the other.
+
+The port is phrased in the editor's terms, not the crate's. For ACP the
+crate holds the JSON-RPC connection on its own threads and hands Lean
+events such as a message chunk, a tool call or a permission request; Lean
+does not get the protocol's raw messages, which would need every type of
+the protocol again in Lean.
+
+### Who can build it
+
+The default packages are built in CI and shipped prebuilt, so a package of
+the default set may hold Rust. A user's package set is linked on the user's
+machine with the Lean toolchain alone (phase 1 of the packages roadmap), so
+a third party's package that holds Rust needs Cargo there, or archives
+built ahead for each platform. Which, and how a set refuses a Rust package
+it cannot build, is the work of the user package sets and the bundled
+toolchain (packages phases 8 and 9).
+
 ## The module map
 
 Every module under `lean/Editor/`, 291 of them
