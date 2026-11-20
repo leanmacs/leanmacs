@@ -21,12 +21,13 @@
 #    relocated copy;
 # 2. verifies the copy's signature with `codesign --verify --strict --deep`;
 # 3. reads its `Info.plist` as the system does (`plutil`): it lints, its
-#    `CFBundleExecutable` is an executable file under `Contents/MacOS`, its
+#    `CFBundleExecutable` is `leanmacs`, the launcher, an executable file
+#    under `Contents/MacOS` beside the editor it starts, `editor`; its
 #    `LSArchitecturePriority` starts with arm64, its
 #    `LSMinimumSystemVersion` is no later than this machine's macOS, the
-#    executable's own minimum macOS (`vtool -show-build`, its `minos`) is
-#    no later than `LSMinimumSystemVersion`, the executable is arm64 alone
-#    (`lipo`), and its `CFBundleDocumentTypes` are exactly two, each with
+#    launcher's and the editor's own minimum macOS (`vtool -show-build`,
+#    their `minos`) is no later than `LSMinimumSystemVersion`, each is
+#    arm64 alone (`lipo`), and its `CFBundleDocumentTypes` are exactly two, each with
 #    the role `Editor` and one content type: `public.text` at rank
 #    `Alternate`, then `public.data` at rank `None`. A walk over the whole
 #    plist finds no `LSHandlerRank` of `Default` or `Owner` and no
@@ -43,7 +44,7 @@
 # 4. converts the icon back to an iconset (`iconutil -c iconset`), which
 #    must hold exactly the ten standard images, each read by ImageIO
 #    (`sips`) at its nominal size, 16 to 1024 pixels;
-# 5. runs the copy's `Contents/MacOS/editor headless` on the fixture
+# 5. runs the copy's `editor headless` on the fixture
 #    `tests/headless/bundle`, copied there too, with no directory argument,
 #    an empty environment (`env -i`: no `HOME`, `PATH` or `LEAN_PATH`) and
 #    `/` as the working directory: it must exit 0 and print exactly
@@ -57,10 +58,17 @@
 #    directory must then hold a `lean-toolchain` that is
 #    `lean/lean-toolchain` byte for byte, and no `lakefile.toml`, since the
 #    bundle holds no package set for a lakefile to require;
-# 5b. runs the copy's `editor --version` the same way, with an empty
-#    environment from `/`: it must print exactly `Leanmacs <version>`,
-#    `build <build ID>` and `commit <commit>`, so the Lean plist reader
-#    (lean/Editor/Version.lean) reads the keys the build writes;
+# 5b. runs the copy's `editor --version` the same way, through the launcher,
+#    with an empty environment from `/`: it must print exactly `Leanmacs
+#    <version>`, `build <build ID>` and `commit <commit>`, so the Lean plist
+#    reader (lean/Editor/Version.lean) reads the keys the build writes;
+# 5c. runs the launcher's `--probe` of the copy's editor, and of a copy of
+#    the editor outside the bundle with `--default`, each with an empty
+#    environment from `/`: each must print `probe: ok`, the launcher, and the
+#    copy as CoreFoundation's main bundle with the app's identifier, so the
+#    launcher's `CFProcessPath` gives an editor outside the bundle the app's
+#    identity (docs/design/lean-runtime.md, "The app's identity across an
+#    exec");
 # 6. builds `editorApp` again and checks that it copied and signed
 #    nothing: the bundle's executable, its `CodeResources` and the build's
 #    trace file keep their modification times and inodes. Lake's output is
@@ -129,6 +137,9 @@ trace="$set_dir/.lake/build/Leanmacs.app.trace"
 
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
+# The temporary directory's own path, its links resolved: CoreFoundation
+# names the main bundle so (step 5c).
+dir=$(cd "$dir" && pwd -P)
 
 fail() {
   echo "app-check: $*" >&2
@@ -202,8 +213,11 @@ read_key() {
   plutil -extract "$1" raw -o - "$plist"
 }
 executable=$(read_key CFBundleExecutable)
+[ "$executable" = leanmacs ] || fail "CFBundleExecutable is $executable, not the launcher, leanmacs"
 [ -f "$app/Contents/MacOS/$executable" ] && [ -x "$app/Contents/MacOS/$executable" ] ||
   fail "CFBundleExecutable names $executable, which is no executable under Contents/MacOS"
+[ -f "$app/Contents/MacOS/editor" ] && [ -x "$app/Contents/MacOS/editor" ] ||
+  fail "Contents/MacOS/editor, the shipped editor the launcher starts, is no executable"
 [ "$(read_key LSArchitecturePriority.0)" = arm64 ] || fail "LSArchitecturePriority does not start with arm64"
 minimum=$(read_key LSMinimumSystemVersion)
 running=$(sw_vers -productVersion)
@@ -224,12 +238,15 @@ not_later "$minimum" "$running" ||
 # The executable's own minimum macOS (its LC_BUILD_VERSION `minos`), which
 # LaunchServices checks before it starts the app from Finder: no later than
 # LSMinimumSystemVersion.
-minos=$(vtool -show-build "$app/Contents/MacOS/$executable" | awk '$1 == "minos" { print $2; exit }')
-[ -n "$minos" ] || fail "the executable records no minimum macOS"
-not_later "$minos" "$minimum" ||
-  fail "the executable needs macOS $minos, later than LSMinimumSystemVersion $minimum: Finder refuses to start it"
-archs=$(lipo -archs "$app/Contents/MacOS/$executable")
-[ "$archs" = arm64 ] || fail "the executable is for $archs, not arm64 alone"
+# The launcher and the editor it starts, each.
+for binary in "$executable" editor; do
+  minos=$(vtool -show-build "$app/Contents/MacOS/$binary" | awk '$1 == "minos" { print $2; exit }')
+  [ -n "$minos" ] || fail "Contents/MacOS/$binary records no minimum macOS"
+  not_later "$minos" "$minimum" ||
+    fail "Contents/MacOS/$binary needs macOS $minos, later than LSMinimumSystemVersion $minimum: Finder refuses to start it"
+  archs=$(lipo -archs "$app/Contents/MacOS/$binary")
+  [ "$archs" = arm64 ] || fail "Contents/MacOS/$binary is for $archs, not arm64 alone"
+done
 # The document types: every text type (public.text) at rank Alternate,
 # offered under "Open With" and never the default, and any file
 # (public.data) at rank None, accepted but never offered or chosen; each with
@@ -447,7 +464,7 @@ step "the copy's headless mode with --generate loaded the config, and generated 
 # Whether the bundle at $1 says version $2, build $3 and commit $4.
 check_says() {
   local said
-  said=$(cd / && env -i "$1/Contents/MacOS/editor" --version) || fail "$1's editor --version failed"
+  said=$(cd / && env -i "$1/Contents/MacOS/leanmacs" --version) || fail "$1's editor --version failed"
   [ "$said" = "$(printf 'Leanmacs %s\nbuild %s\ncommit %s' "$2" "$3" "$4")" ] ||
     fail "$1's editor --version printed
 $said
@@ -455,6 +472,20 @@ not version $2, build $3, commit $4"
 }
 check_says "$app" "$version" "$build_id" "$commit"
 step "the copy's editor --version, with an empty environment from /, printed version $version, build $build_id and commit $commit"
+
+# 5c. The app's identity, through the launcher: the bundle's editor, and a
+# copy of it outside the bundle started with --default, each see the copy as
+# CoreFoundation's main bundle, with its identifier.
+identifier=$(read_key CFBundleIdentifier)
+printf 'probe: ok\nlaunched-by %s\nbundle %s identifier %s\n' "$app/Contents/MacOS/leanmacs" "$app" "$identifier" >"$dir/probe-expected"
+(cd / && env -i "$app/Contents/MacOS/leanmacs" --probe) | diff "$dir/probe-expected" - ||
+  fail "the launcher's probe of the bundle's editor printed other than the copy and its identifier"
+mkdir "$dir/outside"
+cp "$app/Contents/MacOS/editor" "$dir/outside/editor"
+(cd / && env -i "$app/Contents/MacOS/leanmacs" --default "$dir/outside/editor" -- --probe) |
+  diff "$dir/probe-expected" - ||
+  fail "the launcher's probe of an editor outside the bundle printed other than the copy and its identifier"
+step "the bundle's editor and a copy outside it, started by the launcher, both see the copy, $identifier, as their main bundle"
 
 # 6. A second build copies and signs nothing.
 marks() {
@@ -473,6 +504,7 @@ cp -Rpc "$lean_dir" "$clone/lean"
 cp -Rpc "$set_dir" "$clone/packages"
 cp -p "$lean_dir/../tools/stage-bundle.sh" "$clone/tools/stage-bundle.real"
 cp -pc "$lean_dir/../target/release/libeditor_ffi.a" "$clone/target/release/libeditor_ffi.a"
+cp -pc "$lean_dir/../target/release/leanmacs" "$clone/target/release/leanmacs"
 printf '#!/bin/sh\nexit 0\n' >"$clone/bin/cargo"
 printf '#!/usr/bin/env bash\n"$(dirname "$0")/stage-bundle.real" "$@"\nexit 1\n' >"$clone/tools/stage-bundle.sh"
 chmod +x "$clone/bin/cargo" "$clone/tools/stage-bundle.sh"

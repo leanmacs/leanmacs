@@ -1,0 +1,12 @@
+reload 1: installed, 2 files, 1 commands
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+key arrived: i KeyI -
+key arrived: x KeyX -
+key arrived: <Escape> Escape -
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+restart: the session is handed over
+scene 640x480, focused 0, echo "restore: restarted, so the window was closed and reopened; @DIR@/bad ended before restoring the session, so @EDITOR@ restored it; 1 buffers, 1 with unsaved text", echo padding 8, preedit -, published 11, theme "default"
+view 0 0,0 640x464: "xfirst line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "note.txt" +4, mode-line.modified "●" +4, mode-line.secondary "@DIR@" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4

@@ -1,0 +1,31 @@
+# A template of a script: run as `script` is, through the launcher, with
+# `@BAD@` replaced by the path of a program that prints `probe: ok` for
+# `--probe` and otherwise fails before it restores anything. `:restart`
+# into it passes the probe and hands over; the launcher's watcher sees it
+# end with the record still there, marks it failed and starts the previous
+# executable, the editor, which restores the session and names it. What
+# both processes print must be exactly the step's expected output.
+
+reload
+settle
+resize 640 480
+key : Semicolon shift
+commit e @FILE@
+key <Enter> Enter -
+indexed
+key i KeyI -
+key x KeyX -
+key <Escape> Escape -
+indexed
+journalled
+key : Semicolon shift
+commit restart @BAD@
+key <Enter> Enter -
+restarted
+
+# The previous executable, started by the watcher's launcher.
+settle
+resize 640 480
+indexed
+journalled
+scene

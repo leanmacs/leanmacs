@@ -3,12 +3,14 @@
 # `bundle-test` and for `mise run module-bench`
 # (docs/dev-practices/headless-mode.md, "From an app bundle").
 #
-#   tools/stage-bundle.sh [--roots <root>,...] [--closure <file>] \
+#   tools/stage-bundle.sh [--roots <root>,...] [--closure <file>] [--launcher <file>] \
 #     <bundle dir> <executable> <sysroot> <package olean dirs> <kind>...
 #
 # It makes `<bundle dir>/Contents/MacOS/` and copies the executable there as
-# `editor` (a copy, never a link), and copies module files, keeping their
-# paths relative to the directory they are in:
+# `editor` (a copy, never a link), and with `--launcher` the app's launcher
+# there as `leanmacs` (`crates/editor-launch-std`; the bundle's
+# `CFBundleExecutable`, which starts `editor`), and copies module files,
+# keeping their paths relative to the directory they are in:
 #
 # - from the toolchain's `<sysroot>/lib/lean` into
 #   `Contents/Resources/lean/toolchain/lib/lean`, so that directory is a
@@ -39,14 +41,20 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: tools/stage-bundle.sh [--roots <root>,...] [--closure <file>] <bundle dir> <executable> <sysroot> <package olean dirs> <kind>..." >&2
+  echo "usage: tools/stage-bundle.sh [--roots <root>,...] [--closure <file>] [--launcher <file>] <bundle dir> <executable> <sysroot> <package olean dirs> <kind>..." >&2
   exit 2
 }
 
 roots=Init,Std
 closure=
+launcher=
 while [ $# -gt 0 ]; do
   case "$1" in
+  --launcher)
+    [ $# -ge 2 ] || usage
+    launcher=$2
+    shift 2
+    ;;
   --roots)
     [ $# -ge 2 ] || usage
     roots=$2
@@ -82,6 +90,9 @@ staged_toolchain="$bundle/Contents/Resources/lean/toolchain/lib/lean"
 staged_editor="$bundle/Contents/Resources/lean/editor"
 mkdir -p "$macos" "$staged_toolchain" "$staged_editor"
 cp "$executable" "$macos/editor"
+if [ -n "$launcher" ]; then
+  cp "$launcher" "$macos/leanmacs"
+fi
 
 # Copies the files listed on stdin, relative to `$1`, into `$2`, keeping
 # their relative paths.

@@ -1,0 +1,54 @@
+# A template of a script: `mise run ffi-test` copies `note.txt` into a
+# temporary directory, writes this file there with `@FILE@` replaced by the
+# copy's absolute path, and runs it against `tests/headless/config` with
+# `--state` naming a fresh directory beside it. One script serves both
+# processes: the first runs it to `restarted`, hands the session over and
+# execs; the second, started with `--resume 1`, runs it from the line after
+# `restarted`. What both print, one after the other, must be exactly the
+# step's expected output, the temporary directory read as `@DIR@` and the
+# editor's path as `@EDITOR@`.
+
+reload
+settle
+resize 640 480
+
+# `:e` opens the file, which gets unsaved text; the window is split and a
+# second tab made, then the first shown again.
+key : Semicolon shift
+commit e @FILE@
+key <Enter> Enter -
+indexed
+key i KeyI -
+key x KeyX -
+key <Escape> Escape -
+run window-split-vertically
+key w KeyW control
+key c KeyC -
+key w KeyW control
+key p KeyP -
+indexed
+journalled
+
+# `:restart` probes the executable, writes the session and the record, and
+# hands over: this process ends here.
+key : Semicolon shift
+commit restart
+key <Enter> Enter -
+restarted
+
+# The next process: the session restored from the index handed over, the
+# window closed and reopened, said; the same buffer with its unsaved text,
+# the split and the hidden tab.
+settle
+reload
+settle
+resize 640 480
+indexed
+journalled
+scene
+show
+
+# `C-w n` shows the hidden tab.
+key w KeyW control
+key n KeyN -
+scene

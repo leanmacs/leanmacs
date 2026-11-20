@@ -101,6 +101,27 @@ target rustlib pkg : FilePath :=
     setTrace (← computeTrace lib)
     return lib
 
+/-- The app's launcher (`crates/editor-launch-std`, the binary `leanmacs`):
+the bundle's `CFBundleExecutable`, which starts `Contents/MacOS/editor` by
+exec (`docs/design/lean-runtime.md`, "The app's identity across an exec").
+Built as `rustlib` is, by Cargo with its own up-to-date check, into the
+workspace's `target/release`. Only `editorApp` fetches it, so the model
+tests' failing `cargo` (`mise run lean-test`) never reaches it. -/
+target launcher pkg : FilePath :=
+  Job.async do
+    requireSupportedPlatform
+    let root := pkg.dir / ".."
+    let targetDir := root / "target"
+    proc (quiet := true)
+        { cmd := "cargo"
+          args :=
+            #["build", "--release", "--locked", "--package", "editor-launch-std", "--bin",
+              "leanmacs", "--manifest-path", (root / "Cargo.toml").toString, "--target-dir",
+              targetDir.toString] }
+    let binary := targetDir / "release" / "leanmacs"
+    setTrace (← computeTrace binary)
+    return binary
+
 /-- The C glue between `@[extern]` declarations and the Rust library
 (`ffi/glue.c`), compiled against the toolchain's own `lean.h`. Nothing lints C
 for us, so every warning is an error. -/
@@ -741,7 +762,7 @@ def appInfoPlist (version build commit : String) : String :=
 \t\t</dict>
 \t</array>
 \t<key>CFBundleExecutable</key>
-\t<string>editor</string>
+\t<string>leanmacs</string>
 \t<key>CFBundleIconFile</key>
 \t<string>{appName}</string>
 \t<key>CFBundleIdentifier</key>
@@ -797,7 +818,12 @@ the core's, this package's, found in the workspace by name: the stage
 script, this lakefile, the version file, the artwork and the `.olean`
 directory.
 
-It holds `Contents/MacOS/editor`, a copy of the set's `editor`; under
+It holds `Contents/MacOS/leanmacs`, the app's launcher (`launcher`), which is
+the bundle's `CFBundleExecutable` and starts the editor by exec with
+`CFProcessPath` pointing CoreFoundation at the bundle
+(`docs/design/lean-runtime.md`, "The app's identity across an exec");
+`Contents/MacOS/editor`, a copy of the set's `editor`, the shipped default;
+under
 `Contents/Resources/lean`, the `.olean`, `.olean.server` and
 `.olean.private` files of the modules the set's config base imports and of
 every module of `Std` and `Lean`, which a config file may import
@@ -845,6 +871,7 @@ package_facet editorApp pkg : FilePath := do
   let base := (setBase (← setEntries pkg)).map (·.toString)
   let searched := ":".intercalate ((← moduleDirectories pkg).map (·.toString)).toList
   let exe ← fetch <| pkg.facet `editor
+  let launcherJob ← launcher.fetch
   let lister ← «config-test».fetch
   let library ← Editor.fetch
   let stager ← inputTextFile <| core.dir / ".." / "tools" / "stage-bundle.sh"
@@ -853,12 +880,13 @@ package_facet editorApp pkg : FilePath := do
   let versionJob ← inputTextFile <| core.dir / appVersionFile
   let artJob ← inputBinFile <| core.dir / appIconFile
   let inputs :=
-    ((((((exe.zipWith Prod.mk lister).zipWith Prod.mk stager).zipWith (fun paths _ => paths)
-                  library).zipWith
-              (fun paths _ => paths) recipe).zipWith
-          Prod.mk versionJob).zipWith
-      Prod.mk artJob)
-  inputs.mapM fun ((((exe, lister), stager), versionFile), art) => do
+    (((((((exe.zipWith Prod.mk lister).zipWith Prod.mk stager).zipWith (fun paths _ => paths)
+                      library).zipWith
+                  (fun paths _ => paths) recipe).zipWith
+              Prod.mk versionJob).zipWith
+          Prod.mk artJob).zipWith
+      Prod.mk launcherJob)
+  inputs.mapM fun (((((exe, lister), stager), versionFile), art), launcherFile) => do
       addLeanTrace
       addPlatformTrace
       let version ←
@@ -911,8 +939,9 @@ package_facet editorApp pkg : FilePath := do
           proc (quiet := true)
               { cmd := stager.toString
                 args :=
-                  #["--closure", closure.toString, staged.toString, exe.toString, sysroot.toString,
-                    searched, "olean", "olean.server", "olean.private"] }
+                  #["--closure", closure.toString, "--launcher", launcherFile.toString,
+                    staged.toString, exe.toString, sysroot.toString, searched, "olean",
+                    "olean.server", "olean.private"] }
           IO.FS.writeFile (staged / "Contents" / "Info.plist") plist
           -- The system's tools, by absolute path: mise's PATH may hold others of
           -- the same name (a Python package installs an `xattr` with no `-r`).

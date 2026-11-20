@@ -232,9 +232,13 @@ run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xa
 # contract-test took 50 to 62 s on the macOS runner while the gate's other
 # tasks ran beside it; it is to come down once a run on the runner confirms
 # the new time.
+[tasks.launcher]
+description = "Build the app's launcher and its test helper, release (crates/editor-launch-std: leanmacs and launch-probe), for the gate's restart entries"
+run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
+
 [tasks.ffi-test]
-description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh) and that a package imports only the core's API (tools/package-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, and the linked test and headless fixtures of each package of the fixture set and of the default set (tools/package-set.sh)"
-depends = ["lean"]
+description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh) and that a package imports only the core's API (tools/package-imports-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, its restart through the launcher (tests/headless/restart), and the linked test and headless fixtures of each package of the fixture set and of the default set (tools/package-set.sh)"
+depends = ["lean", "launcher"]
 dir = "lean"
 timeout = "180s"
 run = [
@@ -700,6 +704,40 @@ run = [
   # summary and `*restore*` naming the stopped job
   # (`stores-restore-expected`).
   "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/headless/restore && mkdir \"$dir/work\" && cp $f/note.txt \"$dir/work/note.txt\" && touch \"$dir/work/.project\" && sed \"s|@FILE@|$dir/work/note.txt|\" $f/stores-script > \"$dir/stores\" && status=0 && { out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean $f/stores-config \"$dir/stores\") || status=$?; } && test \"$status\" -eq 134 && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/stores-expected - && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean $f/stores-config $f/stores-restore-script) && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | grep -v '^job \\|^commands:' | diff $f/stores-restore-expected -",
+  # Restart (tests/headless/restart; docs/dev-practices/the-gate.md, the
+  # restart entries; lean/Editor/Restore/Restart.lean). Each runs in a
+  # temporary directory with `--state` there; the output has that
+  # directory written `@DIR@` and the editor's path `@EDITOR@`, and its job
+  # lines and command list dropped. One script serves both processes: the
+  # first runs it to `restarted`, the second, started with `--resume 1`,
+  # from the line after. Through the launcher (`target/release/leanmacs`,
+  # built by the `launcher` task, with `--default` the editor): `:restart`
+  # probes the running editor, writes the session and the hand-over record
+  # and execs the launcher, which starts the editor again with the session
+  # handed over; what both print must be exactly `restart-expected` (the
+  # buffer with its unsaved text, the split and the hidden tab, and the
+  # summary that the window was closed and reopened), and then no record is
+  # left, the first run's index is gone, the second's there, and only its
+  # journals.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && f=../tests/headless/restart && editor=$(cd ../packages/.lake/build/bin && pwd -P)/editor && cp $f/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" $f/script > \"$dir/script\" && out=$(../target/release/leanmacs --default ../packages/.lake/build/bin/editor -- headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s|$editor|@EDITOR@|g\" | grep -v '^job \\|^commands:' | diff $f/restart-expected - && test ! -e \"$dir/state/session/handover\" && test ! -e \"$dir/state/session/session-1.json\" && test -e \"$dir/state/session/session-2.json\" && test -z \"$(ls \"$dir/state/session/journals\" | grep -v '^2-')\"",
+  # The same with no launcher (decision 8): the editor run directly execs
+  # itself, with no watcher and no fallback, and says so
+  # (`restart-direct-expected`); the same files are left.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && f=../tests/headless/restart && editor=$(cd ../packages/.lake/build/bin && pwd -P)/editor && cp $f/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" $f/script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s|$editor|@EDITOR@|g\" | grep -v '^job \\|^commands:' | diff $f/restart-direct-expected - && test ! -e \"$dir/state/session/handover\" && test ! -e \"$dir/state/session/session-1.json\" && test -e \"$dir/state/session/session-2.json\" && test -z \"$(ls \"$dir/state/session/journals\" | grep -v '^2-')\"",
+  # A probe that fails: `:restart` into a program that exits 3 whatever it
+  # is given is refused, said, and the script goes on in the same process
+  # with the session as it was (`probe-expected`); no record is written.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && f=../tests/headless/restart && editor=$(cd ../packages/.lake/build/bin && pwd -P)/editor && cp $f/note.txt \"$dir/note.txt\" && printf '#!/bin/sh\\nexit 3\\n' > \"$dir/noprobe\" && chmod +x \"$dir/noprobe\" && sed \"s|@FILE@|$dir/note.txt|; s|@NOPROBE@|$dir/noprobe|\" $f/probe-script > \"$dir/script\" && out=$(../packages/.lake/build/bin/editor headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s|$editor|@EDITOR@|g\" | grep -v '^job \\|^commands:' | diff $f/probe-expected - && test ! -e \"$dir/state/session/handover\"",
+  # The fallback: `:restart` into a program that passes the probe and
+  # otherwise exits 3 before restoring anything. The launcher's watcher sees
+  # it end with the record still there, marks it failed, and the launcher it
+  # execs starts the previous executable, the editor, which restores the
+  # session and names it (`fallback-expected`); the watcher says so on
+  # standard error, and no record is left. The first process's status is the
+  # failed program's, so it is not asked for.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && f=../tests/headless/restart && editor=$(cd ../packages/.lake/build/bin && pwd -P)/editor && cp $f/note.txt \"$dir/note.txt\" && ending='exit 3' && printf '#!/bin/sh\\n[ \"$1\" = --probe ] && { echo \"probe: ok\"; exit 0; }\\n%s\\n' \"$ending\" > \"$dir/bad\" && chmod +x \"$dir/bad\" && sed \"s|@FILE@|$dir/note.txt|; s|@BAD@|$dir/bad|\" $f/fallback-script > \"$dir/script\" && status=0 && { out=$(../target/release/leanmacs --default ../packages/.lake/build/bin/editor -- headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\" 2>\"$dir/err\") || status=$?; } && test \"$status\" -eq 3 && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s|$editor|@EDITOR@|g\" | grep -v '^job \\|^commands:' | diff $f/fallback-expected - && grep -qxF \"leanmacs: $dir/bad ended before it restored the session; starting $editor\" \"$dir/err\" && test ! -e \"$dir/state/session/handover\"",
+  # The same with a program that sends itself SIGKILL (`killed-expected`).
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && dir=$(cd \"$dir\" && pwd -P) && f=../tests/headless/restart && editor=$(cd ../packages/.lake/build/bin && pwd -P)/editor && cp $f/note.txt \"$dir/note.txt\" && ending='kill -KILL $$' && printf '#!/bin/sh\\n[ \"$1\" = --probe ] && { echo \"probe: ok\"; exit 0; }\\n%s\\n' \"$ending\" > \"$dir/bad\" && chmod +x \"$dir/bad\" && sed \"s|@FILE@|$dir/note.txt|; s|@BAD@|$dir/bad|\" $f/fallback-script > \"$dir/script\" && status=0 && { out=$(../target/release/leanmacs --default ../packages/.lake/build/bin/editor -- headless --state \"$dir/state\" \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\" 2>\"$dir/err\") || status=$?; } && test \"$status\" -eq 137 && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g; s|$editor|@EDITOR@|g\" | grep -v '^job \\|^commands:' | diff $f/killed-expected - && grep -qxF \"leanmacs: $dir/bad ended before it restored the session; starting $editor\" \"$dir/err\" && test ! -e \"$dir/state/session/handover\"",
   # `open-file`'s prompt over real files, as a process, with no config
   # (tests/headless/open-file): the file source lists the directory typed so
   # far through the library's file service, directories first with
@@ -822,6 +860,15 @@ run = [
   # bar. The toolchain's directory and the `.olean` directory are passed in,
   # as for config-test. It touches no file.
   ".lake/build/bin/ffi-test window-host-config \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
+  # The same wiring ending in a restart (lean/FfiTest/Editor/Window/Real.lean,
+  # `windowHostRestartScenario`): config loaded at start from the same
+  # fixture, a state directory and a launcher in a temporary directory, and
+  # `restart` run once the restore has finished, into a probe script that
+  # prints `probe: ok`. The host must hand back the restart's plan once the
+  # shutdown has run and the window has closed, the record on disk the
+  # plan's; the plan's exec is recorded by a fake, so nothing is exec'd. It
+  # writes only in its temporary directory.
+  ".lake/build/bin/ffi-test window-host-restart \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
   # The same wiring handed a config base that is not `Editor` alone, as the
   # editor's `main` hands the window mode its package set's (`Editor`, then
   # the entry module of each package of the set; lean/Editor/Main.lean,
@@ -950,10 +997,15 @@ run = [
 # limit of its own: copying the 180 MB executable and the module files must
 # not eat `ffi-test`'s.
 #
-# One shell, which makes a temporary directory and removes it by a trap when
-# the shell ends, whether the check passed or failed. In it,
-# tools/stage-bundle.sh lays out `Leanmacs.app` as the bundle will be: a
-# copy of `editor` (not a link) in `Contents/MacOS`, and the `.olean`,
+# Cargo first builds the app's launcher (crates/editor-launch-std, the
+# binary `leanmacs`), release, into target/; its own up-to-date check makes
+# that quick once built. Then one shell, which makes a temporary directory
+# (its path with its links resolved, as CoreFoundation names a bundle) and
+# removes it by a trap when the shell ends, whether the check passed or
+# failed. In it, tools/stage-bundle.sh lays out `Leanmacs.app` as the bundle
+# will be: a copy of `editor` (not a link) in `Contents/MacOS`, and of the
+# launcher beside it as `leanmacs`, the bundle's `CFBundleExecutable`, and
+# the `.olean`,
 # `.olean.server` and `.olean.private` files of the modules the default
 # set's config base imports and of every module of `Std` and `Lean`, which
 # a config file may import, under
@@ -980,7 +1032,11 @@ run = [
 # found its modules from its own path: outside a bundle it would find no
 # toolchain and be refused, and the build tree's `.olean` directory is not
 # beside the copy. The fixture's commands only make texts, so nothing is
-# written outside the temporary directory.
+# written outside the temporary directory. Every run of the bundle's editor
+# here goes through the launcher, `Contents/MacOS/leanmacs`, with its
+# arguments passed through: so the launcher's layout rule (the default is
+# `Contents/MacOS/editor` beside it) and its pass-through hold on both legs,
+# and the exec'd `editor` still finds the bundle's modules from its own path.
 #
 # Then three fixtures of the default packages from the same bundle: the
 # shipped themes' (packages/shipped-themes/tests/headless/)
@@ -1011,12 +1067,23 @@ run = [
 # the copy, run with an empty environment, must print exactly
 # `version-expected`; and the build tree's `editor`, outside a bundle, must
 # print the line of a development build.
+#
+# Then the app's identity, through the launcher (docs/design/lean-runtime.md,
+# "The app's identity across an exec"): with that `Info.plist` in place,
+# whose `CFBundleIdentifier` is `org.leanmacs.bundle-test`, `leanmacs
+# --probe`, with an empty environment, must print `probe: ok`,
+# `launched-by <bundle>/Contents/MacOS/leanmacs` and, on macOS, `bundle
+# <bundle> identifier org.leanmacs.bundle-test` (elsewhere `bundle none`);
+# and so must `leanmacs --default <dir>/outside/editor -- --probe`, a copy of
+# the editor outside the bundle, which an explicit `--default` starts in
+# place of the bundle's: the real editor sees the app as its main bundle
+# from outside it.
 [tasks.bundle-test]
-description = "Stage the app bundle's layout in a temporary directory, with the module files of the default set's config base and of Std and Lean, and run the headless mode of a copy of the editor there, with no directory argument, an empty environment and a working directory outside it, on the bundle fixture and on the default packages' fixtures, and its --version on a fixture Info.plist (tools/stage-bundle.sh, tests/headless/bundle)"
+description = "Stage the app bundle's layout in a temporary directory, with the launcher and the module files of the default set's config base and of Std and Lean, and run the headless mode of a copy of the editor there through the launcher, with no directory argument, an empty environment and a working directory outside it, on the bundle fixture and on the default packages' fixtures, its --version on a fixture Info.plist, and the launcher's probe of the bundle's editor and of one outside the bundle (tools/stage-bundle.sh, tests/headless/bundle)"
 depends = ["lean"]
 dir = "lean"
 timeout = "120s"
-run = '''lean_dir=$PWD && dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && base=$(lake -d ../packages query :editorBase | tr '\n' ' ') && oleans=$(paste -s -d : ../packages/.lake/build/bin/editor.oleans) && .lake/build/bin/config-test bench-modules "$sysroot" "$oleans" $base Std Lean >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" "$dir/Leanmacs.app" ../packages/.lake/build/bin/editor "$sysroot" "$oleans" olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" - && themes=$lean_dir/../packages/shipped-themes/tests/headless/shipped-themes && cp -R "$themes/config" "$dir/themes-config" && cp "$themes/script" "$dir/themes-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/themes-config" "$dir/themes-script") && printf '%s\n' "$out" | diff "$themes/expected" - && names=$lean_dir/../packages/shipped-themes/tests/headless/package-names && cp -R "$names/config" "$dir/names-config" && cp "$names/script" "$dir/names-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/names-config" "$dir/names-script") && printf '%s\n' "$out" | diff "$names/expected" - && compile=$lean_dir/../packages/compile/tests/headless/config && cp -R "$compile/config" "$dir/compile-config" && cp "$compile/script" "$dir/compile-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/compile-config" "$dir/compile-script") && printf '%s\n' "$out" | diff "$compile/expected" - && generate=$lean_dir/../tests/headless/generate && cp -R "$generate/config" "$dir/generate-config" && cp "$generate/script" "$dir/generate-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless --generate "$dir/generate-config" "$dir/generate-script") && printf '%s\n' "$out" | grep -v '^diagnostic: config:0:0: information: ' | diff "$generate/expected" - && printf '%s\n' "$out" | grep -q '^diagnostic: config:0:0: information: no lakefile.toml is generated' && cmp -s "$dir/generate-config/lean-toolchain" "$lean_dir/lean-toolchain" && test ! -e "$dir/generate-config/lakefile.toml" && echo 'bundle-test: the bundle generated lean-toolchain and no lakefile, and the config loaded' && cp "$fixtures/Info.plist" "$dir/Leanmacs.app/Contents/Info.plist" && env -i "$dir/Leanmacs.app/Contents/MacOS/editor" --version | diff "$fixtures/version-expected" - && "$lean_dir/../packages/.lake/build/bin/editor" --version | grep -qxF 'Leanmacs, a development build: not run from an app bundle, so it has no version, build ID or commit''''
+run = '''lean_dir=$PWD && cargo build --quiet --locked --release --manifest-path ../Cargo.toml -p editor-launch-std --bin leanmacs && dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && dir=$(cd "$dir" && pwd -P) && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && base=$(lake -d ../packages query :editorBase | tr '\n' ' ') && oleans=$(paste -s -d : ../packages/.lake/build/bin/editor.oleans) && .lake/build/bin/config-test bench-modules "$sysroot" "$oleans" $base Std Lean >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" --launcher ../target/release/leanmacs "$dir/Leanmacs.app" ../packages/.lake/build/bin/editor "$sysroot" "$oleans" olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" - && themes=$lean_dir/../packages/shipped-themes/tests/headless/shipped-themes && cp -R "$themes/config" "$dir/themes-config" && cp "$themes/script" "$dir/themes-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" headless "$dir/themes-config" "$dir/themes-script") && printf '%s\n' "$out" | diff "$themes/expected" - && names=$lean_dir/../packages/shipped-themes/tests/headless/package-names && cp -R "$names/config" "$dir/names-config" && cp "$names/script" "$dir/names-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" headless "$dir/names-config" "$dir/names-script") && printf '%s\n' "$out" | diff "$names/expected" - && compile=$lean_dir/../packages/compile/tests/headless/config && cp -R "$compile/config" "$dir/compile-config" && cp "$compile/script" "$dir/compile-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" headless "$dir/compile-config" "$dir/compile-script") && printf '%s\n' "$out" | diff "$compile/expected" - && generate=$lean_dir/../tests/headless/generate && cp -R "$generate/config" "$dir/generate-config" && cp "$generate/script" "$dir/generate-script" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" headless --generate "$dir/generate-config" "$dir/generate-script") && printf '%s\n' "$out" | grep -v '^diagnostic: config:0:0: information: ' | diff "$generate/expected" - && printf '%s\n' "$out" | grep -q '^diagnostic: config:0:0: information: no lakefile.toml is generated' && cmp -s "$dir/generate-config/lean-toolchain" "$lean_dir/lean-toolchain" && test ! -e "$dir/generate-config/lakefile.toml" && echo 'bundle-test: the bundle generated lean-toolchain and no lakefile, and the config loaded' && cp "$fixtures/Info.plist" "$dir/Leanmacs.app/Contents/Info.plist" && env -i "$dir/Leanmacs.app/Contents/MacOS/leanmacs" --version | diff "$fixtures/version-expected" - && "$lean_dir/../packages/.lake/build/bin/editor" --version | grep -qxF 'Leanmacs, a development build: not run from an app bundle, so it has no version, build ID or commit' && launcher="$dir/Leanmacs.app/Contents/MacOS/leanmacs" && if [ "$(uname)" = Darwin ]; then seen="bundle $dir/Leanmacs.app identifier org.leanmacs.bundle-test"; else seen='bundle none'; fi && printf 'probe: ok\nlaunched-by %s\n%s\n' "$launcher" "$seen" >"$dir/probe-expected" && env -i "$launcher" --probe | diff "$dir/probe-expected" - && mkdir "$dir/outside" && cp "$lean_dir/../packages/.lake/build/bin/editor" "$dir/outside/editor" && env -i "$launcher" --default "$dir/outside/editor" -- --probe | diff "$dir/probe-expected" - && echo 'bundle-test: the editor in the bundle and one outside it, started by the launcher, both see the app as their main bundle''''
 
 # The build ID (crates/editor-release, `build_id`): LEANMACS_BUILD_ID when
 # it is set, else HEAD's committer time in UTC, the time landing sets. CI's
@@ -1077,6 +1144,20 @@ description = "Opt-in, never part of ci; macOS on arm64 only: verify the built L
 depends = ["app"]
 timeout = "300s"
 run = "tools/app-check.sh lean packages"
+
+# The app's identity across a restart, on a desktop (tools/restart-check.sh;
+# docs/dev-practices/on-demand-checks.md, "The restart on a desktop"). A copy
+# of the built bundle in a temporary directory, with an identifier of its
+# own, is launched with `open`; open-file events then restart it into a copy
+# of its editor outside the bundle, and into a program that fails, whose
+# fallback the launcher's watcher starts. LaunchServices must list one
+# instance of the app, its bundle path the copy, after each, and the next
+# open-file event must reach the new executable. It opens windows and needs
+# no person. It ends `restart-check: ok`.
+[tasks.restart-check]
+description = "Opt-in, never part of ci; macOS only: launch a copy of the built Leanmacs.app, restart it into an editor outside the bundle and into one that fails, and check with lsappinfo that the app keeps one instance and its identity and that open-file events reach the new executable (tools/restart-check.sh). Opens windows on this desktop"
+depends = ["app"]
+run = "tools/restart-check.sh packages"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl: the gate does not build the bundle, and runs on Linux too. CI's
