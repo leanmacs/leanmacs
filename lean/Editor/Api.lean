@@ -1026,6 +1026,12 @@ where no loop runs the command. -/
 def indentUnitOf (name : String) : EditorM (Option Language.IndentUnit) :=
   RegistryRequest.ask (.indentUnitOf name)
 
+/-- The codec the store called `name` is kept across a restart with, and its
+owner's name (`Editor/Store/Codec.lean`); `none` for a store no codec is
+registered for, and where no loop runs the command. -/
+def storeCodec? (name : String) : EditorM (Option (String × StoreCodec)) :=
+  RegistryRequest.ask (.storeCodec name)
+
 /-- One level of indentation in `target`'s buffer: the unit of its
 language's entry, or four spaces (`Language.IndentUnit.default`) for a
 buffer with no language or one the table has no entry of. -/

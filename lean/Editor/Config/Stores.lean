@@ -55,30 +55,14 @@ def lost (name reason : String) : Diagnostic :=
   { source := s!"store {name}", severity := .warning, message := reason }
 
 /-- The cell a new config's `declaration` gets, given the cell there was for
-it, and a diagnostic if that cell's value was lost. -/
+it, and a diagnostic if that cell's value was lost: the install rule
+(`StoreDeclaration.meet`, `Editor/Store/Codec.lean`), with the owner and the
+name filled in. -/
 def meet (owner : Owner) (declaration : StoreDeclaration) (old : Option Cell) :
     Cell × Option Diagnostic :=
-  let fresh (value : Value) : Cell :=
-    { owner, name := declaration.name, version := declaration.version, value }
-  let reset (reason : String) : Cell × Option Diagnostic :=
-    (fresh declaration.initial, some (lost declaration.name reason))
-  match old with
-  | none => (fresh declaration.initial, none)
-  | some cell =>
-    if cell.version == declaration.version then
-      if declaration.accepts cell.value then (cell, none)
-      else
-        reset "the new config cannot decode the stored value, which was reset to the initial value"
-    else
-      match declaration.migrate cell.version cell.value with
-      | some value =>
-        if declaration.accepts value then (fresh value, none)
-        else
-          reset
-            s!"the new config cannot decode the value it migrated from version {cell.version}, which was reset to the initial value"
-      | none =>
-        reset
-          s!"the stored value, written at version {cell.version}, was not migrated to version {declaration.version} and was reset to the initial value"
+  let met := declaration.meet (old.map fun cell => (cell.version, cell.value))
+  ({ owner, name := declaration.name, version := met.version, value := met.value },
+    met.lost.map (lost declaration.name))
 
 /-- The cells once `owner` has declared exactly `declarations`, and a
 diagnostic for each value that was lost on the way.

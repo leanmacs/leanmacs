@@ -1,7 +1,6 @@
 import Editor.Config.Diagnostic
 import Editor.Config.Owner
 import Editor.Config.Stores
-import Editor.Store
 import Editor.Test.Config
 import Editor.Value
 import ModelTest.Check
@@ -89,6 +88,19 @@ def storeChecks : List Check :=
         pure
           (installed #[theirs] #[numbers "counter" 1] ==
               (#[theirs, cell "counter" 1 (.nat 0)], #[]) &&
-            installed #[theirs] #[] == (#[theirs], #[])) }]
+            installed #[theirs] #[] == (#[theirs], #[])) },
+    { name :=
+        "a cell meets a declaration as the install rule says, the owner and the name filled in: what `StoreDeclaration.meet` gives, its lost value a warning"
+      run :=
+        pure <|
+          [none, some (cell "counter" 1 (.nat 7)), some (cell "counter" 1 (.str "seven")),
+                some (cell "counter" 5 (.nat 7)), some (cell "counter" 3 (.nat 7))].all
+            fun old =>
+            let declaration := numbers "counter" 2
+            let met := declaration.meet (old.map fun cell => (cell.version, cell.value))
+            let (made, said) := Config.Cells.meet .config declaration old
+            made == cell "counter" met.version met.value &&
+              (said.map fun diagnostic => (diagnostic.message, diagnostic.severity)) ==
+                met.lost.map (·, .warning) }]
 
 end ModelTest

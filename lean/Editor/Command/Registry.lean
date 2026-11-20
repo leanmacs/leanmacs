@@ -4,6 +4,7 @@ import Editor.Ex.Line
 import Editor.InputScheme
 import Editor.Language.IndentUnit
 import Editor.ProjectMode
+import Editor.Store.Codec
 import Editor.Workspace
 
 /-!
@@ -72,6 +73,12 @@ request of the editor's port (`EditorRequest.registry`,
   registered in a category, and `atPointSources` the names of the
   at-point sources of the chain of a buffer with the modes it is handed,
   that ask on an occasion.
+- `storeCodec` is answered the codec a store of a name is kept across a
+  restart with, and its owner's name (`Editor/Store/Codec.lean`): what the
+  session restore meets a kept cell with before it hands the cell to the
+  state as plain data (`Editor/Restore/Run.lean`). A codec holds pure
+  functions over plain trees, never a program over the port, so it may be
+  in a reply.
 
 There is no single read of config's readings, as `StateRequest.read` is
 for the state: the language table cannot be in a reply, since a language
@@ -141,6 +148,9 @@ inductive RegistryRequest where
   mode is `major` and whose minor modes are `minors`, in the order they
   were added, that ask on `occasion`, in order. -/
   | atPointSources (major : Option String) (minors : Array String) (occasion : Completion.Occasion)
+  /-- The codec the store called `name` is kept across a restart with, and
+  its owner's name. -/
+  | storeCodec (name : String)
 
 /-- The type of the reply to each question. -/
 abbrev RegistryRequest.Reply : RegistryRequest → Type
@@ -160,6 +170,7 @@ abbrev RegistryRequest.Reply : RegistryRequest → Type
   | .hasJob _ => Bool
   | .categorySources _ => Array String
   | .atPointSources .. => Array String
+  | .storeCodec _ => Option (String × StoreCodec)
 
 /-- The answer to `request` where no loop dispatched the command: as with
 nothing registered and config's defaults, except that any job name is
@@ -181,5 +192,6 @@ def RegistryRequest.bare : (request : RegistryRequest) → request.Reply
   | .hasJob _ => true
   | .categorySources _ => #[]
   | .atPointSources .. => #[]
+  | .storeCodec _ => none
 
 end Editor

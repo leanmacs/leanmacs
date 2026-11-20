@@ -350,7 +350,7 @@ def hostChecks (context : Context) : List Check :=
         let collaborators := { stage.collaborators with packages := #[] }
         let running ← Headless.Running.new collaborators
         let registry := running.config.registry
-        return registry.ownersByKind.size == 17 && registry.ownersByKind.all (·.isEmpty) &&
+        return registry.ownersByKind.size == 18 && registry.ownersByKind.all (·.isEmpty) &&
             registry.styleDefaults.isEmpty &&
             registry.menuBar? == none &&
             (Headless.Running.keys collaborators running 0).menu == none &&

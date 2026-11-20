@@ -71,6 +71,28 @@ run against the handler that collects what it registers
 (`Editor/Config/Registry.lean`). -/
 def setupChecks : List Check :=
   [{  name :=
+        "a setup's codecs across a restart are collected in order, by the store's name, version and keep; one that keeps a store twice is refused; a job registered as reported is collected with its flag, and every other job without it"
+      run :=
+        pure <|
+          let setup : SetupM Unit := do
+            counter.declare
+            counter.keptAcrossRestart (keep := fun n => n + 1)
+            workJob "waited" (fun _ => Work.of (fun _ => pure ()) fun _ => pure ()) (reported :=
+                true)
+            workJob "watched" fun _ => Work.of (fun _ => pure ()) fun _ => pure ()
+          let twice : SetupM Unit := do
+            counter.keptAcrossRestart
+            counter.keptAcrossRestart
+          match Config.Registrations.ofSetup setup with
+          | .ok collected =>
+            collected.codecs.map (fun codec => (codec.name, codec.declaration.version)) ==
+                #[("counter", 1)] &&
+              (collected.codecs.map (·.keep (.nat 4))) == #[some (.nat 5)] &&
+              collected.jobs.map (fun job => (job.name, job.reported)) ==
+                #[("waited", true), ("watched", false)] &&
+              refusal twice == some "the store `counter` is kept across a restart twice"
+          | .error _ => false },
+    { name :=
         "a setup's at-point sources and uses are collected in order, a mode's or every buffer's; one that defines an at-point source name twice is refused, after the display checks"
       run :=
         pure <|

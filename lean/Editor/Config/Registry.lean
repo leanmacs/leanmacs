@@ -469,6 +469,10 @@ structure JobRegistration where
   /-- The job, given the arguments it is started with, with the handler
   that makes the command its result is taken to the editor with. -/
   work : List Argument → Work
+  /-- Whether one running when the process ends is reported as stopped by
+  the next start's restore (`workJob … (reported := true)`,
+  `Editor/Setup.lean`). -/
+  reported : Bool := false
 
 /-- A job entry of the registry: a registered job and its owner. -/
 structure JobEntry where
@@ -731,6 +735,10 @@ it did not, which a host reads as `auto`. -/
   atPointUses : Array AtPointUse := #[]
   /-- The menu entries ("Menus", in the module docs). -/
   menus : Array MenuEntry := #[]
+  /-- The codecs stores are kept across a restart with
+  (`Store.keptAcrossRestart`, `Editor/Setup.lean`), each with its owner,
+  oldest first. -/
+  codecs : Array (Owner × StoreCodec) := #[]
 
 namespace Registry
 
@@ -988,9 +996,24 @@ once (`ModeLine.resolve`). -/
 def resolve (registry : Registry) (order : ModeLine.Order) : ModeLine × Array String :=
   ModeLine.resolve order registry.segment?
 
+/-- `registry` with every codec of `owner` removed and `codecs` added as its
+codecs, in their order. -/
+def replaceCodecs (registry : Registry) (owner : Owner) (codecs : Array StoreCodec) : Registry :=
+  { registry with codecs := registry.codecs.filter (·.1 != owner) ++ codecs.map (owner, ·) }
+
+/-- The codec the store called `name` is kept across a restart with, and its
+owner: the latest entry of that name. -/
+def codec? (registry : Registry) (name : String) : Option (Owner × StoreCodec) :=
+  registry.codecs.findRev? (·.2.name == name)
+
 /-- The job entry `name` starts: the latest one of that name. -/
 def findJob? (registry : Registry) (name : String) : Option JobEntry :=
   registry.jobs.findRev? (·.registration.name == name)
+
+/-- Whether the job called `name` is reported as stopped by a restart: the
+latest job entry of that name says. -/
+def reported (registry : Registry) (name : String) : Bool :=
+  (registry.findJob? name).any (·.registration.reported)
 
 /-- The entry `name` runs: the latest one of that name. -/
 def find? (registry : Registry) (name : String) : Option Entry :=
@@ -1251,8 +1274,8 @@ def unknownAtPoints (registry : Registry) : Array String :=
 the jobs, of the key bindings, of the prefix names, of the modes, of the ex
 bindings, of the faces, of the themes, of the segments, of the languages,
 of the compile contributions, of the completion sources, styles and
-displays, of the at-point sources, of their uses and of the menus, each in
-the entries' order. A registry nothing is registered in has none. -/
+displays, of the at-point sources, of their uses, of the menus and of the
+store codecs, each in the entries' order. A registry nothing is registered in has none. -/
 def ownersByKind (registry : Registry) : Array (Array Owner) :=
   #[registry.entries.map (·.owner), registry.jobs.map (·.owner), registry.bindings.map (·.owner),
     registry.prefixNames.map (·.owner), registry.modes.map (·.owner), registry.ex.map (·.owner),
@@ -1260,7 +1283,7 @@ def ownersByKind (registry : Registry) : Array (Array Owner) :=
     registry.languages.map (·.owner), registry.contributions.map (·.owner),
     registry.sources.map (·.owner), registry.styles.map (·.owner), registry.displays.map (·.owner),
     registry.atPoints.map (·.owner), registry.atPointUses.map (·.owner),
-    registry.menus.map (·.owner)]
+    registry.menus.map (·.owner), registry.codecs.map (·.1)]
 
 /-- What the loop is told of the registry for a command's state requests,
 its questions to the registry and its control requests
@@ -1280,7 +1303,9 @@ file's open and a mode's entry; and the compile contributions and config's
 project commands (`compileHook`), for the compile mode; and the
 completion source registered under a name (`source?`) and the names of
 those registered in a category (`sourcesIn`), for a prompt that asks for
-them. Which command a
+them; and the codec a store is kept across a restart with (`codec?`), with
+its owner's name, and whether a job is reported as stopped by a restart
+(`reported`), for the session restore. Which command a
 name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
@@ -1296,7 +1321,9 @@ def registered (registry : Registry) : Loop.Registered :=
     shellTimeLimit := registry.shellTimeLimit, syntaxRefreshDelay := registry.syntaxRefreshDelay
     languages := registry.languageTable, compile := registry.compileHook
     sources := registry.source?, categorySources := registry.sourcesIn
-    atPoint := registry.atPoint?, atPointNames := registry.atPointNames }
+    atPoint := registry.atPoint?, atPointNames := registry.atPointNames
+    codec? := fun name => (registry.codec? name).map fun (owner, codec) => (owner.name, codec)
+    reported := registry.reported }
 
 end Registry
 
@@ -1306,6 +1333,9 @@ structure Registrations where
   commands : Array Registration := #[]
   /-- The stores, in the order they were declared. -/
   stores : Array StoreDeclaration := #[]
+  /-- The codecs stores are kept across a restart with, in the order they
+  were registered. -/
+  codecs : Array StoreCodec := #[]
   /-- The jobs, in the order they were registered. -/
   jobs : Array JobRegistration := #[]
   /-- The key bindings, in the order they were made, their keys as written,
@@ -1497,7 +1527,10 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .storeCommand name store step, collected =>
     ((),
       { collected with commands := collected.commands.push { name, action := .store store step } })
-  | .job name work, collected => ((), { collected with jobs := collected.jobs.push { name, work } })
+  | .keepAcrossRestart codec, collected =>
+    ((), { collected with codecs := collected.codecs.push codec })
+  | .job name work reported, collected =>
+    ((), { collected with jobs := collected.jobs.push { name, work, reported } })
   | .bind keys command states desc category, collected =>
     ((),
       { collected with
@@ -1685,6 +1718,8 @@ def problem? (collected : Registrations) : Option String := do
   let stores := collected.stores.map (·.name)
   if let some name := repeated? stores then
     return s!"the store `{name}` is declared twice"
+  if let some name := repeated? (collected.codecs.map (·.name)) then
+    return s!"the store `{name}` is kept across a restart twice"
   if let some name := repeated? (collected.commands.map (·.name)) then
     return s!"the command `{name}` is registered twice"
   if let some name := repeated? (collected.jobs.map (·.name)) then
@@ -1863,21 +1898,22 @@ definition of what an owner's registrations are: an install calls it for
 def Registry.replaceOwned (registry : Registry) (owner : Owner) (registrations : Registrations) :
     Registry :=
   registry.replace owner registrations.commands |>.replaceJobs owner
-                                  registrations.jobs |>.replaceBindings
-                                owner registrations.bindings |>.replacePrefixNames
-                              owner registrations.prefixNames |>.replaceModes
-                            owner registrations.modes |>.replaceEx
-                          owner registrations.ex |>.replaceFaces
-                        owner registrations.faces |>.replaceThemes
-                      owner registrations.themes |>.replaceSegments
-                    owner registrations.segments |>.replaceLanguages
-                  owner registrations.languages |>.replaceContributions
-                owner registrations.contributions |>.replaceSources
-              owner registrations.sources |>.replaceStyles
-            owner registrations.styles |>.replaceDisplays
-          owner registrations.displays |>.replaceAtPoints
-        owner registrations.atPoints |>.replaceAtPointUses
-      owner registrations.atPointUses |>.replaceMenus
-    owner registrations.menus
+                                    registrations.jobs |>.replaceBindings
+                                  owner registrations.bindings |>.replacePrefixNames
+                                owner registrations.prefixNames |>.replaceModes
+                              owner registrations.modes |>.replaceEx
+                            owner registrations.ex |>.replaceFaces
+                          owner registrations.faces |>.replaceThemes
+                        owner registrations.themes |>.replaceSegments
+                      owner registrations.segments |>.replaceLanguages
+                    owner registrations.languages |>.replaceContributions
+                  owner registrations.contributions |>.replaceSources
+                owner registrations.sources |>.replaceStyles
+              owner registrations.styles |>.replaceDisplays
+            owner registrations.displays |>.replaceAtPoints
+          owner registrations.atPoints |>.replaceAtPointUses
+        owner registrations.atPointUses |>.replaceMenus
+      owner registrations.menus |>.replaceCodecs
+    owner registrations.codecs
 
 end Editor.Config

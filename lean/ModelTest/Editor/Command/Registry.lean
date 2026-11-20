@@ -37,6 +37,8 @@ def registryRequestChecks : List Check :=
             (RegistryRequest.bare (.categorySources "buffer")).isEmpty &&
             (RegistryRequest.bare (.atPointSources (some "notes") #["one"] .key)).isEmpty &&
             (RegistryRequest.bare (.atPointSources none #[] .key)).isEmpty &&
-            RegistryRequest.bare (.hasJob "nope") == true }]
+            RegistryRequest.bare (.hasJob "nope") == true },
+    { name := "with no loop to answer, a store's codec is asked and none is answered"
+      run := pure ((RegistryRequest.bare (.storeCodec "shell-history")).isNone) }]
 
 end ModelTest

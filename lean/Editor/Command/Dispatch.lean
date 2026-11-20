@@ -546,6 +546,15 @@ structure Loop.Registered where
   (`Config.Registry.atPointNames`), for a command that asks
   (`RegistryRequest.atPointSources`). -/
   atPointNames : Option String → Array String → Array String := fun _ _ => #[]
+  /-- The codec the store of a name is kept across a restart with, and its
+  owner's name (`Config.Registry.codec?`): what the session restore meets a
+  kept cell with (`RegistryRequest.storeCodec`). `none` for a store no
+  codec is registered for. -/
+  codec? : String → Option (String × StoreCodec) := fun _ => none
+  /-- Whether the job of a name is reported as stopped by a restart
+  (`workJob … (reported := true)`, `Editor/Setup.lean`): what a host hands
+  the session's reconciler of the jobs running (`Loop.Keys.running`). -/
+  reported : String → Bool := fun _ => false
 
 /-- The workspace settings `registered` says: config's workspace roots, the
 git program, the marker modes of the compile contributions, and config's
@@ -581,6 +590,7 @@ def Loop.Registered.answer (registered : Loop.Registered) :
   | .atPointSources major minors occasion =>
     (registered.atPointNames major minors).filter fun name =>
       (registered.atPoint name).any (·.asksOn occasion)
+  | .storeCodec name => registered.codec? name
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/

@@ -45,7 +45,8 @@ open Editor.Test
 /-- A package called `name` that registers one thing of every kind an owner
 holds, each named after `name`, and a style default for the category
 `<name>-pick`: a plain command `<name>-plain`, which makes the text `name`, a
-command given its call, a store with a command over it, a job, a key
+command given its call, a store with a command over it and its codec
+across a restart, a job, a key
 binding of `keys` to the plain command, a name for the prefix `C-c`, a mode, an ex name, a
 face, a theme, a segment, a language, a compile contribution, a completion
 source, style and display, an at-point source and a use of it, and a
@@ -57,6 +58,7 @@ def everyKind (name : String) (keys : String := "C-c p") : Package :=
       commandWith s!"{name}-call" fun _ => makes s!"{name} called"
       counter.declare
       counter.command s!"{name}-bump" fun n => pure (n + 1)
+      counter.keptAcrossRestart
       job s!"{name}-job" (fun _ => pure name) makes
       bindKey keys s!"{name}-plain"
       prefixName "C-c" name
@@ -122,6 +124,16 @@ order they register in, what is refused, and what a reload and config do
 to them. -/
 def packageChecks : List Check :=
   [{  name :=
+        "a package's codec across a restart is registered for its owner, and the loop is told it"
+      run :=
+        let (state, refused) := packaged #[everyKind "one"]
+        pure <|
+          refused.isEmpty &&
+            ((state.registry.codec? "counter").map fun (owner, codec) =>
+                (owner.name, codec.name)) ==
+              some ("one", "counter") &&
+            ((state.registry.registered.codec? "counter").map (·.1)) == some "one" },
+    { name :=
         "a package's entries of every kind have the owner named after it, and another package's have another"
       run :=
         let one := everyKind "one"
@@ -129,7 +141,7 @@ def packageChecks : List Check :=
         let (state, refused) := packaged #[one, two]
         pure
           (refused.isEmpty && one.owner == { name := "one" } && two.owner == { name := "two" } &&
-            state.registry.ownersByKind.size == 17 &&
+            state.registry.ownersByKind.size == 18 &&
             state.registry.ownersByKind.all
               (fun owners => owners.toList.eraseDups == [one.owner, two.owner]) &&
             state.registry.entries.map (·.owner.name) ==

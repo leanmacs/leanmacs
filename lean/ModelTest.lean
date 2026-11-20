@@ -127,6 +127,8 @@ import ModelTest.Editor.Setup
 import ModelTest.Editor.Shell
 import ModelTest.Editor.State
 import ModelTest.Editor.State.Request
+import ModelTest.Editor.Store
+import ModelTest.Editor.Store.Codec
 import ModelTest.Editor.SyntaxTree.Contract
 import ModelTest.Editor.SyntaxTree.Model
 import ModelTest.Editor.TabBar
@@ -705,8 +707,9 @@ The config session's decisions are tested here too, with no elaborator:
 
 - `setupChecks`: what a `setup` registers, commands, stores, jobs, key
   bindings (in a prompt category too, and of keys given as values), the leader and the localleader, modes, ex bindings and faces,
-  a job given as its work, an ex name's fixed arguments and menus, and when
-  it is refused;
+  a job given as its work, an ex name's fixed arguments and menus, a
+  store's codec across a restart and a job reported as stopped by one, and
+  when it is refused;
 - `setupHintChecks`: a binding's description (`bindKey`'s `desc`) and a
   prefix's name (`prefixName`), as a `setup` collects them, and the names
   it refuses;
@@ -717,13 +720,21 @@ The config session's decisions are tested here too, with no elaborator:
   make one sequence, which are refused; a prompt category's keymap, first
   among the open prompt's minibuffer view's active keymaps and out of the
   global keymap and the menu bar's, and a sequence bound twice in one
-  category, which is refused; and its menus, replaced by owner, and the
-  menu bar they make (`menuBar?`);
+  category, which is refused; its menus, replaced by owner, and the
+  menu bar they make (`menuBar?`); and its store codecs across a restart,
+  the latest owner's found, and the jobs reported by one, as the loop is
+  told them;
 - `registryHintChecks`: a binding's description on the registry's keymap,
   and its prefix names, by owner, expanded against the leaders in force,
   and two names a scheme's leaders make one prefix, which are refused;
 - `storeChecks`: the rule that meets a new config's stores with the cells
-  there are, one check for each case;
+  there are, one check for each case, and that it is the install rule
+  `StoreDeclaration.meet` with the owner and name filled in;
+- `storeCodecDeclarationChecks`: that install rule over a version and a
+  tree (`Editor/Store/Codec.lean`), pure, one check for each case;
+- `storeCodecChecks`: a store's codec across a restart (`Store.codec`),
+  which keeps what its `keep` keeps and answers none for a tree its
+  decode refuses;
 - `sessionChecks`: one reload (`Config.build`), on the elaborator's model
   and a source held in memory, built for the test scheme: the order a
   config's files are elaborated in and what each is handed, which files a
@@ -1303,6 +1314,8 @@ def checks : List Check :=
     registryChecks ++
     registryHintChecks ++
     storeChecks ++
+    storeCodecDeclarationChecks ++
+    storeCodecChecks ++
     sessionChecks ++
     lakePackageChecks ++
     lakefileChecks ++

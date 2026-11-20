@@ -1,4 +1,5 @@
 import Editor.Command
+import Editor.Store.Codec
 import Editor.Value
 
 /-!
@@ -74,20 +75,6 @@ structure Store (α : Type) where
   drops. -/
   migrate : Nat → Value → Option Value := fun _ _ => none
 
-/-- A store as the editor holds it: what `Store α` says, with no type of
-config's in it. -/
-structure StoreDeclaration where
-  /-- The cell's name. -/
-  name : String
-  /-- The version of the encoding. -/
-  version : Nat
-  /-- The tree of a cell that is new, or that was reset. -/
-  initial : Value
-  /-- Whether the store's `decode` accepts the tree. -/
-  accepts : Value → Bool
-  /-- The store's `migrate`. -/
-  migrate : Nat → Value → Option Value
-
 /-- What the editor holds of `store`. -/
 def Store.declaration {α : Type} (store : Store α) : StoreDeclaration :=
   { name := store.name, version := store.version, initial := store.encode store.initial,
@@ -103,5 +90,13 @@ def Store.step {α : Type} (store : Store α) (run : α → EditorM α) (tree : 
   do
   let value := (store.decode tree).getD store.initial
   return store.encode (← run value)
+
+/-- The codec `store` is kept across a restart with
+(`Editor/Store/Codec.lean`, "Kept across a restart"): its declaration, and
+a `keep` that decodes a tree, applies `keep` to the value and encodes what
+it gives; `none` for a tree `decode` refuses. -/
+def Store.codec {α : Type} (store : Store α) (keep : α → α := id) : StoreCodec :=
+  { declaration := store.declaration
+    keep := fun tree => (store.decode tree).map fun value => store.encode (keep value) }
 
 end Editor

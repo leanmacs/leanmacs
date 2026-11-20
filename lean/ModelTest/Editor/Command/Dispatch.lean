@@ -34,7 +34,9 @@ import Editor.Role
 import Editor.Scene
 import Editor.State
 import Editor.State.Request
+import Editor.Store
 import Editor.TabBar
+import Editor.Test.Config
 import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.States
@@ -347,6 +349,22 @@ config (`Loop.Registered.answer`, `Editor/Command/Dispatch.lean`), and of
 where its arms for them stand towards the guard. -/
 def dispatchRegistryChecks : List Check :=
   [{  name :=
+        "a dispatched command that asks for a store's codec is answered the loop's codec of that name with its owner's name, or none"
+      run :=
+        let codec : StoreCodec := Store.codec Test.counter
+        let registered : Loop.Registered :=
+          { codec? := fun name => if name == "counter" then some ("tally", codec) else none }
+        let asking : EditorM (Option (String × Nat) × Bool) := do
+          let found ← storeCodec? "counter"
+          let other ← storeCodec? "other"
+          return (found.map fun (owner, codec) => (owner, codec.declaration.version), other.isNone)
+        let program : EditorM (Guarded (Option (String × Nat) × Bool) × EditorState) := do
+          asking.dispatched registered (← twoBuffers)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) => answer == (some ("tally", 1), true)
+          | _ => false },
+    { name :=
         "a question to the registry is not guarded: with the interrupt flag up from the first request, a dispatched command that asks which ex names are bound finishes with the names the loop was told"
       run := do
         let asking : EditorM (Array String) := RegistryRequest.ask .exNames

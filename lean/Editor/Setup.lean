@@ -581,10 +581,15 @@ inductive SetupRequest where
   /-- Register the command called `name` over the store called `store`:
   `step` takes the cell's tree to its new tree. -/
   | storeCommand (name : String) (store : String) (step : Value → EditorM Value)
+  /-- Keep the store `codec` is for across a restart, with `codec`
+  (`Editor/Store/Codec.lean`, "Kept across a restart"). -/
+  | keepAcrossRestart (codec : StoreCodec)
   /-- Register `work` as the job called `name`: given the arguments it is
   started with, a job that finishes with the command that takes its result
-  to the editor (`Editor/Job.lean`). -/
-  | job (name : String) (work : List Argument → Work)
+  to the editor (`Editor/Job.lean`). `reported` says whether one running
+  when the process ends is reported as stopped by the next start's restore
+  (`Editor/Restore/Run.lean`). -/
+  | job (name : String) (work : List Argument → Work) (reported : Bool := false)
   /-- Bind the key sequence `keys`, as written, placeholders in place, to
   the command called `command`, holding in the scheme's states named in
   `states`, or as the leader rule says when it names none, described by
@@ -700,6 +705,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .commandWith .. => Unit
   | .store _ => Unit
   | .storeCommand .. => Unit
+  | .keepAcrossRestart _ => Unit
   | .job .. => Unit
   | .bind .. => Unit
   | .prefixName .. => Unit
@@ -760,6 +766,15 @@ survives a reload. -/
 def Store.declare {α : Type} (store : Store α) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.store store.declaration))
 
+/-- Keeps `store` across a restart: the session index writes its cells
+through `keep`, and the next start restores them (`Editor/Store/Codec.lean`,
+"Kept across a restart"). `keep` is what of a value outlives the process: a
+store that holds a buffer number drops it there. A store with no codec is
+never written, and starts empty after a restart. Registering one store
+twice in one `setup` is refused. -/
+def Store.keptAcrossRestart {α : Type} (store : Store α) (keep : α → α := id) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.keepAcrossRestart (store.codec keep)))
+
 /-- Registers the command called `name` over `store`: `run` takes the store's
 value to its new value. The store must be declared in the same `setup`. -/
 def Store.command {α : Type} (store : Store α) (name : String) (run : α → EditorM α) :
@@ -796,9 +811,14 @@ is started with, the job with the handler that makes the command its result
 is taken to the editor with (`Work`, `Editor/Job.lean`). It is for a job
 whose finishing command is built from the arguments, which `job` and
 `jobWith`, whose handler sees the result alone, cannot say. Registering
-starts nothing, as for `job`. -/
-def workJob (name : String) (work : List Argument → Work) : SetupM Unit :=
-  ExceptT.lift (Program.request (port := setupPort) (.job name work))
+starts nothing, as for `job`.
+
+`reported` is for a job a person waits on, such as a build or a search: one
+running when the process ends uncleanly is named by the next start's
+restore as stopped by the restart (`Editor/Restore/Run.lean`). -/
+def workJob (name : String) (work : List Argument → Work) (reported : Bool := false) :
+    SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.job name work reported))
 
 /-- Registers the job called `name` that answers a completion source that
 answers later (`Editor/Completion/Later.lean`): `answer` is given the query
