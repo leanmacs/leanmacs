@@ -41,8 +41,14 @@ launcher=$repo/target/release/leanmacs
 fixtures=$repo/tests/user-sets
 core=$(cat "$shipped.core")
 
-no_leftovers "$tmp" || fail "an editor, a launcher or a watcher it started is still running"
-echo "user-sets-test: ok"
+tmp=$(mktemp -d)
+tmp=$(cd "$tmp" && pwd -P)
+# `no_leftovers` and `reap` (tools/leftovers.sh): every process a step
+# starts names $tmp, and none may outlive this script. A signal ends it
+# through the EXIT trap, so an interrupted run reaps too.
+. "$repo/tools/leftovers.sh"
+trap 'reap "$tmp"; rm -rf "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
 export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 export HOME="$tmp/home" XDG_DATA_HOME="$tmp/xdg-data" XDG_STATE_HOME="$tmp/xdg-state" XDG_CONFIG_HOME="$tmp/xdg-config"
 mkdir -p "$HOME"
