@@ -36,25 +36,14 @@ def executeCommandPackageChecks : List Check :=
               registered.sources.map (·.name) == #[Editor.ExecuteCommand.source.name] &&
               Editor.ExecuteCommand.source.category == "command") },
       { name :=
-          "the execute-command package registers the command `execute-command` and the source `commands` and nothing else: no job, mode, binding, ex name, theme, face, segment, language, style, display, at-point source, menu, store or extension"
+          "the execute-command package is accepted alone and registers the command `execute-command` and the source `commands` and nothing of any other kind: of every kind the registry holds by owner, two entries, and no store cell"
         run :=
+          let (state, refused) : Editor.Config.State Unit Unit × Array String :=
+            Editor.Config.State.ofPackages #[Editor.ExecuteCommand.package]
           pure
-            (registered.commands.map (·.name) == #["execute-command"] &&
+            (refused == #[] && registered.commands.map (·.name) == #["execute-command"] &&
               registered.sources.size == 1 &&
-              registered.jobs.isEmpty &&
-              registered.modes.isEmpty &&
-              registered.bindings.isEmpty &&
-              registered.ex.isEmpty &&
-              registered.themes.isEmpty &&
-              registered.faces.isEmpty &&
-              registered.segments.isEmpty &&
-              registered.languages.isEmpty &&
-              registered.styles.isEmpty &&
-              registered.displays.isEmpty &&
-              registered.atPoints.isEmpty &&
-              registered.menus.isEmpty &&
-              registered.stores.isEmpty &&
-              registered.codecs.isEmpty &&
-              registered.extensions.isEmpty) }]
+              state.registry.ownersByKind.flatten.size == 2 &&
+              state.cells.cells.isEmpty) }]
 
 end ExecuteCommandTest

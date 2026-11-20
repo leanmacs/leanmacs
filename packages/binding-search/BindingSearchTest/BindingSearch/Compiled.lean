@@ -36,25 +36,14 @@ def bindingSearchPackageChecks : List Check :=
               registered.sources.map (·.name) == #[Editor.BindingSearch.source.name] &&
               Editor.BindingSearch.source.category == "binding") },
       { name :=
-          "the binding-search package registers the command `search-bindings` and the source `bindings` and nothing else: no job, mode, binding, ex name, theme, face, segment, language, style, display, at-point source, menu, store or extension"
+          "the binding-search package is accepted alone and registers the command `search-bindings` and the source `bindings` and nothing of any other kind: of every kind the registry holds by owner, two entries, and no store cell"
         run :=
+          let (state, refused) : Editor.Config.State Unit Unit × Array String :=
+            Editor.Config.State.ofPackages #[Editor.BindingSearch.package]
           pure
-            (registered.commands.map (·.name) == #["search-bindings"] &&
+            (refused == #[] && registered.commands.map (·.name) == #["search-bindings"] &&
               registered.sources.size == 1 &&
-              registered.jobs.isEmpty &&
-              registered.modes.isEmpty &&
-              registered.bindings.isEmpty &&
-              registered.ex.isEmpty &&
-              registered.themes.isEmpty &&
-              registered.faces.isEmpty &&
-              registered.segments.isEmpty &&
-              registered.languages.isEmpty &&
-              registered.styles.isEmpty &&
-              registered.displays.isEmpty &&
-              registered.atPoints.isEmpty &&
-              registered.menus.isEmpty &&
-              registered.stores.isEmpty &&
-              registered.codecs.isEmpty &&
-              registered.extensions.isEmpty) }]
+              state.registry.ownersByKind.flatten.size == 2 &&
+              state.cells.cells.isEmpty) }]
 
 end BindingSearchTest
