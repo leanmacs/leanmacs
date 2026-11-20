@@ -387,6 +387,48 @@ def packageSetBuildChecks : List Check :=
                 refusedToolchain? "/t/bin/lake" "was ended by the signal 9" == none &&
                 refusedToolchain? bundled "exited with status 1" == none)
         | _ => pure false },
+    { name :=
+        "macOS refusing the bundle's lake at lake query :editorRustCrates, which cannot start or is killed, or at lake build :editorInstall, killed, ends the build saying so and how to remove the flag, and nothing else"
+      run :=
+        let facts := lakefileWith #[hello]
+        let bundled := "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain/bin/lake"
+        let running := runningWith facts (lake := some bundled)
+        match decide running facts false with
+        | .build order =>
+          let refusal :=
+            s!"macOS refused to run the bundled toolchain ({bundled}); remove the quarantine flag: xattr -dr com.apple.quarantine /Applications/Leanmacs.app"
+          let resolve :=
+            streaming (lakeCommand order #["update", "--keep-toolchain", "default-set", "hello"])
+              #[]
+          let query := lakeCommand order #["query", ":editorRustCrates"]
+          let (scripts, streams) := succeeding order
+          let others := scripts.filter (·.command != query)
+          let refusedWith (scripts : Array Process.Script) (streams : Array Process.StreamScript) :
+            Bool :=
+            match buildDriver running scripts streams with
+            | none => false
+            | some driver =>
+              let done := built driver order
+              done.loop.state.echo == s!"packages: {refusal}; this editor keeps running" &&
+                ((bufferLines done).back?.map
+                    (·.startsWith s!"Package build failed: {refusal} after ")) ==
+                  some true &&
+                !(startedRuns done).any (·.1 == "/bin/mv")
+          pure
+            (refusedWith scripts
+                (#[resolve,
+                  { command := install order, steps := #[], exit := .signal 9 :
+                    Process.StreamScript }]) &&
+              refusedWith
+                (others.push
+                  { command := query, reply := .error (.denied "Operation not permitted") })
+                (streams.push resolve) &&
+              refusedWith
+                (others.push
+                  { command := query
+                    reply := .ok { exit := .signal 9, stdout := .empty, stderr := .empty } })
+                (streams.push resolve))
+        | _ => pure false },
     { name := "a probe that fails removes the staging directory and publishes nothing"
       run :=
         let facts := lakefileWith #[hello]
