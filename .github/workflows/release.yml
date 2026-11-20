@@ -3,7 +3,9 @@ name: Release
 # The rolling nightly (docs/dev-practices/ci.md, "`release`: the nightly"):
 # the prerelease tagged `nightly`, holding the run's .dmg as Leanmacs.dmg
 # and as Leanmacs-<build-id>.dmg, Leanmacs.dmg.sha256 and build.json, with
-# the tag moved to the run's commit; and the download page
+# the tag moved to the run's commit, and the build's own tag,
+# nightly-<build-id>, created at that commit, which a package pins; and
+# the download page
 # (https://leanmacs.github.io/leanmacs/) for that build. ci.yml calls it
 # from main pushes only, after both legs of the gate, the build and the
 # secret scan, in a concurrency group that is never cancelled; nothing else

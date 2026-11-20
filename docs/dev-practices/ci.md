@@ -205,26 +205,36 @@ of about 1.2 GB and uploads it twice. Its steps:
    if the one before it succeeded:
    1. on the first run, `gh release create nightly --prerelease --target
       <commit>`, which creates the tag at the commit;
-   2. delete any `*.new` asset a failed run left behind;
-   3. upload `Leanmacs-<build-id>.dmg` (a new name, so the old nightly is
+   2. list the build's own tag, `nightly-<build-id>`
+      (`gh api repos/<repo>/git/matching-refs/tags/nightly-<build-id>`),
+      and create it at the commit when it is not there (`gh api --method
+      POST repos/<repo>/git/refs -f ref=refs/tags/nightly-<build-id> -f
+      sha=<commit>`); a retried run finds it there at the commit and goes
+      on, and one that finds it at another commit stops, uploading
+      nothing. This tag is the stable revision a package pins the core at
+      (`rev = "nightly-<build-id>"`, docs/packages/writing-a-package.md);
+      it is never moved or deleted, so tags accumulate, one per build. The
+      job's `contents: write` covers creating it; no ruleset covers tags;
+   3. delete any `*.new` asset a failed run left behind;
+   4. upload `Leanmacs-<build-id>.dmg` (a new name, so the old nightly is
       untouched), then `Leanmacs.dmg.new`, `Leanmacs.dmg.sha256.new` and
       `build.json.new`, beside the old assets. Nothing is uploaded with
       `--clobber` over a live name: `gh release upload --clobber` deletes
       the old asset *before* uploading the new one, so the permanent link
       would 404 for the whole upload and stay gone if it failed. A failed
       upload here leaves the old nightly whole;
-   4. list the asset ids (`gh api repos/<repo>/releases/tags/nightly`) and,
+   5. list the asset ids (`gh api repos/<repo>/releases/tags/nightly`) and,
       for `Leanmacs.dmg`, then `Leanmacs.dmg.sha256`, then `build.json`
       last, delete the old asset and rename the new one to its name
       (`gh api --method DELETE` then `--method PATCH
       repos/<repo>/releases/assets/<id> -f name=<name>`), so each name is
       missing only between those two calls and `build.json` never names a
       build whose `.dmg` is not up yet;
-   5. move the tag to the commit through the API (`gh api --method PATCH
+   6. move the tag to the commit through the API (`gh api --method PATCH
       repos/<repo>/git/refs/tags/nightly`), so no git credentials are ever
       set up;
-   6. set the title, "Leanmacs nightly", and the notes, as a prerelease;
-   7. delete old build-ID copies: the release keeps the newest **10**
+   7. set the title, "Leanmacs nightly", and the notes, as a prerelease;
+   8. delete old build-ID copies: the release keeps the newest **10**
       `Leanmacs-<build-id>.dmg`, by build ID, the current one always among
       them, and never deletes the fixed names or a name it does not
       recognise.
@@ -253,6 +263,7 @@ newline:
 {
   "build_id": "<14 digits>",
   "commit": "<40 hex>",
+  "tag": "nightly-<build id>",
   "date": "YYYY-MM-DDTHH:MM:SSZ",
   "size": <bytes>,
   "sha256": "<64 hex>",
@@ -262,8 +273,13 @@ newline:
 ```
 
 `date` comes from the build ID: it is the commit's time in UTC, not the
-time of the run. The release notes give the build ID, the commit with its
-link, the date, the size, the SHA-256, "macOS 26.0 or later, on Apple
+time of the run. `tag` is the build's own tag (`nightly::core_tag`),
+which the publish creates before any upload, so `build.json` never names
+a tag that is not there. The app's `Info.plist` holds the same tag as
+`LeanmacsCoreTag`, derived from the build ID by `lean/lakefile.lean`, and
+the preparation refuses an image whose key is not `nightly-<build id>`
+(`check_stamp`); `editor --version` prints it on its `core` line. The
+release notes give the build ID, the commit with its link, the tag, the date, the size, the SHA-256, "macOS 26.0 or later, on Apple
 silicon", the first-launch steps of `packaging/macos/README.txt` ("Open
 Anyway", and the `xattr` fallback) and `editor --version`. The
 first-launch and `--version` text is `crates/editor-release`'s `install`

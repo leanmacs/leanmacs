@@ -347,6 +347,18 @@ pub fn publish_gate(env: &impl Env) -> Result<Target, GateError> {
     resolve_target(env, true).map_err(GateError::Target)
 }
 
+/// The build's own tag, `nightly-<build id>`: the stable revision a
+/// package pins the core at (`rev = "nightly-<build id>"`), which
+/// [`publish`] creates at the build's commit and never moves or deletes,
+/// unlike the moving [`TAG`]. The app's `Info.plist` holds it as
+/// `LeanmacsCoreTag`, which `lean/lakefile.lean` (`appInfoPlist`) derives
+/// from the build ID the same way; [`check_stamp`] holds the two to each
+/// other at release, so they cannot drift past a nightly.
+#[must_use]
+pub fn core_tag(id: &BuildId) -> String {
+    format!("nightly-{id}")
+}
+
 /// One build, as the release describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Build {
@@ -368,17 +380,18 @@ impl Build {
     }
 }
 
-/// [`BUILD_JSON`]'s text: the build ID, the commit, the build's time in
-/// UTC (the commit's, from the ID), the image's size and SHA-256, and its
-/// two names, in that order, with a two-space indent and a final newline.
+/// [`BUILD_JSON`]'s text: the build ID, the commit, the build's own tag
+/// ([`core_tag`]), the build's time in UTC (the commit's, from the ID), the
+/// image's size and SHA-256, and its two names, in that order, with a two-space indent and a final newline.
 /// Every value is checked text (digits or hex) or a fixed name, so none
 /// needs escaping.
 #[must_use]
 pub fn build_json(build: &Build) -> String {
     format!(
-        "{{\n  \"build_id\": \"{}\",\n  \"commit\": \"{}\",\n  \"date\": \"{}\",\n  \"size\": {},\n  \"sha256\": \"{}\",\n  \"file\": \"{FIXED}\",\n  \"build_file\": \"{}\"\n}}\n",
+        "{{\n  \"build_id\": \"{}\",\n  \"commit\": \"{}\",\n  \"tag\": \"{}\",\n  \"date\": \"{}\",\n  \"size\": {},\n  \"sha256\": \"{}\",\n  \"file\": \"{FIXED}\",\n  \"build_file\": \"{}\"\n}}\n",
         build.id,
         build.commit,
+        core_tag(&build.id),
         build.id.timestamp(),
         build.size,
         build.sha256,
@@ -410,6 +423,7 @@ pub fn notes(build: &Build, target: &Target) -> String {
 
 - Build ID: `{id}` (the commit's time, UTC)
 - Commit: [`{commit}`]({url})
+- Tag: `{tag}` (pin the core at this build with rev = \"{tag}\")
 - Date: {date}
 - Size: {size} bytes
 - SHA-256: `{sha256}`
@@ -441,6 +455,7 @@ Download [`{FIXED}`]({download}), open it, and drag Leanmacs.app onto Applicatio
         version_command = install::VERSION_COMMAND,
         version_prints = install::VERSION_PRINTS,
         url = target.commit_url(commit),
+        tag = core_tag(id),
         download = target.download_url(FIXED),
         date = id.timestamp(),
         size = build.size,
@@ -456,6 +471,9 @@ pub struct Stamp {
     pub build_id: String,
     /// `LeanmacsCommit`, trimmed: the commit it was built from.
     pub commit: String,
+    /// `LeanmacsCoreTag`, trimmed: the tag of the build its core is, which
+    /// `editor --version` prints on its `core` line.
+    pub tag: String,
 }
 
 /// `hdiutil` mounting `image` read-only at `mount_point`, with no Finder
@@ -534,6 +552,13 @@ pub enum StampError {
         /// This build's commit.
         expected: Commit,
     },
+    /// The app's `LeanmacsCoreTag` is not this build's [`core_tag`].
+    CoreTag {
+        /// What the app holds.
+        plist: String,
+        /// This build's tag.
+        expected: String,
+    },
 }
 
 impl fmt::Display for StampError {
@@ -553,6 +578,10 @@ impl fmt::Display for StampError {
                 f,
                 "the app's LeanmacsCommit is `{plist}`, but this build's commit is {expected}"
             ),
+            Self::CoreTag { plist, expected } => write!(
+                f,
+                "the app's LeanmacsCoreTag is `{plist}`, but this build's core tag is {expected}"
+            ),
         }
     }
 }
@@ -561,7 +590,10 @@ impl Error for StampError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Run { source, .. } => Some(source),
-            Self::FileName { .. } | Self::BuildId { .. } | Self::Commit { .. } => None,
+            Self::FileName { .. }
+            | Self::BuildId { .. }
+            | Self::Commit { .. }
+            | Self::CoreTag { .. } => None,
         }
     }
 }
@@ -571,8 +603,8 @@ fn run_error(invocation: &Invocation) -> impl FnOnce(RunError) -> StampError {
     move |source| StampError::Run { command, source }
 }
 
-/// Mounts `image` at `mount_point`, reads the app's `CFBundleVersion` and
-/// `LeanmacsCommit`, and detaches it, by force if a plain detach fails.
+/// Mounts `image` at `mount_point`, reads the app's `CFBundleVersion`,
+/// `LeanmacsCommit` and `LeanmacsCoreTag`, and detaches it, by force if a plain detach fails.
 /// Once mounted, the image is always detached, even when a read failed.
 ///
 /// # Errors
@@ -592,8 +624,15 @@ pub fn read_stamp(
             .map(|value| value.trim().to_owned())
             .map_err(run_error(&invocation))
     };
-    let stamp = read("CFBundleVersion")
-        .and_then(|build_id| read("LeanmacsCommit").map(|commit| Stamp { build_id, commit }));
+    let stamp = read("CFBundleVersion").and_then(|build_id| {
+        read("LeanmacsCommit").and_then(|commit| {
+            read("LeanmacsCoreTag").map(|tag| Stamp {
+                build_id,
+                commit,
+                tag,
+            })
+        })
+    });
     let plain = detach(mount_point, false);
     let detached = process.run(&plain).or_else(|_| {
         let forced = detach(mount_point, true);
@@ -605,8 +644,9 @@ pub fn read_stamp(
 }
 
 /// Checks that the image is this build's: its file name names `id`, and the
-/// app's `CFBundleVersion` is `id` and its `LeanmacsCommit` is `commit`.
-/// Each error names both values.
+/// app's `CFBundleVersion` is `id`, its `LeanmacsCommit` is `commit` and its
+/// `LeanmacsCoreTag` is [`core_tag`] of `id`, so the lakefile's derivation
+/// of the tag and this one agree. Each error names both values.
 ///
 /// # Errors
 ///
@@ -633,6 +673,13 @@ pub fn check_stamp(
         return Err(StampError::Commit {
             plist: stamp.commit.clone(),
             expected: commit.clone(),
+        });
+    }
+    let tag = core_tag(id);
+    if stamp.tag != tag {
+        return Err(StampError::CoreTag {
+            plist: stamp.tag.clone(),
+            expected: tag,
         });
     }
     Ok(())
@@ -894,7 +941,8 @@ impl Error for BuildJsonError {}
 
 /// The build a [`BUILD_JSON`] text describes, as the download page reads
 /// it: its build ID, commit, size and SHA-256, each from its own
-/// `"<key>": <value>` line and checked, and then the whole text must be
+/// `"<key>": <value>` line and checked, and its tag, which must be the
+/// build ID's [`core_tag`], and then the whole text must be
 /// exactly what [`build_json`] writes for them, so the date, both names,
 /// the order of the keys, the indent and the final newline are checked
 /// too. Unlike [`read_build`], it needs no image beside it.
@@ -929,6 +977,10 @@ pub fn parse_build_json(text: &str) -> Result<Build, BuildJsonError> {
     let id = BuildId::parse(&raw_id).map_err(|_| garbled("build_id", &raw_id))?;
     let raw_commit = string("commit")?;
     let commit = Commit::parse(&raw_commit).map_err(|_| garbled("commit", &raw_commit))?;
+    let raw_tag = string("tag")?;
+    if raw_tag != core_tag(&id) {
+        return Err(garbled("tag", &raw_tag));
+    }
     let raw_size = value("size")?;
     let size = raw_size
         .bytes()
@@ -990,6 +1042,16 @@ pub enum PublishError {
     /// After the uploads, the release lists no asset of this name with a
     /// numeric id.
     NotListed(String),
+    /// The build's own tag ([`core_tag`]) is there already, at another
+    /// commit: a package may pin it, so it is never moved.
+    TagElsewhere {
+        /// The tag.
+        tag: String,
+        /// The commit it is at.
+        at: String,
+        /// This build's commit.
+        commit: Commit,
+    },
     /// An image in the directory is not the one its checksum names.
     Hash {
         /// The image.
@@ -1007,6 +1069,10 @@ impl fmt::Display for PublishError {
             Self::Run { command, source } => write!(f, "`{command}` failed: {source}"),
             Self::Shasum(output) => write!(f, "shasum printed `{output}`, not a SHA-256"),
             Self::NotListed(name) => write!(f, "the {TAG} release lists no asset {name}"),
+            Self::TagElsewhere { tag, at, commit } => write!(
+                f,
+                "the tag {tag} is at {at}, not at this build's commit {commit}"
+            ),
             Self::Hash {
                 file,
                 expected,
@@ -1024,7 +1090,10 @@ impl Error for PublishError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Run { source, .. } => Some(source),
-            Self::Shasum(_) | Self::NotListed(_) | Self::Hash { .. } => None,
+            Self::Shasum(_)
+            | Self::NotListed(_)
+            | Self::Hash { .. }
+            | Self::TagElsewhere { .. } => None,
         }
     }
 }
@@ -1071,7 +1140,13 @@ fn asset_ids(listing: &str) -> Vec<(String, String)> {
 /// 3. check the build-ID copy's and the staged [`FIXED`]'s SHA-256 against
 ///    the build's, so nothing goes up that is not what was checked;
 /// 4. if the release does not exist, create it as a prerelease, which
-///    creates the tag at the build's commit;
+///    creates the tag at the build's commit; then list the build's own tag
+///    ([`core_tag`]) through the API (`git/matching-refs`), and create it
+///    at the build's commit when it is not there, go on when it is there
+///    at that commit (a retried run), and stop with
+///    [`PublishError::TagElsewhere`] when it is at another, so
+///    [`BUILD_JSON`] never names a tag that is not there. It is never moved
+///    or deleted: packages pin it;
 /// 5. delete any [`staged`] asset a failed run left behind;
 /// 6. upload the build-ID copy (a new name, so the old nightly is
 ///    untouched; `--clobber` only matters when a run of the same build is
@@ -1181,6 +1256,35 @@ pub fn publish(
             .chain([build.commit.as_str().into()])
             .chain(title_and_notes());
         run(gh(repo, args))?;
+    }
+    let tag = core_tag(&build.id);
+    let reference = format!("refs/tags/{tag}");
+    let listed = run(Invocation::new("gh")
+        .arg("api")
+        .arg(format!("repos/{repo}/git/matching-refs/tags/{tag}"))
+        .args(["--jq", r#".[] | "\(.ref) \(.object.sha)""#])
+        .captured())?;
+    match listed
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .find(|(name, _)| *name == reference)
+    {
+        Some((_, at)) if at.trim() == build.commit.as_str() => {}
+        Some((_, at)) => {
+            return Err(PublishError::TagElsewhere {
+                tag,
+                at: at.trim().to_owned(),
+                commit: build.commit.clone(),
+            });
+        }
+        None => {
+            run(Invocation::new("gh")
+                .args(["api", "--method", "POST"])
+                .arg(format!("repos/{repo}/git/refs"))
+                .args(["-f", &format!("ref={reference}")])
+                .args(["-f", &format!("sha={}", build.commit)])
+                .captured())?;
+        }
     }
     for name in SWAPPED.map(staged) {
         if assets.contains(&name) {
@@ -1459,7 +1563,7 @@ mod tests {
         assert_eq!(
             build_json(&build()),
             format!(
-                "{{\n  \"build_id\": \"20010203040506\",\n  \"commit\": \"{SHA}\",\n  \"date\": \"2001-02-03T04:05:06Z\",\n  \"size\": 123456,\n  \"sha256\": \"{HEX}\",\n  \"file\": \"Leanmacs.dmg\",\n  \"build_file\": \"Leanmacs-20010203040506.dmg\"\n}}\n"
+                "{{\n  \"build_id\": \"20010203040506\",\n  \"commit\": \"{SHA}\",\n  \"tag\": \"nightly-20010203040506\",\n  \"date\": \"2001-02-03T04:05:06Z\",\n  \"size\": 123456,\n  \"sha256\": \"{HEX}\",\n  \"file\": \"Leanmacs.dmg\",\n  \"build_file\": \"Leanmacs-20010203040506.dmg\"\n}}\n"
             )
         );
     }
@@ -1474,6 +1578,7 @@ mod tests {
         let notes = notes(&build(), &leanmacs());
         for part in [
             "Build ID: `20010203040506`",
+            "- Tag: `nightly-20010203040506` (pin the core at this build with rev = \"nightly-20010203040506\")",
             &format!("[`{SHA}`](https://github.com/leanmacs/leanmacs/commit/{SHA})"),
             "Date: 2001-02-03T04:05:06Z",
             "Size: 123456 bytes",
@@ -1536,6 +1641,8 @@ mod tests {
                 version.into()
             } else if line.contains("LeanmacsCommit") {
                 commit.into()
+            } else if line.contains("LeanmacsCoreTag") {
+                format!("nightly-{}\n", version.trim()).into_bytes()
             } else if i.program == "shasum" {
                 format!("{HEX}  {}\n", i.args[2].to_string_lossy()).into_bytes()
             } else {
@@ -1556,12 +1663,20 @@ mod tests {
             format!(
                 "plutil -extract LeanmacsCommit raw -o - {MOUNT}/Leanmacs.app/Contents/Info.plist"
             ),
+            format!(
+                "plutil -extract LeanmacsCoreTag raw -o - {MOUNT}/Leanmacs.app/Contents/Info.plist"
+            ),
             format!("hdiutil detach {MOUNT}"),
         ]
     }
 
     #[test]
-    fn read_stamp_mounts_reads_both_keys_and_detaches() {
+    fn core_tag_is_nightly_and_the_build_id() {
+        assert_eq!(core_tag(&id()), "nightly-20010203040506");
+    }
+
+    #[test]
+    fn read_stamp_mounts_reads_the_three_keys_and_detaches() {
         let mut process = mounted(
             "20010203040506\n",
             "0123456789abcdef0123456789abcdef01234567\n",
@@ -1572,7 +1687,8 @@ mod tests {
             stamp,
             Stamp {
                 build_id: ID.into(),
-                commit: SHA.into()
+                commit: SHA.into(),
+                tag: "nightly-20010203040506".into(),
             }
         );
         assert_eq!(lines(&process.runs), stamp_runs());
@@ -1586,6 +1702,16 @@ mod tests {
             read_stamp(&mut process, Path::new(IMAGE), Path::new(MOUNT)).expect_err("fails");
         assert!(
             matches!(&error, StampError::Run { command, .. } if command.contains("LeanmacsCommit")),
+            "{error:?}"
+        );
+        let mut expected = stamp_runs();
+        expected.remove(3);
+        assert_eq!(lines(&process.runs), expected);
+        let mut process = mounted(ID, SHA, &["plutil -extract LeanmacsCoreTag"]);
+        let error =
+            read_stamp(&mut process, Path::new(IMAGE), Path::new(MOUNT)).expect_err("fails");
+        assert!(
+            matches!(&error, StampError::Run { command, .. } if command.contains("LeanmacsCoreTag")),
             "{error:?}"
         );
         assert_eq!(lines(&process.runs), stamp_runs());
@@ -1623,6 +1749,29 @@ mod tests {
         Stamp {
             build_id: build_id.into(),
             commit: commit.into(),
+            tag: format!("nightly-{build_id}"),
+        }
+    }
+
+    #[test]
+    fn check_stamp_refuses_another_core_tag_and_names_both() {
+        for tag in ["nightly-20010203040507", "nightly", ""] {
+            let error = check_stamp(
+                &Stamp {
+                    tag: tag.into(),
+                    ..stamp(ID, SHA)
+                },
+                &id(),
+                &commit(),
+                "Leanmacs-20010203040506.dmg",
+            )
+            .expect_err(tag);
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "the app's LeanmacsCoreTag is `{tag}`, but this build's core tag is nightly-20010203040506"
+                )
+            );
         }
     }
 
@@ -1826,6 +1975,8 @@ mod tests {
                 ID.into()
             } else if line.contains("LeanmacsCommit") {
                 SHA.into()
+            } else if line.contains("LeanmacsCoreTag") {
+                core_tag(&id()).into_bytes()
             } else if i.program == "shasum" {
                 b"garbage\n".to_vec()
             } else {
@@ -1922,6 +2073,16 @@ mod tests {
         for (key, from, to) in [
             ("build_id", ID, "20011303040506"),
             ("commit", SHA, "0123456"),
+            (
+                "tag",
+                "\"tag\": \"nightly-20010203040506\"",
+                "\"tag\": \"nightly-20010203040507\"",
+            ),
+            (
+                "tag",
+                "\"tag\": \"nightly-20010203040506\"",
+                "\"tag\": \"nightly\"",
+            ),
             ("size", "\"size\": 123456", "\"size\": \"123456\""),
             ("size", "\"size\": 123456", "\"size\": -1"),
             ("sha256", HEX, "nothex"),
@@ -1945,6 +2106,11 @@ mod tests {
         assert_eq!(
             parse_build_json(""),
             Err(BuildJsonError::Missing("build_id"))
+        );
+        let untagged = json.replacen("  \"tag\": \"nightly-20010203040506\",\n", "", 1);
+        assert_eq!(
+            parse_build_json(&untagged),
+            Err(BuildJsonError::Missing("tag"))
         );
     }
 
@@ -2057,6 +2223,8 @@ mod tests {
         digests: Vec<(String, String)>,
         /// The first invocation whose line starts with this fails.
         failing: Option<String>,
+        /// What the listing of the build's own tag prints.
+        refs: String,
     }
 
     /// After the uploads: the old nightly's three swapped assets, and the
@@ -2075,6 +2243,7 @@ mod tests {
                 ids: IDS,
                 digests: Vec::new(),
                 failing: None,
+                refs: String::new(),
             }
         }
 
@@ -2086,6 +2255,15 @@ mod tests {
                 ids: FIRST_IDS,
                 digests: Vec::new(),
                 failing: None,
+                refs: String::new(),
+            }
+        }
+
+        /// The build's own tag listed as `refs`.
+        fn refs(self, refs: &str) -> Self {
+            Self {
+                refs: refs.to_owned(),
+                ..self
             }
         }
 
@@ -2113,6 +2291,8 @@ mod tests {
                     self.assets.clone().into_bytes()
                 } else if line.starts_with("gh api repos/leanmacs/leanmacs/releases/tags/nightly") {
                     self.ids.into()
+                } else if line.starts_with("gh api repos/leanmacs/leanmacs/git/matching-refs/") {
+                    self.refs.clone().into_bytes()
                 } else if i.program == "shasum" {
                     let path = i.args[2].to_string_lossy();
                     let digest = self
@@ -2182,6 +2362,19 @@ mod tests {
         ]
     }
 
+    const MATCHING: &str = r#"gh api repos/leanmacs/leanmacs/git/matching-refs/tags/nightly-20010203040506 --jq .[] | "\(.ref) \(.object.sha)""#;
+
+    fn create_tag() -> String {
+        format!(
+            "gh api --method POST repos/leanmacs/leanmacs/git/refs -f ref=refs/tags/nightly-20010203040506 -f sha={SHA}"
+        )
+    }
+
+    /// Listing the build's own tag, then creating it: no such tag yet.
+    fn build_tag() -> Vec<String> {
+        vec![MATCHING.to_owned(), create_tag()]
+    }
+
     fn tag_and_edit() -> Vec<String> {
         vec![
             format!(
@@ -2229,6 +2422,7 @@ mod tests {
     fn successes() -> [(Github, Vec<String>); 3] {
         let mut crowded_runs = vec![LIST.to_owned(), VIEW.to_owned()];
         crowded_runs.extend(stage_and_sum());
+        crowded_runs.extend(build_tag());
         crowded_runs.push(delete_asset("Leanmacs.dmg.new"));
         crowded_runs.extend(uploads());
         crowded_runs.extend(swaps());
@@ -2242,6 +2436,7 @@ mod tests {
                 concat(&[
                     vec![LIST.to_owned(), VIEW.to_owned()],
                     stage_and_sum(),
+                    build_tag(),
                     uploads(),
                     swaps(),
                     tag_and_edit(),
@@ -2253,6 +2448,7 @@ mod tests {
                     vec![LIST.to_owned()],
                     stage_and_sum(),
                     vec![create()],
+                    build_tag(),
                     uploads(),
                     vec![
                         rename(201, "Leanmacs.dmg"),
@@ -2351,6 +2547,7 @@ mod tests {
                 assets,
                 ids,
                 digests,
+                refs,
                 ..
             } = github;
             for (at, line) in all.iter().enumerate() {
@@ -2360,6 +2557,7 @@ mod tests {
                     ids,
                     digests: digests.clone(),
                     failing: Some(line.clone()),
+                    refs: refs.clone(),
                 }
                 .process();
                 let error =
@@ -2417,7 +2615,12 @@ mod tests {
             let mut process = Github::existing(ASSETS).failing(&upload(staged)).process();
             assert!(publish(&mut process, &repo(), Path::new(DIR), &build()).is_err());
             for line in lines(&process.runs) {
-                assert!(!line.starts_with("gh api"), "{line}");
+                // The build's own tag is made before any upload; the
+                // nightly's tag and assets are not touched.
+                assert!(
+                    !line.starts_with("gh api") || line == MATCHING || line == create_tag(),
+                    "{line}"
+                );
                 assert!(!line.contains("delete-asset"), "{line}");
                 assert!(
                     !line.contains("--clobber") || line.contains("20010203040506"),
@@ -2425,6 +2628,72 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn publish_creates_the_build_tag_before_any_upload() {
+        let mut process = Github::existing(ASSETS).process();
+        publish(&mut process, &repo(), Path::new(DIR), &build()).expect("published");
+        let runs = lines(&process.runs);
+        let created = runs
+            .iter()
+            .position(|l| *l == create_tag())
+            .expect("the tag created");
+        let listed = runs
+            .iter()
+            .position(|l| l == MATCHING)
+            .expect("the tag listed");
+        let uploaded = runs
+            .iter()
+            .position(|l| l.starts_with("gh release upload"))
+            .expect("an upload");
+        assert!(listed < created && created < uploaded, "{runs:?}");
+        assert!(process.runs[listed].captured && process.runs[created].captured);
+    }
+
+    #[test]
+    fn publish_skips_the_tag_when_it_is_already_at_the_commit() {
+        let refs = "refs/tags/nightly-20010203040506 0123456789abcdef0123456789abcdef01234567\n";
+        let mut process = Github::existing(ASSETS).refs(refs).process();
+        publish(&mut process, &repo(), Path::new(DIR), &build()).expect("published");
+        let runs = lines(&process.runs);
+        assert!(runs.contains(&MATCHING.to_owned()));
+        assert!(!runs.contains(&create_tag()), "{runs:?}");
+        assert!(runs.iter().any(|l| l.starts_with("gh release upload")));
+    }
+
+    #[test]
+    fn publish_stops_when_the_tag_is_at_another_commit() {
+        let other = "fedcba9876543210fedcba9876543210fedcba98";
+        let refs = format!(
+            "refs/tags/nightly-20010203040506-rc {SHA}\nrefs/tags/nightly-20010203040506 {other}\n"
+        );
+        let mut process = Github::existing(ASSETS).refs(&refs).process();
+        let error = publish(&mut process, &repo(), Path::new(DIR), &build()).expect_err("refused");
+        assert_eq!(
+            error,
+            PublishError::TagElsewhere {
+                tag: "nightly-20010203040506".into(),
+                at: other.into(),
+                commit: commit(),
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "the tag nightly-20010203040506 is at {other}, not at this build's commit {SHA}"
+            )
+        );
+        assert_eq!(
+            process.runs.last().map(ToString::to_string),
+            Some(MATCHING.to_owned())
+        );
+        assert!(
+            process
+                .runs
+                .iter()
+                .all(|i| !i.to_string().contains("upload") && !i.to_string().contains("--method"))
+        );
     }
 
     #[test]

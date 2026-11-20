@@ -58,7 +58,7 @@ fn mounted(point: &Path) -> bool {
 }
 
 /// The image `<dir>/dist/Leanmacs-<ID>.dmg`, whose app is stamped with
-/// [`ID`] and [`SHA`].
+/// [`ID`], [`SHA`] and the core's tag `nightly-<ID>`.
 fn image(dir: &Path) -> std::path::PathBuf {
     let contents = dir.join("stage").join("Leanmacs.app").join("Contents");
     fs::create_dir_all(&contents).expect("the staged bundle");
@@ -73,6 +73,17 @@ fn image(dir: &Path) -> std::path::PathBuf {
     output(
         "plutil",
         &["-insert", "LeanmacsCommit", "-string", SHA, plist],
+        None,
+    );
+    output(
+        "plutil",
+        &[
+            "-insert",
+            "LeanmacsCoreTag",
+            "-string",
+            &format!("nightly-{ID}"),
+            plist,
+        ],
         None,
     );
     let dist = dir.join("dist");

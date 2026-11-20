@@ -28,7 +28,7 @@ pub const QUARANTINE_FIX: &str = "xattr -dr com.apple.quarantine /Applications/L
 pub const VERSION_COMMAND: &str = "/Applications/Leanmacs.app/Contents/MacOS/editor --version";
 
 /// What [`VERSION_COMMAND`] prints.
-pub const VERSION_PRINTS: &str = "prints the version, the build ID and the commit.";
+pub const VERSION_PRINTS: &str = "prints the version, the build ID, the commit and the core's tag.";
 
 #[cfg(test)]
 mod tests {
@@ -56,9 +56,9 @@ mod tests {
         ] {
             assert!(readme.contains(&collapsed(line)), "README.txt lacks {line}");
         }
-        // The README says it as "It prints the version, the build ID (...)
-        // and the commit."
+        // The README says it as "It prints the version, the build ID (...),
+        // the commit and the core's tag (...)."
         assert!(readme.contains("It prints the version, the build ID ("));
-        assert!(readme.contains(") and the commit."));
+        assert!(readme.contains("), the commit and the core's tag ("));
     }
 }

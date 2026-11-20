@@ -15,10 +15,11 @@
 //! 3. the app's signature must verify (`codesign --verify --strict --deep`);
 //! 4. its `CFBundleVersion` must be the build the file name names and this
 //!    build's ID, its `LeanmacsCommit` this build's commit, both resolved
-//!    as `leanmacs-release` resolves them, and its
-//!    `CFBundleShortVersionString` the line of `lean/app/version`;
+//!    as `leanmacs-release` resolves them, its `LeanmacsCoreTag` that
+//!    build's `nightly::core_tag`, and its `CFBundleShortVersionString` the
+//!    line of `lean/app/version`;
 //! 5. its `editor --version`, run with an empty environment, must print
-//!    those three;
+//!    those four;
 //! 6. a user's package set builds from the read-only volume alone
 //!    (`docs/design/lean-runtime.md`, "The app ships the toolchain"): the
 //!    image's `leanmacs headless --generate`, on a temporary config of
@@ -38,7 +39,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use editor_release::dmg::{self, Found, Kind};
-use editor_release::{build_id, commit};
+use editor_release::{build_id, commit, nightly};
 use editor_release_std::{StdEnv, StdProcess};
 use tempfile::TempDir;
 
@@ -202,6 +203,11 @@ fn the_packed_image_holds_the_app_the_link_the_licence_and_the_readme() {
     assert_eq!(key("CFBundleVersion"), id.as_str(), "this build's ID");
     assert_eq!(key("LeanmacsCommit"), sha.as_str(), "this build's commit");
     assert_eq!(
+        key("LeanmacsCoreTag"),
+        nightly::core_tag(&id).as_str(),
+        "this build's core tag"
+    );
+    assert_eq!(
         key("CFBundleShortVersionString"),
         version,
         "lean/app/version"
@@ -215,7 +221,10 @@ fn the_packed_image_holds_the_app_the_link_the_licence_and_the_readme() {
     );
     assert_eq!(
         said,
-        format!("Leanmacs {version}\nbuild {id}\ncommit {sha}\n"),
+        format!(
+            "Leanmacs {version}\nbuild {id}\ncommit {sha}\ncore {}\n",
+            nightly::core_tag(&id)
+        ),
         "editor --version"
     );
     // 6. A user's package set, built from the read-only volume alone.

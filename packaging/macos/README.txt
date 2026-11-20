@@ -9,7 +9,8 @@ build you have, run
     /Applications/Leanmacs.app/Contents/MacOS/editor --version
 
 It prints the version, the build ID (the commit's time, UTC,
-YYYYMMDDHHMMSS) and the commit.
+YYYYMMDDHHMMSS), the commit and the core's tag (nightly-<build ID>, the
+revision a package pins the core at).
 
 Install:
 
