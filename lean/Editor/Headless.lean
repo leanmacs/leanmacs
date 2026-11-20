@@ -560,9 +560,12 @@ echo area (`Running.said`). No script directive sends them.
 
 `run` drives a host through a script, one directive a line: `reload`,
 `run <name>`, `spawn <name>`, `show`, `scene` and `agree` are requests, and
-`settle`, `join`, `idle <milliseconds>`, `journal`,
+`settle`, `settle <milliseconds>`, `join`, `idle <milliseconds>`, `journal`,
 `key <logical> <physical> <modifiers>`, `commit <text>` and
-`resize <width> <height>` are the driver's own. A `key` is sent with
+`resize <width> <height>` are the driver's own. A `settle <milliseconds>`
+waits as `settle` does, for that many milliseconds in place of the run's
+patience, for a reload known to be slow; its failure names that patience
+(`Failure.waited`), and anything but one number is refused. A `key` is sent with
 `Host.press`: a press with no text,
 posted through the library's window input as a window would report it
 (`Event.post`), in order with the requests. A `commit` is sent the same way
@@ -2525,6 +2528,10 @@ inductive Directive where
   /-- Wait until the editor thread has handled everything asked so far and no
   reload is running. This one is the driver's own. -/
   | settle
+  /-- Settle as `settle` does, for at most this many milliseconds in place of
+  the run's patience: for a reload known to be slow, such as a cold one. The
+  driver's own. -/
+  | settleWithin (milliseconds : Nat)
   /-- Wait until the editor thread has handled everything asked so far and no
   job is running. The driver's own, too. -/
   | join
@@ -2628,6 +2635,18 @@ def resizeDirective? (line : String) : Except String Directive :=
     | _, _ => .error problem
   | _ => .error problem
 
+/-- The settle a `settle` directive's line is: `settle`, which waits the
+run's patience, or `settle <milliseconds>`, which waits that many
+milliseconds in its place. -/
+def settleDirective? (line : String) : Except String Directive :=
+  match named line 6 with
+  | none => .ok .settle
+  | some given =>
+    match given.toNat? with
+    | some milliseconds => .ok (.settleWithin milliseconds)
+    | none =>
+      .error s!"`{line}` is not a settle: expected settle, or settle <milliseconds>, one number"
+
 /-- The directive `line` is, `none` for a blank line or a comment, or what is
 wrong with it. -/
 def directive? (line : String) : Except String (Option Directive) :=
@@ -2638,7 +2657,7 @@ def directive? (line : String) : Except String (Option Directive) :=
     else
       if line == "show" then .ok (some (.request .show))
       else
-        if line == "settle" then .ok (some .settle)
+        if line == "settle" || line.startsWith "settle " then some <$> settleDirective? line
         else
           if line == "join" then .ok (some .join)
           else
@@ -2693,7 +2712,7 @@ def directive? (line : String) : Except String (Option Directive) :=
                                               s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
                                         else
                                           .error
-                                            s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, agree, settle, join, idle <milliseconds>, advance <milliseconds>, journal, journalled, indexed, abort, restarted, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
+                                            s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, agree, settle, settle <milliseconds>, join, idle <milliseconds>, advance <milliseconds>, journal, journalled, indexed, abort, restarted, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -2753,6 +2772,9 @@ inductive Failure where
   /-- The `restarted` on `line` found the loop not ended for a restart within
   the patience. -/
   | notRestarted (line : Nat)
+  /-- A wait that had its own patience of `milliseconds`, a
+  `settle <milliseconds>`, failed so. -/
+  | waited (milliseconds : Nat) (failure : Failure)
   deriving DecidableEq, Repr
 
 /-- What an `advance` on a host whose clock is real says. -/
@@ -2760,7 +2782,7 @@ def advanceNeedsClock : String :=
   "advance needs the headless mode's fake clock"
 
 /-- What went wrong, for the user: `patience` is how long each wait was, in
-milliseconds. -/
+milliseconds, but for a wait that had its own (`waited`). -/
 def Failure.describe (patience : Nat) : Failure → String
   | .reloading (some line) =>
     s!"the settle on line {line} of the script did not finish within {patience} ms: a reload was still running. A file or `setup` of the config is slow, or does not end"
@@ -2779,6 +2801,7 @@ def Failure.describe (patience : Nat) : Failure → String
   | .noClock line => s!"the advance on line {line}: {advanceNeedsClock}"
   | .notRestarted line =>
     s!"the restarted on line {line} of the script found no restart within {patience} ms: the loop did not end with the session handed over"
+  | .waited milliseconds failure => failure.describe milliseconds
 
 /-- The failure a wait that did not settle is, at `line` of the script. -/
 def Wait.failure (line : Option Nat) : Wait → Option Failure
@@ -2898,6 +2921,13 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
         continue
       | .settle =>
         host.await patience
+      | .settleWithin milliseconds =>
+        let wait ← host.await milliseconds
+        -- Its failure says how long it waited, not the run's patience.
+        if let some failure := wait.failure (some line.number) then
+          discard <| host.halt patience
+          return (some (.waited milliseconds failure), none)
+        pure wait
       | .join =>
         host.join patience
       | .idle milliseconds =>

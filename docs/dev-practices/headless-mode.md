@@ -554,6 +554,7 @@ timers.
 |---|---|
 | `reload` | Asks for the config to be reloaded. Elaboration runs in the background, and the editor goes on answering. The command `reload-config`, and so the ex line `reload`, asks the same. |
 | `settle` | Waits, for up to 30 seconds, until everything asked so far has been handled and no reload is running. |
+| `settle <milliseconds>` | As `settle`, waiting up to that many milliseconds in place of 30 seconds, and a failure names that many. It is for a fixture whose cold reload is known to be slow, with the reason beside it in the script. Anything but one number is refused. |
 | `run <name>` | Runs the command registered under that name, through the editor loop, as a key would: with the focused window, guarded against the interrupt key, and rolled back if it does not run to its end. It is no key, so the input scheme's state is as it was: a command that a key enters a Vim state with enters none (the table of evil's commands, above). |
 | `spawn <name>` | Starts the job registered under that name. It runs in the background, and the editor goes on answering. |
 | `join` | Waits, for up to 30 seconds, until everything asked so far has been handled and no job is running. |
