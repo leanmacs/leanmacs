@@ -6,3 +6,4 @@ impl-c	implementation	/repo/tests/packages/impl-c	impl-a
 nested	implementation	/repo/tests/packages/impl-a/nested	-
 outside	implementation	/elsewhere/outside	-
 newpkg	implementation	/repo/packages/newpkg	-
+example	implementation	/repo/docs/packages/example	-

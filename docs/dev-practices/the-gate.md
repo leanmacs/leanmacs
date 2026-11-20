@@ -2233,11 +2233,11 @@ does.**
 
 | A commit that stages | Runs in the `lean` step |
 |---|---|
-| Files inside one implementation package's directory (`packages/compile/`, `tests/packages/greeting/`) | That package's checks alone (`lean-packages`, below) |
+| Files inside one implementation package's directory (`packages/compile/`, `tests/packages/greeting/`, `docs/packages/word-count/`) | That package's checks alone (`lean-packages`, below) |
 | Files inside an interface package's directory (`tests/packages/greeting-api/`) | That package's checks and those of every package that requires it, directly or through any other package, an implementation package included: Lake puts every package a package requires, directly or not, in its workspace, so the package can import the interface, which the layer imports check allows. No other package's |
 | Rust or C inside a package's directory (`tests/packages/echo/rust/`) | That package's Lean checks, as above; the `rust` or `c` step runs as for any Rust or C |
 | Any other file a Lean step reads: the core (`lean/`), a set's own lakefile or manifest, the core's fixtures under `tests/`, `config/`, `mise.toml`, Rust or C outside a package, the hook's own tools (`tools/hook-targets.sh`, `tools/graph-targets.sh`, `tools/lean-hook.sh`, `tools/package-set.sh`) | The core's whole chain, `mise run lean-fmt` and `mise run ffi-test`, which run every package's checks too, as before the hook was targeted |
-| Only files no Lean step reads: `docs/`, plans and notes, other tools | No Lean step: no file matches the step's glob |
+| Only files no Lean step reads: `docs/` but a package's directory under `docs/packages/` (the guide's example package, which the fixture set requires), plans and notes, other tools | No Lean step: no file matches the step's glob |
 
 A path inside two packages' directories belongs to the inner one. A
 commit that stages several kinds runs the union, and any path that
@@ -2300,7 +2300,8 @@ through an implementation package), a package nested in another's directory, a
 package whose name is a prefix of another's, the core, the core with a
 package, docs alone, a set's lakefile and manifest, a core fixture, the
 hook's tools, Rust outside and inside a package, a package new under
-`packages/`, and two packages; and each graph under
+`packages/`, two packages, and a package under `docs/packages/` beside a
+guide, which reaches that package alone; and each graph under
 `tests/hook-targets/bad/` must be refused with exit 2. `ffi-test` requires
 the real graph of the fixture set to be `tests/hook-targets/fixture-set-graph`
 in its names, layers and requires, a change to `greeting-api`'s module to

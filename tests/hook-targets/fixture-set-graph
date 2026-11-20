@@ -4,3 +4,4 @@ greeting-loud	implementation	greeting greeting-api
 echo	implementation	-
 shipped-themes	implementation	-
 compile	implementation	-
+word-count	implementation	-

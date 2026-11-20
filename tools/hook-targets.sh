@@ -29,10 +29,13 @@
 # tools/graph-targets.sh's:
 #
 # - A path no Lean step reads reaches nothing: one outside `lean/`,
-#   `packages/`, `tests/`, `config/`, `mise.toml`, a `Cargo.toml`,
-#   `Cargo.lock`, Rust and C sources, and this hook's own tools
-#   (`tools/hook-targets.sh`, `tools/graph-targets.sh`, `tools/lean-hook.sh`,
-#   `tools/package-set.sh`).
+#   `packages/`, `tests/`, `config/`, a directory under `docs/packages/`
+#   (where the example package of the guide to writing a package lives,
+#   `docs/packages/word-count/`, which the fixture set requires),
+#   `mise.toml`, a `Cargo.toml`, `Cargo.lock`, Rust and C sources, and this
+#   hook's own tools (`tools/hook-targets.sh`, `tools/graph-targets.sh`,
+#   `tools/lean-hook.sh`, `tools/package-set.sh`). The guides themselves,
+#   files directly in `docs/packages/`, are docs.
 #   hk.pkl's `lean` step lists the same patterns, so a commit of docs or
 #   plans alone does not run the step at all.
 # - A path inside a package's directory (the longest that holds it, so a
@@ -91,7 +94,8 @@ fi
 relevant=
 for path in "$@"; do
   case $path in
-    lean/* | packages/* | tests/* | config/* | mise.toml | Cargo.lock | Cargo.toml | */Cargo.toml | \
+    lean/* | packages/* | tests/* | config/* | docs/packages/*/* | mise.toml | Cargo.lock | Cargo.toml | \
+      */Cargo.toml | \
       *.rs | *.c | *.h | *.cc | *.cpp | *.hpp | \
       tools/hook-targets.sh | tools/graph-targets.sh | tools/lean-hook.sh | tools/package-set.sh)
       relevant="$relevant$path

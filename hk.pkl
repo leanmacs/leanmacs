@@ -55,7 +55,9 @@ local changed = new Mapping<String, Step> {
     // `ffi-test` runs, so a change to either reruns this step. `packages/`
     // holds the default package set the editor is built from, `tests/` the
     // fixture `ffi-test` runs the editor's headless mode on and the fixture
-    // package set, and `config/` the default config `config-test` loads.
+    // package set, `config/` the default config `config-test` loads, and
+    // a directory under `docs/packages/` the guide's example package, which
+    // the fixture set requires.
     // What the step runs for the staged files is decided by
     // tools/hook-targets.sh, which owns the decision and lists the same
     // patterns as this glob: a change inside one package's directory runs
@@ -65,7 +67,7 @@ local changed = new Mapping<String, Step> {
     // The packages come from Lake's graph, so a new package needs no edit
     // here.
     ["lean"] {
-        glob = rust_sources + c_sources + List("lean/**", "packages/**", "tests/**", "config/**", "mise.toml", "tools/hook-targets.sh", "tools/graph-targets.sh", "tools/lean-hook.sh", "tools/package-set.sh")
+        glob = rust_sources + c_sources + List("lean/**", "packages/**", "tests/**", "config/**", "docs/packages/*/**", "mise.toml", "tools/hook-targets.sh", "tools/graph-targets.sh", "tools/lean-hook.sh", "tools/package-set.sh")
         check = "sh tools/lean-hook.sh {{files}}"
         exclusive = true
     }

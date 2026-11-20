@@ -159,7 +159,7 @@ run = [
   # that requires it, directly or not, the core's for any other
   # Lean-relevant path, or nothing for a change no Lean step reads. Lake is
   # not asked and nothing is built.
-  "for case in impl-only interface order prefix nested core core-wins docs-only set-files set-manifest core-fixture tooling rust-outside rust-inside new-package two-packages; do c=../tests/hook-targets/cases/$case; out=$(sh ../tools/hook-targets.sh --lines ../tests/hook-targets/graph --root /repo $(cat \"$c/paths\")) || { echo \"lean-test: hook-targets failed on the case $case\"; exit 1; }; { if [ -n \"$out\" ]; then printf '%s\\n' \"$out\"; fi; } | diff \"$c/expected\" - || { echo \"lean-test: hook-targets decided otherwise on the case $case\"; exit 1; }; done",
+  "for case in impl-only interface order prefix nested core core-wins docs-only set-files set-manifest core-fixture tooling rust-outside rust-inside new-package two-packages docs-package; do c=../tests/hook-targets/cases/$case; out=$(sh ../tools/hook-targets.sh --lines ../tests/hook-targets/graph --root /repo $(cat \"$c/paths\")) || { echo \"lean-test: hook-targets failed on the case $case\"; exit 1; }; { if [ -n \"$out\" ]; then printf '%s\\n' \"$out\"; fi; } | diff \"$c/expected\" - || { echo \"lean-test: hook-targets decided otherwise on the case $case\"; exit 1; }; done",
   # And it cannot pass by deciding over nothing: a graph of lines not of
   # four fields, with a layer it does not know, requiring a package that is
   # no line, or holding no line, is exit 2 with the message beside it
