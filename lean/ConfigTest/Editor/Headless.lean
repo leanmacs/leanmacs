@@ -575,13 +575,16 @@ def hostChecks (context : Context) : List Check :=
               lines.getD 3 "" == "run greet: ok" }]
 
 /-- How a check controls elaboration: a decorator of the elaborator port that
-holds the config file `Config/Slow.lean` open until the check lets it go,
-and counts the files being elaborated. Nothing here sleeps to let something
-else happen. -/
+holds one config file, `Config/Slow.lean` unless the check names another,
+open until the check lets it go, and counts the files being elaborated.
+Nothing here sleeps to let something else happen. -/
 structure Gate where
-  /-- Resolved by the check to let `Config/Slow.lean` go, for good. -/
+  /-- The module of the config file the gate holds: `Config.Slow` unless
+  the check names another. -/
+  module : String := "Config.Slow"
+  /-- Resolved by the check to let the held file go, for good. -/
   release : IO.Promise Unit
-  /-- Whether an elaboration of `Config/Slow.lean` has arrived and waited. -/
+  /-- Whether an elaboration of the held file has arrived and waited. -/
   holding : IO.Ref Bool
   /-- How many files are being elaborated now. -/
   inProgress : IO.Ref Nat
@@ -590,10 +593,10 @@ structure Gate where
 
 namespace Gate
 
-/-- A gate that is shut. -/
-def new : IO Gate :=
-  return { release := ← IO.Promise.new, holding := ← IO.mkRef false, inProgress := ← IO.mkRef 0,
-           most := ← IO.mkRef 0 }
+/-- A gate that is shut, holding the config file of `module`. -/
+def new (module : String := "Config.Slow") : IO Gate :=
+  return { module, release := ← IO.Promise.new, holding := ← IO.mkRef false,
+           inProgress := ← IO.mkRef 0, most := ← IO.mkRef 0 }
 
 /-- Runs `elaborate`, the elaboration of `file`, behind the gate. -/
 def through {σ : Type} (gate : Gate) (file : Config.SourceFile)
@@ -601,7 +604,7 @@ def through {σ : Type} (gate : Gate) (file : Config.SourceFile)
   let now ← gate.inProgress.modifyGet fun count => (count + 1, count + 1)
   gate.most.modify (max · now)
   try
-    if file.module == "Config.Slow" then
+    if file.module == gate.module then
       gate.holding.set true
       discard <| IO.wait gate.release.result?
     elaborate
@@ -616,7 +619,7 @@ def around {β σ : Type} (gate : Gate) (elaborator : Config.Elaborator β σ) :
     file := fun base handles file => gate.through file (elaborator.file base handles file),
     root := fun base handles file => gate.through file (elaborator.root base handles file) }
 
-/-- Lets `Config/Slow.lean` go, now and from now on. -/
+/-- Lets the held file go, now and from now on. -/
 def «open» (gate : Gate) : IO Unit :=
   gate.release.resolve ()
 
@@ -966,6 +969,33 @@ def Session.threadOf (session : Session) (line : String) : IO (Option UInt64) :=
   let threads ← session.threads.get
   return (lines.idxOf? line).bind fun index => threads[index]?
 
+/-- Runs `check` on `collaborators` whose output port holds the editor thread
+inside the first line `holds` accepts, and lets it go `milliseconds` after
+it arrived, from a task of its own: the editor thread is inside an event for
+that long, whatever the check's waits do. The line is let go, and that task
+waited for, before this returns. -/
+def holdingLine {α β σ : Type} {scheme : InputScheme}
+    (collaborators : Headless.Collaborators β σ scheme) (holds : String → Bool)
+    (milliseconds : UInt32) (check : Headless.Collaborators β σ scheme → IO α) : IO α := do
+  let release ← IO.Promise.new
+  let entered ← IO.mkRef false
+  let releaser ←
+    IO.asTask (prio := .dedicated) do
+        if ← eventually entered.get then
+          IO.sleep milliseconds
+        release.resolve ()
+  try
+    check
+        { collaborators with
+          emit := fun line => do
+            if holds line && !(← entered.get) then
+              entered.set true
+              discard <| IO.wait release.result?
+            collaborators.emit line }
+  finally
+    release.resolve ()
+    discard <| IO.wait releaser
+
 /-- The checks of jobs through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue and the real text binding. The
 host's jobs wait on a fake clock the check moves, so a job ends when the
@@ -1077,6 +1107,56 @@ def jobChecks (context : Context) : List Check :=
           return failure == some (.working (some 5)) && cancelled && (← stage.clock.waiting) == 0 &&
               (← stage.output.get) ==
                 #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"] },
+    { name :=
+        "a join that cannot finish fails as working even when the reload before it is slower than the join's patience"
+      run := do
+        -- The reload is held at the gate for twice the join's patience, as
+        -- a loaded runner's elaboration can be: the sleep forces that
+        -- interleaving, it is not what makes the check pass.
+        let gate ← Gate.new (module := "Config.Greet")
+        IO.FS.withTempDir fun directory => do
+            writeConfig directory jobsConfig
+            let stage ←
+              Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
+            let opener ←
+              IO.asTask (prio := .dedicated) do
+                  if ← eventually gate.holding.get then
+                    IO.sleep 400
+                  gate.open
+            try
+              let failure ←
+                Headless.run stage.collaborators
+                    #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
+                      ⟨5, .join⟩, ⟨6, .request .show⟩]
+                    200
+              let held ← gate.holding.get
+              let output ← stage.output.get
+              saw
+                  (failure == some (.working (some 5)) && held &&
+                    output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"])
+                  s!"failure={repr failure} held={held} output={output}"
+            finally
+              gate.open
+              discard <| IO.wait opener },
+    { name :=
+        "an editor thread held inside an event longer than a join's patience still makes the join run out as working: the editor thread's answer has a patience of its own"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- The editor thread is held inside the spawn's line for twice the
+          -- join's patience: the join's marker waits behind it.
+          let failure ←
+            holdingLine stage.collaborators (· == "spawn count: job 1") 400 fun collaborators =>
+                Headless.run collaborators
+                  #[⟨1, .request .reload⟩, ⟨2, .settleWithin patience⟩,
+                    ⟨3, .request (.spawn "count")⟩, ⟨4, .join⟩]
+                  200
+          let output ← stage.output.get
+          saw
+              (failure == some (.working (some 4)) &&
+                output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"])
+              s!"failure={repr failure} output={output}" },
     { name :=
         "spawn and join are directives of a script, a spawn with no name is refused, and a join that ran out is described with its line"
       run :=
@@ -1751,6 +1831,21 @@ wait 2" with
                 200
           return failure == some (.working (some 4)) &&
               (← stage.disposed.get) == #[(← stage.output.get).size] },
+    { name :=
+        "a run whose advance stalls while the editor thread is inside an event disposes only after its loop has ended"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        -- The editor thread is held inside the commands line for longer than
+        -- the stall's patience and the halt after it together.
+        let (failure, _) ←
+          holdingLine stage.collaborators (·.startsWith "commands:") 1000 fun collaborators =>
+              Headless.runAndDispose collaborators #[⟨1, .request .show⟩, ⟨2, .advance 5⟩] 200
+        let disposed ← stage.disposed.get
+        let output ← stage.output.get
+        saw
+            (failure == some (.stalled 2 5) && disposed == #[output.size] &&
+              output.any (·.startsWith "commands:"))
+            s!"failure={repr failure} disposed={disposed} output={output}" },
     { name :=
         "the executable's hosts dispose of the directory of the config files' module data: their dispose removes it once it was made, through the module files, and removes nothing before"
       run :=
