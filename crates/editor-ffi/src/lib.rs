@@ -353,6 +353,8 @@
 //! its own completed once, however many changes come; its delivery is
 //! taken in the same record: a status, words, a detail and the paths end to
 //! end. Its other C functions are [`watches::editor_ffi_watches_cancel`],
+//! [`watches::editor_ffi_watches_flush`], completed once every start asked
+//! before it has returned from the port,
 //! [`watches::editor_ffi_watches_shutdown`] and, as a readout for tests,
 //! [`watches::editor_ffi_watches_pending`].
 //!

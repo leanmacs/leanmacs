@@ -82,10 +82,21 @@
 //!   join a thread that is in the sink, waiting for that lock.
 //! - **Threads**: one timer thread for the service, a short-lived one for
 //!   each start, and the adapter's for each registration.
+//! - **A flush is a barrier** ([`Service::flush`]): a wait of the
+//!   caller's, completed once every start asked before it has returned
+//!   from the port (registered and completed, refused, or dropped as
+//!   cancelled); at once, on the caller's thread, when no start is in
+//!   flight. A start's thread, after its own completion, completes each
+//!   flush it was the last thing for, in the order they were asked;
+//!   shutdown, which waits for every start in flight, completes the rest.
+//!   A pending read is not covered: it waits on the disk, not on the
+//!   service. A flush keeps no reply, its id is in use while it waits, and
+//!   a cancel withdraws it.
 //! - **[`Service::pending`]** counts the watches starting or live and the
-//!   waits not answered or not taken: a readout for tests.
+//!   waits not answered or not taken, flushes among them: a readout for
+//!   tests.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread;
@@ -177,6 +188,14 @@ enum Wait {
     Reading(u64),
     /// This reply, kept.
     Kept(WatchReply),
+    /// A flush ([`Service::flush`]), the `order`th asked, waiting for the
+    /// starts `awaited` to return from the port.
+    Flush {
+        /// How many flushes were asked before it.
+        order: u64,
+        /// The starts it still waits for.
+        awaited: HashSet<u64>,
+    },
 }
 
 /// A registration, shared by the watches with its key.
@@ -205,12 +224,55 @@ struct State<R> {
     serial: u64,
     /// How many starts' threads have not returned.
     active: usize,
+    /// How many flushes have been asked: the next one's order.
+    flushes: u64,
 }
 
 impl<R> State<R> {
     /// Whether `id` names a watch or a wait.
     fn in_use(&self, id: u64) -> bool {
         self.watches.contains_key(&id) || self.waits.contains_key(&id)
+    }
+
+    /// Marks the start `id` returned for every flush, and removes and
+    /// returns the flushes it was the last thing for, in the order they
+    /// were asked: for the caller to complete with no lock held.
+    fn settle(&mut self, id: u64) -> Vec<u64> {
+        let mut done = Vec::new();
+        for (&wait, kept) in &mut self.waits {
+            if let Wait::Flush { order, awaited } = kept
+                && awaited.remove(&id)
+                && awaited.is_empty()
+            {
+                done.push((*order, wait));
+            }
+        }
+        self.take_flushes(done)
+    }
+
+    /// Removes the flushes `done`, each with its order, and returns their
+    /// ids in that order.
+    fn take_flushes(&mut self, mut done: Vec<(u64, u64)>) -> Vec<u64> {
+        done.sort_unstable();
+        done.into_iter()
+            .map(|(_, wait)| {
+                self.waits.remove(&wait);
+                wait
+            })
+            .collect()
+    }
+
+    /// Removes and returns every flush waiting, in the order asked.
+    fn take_every_flush(&mut self) -> Vec<u64> {
+        let every = self
+            .waits
+            .iter()
+            .filter_map(|(&wait, kept)| match kept {
+                Wait::Flush { order, .. } => Some((*order, wait)),
+                Wait::Reading(_) | Wait::Kept(_) => None,
+            })
+            .collect();
+        self.take_flushes(every)
     }
 
     /// The key of the live registration whose serial is `serial`.
@@ -299,6 +361,7 @@ impl<W: Watch, C: Clock> Service<W, C> {
                 registrations: HashMap::new(),
                 serial: 0,
                 active: 0,
+                flushes: 0,
             }),
             timer: Condvar::new(),
             finished: Condvar::new(),
@@ -365,8 +428,10 @@ impl<W: Watch, C: Clock> Service<W, C> {
             let mut state = inner.state();
             state.watches.remove(&id);
             state.active -= 1;
+            let flushed = state.settle(id);
             drop(state);
             inner.finished.notify_all();
+            inner.complete_all(flushed);
         }
         started
     }
@@ -410,6 +475,7 @@ impl<W: Watch, C: Clock> Service<W, C> {
                 Some(Wait::Kept(reply)) => Some(reply),
                 _ => None,
             },
+            Wait::Flush { .. } => None,
             &Wait::Reading(watch) => {
                 let Some(Held::Live(live)) = state.watches.get_mut(&watch) else {
                     return None;
@@ -453,7 +519,7 @@ impl<W: Watch, C: Clock> Service<W, C> {
                         }
                         true
                     }
-                    Some(Wait::Kept(_)) => true,
+                    Some(Wait::Kept(_) | Wait::Flush { .. }) => true,
                     None => false,
                 };
             }
@@ -475,6 +541,37 @@ impl<W: Watch, C: Clock> Service<W, C> {
     pub fn wake(&self) {
         let _state = self.inner().state();
         self.inner().timer.notify_all();
+    }
+
+    /// Asks for the wait `id` to be completed once every start asked before
+    /// this call has returned from the port: registered and completed,
+    /// refused, or dropped as cancelled. A pending read is not waited for:
+    /// it waits on the disk, not on the service. It returns at once and
+    /// keeps no reply. An id in use is refused; one with no start in
+    /// flight is completed at once, on the caller's thread. It is counted
+    /// in [`pending`](Self::pending) while it waits, and a cancel
+    /// withdraws it.
+    pub fn flush(&self, id: u64) -> bool {
+        let inner = self.inner();
+        let mut state = inner.state();
+        if state.in_use(id) {
+            return false;
+        }
+        let awaited: HashSet<u64> = state
+            .watches
+            .iter()
+            .filter(|(_, held)| matches!(held, Held::Starting { .. }))
+            .map(|(&watch, _)| watch)
+            .collect();
+        if awaited.is_empty() {
+            drop(state);
+            (inner.complete)(id);
+            return true;
+        }
+        let order = state.flushes;
+        state.flushes += 1;
+        state.waits.insert(id, Wait::Flush { order, awaited });
+        true
     }
 
     /// The watches starting or live, and the waits not answered or not
@@ -505,11 +602,20 @@ impl<W: Watch, C: Clock> Inner<W, C> {
         };
         let mut state = self.state();
         state.active -= 1;
+        let flushed = state.settle(id);
         drop(state);
         self.finished.notify_all();
         drop(dropped);
         if completed {
             (self.complete)(id);
+        }
+        self.complete_all(flushed);
+    }
+
+    /// Completes each of `waits`, in order, with no lock held.
+    fn complete_all(&self, waits: Vec<u64>) {
+        for wait in waits {
+            (self.complete)(wait);
         }
     }
 
@@ -685,7 +791,10 @@ impl<W: Watch, C: Clock> Inner<W, C> {
     fn shutdown(&self) {
         let mut state = self.state();
         state.shut = true;
-        state.waits.clear();
+        // A flush is kept: it is completed once every start has returned.
+        state
+            .waits
+            .retain(|_, kept| matches!(kept, Wait::Flush { .. }));
         state.watches.retain(|_, held| match held {
             Held::Starting { cancelled } => {
                 *cancelled = true;
@@ -700,8 +809,10 @@ impl<W: Watch, C: Clock> Inner<W, C> {
             .wait_while(state, |state| state.active > 0)
             .unwrap_or_else(PoisonError::into_inner);
         let ended: Vec<_> = state.registrations.drain().collect();
+        let flushed = state.take_every_flush();
         drop(state);
         drop(ended);
+        self.complete_all(flushed);
     }
 
     /// The timer thread: completes each pending read whose batch has come
@@ -1389,6 +1500,73 @@ mod tests {
             other => panic!("not refused: {other:?}"),
         }
         assert_eq!(fake.record().watched, [], "the port is not asked");
+    }
+
+    /// The port's `watch` is held, so the start cannot return from it until
+    /// the test lets go: a flush completed at its call, or ahead of the
+    /// start, is seen every time.
+    #[test]
+    fn a_flush_waits_for_a_start_held_in_the_port_and_completes_after_it() {
+        let (fake, _ground, clock) = fake();
+        let (service, completed) = service(&fake, &clock);
+        fake.hold_watches();
+        assert!(service.start(1, file("/w/f"), AT_ONCE));
+
+        // Read while the start is held, and checked once it is let go: a
+        // check that fails while it is held would leave the service's drop
+        // waiting for it.
+        let asked = service.flush(2);
+        let in_use = !service.flush(2) && !service.start(2, file("/w/g"), AT_ONCE);
+        let pending = service.pending();
+        let nothing = completed.try_recv().is_err();
+        fake.release_watches();
+        assert!(asked && in_use, "accepted once, then its id is in use");
+        assert_eq!(pending, 2);
+        assert!(nothing, "nothing is completed while the start is held");
+
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(2));
+        // It keeps no reply.
+        assert_eq!(service.take(2), None);
+        assert_eq!(service.take(1), Some(WatchReply::Started));
+        assert_eq!(service.pending(), 1, "the live watch");
+    }
+
+    #[test]
+    fn a_flush_with_no_start_in_flight_is_completed_at_once_whatever_is_live() {
+        let (fake, _ground, clock) = fake();
+        let (service, completed) = service(&fake, &clock);
+        started(&service, &completed, 1, file("/w/f"), AT_ONCE);
+        assert!(service.next(1, 2), "a pending read is not waited for");
+
+        assert!(service.flush(3));
+
+        assert_eq!(completed.try_recv(), Ok(3));
+    }
+
+    #[test]
+    fn a_cancelled_flush_is_never_completed_and_shutdown_completes_one_waiting() {
+        let (fake, _ground, clock) = fake();
+        let (service, completed) = service(&fake, &clock);
+        fake.hold_watches();
+        assert!(service.start(1, file("/w/f"), AT_ONCE));
+        assert!(fake.until(DEADLINE, |record| record.parked == 1));
+        // Checked once the start is let go, as above.
+        let asked = service.flush(2) && service.flush(3);
+        let withdrawn = service.cancel(2) && !service.cancel(2);
+
+        let shutting = {
+            let service = service.clone();
+            thread::spawn(move || service.shutdown())
+        };
+        fake.release_watches();
+        shutting.join().expect("shutdown returns");
+        assert!(asked && withdrawn);
+
+        // The cancelled start is never completed, nor the cancelled flush.
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(3));
+        assert!(completed.try_recv().is_err());
+        assert_eq!(service.pending(), 0);
     }
 
     #[test]

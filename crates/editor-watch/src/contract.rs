@@ -7,7 +7,7 @@
 //! given.
 //!
 //! The port's properties are [`LIVE_ON_RETURN`] to [`REFUSED`]. The
-//! service's, [`FILE_WRITTEN`] to [`SHUTDOWN`], run [`Service`] over the
+//! service's, [`FILE_WRITTEN`] to [`FLUSH`], run [`Service`] over the
 //! watch the check is given, on the clock it is given, so a real adapter
 //! shows them on real files. On a real file system they check that a kind
 //! is *present* in a change, never that the set is exactly something, and
@@ -101,6 +101,18 @@ pub trait Ground {
 
     /// How long the check waits for what should happen at once.
     fn deadline(&self) -> Duration;
+
+    /// Holds every later call of the port's `watch` inside the port, until
+    /// [`release_starts`](Self::release_starts), and says whether it can.
+    /// The fake's ground can; a real ground cannot, and keeps this default,
+    /// so [`FLUSH`] there checks the order without forcing it.
+    fn hold_starts(&self) -> bool {
+        false
+    }
+
+    /// Lets every call [`hold_starts`](Self::hold_starts) held go on, and
+    /// holds none from now on.
+    fn release_starts(&self) {}
 }
 
 /// An entry made right after `watch` returns is noticed, on each of 20
@@ -175,9 +187,15 @@ pub const CANCELLED_SILENT: &str = "a cancelled watch's pending read is never co
 /// never completed. As in [`CANCELLED_SILENT`], the file is first made
 /// after the shutdown, so no late notice completes the read before it.
 pub const SHUTDOWN: &str = "after shutdown a start is refused and a pending read never completed";
+/// A flush asked while a start is in the port is completed after the
+/// start's own completion, and not before it. Where the ground can hold
+/// starts ([`Ground::hold_starts`]), the start is held and nothing is
+/// completed until it is let go, which forces the order; elsewhere the
+/// same order is required.
+pub const FLUSH: &str = "a flush is completed once every start asked before it has returned";
 
 /// Every property, in the order [`check`] runs them.
-pub const PROPERTIES: [&str; 23] = [
+pub const PROPERTIES: [&str; 24] = [
     LIVE_ON_RETURN,
     CREATED,
     WRITTEN,
@@ -201,6 +219,7 @@ pub const PROPERTIES: [&str; 23] = [
     COALESCED,
     CANCELLED_SILENT,
     SHUTDOWN,
+    FLUSH,
 ];
 
 /// How many deliveries a service property reads for each change it looks
@@ -270,6 +289,7 @@ pub fn check<W: Watch + Clone, C: Clock + Clone>(
         (COALESCED, check.coalesced()),
         (CANCELLED_SILENT, check.cancelled_silent()),
         (SHUTDOWN, check.shutdown()),
+        (FLUSH, check.flush()),
     ];
     results
         .into_iter()
@@ -861,6 +881,22 @@ impl<W: Watch + Clone, C: Clock + Clone, G: Ground> Check<'_, W, C, G> {
             .delivery(kept, self.deadline())
             .is_some_and(|changes| names(&changes, &file));
         told && !served.ever_completed(cancelled)
+    }
+
+    fn flush(&self) -> bool {
+        let file = self.fresh("flush").join("f");
+        let served = self.served();
+        let held = self.ground.hold_starts();
+        let asked = served.service.start(1, Target::File(file), AT_ONCE) && served.service.flush(2);
+        // Held, the start cannot return from the port: nothing is done.
+        let waited = !held || served.completed.try_recv().is_err();
+        self.ground.release_starts();
+        let deadline = self.deadline();
+        let order = [
+            served.completed.recv_timeout(deadline).ok(),
+            served.completed.recv_timeout(deadline).ok(),
+        ];
+        asked && waited && order == [Some(1), Some(2)] && served.service.take(2).is_none()
     }
 
     fn shutdown(&self) -> bool {

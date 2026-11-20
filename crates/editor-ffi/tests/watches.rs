@@ -22,7 +22,9 @@
 mod common;
 
 use common::{completion_of, next, next_completion, start, take, write};
-use editor_ffi::watches::{editor_ffi_watches_cancel, editor_ffi_watches_pending};
+use editor_ffi::watches::{
+    editor_ffi_watches_cancel, editor_ffi_watches_flush, editor_ffi_watches_pending,
+};
 
 /// The bit of a written change.
 const WRITTEN: u64 = 2;
@@ -79,6 +81,15 @@ fn a_watch_is_started_through_c_and_a_write_is_delivered_on_the_completion_queue
     let refused = take(12).expect("a reply");
     assert_eq!(refused.status, 2, "not found");
     assert!(refused.detail.contains("missing"));
+
+    // A flush asked behind a start is completed after it.
+    assert!(start(13, 1, 0, 64, directory.path()));
+    assert!(editor_ffi_watches_flush(14));
+    assert_eq!(next_completion(), completion_of(13));
+    assert_eq!(next_completion(), completion_of(14));
+    assert_eq!(take(14), None, "a flush keeps no reply");
+    assert_eq!(take(13).map(|taken| taken.status), Some(0));
+    assert!(editor_ffi_watches_cancel(13));
 
     // Words that spell no start start nothing.
     // SAFETY: no bytes are lent.

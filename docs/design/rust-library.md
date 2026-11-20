@@ -628,7 +628,7 @@ C functions are `crates/editor-ffi/src/watches.rs`.
   which is how a test sees that a registration is never dropped under the
   service's lock. `Flaws` makes a fake that breaks one rule of the port.
 - **The contract** (`editor_watch::contract::check(watch, clock, ground,
-  dir)`) runs 23 properties, each in a fresh subdirectory of a directory
+  dir)`) runs 24 properties, each in a fresh subdirectory of a directory
   its caller owns, and returns the names of those that fail. Twelve are
   the port's: live on return (on 20 fresh registrations, so a race shows
   up); created; written; removed; renamed, under both paths; renamed over
@@ -636,7 +636,7 @@ C functions are `crates/editor-ffi/src/watches.rs`.
   `watch` returned and a file written in it; spelled as given, for a
   directory registered through a link; independent registrations; a
   dropped registration silent (200 writes right after the drop, then a
-  sentinel on a second registration); and the refusals. Eleven are the
+  sentinel on a second registration); and the refusals. Twelve are the
   service's, run over `Service` on the watch and the clock the check is
   given: a file watch is told of a write, of a rename over the file, of its
   removal, of its creation, of a write after an atomic save, and of nothing
@@ -644,8 +644,13 @@ C functions are `crates/editor-ffi/src/watches.rs`.
   removed directly inside it, and of nothing deeper; a tree watch of a
   change in a subdirectory; five writes within a window of 300 ms arrive as
   one delivery (`COALESCED`); a cancelled watch's pending read is never
-  completed; and after shutdown a start is refused and a pending read never
-  completed.
+  completed; after shutdown a start is refused and a pending read never
+  completed; and a flush asked while a start is in the port is completed
+  after the start's own completion (`FLUSH`). Where the ground can hold
+  the port's `watch` (`Ground::hold_starts`, which the fake's ground
+  forwards to `FakeWatch::hold_watches` and a real ground leaves at its
+  default, "cannot hold"), nothing is completed while the start is held,
+  which forces the order; elsewhere the same order is required.
   - **How a property waits.** A sink sends each notice to a channel, and
     the property waits for one that matches, up to the ground's deadline
     (1 s on the fake, 10 s on real files). A negative claim uses a
@@ -717,7 +722,14 @@ C functions are `crates/editor-ffi/src/watches.rs`.
     registration when the call returns, and is never completed. An id in
     use is refused. **Shutdown** refuses every later start (as shut down,
     completed at once), cancels every watch, waits for every start in
-    flight, and drops every registration; it is idempotent.
+    flight, and drops every registration; it is idempotent. **A flush**
+    (`Service::flush`, deterministic-test-concurrency phase 1) is a wait
+    of the caller's, completed once every start asked before it has
+    returned from the port (registered and completed, refused, or dropped
+    as cancelled); at once when no start is in flight. A start's thread,
+    after its own completion, completes each flush it was the last thing
+    for, in the order asked, and shutdown completes the rest. **A pending
+    read is not covered**: it waits on the disk, not on the service.
   - **A registration is never dropped, and the completion never called,
     under the service's lock.** It is taken out under the lock and dropped
     after: notify's FSEvents drop joins its run-loop thread, which may be
@@ -790,6 +802,7 @@ C functions are `crates/editor-ffi/src/watches.rs`.
   | `editor_ffi_watches_start(id, words, words_len, path, path_len)` | Three words, the target (0 a file, 1 a directory's entries, 2 a directory's tree), the window in milliseconds and the bound, then the path's bytes, which must be UTF-8. False, starting nothing, for words that spell no start, a path that is not UTF-8, an id in use, or when the system refuses the start its thread |
   | `editor_ffi_watches_next(watch, wait)` | Asks for the watch's next delivery, as the wait `wait`. False for a watch that is not live, one with a read pending, or a wait id in use |
   | `editor_ffi_watches_take(wait, *mut RawWatchReply)` | Fills the record and returns true, or returns false when nothing is kept for the wait |
+  | `editor_ffi_watches_flush(id)` | Asks for the wait `id` to be completed once every start asked before it has returned from the port; keeps no reply. False for an id in use |
   | `editor_ffi_watches_cancel(id)` | Cancels a watch, dropping its registration once no other watch shares it, or a wait |
   | `editor_ffi_watches_pending()` | Watches starting or live, and waits not answered or not taken: a readout for tests |
   | `editor_ffi_watches_shutdown()` | Ends every watch; a later start is refused as shut down |

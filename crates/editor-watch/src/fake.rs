@@ -673,6 +673,15 @@ impl Ground for FakeGround {
     fn deadline(&self) -> Duration {
         FAKE_DEADLINE
     }
+
+    fn hold_starts(&self) -> bool {
+        self.fake.hold_watches();
+        true
+    }
+
+    fn release_starts(&self) {
+        self.fake.release_watches();
+    }
 }
 
 #[cfg(test)]

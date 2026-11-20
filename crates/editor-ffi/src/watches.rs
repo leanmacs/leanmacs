@@ -69,6 +69,7 @@
 //! | [`editor_ffi_watches_start`] | Starts a watch. False, starting nothing, for words that spell no start, an id in use, or when the system refuses the start its thread |
 //! | [`editor_ffi_watches_next`] | Asks for a watch's next delivery, under a wait id of its own. False for a watch that is not live, one with a read pending, or a wait id in use |
 //! | [`editor_ffi_watches_take`] | Fills a [`RawWatchReply`] and returns true, or returns false when nothing is kept for the wait |
+//! | [`editor_ffi_watches_flush`] | Asks for an id to be completed once every start asked before it has returned from the port; keeps no reply. False for an id in use |
 //! | [`editor_ffi_watches_cancel`] | Cancels a watch, dropping its registration once no other watch shares it, or a wait |
 //! | [`editor_ffi_watches_pending`] | Watches starting or live, and waits not answered or not taken. A readout for tests |
 //! | [`editor_ffi_watches_shutdown`] | Ends every watch; a later start is refused as shut down |
@@ -311,6 +312,19 @@ pub unsafe extern "C" fn editor_ffi_watches_take(wait: u64, out: *mut RawWatchRe
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_watches_cancel(id: u64) -> bool {
     WATCHES.cancel(id)
+}
+
+/// Asks the process's watch service for the wait `id` to be completed once
+/// every start asked before this call has returned from the port
+/// ([`Service::flush`]), and returns whether it was accepted. It returns at
+/// once and never blocks. Its completion is queued from [`SERVICE`] behind
+/// those of the starts it waited for, and it keeps no reply. A pending read
+/// is not waited for.
+///
+/// Returns false, starting nothing, if `id` is in use.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_watches_flush(id: u64) -> bool {
+    WATCHES.flush(id)
 }
 
 /// How many watches are starting or live, and how many waits have not been
