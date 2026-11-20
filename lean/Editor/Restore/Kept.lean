@@ -1,4 +1,5 @@
 import Editor.File
+import Editor.Restart.Handover
 import Editor.Restore.Records
 
 /-!
@@ -24,6 +25,7 @@ The rules are in `Editor/Restore.lean`; the formats on disk in
 | Another fact of the workspace table | A field of `Workspace.Record`, `Project.Record` or `Document.Workspaces` (`Editor/Restore/Records.lean`), with its JSON, record and restore in `Editor/Restore/Workspaces.lean` |
 | Another fact of a store kept across a restart | A field of `KeptCell` (`Editor/Store/Codec.lean`), its JSON in `Editor/Restore/Workspaces.lean`; mirrored into `Kept.stores` or `Kept.table` by `Restore.journalOrders` |
 | A new plain type `Kept`, `Kept.Pending` or `Restore.Place` names | `Editor/Restore/Records.lean`, never a module that imports the state |
+| Another fact of a restart in flight | A field of `Restart.Handing` (`Editor/Restart/Handover.lean`, a leaf), set by the `restore` package's restart (`Editor/Restore/Restart.lean`) |
 
 The cells parked for a codec (`Kept.parked`) are written by the same two
 writers: the restore's first half parks the table cells no codec met, with
@@ -223,6 +225,20 @@ structure Kept where
   /-- How many other jobs are running, as the host last handed them
   (`Restore.otherJobs`). -/
   otherJobs : Nat := 0
+  /-- The restart in flight, from the probe's success until the exec or
+  until it is abandoned (`Editor/Restore/Restart.lean`): while it is set the
+  loop drops the user's input and the editor does not leave. -/
+  handing : Option Restart.Handing := none
+  /-- The hand-over record this run was started with (`--handed-over`), to
+  remove at the hand-shake: once the handed index is restored and this
+  run's own index written (`Restore.journalOrders`). -/
+  handedOver : Option System.FilePath := none
+  /-- Whether this run took a handed session in (`--restore`):
+  `Editor.restarted`. -/
+  restarted : Bool := false
+  /-- The executables that ended before they restored the session, which a
+  restart fell back past (`--failed`). -/
+  fellBack : Array System.FilePath := #[]
   deriving BEq, Repr
 
 end Editor.Restore

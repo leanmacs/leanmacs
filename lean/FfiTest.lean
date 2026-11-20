@@ -12,6 +12,7 @@ import FfiTest.Editor.Ffi.Fuzzy
 import FfiTest.Editor.Ffi.Grep
 import FfiTest.Editor.Ffi.Interrupt
 import FfiTest.Editor.Ffi.Inverse
+import FfiTest.Editor.Ffi.Launch
 import FfiTest.Editor.Ffi.MainThread
 import FfiTest.Editor.Ffi.Marker
 import FfiTest.Editor.Ffi.Pair
@@ -94,6 +95,7 @@ def checks (_ : Unit) : List Check :=
     eventDecodeChecks () ++
     eventChecks () ++
     interruptChecks () ++
+    ffiLaunchChecks () ++
     fuzzyChecks () ++
     syntaxChecks () ++
     searchChecks () ++
@@ -166,6 +168,10 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit status
   | ["window-host-config", sysroot, oleanDir, configDir] =>
     let status ← FfiTest.windowHostConfigScenario sysroot oleanDir configDir
+    Editor.Ffi.quit
+    IO.Process.exit status
+  | ["window-host-restart", sysroot, oleanDir, configDir] =>
+    let status ← FfiTest.windowHostRestartScenario sysroot oleanDir configDir
     Editor.Ffi.quit
     IO.Process.exit status
   | ["window-host-base", sysroot, oleanDir, configDir] =>

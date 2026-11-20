@@ -265,12 +265,77 @@ def closedFile : Option EvilDriver :=
     let inB := evilFed (opened begun "b.txt") "G g g"
     drained (closed (evilFed (opened inB "a.txt") "G x") "b.txt")
 
+/-- A loop after a first one that opened `a.txt` and ended uncleanly,
+over its world with `change` made to it, launched with `launch`, its
+restore naming `named`, restored. -/
+def restartedOver (named : Option System.FilePath) (launch : Restart.Launch := {})
+    (change : FileModel → FileModel := id) : Option EvilDriver := do
+  let before ← first
+  let opened := drained (WorkingSetTest.opened before "a.txt")
+  let driver ← restoreDriver (some (change opened.jobs.files))
+  let launched :=
+    { driver with loop := { driver.loop with state := { driver.loop.state with launch } } }
+  let arguments := [Argument.str stateDirectory.toString] ++ (named.map (.str ·.toString)).toList
+  return withCommands (drained (launched.started #[{ name := restoreJob, arguments }]))
+
+/-- `files` with an index of the run 5 that lists no buffer, not ended. -/
+def withEmptyIndex (files : FileModel) : FileModel :=
+  withIndex files (indexName 5) ({ run := 5 } : Document).render
+
 end RestoreRunTest
 
 open RestoreRunTest in
 /-- The checks of restoring a session (`Editor/Restore/Run.lean`). -/
 def restoreChecks : List Check :=
   [{  name :=
+        "a restart's named index is restored even when an index of a higher run is there, and the run then says it took a handed session in"
+      run :=
+        pure <|
+          let named := restartedOver (some (indexPath stateDirectory 1)) (change := withEmptyIndex)
+          let chosen := restartedOver none (change := withEmptyIndex)
+          (named.map fun d => (bufferNamed d "a.txt").isSome) == some true &&
+            (chosen.map fun d => (bufferNamed d "a.txt").isSome) == some false &&
+            (named.map (·.loop.state.restore.restarted)) == some true &&
+            (chosen.map (·.loop.state.restore.restarted)) == some false },
+    { name :=
+        "a named index that is not there is said, and the index the version rule chooses is restored"
+      run :=
+        pure <|
+          match restartedOver (some (indexPath stateDirectory 42)) with
+          | none => false
+          | some driver =>
+            (bufferNamed driver "a.txt").isSome &&
+              (reportOf driver).contains
+                "session-42.json was named by the restart but it is not there; restoring as after an unclean end" },
+    { name :=
+        "a restart's summary says the window was closed and reopened, and, after a fallback, which executables ended before the one that restored it"
+      run :=
+        pure <|
+          let named := some (indexPath stateDirectory 1)
+          let plain := restartedOver named { running := some "/A/editor" }
+          let fell :=
+            restartedOver named { running := some "/A/editor", failed := #["/u/9/editor"] }
+          (plain.map (·.loop.state.echo)) ==
+              some
+                "restore: restarted, so the window was closed and reopened; 1 buffers, 0 with unsaved text" &&
+            (fell.map (·.loop.state.echo)) ==
+              some
+                "restore: restarted, so the window was closed and reopened; /u/9/editor ended before restoring the session, so /A/editor restored it; 1 buffers, 0 with unsaved text" },
+    { name :=
+        "a record a launcher gave up on, handover.failed, is said in the report with its candidates and removed"
+      run :=
+        pure <|
+          let failed :=
+            "leanmacs-handover 1\nsession /state/session/session-1.json\nshipped /A/editor\ncandidate /u/9/editor\ncandidate /A/editor\nfailed /u/9/editor\nfailed /A/editor\n"
+          let change (files : FileModel) : FileModel :=
+            files.withFile (failedRecordPath stateDirectory) failed.toUTF8
+          match restartedOver none (change := change) with
+          | none => false
+          | some driver =>
+            (reportOf driver).contains
+                "a restart could not start any of /u/9/editor, /A/editor; the session was restored as after an unclean end" &&
+              bytesAt driver (failedRecordPath stateDirectory) == none },
+    { name :=
         "(a) windows and layouts, (b) tabs: two tabs with manual splits at an edge, a resize, a docked window, a float, a named and zoomed hidden tab come back as they were, up to the views' ids; the start window keeps id 0 and is focused; each view's buffer, selection and scroll match; tab-next shows the hidden tab as it was"
       run :=
         pure <|

@@ -1,4 +1,5 @@
 import Editor.ModuleLookup
+import Editor.Restart.Launch
 
 /-!
 # The window mode's command line
@@ -45,6 +46,12 @@ before the first event (`Options.starts`). It reads nothing itself, so
   `EditorState.hostedBy`). Nothing is made at start: a directory that is
   not there is made when something is first written in it.
 - **`--no-ime`** runs the window with no input method composing.
+- **A restart** (`Editor/Restore/Restart.lean`) hands the next run the
+  options as given, the file dropped (`Options.restartArguments`): the
+  restored session reopens the file, and every other option means the same
+  to the next run. The launch flags are not among them
+  (`Editor/Restart/Launch.lean`): the launcher gives the next run its own.
+  A run a restart started restores the index it was handed (`Start.restore`).
 
 Two files, an option it does not know, and an option with no value are
 refused, with the usage (`usage`).
@@ -160,6 +167,12 @@ structure Options where
   /-- The frame latency this run asks for (`--frame-latency`); none for the
   renderer's decision. -/
   frameLatency : Option Nat := none
+  /-- The command line as given, the file dropped: what a restart hands on
+  (`restartArguments`). -/
+  given : List String := []
+  /-- How this run was launched (`Editor/Restart/Launch.lean`), which the
+  executable read before the options. -/
+  launch : Restart.Launch := {}
   deriving DecidableEq, Repr
 
 /-- The window mode's command line, as the usage says it. -/
@@ -262,6 +275,21 @@ def readAll (read : Read) : List String → Except String Read
       | some _ => .error "only one file is opened"
       | none => readAll { read with file := some argument } rest
 
+/-- `arguments` with the file among them dropped: every word that is not an
+option or an option's value. -/
+def withoutFile : List String → List String
+  | option :: value :: rest =>
+    if
+        ["--config", "--state", "--sysroot", "--oleans", "--present-mode",
+              "--frame-latency"].contains
+          option then
+      option :: value :: withoutFile rest
+    else
+      if option.startsWith "-" then option :: withoutFile (value :: rest)
+      else withoutFile (value :: rest)
+  | [option] => if option.startsWith "-" then [option] else []
+  | [] => []
+
 /-- What `arguments`, the command line, asks for, given `environment`; or
 why it is refused, followed by a line of the usage. -/
 def parse (environment : Environment) (arguments : List String) : Except String Options :=
@@ -283,7 +311,13 @@ def parse (environment : Environment) (arguments : List String) : Except String 
         composition := read.composition
         report := read.report
         presentMode := read.presentMode
-        frameLatency := read.frameLatency }
+        frameLatency := read.frameLatency
+        given := withoutFile arguments }
+
+/-- The command line a restart hands the next run: every option given, the
+file dropped, no launch flag ("A restart", in the module docs). -/
+def Options.restartArguments (options : Options) : List String :=
+  options.given
 
 /-- The state directory the host hands the loop's first state. -/
 def Options.stateDirectory (options : Options) : Option System.FilePath :=
@@ -320,8 +354,9 @@ def notJournalled : String :=
 /-- What the window mode posts to the editor loop before the first event. -/
 inductive Start where
   /-- Restore the session of the state directory, holding what follows until
-  it has finished (`Headless.Request.restore`). -/
-  | restore
+  it has finished (`Headless.Request.restore`): the index a restart named,
+  when one did. -/
+  | restore (named : Option System.FilePath)
   /-- Open the file at `path`, which is absolute. -/
   | «open» (path : String)
   /-- Say `text` in the echo area. -/
@@ -338,7 +373,7 @@ not journalled (`notJournalled`), and each of `said`; then a reload when
 one empty buffer. The restore comes first so that config's `setup` runs
 after it: the host holds what follows until it has finished. -/
 def Options.starts (options : Options) (plan : ConfigPlan) (said : Array String) : Array Start :=
-  let restores := if options.state.isSome then #[Start.restore] else #[]
+  let restores := if options.state.isSome then #[Start.restore options.launch.restore] else #[]
   let opens :=
     match options.file with
     | some path => #[Start.open path]

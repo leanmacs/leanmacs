@@ -1140,6 +1140,7 @@ and moving are `Editor/JumpList.lean`'s and `Editor/Jumps.lean`'s.
 | A place in a text that is to follow its edits and outlive its buffer (a jump list's entry, a mark) | A `Place`, held in `Window.jumps`, `Buffer.marks` or `EditorState.Remembered.globalMarks`, or a new field beside them that `EditorState.placeMarkers` reads, so its markers are given up |
 | Something a command asks the loop to hand its host once it has run to its end (a job to start or cancel, an invocation to run next, a reload, a theme) | A field of `EditorState.Outbox` (`Editor/State/Outbox.lean`, "Where a new entry goes"), which the loop empties whole after each command |
 | What commands remember for the whole editor from one command to the next, to put back or repeat (a register, the last find, the last search) | A field of `EditorState.Remembered` ("What commands remember"), set by an operation here and read through one |
+| What the host knew at start (the working directory, the home, the state directory, how the run was launched) | A field of `EditorState` beside `workingDirectory`, `home`, `stateDirectory` and `launch`, set once by `hostedBy` |
 | The whole editor, set and read on its own (the scroll margin, the pending key prefix, a command's choice of auto-reload, asked to quit, the order buffers were used in, how many times the workspace table changed) | A field of `EditorState` |
 | What the last publish was handed or measured, or drew itself (the row heights, the padding, when the tab bar shows, the tab bar's and the candidate list's views) | A field of `EditorState`, set by a publish (`Loop.publish`, `Editor/Loop.lean`) |
 | What a reconciler of the loop keeps in step after each publish (the files followed for auto-reload, the gutter's tracked files and watched repositories, the open prompt's job keys, the session's journals) | A field of `EditorState` beside `following`, `tracked`, `refWatches`, `completionKeys` and `restore`, written by that reconciler; its type plain data here, or in a leaf module this one imports (`Editor/Restore/Kept.lean`) |
@@ -2231,6 +2232,12 @@ structure EditorState where
   one sets it once, with the working directory; none until then, and a
   host that has none keeps nothing across a restart. -/
   stateDirectory : Option System.FilePath := none
+  /-- How this run was launched and what a restart hands on
+  (`Editor/Restart/Launch.lean`): the launcher, the shipped executable, the
+  index handed over, the running executable and the host's arguments. A
+  host sets it once, with the state directory (`hostedBy`); empty until
+  then, and a run with no launcher restarts with no fallback. -/
+  launch : Restart.Launch := {}
   /-- When the tab bar is shown (`Editor/TabBar.lean`): config's choice, as
   the last publish was handed it (`Loop.publish`); while there are two tabs
   or more before any. -/
@@ -2906,12 +2913,12 @@ def initial (size : Size) (shape : Shape := .exclusive) : TextM EditorState := d
       recent := #[⟨0⟩] }
 
 /-- The state as a host hands it to its loop when it first makes it: with
-the host's working directory, home directory and state directory, which no
-command changes after. -/
+the host's working directory, home directory, state directory and launch,
+which no command changes after. -/
 def hostedBy (workingDirectory : System.FilePath) (home stateDirectory : Option System.FilePath)
-    (state : EditorState) : EditorState :=
+    (state : EditorState) (launch : Restart.Launch := {}) : EditorState :=
   { state with
-    workingDirectory, home, stateDirectory }
+    workingDirectory, home, stateDirectory, launch }
 
 /-- The state with every transient float but `keep` closed: each leaves
 `floats` and `windows`, its markers the caller's to give up. The focus is
@@ -3319,9 +3326,10 @@ def isSaving (state : EditorState) : Bool :=
   state.buffers.any fun slot => slot.any (·.file.any (·.saving.isSome))
 
 /-- Whether the editor leaves ("Quit", in the module docs): a command asked
-it to quit, no buffer has unsaved changes, and no save is in flight. -/
+it to quit, no buffer has unsaved changes, no save is in flight, and no
+restart is handing the session over (`Restore.Kept.handing`). -/
 def leaves (state : EditorState) : Bool :=
-  state.quitting && state.unsaved.isNone && !state.isSaving
+  state.quitting && state.unsaved.isNone && !state.isSaving && state.restore.handing.isNone
 
 /-- `state` with a quit that cannot go ahead withdrawn: asked to quit while
 a buffer has unsaved changes, it is no longer asked. Any other state is as

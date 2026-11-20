@@ -631,6 +631,18 @@ request sets a flag of the editor state (`EditorState.quitting`,
 
 Pinned by `ModelTest.systemQuitChecks` and `ModelTest.dispatchQuitChecks`.
 
+**A restart in flight.** From the restart's probe succeeding until its exec,
+or until the hand-over is abandoned (`Restore.Kept.handing`,
+`Editor/Restore/Restart.lean`), the loop drops the user's input it is
+handed, keys, committed text, a preedit and the pointer
+(`droppedWhileHanding`), and says the hand-over again in the echo area
+(`Restart.handingLine`), so no edit can follow the index the hand-over
+writes. A resize, the focus and the queue's other events are handled as
+ever. The editor does not leave meanwhile (`EditorState.leaves`), and a step
+whose command handed a plan over hands it to the host
+(`Stepped.handOver`), which ends its loop and execs it. Pinned by
+`ModelTest.loopChecks`.
+
 **The scheme after a command that failed.** The loop keeps two states of
 the scheme: the one after the last key (`Loop.input`), and the last one at
 rest (`Loop.atRest`), in which nothing was pending. When an invocation does
@@ -1684,6 +1696,10 @@ structure Loop.Stepped (scheme : InputScheme) where
   to take in (`Config.State.restoreCells`). None for a step that ran no
   command, and for one whose command did not run to its end. -/
   restoredCells : Array KeptCell := #[]
+  /-- The plan of a restart whose session and record are written
+  (`Editor.handOver`, `Editor/Restore/Restart.lean`): the host ends its loop,
+  shuts down and execs it. None for a step whose command asked none. -/
+  handOver : Option Restart.Plan := none
 
 namespace EditorState
 
@@ -2718,6 +2734,14 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) :
       return ({ state with preedit := none }, some text)
   | _ => return (state, none)
 
+/-- Whether `event` is input the loop drops while a restart hands the
+session over (`Restore.Kept.handing`, "A restart in flight" in the module
+docs): a key, committed text, a preedit or the pointer. A resize, the focus
+and every other event is handled as ever. -/
+def droppedWhileHanding : Event → Bool
+  | .key .. | .commit _ | .preedit _ | .pointer _ => true
+  | _ => false
+
 /-- Whether the loop steps `event` through its scheme: a key press, a
 repeat among them, whose key is not a modifier by itself
 (`Key.isModifier`). The key it steps, if so. -/
@@ -3037,7 +3061,8 @@ def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
     theme := ran.outbox.theme
     ended := some ran.ending
     cancels := ran.outbox.cancels
-    restoredCells := ran.outbox.restoredCells }
+    restoredCells := ran.outbox.restoredCells
+    handOver := ran.outbox.handOver }
 
 /-- One key through the scheme, for the focused view, and the invocation it
 yields, if it yields one, run (`run`): what the step hands back, with the
@@ -3547,6 +3572,14 @@ refused: the publish puts a refusal of its own in the echo area too ("When
 publishing is refused", in the module docs). -/
 def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
   let loop := loop.keyedBy keys
+  -- While a restart hands the session over, the user's input is dropped and
+  -- the hand-over is said again: no edit follows the index it writes.
+  if loop.state.restore.handing.isSome && droppedWhileHanding event then
+    let said := Restart.handingLine loop.state.launch.launchedBy.isSome
+    return ←
+        ({ loop := { loop with state := { loop.state with echo := said } }, next := .continue } :
+                Stepped scheme).published
+            keys
   if let some pressed := stepped? event then
     return ← (← loop.key keys pressed).published keys
   match event with

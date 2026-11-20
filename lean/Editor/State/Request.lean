@@ -191,6 +191,9 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   `markRestored`, a buffer made or reopened, refused `noSuchBuffer`; and
   `restoreCells`, the declared stores' cells, kept in the outbox
   (`EditorState.Outbox.restoredCells`) for the host that holds the cells.
+- **A restart hands its plan over by `handOver`**, kept in the outbox
+  (`EditorState.Outbox.handOver`) for the host to exec once its session and
+  record are written (`Editor/Restore/Restart.lean`).
 
 ## Where an addition goes
 
@@ -311,6 +314,9 @@ inductive StateRequest where
   /-- Hand the host `cells`, the declared stores' cells a session restore
   read. -/
   | restoreCells (cells : Array KeptCell)
+  /-- Hand the host `plan`, a restart whose session and record are written,
+  to exec (`EditorState.Outbox.handOver`). -/
+  | handOver (plan : Restart.Plan)
   /-- Choose auto-reload on or off, for as long as the editor runs. -/
   | setAutoReload (on : Bool)
   /-- Stop following the buffer `id` for auto-reload: its follow job ended. -/
@@ -454,6 +460,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .restoreWorkspaces _ => Unit
   | .markRestored _ => Except BufferRefusal Unit
   | .restoreCells _ => Unit
+  | .handOver _ => Unit
   | .setAutoReload _ => Unit
   | .unfollow _ => Unit
   | .refuseFollow _ => Unit
@@ -562,6 +569,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .markRestored id, state => state.markRestored id
   | .restoreCells cells, state =>
     ((), { state with outbox.restoredCells := state.outbox.restoredCells ++ cells })
+  | .handOver plan, state => ((), { state with outbox.handOver := some plan })
   | .setAutoReload on, state => ((), { state with autoReload := some on })
   | .unfollow id, state => ((), { state with following := state.following.filter (·.buffer != id) })
   | .refuseFollow id, state =>

@@ -1779,6 +1779,16 @@ def floatingWindowChecks : List Check :=
 (`Editor/State.lean`), on the text model. -/
 def stateChecks : List Check :=
   [{        name :=
+              "the editor does not leave while a restart hands the session over, asked to quit with nothing unsaved and no save in flight"
+            run :=
+              pure <|
+                let state := { EditorState.none with quitting := true }
+                let handing :=
+                  { state with
+                    restore :=
+                      { handing := some { plan := { record := "/s/h", handover := default } } } }
+                state.leaves && !handing.leaves },
+          { name :=
               "a new buffer's history is not restored, and marking it restored says it is, refused for a buffer there is none of"
             run :=
               pure <|

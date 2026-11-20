@@ -210,6 +210,28 @@ def switched (start : TextM EditorState) (text : String) (events : List Event :=
 each event does to the state, and the scene it publishes. -/
 def loopChecks : List Check :=
   [{  name :=
+        "while a restart hands the session over, a key and a committed text change no text and say the hand-over again; a resize is handled"
+      run :=
+        pure <|
+          match evilDriver "a|b" with
+          | none => false
+          | some driver =>
+            let plan : Restart.Plan := { record := "/s/session/handover", handover := default }
+            let handing :=
+              { driver with
+                loop :=
+                  { driver.loop with
+                    state := { driver.loop.state with restore := { handing := some { plan } } } } }
+            let fed (driver : EvilDriver) (event : Event) : EvilDriver :=
+              (driver.feed { event, stamp := 0 }).1
+            let keyed := evilFed handing "i x"
+            let committed := fed handing (.commit "y")
+            let resized := fed handing (.resize { width := 641, height := 479, scale := 2.0 })
+            evilText keyed == some "ab" && evilText committed == some "ab" &&
+              keyed.loop.state.echo == Restart.handingLine false &&
+              committed.loop.state.echo == Restart.handingLine false &&
+              resized.loop.state.frame.size == ⟨641, 479⟩ },
+    { name :=
         "a layout a restore holds is not chosen while the config generation is the restore's, and is once config has installed past it; with no hold, a handed layout is chosen as before"
       run :=
         pure <|

@@ -1,4 +1,5 @@
 import Editor.Package
+import Editor.Restore.Restart
 import Editor.Restore.Run
 
 /-!
@@ -13,12 +14,17 @@ the owner `restore` when its loop starts, before any config
 registered.
 
 - **The jobs**: `restore` and `restore-files`, the two halves of a restore;
-  `restore-write` and `restore-save`, which write this run's index. Each is
+  `restore-write` and `restore-save`, which write this run's index;
+  `restart-probe` and `restart-save`, a restart's probe and its save of the
+  session and the record (`Editor/Restore/Restart.lean`). Each is
   restarted (`workJob … (restarted := true)`): the next start runs its own
-  restore and writes its own index, so one running at a restart is not
-  counted as stopped by it.
-- **The command**: `restore-modes`, which sets a major mode a restore
-  deferred until config registered it.
+  restore and writes its own index, and a restart's own jobs end with the
+  run that hands over, so one running at a restart is not counted as
+  stopped by it.
+- **The commands**: `restore-modes`, which sets a major mode a restore
+  deferred until config registered it; `restart`, bound to the ex name
+  `restart`, which takes an optional executable; and `restart-abandon`,
+  which a host runs to give a hand-over up.
 - **The mode**: `restore-report`, the report's buffer's (`*restore*`).
 
 Pinned by `ModelTest.restoreChecks`, on the models, by
@@ -33,10 +39,15 @@ def package : Package :=
   { name := "restore"
     setup := do
       commandWith modesName modesCommand
+      commandWith Editor.restartName restartCommand
+      commandWith abandonName abandonCommand
+      Editor.exCommand Editor.restartName Editor.restartName (takes := .text)
       defineMode { name := reportMode }
       workJob restoreJob restoreWork (restarted := true)
       workJob filesJob filesWork (restarted := true)
       workJob writeJob writeWork (restarted := true)
-      workJob saveJob saveWork (restarted := true) }
+      workJob saveJob saveWork (restarted := true)
+      workJob probeJob probeWork (restarted := true)
+      workJob restartSaveJob restartSaveWork (restarted := true) }
 
 end Editor.Restore

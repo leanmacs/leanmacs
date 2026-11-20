@@ -105,6 +105,25 @@ def headlessCommandLineChecks : List Check :=
             refused installed ["--state"] &&
             refused installed ["--state", "/a", "--state", "/b", "/c", "/t"] &&
             refused installed ["--state", "--render", "/c", "/t"]) },
+    { name :=
+        "--resume <k> is the count of restarts passed, read and refused as --state is, and not a number refused too; without it it is 0"
+      run :=
+        pure
+          ((read installed ["--resume", "2", "--state", "/st", "/c", "/t"]).map (·.resume) ==
+              some 2 &&
+            (read installed ["/c", "/t"]).map (·.resume) == some 0 &&
+            refused installed ["--resume"] &&
+            refused installed ["--resume", "x", "/c", "/t"] &&
+            refused installed ["--resume", "1", "--resume", "2", "/c", "/t"] &&
+            refused installed ["--resume", "--render", "/c", "/t"]) },
+    { name :=
+        "the command line a restart hands on is this run's with --resume one more than its own, and no other --resume"
+      run :=
+        pure
+          (Headless.handedOn ["--state", "/st", "/c", "/t"] 0 ==
+              ["--resume", "1", "--state", "/st", "/c", "/t"] &&
+            Headless.handedOn ["--resume", "1", "--state", "/st", "/c", "/t"] 1 ==
+              ["--resume", "2", "--state", "/st", "/c", "/t"]) },
     { name := "an option given twice is refused with no reason beyond the usage line"
       run :=
         pure

@@ -1,4 +1,5 @@
 import Editor.Invocation
+import Editor.Restart.Handover
 import Editor.Store.Codec
 
 /-!
@@ -10,19 +11,22 @@ to start and the keys of the jobs to cancel (`Editor/Loop.lean`, "Jobs
 from commands"), the invocations to run next, a prompt's continuation with
 its answer among them ("Prompts"), whether the config is to be reloaded
 ("Reload from a command"), the theme to load ("A theme switch from a
-command") and the declared stores' cells a session restore read, for the
-host that holds the cells ("Restoring", `Editor/Restore/Run.lean`).
+command"), the declared stores' cells a session restore read, for the
+host that holds the cells ("Restoring", `Editor/Restore/Run.lean`), and the
+plan of a restart whose session and record are written, for the host to
+exec (`Editor/Restore/Restart.lean`).
 
 ## The rules
 
 - **Each entry is set by one state request** (`Editor/State/Request.lean`):
   `starts` by `startJob`, `cancels` by `cancelJob`, `answered` by `invoke`
   and by `closePrompt` (`EditorState.closePrompt`), `reload` by `reload`,
-  `theme` by `loadTheme` and `restoredCells` by `restoreCells`.
+  `theme` by `loadTheme`, `restoredCells` by `restoreCells` and `handOver`
+  by `handOver`.
   `starts`, `cancels`, `answered` and `restoredCells` each append in
   order, so two `restoreCells` in one command hand on the cells of both,
-  the first's first; `reload` and `theme` are set in place of what was
-  there, so the latest wins.
+  the first's first; `reload`, `theme` and `handOver` are set in place of
+  what was there, so the latest wins.
 - The jobs a command asked to be started are kept in order, a `JobStart`
   each: a registered job's name and plain arguments, and the key a host
   keeps it under, if it has one.
@@ -102,6 +106,9 @@ structure EditorState.Outbox where
   with its codec and config's as they were, for the host that holds the
   cells (`Config.State.restoreCells`), in order. -/
   restoredCells : Array KeptCell := #[]
+  /-- The plan of a restart whose session and record are written: the host
+  ends its loop, shuts down and execs it (`Restart.Plan.invocation`). -/
+  handOver : Option Restart.Plan := none
   deriving BEq, Repr
 
 end Editor

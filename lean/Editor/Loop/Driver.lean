@@ -232,6 +232,10 @@ structure Loop.Driver (scheme : InputScheme) where
   (`Loop.Stepped.restoredCells`), in order. The driver holds no cells: a
   host takes them in (`Config.State.restoreCells`). -/
   restoredCells : Array KeptCell := #[]
+  /-- The plan of the restart a step it took in handed over
+  (`Loop.Stepped.handOver`), the latest. The driver execs nothing: a host
+  ends its loop and execs it. -/
+  handOver : Option Restart.Plan := none
 
 namespace Loop.Driver
 
@@ -512,6 +516,7 @@ partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
                 reloads := driver.reloads + if stepped.reload then 1 else 0
                 themes := driver.themes ++ stepped.theme.toArray
                 restoredCells := driver.restoredCells ++ stepped.restoredCells
+                handOver := stepped.handOver <|> driver.handOver
                 armed :=
                   match stepped.pause with
                   | .keep => driver.armed

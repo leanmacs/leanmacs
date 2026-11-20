@@ -134,6 +134,12 @@ structure Loaded where
   /-- Each journal file: its run, buffer and generation, whether it is the
   base, and its load. -/
   journals : Array (Nat × Nat × Nat × Bool × Except FileError File.Loaded) := #[]
+  /-- The index a restart named (`--restore`), restored in place of the one
+  the version rule chooses. -/
+  named : Option System.FilePath := none
+  /-- A record a launcher gave up on (`handover.failed`), loaded and then
+  removed by the job, if one was there. -/
+  failedRecord : Option (Except FileError File.Loaded) := none
 
 /-- The text a load holds, read and let go of: what its job loaded, taken
 into the store, read and released. -/
@@ -259,8 +265,34 @@ def read (loaded : Loaded) : EditorM Unit := do
         reads.push
           (run,
             { report := #[s!"{name} cannot be loaded ({error.describe}): it is left as it is"] })
-  let choice := Document.choose reads
-  report := report ++ choice.report
+  let chosen := Document.choose reads
+  -- A restart names the index it handed over: that one is restored, whatever
+  -- run is highest, unless it is missing or does not parse.
+  let (choice, namedSaid) : Document.Choice × Array String :=
+    match loaded.named with
+    | none => (chosen, #[])
+    | some path =>
+      let name := path.fileName.getD path.toString
+      let unclean := "restoring as after an unclean end"
+      match (loaded.indexes.zip reads).find? fun ((_, indexName, _), _) => indexName == name with
+      | some (_, (_, read)) =>
+        match read.document with
+        | some document => ({ chosen with restored := some document }, #[])
+        | none => (chosen, #[s!"{name} was named by the restart but it does not parse; {unclean}"])
+      | none => (chosen, #[s!"{name} was named by the restart but it is not there; {unclean}"])
+  report := report ++ namedSaid ++ choice.report
+  -- A restart the launcher gave up on: said, and the record gone.
+  if let some reply := loaded.failedRecord then
+    let tried ←
+      match reply with
+      | .ok file =>
+        do
+          pure (", ".intercalate (Restart.failedCandidates (← textOf file)).toList)
+      | .error _ =>
+        pure "its executables"
+    report :=
+      report.push
+        s!"a restart could not start any of {tried}; the session was restored as after an unclean end"
   let run :=
     nextRun (loaded.sessionNames ++ loaded.journalNames)
       (reads.filterMap (·.2.document.map (·.run)))
@@ -398,9 +430,12 @@ def read (loaded : Loaded) : EditorM Unit := do
               run := (choice.restored.map (·.run)).getD 0 } }
     loads := loads ++ [.str file.path]
   pending := { pending with report := report }
+  let launch := (← editorState).launch
   setKept
       { (← editorState).restore with
-        pending := some pending, parked, parkedAt := ← generationNow }
+        pending := some pending, parked, parkedAt := ← generationNow
+        restarted := loaded.named.isSome, handedOver := launch.handedOver
+        fellBack := launch.failed }
   let arguments :=
     [.str loaded.directory.toString, .nat (statArguments.length / 2)] ++ statArguments ++ loads
   if let .error refusal← startJob filesJob arguments then
@@ -410,7 +445,11 @@ def read (loaded : Loaded) : EditorM Unit := do
 directory made, the session's files listed and loaded, and the first half's
 command (`read`). -/
 def restoreWork (arguments : List Argument) : Work := fun _ => do
-  let .str state :: _ := arguments | throw s!"{restoreJob}: its arguments are not a restore's"
+  let .str state :: rest := arguments | throw s!"{restoreJob}: its arguments are not a restore's"
+  let named : Option System.FilePath :=
+    match rest with
+    | .str path :: _ => some path
+    | _ => none
   let directory := System.FilePath.mk state
   let made ← File.makeDirectory (journalsDirectory directory)
   let names (path : System.FilePath) : JobM (Array String) := do
@@ -433,7 +472,16 @@ def restoreWork (arguments : List Argument) : Work := fun _ => do
         journals.push
           (run, buffer, generation, base,
             ← File.load (journalsDirectory directory / name) Files.limit)
-  return read { directory, made, sessionNames, journalNames, indexes, journals }
+  -- A record the launcher gave up on is read once, for the report, and gone.
+  let failedRecord ←
+    if sessionNames.contains (failedRecordPath directory).fileName.get! then
+      let reply ← File.load (failedRecordPath directory) Files.limit
+      discard <| File.remove (failedRecordPath directory)
+      pure (some reply)
+    else
+      pure none
+  return read
+      { directory, made, sessionNames, journalNames, indexes, journals, named, failedRecord }
 
 /-- Puts the window `view`, which shows `buffer`, at `place`, clamped to the
 text: its selection's anchor and head, their columns in bytes as recorded
@@ -757,7 +805,20 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
   report := report ++ pending.jobs.map stoppedLine ++ othersLine pending.jobs.size pending.otherJobs
   let stopped := pending.jobs.size + pending.otherJobs
   let buffers := pending.unsaved + (reopened.filter (·.isSome)).size
-  let mut summary := s!"restore: {buffers} buffers, {pending.unsaved} with unsaved text"
+  let kept := (← editorState).restore
+  let launch := (← editorState).launch
+  -- A restart says so first, and which executables it fell back past.
+  let restartedSays :=
+    if kept.restarted then
+      let fell :=
+        if kept.fellBack.isEmpty then ""
+        else
+          let running := (launch.running.map (·.toString)).getD "this executable"
+          s!"{", ".intercalate (kept.fellBack.map (·.toString)).toList} ended before restoring the session, so {running} restored it; "
+      s!"restarted, so the window was closed and reopened; {fell}"
+    else ""
+  let mut summary :=
+    s!"restore: {restartedSays}{buffers} buffers, {pending.unsaved} with unsaved text"
   if changed > 0 then
     summary := summary ++ s!"; {changed} changed on disk"
   if stopped > 0 then
@@ -765,7 +826,7 @@ def restored (stats : Array (Nat × Except FileError File.Stamp))
   let problems := report.size > changed
   if problems then
     summary := summary ++ s!"; see {reportName}"
-  if buffers > 0 || !report.isEmpty then
+  if buffers > 0 || !report.isEmpty || kept.restarted then
     writeReport (#[summary] ++ report)
     message summary
   let generation ← generationNow

@@ -118,12 +118,15 @@ import ModelTest.Editor.ProjectMode.Format
 import ModelTest.Editor.ProjectMode.Listing
 import ModelTest.Editor.ProjectSearch
 import ModelTest.Editor.ProjectSearch.Run
+import ModelTest.Editor.Restart.Handover
+import ModelTest.Editor.Restart.Launch
 import ModelTest.Editor.Restore
 import ModelTest.Editor.Restore.Compiled
 import ModelTest.Editor.Restore.Document
 import ModelTest.Editor.Restore.Frame
 import ModelTest.Editor.Restore.Indexed
 import ModelTest.Editor.Restore.Journal
+import ModelTest.Editor.Restore.Restart
 import ModelTest.Editor.Restore.Run
 import ModelTest.Editor.Restore.Value
 import ModelTest.Editor.Restore.Workspaces
@@ -1420,6 +1423,9 @@ def checks : List Check :=
     filesPackageChecks ++
     workspacePackageChecks ++
     restorePackageChecks ++
+    restartChecks ++
+    restartHandoverChecks ++
+    restartLaunchChecks ++
     packageSetChecks ++
     windowTallyChecks ++
     windowLoopChecks ++

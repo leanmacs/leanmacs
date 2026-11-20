@@ -74,9 +74,10 @@ def windowHostScenario (file : Option String) : IO UInt8 := do
     Editor.Ffi.windowRequest .scripted .minimise
     Editor.Window.shutdown
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options (.skip none)
-        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[] shutdown
-        .headless
+    Editor.Window.Outcome.code <$>
+        Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
+          (.skip none) (← Editor.Ffi.Display.newCells 8 16)
+          (← Editor.Clipboard.InProcess.new).handle #[] shutdown .headless
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host: the window mode ended with status {status}"
     return 1
@@ -156,10 +157,11 @@ def windowHostConfigScenario (sysroot oleanDir configDir : String) : IO UInt8 :=
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := [oleanDir], composition := true }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
-        (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
-        none)
+    Editor.Window.Outcome.code <$>
+        Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
+          (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+          (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless
+          (patience := none)
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host-config: the window mode ended with status {status}"
     return 1
@@ -189,10 +191,11 @@ def windowHostBaseScenario (sysroot oleanDir configDir : String) : IO UInt8 := d
     { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
       oleans := [oleanDir], composition := true }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor, `ConfigFixture] .scripted
-        options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
-        none)
+    Editor.Window.Outcome.code <$>
+        Editor.Window.host EditorCore.EditorPackage.packages #[`Editor, `ConfigFixture] .scripted
+          options (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+          (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless
+          (patience := none)
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host-base: the window mode ended with status {status}"
     return 1
@@ -226,10 +229,11 @@ def windowHostGenerateScenario (sysroot oleanDir configDir : String) : IO UInt8 
   let generator : Editor.Config.Generator :=
     { create := Editor.Config.Directory.create configDir, pin, set := some set }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
-        (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
-        (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless (patience :=
-        none) (generator := some generator)
+    Editor.Window.Outcome.code <$>
+        Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
+          (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+          (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless
+          (patience := none) (generator := some generator)
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host-generate: the window mode ended with status {status}"
     return 1
@@ -274,9 +278,10 @@ def windowHostDirectScenario (editorPath sysroot configDir : String) : IO UInt8 
       return 1
   let plan := options.configPlan false
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options plan
-        (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
-        Editor.Window.shutdown .headless (patience := none)
+    Editor.Window.Outcome.code <$>
+        Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options plan
+          (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle #[]
+          Editor.Window.shutdown .headless (patience := none)
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host-direct: the window mode ended with status {status}"
     return 1
@@ -301,9 +306,10 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
     { file := some file, config := none, configGiven := false, sysroot := none, oleans := []
       composition := true }
   let status ←
-    Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scriptedUndrawn options
-        (.skip none) (← Editor.Ffi.Display.newCells 8 16) (← Editor.Clipboard.InProcess.new).handle
-        #[] Editor.Window.shutdown .headless
+    Editor.Window.Outcome.code <$>
+        Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scriptedUndrawn options
+          (.skip none) (← Editor.Ffi.Display.newCells 8 16)
+          (← Editor.Clipboard.InProcess.new).handle #[] Editor.Window.shutdown .headless
   unless status == 1 do
     IO.eprintln s!"ffi-test window-host-undrawn: the window mode ended with status {status}, not 1"
     return 1
@@ -313,5 +319,76 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
   IO.println
       "ffi-test window-host-undrawn: the window ran with nothing drawing in it, and the window mode said so"
   return 0
+
+/-- The window mode's wiring (`Editor.Window.host`) on the scripted
+platform, ending in a restart: with a state directory and a launcher in a
+temporary directory, `restart` is run as soon as the restore has finished
+(`afterRestore`), into a probe script that prints `probe: ok`. Config is
+loaded at start from `configDir`, as `windowHostConfigScenario` loads it,
+so the window opens only once the loop has ended or the reload has
+finished, and the scripted window's input and close request come after the
+hand-over began: dropped, and refused, while it is in flight. The host must
+answer `Outcome.restart` with the plan, once the shutdown has run once,
+while the window ran, and the window has closed; the plan's exec, recorded
+by a fake in place of `Restart.real`, is `<launcher> --handover
+<state>/session/handover`, and the record on disk is the plan's
+(`Restart.Handover.encode`). 0 when all of that holds; 1 otherwise, saying
+why on stderr. -/
+def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 := do
+  let dir ← IO.FS.createTempDir
+  try
+    let probe := dir / "probe"
+    IO.FS.writeFile probe "#!/bin/sh\necho 'probe: ok'\n"
+    IO.setAccessRights probe { user := { read := true, write := true, execution := true } }
+    let state := dir / "state"
+    let launcher : System.FilePath := dir / "leanmacs"
+    let options : Editor.Window.Options :=
+      { file := none, config := some configDir, configGiven := true, sysroot := some sysroot
+        oleans := [oleanDir], composition := true, state := some state.toString
+        launch := { launchedBy := some launcher, running := some probe, shipped := some probe } }
+    let shutdowns ← IO.mkRef 0
+    let shutdown := do
+      shutdowns.modify (· + 1)
+      IO.sleep 100
+      Editor.Ffi.windowRequest .scripted .minimise
+      Editor.Window.shutdown
+    let outcome ←
+      Editor.Window.host EditorCore.EditorPackage.packages #[`Editor] .scripted options
+          (.load configDir) (← Editor.Ffi.Display.newCells 8 16)
+          (← Editor.Clipboard.InProcess.new).handle #[] shutdown .headless (patience := none)
+          (afterRestore := #[.run Editor.restartName])
+    let .restart plan := outcome |
+      IO.eprintln
+          s!"ffi-test window-host-restart: the window mode ended with {repr outcome}, not a restart"
+      return 1
+    -- The exec, as `main` makes it once `host` has returned: the window has
+    -- closed by then.
+    let replaced ← IO.mkRef (#[] : Array Editor.Restart.Invocation)
+    let replace (invocation : Editor.Restart.Invocation) : IO String := do
+      replaced.modify (·.push invocation)
+      return "recorded"
+    discard <| replace plan.invocation
+    unless (← shutdowns.get) == 1 do
+      IO.eprintln
+          s!"ffi-test window-host-restart: the shutdown ran {← shutdowns.get} times, not once"
+      return 1
+    unless ((← Editor.Ffi.windowAsked .scripted).getD #[]).contains (.request .minimise) do
+      IO.eprintln
+          "ffi-test window-host-restart: the shutdown did not run before the window was closed"
+      return 1
+    let record := state / "session" / "handover"
+    unless
+      (← replaced.get) ==
+        #[{ program := launcher, arguments := #["--handover", record.toString] }] do
+      IO.eprintln s!"ffi-test window-host-restart: the exec would be {repr (← replaced.get)}"
+      return 1
+    unless (← IO.FS.readFile record) == plan.handover.encode do
+      IO.eprintln "ffi-test window-host-restart: the record on disk is not the plan's"
+      return 1
+    IO.println
+        "ffi-test window-host-restart: the window closed after the shutdown, and the host handed back the restart's plan, its record written"
+    return 0
+  finally
+    IO.FS.removeDirAll dir
 
 end FfiTest

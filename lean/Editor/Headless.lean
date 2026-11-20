@@ -15,6 +15,7 @@ import Editor.Job.Jobs
 import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Loop
+import Editor.Restart.Real
 import Editor.SyntaxTree.Real
 import Editor.Text.Real
 import Editor.Watch.Real
@@ -380,6 +381,30 @@ cells a restore read (`Loop.Stepped.restoredCells`) are taken in with the
 write a step asked for (`Config.State.restoreCells`). The script's `workspaces`
 prints the workspace table.
 
+## Restarting
+
+A restart (`Editor/Restore/Restart.lean`) ends with a step that hands the
+host a plan (`Loop.Stepped.handOver`): the session and the hand-over record
+are written. When a journal order has failed since the hand-over began
+(`Running.handingFrom`, against the failures `journalFailed` counted), the
+host runs `restart-abandon` with `restart: a journal write failed
+(<path>); the session was not handed over`, as an invocation no key
+yielded, and the loop goes on. Otherwise it ends its loop and keeps the
+plan (`Progress.handOver`). The headless mode then prints `restart: the
+session is handed over`, with ` (no launcher, so no fallback)` after it for
+a run no launcher started, shuts down as at an end and execs the plan
+(`Collaborators.replace`, `Restart.real` for the executable's hosts); the
+window mode closes its window first (`Editor/Window/Real.lean`). An exec
+that fails is said, `editor: the restart could not start <program>:
+<reason>; the session is kept and the next start restores it`, with status 1.
+
+With `--restore` (`Restart.Launch.restore`), the restore request names the
+index handed over (`Request.restore`), which the restore takes in place of
+the one the version rule chooses. The script's `restarted` waits, within its
+patience, until the loop has ended with a hand-over, and the script then
+stops in this process; the next run, started with `--resume <k>`, skips the
+script through the k-th `restarted` (`resumed`) and goes on from there.
+
 ## One loop at a time
 
 The editor queue is process-wide, so two live loops would take each other's
@@ -717,8 +742,10 @@ inductive Request where
   | say (text : String)
   /-- Restore the session of the state directory (`Collaborators.stateDirectory`):
   start the job `restore`, and hold the requests that follow until it has
-  finished ("Restoring a session", in the module docs). -/
-  | restore
+  finished ("Restoring a session", in the module docs). `named` is the index
+  a restart handed over, restored in place of the one the version rule
+  chooses ("Restarting"). -/
+  | restore (named : Option System.FilePath)
   /-- Print the workspace table: each workspace, each project and the
   unscoped store, with their values. -/
   | workspaces
@@ -1012,6 +1039,17 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   mode's, and a test stage's. None for a host on the real clock, the window
   mode's. -/
   clock : Option Job.FakeClock := none
+  /-- How this run was launched and what a restart hands on
+  (`Restart.Launch`), which `start` writes into the editor state
+  (`EditorState.launch`). The executable's hosts read it from the command
+  line (`Editor/Executable.lean`); empty by default, a run with no
+  launcher. -/
+  launch : Restart.Launch := {}
+  /-- Execs a restart's plan in place of this process, once the host has shut
+  down ("Restarting", in the module docs): it answers only when the exec
+  failed, with the reason. The executable's hosts are handed `Restart.real`;
+  the default refuses. -/
+  replace : Restart.Invocation → IO String := fun _ => pure "no exec in this host"
   /-- Removes what the collaborators left outside the process: the real
   ones' directory of the config files' module data, if a config with
   files under `Config/` had it made (`Editor/Config/Elaborate.lean`,
@@ -1042,7 +1080,7 @@ def Signal.encode : Signal → UInt64 × String
   | .request .agree => (7, "")
   | .request (.open path) => (8, path)
   | .request (.say text) => (9, text)
-  | .request .restore => (10, "")
+  | .request (.restore named) => (10, ((named.map (·.toString)).getD ""))
   | .request .workspaces => (11, "")
 
 /-- The signal an event's code and text stand for, if they stand for one. -/
@@ -1058,7 +1096,7 @@ def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
   | 7 => some (.request .agree)
   | 8 => some (.request (.open text))
   | 9 => some (.request (.say text))
-  | 10 => some (.request .restore)
+  | 10 => some (.request (.restore (if text.isEmpty then none else some text)))
   | 11 => some (.request .workspaces)
   | _ => none
 
@@ -1196,6 +1234,15 @@ structure Running (β σ : Type) (scheme : InputScheme) where
   spawned : Array Nat := #[]
   /-- The paths whose journal failures were said: each is said once. -/
   journalSaid : Array String := #[]
+  /-- How many of the journal's orders have failed, all told, and the path
+  of the last. -/
+  journalFailures : Nat × Option String := (0, none)
+  /-- How many journal orders had failed when the restart in flight began
+  (`Restore.Kept.handing`), while one is ("Restarting", in the module
+  docs). -/
+  handingFrom : Option Nat := none
+  /-- The plan of the restart the loop ended for, once it has. -/
+  handOver : Option Restart.Plan := none
 
 namespace Running
 
@@ -1618,6 +1665,7 @@ def journalFailed (collaborators : Collaborators β σ scheme) (running : Runnin
     IO (Running β σ scheme) := do
   let mut running := running
   for (path, detail) in ← collaborators.journal.failures do
+    running := { running with journalFailures := (running.journalFailures.1 + 1, some path) }
     unless running.journalSaid.contains path do
       let text := s!"journal: {path}: {detail}"
       collaborators.log text
@@ -1673,15 +1721,41 @@ partial def took (collaborators : Collaborators β σ scheme) (running : Running
     collaborators.log entry
   -- The frame the step replaced is let go of on the pool (`release`).
   release running.frame
+  -- The cancels first, then the journal's orders, then the starts: so a job
+  -- started by this step, a restart's save among them, asks the file
+  -- service after the orders this step handed it.
   let mut running ←
     ({ running with
             frame := some stepped.loop, stepped := true
             config := (running.config.written stepped.write).restoreCells stepped.restoredCells
-            stopped := running.stopped || stepped.next == Loop.Next.stop }).launch
-        collaborators stepped.starts stepped.cancels stepped.spawns
+            stopped := running.stopped || stepped.next == Loop.Next.stop
+            handingFrom :=
+              if stepped.loop.state.restore.handing.isSome then
+                running.handingFrom <|> some running.journalFailures.1
+              else none }).launch
+        collaborators #[] stepped.cancels #[]
+  running ← running.journaled collaborators stepped.journal
+  running ← running.launch collaborators stepped.starts #[] stepped.spawns
   running ← running.pause collaborators stepped.pause
   running ← running.delayHints collaborators stepped.hintDelay
-  running ← running.journaled collaborators stepped.journal
+  -- A restart whose session is written: handed over, unless a journal order
+  -- failed since it began ("Restarting", in the module docs).
+  if let some plan := stepped.handOver then
+    let (failures, last) := running.journalFailures
+    if failures > running.handingFrom.getD failures then
+      let reason :=
+        s!"restart: a journal write failed ({last.getD "a journal"}); the session was not handed over"
+      if let some frame := running.frame then
+        let (answered, attempted) ←
+          running.attempt collaborators
+              (frame.invoke (running.keys collaborators (← collaborators.services.timers.now))
+                { command := Restore.abandonName, arguments := [.str reason] })
+        running := attempted
+        if let some answered := answered then
+          running ← running.took collaborators answered
+    else
+      return { running with
+          stopped := true, handOver := some plan }
   if stepped.reload then
     -- What the driver's `reload` request does: one job at a time.
     running ← running.reduce collaborators .requested
@@ -2067,9 +2141,10 @@ def request (collaborators : Collaborators β σ scheme) (running : Running β �
     return running
   | .scene => running.scene collaborators
   | .agree => running.agree collaborators
-  | .restore => do
+  | .restore named => do
     let some directory := collaborators.stateDirectory | return running
-    let (id?, running) ← running.startJob collaborators Restore.restoreJob [.str directory.toString]
+    let arguments := [Argument.str directory.toString] ++ (named.map (.str ·.toString)).toList
+    let (id?, running) ← running.startJob collaborators Restore.restoreJob arguments
     let some id := id? | return running
     collaborators.emit s!"job {id} {Restore.restoreJob}: started"
     return { running with restoring := some id }
@@ -2189,6 +2264,9 @@ structure Progress where
   or none: what the window mode opens its window with once the start-up
   reload has finished (`Window.titleBarAtOpen`). -/
   titleBar : Option Window.TitleBar := none
+  /-- The plan of the restart the loop ended for, set once it has ended
+  ("Restarting", in the module docs). -/
+  handOver : Option Restart.Plan := none
 
 /-- What the editor thread holds as its loop starts: the config state its
 packages make (`Config.State.ofPackages`: each of `collaborators.packages`
@@ -2247,6 +2325,9 @@ def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β
             (running.jobs.table.entries.filter fun entry =>
                 entry.name != Restore.writeJob && entry.name != Restore.saveJob &&
                   !running.spawned.contains entry.id).size }
+  -- A loop that ended for a restart tells its driver the plan.
+  if let some plan := running.handOver then
+    progress.modify fun progress => { progress with handOver := some plan }
   -- Nothing will deal with a result any more: no job runs on unowned, and
   -- no pause waits.
   running.jobs.cancelAll
@@ -2278,7 +2359,7 @@ def Collaborators.hosting {β σ : Type} {scheme : InputScheme}
       return { loop with
           state :=
             loop.state.hostedBy collaborators.workingDirectory collaborators.home
-              collaborators.stateDirectory } }
+              collaborators.stateDirectory collaborators.launch } }
 
 /-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`.
 The loop it makes, when it is first needed, has the collaborators' working
@@ -2480,6 +2561,11 @@ inductive Directive where
   abort would: what the journal handed the system survives it. The
   driver's own. -/
   | abort
+  /-- Wait until the loop has ended for a restart (`Progress.handOver`): the
+  script stops in this process, and the next run, started with
+  `--resume`, goes on after this line ("Restarting", in the module docs).
+  The driver's own. -/
+  | restarted
   deriving DecidableEq, Repr
 
 /-- The name a directive gives after its keyword, which is the first
@@ -2587,22 +2673,24 @@ def directive? (line : String) : Except String (Option Directive) :=
                                 else
                                   if line == "abort" then .ok (some .abort)
                                   else
-                                    if line == "idle" || line.startsWith "idle " then
-                                      match (named line 4).bind String.toNat? with
-                                      | some milliseconds => .ok (some (.idle milliseconds))
-                                      | none =>
-                                        .error
-                                          s!"`{line}` is not an idle: expected idle <milliseconds>, one number"
+                                    if line == "restarted" then .ok (some .restarted)
                                     else
-                                      if line == "advance" || line.startsWith "advance " then
-                                        match (named line 7).bind String.toNat? with
-                                        | some milliseconds => .ok (some (.advance milliseconds))
+                                      if line == "idle" || line.startsWith "idle " then
+                                        match (named line 4).bind String.toNat? with
+                                        | some milliseconds => .ok (some (.idle milliseconds))
                                         | none =>
                                           .error
-                                            s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
+                                            s!"`{line}` is not an idle: expected idle <milliseconds>, one number"
                                       else
-                                        .error
-                                          s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, agree, settle, join, idle <milliseconds>, advance <milliseconds>, journal, journalled, indexed, abort, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
+                                        if line == "advance" || line.startsWith "advance " then
+                                          match (named line 7).bind String.toNat? with
+                                          | some milliseconds => .ok (some (.advance milliseconds))
+                                          | none =>
+                                            .error
+                                              s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
+                                        else
+                                          .error
+                                            s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, agree, settle, join, idle <milliseconds>, advance <milliseconds>, journal, journalled, indexed, abort, restarted, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -2611,6 +2699,20 @@ structure Line where
   /-- What the line says. -/
   directive : Directive
   deriving DecidableEq, Repr
+
+/-- `script` as a run started with `--resume <resume>` runs it: from the line
+after its `resume`-th `restarted`, or whole for 0 ("Restarting", in the
+module docs). -/
+def resumed (script : Array Line) (resume : Nat) : Array Line :=
+  if resume == 0 then script
+  else
+    let (_, kept) :=
+      script.foldl
+        (fun (passed, kept) line =>
+          if passed ≥ resume then (passed, kept.push line)
+          else if line.directive == .restarted then (passed + 1, kept) else (passed, kept))
+        (0, #[])
+    kept
 
 /-- The directives of a script: one a line, with blank lines and lines that
 start with `#` skipped. Or what is wrong with the first line that is not a
@@ -2645,6 +2747,9 @@ inductive Failure where
   | stalled (line : Nat) (milliseconds : Nat)
   /-- The `advance` on `line` ran on a host whose clock is real. -/
   | noClock (line : Nat)
+  /-- The `restarted` on `line` found the loop not ended for a restart within
+  the patience. -/
+  | notRestarted (line : Nat)
   deriving DecidableEq, Repr
 
 /-- What an `advance` on a host whose clock is real says. -/
@@ -2669,6 +2774,8 @@ def Failure.describe (patience : Nat) : Failure → String
   | .stalled line milliseconds =>
     s!"the advance on line {line} found no wait due within {milliseconds} ms on the clock within {patience} ms"
   | .noClock line => s!"the advance on line {line}: {advanceNeedsClock}"
+  | .notRestarted line =>
+    s!"the restarted on line {line} of the script found no restart within {patience} ms: the loop did not end with the session handed over"
 
 /-- The failure a wait that did not settle is, at `line` of the script. -/
 def Wait.failure (line : Option Nat) : Wait → Option Failure
@@ -2743,7 +2850,10 @@ host: sends each request in order and waits at each `settle` and each
 `join`. `none` when the script ran to its end, or a command quit the editor
 before it, and otherwise why it could not: the editor thread did not
 settle, a job did not end, or the loop did not stop, within `patience`
-milliseconds.
+milliseconds. With it, the plan of the restart the loop ended for, when a
+`restarted` found one: the script stops there ("Restarting", in the module
+docs). A run started with `--resume <resume>` runs the script from after
+its `resume`-th `restarted` (`resumed`).
 
 Once the loop has ended by itself, because a command quit the editor, the
 lines that are left are not run: the script is read no further at a wait
@@ -2754,12 +2864,15 @@ A `settle` or a `join` that runs out ends the loop at once, whether a reload
 or a job is running or not. A rejected reload is something to print, not a
 failure, and so is a job that fails. A job the script leaves running is
 cancelled when the loop ends. -/
-def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (script : Array Line) (patience : Nat) : IO (Option Failure) := do
+def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
+    (script : Array Line) (patience : Nat) (resume : Nat := 0) :
+    IO (Option Failure × Option Restart.Plan) := do
   let host ← start collaborators
-  -- With a state directory, the session is restored first.
+  -- With a state directory, the session is restored first: the index a
+  -- restart handed over, when there is one.
   if collaborators.stateDirectory.isSome then
-    host.send .restore
+    host.send (.restore collaborators.launch.restore)
+  let script := resumed script resume
   -- The serial of the last journal entry a `journal` line counted.
   let mut journaled : UInt64 := 0
   for line in script do
@@ -2801,7 +2914,7 @@ def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β 
         if wait == .settled then
           unless ← within patience (return (← collaborators.journal.pending) == 0) do
             discard <| host.halt patience
-            return some (.unanswered (some line.number))
+            return (some (.unanswered (some line.number)), none)
         pure wait
       | .indexed =>
         let wait ← host.await patience
@@ -2824,43 +2937,61 @@ def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β 
                 return false
           unless written do
             discard <| host.halt patience
-            return some (.unanswered (some line.number))
+            return (some (.unanswered (some line.number)), none)
         pure wait
       | .abort =>
         (← IO.getStdout).flush
         IO.Process.exit abortStatus
+      | .restarted =>
+        -- The loop ends by itself once it has handed the session over.
+        let ended ← within patience (IO.hasFinished host.thread)
+        let plan := (← host.progress.get).handOver
+        match ended, plan with
+        | true, some plan =>
+          IO.ofExcept host.thread.get
+          return (none, some plan)
+        | _, _ =>
+          discard <| host.halt patience
+          return (some (.notRestarted line.number), none)
       | .advance milliseconds =>
         let some clock := collaborators.clock |
           discard <| host.halt patience
-          return some (.noClock line.number)
+          return (some (.noClock line.number), none)
         -- Only once a wait is due within the move: so a job that is about
         -- to sleep is in its sleep before the clock moves past it.
         unless ← within patience (clock.dueWithin milliseconds) do
           discard <| host.halt patience
-          return some (.stalled line.number milliseconds)
+          return (some (.stalled line.number milliseconds), none)
         clock.advance milliseconds
         continue
     if wait == .ended then
       break
     if let some failure := wait.failure (some line.number) then
       discard <| host.halt patience
-      return some failure
+      return (some failure, none)
   -- The end of the script: wait for a reload that is still running, then
   -- stop the loop. A loop that has ended by itself is neither waited for
   -- nor stopped, and `halt` throws the error it ended with, if it did.
   let unsettled := (← host.await patience).failure none
   let stopped ← host.halt patience
-  return unsettled <|> (if stopped then none else some (.unanswered none))
+  return (unsettled <|> (if stopped then none else some (.unanswered none)), none)
 
-/-- Runs `script` against a host of its own, as `run` does, and then, the
+/-- Runs `script` against a host of its own, as `runFrom` does from its
+start, and says only why it could not run to its end. -/
+def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
+    (script : Array Line) (patience : Nat) : IO (Option Failure) :=
+  (·.1) <$> runFrom collaborators script patience
+
+/-- Runs `script` against a host of its own, as `runFrom` does, and then, the
 host's loop having ended, removes what the collaborators left outside the
 process (`Collaborators.dispose`): once, whether the run returned or threw.
 A dispose that throws is ignored, so it neither hides the run's failure nor
 replaces it. What the headless mode runs (`main`). -/
 def runAndDispose {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (script : Array Line) (patience : Nat) : IO (Option Failure) := do
+    (script : Array Line) (patience : Nat) (resume : Nat := 0) :
+    IO (Option Failure × Option Restart.Plan) := do
   try
-    run collaborators script patience
+    runFrom collaborators script patience resume
   finally
     try
       collaborators.dispose
@@ -3061,7 +3192,7 @@ editor's (`Collaborators.workingDirectory`): where `:!` runs for a buffer
 with neither a workspace nor a file; no path of the command line is read
 against it. -/
 def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.LakePackage.Origin)
-    (arguments : List String) : IO UInt32 := do
+    (launch : Restart.Launch) (arguments : List String) : IO UInt32 := do
   let appPath := (← IO.appPath).toString
   -- The record the build wrote beside the executable, read at the edge: a
   -- record that is not there, or cannot be read, names no directory.
@@ -3072,7 +3203,8 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
       return none
   let recorded ← ModuleLookup.recorded appPath readFile
   let
-    { render := drawn, generate, sysroot, oleans, config := configDir, script := scriptPath, state }
+    { render := drawn, generate, sysroot, oleans, config := configDir, script := scriptPath, state,
+      resume }
     ←
     match read appPath arguments recorded with
     | .ok read =>
@@ -3108,14 +3240,20 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   -- The loop has ended when `runAndDispose` returns, so no reload is
   -- elaborating: the directory of the config files' module data goes with
   -- it, if one was made.
-  let failure ←
+  -- A restart hands the next run this command line, its `--resume` one
+  -- more than this run's.
+  let launch := { launch with arguments := "headless" :: handedOn arguments resume }
+  let (failure, handOver) ←
     runAndDispose
         { shipped with
-          generator, workingDirectory
+          generator, workingDirectory, launch, replace := Restart.real
           display :=
             if drawn then drawnDisplay else fun snapshots => Host.Display.recorder cells snapshots
           render := if drawn then some Render.library else none }
-        directives settlePatience
+        directives settlePatience resume
+  if let some plan := handOver then
+    IO.println
+        s!"restart: the session is handed over{if plan.launcher.isSome then "" else " (no launcher, so no fallback)"}"
   (← IO.getStdout).flush
   if let some failure := failure then
     IO.eprintln s!"editor: {failure.describe settlePatience}"
@@ -3134,6 +3272,16 @@ def main (packages : Array Package) (base : Array Lean.Name) (origin : Config.La
   -- them, and the exit is explicit, because a task may still be blocked in
   -- the library.
   Ffi.quit
+  -- A restart's exec, once everything is shut down and flushed: it answers
+  -- only when it failed.
+  if let some plan := handOver then
+    (← IO.getStdout).flush
+    (← IO.getStderr).flush
+    let invocation := plan.invocation
+    let reason ← Restart.real invocation
+    IO.eprintln
+        s!"editor: the restart could not start {invocation.program}: {reason}; the session is kept and the next start restores it"
+    IO.Process.exit 1
   IO.Process.exit (if failure.isNone then 0 else 1)
 
 end Editor.Headless

@@ -159,6 +159,29 @@ def installedWith (generation : Nat) (codec? : String → Option (String × Stor
           { driver.keys.registered with
             generation, codec? } } }
 
+/-- `driver` once the pending job called `name` is finished, the oldest of
+that name. -/
+def finishNamed (driver : EvilDriver) (name : String) : EvilDriver :=
+  match driver.pending.find? (·.name == name) with
+  | some job => (driver.finish job.id).1
+  | none => driver
+
+/-- A driver of the checks launched with the hand-over record of a restart
+(`--handed-over`), the record on disk, with the restore started and
+its two halves finished: restored, its own index not yet written. -/
+def handedDriver : Option EvilDriver :=
+  (restoreDriver).map fun driver =>
+    let record := recordPath stateDirectory
+    let launched :=
+      { driver with
+        loop :=
+          { driver.loop with
+            state := { driver.loop.state with launch := { handedOver := some record } } }
+        jobs := { driver.jobs with files := driver.jobs.files.withFile record "record".toUTF8 } }
+    let started :=
+      launched.started #[{ name := restoreJob, arguments := [.str stateDirectory.toString] }]
+    finishNamed (finishNamed started restoreJob) filesJob
+
 /-- The names of the unscoped cells the index of the run `run` lists. -/
 def unscopedNames (driver : EvilDriver) (run : Nat) : Option (Array String) :=
   ((indexOf driver run).bind (·.workspaces)).map (·.unscoped.map (·.name))
@@ -169,6 +192,39 @@ open JournalReconcileTest in
 /-- The checks of the journal's reconciler (`Editor/Restore.lean`). -/
 def journalReconcileChecks : List Check :=
   [{  name :=
+        "the hand-shake: a run handed a record removes it once the handed index is restored and its own index is written, never before, and once"
+      run :=
+        pure <|
+          match handedDriver with
+          | none => false
+          | some restored =>
+            let record := recordPath stateDirectory
+            let shaken := drained restored
+            -- Once only: a record written again later is the next restart's.
+            let rewritten :=
+              { shaken with
+                jobs :=
+                  { shaken.jobs with files := shaken.jobs.files.withFile record "next".toUTF8 } }
+            let later := drained (evilFed rewritten (typing "x"))
+            restored.loop.state.restore.restored && !restored.loop.state.restore.indexWritten &&
+              bytesAt restored record == some "record".toUTF8 &&
+              restored.loop.state.restore.handedOver == some record &&
+              shaken.loop.state.restore.indexWritten &&
+              bytesAt shaken record == none &&
+              shaken.loop.state.restore.handedOver.isNone &&
+              bytesAt later record == some "next".toUTF8 &&
+              later.loop.state.restore.handedOver.isNone },
+    { name :=
+        "a run that ends cleanly before the hand-shake removes the record it was handed with its last orders"
+      run :=
+        pure <|
+          match handedDriver with
+          | none => false
+          | some restored =>
+            let quit := invoked restored Ex.quitName
+            quit.stopped && bytesAt quit (recordPath stateDirectory) == none &&
+              (indexOf quit 1).map (·.ended) == some true },
+    { name :=
         "the index written after a split, a new tab and a jump carries the frame, both tabs and the jumps, decoded"
       run :=
         pure <|

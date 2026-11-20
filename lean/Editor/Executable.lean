@@ -1,3 +1,5 @@
+import Editor.Restart.Launch
+
 /-!
 # The executable's top-level dispatch
 
@@ -5,12 +7,23 @@ Which mode the editor executable runs, given its command line (`mode`). It
 is pure, so `model-test` pins it (`ModelTest.executableModeChecks`), and
 `Editor.Main.run` (`Editor/Main.lean`) acts on what it selects.
 
+- **The launch flags** come first: the app's launcher gives an editor
+  `--launched-by`, `--shipped`, `--restore`, `--handed-over` and `--failed`
+  before anything else (`Editor/Restart/Launch.lean`). `mode` strips them
+  (`Restart.Launch.strip`) before it dispatches on the rest, and hands them
+  to the modes that act on them as a `Restart.Launch`. The launcher's own
+  options share no name with these or with any mode's.
 - `editor demo` alone is the demonstration: it calls the Rust library and
   prints what comes back.
 - `editor --version` alone says the version, the build ID and the commit
   of the running build (`Editor/Version.lean`). `--version` with anything
   else is the window mode's, which refuses it as an option it does not
   know.
+- `editor --probe` alone is the probe a restart runs before it hands the
+  session over (`Editor/Restore/Restart.lean`): it prints `probe: ok` once
+  `main` is reached, so every module initialiser has run, then how it was
+  launched and the main bundle it sees. `--probe` with anything else is
+  the window mode's, as `--version` is.
 - `editor headless …` is the headless mode, handed the rest of the command
   line (`Editor/Headless.lean`).
 - `editor window-check …` is the keyboard check, handed its options
@@ -21,8 +34,8 @@ is pure, so `model-test` pins it (`ModelTest.executableModeChecks`), and
   `window-check` is opened as `./demo`, `./headless` or `./window-check`,
   and `editor demo x` is the window mode's, which refuses two files.
 
-It imports nothing, and `Editor` does not import it, so it adds nothing to
-what config is elaborated on.
+It imports only the launch flags' leaf module, and `Editor` does not import
+it, so it adds nothing to what config is elaborated on.
 -/
 
 namespace Editor.Executable
@@ -33,20 +46,26 @@ inductive Mode where
   | demo
   /-- The version, the build ID and the commit. -/
   | version
+  /-- The probe: `probe: ok`, the launcher and the main bundle. -/
+  | probe (launch : Restart.Launch)
   /-- The headless mode, with the command line after `headless`. -/
-  | headless (arguments : List String)
+  | headless (launch : Restart.Launch) (arguments : List String)
   /-- The keyboard check, with the options after `window-check`. -/
   | windowCheck (options : List String)
   /-- The window mode, with the whole command line. -/
-  | window (arguments : List String)
+  | window (launch : Restart.Launch) (arguments : List String)
   deriving DecidableEq, Repr
 
-/-- The mode the command line `arguments` selects. -/
-def mode : List String → Mode
+/-- The mode the command line `arguments` selects, its launch flags
+stripped first. -/
+def mode (arguments : List String) : Mode :=
+  let (launch, rest) := Restart.Launch.strip arguments
+  match rest with
   | ["demo"] => .demo
   | ["--version"] => .version
-  | "headless" :: rest => .headless rest
+  | ["--probe"] => .probe launch
+  | "headless" :: rest => .headless launch rest
   | "window-check" :: options => .windowCheck options
-  | arguments => .window arguments
+  | arguments => .window launch arguments
 
 end Editor.Executable

@@ -2384,6 +2384,34 @@ read, once this command has run to its end (`EditorState.Outbox.restoredCells`).
 def _root_.Editor.restoreCells (cells : Array KeptCell) : EditorM Unit :=
   EditorState.ask (.restoreCells cells)
 
+/-- Hands the host `plan`, a restart whose session and record are written,
+once this command has run to its end (`EditorState.Outbox.handOver`): the
+host ends its loop and execs it. -/
+def _root_.Editor.handOver (plan : Restart.Plan) : EditorM Unit :=
+  EditorState.ask (.handOver plan)
+
+/-- The name the restart's command is registered under, and its ex name
+(`Editor/Restore/Restart.lean`). -/
+def _root_.Editor.restartName : String :=
+  "restart"
+
+/-- Restarts the editor into a new process with the session handed over
+(`Editor/Restore/Restart.lean`): into `into` when given, an executable's
+absolute path, else into the running executable, with the previous and the
+shipped one as its fallbacks. It runs the command `restart` after this
+command has run to its end, which says why when it refuses. For config
+and for phase 8's install. -/
+def _root_.Editor.restart (into : Option System.FilePath := none) : EditorM Unit :=
+  EditorState.ask
+    (.invoke
+      { command := Editor.restartName
+        arguments := (into.map fun path => Argument.str path.toString).toList })
+
+/-- Whether this run took a handed session in: it was started by a restart
+with `--restore` (`Restore.Kept.restarted`). -/
+def _root_.Editor.restarted : EditorM Bool := do
+  return (← editorState).restore.restarted
+
 /-- The value of `store` in the unscoped store: what its cell decodes to, or
 the store's initial value when it has no cell or one the store does not
 decode. -/

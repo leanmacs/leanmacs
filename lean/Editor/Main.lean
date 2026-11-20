@@ -24,6 +24,17 @@ running build, read from its bundle's `Info.plist`, or that it is a
 development build when it runs from outside a bundle
 (`Editor/Version.lean`).
 
+`editor --probe` is what a restart runs before it hands the session over
+(`Editor/Restore/Restart.lean`). By the time `run` is called every module
+initialiser has run, packages' `initialize` among them, so reaching it is
+the probe: it prints `probe: ok`, then `launched-by <launcher>` (or
+`launched-by none`), then `bundle <path> identifier <id>` from
+CoreFoundation's main bundle (`Ffi.mainBundle`, `identifier none` when it
+has none), or `bundle none` where there is none, and returns 0. The launch
+flags (`Editor/Restart/Launch.lean`) are stripped before the mode is chosen
+(`Editor/Executable.lean`); `run` adds the running executable
+(`IO.appPath`) and hands the launch to the headless and window modes.
+
 `editor headless [--render] [--generate] [<sysroot> <olean dir>] <config dir>
 <script file>` is the headless mode (`Editor/Headless.lean`): it loads the config in a
 directory, runs a script against it and prints what happened, for
@@ -169,11 +180,22 @@ def run (packages : Array Package) (base : Array Lean.Name) (origin : Config.Lak
     else
       IO.eprintln text
     pure status
-  | .headless rest =>
-    Editor.Headless.main packages base origin rest
+  | .probe launch =>
+    IO.println "probe: ok"
+    IO.println s!"launched-by {(launch.launchedBy.map (·.toString)).getD "none"}"
+    match ← Ffi.mainBundle with
+    | some (path, identifier) =>
+      IO.println s!"bundle {path} identifier {identifier.getD "none"}"
+    | none =>
+      IO.println "bundle none"
+    pure 0
+  | .headless launch rest =>
+    let launch := { launch with running := some (← IO.appPath) }
+    Editor.Headless.main packages base origin launch rest
   | .windowCheck options =>
     Editor.WindowCheck.main options
-  | .window arguments =>
-    Editor.Window.main packages base origin arguments
+  | .window launch arguments =>
+    let launch := { launch with running := some (← IO.appPath) }
+    Editor.Window.main packages base origin launch arguments
 
 end Editor.Main

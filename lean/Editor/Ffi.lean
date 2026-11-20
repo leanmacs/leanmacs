@@ -8,11 +8,11 @@ import Editor.Ffi.Fuzzy
 import Editor.Ffi.Grep
 import Editor.Ffi.Interrupt
 import Editor.Ffi.Inverse
+import Editor.Ffi.Launch
 import Editor.Ffi.Log
 import Editor.Ffi.MainThread
 import Editor.Ffi.Marker
 import Editor.Ffi.Pair
-import Editor.Ffi.Processes
 import Editor.Ffi.Render
 import Editor.Ffi.Search
 import Editor.Ffi.Syntax
@@ -34,8 +34,8 @@ This module holds the conventions and imports the bindings, one module for
 each module of `crates/editor-ffi/src/` that defines them, all in
 `namespace Editor.Ffi`, so `import Editor.Ffi` brings every binding. It
 imports each family no other family imports; the rest (`Document`,
-`Snapshot`, `Transaction`, `Text`, `Events`, `Words`) come with the
-families that build on them.
+`Snapshot`, `Transaction`, `Text`, `Events`, `Words`, and `Processes`, whose
+command layout `Launch` takes) come with the families that build on them.
 
 | Module | Binds | Conventions |
 |---|---|---|
@@ -65,6 +65,7 @@ families that build on them.
 | `Editor/Ffi/Processes.lean` | `processes.rs` | "Services and completions" |
 | `Editor/Ffi/Watches.lean` | `watches.rs` | "Services and completions" |
 | `Editor/Ffi/Grep.lean` | `grep.rs` | "Services and completions" |
+| `Editor/Ffi/Launch.lean` | `launch.rs`: the exec and the main bundle, forwarded to the launcher's adapters (`crates/editor-launch-std`) | "Plain data" |
 
 `Editor/Ffi/Words.lean` is the word codec the families share (`words.rs`'s
 counterpart), under `Editor.Ffi.Words`; see "Plain data".

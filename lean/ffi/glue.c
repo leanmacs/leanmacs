@@ -2532,6 +2532,40 @@ lean_obj_res editor_glue_clipboard_live(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_clipboard_live()));
 }
 
+// ---- The exec and the main bundle ----
+
+void editor_ffi_exec(const uint8_t *words, size_t words_len,
+                     const uint8_t *strings, size_t strings_len,
+                     editor_ffi_raw_text *out);
+uint8_t editor_ffi_main_bundle(editor_ffi_raw_text *path,
+                               editor_ffi_raw_text *identifier);
+
+// `Editor.Ffi.execRaw : @& ByteArray → @& String → IO String`: the command
+// laid out as a run's, exec'd; it answers only when the exec failed, with
+// the reason.
+lean_obj_res editor_glue_exec(b_lean_obj_arg words, b_lean_obj_arg strings) {
+  editor_ffi_raw_text reason;
+  editor_ffi_exec(byte_array_bytes(words), byte_array_len(words),
+                  string_bytes(strings), string_len(strings), &reason);
+  return lean_io_result_mk_ok(text_take(reason));
+}
+
+// `Editor.Ffi.mainBundle : IO (Option (String × Option String))`: the main
+// bundle's path and identifier, `none` where there is no CoreFoundation.
+lean_obj_res editor_glue_main_bundle(void) {
+  editor_ffi_raw_text path;
+  editor_ffi_raw_text identifier;
+  uint8_t status = editor_ffi_main_bundle(&path, &identifier);
+  if (status == 0) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *pair = lean_alloc_ctor(0, 2, 0);
+  lean_ctor_set(pair, 0, text_take(path));
+  lean_ctor_set(pair, 1,
+                status == 2 ? option_some(text_take(identifier)) : lean_box(0));
+  return lean_io_result_mk_ok(option_some(pair));
+}
+
 // ---- The process entry point ----
 //
 // Lean's generated `main` runs the Lean `main` on a thread Lean creates, so

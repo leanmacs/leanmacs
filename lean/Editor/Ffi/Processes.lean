@@ -98,7 +98,7 @@ private opaque processesRunRaw (id : UInt64) (words : @& ByteArray) (strings : @
 /-- A run's command and limit as they cross: the words, the limit, whether to
 clear, and the count and byte lengths of each list of texts, and one string
 of every text end to end. -/
-private def runLayout (program : String) (arguments : Array String) (clear : Bool)
+def runLayout (program : String) (arguments : Array String) (clear : Bool)
     (set : Array (String × String)) (unset : Array String) (directory : String) (limit : UInt64) :
     ByteArray × String :=
   let size (text : String) := text.utf8ByteSize.toUInt64

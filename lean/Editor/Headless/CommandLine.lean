@@ -3,8 +3,8 @@ import Editor.ModuleLookup
 /-!
 # The headless mode's command line
 
-`editor headless [--render] [--generate] [--state <dir>] [<sysroot> <olean dir>]
-<config dir> <script file>` (`Editor/Headless.lean`). This module is the pure part of it: what the
+`editor headless [--render] [--generate] [--state <dir>] [--resume <k>]
+[<sysroot> <olean dir>] <config dir> <script file>` (`Editor/Headless.lean`). This module is the pure part of it: what the
 command line after `headless` asks for, given where the executable is. It
 reads nothing itself, so `model-test` pins it
 (`ModelTest.headlessCommandLineChecks`).
@@ -34,6 +34,11 @@ reads nothing itself, so `model-test` pins it
   (`Collaborators.stateDirectory`): a session is restored from it at start
   and journalled to it (`Editor/Restore.lean`). Without it there is none,
   and the headless mode keeps nothing across a run.
+- **`--resume <k>`**, before the paths, resumes the script after a restart
+  (`Editor/Restore/Restart.lean`): the script is skipped through its k-th
+  `restarted` directive. A run hands the next its own command line with
+  `--resume` one more than its own (`handedOn`), so the count does not
+  depend on where the driver was when the restart began.
 
 The options come in any order, each at most once. The two
 directories are given both or neither, so three or five paths are refused,
@@ -61,11 +66,14 @@ structure Arguments where
   script : String
   /-- The state directory (`--state`), if one was given. -/
   state : Option String := none
+  /-- How many `restarted` directives of the script this run has passed
+  (`--resume`): 0 for a run that no restart started. -/
+  resume : Nat := 0
   deriving DecidableEq, Repr
 
 /-- The headless mode's command line, after `headless`. -/
 def usage : String :=
-  "headless [--render] [--generate] [--state <dir>] [<sysroot> <olean dir>] <config dir> <script file>"
+  "headless [--render] [--generate] [--state <dir>] [--resume <k>] [<sysroot> <olean dir>] <config dir> <script file>"
 
 /-- Why two paths are refused outside a bundle, and what to give: the
 `.olean` directory is a search path, and config is elaborated on the base of
@@ -75,19 +83,39 @@ executable. -/
 def noToolchain : String :=
   "no Lean toolchain: give <sysroot> <olean dir> before the config directory, or run the executable from an app bundle; <olean dir> is a search path, directories joined with `:`, which must hold the core's and every package's of the editor's set unless the build recorded them beside the executable (<executable>.oleans)"
 
+/-- The options that take a value after them. -/
+def valuedOptions : List String :=
+  ["--state", "--resume"]
+
 /-- The options before the paths of `arguments`, in order, after those in
-`seen`; the state directory the last `--state` named; the paths; and whether
-every `--state` had a directory after it that is no option. -/
+`seen`; each valued option's last value, after those in `values`; the
+paths; and whether every valued option had a value after it that is no
+option. -/
 def split :
-    List String → List String → Option String → List String × Option String × List String × Bool
-  | "--state" :: directory :: rest, seen, _ =>
-    if directory.startsWith "--" then (seen ++ ["--state"], none, rest, false)
-    else split rest (seen ++ ["--state"]) (some directory)
-  | ["--state"], seen, state => (seen ++ ["--state"], state, [], false)
-  | option :: rest, seen, state =>
-    if option.startsWith "--" then split rest (seen ++ [option]) state
-    else (seen, state, option :: rest, true)
-  | [], seen, state => (seen, state, [], true)
+    List String →
+      List String →
+      List (String × String) → List String × List (String × String) × List String × Bool
+  | option :: rest, seen, values =>
+    if valuedOptions.contains option then
+      match rest with
+      | value :: more =>
+        if value.startsWith "--" then (seen ++ [option], values, more, false)
+        else split more (seen ++ [option]) (values ++ [(option, value)])
+      | [] => (seen ++ [option], values, [], false)
+    else
+      if option.startsWith "--" then split rest (seen ++ [option]) values
+      else (seen, values, option :: rest, true)
+  | [], seen, values => (seen, values, [], true)
+
+/-- The command line after `headless` a run hands the next at a restart
+(`Restart.Launch.arguments`): `arguments`, its own, with every `--resume`
+dropped and `--resume <resume + 1>` first. -/
+def handedOn (arguments : List String) (resume : Nat) : List String :=
+  let rec drop : List String → List String
+    | "--resume" :: _ :: rest => drop rest
+    | argument :: rest => argument :: drop rest
+    | [] => []
+  ["--resume", toString (resume + 1)] ++ drop arguments
 
 /-- What `arguments`, the command line after `headless`, asks for, for an
 executable at `appPath` for which the build recorded the `.olean`
@@ -96,13 +124,17 @@ why it is refused: the empty string when the usage alone says it, as for a
 number of paths it does not take. -/
 def read (appPath : String) (arguments : List String) (recorded : List String := []) :
     Except String Arguments :=
-  let (options, state, paths, valued) := split arguments [] none
+  let (options, values, paths, valued) := split arguments [] []
   let render := options.contains "--render"
   let generate := options.contains "--generate"
-  -- Each option at most once, and none the mode does not know.
+  let state := (values.find? (·.1 == "--state")).map (·.2)
+  let resume := (values.find? (·.1 == "--resume")).map (·.2)
+  -- Each option at most once, and none the mode does not know; a resume a
+  -- number.
   let known :=
-    valued && options.all (["--render", "--generate", "--state"].contains ·) &&
-      options.eraseDups == options
+    valued && options.all (["--render", "--generate", "--state", "--resume"].contains ·) &&
+      options.eraseDups == options &&
+      resume.all (·.toNat?.isSome)
   let named : Option (ModuleLookup.Given × String × String) :=
     match paths with
     | [config, script] => some ({}, config, script)
@@ -117,7 +149,9 @@ def read (appPath : String) (arguments : List String) (recorded : List String :=
     let directories := ModuleLookup.resolve appPath explicit recorded
     match directories.sysroot, directories.oleans with
     | some sysroot, directory :: rest =>
-      .ok { render, generate, sysroot, oleans := directory :: rest, config, script, state }
+      .ok {
+          render, generate, sysroot, oleans := directory :: rest, config, script, state
+          resume := (resume.bind (·.toNat?)).getD 0 }
     | _, _ => .error noToolchain
   | _, _ => .error ""
 

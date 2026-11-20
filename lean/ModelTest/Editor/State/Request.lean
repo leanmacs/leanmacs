@@ -98,7 +98,14 @@ def stateRequests : List StateRequest :=
 asks the text store nothing, so a marker's id is written out by hand. -/
 def stateRequestChecks : List Check :=
   let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
-  [{  name :=
+  [{  name := "handOver keeps a restart's plan in the outbox, the latest in place of what was there"
+      run :=
+        pure <|
+          let plan (record : String) : Restart.Plan := { record, handover := default }
+          let (_, once) := EditorState.none.handle (.handOver (plan "/a"))
+          let (_, twice) := once.handle (.handOver (plan "/b"))
+          once.outbox.handOver == some (plan "/a") && twice.outbox.handOver == some (plan "/b") },
+    { name :=
         "the restore's requests are their operations: restoreFrame puts a frame back, restoreWorkspaces takes in a table, markRestored marks a buffer, and restoreCells keeps the cells in the outbox, in order"
       run :=
         pure <|

@@ -14,8 +14,8 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 view 4 0,0 0x0: "e", scroll 0, selections 1..1, padding 8 0
 status 4: minibuffer.prompt ":"
-view 2 0,0 0x0: "e\ne!\nnext-error\nprevious-error\nautoread\nnoautoread\nreload\nvc-stage-hunk\nvc-unstage-hunk\nvc-worktrees", scroll 0, selections , padding 8 0
-decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.candidate 2..4 minibuffer.match 2..3 minibuffer.candidate 5..15 minibuffer.match 6..7 minibuffer.candidate 16..30 minibuffer.match 18..19 minibuffer.candidate 31..39 minibuffer.match 36..37 minibuffer.candidate 40..50 minibuffer.match 47..48 minibuffer.candidate 51..57 minibuffer.match 52..53 minibuffer.candidate 58..71 minibuffer.match 65..66 minibuffer.candidate 72..87 minibuffer.match 81..82 minibuffer.candidate 88..100 minibuffer.match 97..98
+view 2 0,0 0x0: "e\ne!\nnext-error\nprevious-error\nautoread\nnoautoread\nreload\nrestart\nvc-stage-hunk\nvc-unstage-hunk", scroll 0, selections , padding 8 0
+decorations 2: minibuffer.candidate 0..1 minibuffer.match 0..1 minibuffer.candidate 2..4 minibuffer.match 2..3 minibuffer.candidate 5..15 minibuffer.match 6..7 minibuffer.candidate 16..30 minibuffer.match 18..19 minibuffer.candidate 31..39 minibuffer.match 36..37 minibuffer.candidate 40..50 minibuffer.match 47..48 minibuffer.candidate 51..57 minibuffer.match 52..53 minibuffer.candidate 58..65 minibuffer.match 59..60 minibuffer.candidate 66..79 minibuffer.match 73..74 minibuffer.candidate 80..95 minibuffer.match 89..90
 status 2: -
 key arrived: <Tab> Tab -
 key arrived: <Enter> Enter -

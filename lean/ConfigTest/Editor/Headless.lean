@@ -1213,6 +1213,34 @@ The command line itself is covered by one run of the real executable on the
 fixture under `tests/headless`, in the `ffi-test` task. -/
 def scriptChecks (context : Context) : List Check :=
   [{  name :=
+        "restarted is a directive with its line's number, refused with anything after it, and the error message of a line that is no directive lists it; a run resumed past k restarteds runs the script from the line after the k-th"
+      run :=
+        let script :=
+          #[⟨1, .request .scene⟩, ⟨2, .restarted⟩, ⟨3, .settle⟩, ⟨4, .restarted⟩,
+            ⟨5, .request .show⟩]
+        pure <|
+          (Headless.script
+                  "scene
+ restarted 
+").toOption ==
+              some #[⟨1, .request .scene⟩, ⟨2, .restarted⟩] &&
+            (match
+              Headless.script
+                "scene
+restarted now" with
+            | .error message => message.startsWith "line 2: "
+            | .ok _ => false) &&
+            (match
+              Headless.script
+                "scene
+wait 2" with
+            | .error message => (message.splitOn " restarted,").length == 2
+            | .ok _ => false) &&
+            Headless.resumed script 0 == script &&
+            Headless.resumed script 1 == #[⟨3, .settle⟩, ⟨4, .restarted⟩, ⟨5, .request .show⟩] &&
+            Headless.resumed script 2 == #[⟨5, .request .show⟩] &&
+            Headless.resumed script 3 == #[] },
+    { name :=
         "indexed and workspaces are directives with their lines' numbers, refused with anything after them as no directive, and the error message of a line that is no directive lists them"
       run :=
         pure <|
@@ -1667,7 +1695,7 @@ def scriptChecks (context : Context) : List Check :=
         IO.FS.withTempDir fun directory => do
           writeConfig directory jobsConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          let failure ←
+          let (failure, _) ←
             Headless.runAndDispose stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
                   ⟨4, .advance 10⟩, ⟨5, .join⟩]
@@ -1681,7 +1709,7 @@ def scriptChecks (context : Context) : List Check :=
           writeConfig directory jobsConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           -- The clock is never moved, so the join runs out.
-          let failure ←
+          let (failure, _) ←
             Headless.runAndDispose stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩, ⟨4, .join⟩]
                 200
@@ -2798,6 +2826,47 @@ def failingRestore : Package :=
 def echoes (text : String) (line : String) : Bool :=
   line.startsWith "scene " && (line.splitOn s!", echo {text.quote}, echo padding ").length == 2
 
+/-- A host over a config directory holding `files`, with the packages
+`files` and `restore`, the library's file service, a temporary state
+directory, a launch whose running executable passes the probe (the process
+service a fake over that reply), and a journal whose failure readout
+answers one more failure of one path at each read once `failing` is set, so
+it is said once and counted at every read: what `check` is handed, with
+the flag; and the host is stopped. -/
+def withFailingJournal (context : Context) (files : List (String × String))
+    (check : Headless.Host → IO.Ref (Array String) → IO.Ref Bool → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory =>
+    IO.FS.withTempDir fun state => do
+      writeConfig directory files
+      let stage ←
+        Stage.overFiles context (Config.Directory.source directory)
+            { packages := #[Files.package, Restore.package] }
+      let running : System.FilePath := "/A.app/Contents/MacOS/editor"
+      let processes ←
+        Job.FakeProcesses.new stage.collaborators.services.completions
+            {
+              scripts :=
+                #[{ command := Restore.probeCommand running
+                    reply :=
+                      .ok { exit := .code 0, stdout := "probe: ok\n".toUTF8, stderr := .empty } }] }
+      let failing ← IO.mkRef false
+      let real := Headless.Journal.real stage.collaborators.published.reader
+      let journal : Headless.Journal :=
+        { real with
+          failures := do
+            let taken ← real.failures
+            if ← failing.get then
+              return taken.push ("/journal/full", "the disk is full")
+            return taken }
+      let stage :=
+        { stage with
+          collaborators :=
+            { stage.collaborators with
+              stateDirectory := some state, journal
+              launch := { running := some running, shipped := some running }
+              services := { stage.collaborators.services with processes := processes.processes } } }
+      onStage stage fun host stage => check host stage.output failing
+
 /-- The checks of the restore at start-up in the host (`Editor/Headless.lean`,
 "Restoring a session"), on the real elaborator: it runs before the start-up
 reload, which it holds, and `await` waits for it; a restore whose job fails
@@ -2805,10 +2874,52 @@ releases what it held. The first and the last are over the library's file
 service and share `fileChecks`' table of waits, so these run after them. -/
 def restoreOrderChecks (context : Context) : List Check :=
   [{  name :=
+        "a restore that names the index a restart handed over holds the start-up reload as an unnamed one does: its second half runs before reload 1 is installed"
+      run :=
+        withRestoreFiles context greetConfig fun host output state => do
+          host.send (.restore (some (Restore.indexPath state 1)))
+          host.send .reload
+          unless ← host.settle patience do
+            return false
+          let lines ← output.get
+          let restored :=
+            firstLine? lines fun line =>
+              line.startsWith "job " && (line.splitOn s!" {Restore.filesJob}: ok").length == 2
+          let installed := firstLine? lines (·.startsWith "reload 1: installed")
+          return match restored, installed with
+            | some restored, some installed => restored < installed
+            | _, _ => false },
+    { name :=
+        "a hand-over after a journal order failed since the restart began is given up: restart-abandon says the failure, and the loop goes on with no plan"
+      run :=
+        withFailingJournal context greetConfig fun host output failing => do
+          host.send (.restore none)
+          unless ← host.settle patience do
+            return false
+          failing.set true
+          host.send (.run Editor.restartName)
+          -- The debounced index write sleeps on the stage's clock, which
+          -- nothing moves, so the wait is for the save's command.
+          let saved ←
+            Headless.within patience do
+                return (← output.get).any (·.endsWith s!"{Restore.restartSaveJob}: ok")
+          unless saved do
+            return false
+          host.send .scene
+          unless ← host.settle patience do
+            return false
+          let lines ← output.get
+          let progress ← host.progress.get
+          return progress.handOver.isNone && !(← IO.hasFinished host.thread) &&
+              lines.any fun line =>
+                echoes
+                  "restart: a journal write failed (/journal/full); the session was not handed over"
+                  line },
+    { name :=
         "a host with a session and a config restores first: the restore's second half has run, and the buffer it restored is there, before reload 1 is installed"
       run :=
         withRestoreFiles context greetConfig fun host output _ => do
-          host.send .restore
+          host.send (.restore none)
           host.send .reload
           unless ← host.settle patience do
             return false
@@ -2829,7 +2940,7 @@ def restoreOrderChecks (context : Context) : List Check :=
       run :=
         withRestoreHost context greetConfig fun host output fake => do
           let hold ← fake.holdTakes
-          host.send .restore
+          host.send (.restore none)
           host.send .reload
           let waited ← host.await 300
           let early := (← output.get).any (·.startsWith "reload 1")
@@ -2843,7 +2954,7 @@ def restoreOrderChecks (context : Context) : List Check :=
         withRestoreFiles context helloConfig (restore := failingRestore) fun host output state => do
           let notes := state / "notes.txt"
           IO.FS.writeFile notes "notes"
-          host.send .restore
+          host.send (.restore none)
           host.send (.open notes.toString)
           host.send (.say "held words")
           host.send .reload
@@ -2873,7 +2984,7 @@ def restoreOrderChecks (context : Context) : List Check :=
         IO.FS.withTempDir fun state => do
           let first ←
             withStateHost context state [] #[countedPackage 1] fun host stage => do
-                host.send .restore
+                host.send (.restore none)
                 host.send (.run "bump-counted")
                 host.send (.run "bump-counted")
                 unless ← host.settle patience do
@@ -2881,7 +2992,7 @@ def restoreOrderChecks (context : Context) : List Check :=
                 indexWritten host stage
           let shown (version : Nat) (line : String) :=
             withStateHost context state [] #[countedPackage version] fun host stage => do
-              host.send .restore
+              host.send (.restore none)
               host.send .show
               unless ← host.settle patience do
                 return false
@@ -2895,7 +3006,7 @@ def restoreOrderChecks (context : Context) : List Check :=
         IO.FS.withTempDir fun state => do
           let first ←
             withStateHost context state keptConfig #[] fun host stage => do
-                host.send .restore
+                host.send (.restore none)
                 host.send .reload
                 unless ← host.settle patience do
                   return false
@@ -2906,7 +3017,7 @@ def restoreOrderChecks (context : Context) : List Check :=
                 indexWritten host stage
           let restored ←
             withStateHost context state keptConfig #[] fun host stage => do
-                host.send .restore
+                host.send (.restore none)
                 host.send .reload
                 unless ← host.settle patience do
                   return false
@@ -2916,7 +3027,7 @@ def restoreOrderChecks (context : Context) : List Check :=
                 return (← stage.output.get).contains "store kept v1: 2"
           let thrown ←
             withStateHost context state throwingConfig #[] fun host stage => do
-                host.send .restore
+                host.send (.restore none)
                 host.send .reload
                 unless ← host.settle patience do
                   return false
@@ -2926,7 +3037,7 @@ def restoreOrderChecks (context : Context) : List Check :=
                 return index.any fun text => (text.splitOn "\"name\":\"kept\"").length == 2
           let claimed ←
             withStateHost context state keptConfig #[] fun host stage => do
-                host.send .restore
+                host.send (.restore none)
                 host.send .reload
                 unless ← host.settle patience do
                   return false

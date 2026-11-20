@@ -46,6 +46,28 @@ def windowOptionChecks : List Check :=
     | .error message => message.endsWith Window.usage
     | .ok _ => false
   [{  name :=
+        "a restart hands on every option given and drops the file: what the next run parses of it is this run's options with no file, for options with each flag given"
+      run :=
+        let full :=
+          ["--config", "c", "--state", "st", "--sysroot", "/s", "--oleans", "/o", "--no-ime", "f",
+            "--report", "--present-mode", "mailbox", "--frame-latency", "2"]
+        let again (arguments : List String) : Bool :=
+          match parsed arguments with
+          | some options => parsed options.restartArguments == some { options with file := none }
+          | none => false
+        pure
+          (again full && again ["f"] && again [] && again ["--no-ime", "f"] &&
+            (parsed full).map (·.restartArguments.contains "f") == some false) },
+    { name :=
+        "a run a restart started with --restore restores that index first; without one the restore names none"
+      run :=
+        let named : Window.Options → Window.Options := fun options =>
+          { options with launch := { restore := some "/s/session/session-2.json" } }
+        pure
+          ((parsed ["--state", "/s", "f"]).map (fun o => (named o).starts (.skip none) #[]) ==
+              some #[.restore (some "/s/session/session-2.json"), .open "/work/project/f"] &&
+            (parsed ["--state", "/s"]).map (·.starts (.skip none) #[]) == some #[.restore none]) },
+    { name :=
         "the state directory is --state's, resolved against the working directory; else leanmacs under XDG_STATE_HOME, else under HOME's .local/state when that is unset or empty; and none when neither is set"
       run :=
         let unset := { windowEnvironment with xdgStateHome := none }
@@ -122,9 +144,11 @@ def windowOptionChecks : List Check :=
               state := some "/home/ada/.local/state/leanmacs", sysroot := some "/s"
               oleans := ["/o", "/opt/core/lib/lean"], composition := false }
         pure
-          (parsed ["--config", "/c", "--sysroot", "/s", "--oleans", "/o", "--no-ime", "f"] ==
+          ((parsed ["--config", "/c", "--sysroot", "/s", "--oleans", "/o", "--no-ime", "f"]).map
+                ({ · with given := [] }) ==
               given &&
-            parsed ["--no-ime", "f", "--oleans", "/o", "--sysroot", "/s", "--config", "/c"] ==
+            (parsed ["--no-ime", "f", "--oleans", "/o", "--sysroot", "/s", "--config", "/c"]).map
+                ({ · with given := [] }) ==
               given) },
     { name :=
         "config is loaded from the default directory only when it exists, from a directory given with --config whether it exists or not, and never with no toolchain, which is said"
@@ -300,7 +324,7 @@ def windowStartChecks : List Check :=
         let without := (Window.parse homeless ["f"]).toOption
         pure
           ((parsed ["--state", "/s", "f"]).map (·.starts (.load "/c") #["a"]) ==
-              some #[.restore, .open "/work/project/f", .say "a", .reload] &&
+              some #[.restore none, .open "/work/project/f", .say "a", .reload] &&
             without.map (·.starts (.load "/c") #["a"]) ==
               some #[.open "/work/project/f", .say Window.notJournalled, .say "a", .reload]) },
     { name :=
@@ -309,11 +333,11 @@ def windowStartChecks : List Check :=
         let empty := (parsed []).map (·.starts (.load "/xdg/leanmacs") #["hi"])
         let withFile := (parsed [(inFiles "note.txt").toString]).map (·.starts (.skip none) #[])
         pure <|
-          empty == some #[.restore, .say "hi", .reload] &&
+          empty == some #[.restore none, .say "hi", .reload] &&
             (parsed ["f"]).map (·.starts (.skip none) #[]) ==
-              some #[.restore, .open "/work/project/f"] &&
+              some #[.restore none, .open "/work/project/f"] &&
             (parsed ["f"]).map (·.starts (.load "/c") #["a", "b"]) ==
-              some #[.restore, .open "/work/project/f", .say "a", .say "b", .reload] &&
+              some #[.restore none, .open "/work/project/f", .say "a", .say "b", .reload] &&
             match empty.bind started, withFile.bind started with
             | some opened, some loading =>
               opened.loop.state.buffers.size == 1 &&

@@ -51,7 +51,21 @@ nothing waits on them (`Loop.Stepped.journal`). Its rules:
   in (`Kept.staleIndexes`) once this run's first index is written.
 - **The end of the run.** When the loop stops because the editor leaves,
   the last orders remove this run's journals and save this run's index with
-  `ended: true`, after the removes. No other run's file is touched.
+  `ended: true`, after the removes. No other run's file is touched, but for
+  the hand-over record a restart started this run with (`Kept.handedOver`),
+  removed with them when the run ends before the hand-shake: a run that
+  chose to end is no failed restart.
+- **A restart in flight** (`Kept.handing`, `Editor/Restore/Restart.lean`):
+  once no save is in flight, the publish hands back its journal orders as
+  ever and then starts `restart-save`, keyed, with a snapshot of the index
+  as it is (not ended), a snapshot of the record's text and their paths,
+  and cancels the debounced write. Until the hand-over ends nothing else
+  writes the index.
+- **The hand-shake.** A run started with a hand-over record
+  (`Kept.handedOver`, `--handed-over`) removes it once the handed index is
+  restored and this run's own index is written, after the stale indexes'
+  removes, once. From then on the session is this run's on disk, and the
+  launcher's watcher ends (`crates/editor-launch/src/watch.rs`).
 
 ## The index
 
@@ -174,6 +188,31 @@ def writeJob : String :=
 /-- The name of the job that saves a rendered index. -/
 def saveJob : String :=
   "restore-save"
+
+/-- The name of a restart's job that runs the probe
+(`Editor/Restore/Restart.lean`). -/
+def probeJob : String :=
+  "restart-probe"
+
+/-- The name of the command a host runs to give a restart's hand-over up
+(`Editor/Restore/Restart.lean`; `Headless.Running.took`). -/
+def abandonName : String :=
+  "restart-abandon"
+
+/-- The name of the job that writes the session and the hand-over record of a
+restart (`Editor/Restore/Restart.lean`). -/
+def restartSaveJob : String :=
+  "restart-save"
+
+/-- The hand-over record under the state directory `state`
+(`Editor/Restart/Handover.lean`). -/
+def recordPath (state : System.FilePath) : System.FilePath :=
+  sessionDirectory state / "handover"
+
+/-- The record a launcher renamed when no executable could restore the
+session (`crates/editor-launch/src/launch.rs`). -/
+def failedRecordPath (state : System.FilePath) : System.FilePath :=
+  sessionDirectory state / "handover.failed"
 
 /-- The name of the command that sets the modes a restore deferred. -/
 def modesName : String :=
@@ -396,7 +435,11 @@ def journalOrders (state : EditorState) (enabled leaving : Bool) (context : Cont
   let kept := state.restore
   let some run := kept.run | return { state }
   if leaving then
-    let orders := kept.journals.flatMap (removing directory run)
+    -- A clean end before the hand-shake ends the hand-over too: the run
+    -- chose to end, and the launcher's watcher sees the record go.
+    let orders :=
+      kept.journals.flatMap (removing directory run) ++
+        kept.handedOver.toArray.map fun record => { request := .remove record }
     let document ← Document.of state run (ended := true)
     let text ← createText document.render
     let snapshot ← text.snapshot
@@ -409,7 +452,7 @@ def journalOrders (state : EditorState) (enabled leaving : Bool) (context : Cont
           { state with
             restore :=
               { kept with
-                journals := #[], ended := true } }
+                journals := #[], ended := true, handedOver := none } }
         orders := orders.push save, cancels := #[writeJob, saveJob] }
   let mut orders := #[]
   let mut journals := #[]
@@ -472,9 +515,15 @@ def journalOrders (state : EditorState) (enabled leaving : Bool) (context : Cont
   -- What a restore took in goes once the new bases are asked for.
   orders := orders ++ kept.stale.map fun path => { request := .remove path }
   let mut staleIndexes := kept.staleIndexes
+  let mut handedOver := kept.handedOver
   if kept.indexWritten then
     orders := orders ++ staleIndexes.map fun path => { request := .remove path }
     staleIndexes := #[]
+    -- The hand-shake: the handed index is restored and this run's own is
+    -- written, so the session is this run's on disk.
+    if kept.restored then
+      orders := orders ++ handedOver.toArray.map fun record => { request := .remove record }
+      handedOver := none
   -- The modes a restore deferred, once a config has installed.
   let mut answered := #[]
   let mut deferred := #[]
@@ -492,7 +541,7 @@ def journalOrders (state : EditorState) (enabled leaving : Bool) (context : Cont
       deferred := deferred.push entry
   let kept :=
     { kept with
-      journals, nextGeneration := next, stale := #[], staleIndexes, deferred
+      journals, nextGeneration := next, stale := #[], staleIndexes, deferred, handedOver
       places :=
         kept.places.filter fun entry =>
           (state.buffer? ⟨entry.buffer⟩).any (·.history.head == entry.revision) }
@@ -500,6 +549,30 @@ def journalOrders (state : EditorState) (enabled leaving : Bool) (context : Cont
     { state with
       restore := kept
       echo := if said.isEmpty then state.echo else s!"restore: {"; ".intercalate said.toList}" }
+  -- A restart in flight: once no save is in flight, after this publish's
+  -- orders, the session and the record are saved, and the debounced write
+  -- is cancelled; until the hand-over ends nothing else writes the index.
+  if let some handing := kept.handing then
+    if handing.saving || state.isSaving then
+      return { state, orders, answered }
+    let document ← Document.of state run
+    let indexText ← createText document.render
+    let index ← indexText.snapshot
+    (TextSource.text indexText).release
+    let recordText ← createText handing.plan.handover.encode
+    let record ← recordText.snapshot
+    (TextSource.text recordText).release
+    let restore :=
+      { kept with
+        handing := some { handing with saving := true }, writing := false, written := none }
+    return {
+        state := { state with restore }, orders, answered, cancels := #[writeJob, saveJob]
+        starts :=
+          #[{ name := restartSaveJob
+              arguments :=
+                [.nat index.index, .nat record.index, .str (sessionDirectory directory).toString,
+                  .str (indexPath directory run).toString, .str handing.plan.record.toString]
+              key := some restartSaveJob }] }
   -- The index, once it differs from the last written and no write is
   -- pending: while one is, the index is not even made, since the write
   -- renders the index as it is when it fires.

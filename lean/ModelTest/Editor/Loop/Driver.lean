@@ -72,6 +72,18 @@ def driverChecks : List Check :=
     steps.flatMap fun step => (step.map (·.starts)).getD #[]
   let echoOf (driver : TestDriver) : Option String := driver.model.display.scenes.back?.map (·.echo)
   [{  name :=
+        "a command that hands a restart's plan over has it handed back with its step, kept by the driver, and the outbox emptied"
+      run :=
+        pure <|
+          match fileDriver with
+          | none => false
+          | some driver =>
+            let plan : Restart.Plan := { record := "/s/session/handover", handover := default }
+            let (handed, stepped) :=
+              driver.stepped (driver.loop.deliver driver.handed "job 1 test" (Editor.handOver plan))
+            (stepped.toOption.bind (·.handOver)) == some plan && handed.handOver == some plan &&
+              handed.loop.state.outbox.handOver.isNone },
+    { name :=
         "a step that hands back a spawn has its work run on the job model under the spawn's key, kept under the spawn's label, and its command delivered at finish; a second spawn of the key ends the first undelivered, and a cancel of the key ends the second undelivered"
       run :=
         pure <|
