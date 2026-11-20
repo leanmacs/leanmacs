@@ -1830,10 +1830,14 @@ package's modules.
   must exit 2 naming the layer it does not know, and `--lines no-core`,
   all allowed lines with no core importer, must exit 2 saying the core is
   not checked. And on a real graph: the set `tests/layer-imports/` holds
-  the fixture set and the package `greeting-reach`, never built, whose one
-  module imports `GreetingApi` of the interface package `greeting-api` and
-  `Greeting` of the implementation package `greeting`. The check on it must
-  exit 1 and print exactly `graph-expected`, the one refused import.
+  the fixture set and the package `greeting-reach`, never built, whose
+  library module imports `GreetingApi` of the interface package
+  `greeting-api` and `Greeting` of the implementation package `greeting`,
+  and whose test library, a second library, has a module that imports
+  `Greeting` too. The check on it must exit 1 and print exactly
+  `graph-expected`, the two refused imports: the second shows the rule
+  holds for test modules and the facet reads every library of a package,
+  not only its first.
 - **The facet is seen to walk the core.** `ffi-test` counts the lines of
   `lake -d ../packages query :editorLayerImports` whose importer's layer
   is `core`, and requires more than none.

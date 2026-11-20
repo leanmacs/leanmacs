@@ -1,11 +1,12 @@
 # The layer imports check's real-graph fixture (tools/layer-imports-check.sh;
 # docs/dev-practices/the-gate.md, "The layer imports check"): a package set
 # that holds the fixture set (../packages, which reaches the default set and
-# the core) and the fixture package `greeting-reach`, which imports a
-# module of the implementation package `greeting`. The gate runs the check
-# on it and requires it to refuse exactly that import (graph-expected), so
-# the check is seen to read the layers Lake declares and to refuse on a
-# real graph. It declares no target and is never built: `lake query` reads
+# the core) and the fixture package `greeting-reach`, a module of whose
+# library and a module of whose test library each import a module of the
+# implementation package `greeting`. The gate runs the check on it and
+# requires it to refuse exactly those two imports (graph-expected), so the
+# check is seen to read the layers Lake declares, to read every library of
+# a package, its tests' included, and to refuse on a real graph. It declares no target and is never built: `lake query` reads
 # headers alone.
 #
 # After changing a `require`, run in lean/:

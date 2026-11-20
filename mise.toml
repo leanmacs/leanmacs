@@ -422,11 +422,15 @@ run = [
   # package `greeting-api` declares, and imports nothing of `greeting`.
   "sh ../tools/layer-imports-check.sh ../tests/packages",
   # And the rule on a real graph: the set tests/layer-imports/ holds the
-  # fixture set and the package `greeting-reach`, whose one module imports
-  # `GreetingApi`, of an interface package, and `Greeting`, of an
-  # implementation package. The check must exit 1 and print exactly
-  # tests/layer-imports/graph-expected, the one refused import: it reads the
-  # layer `greeting-api`'s lakefile declares, and refuses on Lake's graph.
+  # fixture set and the package `greeting-reach`, whose library module
+  # imports `GreetingApi`, of an interface package, and `Greeting`, of an
+  # implementation package, and whose test library, a second library, has
+  # a module that imports `Greeting` too. The check must exit 1 and print
+  # exactly tests/layer-imports/graph-expected, the two refused imports: it
+  # reads the layer `greeting-api`'s lakefile declares, reads every library
+  # of a package, so a facet that walked only a package's first library
+  # would miss the test module's import and fail here, and refuses on
+  # Lake's graph.
   "status=0; out=$(sh ../tools/layer-imports-check.sh ../tests/layer-imports 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/layer-imports/graph-expected -; } || { echo \"ffi-test: the layer imports check exited $status on tests/layer-imports\"; exit 1; }",
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
