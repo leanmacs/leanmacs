@@ -222,6 +222,14 @@
 //!   started, and is safe for an id that is unknown or already done. A
 //!   completion that was queued before the cancel still arrives after it,
 //!   and the caller ignores a completion for an id it no longer waits for.
+//! - **`flush` is a barrier.** `flush` takes an id the caller chose, as a
+//!   start does, returns at once, and is completed through the queue once
+//!   the service has finished every piece of work handed to it before the
+//!   call that it can finish on its own; each service's module docs say
+//!   which. Its completion is queued behind those of the work it covers,
+//!   it keeps no result, and `cancel` withdraws it. It is how a caller
+//!   waits for a service's work to be done, in place of polling its
+//!   `pending` count, which stays a readout for tests.
 //! - **Plain data only, and no call into Lean.** A dedicated Lean task pulls
 //!   the completion queue.
 //! - **The logic is behind a port with a fake**, and is tested with no Lean.
@@ -230,7 +238,8 @@
 //! [`timers::FakeClock`] published for tests; which wait is due when is the
 //! pure [`timers::Schedule`]; and its C functions are
 //! [`timers::editor_ffi_timers_now`], [`timers::editor_ffi_timers_start`],
-//! [`timers::editor_ffi_timers_cancel`] and, as a readout for tests,
+//! [`timers::editor_ffi_timers_cancel`], [`timers::editor_ffi_timers_flush`]
+//! and, as a readout for tests,
 //! [`timers::editor_ffi_timers_pending`].
 //!
 //! Tests: the unit tests of `timers.rs` (the schedule; the service loop on

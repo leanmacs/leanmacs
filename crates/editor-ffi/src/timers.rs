@@ -15,9 +15,15 @@
 //!   clock began. [`Monotonic`] is the real one, and [`FakeClock`] the fake,
 //!   which a test moves by hand. It is public, not `cfg(test)`, like the
 //!   scripted event source.
-//! - [`Schedule`] is the waits not yet due. It is pure: which wait is due
-//!   when, and what cancelling means, are decided here and tested with no
-//!   thread and no clock.
+//! - [`Schedule`] is the waits not yet due, and the flushes. It is pure:
+//!   which wait is due when, where a flush comes out among them, and what
+//!   cancelling means, are decided here and tested with no thread and no
+//!   clock.
+//!
+//! **A flush is a barrier** ([`Timers::flush`]): due at the clock's reading
+//! when it is asked, it comes out in the same turn as every wait due by
+//! then, after them, so its completion is queued behind theirs. A wait not
+//! yet due is not covered, since it is no work the service can finish now.
 //! - [`Timers`] is the service over a clock: it holds a schedule, and its
 //!   loop, [`Timers::run`], completes due waits through a closure it is
 //!   given, and otherwise parks until the next deadline, a new wait, or
@@ -28,7 +34,7 @@
 //! [`editor_ffi_timers_start`], so nothing runs when the library is loaded.
 //! The C functions at the bottom only forward to it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
@@ -44,6 +50,8 @@ pub struct Schedule {
     by_deadline: BTreeSet<(u64, u64)>,
     /// The deadline of every wait, by id.
     deadlines: BTreeMap<u64, u64>,
+    /// Every flush as `(deadline, id)`, in the order they were asked.
+    flushes: VecDeque<(u64, u64)>,
 }
 
 impl Schedule {
@@ -52,6 +60,7 @@ impl Schedule {
         Self {
             by_deadline: BTreeSet::new(),
             deadlines: BTreeMap::new(),
+            flushes: VecDeque::new(),
         }
     }
 
@@ -59,7 +68,7 @@ impl Schedule {
     /// added. An id that is already waiting is refused, and keeps the
     /// deadline it has.
     pub fn start(&mut self, id: u64, deadline: u64) -> bool {
-        if self.deadlines.contains_key(&id) {
+        if self.holds(id) {
             return false;
         }
         self.deadlines.insert(id, deadline);
@@ -67,17 +76,39 @@ impl Schedule {
         true
     }
 
-    /// Removes the wait `id`, and returns whether it was waiting.
+    /// Adds the flush `id`, due at `deadline`, and returns whether it was
+    /// added. It comes out of [`take_due`](Self::take_due) in the same
+    /// turn as every wait due by `deadline`, after them, whatever their
+    /// ids. An id that is waiting, as a wait or a flush, is refused.
+    pub fn start_flush(&mut self, id: u64, deadline: u64) -> bool {
+        if self.holds(id) {
+            return false;
+        }
+        self.flushes.push_back((deadline, id));
+        true
+    }
+
+    /// Whether `id` is waiting, as a wait or a flush.
+    fn holds(&self, id: u64) -> bool {
+        self.deadlines.contains_key(&id) || self.flushes.iter().any(|&(_, flush)| flush == id)
+    }
+
+    /// Removes the wait or flush `id`, and returns whether it was waiting.
     pub fn cancel(&mut self, id: u64) -> bool {
         match self.deadlines.remove(&id) {
             Some(deadline) => self.by_deadline.remove(&(deadline, id)),
-            None => false,
+            None => {
+                let before = self.flushes.len();
+                self.flushes.retain(|&(_, flush)| flush != id);
+                self.flushes.len() != before
+            }
         }
     }
 
     /// Removes and returns the ids of the waits due at `now`: those whose
     /// deadline is `now` or earlier, earliest deadline first, and of two
-    /// with one deadline the lower id first.
+    /// with one deadline the lower id first; then the ids of the flushes
+    /// due at `now`, in the order they were asked.
     pub fn take_due(&mut self, now: u64) -> Vec<u64> {
         let mut due = Vec::new();
         while let Some(&(deadline, id)) = self.by_deadline.first() {
@@ -88,17 +119,26 @@ impl Schedule {
             self.deadlines.remove(&id);
             due.push(id);
         }
+        self.flushes.retain(|&(deadline, id)| {
+            let is_due = deadline <= now;
+            if is_due {
+                due.push(id);
+            }
+            !is_due
+        });
         due
     }
 
-    /// The earliest deadline a wait is waiting for, if any is.
+    /// The earliest deadline a wait or a flush is waiting for, if any is.
     pub fn next_deadline(&self) -> Option<u64> {
-        self.by_deadline.first().map(|&(deadline, _)| deadline)
+        let wait = self.by_deadline.first().map(|&(deadline, _)| deadline);
+        let flush = self.flushes.iter().map(|&(deadline, _)| deadline).min();
+        wait.into_iter().chain(flush).min()
     }
 
-    /// How many waits are waiting.
+    /// How many waits and flushes are waiting.
     pub fn pending(&self) -> usize {
-        self.deadlines.len()
+        self.deadlines.len() + self.flushes.len()
     }
 }
 
@@ -214,6 +254,20 @@ impl<C: Clock> Timers<C> {
     pub fn start(&self, id: u64, deadline: u64) -> bool {
         let started = self.state().schedule.start(id, deadline);
         // The new wait may be due before the one the service is parked for.
+        self.changed.notify_all();
+        started
+    }
+
+    /// Asks for the request `id` to be completed once every wait due when
+    /// this is called has been completed, and returns whether it was
+    /// accepted: it is due at the clock's reading now, and is completed in
+    /// the same turn as every wait due by then, after them. A wait not yet
+    /// due is not waited for: it is no work the service can finish now. It
+    /// returns at once. An id that is waiting is refused, and a cancel
+    /// withdraws it.
+    pub fn flush(&self, id: u64) -> bool {
+        let now = self.clock.now_ms();
+        let started = self.state().schedule.start_flush(id, now);
         self.changed.notify_all();
         started
     }
@@ -353,6 +407,19 @@ pub extern "C" fn editor_ffi_timers_start(id: u64, deadline: u64) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_timers_cancel(id: u64) -> bool {
     TIMERS.cancel(id)
+}
+
+/// Asks the process's timer service for the request `id` to be completed
+/// once every timer request due when this is called has been completed
+/// ([`Timers::flush`]), and returns whether it was accepted. It returns at
+/// once and never blocks. Its completion is queued from [`SERVICE`] behind
+/// those of the waits it covers. A wait not yet due is not covered.
+///
+/// Returns false, starting nothing, if `id` is already waiting, or if the
+/// operating system refused the service its thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_timers_flush(id: u64) -> bool {
+    service_started() && TIMERS.flush(id)
 }
 
 /// How many timer requests are waiting. A readout for tests, which use it
@@ -590,6 +657,90 @@ mod tests {
 
         assert_eq!(schedule.pending(), 0);
         assert_eq!(schedule.next_deadline(), None);
+    }
+
+    #[test]
+    fn a_flush_comes_out_after_every_wait_due_at_its_deadline_whatever_their_ids() {
+        let mut schedule = Schedule::new();
+        assert!(schedule.start(5, 10));
+        assert!(schedule.start(4, 3));
+        // Lower than both waits' ids, and asked before one of them.
+        assert!(schedule.start_flush(1, 10));
+        assert!(schedule.start(6, 10));
+        assert!(schedule.start(7, 11));
+        assert!(schedule.start_flush(2, 10));
+        // Its id is in use, for a flush and a wait alike.
+        assert!(!schedule.start_flush(1, 0));
+        assert!(!schedule.start(1, 0));
+        assert!(!schedule.start_flush(5, 0));
+        assert_eq!(schedule.pending(), 6);
+        assert_eq!(schedule.next_deadline(), Some(3));
+
+        // The waits due, earliest first, then the flushes in the order asked.
+        assert_eq!(schedule.take_due(10), [4, 5, 6, 1, 2]);
+        assert_eq!(schedule.pending(), 1);
+        assert_eq!(schedule.next_deadline(), Some(11));
+    }
+
+    #[test]
+    fn a_flush_is_not_due_before_its_deadline_and_a_cancelled_one_never_comes_out() {
+        let mut schedule = Schedule::new();
+        assert!(schedule.start_flush(1, 10));
+        assert!(schedule.start_flush(2, 10));
+        assert_eq!(schedule.next_deadline(), Some(10));
+        assert_eq!(schedule.take_due(9), [] as [u64; 0]);
+
+        assert!(schedule.cancel(1));
+        assert!(!schedule.cancel(1));
+        assert_eq!(schedule.pending(), 1);
+        assert_eq!(schedule.take_due(10), [2]);
+        assert_eq!(schedule.next_deadline(), None);
+    }
+
+    /// The service's thread is held inside the completion of wait 1 while
+    /// wait 2 (due now), wait 3 (due later) and the flush are asked. The held
+    /// thread is the only completer, so a flush completed at its call, or
+    /// ahead of wait 2, is seen every time.
+    #[test]
+    fn a_flush_is_completed_after_every_wait_due_when_it_was_asked_and_not_before() {
+        let clock = Arc::new(FakeClock::new());
+        let timers = Arc::new(Timers::new(Arc::clone(&clock)));
+        let (done, completed) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let service = thread::spawn({
+            let timers = Arc::clone(&timers);
+            move || {
+                timers.run(|id| {
+                    let _ = done.send(id);
+                    if id == 1 {
+                        let _ = released.recv_timeout(DEADLINE);
+                    }
+                });
+            }
+        });
+        let next = || {
+            completed
+                .recv_timeout(DEADLINE)
+                .unwrap_or_else(|_| panic!("no wait was completed within {DEADLINE:?}"))
+        };
+        assert!(timers.start(1, 0));
+        assert_eq!(next(), 1);
+        assert!(timers.start(2, 0));
+        assert!(timers.start(3, 10));
+        assert!(timers.flush(9));
+        assert!(!timers.flush(9));
+
+        assert!(completed.try_recv().is_err());
+        let _ = release.send(());
+
+        assert_eq!([next(), next()], [2, 9]);
+        // Wait 3 is not due, so the flush did not wait for it: a marker
+        // due now is the next completion, and 3 is still waiting.
+        assert!(timers.start(4, 0));
+        assert_eq!(next(), 4);
+        assert_eq!(timers.pending(), 1);
+        timers.stop();
+        let _ = service.join();
     }
 
     #[test]

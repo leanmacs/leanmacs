@@ -68,6 +68,12 @@ its `Timer` are all waits on this service.
   process has one instance, whose thread starts with the first request. A
   completion is an event of the kind `Completion` from the library source,
   whose code is the request's id.
+- **A flush** (`editor_ffi_timers_flush`, deterministic-test-concurrency
+  phase 1) is due at the clock's reading when it is asked, and comes out of
+  the schedule in the same turn as every wait due by then, after them,
+  whatever their ids. So its completion is queued behind those of every
+  wait that was due when it was asked. A wait not yet due is not covered:
+  it is no work the service can finish now.
 
 Timers were listed as Lean's (`Std.Async`). They are in the library because
 every wait of a job then completes one way, through the pump; because the

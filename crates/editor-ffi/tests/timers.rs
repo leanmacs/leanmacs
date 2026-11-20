@@ -17,8 +17,8 @@ use editor_ffi::events::{
 };
 use editor_ffi::text::editor_ffi_text_free;
 use editor_ffi::timers::{
-    SERVICE, editor_ffi_timers_cancel, editor_ffi_timers_now, editor_ffi_timers_pending,
-    editor_ffi_timers_start,
+    SERVICE, editor_ffi_timers_cancel, editor_ffi_timers_flush, editor_ffi_timers_now,
+    editor_ffi_timers_pending, editor_ffi_timers_start,
 };
 
 /// How long the test waits for something that should happen at once. Only
@@ -103,6 +103,17 @@ fn the_process_wide_timers_complete_a_wait_on_the_completion_queue_unless_it_is_
     // start that was refused.
     assert!(editor_ffi_timers_start(9, 0));
     assert_eq!(next_completion(), completion_of(9));
+    assert_eq!(editor_ffi_events_waiting(COMPLETION), 0);
+
+    // A flush asked behind a wait due now is completed after it, and one
+    // asked beside a wait an hour away does not wait for it.
+    assert!(editor_ffi_timers_start(10, editor_ffi_timers_now()));
+    assert!(editor_ffi_timers_start(11, editor_ffi_timers_now() + HOUR));
+    assert!(editor_ffi_timers_flush(12));
+    assert_eq!(next_completion(), completion_of(10));
+    assert_eq!(next_completion(), completion_of(12));
+    assert_eq!(editor_ffi_timers_pending(), 1);
+    assert!(editor_ffi_timers_cancel(11));
     assert_eq!(editor_ffi_events_waiting(COMPLETION), 0);
 
     // The clock does not go back.
