@@ -18,10 +18,22 @@
 # - `tests/headless/` holds its headless fixtures.
 #
 # Every Lean linter is on and a warning fails the build, as in the core.
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its
+# modules; `greeting-loud` reaches its command by the name `greeting-api`
+# declares.
 name = "greeting"
 testDriver = "«greeting-test»"
 defaultTargets = ["Greeting", "GreetingTest"]
 leanOptions = { linter.all = true, warningAsError = true }
+
+# The interface package this one implements: it declares the name of
+# `greeting-reply`, which `greeting-loud` reaches, and publishes the
+# contract check this package's tests run.
+[[require]]
+name = "greeting-api"
+path = "../greeting-api"
 
 [[require]]
 name = "editor-core"

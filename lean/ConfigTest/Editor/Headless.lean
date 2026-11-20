@@ -344,13 +344,13 @@ def hostChecks (context : Context) : List Check :=
                "run greet: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\"",
                "text 2: \"v2\""] },
     { name :=
-        "a host handed no packages starts with an empty registry and no menu bar: no command, job, binding, mode, ex name, theme, segment, language, contribution, source, style, display, at-point source or use, no style default, no store and no menu, and nothing is logged"
+        "a host handed no packages starts with an empty registry and no menu bar: no command, job, binding, mode, ex name, theme, segment, language, contribution, source, style, display, at-point source or use, no style default, no store, no menu and no extension, and nothing is logged"
       run := do
         let stage ← Stage.new context context.elaborator (Config.Directory.source "no-config")
         let collaborators := { stage.collaborators with packages := #[] }
         let running ← Headless.Running.new collaborators
         let registry := running.config.registry
-        return registry.ownersByKind.size == 18 && registry.ownersByKind.all (·.isEmpty) &&
+        return registry.ownersByKind.size == 19 && registry.ownersByKind.all (·.isEmpty) &&
             registry.styleDefaults.isEmpty &&
             registry.menuBar? == none &&
             (Headless.Running.keys collaborators running 0).menu == none &&
@@ -575,13 +575,16 @@ def hostChecks (context : Context) : List Check :=
               lines.getD 3 "" == "run greet: ok" }]
 
 /-- How a check controls elaboration: a decorator of the elaborator port that
-holds the config file `Config/Slow.lean` open until the check lets it go,
-and counts the files being elaborated. Nothing here sleeps to let something
-else happen. -/
+holds one config file, `Config/Slow.lean` unless the check names another,
+open until the check lets it go, and counts the files being elaborated.
+Nothing here sleeps to let something else happen. -/
 structure Gate where
-  /-- Resolved by the check to let `Config/Slow.lean` go, for good. -/
+  /-- The module of the config file the gate holds: `Config.Slow` unless
+  the check names another. -/
+  module : String := "Config.Slow"
+  /-- Resolved by the check to let the held file go, for good. -/
   release : IO.Promise Unit
-  /-- Whether an elaboration of `Config/Slow.lean` has arrived and waited. -/
+  /-- Whether an elaboration of the held file has arrived and waited. -/
   holding : IO.Ref Bool
   /-- How many files are being elaborated now. -/
   inProgress : IO.Ref Nat
@@ -590,10 +593,10 @@ structure Gate where
 
 namespace Gate
 
-/-- A gate that is shut. -/
-def new : IO Gate :=
-  return { release := ← IO.Promise.new, holding := ← IO.mkRef false, inProgress := ← IO.mkRef 0,
-           most := ← IO.mkRef 0 }
+/-- A gate that is shut, holding the config file of `module`. -/
+def new (module : String := "Config.Slow") : IO Gate :=
+  return { module, release := ← IO.Promise.new, holding := ← IO.mkRef false,
+           inProgress := ← IO.mkRef 0, most := ← IO.mkRef 0 }
 
 /-- Runs `elaborate`, the elaboration of `file`, behind the gate. -/
 def through {σ : Type} (gate : Gate) (file : Config.SourceFile)
@@ -601,7 +604,7 @@ def through {σ : Type} (gate : Gate) (file : Config.SourceFile)
   let now ← gate.inProgress.modifyGet fun count => (count + 1, count + 1)
   gate.most.modify (max · now)
   try
-    if file.module == "Config.Slow" then
+    if file.module == gate.module then
       gate.holding.set true
       discard <| IO.wait gate.release.result?
     elaborate
@@ -616,7 +619,7 @@ def around {β σ : Type} (gate : Gate) (elaborator : Config.Elaborator β σ) :
     file := fun base handles file => gate.through file (elaborator.file base handles file),
     root := fun base handles file => gate.through file (elaborator.root base handles file) }
 
-/-- Lets `Config/Slow.lean` go, now and from now on. -/
+/-- Lets the held file go, now and from now on. -/
 def «open» (gate : Gate) : IO Unit :=
   gate.release.resolve ()
 
@@ -966,6 +969,42 @@ def Session.threadOf (session : Session) (line : String) : IO (Option UInt64) :=
   let threads ← session.threads.get
   return (lines.idxOf? line).bind fun index => threads[index]?
 
+/-- Runs `check` with a point to hold a thread at: the first thread to reach
+it is held there, and let go `milliseconds` after it arrived, from a task of
+its own, whatever the check's waits do; a thread that reaches it later
+passes. The thread is let go, and that task waited for, before this
+returns. -/
+def holdingOnce {α : Type} (milliseconds : UInt32) (check : BaseIO Unit → IO α) : IO α := do
+  let release ← IO.Promise.new
+  let entered ← IO.mkRef false
+  let releaser ←
+    IO.asTask (prio := .dedicated) do
+        if ← eventually entered.get then
+          IO.sleep milliseconds
+        release.resolve ()
+  try
+    check do
+        unless ← entered.modifyGet fun entered => (entered, true) do
+          discard <| IO.wait release.result?
+  finally
+    release.resolve ()
+    discard <| IO.wait releaser
+
+/-- Runs `check` on `collaborators` whose output port holds the editor thread
+inside the first line `holds` accepts, and lets it go `milliseconds` after
+it arrived (`holdingOnce`): the editor thread is inside an event for that
+long, whatever the check's waits do. -/
+def holdingLine {α β σ : Type} {scheme : InputScheme}
+    (collaborators : Headless.Collaborators β σ scheme) (holds : String → Bool)
+    (milliseconds : UInt32) (check : Headless.Collaborators β σ scheme → IO α) : IO α :=
+  holdingOnce milliseconds fun hold =>
+    check
+      { collaborators with
+        emit := fun line => do
+          if holds line then
+            hold
+          collaborators.emit line }
+
 /-- The checks of jobs through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue and the real text binding. The
 host's jobs wait on a fake clock the check moves, so a job ends when the
@@ -1066,17 +1105,80 @@ def jobChecks (context : Context) : List Check :=
           writeConfig directory jobsConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           -- The clock is never moved, so the job never ends: the join runs
-          -- out, after a fifth of a second, and `run` ends its loop.
+          -- out, after a fifth of a second, and `run` ends its loop. The
+          -- reload must finish, so its settle has the long patience, and so
+          -- have the editor thread's answers and the loop's end.
           let failure ←
             Headless.run stage.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩, ⟨5, .join⟩,
-                  ⟨6, .request .show⟩]
-                200
+                #[⟨1, .request .reload⟩, ⟨2, .settleWithin patience⟩,
+                  ⟨3, .request (.spawn "count")⟩, ⟨5, .join⟩, ⟨6, .request .show⟩]
+                200 (answer := patience)
           -- The loop has ended: the job it left is cancelled, with its wait.
           let cancelled ← eventually (return (← stage.clock.withdrawn).size == 1)
-          return failure == some (.working (some 5)) && cancelled && (← stage.clock.waiting) == 0 &&
-              (← stage.output.get) ==
-                #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"] },
+          let waiting ← stage.clock.waiting
+          let output ← stage.output.get
+          saw
+              (failure == some (.working (some 5)) && cancelled && waiting == 0 &&
+                output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"])
+              s!"failure={repr failure} cancelled={cancelled} waiting={waiting} output={output}" },
+    { name :=
+        "the shape of a short-patience script: the settle after a real reload has a patience of its own, so a reload slower than the join's patience still leaves the join to run out as working"
+      run := do
+        -- A guard on how the checks write their scripts, not on the driver.
+        -- The reload is held at the gate for twice the join's patience, as
+        -- a loaded runner's elaboration can be. Under a plain `settle`,
+        -- which keeps the run's 200 ms, that fails the settle as reloading
+        -- (`.reloading (some 2)`, seen with this check's first script); the
+        -- driver does not and need not tell a slow reload from a stuck one.
+        -- So a script that runs its waits on a short patience settles a
+        -- real reload with a patience of its own (`settle <milliseconds>`),
+        -- as this one and the join and dispose checks do. The fix is that
+        -- shape, not the driver's: the driver as it was before a run had
+        -- an `answer` passes this script too.
+        let gate ← Gate.new (module := "Config.Greet")
+        IO.FS.withTempDir fun directory => do
+            writeConfig directory jobsConfig
+            let stage ←
+              Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
+            let opener ←
+              IO.asTask (prio := .dedicated) do
+                  if ← eventually gate.holding.get then
+                    IO.sleep 400
+                  gate.open
+            try
+              let failure ←
+                Headless.run stage.collaborators
+                    #[⟨1, .request .reload⟩, ⟨2, .settleWithin patience⟩,
+                      ⟨3, .request (.spawn "count")⟩, ⟨5, .join⟩, ⟨6, .request .show⟩]
+                    200 (answer := patience)
+              let held ← gate.holding.get
+              let output ← stage.output.get
+              saw
+                  (failure == some (.working (some 5)) && held &&
+                    output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"])
+                  s!"failure={repr failure} held={held} output={output}"
+            finally
+              gate.open
+              discard <| IO.wait opener },
+    { name :=
+        "an editor thread held inside an event longer than a join's patience still makes the join run out as working: the editor thread's answer has a patience of its own"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- The editor thread is held inside the spawn's line for twice the
+          -- join's patience: the join's marker waits behind it.
+          let failure ←
+            holdingLine stage.collaborators (· == "spawn count: job 1") 400 fun collaborators =>
+                Headless.run collaborators
+                  #[⟨1, .request .reload⟩, ⟨2, .settleWithin patience⟩,
+                    ⟨3, .request (.spawn "count")⟩, ⟨4, .join⟩]
+                  200 (answer := patience)
+          let output ← stage.output.get
+          saw
+              (failure == some (.working (some 4)) &&
+                output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"])
+              s!"failure={repr failure} output={output}" },
     { name :=
         "spawn and join are directives of a script, join, restarted and indexed with an optional patience in seconds, a spawn with no name and a patience that is no number are refused, and a join that ran out is described with its line"
       run :=
@@ -1288,21 +1390,27 @@ wait 2" with
                   ⟨4, .advance 10⟩, ⟨5, .join⟩]
                 patience
           let output ← stage.output.get
+          -- The advance's short patience is for it alone: the reload must
+          -- finish, and the editor thread answer and the loop end.
           let stalled ← Stage.new context context.elaborator (Config.Directory.source directory)
           let ranOut ←
             Headless.run stalled.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .advance 5⟩] 200
+                #[⟨1, .request .reload⟩, ⟨2, .settleWithin patience⟩, ⟨3, .advance 5⟩] 200
+                (answer := patience)
+          let stalledOutput ← stalled.output.get
           let real ← Stage.new context context.elaborator (Config.Directory.source directory)
           let refused ←
             Headless.run { real.collaborators with clock := none } #[⟨1, .settle⟩, ⟨2, .advance 1⟩]
-                200
-          return joined.isNone && output.contains "job 1 count: ok" &&
-              ranOut == some (.stalled 3 5) &&
-              (Headless.Failure.stalled 3 5).describe 200 ==
-                "the advance on line 3 found no wait due within 5 ms on the clock within 200 ms" &&
-              refused == some (.noClock 2) &&
-              (Headless.Failure.noClock 2).describe 200 ==
-                s!"the advance on line 2: {Headless.advanceNeedsClock}" },
+                200 (answer := patience)
+          saw
+              (joined.isNone && output.contains "job 1 count: ok" &&
+                ranOut == some (.stalled 3 5) &&
+                (Headless.Failure.stalled 3 5).describe 200 ==
+                  "the advance on line 3 found no wait due within 5 ms on the clock within 200 ms" &&
+                refused == some (.noClock 2) &&
+                (Headless.Failure.noClock 2).describe 200 ==
+                  s!"the advance on line 2: {Headless.advanceNeedsClock}")
+              s!"joined={repr joined} output={output} ranOut={repr ranOut} stalledOutput={stalledOutput} refused={repr refused}" },
     {
       name :=
         "a script is one directive a line, each with its line number, and blank lines and comments are skipped",
@@ -1324,6 +1432,18 @@ wait 2" with
           ((refusal "reload\nrelaod\n").startsWith "line 2: " &&
             (refusal "# a comment\n\nreload\nrun\n").startsWith "line 4: " &&
             (refusal "settle now\n").startsWith "line 1: ") },
+    { name :=
+        "a settle may give its own patience in milliseconds, one number: anything else after settle is refused, with the number of the line"
+      run :=
+        let refusal (text : String) : String :=
+          match Headless.script text with
+          | .error message => message
+          | .ok _ => ""
+        pure
+          ((Headless.script "reload\nsettle 90000\nsettle\n").toOption ==
+              some #[⟨1, .request .reload⟩, ⟨2, .settleWithin 90000⟩, ⟨3, .settle⟩] &&
+            (refusal "reload\nsettle soon\n").startsWith "line 2: " &&
+            (refusal "settle 1 2\n").startsWith "line 1: ") },
     { name :=
         "a key directive is a logical key, a physical key and modifiers: one character or a <Name>, a code or -, and modifiers joined with + or -"
       run :=
@@ -1446,6 +1566,48 @@ wait 2" with
               -- The job that was left behind ends; its wake-up is under this
               -- host's source id, which no later host is given.
               gate.open },
+    { name :=
+        "a settle with its own milliseconds waits that long, not the run's patience, and its failure says how long it waited"
+      run := do
+        let gate ← Gate.new
+        IO.FS.withTempDir fun directory => do
+            writeConfig directory slowConfig
+            let stage ←
+              Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
+            try
+              -- The reload is held open. The run's patience is a minute, so
+              -- a failure now is the settle's own fifth of a second.
+              let failure ←
+                Headless.run stage.collaborators
+                    #[⟨3, .request .reload⟩, ⟨7, .settleWithin 200⟩, ⟨8, .request .show⟩] 60000
+              return failure == some (.waited 200 (.reloading (some 7)))
+            finally
+              gate.open },
+    { name :=
+        "a join with its own seconds waits that long, not the run's patience, and its failure says how long it waited"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- The clock is never moved, so the job never ends. The run's
+          -- patience is the long one, so a failure now is the join's own
+          -- second.
+          let failure ←
+            Headless.run stage.collaborators
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩,
+                  ⟨5, .join (some 1)⟩, ⟨6, .request .show⟩]
+                patience
+          saw (failure == some (.waited 1000 (.working (some 5)))) s!"failure={repr failure}" },
+    { name :=
+        "a restarted with its own seconds waits that long for a hand-over, not the run's patience, and its failure says how long it waited"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- No restart is asked for, so none comes: its own patience of
+          -- none at all runs out at once, where the run's would be long.
+          let failure ← Headless.run stage.collaborators #[⟨1, .restarted (some 0)⟩] patience
+          saw (failure == some (.waited 0 (.notRestarted 1))) s!"failure={repr failure}" },
     { name :=
         "a script that ends while a reload cannot finish fails at its end, with a reload still running and no line"
       run := do
@@ -1697,6 +1859,43 @@ wait 2" with
             (reloading.splitOn "line 12").length == 2 &&
             (unanswered.splitOn "line 12").length == 2 &&
             (atEnd.splitOn "line").length == 1) },
+    { name := "a wait that had its own patience is described with that patience, not the run's"
+      run :=
+        let waited := Headless.Failure.describe 30000 (.waited 90000 (.reloading (some 9)))
+        pure
+          (waited == Headless.Failure.describe 90000 (.reloading (some 9)) &&
+            (waited.splitOn "90000 ms").length == 2 &&
+            (waited.splitOn "30000 ms").length == 1) },
+    { name :=
+        "a wait's failure carries the patience that ran out when it is not the run's: the answer patience for an editor thread that did not answer, a settle's own milliseconds for any failure of its, and none for the run's own"
+      run :=
+        let line := some 1
+        let failures :=
+          [Headless.Wait.unanswered.failureIn line 60000 200,
+            Headless.Wait.unanswered.failureIn line 30000 30000,
+            Headless.Wait.reloading.failureIn line 30000 200,
+            Headless.Wait.working.failureIn line 30000 200,
+            Headless.Wait.reloading.failureIn line 30000 200 (own := some 90000),
+            Headless.Wait.unanswered.failureIn line 30000 200 (own := some 90000),
+            -- A settle <milliseconds> bounds its whole wait, the editor
+            -- thread's answer too, so an answer that did not come names its
+            -- milliseconds even when the run's answer and patience agree.
+            Headless.Wait.unanswered.failureIn line 30000 30000 (own := some 90000),
+            Headless.Wait.settled.failureIn line 30000 200,
+            Headless.Wait.ended.failureIn line 30000 200,
+            Headless.Wait.settled.failureIn line 30000 200 (own := some 90000),
+            Headless.Wait.ended.failureIn line 30000 200 (own := some 90000)]
+        let expected : List (Option Headless.Failure) :=
+          [some (.waited 200 (.unanswered line)), some (.unanswered line), some (.reloading line),
+            some (.working line), some (.waited 90000 (.reloading line)),
+            some (.waited 90000 (.unanswered line)), some (.waited 90000 (.unanswered line)), none,
+            none, none, none]
+        saw
+          (failures == expected &&
+            Headless.Failure.within 200 30000 (.unanswered none) ==
+              .waited 200 (.unanswered none) &&
+            Headless.Failure.within 30000 30000 (.working line) == .working line)
+          s!"failures={repr failures}" },
     { name :=
         "the headless mode's run disposes of its collaborators once its loop has ended: dispose is called once, after every line the script had the host print"
       run :=
@@ -1716,13 +1915,102 @@ wait 2" with
         IO.FS.withTempDir fun directory => do
           writeConfig directory jobsConfig
           let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
-          -- The clock is never moved, so the join runs out.
+          -- The clock is never moved, so the join runs out. The reload must
+          -- finish, and the editor thread answer and the loop end.
           let (failure, _) ←
             Headless.runAndDispose stage.collaborators
-                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩, ⟨4, .join⟩]
-                200
-          return failure == some (.working (some 4)) &&
-              (← stage.disposed.get) == #[(← stage.output.get).size] },
+                #[⟨1, .request .reload⟩, ⟨2, .settleWithin patience⟩,
+                  ⟨3, .request (.spawn "count")⟩, ⟨4, .join⟩]
+                200 (answer := patience)
+          let disposed ← stage.disposed.get
+          let output ← stage.output.get
+          saw (failure == some (.working (some 4)) && disposed == #[output.size])
+              s!"failure={repr failure} disposed={disposed} output={output}" },
+    { name :=
+        "a run whose advance stalls while the editor thread is inside an event disposes only after its loop has ended"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        -- The editor thread is held inside the commands line for longer than
+        -- the stall's patience and the halt after it together.
+        let (failure, _) ←
+          holdingLine stage.collaborators (·.startsWith "commands:") 1000 fun collaborators =>
+              Headless.runAndDispose collaborators #[⟨1, .request .show⟩, ⟨2, .advance 5⟩] 200
+                (answer := patience)
+        let disposed ← stage.disposed.get
+        let output ← stage.output.get
+        saw
+            (failure == some (.stalled 2 5) && disposed == #[output.size] &&
+              output.any (·.startsWith "commands:"))
+            s!"failure={repr failure} disposed={disposed} output={output}" },
+    { name :=
+        "a run whose join runs out while the editor thread is inside an event disposes only after its loop has ended"
+      run := do
+        let stage ← Stage.new context context.elaborator (memorySource [])
+        -- The editor thread is held inside the commands line for a second
+        -- longer than its answer to the join may take: the join runs out
+        -- unanswered with the line pending, and the halt after it waits
+        -- for the loop to print the line, reach the join's marker and stop.
+        let held := (patience + 1000).toUInt32
+        let script : Array Headless.Line := #[⟨1, .request .show⟩, ⟨2, .join⟩]
+        let (failure, _) ←
+          holdingLine stage.collaborators (·.startsWith "commands:") held fun collaborators =>
+              Headless.runAndDispose collaborators script 200 (answer := patience)
+        let disposed ← stage.disposed.get
+        let output ← stage.output.get
+        saw
+            (failure == some (.waited patience (.unanswered (some 2))) &&
+              disposed == #[output.size] &&
+              output.any (·.startsWith "commands:"))
+            s!"failure={repr failure} disposed={disposed} output={output}" },
+    { name :=
+        "a run that reaches its script's end disposes only after its loop has ended, when the loop is slow to end"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeConfig directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- The script leaves its job in its wait, and the loop withdraws
+          -- that wait as it ends, on its own thread: held there for longer
+          -- than the run's patience, the loop ends that long after the
+          -- script's end stopped it. A held line could not show this: the
+          -- wait at the script's end waits for the editor thread's answer,
+          -- so a line held before it is printed before the stop. The
+          -- spawn's line waits for the job to be in its wait, so there is a
+          -- wait to withdraw when the loop ends.
+          let staged := stage.collaborators
+          let timers := staged.services.timers
+          let withdrew ← IO.mkRef false
+          let order ← IO.mkRef #[]
+          let (failure, _) ←
+            holdingOnce 1000 fun hold =>
+                Headless.runAndDispose
+                  { staged with
+                    emit := fun line => do
+                      if line == "spawn count: job 1" then
+                        discard <| eventually (return (← stage.clock.waiting) == 1)
+                      staged.emit line
+                    services :=
+                      { staged.services with
+                        timers :=
+                          { timers with
+                            cancel := fun id => do
+                              hold
+                              timers.cancel id
+                              withdrew.set true } }
+                    dispose := do
+                      order.modify (·.push (← withdrew.get))
+                      staged.dispose }
+                  #[⟨1, .request .reload⟩, ⟨2, .settleWithin patience⟩,
+                    ⟨3, .request (.spawn "count")⟩]
+                  200 (answer := patience)
+          let withdrawn ← stage.clock.withdrawn
+          let disposed ← stage.disposed.get
+          let output ← stage.output.get
+          let order ← order.get
+          saw
+              (failure.isNone && withdrawn.size == 1 && order == #[true] &&
+                disposed == #[output.size] &&
+                output == #["reload 1: installed, 2 files, 1 commands", "spawn count: job 1"])
+              s!"failure={repr failure} withdrawn={withdrawn} withdrew before dispose={order} disposed={disposed} output={output}" },
     { name :=
         "the executable's hosts dispose of the directory of the config files' module data: their dispose removes it once it was made, through the module files, and removes nothing before"
       run :=

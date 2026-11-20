@@ -19,6 +19,13 @@
 //!   wholly, the longest. That is at least one span with the fewest
 //!   errors, which is all the port asks.
 //! - **Not anchored.** A span may start anywhere in the text.
+//! - **The scalar search for an empty text.** The SIMD search of 0.4.0,
+//!   which x86 takes, reports no span of an empty text: its loop over
+//!   anti-diagonals never reports the one that ends at offset 0, the
+//!   empty text's only span. The contract's sweep caught it (pattern `A`,
+//!   an empty text, one error allowed). The scalar search, which other
+//!   machines take, has no such gap, so the empty text is asked of it and
+//!   every other text of the SIMD search.
 //!
 //! The library counts bytes, so a span it reports can cut a character of
 //! a text that is not ASCII. The port allows that, and the rule above it
@@ -26,13 +33,17 @@
 //!
 //! # Tests
 //!
-//! The port's contract, and two cases of its own: a pattern with one
-//! substitution is found with one error, and a pattern with no span near
-//! enough reports none (`tests/contract.rs`).
+//! The port's contract, and three cases of its own: a pattern with one
+//! substitution is found with one error, a pattern with no span near
+//! enough reports none, and an empty text reports the empty span exactly
+//! when the whole pattern is within the errors allowed
+//! (`tests/contract.rs`).
 
 use editor_fuzzy::locate::{Searcher, Span};
 use triple_accel::SearchType;
-use triple_accel::levenshtein::{LEVENSHTEIN_COSTS, levenshtein_search_simd_with_opts};
+use triple_accel::levenshtein::{
+    LEVENSHTEIN_COSTS, levenshtein_search_naive_with_opts, levenshtein_search_simd_with_opts,
+};
 
 /// The searcher over triple_accel. It keeps nothing between questions.
 #[derive(Debug)]
@@ -57,7 +68,12 @@ impl Default for TripleAccel {
 
 impl Searcher for TripleAccel {
     fn spans(&mut self, pattern: &str, text: &str, max_errors: u32) -> Vec<Span> {
-        levenshtein_search_simd_with_opts(
+        let search = if text.is_empty() {
+            levenshtein_search_naive_with_opts
+        } else {
+            levenshtein_search_simd_with_opts
+        };
+        search(
             pattern.as_bytes(),
             text.as_bytes(),
             max_errors,

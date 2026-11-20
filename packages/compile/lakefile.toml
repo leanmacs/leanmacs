@@ -29,6 +29,10 @@
 #
 # Every Lean linter is on and a warning fails the build, as in the core.
 #
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+#
 # It imports two features that are still core modules, the shell
 # (`Editor.Shell`) and the workspace's modes (`Editor.Workspace.Modes`).
 # When either moves into a package, this one requires that package.

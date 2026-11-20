@@ -25,6 +25,15 @@ name = "fixture-set"
 name = "greeting-loud"
 path = "greeting-loud"
 
+# `greeting-api` is an interface package (docs/design/extension-points.md,
+# "Three layers"): `greeting` implements it and `greeting-loud` reaches a
+# name it declares. Both require it, so it is in the set through them too;
+# it is named here so the gate's steps list it as a package of the set
+# whatever those two require.
+[[require]]
+name = "greeting-api"
+path = "greeting-api"
+
 # `echo` holds Rust: a crate of its own and the glue that binds it, which
 # the package-set build links into this set's editor through the one Rust
 # archive it generates from the set (docs/design/packages.md, "Rust in a

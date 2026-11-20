@@ -17,7 +17,8 @@ editor-fuzzy = { path = "../editor-fuzzy" }
 # the newest release (2021), and the crate is no longer maintained, which
 # the port makes cheap to undo. Its licence is MIT, and it is used
 # unmodified. Its default features are its SIMD paths on x86, chosen at
-# run time; on other machines it takes its scalar path.
+# run time; on other machines it takes its scalar path. An empty text
+# goes to its scalar path everywhere (see `src/lib.rs`).
 #
 # Looked at on 2026-11-19 and set aside:
 #

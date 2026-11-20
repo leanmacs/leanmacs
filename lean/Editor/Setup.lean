@@ -701,6 +701,9 @@ inductive SetupRequest where
   /-- Define `menu`, one menu of the menu bar, by its title
   (`Editor/Menu.lean`). -/
   | menu (menu : Submenu)
+  /-- Register `value` at the extension point `key`, the name of the type
+  `value` was made from (`Editor/Extension.lean`). -/
+  | extend (key : Lean.Name) (value : Dynamic)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -744,6 +747,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .atPoint _ => Unit
   | .useAtPoint .. => Unit
   | .menu _ => Unit
+  | .extend .. => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=

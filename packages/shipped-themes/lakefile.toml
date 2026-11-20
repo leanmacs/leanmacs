@@ -22,6 +22,10 @@
 #
 # Every Lean linter is on and a warning fails the build, as in the core.
 #
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+#
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/shipped-themes update --keep-toolchain
 # then the same for every set that reaches this package (../, tests/packages,

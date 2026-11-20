@@ -13,10 +13,10 @@ import Editor.Evil.Theorems
 import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
 import Editor.ExecuteCommand
+import Editor.Extension
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
-import Editor.Setup
 import Editor.TabCommands
 import Editor.Themes
 import Editor.VersionControl.Commit
@@ -257,6 +257,11 @@ buffer, `vc-commit`, which commits (`Editor/VersionControl/Commit.lean`). Its re
 imported. Its model and its contract (`Editor/VersionControl/Model.lean`,
 `Editor/VersionControl/Contract.lean`) are for tests, and are not
 imported.
+
+Extension points are here too (`Editor/Extension.lean`): config registers
+a value at a package's extension point with `Extension.add`, as a package
+does, and a command of config's reads the values at one with
+`Extension.values` and `Extension.named`.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

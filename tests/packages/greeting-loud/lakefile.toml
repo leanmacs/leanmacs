@@ -3,7 +3,10 @@
 # package `greeting` and registers a command of the same name as one of
 # `greeting`'s, so an editor built from a set that holds both shows which
 # registered later. A package registers after every package it requires,
-# whatever order the set's lakefile names them in.
+# whatever order the set's lakefile names them in. It reaches the name
+# through the interface package `greeting-api`, and imports nothing of
+# `greeting`, an implementation package (docs/design/extension-points.md,
+# "Three layers").
 #
 # Its layout is `greeting`'s (../greeting/lakefile.toml), without a linked
 # test: `GreetingLoud` is its library, with its entry module
@@ -15,9 +18,19 @@ testDriver = "«greeting-loud-test»"
 defaultTargets = ["GreetingLoud", "GreetingLoudTest"]
 leanOptions = { linter.all = true, warningAsError = true }
 
+# `greeting` is required only to order registration: this package registers
+# after it, so its `greeting-reply` is the one found. None of its modules is
+# imported, since it is an implementation package; the name is the
+# interface package's.
 [[require]]
 name = "greeting"
 path = "../greeting"
+
+# The interface package that declares the name this package reaches,
+# `GreetingApi.replyName`, and publishes the fake its tests use.
+[[require]]
+name = "greeting-api"
+path = "../greeting-api"
 
 [[require]]
 name = "editor-core"

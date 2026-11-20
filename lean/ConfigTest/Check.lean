@@ -4,17 +4,21 @@ import Editor.Config.Elaborate
 import Editor.Config.Session
 import Editor.Job.Real
 import Editor.Job.Runner
+import ExtensionFixture
 
 /-!
 # Config tests: the check
 
 The type of one check of the config session, `Check`; the `Context` every check
-is given; `failures`, which runs a list of them; `run`, which imports the base
-once and runs the list it is given; and `usage`, the command line `main` does
-not understand. Every test module that writes a check imports this one (the root
-module `ConfigTest` describes the layout).
+is given; `failures`, which runs a list of them; `saw`, with which a check
+says what it saw when it fails; their checks, `checkChecks`; `run`, which
+imports the base once and runs the list it is given; and `usage`, the command
+line `main` does not understand. Every test module that writes a check imports
+this one (the root module `ConfigTest` describes the layout).
 
-It imports the config base, `Editor`, for the link alone: the checks
+It imports the config base, `Editor`, and the fixtures `ConfigFixture` and
+`ExtensionFixture`, which the base the checks share holds too, for the
+link alone: the checks
 elaborate config on that base with the real elaborator
 (`Editor/Config/Elaborate.lean`, "The base"), whose import of the base at
 runtime needs every module of it linked into this executable. The adapter
@@ -36,8 +40,8 @@ structure Check where
 /-- What every check is given. -/
 structure Context where
   /-- The real elaborator, whose `base` hands back, and grows, the one base
-  the checks share (`sharing`): `Editor` and `ConfigFixture` to start
-  with. -/
+  the checks share (`sharing`): `Editor`, `ConfigFixture` and
+  `ExtensionFixture` to start with. -/
   elaborator : Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle
   /-- What `ConfigFixture.bump` returned to compiled code before the base was
   imported. -/
@@ -74,6 +78,14 @@ def Context.fileWaits (context : Context) : IO Job.Completions := do
   context.waits.set (some completions)
   return completions
 
+/-- How a check ends that says what it saw when it fails: `true` when `holds`,
+and otherwise it throws `observed`, which `failures` reports after the
+check's name, as `(saw <observed>)`. -/
+def saw (holds : Bool) (observed : String) : IO Bool := do
+  unless holds do
+    throw (IO.userError s!"saw {observed}")
+  return true
+
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
 def failures (checks : List Check) : IO (List String) :=
@@ -82,6 +94,15 @@ def failures (checks : List Check) : IO (List String) :=
       return if ← check.run then none else some check.name
     catch error =>
       return some s!"{check.name} ({error})"
+
+/-- The checks of `failures` and `saw`: what a failing check saw is printed
+after its name. -/
+def checkChecks (_ : Unit) : List Check :=
+  [{  name :=
+        "a check that ends with saw of what does not hold fails with what it saw after its name, and saw of what holds holds"
+      run := do
+        let failed ← failures [{ name := "it holds", run := saw false "x" }]
+        return failed == ["it holds (saw x)"] && (← saw true "x") }]
 
 /-- The directories a directory argument of the executable names: one, or
 several joined with `:`, as the editor reads its own
@@ -121,7 +142,8 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
       let elaborator :=
         sharing (← IO.mkRef none)
           (Config.Elaborate.elaborator
-            { sysroot, oleanDirs := oleanDirs oleanDir, imports := #[`Editor, `ConfigFixture] }
+            { sysroot, oleanDirs := oleanDirs oleanDir,
+              imports := #[`Editor, `ConfigFixture, `ExtensionFixture] }
             files)
       -- The one import of the base, made before any check runs.
       discard <| elaborator.base none #[]

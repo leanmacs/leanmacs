@@ -1,0 +1,30 @@
+# A fixture package of the layer imports check's real-graph fixture
+# (../lakefile.toml), used by that check alone: an implementation package
+# whose library module imports the interface package `greeting-api`, which
+# the rule allows, and the implementation package `greeting`, which it
+# refuses; and whose test library, a second library, has a module that
+# imports `greeting` too, which the rule refuses as well: it holds for a
+# package's test modules, and the check must read every library of a
+# package, not only its first. It is never built: `lake query` reads
+# headers alone, so its modules hold the imports and a doc comment and
+# nothing else.
+name = "greeting-reach"
+
+[[require]]
+name = "greeting"
+path = "../../packages/greeting"
+
+[[require]]
+name = "greeting-api"
+path = "../../packages/greeting-api"
+
+[[require]]
+name = "editor-core"
+path = "../../../lean"
+
+[[lean_lib]]
+name = "GreetingReach"
+
+[[lean_lib]]
+name = "GreetingReachTest"
+globs = ["GreetingReachTest.+"]

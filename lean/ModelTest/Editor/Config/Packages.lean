@@ -9,6 +9,7 @@ import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.Config.Stores
+import Editor.Extension
 import Editor.Invocation
 import Editor.Language
 import Editor.Layout
@@ -42,6 +43,13 @@ namespace ModelTest
 open Editor
 open Editor.Test
 
+/-- An extension point declared here for `everyKind`, whose value is named
+after the package that registers it. -/
+structure Tagged where
+  /-- Who registered it. -/
+  name : String
+  deriving TypeName
+
 /-- A package called `name` that registers one thing of every kind an owner
 holds, each named after `name`, and a style default for the category
 `<name>-pick`: a plain command `<name>-plain`, which makes the text `name`, a
@@ -49,8 +57,8 @@ command given its call, a store with a command over it and its codec
 across a restart, a job, a key
 binding of `keys` to the plain command, a name for the prefix `C-c`, a mode, an ex name, a
 face, a theme, a segment, a language, a compile contribution, a completion
-source, style and display, an at-point source and a use of it, and a
-menu. -/
+source, style and display, an at-point source and a use of it, a menu,
+and a value at an extension point (`Tagged`). -/
 def everyKind (name : String) (keys : String := "C-c p") : Package :=
   { name
     setup := do
@@ -77,6 +85,7 @@ def everyKind (name : String) (keys : String := "C-c p") : Package :=
       defineAtPoint (Completion.AtPoint.silent s!"{name}-at")
       useAtPoint s!"{name}-at"
       defineMenu { title := name }
+      Extension.add ({ name } : Tagged)
       useStyleFor s!"{name}-pick" s!"{name}-style" }
 
 /-- The package called `name` that registers the plain commands `commands`,
@@ -141,7 +150,7 @@ def packageChecks : List Check :=
         let (state, refused) := packaged #[one, two]
         pure
           (refused.isEmpty && one.owner == { name := "one" } && two.owner == { name := "two" } &&
-            state.registry.ownersByKind.size == 18 &&
+            state.registry.ownersByKind.size == 19 &&
             state.registry.ownersByKind.all
               (fun owners => owners.toList.eraseDups == [one.owner, two.owner]) &&
             state.registry.entries.map (·.owner.name) ==

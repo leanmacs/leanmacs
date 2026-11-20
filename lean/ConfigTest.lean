@@ -11,6 +11,7 @@ import ConfigTest.Editor.Evil
 import ConfigTest.Editor.Evil.TreeObjects
 import ConfigTest.Editor.Ex
 import ConfigTest.Editor.ExecuteCommand
+import ConfigTest.Editor.Extension
 import ConfigTest.Editor.Face
 import ConfigTest.Editor.Files
 import ConfigTest.Editor.Headless
@@ -37,7 +38,8 @@ Rust indent fixture the indent checks read, and the directory of the
 default config `mise run install` ships (`config/default`), which
 `defaultConfigChecks` read. It reads nothing from the
 environment or the working directory. It runs every check in `checks`, names
-the ones that failed, and exits non-zero if any did.
+the ones that failed, each with what it saw when it says (`saw`), and exits
+non-zero if any did.
 
 The checks themselves live in test modules that mirror the module they
 test, where ModelTest keeps the model counterpart where there is one: the
@@ -48,9 +50,10 @@ default config (`config/default`) is no Lean module, so its checks are in
 `ConfigTest/DefaultConfig.lean`, which mirrors none. A test module keeps the helpers only its checks use. Helpers that several test
 modules use are in small support modules under `ConfigTest/Support/`, each
 of one kind of fixture, and `ConfigTest.Check` holds the `Check` type, the
-`Context` every check is given, `failures`, `run` (handed `checks` by
-`main`) and `usage`. Everything is in the namespace `ConfigTest`, so a list
-is `ConfigTest.<name>Checks` whichever module holds it. This module keeps
+`Context` every check is given, `failures`, `saw`, their own checks
+(`checkChecks`), `run` (handed `checks` by `main`) and `usage`. Everything
+is in the namespace `ConfigTest`, so a list is `ConfigTest.<name>Checks`
+whichever module holds it. This module keeps
 only `checks`, which runs them in order, and `main`.
 
 The model tests (`ModelTest.lean` and `ModelTest/`) pin the decisions of the
@@ -104,8 +107,13 @@ show:
   are serialised, and a replaced config is not retained;
 - `jobChecks`: jobs from config through the host: a handler receives a job's
   result on the editor thread, a reload that installs cancels the old
-  config's jobs and a rejected one does not, and how each ending of a job is
-  reported;
+  config's jobs and a rejected one does not, how each ending of a job is
+  reported, and a join that cannot finish running out as working when the
+  editor thread's answer is slower than its patience; and, a guard on how
+  a script with a short patience is written rather than on the driver,
+  that such a script settles a real reload with a patience of its own,
+  so a reload slower than the join's patience still leaves the join to
+  run out as working;
 - `shippedChecks`: what the executable's hosts start with, the registry the
   packages of the core's Lake package make
   (`EditorCore.EditorPackage.packages`), each entry for the owner named
@@ -125,7 +133,10 @@ show:
   has released the focused buffer's text, the line the host prints for a
   program of the loop that is refused, and a window's close request with
   nothing unsaved ending the loop; and the headless mode's run disposing of
-  its collaborators once its loop has ended, whether it failed or not, and
+  its collaborators once its loop has ended, whether it failed or not, even
+  with the editor thread inside an event when a join or an advance runs
+  out, or with the loop slow to end at the script's end, which patience a
+  failure names (`Wait.failureIn`), and
   the executable's hosts' dispose removing the directory of the config
   files' module data once it was made;
 - `dispatchChecks`: keys through the host, with the test scheme and
@@ -216,6 +227,13 @@ show:
   workspace finder and `SPC p p` the project's workspace picker; each of its bindings names a
   registered command; and each prefix it binds under the leader has a
   prefix name (`Registry.prefixName?`);
+- `extensionChecks`: extension points (`Editor/Extension.lean`) with the
+  real elaborator, over the fixture `ExtensionFixture`, which declares an
+  extension point and a compiled package that reads it: a config
+  elaborated at runtime registers at that point, the compiled package
+  reads config's value typed and runs its interpreted program, and a
+  reload without the registration replaces config's value and keeps the
+  package's;
 - `indentChecks`: `=` and the indented new lines through a host of the Vim
   scheme that ships, over the library's Rust grammar: `gg=G` on the
   mangled Rust indent fixture (`tests/syntax/rust/indent.rs`, read from the
@@ -325,8 +343,8 @@ open Editor
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
-  lakefileChecks () ++ lakefileEntryChecks () ++ packageSetEditChecks () ++ directoryChecks () ++
-    moduleFilesChecks () ++
+  checkChecks () ++ lakefileChecks () ++ lakefileEntryChecks () ++ packageSetEditChecks () ++
+    directoryChecks () ++ moduleFilesChecks () ++
     hostChecks context ++
     threadChecks context ++
     jobChecks context ++
@@ -362,6 +380,7 @@ def checks (context : Context) : List Check :=
     hintChecks context ++
     keyHintChecks context ++
     defaultConfigChecks context ++
+    extensionChecks context ++
     -- Last, the checks whose config imports `Lean`: the base the checks
     -- share then holds it, and every environment made from that base
     -- after them costs a few times more.

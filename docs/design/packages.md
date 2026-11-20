@@ -141,6 +141,8 @@ built from one:
 | `editorShipped` | a package, the set | For `lake query`: what an app bundle ships of the set, built: one line `file<TAB><source><TAB><place>` a file (the core's `Editor` and `EditorCore` libraries and each other package's libraries but its tests, with their sources and every file Lake wrote; the lakefiles; the core's glue; the Rust archive), and one `oleans<TAB><place>` a `.olean` directory, for `tools/stage-bundle.sh` ([lean-runtime.md](lean-runtime.md), "The app ships the toolchain") |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
 | `editorPackageImports` | a package, the set | For `lake query`: each direct import of a core module by a module of those packages, one a line, with the module's kind (`library`, `test`, `linked`, `linked-test`); what the package imports check reads |
+| `editorLayerImports` | a package, the set | For `lake query`: each direct import of a workspace module by a module of the core or of those packages, one a line, with the layer of the importing and the imported package (`core`, `interface`, `implementation`); what the layer imports check reads |
+| `editorPackageGraph` | a package, the set | For `lake query`: the same packages as `editorPackages`, one a line, with each one's layer, directory and the packages of the set it requires; what the pre-commit hook decides over (`tools/hook-targets.sh`) |
 | `editorRustCrates` | a package, the set | For `lake query`: the set's package crates, one a line ("Rust in a package", below) |
 | `editorRustCrate` | a package, the set | For `lake query`: writes the crate generated from the set's package crates and prints its directory; builds nothing |
 | `editorRust` | a package, the set | The set's one Rust archive: the generated crate, built, or the core's (`rustlib`) for a set with no package crate |
@@ -453,8 +455,9 @@ globs = ["Config.+"]
   editors with that default and requires config to load (`ffi-test
   window-host-direct`), and checks each record: the default set's names
   three directories, the core's, then `shipped-themes`' and `compile`'s,
-  and the fixture set's seven, the core's, `greeting`'s, `greeting-loud`'s,
-  `echo`'s, `shipped-themes`', `compile`'s and `word-count`'s, each
+  and the fixture set's eight, the core's, `greeting-api`'s, `greeting`'s,
+  `greeting-loud`'s, `echo`'s, `shipped-themes`', `compile`'s and
+  `word-count`'s, each
   holding its package's modules.
 - **A directory given on the command line is a search path**, one
   directory or several joined with `:`, and outside a bundle the recorded
@@ -794,20 +797,23 @@ over the process service, a major mode, ex names and contributions.
 
 ### The fixture set
 
-Three packages and a set under `tests/packages/`, used by tests alone. They
+Four packages and a set under `tests/packages/`, used by tests alone. They
 showed the path a default package and a user's package take before any
 feature moved, and they still show what the default package does not: a
 package that requires another package, and a linked test that starts a
-host. The set requires the default set, so its editor holds the default
-packages too, and the example package of the guide to writing a package,
+host, and an interface package with its fake and its contract check
+([extension-points.md](extension-points.md), "Three layers"). The set
+requires the default set, so its editor holds the default packages too,
+and the example package of the guide to writing a package,
 `docs/packages/word-count/`, so the gate's package steps cover the code the
 guide quotes.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `echo`, then the default set, and through it `shipped-themes` and `compile`, then `word-count` |
-| `tests/packages/greeting/` | The Lake package `greeting`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean`), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
-| `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting` and registers `greeting-reply` again with another text; its test driver and the fixture `tests/headless/reply` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it `shipped-themes` and `compile`, then `word-count` |
+| `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
+| `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
+| `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
 | `tests/packages/echo/` | The Lake package `echo`, which holds Rust ("Rust in a package", below): its crate `echo-service` (`rust/`), its glue (`ffi/glue.c`), the port of its service with a pure model, a contract and the Rust-backed binding, its test driver (`EchoTest/Model.lean`) and its linked test (`EchoTest/Linked.lean`). It registers no package |
 | `docs/packages/word-count/` | The Lake package `word-count`, the example the guide to writing a package ([writing-a-package.md](../packages/writing-a-package.md)) quotes: the command `word-count` (`WordCount.lean`), its entry module, its test driver (`WordCountTest/Model.lean`, which runs `WordCountTest/WordCount.lean`) and three fixtures: `count`, the command compiled in; `as-config`, the same code as a config file; and `from-config`, a config that imports the package's module. It has no linked test |
 
@@ -1213,10 +1219,16 @@ The core's API is the set of core modules a package may name in an `import`
 line. It is defined by a rule over the module map, and each row of the map
 says which side of the rule its modules are on.
 
-This is the rule as built. As the remaining features move out it becomes
-three layers, the core, interface packages and implementation packages,
-with no package importing an implementation package
-([extension-points.md](extension-points.md), "Three layers").
+This is the rule of what a package imports of the core. Beside it holds
+the three-layer rule ([extension-points.md](extension-points.md), "Three
+layers"), built in features-as-packages phase 1: the core imports no
+package, and no package, interface or implementation, imports a module of
+an implementation package; a package may import interface packages. A
+package is an interface package when its lakefile declares
+`keywords = ["editor-interface"]`, and an implementation package
+otherwise. The rule holds for every module of a package, its tests
+included. `shipped-themes` and `compile` are implementation packages and
+import the core alone.
 
 - **A package may import any core module that is not internal.** The rule
   is about `import` lines. Lean's imports are transitive, so a module an
@@ -1320,6 +1332,14 @@ with no package importing an implementation package
   API: a core module that is neither internal nor a test double is part
   of it. A change to the rule changes the script, this section and the
   lines the gate holds the script to (`tests/package-imports/`).
+- **The layer imports check enforces the three-layer rule**
+  (`tools/layer-imports-check.sh`, in `mise run ffi-test`;
+  [the-gate.md](../dev-practices/the-gate.md), "The layer imports check").
+  It asks Lake for each direct import between workspace modules by a
+  module of the core or of a set's packages, with the layer of each side
+  (`lake -d <set dir> query :editorLayerImports`), and refuses a core
+  module importing any package and a package importing an implementation
+  package.
 
 Checked against the graph at `6ba99de5`, before either feature moved:
 every core module the two features' modules imported directly was
@@ -1806,7 +1826,7 @@ of `echo` outside the repository is refused with its reason
 
 ## The module map
 
-Every module under `lean/Editor/`, 303 of them
+Every module under `lean/Editor/`, 304 of them
 (`find lean/Editor -name '*.lean' | wc -l`; 254 at `6ba99de5`, phase 4
 added `Editor.Main`, phase 5 added `Editor.Themes.Picture` and moved
 the three modules of the shipped palettes out, phase 6 moved the five
@@ -1814,9 +1834,10 @@ of the compile mode out and added the 18 of the test kit, phase 7 added
 six to the config session, and the merge of
 `main` that brought the working sets, project search, the jump list and
 marks added 19, session-restore phase 1 added six, and phase 2 six more,
-the store codec and five of the reconciler's records and formats), is
+the store codec and five of the reconciler's records and formats, and
+features-as-packages phase 1 added `Editor.Extension`), is
 **core** or part of a **feature that could become a package**. The counts
-below add up to 303: 210 core and 93 in 22 features.
+below add up to 304: 211 core and 93 in 22 features.
 
 - **Core** is what a host with no packages needs to start and run: the
   ports with their models and bindings, the state, the scene and display
@@ -1857,7 +1878,7 @@ One row covers modules that share a class and a side of the import rule.
 | The editor API and what is proved of it: `Editor.Api`, `.Api.Theorems`, `Editor.UndoTree`, `.UndoTree.Theorems` | 4 | core | yes |
 | The composite port and a command: `Editor.Command`, `.Call`, `.Control`, `.Registry`, `.Append`, `Editor.Program` | 6 | core | yes |
 | The ports: `Editor.Clipboard`, `Editor.Diff`, `.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Process`, `.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 14 | core | yes |
-| The setup port, packages and stores: `Editor.Setup`, `Editor.Package`, `Editor.Store`, `.Store.Codec`, `Editor.Value`, `Editor.Json` | 6 | core | yes |
+| The setup port, packages, extension points and stores: `Editor.Setup`, `Editor.Package`, `Editor.Extension`, `Editor.Store`, `.Store.Codec`, `Editor.Value`, `Editor.Json` | 7 | core | yes |
 | The state: `Editor.State`, `.State.Request`, `Editor.Event`, `Editor.DisplayRules`, `Editor.Floating`, `Editor.Layout`, `Editor.GeneratedView`, `Editor.ExcerptView`, `Editor.Gutter`, `Editor.Workspace` | 10 | core | yes |
 | Places, jump lists and marks, which the state holds and the loop follows through edits: `Editor.JumpList`, `Editor.Marks`, `.Marks.Follow`, `Editor.Jumps` | 4 | core | yes |
 | The scene and display types: `Editor.Scene`, `Editor.Scroll`, `Editor.Face`, `.Face.Vocabulary`, `Editor.Appearance`, `Editor.Highlight`, `Editor.TabBar`, `Editor.ModeLine`, `Editor.Menu` | 9 | core | yes |

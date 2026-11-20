@@ -1,0 +1,6 @@
+greeting-api	interface	-
+greeting	implementation	greeting-api
+greeting-loud	implementation	greeting greeting-api
+echo	implementation	-
+shipped-themes	implementation	-
+compile	implementation	-

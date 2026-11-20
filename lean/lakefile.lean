@@ -61,6 +61,14 @@ imports its `.olean` again at runtime as part of the base config is
 elaborated on. -/
 lean_lib ConfigFixture
 
+/-- An extension point and a compiled package that reads it
+(`ExtensionFixture.lean`), for the checks that config elaborated at runtime
+registers at a compiled package's extension point. `config-test` imports
+it, so it is linked into that executable, and the same executable imports
+its `.olean` again at runtime as part of the base config is elaborated
+on. -/
+lean_lib ExtensionFixture
+
 /-- Whether the build is for Linux, read from the target triple of the Lean
 toolchain Lake runs on (`aarch64-unknown-linux-gnu`): `System.Platform` has a
 flag for macOS and for Windows and none for Linux. -/
@@ -1350,6 +1358,85 @@ package_facet editorPackageImports pkg : Array String := do
           return (Job.collectArray lines).map (·.flatten)
       jobs := jobs.push job
   return (Job.collectArray jobs).map (·.flatten)
+
+/-- The layer of the Lake package `dep` in the three-layer import rule
+(`docs/design/extension-points.md`, "Three layers"): `core` for this
+package, `interface` for a package whose lakefile declares the keyword
+`editor-interface` (`keywords = ["editor-interface"]`, Lake's own package
+key), and `implementation` for every other package, so a misspelt keyword
+makes a package more refused, never less. -/
+def layerOf (dep : Package) : String :=
+  if dep.keyName == __name__ then "core"
+  else if dep.keywords.contains "editor-interface" then "interface" else "implementation"
+
+/-- The direct imports of the modules of the core and of every package of a
+set, for the layer imports check (`tools/layer-imports-check.sh`;
+`lake -d <set dir> query :editorLayerImports`;
+`docs/dev-practices/the-gate.md`, "The layer imports check"). For the core
+and each package a gate step runs over (`editorPackages`), each module of
+its libraries and each module of a package of the workspace it imports
+directly, its own package's included, one line, its fields separated by
+tabs: the package's name and layer (`layerOf`), the importing module, the
+imported module's package and layer, and the imported module. A module of
+the toolchain is no module of the workspace, and is not listed. The imports
+within one package are listed so that the check can see the core's modules
+were walked: every core module that imports another core module gives a
+line whose importer's layer is `core`. A module two of a package's
+libraries hold is listed once. It reads each module's header, as Lake does
+to resolve imports, and builds nothing. -/
+package_facet editorLayerImports pkg : Array String := do
+  let ws ← getWorkspace
+  let mut jobs : Array (Job (Array String)) := #[]
+  for dep in setPackages ws pkg do
+    if !dep.remoteUrl.isEmpty || dep.leanLibs.isEmpty then
+      continue
+    let name := dep.baseName.toString (escape := false)
+    let layer := layerOf dep
+    for lib in dep.leanLibs do
+      let job ←
+        (← lib.modules.fetch).bindM fun mods => do
+          let lines ←
+            mods.mapM fun mod => do
+              (← mod.imports.fetch).mapM fun imports =>
+                return imports.map fun imported =>
+                    s!"{name}\t{layer}\t{mod.name}\t{imported.pkg.baseName.toString (escape := false)}\t{layerOf imported.pkg}\t{imported.name}"
+          return (Job.collectArray lines).map (·.flatten)
+      jobs := jobs.push job
+  return (Job.collectArray jobs).map fun lines => Id.run do
+    let mut seen : Std.HashSet String := {}
+    let mut kept : Array String := #[]
+    for line in lines.flatten do
+      unless seen.contains line do
+        seen := seen.insert line
+        kept := kept.push line
+    return kept
+
+/-- The packages of a set as a graph, for the pre-commit hook
+(`tools/hook-targets.sh`; `lake -d <set dir> query :editorPackageGraph`;
+`docs/dev-practices/the-gate.md`, "The pre-commit hook"). For each package
+a gate step runs over (`editorPackages`), in the same order, each after the
+packages it requires, one line, its fields separated by tabs: its name, its
+layer (`layerOf`), its directory, and the names of the packages it requires
+directly that are themselves such packages, separated by spaces, or `-`
+when there is none (the core is never one). It builds nothing. -/
+package_facet editorPackageGraph pkg : Array String := do
+  let ws ← getWorkspace
+  let isGatePackage (dep : Package) : Bool :=
+    dep.keyName != __name__ && dep.remoteUrl.isEmpty && !dep.leanLibs.isEmpty
+  let mut lines : Array String := #[]
+  for dep in setPackages ws pkg do
+    unless isGatePackage dep do
+      continue
+    let required :=
+      dep.depConfigs.filterMap fun cfg =>
+        match ws.findPackageByName? cfg.name with
+        | some req =>
+          if isGatePackage req then some (req.baseName.toString (escape := false)) else none
+        | none => none
+    let requires := if required.isEmpty then "-" else " ".intercalate required.toList
+    lines :=
+      lines.push s!"{dep.baseName.toString (escape := false)}\t{layerOf dep}\t{dep.dir}\t{requires}"
+  return Job.pure lines
 
 /-- The checks of the boundary with the Rust library (`FfiTest.lean`), linked
 exactly like the editor (`linkAsEditor`): `supportInterpreter` exports the

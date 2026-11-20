@@ -5,8 +5,17 @@
 # `config/` is elaborated on the modules the bundle holds. What it prints
 # must be exactly `expected`.
 
+# This settle waits up to 90 s, three times the default 30 s. It is the
+# first reload of bundle-test's chain: a cold, interpreted elaboration of a
+# config that imports `Lean` from about 1.3 GB of module files just copied
+# into the staged bundle. It takes under a second on a desktop (0.7 to 1.3 s
+# at 34b68158 and at dcbe3ebf alike) and passed well inside 30 s on CI
+# before b4a4eaf4. Since then, on the macos-26 runner, it overlaps
+# ffi-test's cargo build and cargo-deny steps, and it ran out at 30 s in
+# runs 44751682483 and 44757431162. A reload that never ends still fails
+# here, naming this line and the 90000 ms.
 reload
-settle
+settle 90000
 
 # `squares` is config's: it runs interpreted, calling compiled code of
 # `Init` and of `Editor`. Text 0 is the scratch buffer's.

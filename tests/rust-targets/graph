@@ -1,0 +1,8 @@
+a	/repo/crates/a	-
+b	/repo/crates/b	a
+c	/repo/crates/c	b
+ab	/repo/crates/ab	-
+d	/repo/crates/d	-
+e	/repo/crates/d/e	d
+pkg-crate	/repo/tests/packages/p/rust	a
+outside	/elsewhere/outside	-

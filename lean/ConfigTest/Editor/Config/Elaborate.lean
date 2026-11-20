@@ -236,12 +236,13 @@ def elaboratorChecks (context : Context) : List Check :=
             (← found "Lean.Data.NoSuchModule") == .absent &&
             (← found "lake") == .absent },
     { name :=
-        "a module the base holds and a module of Lean in the toolchain are linked; a module of the toolchain outside Init, Std and Lean, a module of Lean that is not there, and a binding module the base does not hold are not"
+        "a module the base holds, each fixture among them, and a module of Lean in the toolchain are linked; a module of the toolchain outside Init, Std and Lean, a module of Lean that is not there, and a binding module the base does not hold are not"
       run := do
         let base ← context.elaborator.base none #[]
         let linked (module : String) : IO Bool :=
           return (← context.elaborator.linked base module).isFound
-        return (← linked "Editor") && (← linked "ConfigFixture") && (← linked "Lean.Data.Json") &&
+        return (← linked "Editor") && (← linked "ConfigFixture") && (← linked "ExtensionFixture") &&
+            (← linked "Lean.Data.Json") &&
             (← linked "Std") &&
             !(← linked "Lake") &&
             !(← linked "Lean.NoSuchModule") &&

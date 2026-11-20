@@ -14,7 +14,9 @@ every package of the fixture set, the default packages among them ("The
 package steps", below); the check
 that the host's modules import no feature module, the
 check that the core imports no module of a feature that moves out of it,
-the check that a package imports only the core's API, the checks of the Lean/Rust boundary, the contract checks against
+the check that a package imports only the core's API, the check of the
+three-layer import rule (the core imports no package, and no package
+imports an implementation package), the checks of the Lean/Rust boundary, the contract checks against
 the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); the headless mode run from a staged app
 bundle (`mise run bundle-test`); a user's package set built, installed and
@@ -23,7 +25,9 @@ user-sets-test`); the C format check; and the workflow lint
 (`mise run workflow-lint`: actionlint, zizmor and the structural check of
 the CI workflow). `hk check` runs the same task, and CI runs it, unchanged,
 on `macos-26` and on `ubuntu-24.04` for every push and pull request
-([`ci.md`](ci.md)).
+([`ci.md`](ci.md)). The pre-commit hook runs less: only the steps whose
+files are staged, and of the Lean and Rust steps only what the staged
+change reaches ("The pre-commit hook", below).
 
 The gate opens no window, makes no surface on one, reads and writes no
 clipboard, and needs neither a display nor Docker. Every window it runs is
@@ -220,8 +224,10 @@ properties. The crate's `clippy.toml` refuses the clocks, every file of
 the disk and both adapters' constructors in all of it. The searcher's real
 adapter, over `triple_accel` (`crates/editor-fuzzy-triple-accel`), is held
 to that contract, which sweeps generated texts from a fixed seed, and to
-its own two cases: one substitution is found with one error, and a
-pattern with no span near enough reports none. `mise run deny` holds that
+its own three cases: one substitution is found with one error, a
+pattern with no span near enough reports none, and an empty text reports
+the empty span exactly when the whole pattern is within the errors
+allowed. `mise run deny` holds that
 only that adapter depends on the library, and only `editor-ffi` on the
 adapter, whose C function that locates a pattern has one wiring test
 beside the ranking's. `mise run deny` holds that only the
@@ -1249,10 +1255,10 @@ package-set build recorded beside it (`<editor>.oleans`;
 editor reads it at. It must exit 0, which it does only when that config
 loaded, so the default directory holds the modules config is elaborated
 on. The gate runs it for the default set's editor and for the fixture
-set's, and then requires the fixture set's record to name seven
-directories in order, the core's, `greeting`'s, `greeting-loud`'s,
-`echo`'s, `shipped-themes`', `compile`'s and `word-count`'s, each holding
-its package's modules.
+set's, and then requires the fixture set's record to name eight
+directories in order, the core's, `greeting-api`'s, `greeting`'s,
+`greeting-loud`'s, `echo`'s, `shipped-themes`', `compile`'s and
+`word-count`'s, each holding its package's modules.
 The editor searches every recorded directory, after any its command line
 gives, which is a search path, directories joined with `:`
 (`lean/Editor/ModuleLookup.lean`).
@@ -1713,8 +1719,88 @@ graph.
   `tests/empty-set` holds no package, and the check must exit 2 and say
   there is nothing to check.
 - **What it does not claim.** It checks imports of the core's modules. A
-  package's imports of another package's modules are Lake's to resolve
-  from the `require`s, and no rule limits them yet.
+  package's imports of another package's modules are the layer imports
+  check's (below).
+
+## The layer imports check
+
+```sh
+cd lean && sh ../tools/layer-imports-check.sh ../tests/packages
+```
+
+Part of `mise run ffi-test`, after the package imports check. It holds the
+three-layer rule of [extension-points.md](../design/extension-points.md),
+"Three layers", on Lake's module graph: anything moved out of the core can
+be left out of a set or replaced, so nothing imports an implementation
+package's modules.
+
+| Importing module | Imported module | |
+|---|---|---|
+| any | a module of its own package | allowed |
+| a module of the core | a module of any package | refused: `the core imports no package` |
+| a module of any package | a module of an implementation package | refused: `a module of an implementation package, which no package imports` |
+| a module of any package | a module of the core or of an interface package | allowed (what of the core is the package imports check's business) |
+
+- **A package declares its layer in its lakefile**, with Lake's package
+  key `keywords`: `keywords = ["editor-interface"]` makes it an interface
+  package. Every other package is an implementation package, so a missing
+  or misspelt keyword makes a package more refused, never less. The core
+  is the core's Lake package. No list is kept by hand.
+- **It asks Lake and reads no source text.** `lake -d <set dir> query
+  :editorLayerImports`, a facet the core's lakefile defines, prints one
+  line for each direct import, by a module of a library of the core or of
+  a package the gate's steps run over, of a module of a package of the
+  workspace, its own package's included: `<package> <layer> <module>
+  <imported package> <imported layer> <imported module>`, tab-separated.
+  Modules of the toolchain are no workspace modules and are not listed.
+  Lake reads the headers and builds nothing.
+- **It holds for every module of a package**, its tests and its linked
+  test included: a test uses the interface package's fake, never another
+  feature's implementation.
+- **Exit 0** when every import is allowed, printing nothing. **Exit 1**
+  after printing each refused import, one a line:
+  `layer-imports-check: <package> (<layer>): <module> imports <imported
+  module> of <imported package> (<imported layer>): <reason>`.
+- **It refuses to pass over nothing.** A command line it does not take, a
+  query Lake fails, a line that is not six fields, a layer it does not
+  know and no line at all are exit 2, and so is input in which no module
+  of the core is an importer: every set requires the core, so the facet
+  did not walk the core's modules, and the core's half of the rule would
+  hold of nothing. The within-package lines are listed for that reason:
+  every core module that imports another gives a line whose importer is
+  the core.
+- **The gate holds the rule itself to fixtures** (`tests/layer-imports/`).
+  `--lines lines`, written by hand with a line for each branch of the
+  rule, must exit 1 and print exactly `expected`. Among its refused lines
+  are a core module importing a module of `shipped-themes`, one of
+  `compile` and one of an interface package: the core's lakefile requires
+  no package, so no real graph can show that refusal. `--lines bad-layer`
+  must exit 2 naming the layer it does not know, and `--lines no-core`,
+  all allowed lines with no core importer, must exit 2 saying the core is
+  not checked. And on a real graph: the set `tests/layer-imports/` holds
+  the fixture set and the package `greeting-reach`, never built, whose
+  library module imports `GreetingApi` of the interface package
+  `greeting-api` and `Greeting` of the implementation package `greeting`,
+  and whose test library, a second library, has a module that imports
+  `Greeting` too. The check on it must exit 1 and print exactly
+  `graph-expected`, the two refused imports: the second shows the rule
+  holds for test modules and the facet reads every library of a package,
+  not only its first.
+- **The facet is seen to walk the core.** `ffi-test` counts the lines of
+  `lake -d ../packages query :editorLayerImports` whose importer's layer
+  is `core`, and requires more than none.
+- **The sets it is run over**, each required to pass: the default set,
+  `packages/`, so `shipped-themes` and `compile` import only the core;
+  the fixture set, `tests/packages/`, where `greeting-loud` reaches
+  `greeting`'s command through `greeting-api`; the user-side link's set,
+  `tests/user-link/`; and `tests/empty-set/`, the core alone.
+- **Time.** About two and a half seconds a set on a developer's Mac, most
+  of it Lake reading the core's headers (some 5,700 lines are the core's
+  own imports); the script skips the imports within one package in one
+  `awk` pass, and its own time is a tenth of a second.
+- **What it does not claim.** It checks `import` lines. A `require` of an
+  implementation package, as `greeting-loud`'s of `greeting`, which orders
+  registration, is not refused yet (the task `layer-requires-check`).
 
 ## The package steps
 
@@ -1741,11 +1827,11 @@ package's tests are by convention are in
 
 - **The gate gives every step the fixture set**, `tests/packages/`, which
   requires the fixture package `greeting-loud`, through it `greeting`, the
-  fixture package `echo`, which holds Rust, the default set, and the
-  example package of the guide to writing a package, `word-count`
-  (`docs/packages/word-count/`). So the default packages, `shipped-themes`
-  and `compile`, and the code the guide quotes are tested, built,
-  format-checked and run through it. `run`
+  fixture interface package `greeting-api`, the fixture package `echo`,
+  which holds Rust, the default set, and the example package of the guide
+  to writing a package, `word-count` (`docs/packages/word-count/`). So the
+  default packages, `shipped-themes` and `compile`, and the code the guide
+  quotes are tested, built, format-checked and run through it. `run`
   is also given the default set itself, `packages/`, so those packages'
   linked tests and fixtures hold of the default set's editor, the one
   that is shipped.
@@ -1783,7 +1869,7 @@ package's tests are by convention are in
   line, `compile linked test: 7 checks passed`, its fixtures `config`,
   `ex-names` and `shipped-formats`, the three fixtures of `word-count`,
   `as-config`, `count` and `from-config`, and `package-set: ran 4 linked
-  tests and 12 headless fixtures over 6 packages`; and over the default set, the
+  tests and 12 headless fixtures over 7 packages`; and over the default set, the
   two default packages' linked tests and seven fixtures and `package-set:
   ran 2 linked tests and 7 headless fixtures over 2 packages`. A fixture or a linked test that is
   renamed, moved or no longer found by the naming convention fails that
@@ -1834,8 +1920,23 @@ package's tests are by convention are in
   under a package's `tests/headless/` with no `config/`, no `script` or no
   `expected` is exit 2, naming what is missing, and so is a set whose
   packages hold no linked test and no fixture at all.
+- **`--only <package>`**, given once for each package and before the
+  step, runs the step over the named packages of the set alone, in the
+  set's order; `build` still builds the set's editor first. It is what the
+  pre-commit hook runs for a change that reaches only some packages ("The
+  pre-commit hook", below). A name that is no package of the set is exit 2,
+  naming it. `run` over the named packages still refuses to run nothing,
+  unless `--allow-empty-run` is given too, as the hook does for a change
+  to an interface package such as `greeting-api`, which has no linked test
+  and no fixture; the gate's own steps run over every package and never
+  pass it, and the script refuses it without `--only`. `lean-test` shows
+  `--only greeting test` testing `greeting` alone and `--only nosuch`
+  refused; `ffi-test` shows `--only greeting-api run` refused and, with
+  `--allow-empty-run`, printing `package-set: ran 0 linked tests and 0
+  headless fixtures over 1 package`.
 - **The fixture's own checks.** `greeting`: three checks in its driver
-  (`GreetingTest/Greeting.lean`); a linked test
+  (`GreetingTest/Greeting.lean`), and the contract check of
+  `greeting-api`, which it implements; a linked test
   (`GreetingTest/Linked.lean`) with a check of each kind the core has an
   executable for, one that reads its text back from the Rust library, as
   `ffi-test` does, and one that starts the headless host on the real
@@ -1843,8 +1944,11 @@ package's tests are by convention are in
   the package's command and sees the key run it, as `config-test` does;
   and the fixture
   `hello`, where its command runs on the fixture set's editor.
-  `greeting-loud`: three checks in its driver and the fixture `reply`,
-  which shows it registered after `greeting`. `echo`: in its driver
+  `greeting-loud`: two checks in its driver, on greeting-api's fake, and
+  the fixture `reply`, which shows it registered after `greeting`.
+  `greeting-api`: four checks in its driver, that it declares
+  `greeting-reply`, that its fake keeps its contract, and that the
+  contract refuses a package that lacks the name or misspells it. `echo`: in its driver
   (`EchoTest/Model.lean`), the three vectors of its pure CRC-32 and the
   seven properties of its port's contract against the pure model, and one
   check of the model's own; in its linked test (`EchoTest/Linked.lean`),
@@ -1957,7 +2061,11 @@ trap and runs its editor as the installed app runs it
    default packages: `shipped-themes` and `package-names` of the package
    `shipped-themes`, and `config` of the package `compile`. Each must
    print exactly its `expected`, which it can only from the modules the
-   bundle's record names.
+   bundle's record names. The bundle fixture's first settle waits up to
+   90 seconds (`settle 90000`), not the default 30: it is the chain's cold
+   first reload, of a config that imports `Lean` from module files just
+   copied into the bundle, and on the macOS runner it overlaps
+   `ffi-test`'s cargo steps (the script's comment has the runs).
 4. **The generated lakefile.** `headless --generate` on a copy of
    `tests/headless/generate`, whose config directory holds `init.lean`
    alone, must print exactly its `expected`, write a `lakefile.toml` equal
@@ -2015,7 +2123,8 @@ trap and runs its editor as the installed app runs it
    must be unchanged, no core may be cloned under the config's
    `.lake/packages`, and the launcher's probe must name version 2.
 
-It has a time limit of its own, 600 seconds. On macOS (2026-11-20, Apple
+It has a time limit of its own, 600 seconds, for the toolchain's copy, the
+builds and that settle, which can run out and say so well within it. On macOS (2026-11-20, Apple
 M5 Max) the stage takes about 5 to 14 s, the default set's build from the
 bundle about 7 s, the two builds of step 8 about 9 s, and the whole test
 about 30 s.
@@ -2096,6 +2205,178 @@ no fallback.
 
 Measured on macOS arm64 (2026-11-20): about 17 s, cold fixture packages
 included; A's three processes about 13 s.
+
+## The pre-commit hook
+
+```sh
+hk run pre-commit
+```
+
+The pre-commit hook (`hk.pkl`, `pre-commit`) runs only the steps whose
+files are staged: `fmt`, `rust` and `c` for Rust and C, `workflows` for
+the CI workflow, and `lean` for what Lake builds. Within the `lean` step,
+what runs is decided from the staged paths and Lake's package graph by
+`tools/hook-targets.sh` (`lake -d ../tests/packages query
+:editorPackageGraph`: each package of the fixture set with its layer, its
+directory and the packages of the set it requires), and run by
+`tools/lean-hook.sh`. The decision itself, which nodes of a graph the
+staged paths reach, is one tool both hooks share,
+`tools/graph-targets.sh`: `hook-targets.sh` and the Rust hook's
+`rust-targets.sh` only choose the paths their step reads and turn their
+tool's graph into its lines (a name, a directory, whether a change to the
+node reaches the nodes that require it, and what it requires). The Lean
+hook's dispatcher prints the decision first: `lean-hook: core`,
+`lean-hook: packages <names>` or `lean-hook: nothing`. The full gate is
+not targeted: `hk check`, `mise run ci` and CI run every check, whatever
+changed. **Targeting may skip a check at commit time; the gate never
+does.**
+
+| A commit that stages | Runs in the `lean` step |
+|---|---|
+| Files inside one implementation package's directory (`packages/compile/`, `tests/packages/greeting/`) | That package's checks alone (`lean-packages`, below) |
+| Files inside an interface package's directory (`tests/packages/greeting-api/`) | That package's checks and those of every package that requires it, directly or through any other package, an implementation package included: Lake puts every package a package requires, directly or not, in its workspace, so the package can import the interface, which the layer imports check allows. No other package's |
+| Rust or C inside a package's directory (`tests/packages/echo/rust/`) | That package's Lean checks, as above; the `rust` or `c` step runs as for any Rust or C |
+| Any other file a Lean step reads: the core (`lean/`), a set's own lakefile or manifest, the core's fixtures under `tests/`, `config/`, `mise.toml`, Rust or C outside a package, the hook's own tools (`tools/hook-targets.sh`, `tools/graph-targets.sh`, `tools/lean-hook.sh`, `tools/package-set.sh`) | The core's whole chain, `mise run lean-fmt` and `mise run ffi-test`, which run every package's checks too, as before the hook was targeted |
+| Only files no Lean step reads: `docs/`, plans and notes, other tools | No Lean step: no file matches the step's glob |
+
+A path inside two packages' directories belongs to the inner one. A
+commit that stages several kinds runs the union, and any path that
+reaches the core runs the core's chain. A package added under
+`packages/` or `tests/packages/` and required by its set is targeted with
+no edit to `hk.pkl`: the graph is the only list of packages, and
+`ffi-test` requires a file in the directory of every package of the
+fixture set to reach that package, so a package Lake lists that the hook
+would not target fails the gate.
+
+**What a package's checks are** (`mise run lean-packages`, with the names
+in `LEAN_HOOK_PACKAGES`, which runs `tools/lean-packages.sh`; never part
+of `ci`), in order: the toolchain
+check; over the named packages of the fixture set (`tools/package-set.sh
+--only`, "The package steps", above), the `test` step, with the `cargo`
+that fails first on the `PATH`; the `build` step, which first builds the
+set's editor, compiling whatever of the core and of the other packages is
+stale and linking, then the package's default targets under its linters
+and its linked test; the `fmt` step; the layer and package imports checks
+over the set, two Lake queries of about a second, kept because the
+targeting is sound only while no package imports an implementation
+package; the `run` step, with `--allow-empty-run` so an interface package,
+which has no linked test and no fixture, passes; and, for a named package
+that is also a default package, the default set's editor and the same
+`run` over it.
+
+**What a package's checks leave out**: the core's model tests (`lake
+test` in `lean/`), the build of the core's own targets (`ffi-test`,
+`config-test`, `contract-test`), lean-fmt over the core, every check in
+`ffi-test` that is the core's (the host, core and package imports checks
+on the default set, the Rust bans check, the FFI, contract and config
+tests, the core's headless fixtures and the restart entries), the editors
+of `tests/empty-set` and `tests/user-link`, the launcher, and every other
+package's test, build, format check and run.
+
+**Edges the targeting accepts**, each caught by the full gate:
+
+- `greeting-loud` requires the implementation package `greeting` only to
+  register after it, and its fixture `reply` relies on `greeting`
+  registering the command it calls. A change to `greeting` alone runs
+  `greeting`'s checks, not `reply`.
+- The core's headless fixtures run on the default set's editor, which
+  links `shipped-themes` and `compile`. A change to one of those packages
+  does not rerun them at commit time.
+
+**Pinned by the gate.** `lean-test` runs the shared decision over a graph
+written by hand (`tests/graph-targets/graph`): a node that propagates
+reaching every node that requires it, directly or through one that does
+not propagate; a node that does not, itself alone; a nested node, a
+prefix of another's name, the fallback, a union, and the same reach
+when a node that does not propagate is named before one whose walk
+passes through it (`order`, here and in tests/hook-targets/), each case's
+`expected` exactly; and refuses each graph under
+`tests/graph-targets/bad/` with exit 2. It runs the Lean adapter over a graph
+written by hand (`tests/hook-targets/graph`, its packages under `/repo`):
+each case under `tests/hook-targets/cases/` gives the staged paths and the
+exact decision, for one implementation package, an interface package
+(reaching the packages that require it through an interface package and
+through an implementation package), a package nested in another's directory, a
+package whose name is a prefix of another's, the core, the core with a
+package, docs alone, a set's lakefile and manifest, a core fixture, the
+hook's tools, Rust outside and inside a package, a package new under
+`packages/`, and two packages; and each graph under
+`tests/hook-targets/bad/` must be refused with exit 2. `ffi-test` requires
+the real graph of the fixture set to be `tests/hook-targets/fixture-set-graph`
+in its names, layers and requires, a change to `greeting-api`'s module to
+reach exactly `greeting-api`, `greeting` and `greeting-loud` when Lake is
+asked, and every package of the set to be targeted.
+
+The dispatchers are pinned too, with `--dry-run`, which prints each
+command instead of running it. `lean-test` runs `tools/lean-hook.sh` over
+the hand-written graph for one implementation package, an interface
+package, the core and docs alone, and requires exactly the decision and
+the commands in each case's `hook-expected`; and `tools/lean-packages.sh`
+for `compile` and `greeting` together and for `greeting` alone, requiring
+exactly `tests/hook-targets/lean-packages/compile-expected`, whose last
+two commands build the default set's editor and run `compile` over it,
+and `greeting-expected`, which never names the default set.
+
+**Time, before and after** (2026-11-20, an Apple M5 Max, 18 cores, 128 GB; `hk run pre-commit`
+with one file staged, a comment line appended to it, a distinct one each
+run so Lake rebuilds that module; three runs on a warm tree, min and
+median in seconds):
+
+| Staged | Before | After |
+|---|---|---|
+| One implementation package (`packages/compile/Compile.lean`) | 172.1 / 172.6 | 14.1 / 14.3 |
+| An interface package (`tests/packages/greeting-api/GreetingApi.lean`) | 173.6 / 174.5 | 14.6 / 16.4 |
+| The core (`lean/Editor/Core.lean`) | 169.7 / 170.0 | the same chain, plus the decision, 0.6 s |
+| `docs/` alone | 0.0 / 0.0 | 0.1 / 0.1 |
+
+The "before" runs of the one-package change were first taken while other
+processes held the machine at a load average of 50 to 90, and took 198 to
+325 s; the table gives the three quiet runs taken after. The core's
+"after" runs fell under that load too (283 to 303 s, and one failed on a
+fixture's 30 s join), so the table gives what is known instead: the hook
+runs the same two tasks as before, after a decision that takes 0.6 s.
+
+**The Rust step is targeted the same way.** `tools/rust-targets.sh`
+decides over Cargo's graph (`cargo metadata --no-deps`, read with yq;
+`--print-graph` prints it): a change inside a crate's directory reaches
+that crate and every crate that depends on it, directly or through
+another; any other path the step reads (`Cargo.lock`, the workspace's
+`Cargo.toml`, `mise.toml`, Rust outside a crate, the hook's own tools and
+fixtures) reaches the workspace. `tools/rust-hook.sh` runs `cargo clippy
+-p <crates> --all-targets --locked -- -D warnings` and `cargo test -p
+<crates> --locked` for crates, and `mise run lint && mise run test` for
+the workspace. `mise run test` pins it: the cases under
+`tests/rust-targets/` over a crate graph written by hand, the refused
+graphs under `tests/rust-targets/bad/`, every crate of the workspace
+targeted as itself, and a change to `editor-service` reaching exactly
+`editor-service`, `editor-ffi` and `echo-service`; and, with
+`tools/rust-hook.sh --dry-run`, the commands for a crate no crate depends
+on, a crate others depend on, the workspace and docs alone, each case's
+`hook-expected`. It was measured before
+it was built, with one comment line appended to a crate's `src/lib.rs`,
+three runs each, both columns under the same background load (a load
+average of 70 to 100), so the times are long but the comparison holds:
+
+| A change to | Workspace (`mise run lint && mise run test`) | The crate and its dependents |
+|---|---|---|
+| `editor-release-std`, a leaf | 61.4 / 64.2 | 2.5 / 2.6 |
+| `editor-text`, in the middle (eight dependents, `editor-ffi` among them) | 76.4 / 80.1 | 45.5 / 47.0 |
+| `editor-service` (`editor-ffi`, `echo-service`) | 78.3 / 79.3 | 12.3 / 13.8 |
+
+Each saves at least 30 s or 30%, and the reach is Cargo's graph, so it
+was taken. A Rust change outside a package still runs the Lean step's core
+chain, which links the Rust library.
+
+**The core's own chain was not narrowed.** On the quiet run above,
+`lean-test` took 13.5 s, `lean` 7.2 s, `lean-fmt` over the core and every
+package about 27 s, and `ffi-test` 100.7 s, of which `contract-test` and
+`config-test` take about 19 s each, the package steps' `run` over the two
+sets about 11 s and the core's headless fixtures and restart entries most
+of the rest. Every core module is in the core's root and every test
+executable reaches it, so no core change could skip one by Lake's graph;
+and the hook's two `mise run` calls run `lean-test` and `lean` twice,
+about 20 s, under both thresholds. The numbers are in the rdm task
+`narrow-core-pre-commit`.
 
 ## The Rust bans check
 

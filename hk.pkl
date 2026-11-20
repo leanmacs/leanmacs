@@ -36,10 +36,14 @@ local changed = new Mapping<String, Step> {
     }
     // A crate's `clippy.toml` lists what the crate may not name (real files,
     // processes, clocks), so a commit that changes only a list still runs
-    // the lint.
+    // the lint. Which crates the lint and the tests run over is decided by
+    // tools/rust-targets.sh from Cargo's graph, which lists the same
+    // patterns as this glob: a change inside a crate's directory runs that
+    // crate's and its dependents', any other the whole workspace's
+    // (docs/dev-practices/the-gate.md, "The pre-commit hook").
     ["rust"] {
-        glob = rust_sources + List("mise.toml", "**/clippy.toml")
-        check = "mise run lint && mise run test"
+        glob = rust_sources + List("mise.toml", "**/clippy.toml", "tools/rust-targets.sh", "tools/graph-targets.sh", "tools/rust-hook.sh", "tests/rust-targets/**")
+        check = "sh tools/rust-hook.sh {{files}}"
         exclusive = true
     }
     ["c"] {
@@ -52,9 +56,17 @@ local changed = new Mapping<String, Step> {
     // holds the default package set the editor is built from, `tests/` the
     // fixture `ffi-test` runs the editor's headless mode on and the fixture
     // package set, and `config/` the default config `config-test` loads.
+    // What the step runs for the staged files is decided by
+    // tools/hook-targets.sh, which owns the decision and lists the same
+    // patterns as this glob: a change inside one package's directory runs
+    // that package's checks (and, for an interface package, those of the
+    // packages that require it), any other runs the core's chain and every
+    // package's (docs/dev-practices/the-gate.md, "The pre-commit hook").
+    // The packages come from Lake's graph, so a new package needs no edit
+    // here.
     ["lean"] {
-        glob = rust_sources + c_sources + List("lean/**", "packages/**", "tests/**", "config/**", "mise.toml")
-        check = "mise run lean-fmt && mise run ffi-test"
+        glob = rust_sources + c_sources + List("lean/**", "packages/**", "tests/**", "config/**", "mise.toml", "tools/hook-targets.sh", "tools/graph-targets.sh", "tools/lean-hook.sh", "tools/package-set.sh")
+        check = "sh tools/lean-hook.sh {{files}}"
         exclusive = true
     }
     ["workflows"] {

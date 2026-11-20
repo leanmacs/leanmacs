@@ -6,7 +6,7 @@
 //! and on its sweep of generated texts from a fixed seed.
 
 use editor_fuzzy::contract;
-use editor_fuzzy::locate::{self, Searcher};
+use editor_fuzzy::locate::{self, Searcher, Span};
 use editor_fuzzy_triple_accel::TripleAccel;
 
 #[test]
@@ -31,4 +31,33 @@ fn a_pattern_with_no_span_near_enough_reports_none() {
     let spans = TripleAccel::new().spans("needle", "haystack haystack", 1);
 
     assert_eq!(spans, []);
+}
+
+#[test]
+fn an_empty_text_is_answered_with_the_empty_span_when_the_pattern_is_within_the_errors_allowed() {
+    // Round 20 of the contract's sweep: on x86_64 the library's SIMD search
+    // reports no span of an empty text.
+    let spans = TripleAccel::new().spans("A", "", 1);
+
+    assert_eq!(
+        spans,
+        [Span {
+            start: 0,
+            end: 0,
+            errors: 1
+        }]
+    );
+}
+
+#[test]
+fn an_empty_text_reports_the_empty_span_only_when_the_whole_pattern_is_within_the_errors_allowed() {
+    assert_eq!(
+        TripleAccel::new().spans("ab", "", 2),
+        [Span {
+            start: 0,
+            end: 0,
+            errors: 2
+        }]
+    );
+    assert_eq!(TripleAccel::new().spans("ab", "", 1), []);
 }
