@@ -1,3 +1,5 @@
+import Echo.Checksum
+
 /-!
 # The fixture package `echo`: its port
 
@@ -6,7 +8,8 @@ A package outside the core, used by tests alone, that holds Rust
 (`rust/`), with one service, the echo, and the glue that binds it
 (`ffi/glue.c`). This module is the port the service is used through, in
 the editor's terms and with no Rust: start a request of a text, under an
-id the caller chose; cancel it; take its reply once it has completed.
+id the caller chose; cancel it; take its reply once it has completed, the
+text and its CRC-32, which the crate takes from the system's zlib.
 
 The port has a pure model (`Echo.Model`) and a contract
 (`Echo.Contract`), whose properties run against the model in the package's
@@ -21,6 +24,8 @@ namespace Echo
 structure Reply where
   /-- The request's text, back. -/
   text : String
+  /-- The CRC-32 of the text's UTF-8 bytes (`Echo.checksum`). -/
+  checksum : UInt32
   deriving DecidableEq, Repr
 
 /-- The echo service, as a package's code sees it: the port. -/
@@ -35,8 +40,8 @@ structure Service where
   is no longer in use; `none` before then, and for an id not in use. -/
   take : UInt64 → IO (Option Reply)
 
-/-- The reply to a request of `text`. -/
+/-- The reply to a request of `text`: the text and its checksum. -/
 def Reply.to (text : String) : Reply :=
-  { text }
+  { text, checksum := Echo.checksum text }
 
 end Echo

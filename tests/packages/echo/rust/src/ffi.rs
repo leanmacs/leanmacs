@@ -27,6 +27,8 @@ pub struct RawReply {
     pub text: *mut u8,
     /// The length of `text` in bytes.
     pub text_len: usize,
+    /// The CRC-32 of the text's bytes.
+    pub checksum: u32,
 }
 
 /// Starts the request `id` of the `len` bytes of text at `text`
@@ -63,9 +65,16 @@ pub unsafe extern "C" fn echo_ffi_take(id: u64, out: *mut RawReply) -> bool {
     let Some(reply) = ECHO.take(id) else {
         return false;
     };
+    let checksum = reply.checksum;
     let (text, text_len) = buffer::lend(reply.text.into_bytes());
     // SAFETY: the caller guarantees `out` is writable.
-    unsafe { out.write(RawReply { text, text_len }) };
+    unsafe {
+        out.write(RawReply {
+            text,
+            text_len,
+            checksum,
+        })
+    };
     true
 }
 

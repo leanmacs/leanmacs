@@ -21,6 +21,7 @@
 typedef struct {
   uint8_t *text;
   size_t text_len;
+  uint32_t checksum;
 } echo_raw_reply;
 
 bool echo_ffi_start(uint64_t id, const uint8_t *text, size_t len);
@@ -40,7 +41,8 @@ lean_obj_res echo_glue_cancel(uint64_t id) {
   return lean_io_result_mk_ok(lean_box(echo_ffi_cancel(id)));
 }
 
-// `Echo.Real.take : UInt64 → IO (Option String)`
+// `Echo.Real.takeRaw : UInt64 → IO (Option (String × UInt32))`: the text and
+// its checksum.
 lean_obj_res echo_glue_take(uint64_t id) {
   echo_raw_reply raw;
   if (!echo_ffi_take(id, &raw)) {
@@ -49,7 +51,10 @@ lean_obj_res echo_glue_take(uint64_t id) {
   lean_object *text =
       lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
   echo_ffi_free(raw.text, raw.text_len);
+  lean_object *pair = lean_alloc_ctor(0, 2, 0);
+  lean_ctor_set(pair, 0, text);
+  lean_ctor_set(pair, 1, lean_box_uint32(raw.checksum));
   lean_object *some = lean_alloc_ctor(1, 1, 0);
-  lean_ctor_set(some, 0, text);
+  lean_ctor_set(some, 0, pair);
   return lean_io_result_mk_ok(some);
 }

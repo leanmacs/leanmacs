@@ -18,7 +18,8 @@ lakefile cannot declare a target that compiles C, a library's
 - `echoGlue.o` is the package's glue, `ffi/glue.c`, compiled against the
   toolchain's `lean.h`.
 - `Echo` is the package's library: the port, its pure model, its contract,
-  its list of packages and its entry module. `EchoReal` is the Rust-backed binding alone, whose
+  the pure checksum its replies carry, its list of packages and its entry
+  module. `EchoReal` is the Rust-backed binding alone, whose
   `moreLinkObjs` is the glue, so the glue is linked into exactly the
   executables that import `Echo.Real`: the set's editor, through the entry
   module, and the linked test.
@@ -49,7 +50,7 @@ target echoGlue.o pkg : FilePath := do
 /-- The port, its model, its contract and the entry module: every module of
 the package but its tests and the binding. -/
 @[default_target] lean_lib Echo where globs :=
-  #[.one `Echo, .one `Echo.Model, .one `Echo.Contract, .one `Echo.Packages,
+  #[.one `Echo, .one `Echo.Model, .one `Echo.Contract, .one `Echo.Checksum, .one `Echo.Packages,
     .one `Echo.EditorPackage]
 
 /-- The Rust-backed binding, with the package's glue. -/

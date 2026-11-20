@@ -1,5 +1,6 @@
 //! The service of the fixture package `echo`: it answers each request with
-//! the request's text, worked on a thread of its own, and reports that the
+//! the request's text and the text's CRC-32, which it takes from the
+//! system's zlib ([`zlib`]), worked on a thread of its own, and reports that the
 //! request has finished through the [`Completer`] port.
 //!
 //! It keeps the rules every service keeps (`editor-ffi`'s crate docs,
@@ -21,6 +22,7 @@
 //! the process's completion queue.
 
 pub mod ffi;
+pub mod zlib;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -31,11 +33,14 @@ use editor_service::{Completer, Service};
 /// The service, as the completion queue names it.
 pub static SERVICE: Service = Service::named("echo");
 
-/// What a request answers: its text, back.
+/// What a request answers: its text, back, and the text's checksum.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reply {
     /// The request's text.
     pub text: String,
+    /// The CRC-32 of the text's UTF-8 bytes, from the system's zlib
+    /// ([`zlib::checksum`]).
+    pub checksum: u32,
 }
 
 impl Reply {
@@ -43,6 +48,7 @@ impl Reply {
     pub fn to(text: &str) -> Self {
         Self {
             text: text.to_owned(),
+            checksum: zlib::checksum(text.as_bytes()),
         }
     }
 }
@@ -193,9 +199,13 @@ mod tests {
     #[test]
     fn a_started_request_completes_and_its_take_answers_its_text() {
         let echo = echo();
-        assert!(echo.start(3, "hello"));
+        assert!(echo.start(3, "123456789"));
         assert_eq!(reported(&echo, 1), [3]);
-        assert_eq!(echo.take(3), Some(Reply::to("hello")));
+        let reply = echo.take(3).expect("a reply");
+        assert_eq!(
+            (reply.text.as_str(), reply.checksum),
+            ("123456789", 0xCBF4_3926)
+        );
     }
 
     #[test]

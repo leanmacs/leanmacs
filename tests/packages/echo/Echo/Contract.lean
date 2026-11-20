@@ -48,7 +48,7 @@ def echoes (subject : Subject) (text : String) : IO Bool := do
 
 /-- The properties every implementation of the port has. -/
 def properties : List Property :=
-  [{  name := "a started request completes, and its take answers its text"
+  [{  name := "a started request completes, and its take answers its text and the text's checksum"
       holds := fun subject => echoes subject "hello" },
     { name := "a take answers once; the second answers none"
       holds := fun subject => do

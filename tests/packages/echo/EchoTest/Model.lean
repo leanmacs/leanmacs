@@ -1,3 +1,4 @@
+import EchoTest.Echo.Checksum
 import EchoTest.Echo.Model
 
 /-!
@@ -14,7 +15,7 @@ and runs their checks.
 /-- Runs the checks and prints each that failed; the exit status is 1 when
 one did. -/
 def main : IO UInt32 := do
-  let checks ← EchoTest.echoModelChecks
+  let checks := EchoTest.echoChecksumChecks ++ (← EchoTest.echoModelChecks)
   let failed := checks.filter fun check => !check.2
   for check in failed do
     IO.eprintln s!"FAILED: {check.1}"
