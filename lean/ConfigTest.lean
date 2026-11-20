@@ -110,7 +110,8 @@ show:
   completion sources that ship; and it holds nothing of the compile mode,
   no command, ex name, job, mode or contribution, that mode being a
   package outside the core's Lake package;
-- `scriptChecks`: the headless mode's script and its driver, and the editor
+- `scriptChecks`: the headless mode's script (its `indexed` and
+  `workspaces` directives among them) and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
   library, a scene published after a reload's install and a job's command
   once the frame exists, the scene whose echo is the refusal once a command
@@ -228,8 +229,12 @@ show:
   while the restore is in flight is held, and `await` does not answer
   settled, until it has finished; and a restore whose job fails releases
   what it held (the file given opened, the text said, reload 1 installed)
-  and `await` answers settled. They run after `fileChecks`, whose table of
-  waits the first and the last share;
+  and `await` answers settled. A package's declared store kept across a
+  restart comes back before any reload, and migrated by the package at a
+  new version; a config's store comes back by the start-up reload, stays
+  parked and written while a config's `setup` throws, and is claimed by a
+  later good reload. They run after `fileChecks`, whose table of waits the
+  first and the last share;
 - `journalFailureChecks`: the journal's failures in the host, over a
   journal whose failures the check puts there: they are taken after each
   step, and said once for each path, in the echo area and to the log;

@@ -1213,6 +1213,21 @@ The command line itself is covered by one run of the real executable on the
 fixture under `tests/headless`, in the `ffi-test` task. -/
 def scriptChecks (context : Context) : List Check :=
   [{  name :=
+        "indexed and workspaces are directives with their lines' numbers, refused with anything after them as no directive, and the error message of a line that is no directive lists them"
+      run :=
+        pure <|
+          (Headless.script "indexed\n  workspaces  \n").toOption ==
+              some #[⟨1, .indexed⟩, ⟨2, .request .workspaces⟩] &&
+            (["indexed now", "workspaces all"].all fun line =>
+              match Headless.script ("scene\n" ++ line) with
+              | .error message => message.startsWith "line 2: "
+              | .ok _ => false) &&
+            match Headless.script "scene\nwait 2" with
+            | .error message =>
+              (message.splitOn ", indexed,").length == 2 &&
+                (message.splitOn " workspaces,").length == 2
+            | .ok _ => false },
+    { name :=
         "an advance directive is a number of milliseconds, with its line's number; one with no number, two or a part that is no number is refused with its line, and the error message of a line that is no directive lists it"
       run :=
         pure <|
@@ -2687,6 +2702,88 @@ def withRestoreFiles (context : Context) (files : List (String × String))
               journal := Headless.Journal.real stage.collaborators.published.reader } }
       onStage stage fun host stage => check host stage.output state
 
+/-- A package that declares the store `counted` of a number, at `version`,
+whose migration doubles a version-1 number, keeps it across a restart, and
+registers `bump-counted`, which adds one. -/
+def countedPackage (version : Nat) : Package :=
+  let counted : Store Nat :=
+    { name := "counted", version, initial := 0, encode := .nat
+      decode := fun
+        | .nat n => some n
+        | _ => none
+      migrate := fun old tree =>
+        match old, tree with
+        | 1, .nat n => some (.nat (2 * n))
+        | _, _ => none }
+  { name := "counter"
+    setup := do
+      counted.declare
+      counted.keptAcrossRestart
+      counted.command "bump-counted" fun n => pure (n + 1) }
+
+/-- A config that declares the store `kept` of a number, keeps it across a
+restart, and registers `bump-kept`, which adds one. -/
+def keptConfig : List (String × String) :=
+  [("init.lean",
+      "def kept : Store Nat :=
+  { name := \"kept\", version := 1, initial := 0, encode := .nat,
+    decode := fun
+      | .nat n => some n
+      | _ => none }
+
+def setup : SetupM Unit := do
+  kept.declare
+  kept.keptAcrossRestart
+  kept.command \"bump-kept\" fun n => pure (n + 1)
+")]
+
+/-- A config whose `setup` throws, as one that cannot go on might. -/
+def throwingConfig : List (String × String) :=
+  [("init.lean", "def setup : SetupM Unit := throw \"no config today\"\n")]
+
+/-- Runs `check` against a host over a config directory holding `files`,
+with the real elaborator, the packages `files`, `restore` and `packages`,
+the library's file service and journal, and the state directory `state`,
+which outlives it; and stops the host, uncleanly: its session is left to
+the next. -/
+def withStateHost (context : Context) (state : System.FilePath) (files : List (String × String))
+    (packages : Array Package)
+    (check : Headless.Host → Stage Config.Elaborate.Base Config.Elaborate.Handle → IO Bool) :
+    IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeConfig directory files
+    let stage ←
+      Stage.overFiles context (Config.Directory.source directory)
+          { packages := #[Files.package, Restore.package] ++ packages }
+    let stage :=
+      { stage with
+        collaborators :=
+          { stage.collaborators with
+            stateDirectory := some state
+            journal := Headless.Journal.real stage.collaborators.published.reader } }
+    onStage stage fun host stage => check host stage
+
+/-- Waits until the host has written the session index: each write's delay
+moved past on the stage's clock, until neither a write nor a save is
+running. A write the host started after the last one rendered, for a change
+its publish had not seen yet, is waited for too. -/
+def indexWritten {β σ : Type} (host : Headless.Host) (stage : Stage β σ) : IO Bool := do
+  for _ in [0:4] do
+    unless ← Headless.within patience (stage.clock.dueWithin Restore.writeDelay) do
+      return false
+    stage.clock.advance Restore.writeDelay
+    if (← host.waitWhile 300 (fun progress => progress.indexing) .working) == .settled then
+      return true
+  return false
+
+/-- The text of the highest run's index under `state`, if there is one. -/
+def lastIndex (state : System.FilePath) : IO (Option String) := do
+  let names :=
+    (← (Restore.sessionDirectory state).readDir).filterMap fun entry =>
+      Restore.runOfIndex? entry.fileName
+  let some run := names.foldl (fun found run => some ((found.getD run).max run)) none | return none
+  return some (← IO.FS.readFile (Restore.indexPath state run))
+
 /-- The index of the first line of `lines` that `holds`, if one does. -/
 def firstLine? (lines : Array String) (holds : String → Bool) : Option Nat :=
   lines.findIdx? holds
@@ -2769,7 +2866,75 @@ def restoreOrderChecks (context : Context) : List Check :=
           return waited == .settled && joined == .settled && opened && said && registered &&
               match failed, installed with
               | some failed, some installed => failed < installed
-              | _, _ => false }]
+              | _, _ => false },
+    { name :=
+        "a package's declared store kept across a restart, end to end: bumped twice and left uncleanly, the next host shows it before any reload, since packages register before the restore; a host handed the package at version 2 shows it migrated"
+      run :=
+        IO.FS.withTempDir fun state => do
+          let first ←
+            withStateHost context state [] #[countedPackage 1] fun host stage => do
+                host.send .restore
+                host.send (.run "bump-counted")
+                host.send (.run "bump-counted")
+                unless ← host.settle patience do
+                  return false
+                indexWritten host stage
+          let shown (version : Nat) (line : String) :=
+            withStateHost context state [] #[countedPackage version] fun host stage => do
+              host.send .restore
+              host.send .show
+              unless ← host.settle patience do
+                return false
+              return (← stage.output.get).contains line
+          let second ← shown 1 "store counted v1: 2"
+          let third ← shown 2 "store counted v2: 4"
+          return first && second && third },
+    { name :=
+        "a config's store kept across a restart: the start-up reload restores it; a config whose setup throws keeps it parked, and the index written after still lists it; a later good reload claims it"
+      run :=
+        IO.FS.withTempDir fun state => do
+          let first ←
+            withStateHost context state keptConfig #[] fun host stage => do
+                host.send .restore
+                host.send .reload
+                unless ← host.settle patience do
+                  return false
+                host.send (.run "bump-kept")
+                host.send (.run "bump-kept")
+                unless ← host.settle patience do
+                  return false
+                indexWritten host stage
+          let restored ←
+            withStateHost context state keptConfig #[] fun host stage => do
+                host.send .restore
+                host.send .reload
+                unless ← host.settle patience do
+                  return false
+                host.send .show
+                unless ← host.settle patience do
+                  return false
+                return (← stage.output.get).contains "store kept v1: 2"
+          let thrown ←
+            withStateHost context state throwingConfig #[] fun host stage => do
+                host.send .restore
+                host.send .reload
+                unless ← host.settle patience do
+                  return false
+                unless ← indexWritten host stage do
+                  return false
+                let index ← lastIndex state
+                return index.any fun text => (text.splitOn "\"name\":\"kept\"").length == 2
+          let claimed ←
+            withStateHost context state keptConfig #[] fun host stage => do
+                host.send .restore
+                host.send .reload
+                unless ← host.settle patience do
+                  return false
+                host.send .show
+                unless ← host.settle patience do
+                  return false
+                return (← stage.output.get).contains "store kept v1: 2"
+          return first && restored && thrown && claimed }]
 
 /-- A journal (`Headless.Journal`) whose orders do nothing and whose
 failures are what the check put in `failed` since the host last took them,

@@ -14,7 +14,7 @@ import Editor.Text.Model
 The tests of session restore over the real bindings: `restoreRunChecks`,
 with the library's text store and file service in a temporary directory,
 through a restart: typing is journalled by the file service, unobserved,
-and a second loop restores it.
+and a second loop restores it; and two tabs, the first split, come back.
 -/
 
 namespace ContractTest
@@ -29,7 +29,8 @@ def restoreJobs : Array Config.JobRegistration :=
 
 /-- The commands of the checks beside those: `start-restore` starts the job
 `restore` with its argument, as a host's first request does; `type-text`
-inserts its argument at the window's cursors. -/
+inserts its argument at the window's cursors; `split-and-tab` splits the
+window and opens a second tab on its buffer, named `two`. -/
 def restoreExtras : Array Config.Registration :=
   #[{ name := "start-restore"
       action :=
@@ -40,7 +41,13 @@ def restoreExtras : Array Config.Registration :=
       action :=
         .call fun call => do
           let .str text :: _ := call.arguments | return
-          discard <| call.target.window.id.insertAtSelections text }]
+          discard <| call.target.window.id.insertAtSelections text },
+    { name := "split-and-tab"
+      action :=
+        .call fun call => do
+          discard <| call.target.window.id.split
+          discard <| call.target.window.id.newTab
+          discard <| changeTab (.rename 1 (some "two")) }]
 
 /-- The keys of the checks: none bound; the commands by name; the jobs
 registered. -/
@@ -127,6 +134,33 @@ def restoreRunChecks (services : Job.Services) : List Check :=
               decoded.records.size == 1 &&
               again == edited &&
               (buffer.map Buffer.isModified) == some true &&
-              restored.state.restore.run == some 2 }]
+              restored.state.restore.run == some 2 },
+    { name :=
+        "two tabs, the first split, are restored on the real text binding and file service: a second loop over the same state directory has both tabs, the split, the second tab's name, and every window on the file's buffer"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          let state := directory / "state"
+          let a := directory / "a.txt"
+          IO.FS.writeFile a "first line\nsecond line\n"
+          let rig ← ProjectRig.over services
+          let some (split, _) ←
+            runRestoring rig state
+                [{ command := "start-restore", arguments := [.str state.toString] }, openFile a,
+                  { command := "type-text", arguments := [.str "typed "] },
+                  { command := "split-and-tab" }] | return false
+          unless ← eventually (return (← Ffi.filesPending) == 0) do
+            return false
+          let fresh ← ProjectRig.over services
+          let some (restored, _) ←
+            runRestoring fresh state
+                [{ command := "start-restore", arguments := [.str state.toString] }] | return false
+          let frame := restored.state.frame
+          let shows (state : EditorState) : Array String :=
+            state.windows.filterMap fun window => (state.buffer? window.buffer).map (·.name)
+          return split.state.frame.tabs.size == 2 && frame.tabs.size == 2 &&
+              frame.windows.size == 2 &&
+              frame.tabsAfter.map (·.name) == #[some "two"] &&
+              shows restored.state == #["a.txt", "a.txt", "a.txt"] &&
+              restored.state.wellFormed }]
 
 end ContractTest
