@@ -60,9 +60,10 @@ only.
 Pinned by `ModelTest.bindingSearchChecks`, on the loop's driver over the
 editor's models and the test scheme; by `ModelTest.pressedChecks`, for the
 reserved keys invocation under the test scheme and the Vim scheme; by
-`ConfigTest.commandPromptChecks`, through a host over the real binding and
-the real registry; and by `ConfigTest.defaultConfigChecks`, which presses
-`SPC ?` under the shipped default config.
+the headless fixture `tests/headless/binding-search`, on the default
+editor with a config of its own; and by the headless fixture
+`tests/headless/default-config`, which runs `SPC ?` under the shipped
+default config.
 -/
 
 namespace Editor.BindingSearch

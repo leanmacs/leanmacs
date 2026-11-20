@@ -566,10 +566,12 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   order kept with the style's ranges, and a missing filter said in the
   echo area;
 - `sourceContractChecks`: the completion sources' contract
-  (`Editor/Completion/Contract.lean`) on the model, the fake, each
-  shipped source and the key hints' source, run on `twoBuffers` over the
-  editor's models, and seen to report a source that writes and one that is
-  refused;
+  (`Editor/Completion/Contract.lean`) on the model, the fake, each source
+  the core ships but the command prompt's and the binding search's, which
+  their own lists hold to it, and the key hints' source, run on the kit's
+  runner over `twoBuffers` and the editor's models
+  (`Editor.Test.sourceRunner`, `Editor/Test/Sources.lean`), and seen to
+  report a source that writes and one that is refused;
 - `keyHintSourceChecks`: the key hints' source
   (`Editor/Completion/Keys.lean`): a candidate of each kind of hint, its
   annotation and kind, a source of the category `key` that has filtered
@@ -645,6 +647,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   reverses the listing and decides which command a fragment runs, while a
   theme prompt keeps its own order; opened by a key bound to it or from the
   menu, it annotates its candidates with their keys as when called by name;
+  and its source, `commands`, holds the completion sources' contract on
+  the kit's runner and answers something there (`Editor.Test.sourceHolds`);
 - `bindingSearchChecks`: the binding search (`Editor/BindingSearch.lean`)
   on that driver: it lists each binding the scheme reaches as its keys and
   command, annotated with its description; accepting one runs its command
@@ -653,7 +657,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   nothing; a prompt already open is said; a fake style chosen for the
   category `binding` reverses the listing; and opened by a key bound to it,
   from the menu, or as the command a fake scheme's answer completes, it
-  lists the same bindings as when called by name;
+  lists the same bindings as when called by name; and its source,
+  `bindings`, holds the completion sources' contract on the kit's runner
+  and answers something there (`Editor.Test.sourceHolds`);
 - `faceVocabularyChecks`: the face vocabulary (`Editor/Face/Vocabulary.lean`)
   names each face once with its meaning, and lists every face the shipped
   Vim scheme and the loop draw, layout's four and the faces declared

@@ -5226,12 +5226,14 @@ Pinned by `ModelTest.executeCommandChecks` (the prompt, its candidates and
 their annotations, the resolution, a refusal, and a fake style deciding
 the order, on the loop's driver over the editor's models),
 `dispatchStateChecks` and `registryChecks` (the names the loop is told),
-`sourceContractChecks` (the source), `ConfigTest.commandPromptChecks`
-(compiled and config commands listed, a reload dropping one, and a
-command config binds to `SPC f f` shown with `SPC f f`, through a host),
+the source's contract on the kit's runner (in `executeCommandChecks`, as
+`Editor.Test.sourceHolds`), the headless fixture
+`tests/headless/command-prompt` (config's commands listed under its own
+style, a command config binds to `SPC f f` shown with `SPC f f`, and
+`load-theme` run through the prompt, on the default editor),
 `ConfigTest.shippedChecks` (registered compiled, with its source in
-`command`) and `ConfigTest.defaultConfigChecks` (`SPC :` under the default
-config).
+`command`) and the headless fixture `tests/headless/default-config`
+(`SPC :` under the default config).
 
 ## Searching the bindings
 
@@ -5295,10 +5297,12 @@ Pinned by `ModelTest.keymapChecks` (`reachableOver`),
 the Vim scheme), `bindingSearchChecks` (the prompt, its candidates,
 accepting, resolution, a refusal and a fake style, on the loop's driver),
 `dispatchStateChecks` and `stateRequestChecks` (the request),
-`sourceContractChecks` (the source), `ConfigTest.commandPromptChecks` (a
-config binding listed with its keys and description, and accepting it
-runs its command, through a host) and `ConfigTest.defaultConfigChecks`
-(`SPC ?` under the default config).
+the source's contract on the kit's runner (in `bindingSearchChecks`, as
+`Editor.Test.sourceHolds`), the headless fixture
+`tests/headless/binding-search` (a config binding listed with its keys
+and description, and accepting it runs its command, on the default
+editor) and the headless fixture `tests/headless/default-config` (`SPC ?`
+under the default config).
 
 ## Extending from config
 

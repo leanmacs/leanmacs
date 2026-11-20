@@ -63,6 +63,17 @@ def defaultRegistry (registrations : Config.Registrations) : IO Config.Registry 
   return { registry with
       leader := registrations.leader, localLeader := registrations.localLeader }
 
+/-- The commands the default config binds that no package of the core's
+Lake package registers: the command prompt's, `execute-command`, and the
+binding search's, `search-bindings`, which default packages register. They
+are written as text, as a reacher inside the core names a name another
+package declares (`docs/design/extension-points.md`, "Reaches by name"):
+the core cannot import a package. The interface packages of the two
+features declare them. That the default editor runs them for `SPC :` and
+`SPC ?` is the headless fixture `tests/headless/default-config`'s. -/
+def defaultPackageCommands : Array String :=
+  #["execute-command", "search-bindings"]
+
 /-- Whether `lines` hold the status line of a prompt labelled `label`. Each
 prompt opens a minibuffer view of its own, so a prompt's status line is
 compared from its view's id on. -/
@@ -73,10 +84,11 @@ def promptOf (label : String) (lines : Array String) : Bool :=
 (`config/default`), read from the directory the fourth argument names: it
 loads with no reload error and `SPC f f` opens a file, `SPC p f` and `SPC SPC`
 open the workspace finder and `SPC p p` runs `find-file-in-project`, each binding names a
-registered command, and each prefix it binds under the leader is named. -/
+registered command or one of `defaultPackageCommands`, and each prefix it binds under the
+leader is named. -/
 def defaultConfigChecks (context : Context) : List Check :=
   [{  name :=
-        "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, once that is cancelled SPC : opens the command prompt, and once that is cancelled SPC ? opens the binding search, which, once open is typed, lists SPC f f  open-file"
+        "the default config: a reload installs it with no diagnostic; SPC f f then runs open-file, which asks for a path, and <Escape> cancels it"
       run := do
         let files ← configFiles context.defaultConfig
         withVimHost context files fun session => do
@@ -90,28 +102,10 @@ def defaultConfigChecks (context : Context) : List Check :=
             let after ← session.sceneLines
             session.typed "<Escape>"
             let cancelled ← session.sceneLines
-            session.typed "SPC :"
-            let rejoined := (← session.host.join patience) == .settled
-            let commanding ← session.sceneLines
-            session.typed "<Escape>"
-            session.typed "SPC ?"
-            let searched := (← session.host.join patience) == .settled
-            let searching ← session.sceneLines
-            -- The list shows only its first rows: typing `open` narrows it
-            -- to the bindings that match.
-            session.typed "o p e n"
-            let narrowed := (← session.host.join patience) == .settled
-            let opening ← session.sceneLines
-            return installed && clean && joined && rejoined && searched && narrowed &&
+            return installed && clean && joined &&
                 !before.contains (promptStatus Files.openPrompt) &&
                 after.contains (promptStatus Files.openPrompt) &&
-                !cancelled.contains (promptStatus Files.openPrompt) &&
-                !promptOf ExecuteCommand.label cancelled &&
-                promptOf ExecuteCommand.label commanding &&
-                !promptOf BindingSearch.label commanding &&
-                promptOf BindingSearch.label searching &&
-                opening.any fun line =>
-                  line.startsWith "view " && (afterId line).contains "SPC f f  open-file" },
+                !cancelled.contains (promptStatus Files.openPrompt) },
     { name :=
         "the default config: SPC p f opens the workspace finder, once that is cancelled SPC SPC opens it again, and once that is cancelled SPC p p runs find-file-in-project, which says the scratch buffer is in no project"
       run := do
@@ -144,14 +138,15 @@ def defaultConfigChecks (context : Context) : List Check :=
                 !promptOf label recancelled &&
                 switching.any fun line => (line.splitOn said).length == 2 },
     { name :=
-        "the default config: every binding names a command registered compiled or by the config, <leader> f f is bound to open-file, <leader> : to execute-command, described Execute command, and <leader> ? to search-bindings, described Search bindings, <leader> p f and <leader> SPC to find-file-in-workspace, described Find file in workspace, <leader> p p to find-file-in-project, described Switch workspace, <leader> s p and <leader> / to project-search, described Search workspace, <leader> * to project-search-symbol, described Search symbol in workspace, <leader> k a to working-set-add, described Add to working set, and <leader> k o and <leader> RET to working-set-open, described Open working set"
+        "the default config: every binding names a command registered compiled, by the config, or one of the default packages' commands it binds, execute-command and search-bindings; <leader> f f is bound to open-file, <leader> : to execute-command, described Execute command, and <leader> ? to search-bindings, described Search bindings, <leader> p f and <leader> SPC to find-file-in-workspace, described Find file in workspace, <leader> p p to find-file-in-project, described Switch workspace, <leader> s p and <leader> / to project-search, described Search workspace, <leader> * to project-search-symbol, described Search symbol in workspace, <leader> k a to working-set-add, described Add to working set, and <leader> k o and <leader> RET to working-set-open, described Open working set"
       run := do
         let registrations ← defaultBuilt context
         let registry ← defaultRegistry registrations
         let unregistered :=
           registrations.bindings.filter fun binding =>
             (registry.find? binding.command).isNone &&
-              !registrations.commands.any (·.name == binding.command)
+              !registrations.commands.any (·.name == binding.command) &&
+              !defaultPackageCommands.contains binding.command
         unless unregistered.isEmpty do
           throw <| IO.userError s!"unregistered commands: {unregistered.toList.map (·.command)}"
         return !registrations.bindings.isEmpty &&
@@ -162,12 +157,12 @@ def defaultConfigChecks (context : Context) : List Check :=
             registrations.bindings.any
               (fun binding =>
                 Key.strokeNotations binding.keys == "<leader> :" &&
-                  binding.command == ExecuteCommand.name &&
+                  binding.command == "execute-command" &&
                   binding.desc == some "Execute command") &&
             registrations.bindings.any
               (fun binding =>
                 Key.strokeNotations binding.keys == "<leader> ?" &&
-                  binding.command == BindingSearch.name &&
+                  binding.command == "search-bindings" &&
                   binding.desc == some "Search bindings") &&
             registrations.bindings.any
               (fun binding =>

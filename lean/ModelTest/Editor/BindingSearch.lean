@@ -21,6 +21,7 @@ import Editor.Test.Keys
 import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.Prompts
+import Editor.Test.Sources
 import ModelTest.Check
 
 /-!
@@ -140,108 +141,112 @@ reaches with its keys, command and description, runs the one accepted as
 its key would, and the style chosen for the category `binding` decides the
 order. -/
 def bindingSearchChecks : List Check :=
-  [{  name :=
-        "calling search-bindings opens a prompt labelled with its label whose continuation is the command itself, listing each binding as its keys and command, annotated with its description, of the kind binding"
-      run :=
-        pure <|
-          match searchDriver with
-          | none => false
-          | some driver =>
-            let asking := searching driver
-            asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
-                some (BindingSearch.label, { command := BindingSearch.name }) &&
-              (candidatesOf asking).map (·.all.map fun c => (c.text, c.annotation, c.kind)) ==
-                some
-                  #[("C-e y  minibuffer-accept", none, some "binding"),
-                    ("C-c m  marked", some "Mark it", some "binding")] },
-    { name :=
-        "accepting C-c m  marked runs marked with the keys C-c m and no argument, as pressing C-c m at rest does, and closes the prompt"
-      run :=
-        pure <|
-          match searchDriver with
-          | none => false
-          | some driver =>
-            let accepted := acceptingBinding driver "C-c m  marked"
-            let pressed := (fedTo driver (presses "C-c m")).1
-            promptEcho accepted == "marked C-c m" && promptEcho accepted == promptEcho pressed &&
-              accepted.loop.state.prompt == none },
-    { name :=
-        "accepting a typed fragment with nothing chosen runs the binding the style lists first for it; a text nothing matches is said and runs nothing; an empty answer says nothing"
-      run :=
-        pure <|
-          match searchDriver with
-          | none => false
-          | some driver =>
-            let fragment := acceptingBinding driver "C-c"
-            let unmatched := acceptingBinding driver "zzz"
-            let empty := acceptingBinding driver ""
-            promptEcho fragment == "marked C-c m" &&
-              promptEcho unmatched == BindingSearch.noMatch "zzz" &&
-              promptEcho unmatched == "search-bindings: no binding matches `zzz`" &&
-              unmatched.loop.state.prompt == none &&
-              promptEcho empty == "" &&
-              empty.loop.state.prompt == none },
-    { name :=
-        "calling the binding search while a prompt is open says the refusal after its own name and leaves that prompt open"
-      run :=
-        pure <|
-          match searchDriver with
-          | none => false
-          | some driver =>
-            let again := searching (searching driver)
-            promptEcho again == BindingSearch.notAsking (.alreadyOpen ⟨1⟩) &&
-              again.loop.state.prompt.map (·.label) == some BindingSearch.label },
-    { name :=
-        "the style the loop is handed for the category binding decides the order of the binding search's candidates: a fake that reverses lists them in reverse"
-      run :=
-        pure <|
-          let keys : Loop.Keys TestScheme.scheme :=
-            { searchKeys with
-              matching :=
-                { default := Completion.Style.keeping "all" fun _ _ => true
-                  byCategory := fun category =>
-                    if category == BindingSearch.category then some reversingBindings else none } }
-          match searchDriver keys with
-          | none => false
-          | some driver =>
-            (candidatesOf (searching driver)).map (·.listed.map (·.candidate.text)) ==
-              some #["C-c m  marked", "C-e y  minibuffer-accept"] },
-    { name :=
-        "pressing C-c s, a key bound to search-bindings, lists every binding with its description, as calling it by name does"
-      run :=
-        pure <|
-          match searchDriver keyedSearchKeys with
-          | none => false
-          | some driver =>
-            let named := searching driver
-            let pressed := (fedTo driver (presses "C-c s")).1
-            promptRows pressed == some keyedSearchRows && promptRows pressed == promptRows named },
-    { name :=
-        "choosing search-bindings from the menu lists every binding with its description, as calling it by name does"
-      run :=
-        pure <|
-          match searchDriver keyedSearchKeys with
-          | none => false
-          | some driver =>
-            let named := searching driver
-            let chosen := (fedTo driver [.menu BindingSearch.name]).1
-            promptRows chosen == some keyedSearchRows && promptRows chosen == promptRows named },
-    { name :=
-        "an answer to the scheme's question that completes search-bindings, from a fake scheme whose answer names the command, lists every binding with its description, as calling it by name does"
-      run :=
-        pure <|
-          match
-            (Loop.Driver.over answeringSearchKeys (fun _ => none) (EditorState.initial ⟨640, 480⟩)
-                editorModel).toOption with
-          | none => false
-          | some driver =>
-            let named := (driver.stepped (driver.loop.runNamed driver.handed BindingSearch.name)).1
-            let answered :=
-              (driver.stepped
-                  (driver.loop.invoke driver.handed
-                    { command := InputScheme.answerName,
-                      arguments := [.str BindingSearch.name] })).1
-            promptRows answered == some keyedSearchRows &&
-              promptRows answered == promptRows named }]
+  [{    name :=
+          "calling search-bindings opens a prompt labelled with its label whose continuation is the command itself, listing each binding as its keys and command, annotated with its description, of the kind binding"
+        run :=
+          pure <|
+            match searchDriver with
+            | none => false
+            | some driver =>
+              let asking := searching driver
+              asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
+                  some (BindingSearch.label, { command := BindingSearch.name }) &&
+                (candidatesOf asking).map (·.all.map fun c => (c.text, c.annotation, c.kind)) ==
+                  some
+                    #[("C-e y  minibuffer-accept", none, some "binding"),
+                      ("C-c m  marked", some "Mark it", some "binding")] },
+      { name :=
+          "accepting C-c m  marked runs marked with the keys C-c m and no argument, as pressing C-c m at rest does, and closes the prompt"
+        run :=
+          pure <|
+            match searchDriver with
+            | none => false
+            | some driver =>
+              let accepted := acceptingBinding driver "C-c m  marked"
+              let pressed := (fedTo driver (presses "C-c m")).1
+              promptEcho accepted == "marked C-c m" && promptEcho accepted == promptEcho pressed &&
+                accepted.loop.state.prompt == none },
+      { name :=
+          "accepting a typed fragment with nothing chosen runs the binding the style lists first for it; a text nothing matches is said and runs nothing; an empty answer says nothing"
+        run :=
+          pure <|
+            match searchDriver with
+            | none => false
+            | some driver =>
+              let fragment := acceptingBinding driver "C-c"
+              let unmatched := acceptingBinding driver "zzz"
+              let empty := acceptingBinding driver ""
+              promptEcho fragment == "marked C-c m" &&
+                promptEcho unmatched == BindingSearch.noMatch "zzz" &&
+                promptEcho unmatched == "search-bindings: no binding matches `zzz`" &&
+                unmatched.loop.state.prompt == none &&
+                promptEcho empty == "" &&
+                empty.loop.state.prompt == none },
+      { name :=
+          "calling the binding search while a prompt is open says the refusal after its own name and leaves that prompt open"
+        run :=
+          pure <|
+            match searchDriver with
+            | none => false
+            | some driver =>
+              let again := searching (searching driver)
+              promptEcho again == BindingSearch.notAsking (.alreadyOpen ⟨1⟩) &&
+                again.loop.state.prompt.map (·.label) == some BindingSearch.label },
+      { name :=
+          "the style the loop is handed for the category binding decides the order of the binding search's candidates: a fake that reverses lists them in reverse"
+        run :=
+          pure <|
+            let keys : Loop.Keys TestScheme.scheme :=
+              { searchKeys with
+                matching :=
+                  { default := Completion.Style.keeping "all" fun _ _ => true
+                    byCategory := fun category =>
+                      if category == BindingSearch.category then some reversingBindings
+                      else none } }
+            match searchDriver keys with
+            | none => false
+            | some driver =>
+              (candidatesOf (searching driver)).map (·.listed.map (·.candidate.text)) ==
+                some #["C-c m  marked", "C-e y  minibuffer-accept"] },
+      { name :=
+          "pressing C-c s, a key bound to search-bindings, lists every binding with its description, as calling it by name does"
+        run :=
+          pure <|
+            match searchDriver keyedSearchKeys with
+            | none => false
+            | some driver =>
+              let named := searching driver
+              let pressed := (fedTo driver (presses "C-c s")).1
+              promptRows pressed == some keyedSearchRows &&
+                promptRows pressed == promptRows named },
+      { name :=
+          "choosing search-bindings from the menu lists every binding with its description, as calling it by name does"
+        run :=
+          pure <|
+            match searchDriver keyedSearchKeys with
+            | none => false
+            | some driver =>
+              let named := searching driver
+              let chosen := (fedTo driver [.menu BindingSearch.name]).1
+              promptRows chosen == some keyedSearchRows && promptRows chosen == promptRows named },
+      { name :=
+          "an answer to the scheme's question that completes search-bindings, from a fake scheme whose answer names the command, lists every binding with its description, as calling it by name does"
+        run :=
+          pure <|
+            match
+              (Loop.Driver.over answeringSearchKeys (fun _ => none) (EditorState.initial ⟨640, 480⟩)
+                  editorModel).toOption with
+            | none => false
+            | some driver =>
+              let named :=
+                (driver.stepped (driver.loop.runNamed driver.handed BindingSearch.name)).1
+              let answered :=
+                (driver.stepped
+                    (driver.loop.invoke driver.handed
+                      { command := InputScheme.answerName,
+                        arguments := [.str BindingSearch.name] })).1
+              promptRows answered == some keyedSearchRows &&
+                promptRows answered == promptRows named }] ++
+    (sourceHolds BindingSearch.source).map fun (name, held) => { name, run := pure held }
 
 end ModelTest

@@ -10,7 +10,6 @@ import ConfigTest.Editor.Config.Lakefile.Toml
 import ConfigTest.Editor.Evil
 import ConfigTest.Editor.Evil.TreeObjects
 import ConfigTest.Editor.Ex
-import ConfigTest.Editor.ExecuteCommand
 import ConfigTest.Editor.Extension
 import ConfigTest.Editor.Face
 import ConfigTest.Editor.Files
@@ -367,7 +366,6 @@ def checks (context : Context) : List Check :=
     faceChecks context ++
     cursorResolutionChecks () ++
     themeChecks context ++
-    commandPromptChecks context ++
     environmentHostChecks context ++
     fileChecks context ++
     restoreOrderChecks context ++

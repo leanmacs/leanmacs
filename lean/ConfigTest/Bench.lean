@@ -36,7 +36,6 @@ import Editor.Loop
 import Editor.Minibuffer
 import Editor.Minibuffer.Compiled
 import Editor.Mode
-import Editor.ModeLine.Compiled
 import Editor.Package
 import Editor.Program
 import Editor.Scene
@@ -44,6 +43,7 @@ import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
+import Editor.Test.Shipped
 import Editor.Text
 import Editor.Text.Model
 import Editor.Text.Real
@@ -709,7 +709,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             jobs := requests + 2, environment := requests + 3, posts := requests + 4,
             pauseEvents := requests + 5,
             packages :=
-              #[Completion.package, ModeLine.package, Minibuffer.package,
+              #[Completion.package, Test.Shipped.modeLine, Minibuffer.package,
                 Compiled.package
                   {
                     commands :=
@@ -857,7 +857,7 @@ def prompt (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
             wakeups := requests + 1, jobs := requests + 2, environment := requests + 3,
             posts := requests + 4, pauseEvents := requests + 5,
             packages :=
-              #[Completion.package, ModeLine.package, Files.package, Minibuffer.package,
+              #[Completion.package, Test.Shipped.modeLine, Files.package, Minibuffer.package,
                 Compiled.package { commands := #[{ name := "noop", action := .plain (pure ()) }] }]
             workingDirectory := "/big" }
     try
@@ -1003,7 +1003,7 @@ def workspaceFiles (sysroot oleanDir : String) (repository : System.FilePath) (s
           source := memorySource [], emit, services, published, held, requests := 1
           wakeups := 2, jobs := 3, environment := 4, posts := 5, pauseEvents := 6
           packages :=
-            #[Completion.package, ModeLine.package, Files.package, Minibuffer.package,
+            #[Completion.package, Test.Shipped.modeLine, Files.package, Minibuffer.package,
               Workspace.package,
               Compiled.package
                 {

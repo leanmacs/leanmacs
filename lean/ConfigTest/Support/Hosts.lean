@@ -22,7 +22,6 @@ import Editor.Job.Runner
 import Editor.Language
 import Editor.Loop
 import Editor.Mode
-import Editor.ModeLine.Compiled
 import Editor.Package
 import Editor.Process
 import Editor.Program
@@ -31,6 +30,7 @@ import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
+import Editor.Test.Shipped
 import Editor.Text
 import Editor.Text.Real
 import Editor.Watch
@@ -293,7 +293,7 @@ def Stage.new {β σ : Type} (context : Context) (elaborator : Config.Elaborator
           jobs := requests + 2, environment := requests + 3
           posts := requests + 4, pauseEvents := requests + 5
           packages :=
-            #[Completion.package, ModeLine.package] ++ compiled.packages ++ #[compiled.package]
+            #[Completion.package, Test.Shipped.modeLine] ++ compiled.packages ++ #[compiled.package]
           log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter
           dispose := do
             let emitted := (← output.get).size

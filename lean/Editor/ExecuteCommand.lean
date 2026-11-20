@@ -60,10 +60,10 @@ A new order or search is config's style for `command`. What a candidate
 shows beside its name is `annotation`.
 
 Pinned by `ModelTest.executeCommandChecks`, on the loop's driver over the
-editor's models and the test scheme; by `ConfigTest.commandPromptChecks`,
-through a host over the real binding and the real registry; and by
-`ConfigTest.defaultConfigChecks`, which presses `SPC :` under the shipped
-default config.
+editor's models and the test scheme; by the headless fixture
+`tests/headless/command-prompt`, on the default editor with a config of
+its own; and by the headless fixture `tests/headless/default-config`,
+which runs `SPC :` under the shipped default config.
 -/
 
 namespace Editor.ExecuteCommand
