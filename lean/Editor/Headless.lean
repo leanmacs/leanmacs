@@ -414,7 +414,10 @@ events: hosts in one process follow one another and never overlap. A host
 posts under source ids it is given, and its loop ignores an event from a
 Lean source it was not given, so a late event from an earlier host is
 dropped. `stop` ends this loop only; quitting the queues is for the process
-(`Ffi.quit`).
+(`Ffi.quit`). `run` and `runAndDispose` return only once their host's loop
+has ended, or their `answer` ran out waiting for it, a wait's own patience
+bounding only what that wait is for: so the next host does not start beside
+a loop that is still taking events.
 
 ## What it prints
 
@@ -586,6 +589,18 @@ still running, or run out before the editor thread had handled everything
 sent to it, or ended, because the loop has. `run` returns a `Failure` for a
 wait that ran out, with the line of the `settle` or the `join`, or with no
 line for the wait at the end of the script and for a loop that did not stop.
+
+A run has two patiences (`runFrom`). Its `patience` bounds what a wait is
+for: a reload or a job ending, an `advance`'s wait coming due. Its `answer`
+bounds what should happen at once: the editor thread's answer to a wait,
+and the loop's end when the run stops it. The headless mode gives both the
+same value (`settlePatience`), and then every wait is one window of it, as a
+`settle <milliseconds>` always is of its milliseconds. A check gives a short
+`patience` to the one wait it means to run out and a long `answer`, so that a
+loaded machine neither turns that wait's failure into another one nor
+leaves the loop running after `run` returns. A failure is `waited` the
+patience that ran out when that is not the run's `patience`
+(`Wait.failureIn`), since the run's failures are described with it.
 
 **A command that quits the editor ends the script.** When a step says stop
 (`Editor/Loop.lean`, "Quit") the host ends its loop, as it does for a close
@@ -2449,56 +2464,70 @@ def resize (_ : Host) (width height : Nat) : IO Unit := do
     throw (IO.userError "the editor queue refused a resize: it has been quit")
 
 /-- Waits until the editor thread has handled everything sent so far and
-`busy` no longer holds of its progress, for at most `patience` milliseconds.
-Says what the wait came to: `still` if it ran out with the editor thread up
-to date and `busy` still holding.
+`busy` no longer holds of its progress, for at most `patience` milliseconds
+from its start. Says what the wait came to: `still` if it ran out with the
+editor thread up to date and `busy` still holding.
+
+The editor thread's answer, its reaching everything sent so far, is waited
+for up to `answer` milliseconds, and `unanswered` if it does not come by
+then. `busy` is then looked at until `patience` has run out, and at least
+once: so an answer later than `patience`, which only an `answer` longer than
+it allows, is followed by one look at what the wait is for. With `answer`
+equal to `patience`, its default, the wait is one window of `patience`.
 
 A loop that has ended, or ends while the wait runs, is answered `ended` as
 soon as it is seen: its task has finished, so nothing it was waited for
 will happen, and the wait does not run out its patience. The loop's last
 progress is not read then: the loop does not publish it once it has ended,
 so it may still say a job is running. -/
-def waitWhile (host : Host) (patience : Nat) (busy : Progress → Bool) (still : Wait) : IO Wait := do
+def waitWhile (host : Host) (patience : Nat) (busy : Progress → Bool) (still : Wait)
+    (answer : Nat := patience) : IO Wait := do
   if ← IO.hasFinished host.thread then
     return .ended
+  let start ← IO.monoMsNow
   let marker ← host.posted.modifyGet fun posted => (posted + 1, posted + 1)
   host.post .marker
+  -- The marker was posted after everything sent so far: a loop that has
+  -- reached it is up to date, and what it is waiting for is what is busy.
+  discard <|
+      within answer do
+        return (← IO.hasFinished host.thread) || (← host.progress.get).markers >= marker
+  if ← IO.hasFinished host.thread then
+    return .ended
+  if (← host.progress.get).markers < marker then
+    return .unanswered
   let settled ←
-    within patience do
-        if ← IO.hasFinished host.thread then
-          return true
-        let progress ← host.progress.get
-        return progress.markers >= marker && !busy progress
+    within (start + patience - (← IO.monoMsNow)) do
+        return (← IO.hasFinished host.thread) || !busy (← host.progress.get)
   if ← IO.hasFinished host.thread then
     return .ended
   if settled then
     return .settled
-  -- The marker was posted after everything sent so far: a loop that has
-  -- reached it is up to date, and what it is waiting for is what is busy.
-  let progress ← host.progress.get
-  return if progress.markers < marker then .unanswered
-    else if busy progress then still else .settled
+  return if busy (← host.progress.get) then still else .settled
 
 /-- Waits until the editor thread has handled everything sent so far, no
 reload is running and no restore is in flight, for at most `patience`
-milliseconds, and says what the wait came to. A restore holds the driver's
+milliseconds, the editor thread's answer for at most `answer`
+(`waitWhile`), and says what the wait came to. A restore holds the driver's
 requests after it, the start-up reload among them, so a wait for that
 reload waits for the restore first. -/
-def await (host : Host) (patience : Nat) : IO Wait :=
+def await (host : Host) (patience : Nat) (answer : Nat := patience) : IO Wait :=
   host.waitWhile patience (fun progress => progress.reloading || progress.restoring) .reloading
+    answer
 
 /-- Waits until the editor thread has handled everything sent so far and no
-job is running, for at most `patience` milliseconds, and says what the wait
-came to. A job is running from its `spawn` until the editor thread has dealt
-with its result, or has cancelled it with its owner. -/
-def join (host : Host) (patience : Nat) : IO Wait :=
-  host.waitWhile patience (·.jobs > 0) .working
+job is running, for at most `patience` milliseconds, the editor thread's
+answer for at most `answer` (`waitWhile`), and says what the wait came to.
+A job is running from its `spawn` until the editor thread has dealt with its
+result, or has cancelled it with its owner. -/
+def join (host : Host) (patience : Nat) (answer : Nat := patience) : IO Wait :=
+  host.waitWhile patience (·.jobs > 0) .working answer
 
 /-- Waits until the editor thread has handled everything sent so far and no
 reload is running; `false` if that takes longer than `patience`
-milliseconds. -/
-def settle (host : Host) (patience : Nat) : IO Bool :=
-  return (← host.await patience) == .settled
+milliseconds, or the editor thread's answer longer than `answer`. -/
+def settle (host : Host) (patience : Nat) (answer : Nat := patience) : IO Bool :=
+  return (← host.await patience answer) == .settled
 
 /-- Ends the loop at once, whether a reload is running or not; `false` if it
 has not ended after `patience` milliseconds. Throws the error the loop ended
@@ -2811,6 +2840,26 @@ def Wait.failure (line : Option Nat) : Wait → Option Failure
   | .unanswered => some (.unanswered line)
   | .ended => none
 
+/-- `failure`, of a wait whose patience of `milliseconds` ran out, as the
+run describes it with its own `patience` (`Failure.describe`): as it is
+when the two agree, and otherwise with the patience that ran out
+(`waited`). -/
+def Failure.within (milliseconds patience : Nat) (failure : Failure) : Failure :=
+  if milliseconds == patience then failure else .waited milliseconds failure
+
+/-- The failure a wait of a run whose patience is `patience` and whose
+answer patience is `answer` (`runFrom`) came to, at `line` of the script.
+A wait with milliseconds of its `own`, a `settle <milliseconds>`, is bounded
+by them alone, its answer too, so any failure of it is `waited` them. Of any
+other wait, the editor thread's not answering ran out `answer`, and a reload
+or a job still running ran out `patience`. -/
+def Wait.failureIn (wait : Wait) (line : Option Nat) (patience answer : Nat)
+    (own : Option Nat := none) : Option Failure :=
+  match own, wait with
+  | some milliseconds, _ => (wait.failure line).map (.waited milliseconds)
+  | none, .unanswered => some (Failure.within answer patience (.unanswered line))
+  | none, _ => wait.failure line
+
 /-- Waits until `render`'s loop is at rest, for at most `patience`
 milliseconds; `false` if it is not by then. -/
 def rested (render : Render) (patience : Nat) : IO Bool :=
@@ -2874,12 +2923,13 @@ def abortStatus : UInt8 :=
 /-- Runs `script` against a host of its own, as its driver, and stops the
 host: sends each request in order and waits at each `settle` and each
 `join`. `none` when the script ran to its end, or a command quit the editor
-before it, and otherwise why it could not: the editor thread did not
-settle, a job did not end, or the loop did not stop, within `patience`
-milliseconds. With it, the plan of the restart the loop ended for, when a
-`restarted` found one: the script stops there ("Restarting", in the module
-docs). A run started with `--resume <resume>` runs the script from after
-its `resume`-th `restarted` (`resumed`).
+before it, and otherwise why it could not: a reload or a job did not end
+within `patience` milliseconds, or the editor thread did not answer, or the
+loop did not stop, within `answer` (`Wait.failureIn`). With it, the plan of
+the restart the loop ended for, when a `restarted` found one: the script
+stops there ("Restarting", in the module docs). A run started with
+`--resume <resume>` runs the script from after its `resume`-th `restarted`
+(`resumed`).
 
 Once the loop has ended by itself, because a command quit the editor, the
 lines that are left are not run: the script is read no further at a wait
@@ -2889,9 +2939,20 @@ finished.
 A `settle` or a `join` that runs out ends the loop at once, whether a reload
 or a job is running or not. A rejected reload is something to print, not a
 failure, and so is a job that fails. A job the script leaves running is
-cancelled when the loop ends. -/
+cancelled when the loop ends.
+
+Two patiences bound the run's waits. `patience` bounds what a wait is for: a
+reload or a job ending, an `advance`'s wait coming due, a `restarted`'s
+hand-over. `answer`, `patience` unless it is given, bounds what should
+happen at once: the editor thread's answer to a wait (`Host.waitWhile`) and
+the loop's end when the run stops it. So the run returns only once its
+loop has ended, or `answer` ran out waiting for that. A `settle
+<milliseconds>` bounds its whole wait, the answer too, by its own
+milliseconds alone. The headless mode passes one patience for both
+(`settlePatience`); a check gives a short `patience` to the one wait it
+means to run out, and a long `answer`. -/
 def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (script : Array Line) (patience : Nat) (resume : Nat := 0) :
+    (script : Array Line) (patience : Nat) (resume : Nat := 0) (answer : Nat := patience) :
     IO (Option Failure × Option Restart.Plan) := do
   let host ← start collaborators
   -- With a state directory, the session is restored first: the index a
@@ -2920,37 +2981,39 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
         host.resize width height
         continue
       | .settle =>
-        host.await patience
+        host.await patience answer
       | .settleWithin milliseconds =>
+        -- One window of its own milliseconds, the editor thread's answer
+        -- too; its failure says how long it waited, not the run's patience.
         let wait ← host.await milliseconds
-        -- Its failure says how long it waited, not the run's patience.
-        if let some failure := wait.failure (some line.number) then
-          discard <| host.halt patience
-          return (some (.waited milliseconds failure), none)
+        if let some failure :=
+            wait.failureIn (some line.number) patience answer (own := some milliseconds) then
+          discard <| host.halt answer
+          return (some failure, none)
         pure wait
       | .join =>
-        host.join patience
+        host.join patience answer
       | .idle milliseconds =>
-        let wait ← host.await patience
+        let wait ← host.await patience answer
         if wait == .settled then
           collaborators.emit (← idled collaborators.render patience milliseconds)
         pure wait
       | .journal =>
-        let wait ← host.await patience
+        let wait ← host.await patience answer
         if wait == .settled then
           let (said, last) ← journalSince collaborators.render patience journaled
           journaled := last
           collaborators.emit said
         pure wait
       | .journalled =>
-        let wait ← host.await patience
+        let wait ← host.await patience answer
         if wait == .settled then
           unless ← within patience (return (← collaborators.journal.pending) == 0) do
-            discard <| host.halt patience
+            discard <| host.halt answer
             return (some (.unanswered (some line.number)), none)
         pure wait
       | .indexed =>
-        let wait ← host.await patience
+        let wait ← host.await patience answer
         if wait == .settled then
           let written ←
             within patience do
@@ -2969,7 +3032,7 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
                     clock.advance Restore.writeDelay
                 return false
           unless written do
-            discard <| host.halt patience
+            discard <| host.halt answer
             return (some (.unanswered (some line.number)), none)
         pure wait
       | .abort =>
@@ -2984,47 +3047,52 @@ def runFrom {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators
           IO.ofExcept host.thread.get
           return (none, some plan)
         | _, _ =>
-          discard <| host.halt patience
+          discard <| host.halt answer
           return (some (.notRestarted line.number), none)
       | .advance milliseconds =>
         let some clock := collaborators.clock |
-          discard <| host.halt patience
+          discard <| host.halt answer
           return (some (.noClock line.number), none)
         -- Only once a wait is due within the move: so a job that is about
         -- to sleep is in its sleep before the clock moves past it.
         unless ← within patience (clock.dueWithin milliseconds) do
-          discard <| host.halt patience
+          discard <| host.halt answer
           return (some (.stalled line.number milliseconds), none)
         clock.advance milliseconds
         continue
     if wait == .ended then
       break
-    if let some failure := wait.failure (some line.number) then
-      discard <| host.halt patience
+    if let some failure := wait.failureIn (some line.number) patience answer then
+      discard <| host.halt answer
       return (some failure, none)
   -- The end of the script: wait for a reload that is still running, then
   -- stop the loop. A loop that has ended by itself is neither waited for
   -- nor stopped, and `halt` throws the error it ended with, if it did.
-  let unsettled := (← host.await patience).failure none
-  let stopped ← host.halt patience
-  return (unsettled <|> (if stopped then none else some (.unanswered none)), none)
+  let unsettled := (← host.await patience answer).failureIn none patience answer
+  let stopped ← host.halt answer
+  let unstopped :=
+    if stopped then none else some (Failure.within answer patience (.unanswered none))
+  return (unsettled <|> unstopped, none)
 
 /-- Runs `script` against a host of its own, as `runFrom` does from its
-start, and says only why it could not run to its end. -/
+start, with the same `patience` and `answer`, and says only why it could not
+run to its end. -/
 def run {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (script : Array Line) (patience : Nat) : IO (Option Failure) :=
-  (·.1) <$> runFrom collaborators script patience
+    (script : Array Line) (patience : Nat) (answer : Nat := patience) : IO (Option Failure) :=
+  (·.1) <$> runFrom collaborators script patience (answer := answer)
 
 /-- Runs `script` against a host of its own, as `runFrom` does, and then, the
 host's loop having ended, removes what the collaborators left outside the
 process (`Collaborators.dispose`): once, whether the run returned or threw.
-A dispose that throws is ignored, so it neither hides the run's failure nor
-replaces it. What the headless mode runs (`main`). -/
+The loop has ended unless `answer` ran out waiting for it (`runFrom`), so
+nothing is disposed of under a live loop that ends within it. A dispose
+that throws is ignored, so it neither hides the run's failure nor replaces
+it. What the headless mode runs (`main`). -/
 def runAndDispose {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme)
-    (script : Array Line) (patience : Nat) (resume : Nat := 0) :
+    (script : Array Line) (patience : Nat) (resume : Nat := 0) (answer : Nat := patience) :
     IO (Option Failure × Option Restart.Plan) := do
   try
-    runFrom collaborators script patience resume
+    runFrom collaborators script patience resume answer
   finally
     try
       collaborators.dispose

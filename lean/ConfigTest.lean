@@ -100,8 +100,10 @@ show:
   are serialised, and a replaced config is not retained;
 - `jobChecks`: jobs from config through the host: a handler receives a job's
   result on the editor thread, a reload that installs cancels the old
-  config's jobs and a rejected one does not, and how each ending of a job is
-  reported;
+  config's jobs and a rejected one does not, how each ending of a job is
+  reported, and a join that cannot finish running out as working when the
+  reload before it, or the editor thread's answer, is slower than its
+  patience;
 - `shippedChecks`: what the executable's hosts start with, the registry the
   packages of the core's Lake package make
   (`EditorCore.EditorPackage.packages`), each entry for the owner named
@@ -121,7 +123,9 @@ show:
   has released the focused buffer's text, the line the host prints for a
   program of the loop that is refused, and a window's close request with
   nothing unsaved ending the loop; and the headless mode's run disposing of
-  its collaborators once its loop has ended, whether it failed or not, and
+  its collaborators once its loop has ended, whether it failed or not, even
+  with the editor thread inside an event when a wait runs out, which
+  patience a failure names (`Wait.failureIn`), and
   the executable's hosts' dispose removing the directory of the config
   files' module data once it was made;
 - `dispatchChecks`: keys through the host, with the test scheme and
