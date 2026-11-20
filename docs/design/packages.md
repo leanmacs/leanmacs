@@ -1196,7 +1196,13 @@ last reload; :reload and try again"); its command then asks for a reload,
 which compares the fingerprints and starts the build. `:package-update`
 with no rev edits nothing: the lakefile names what is required and the
 manifest pins the revision, so it starts the build with `lake update` for
-the named package, or every git and Reservoir one.
+the named package, or every git and Reservoir one. A lakefile without the
+core's require at its root, last (an older editor's, which requires the
+set alone), is first repaired instead (`repair`, the commands' one
+composition with an edit that changes nothing), and nothing is updated:
+`lake update` on it would resolve a git core a package names, cloning it,
+before the build's core check refused it, and leave the lakefile as it
+was. Its line says to run `:package-update` again.
 
 A config file named `Config/EditorPackage.lean` would be taken as the
 `config` package's entry module and linked; nothing refuses it yet.

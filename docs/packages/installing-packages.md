@@ -99,7 +99,9 @@ What you see:
 The lakefile names what is required. `lake-manifest.json`, which the build
 writes beside it, pins the revision of each git package. `:package-update`
 with no rev edits nothing: it fetches the newest revision of the package, or
-of every git and Reservoir package, moves the pin and builds.
+of every git and Reservoir package, moves the pin and builds. On a lakefile
+an older editor wrote, without the core's require, it writes that require
+first and updates nothing: run it again.
 `:package-update <name> <rev>` writes `rev = "<rev>"` into that package's
 table and builds at that revision.
 
@@ -149,7 +151,8 @@ make the same edit and `:reload`.
 - **Every command writes the core's require last.** `:package-install`,
   `:package-remove` and `:package-update <name> <rev>` take any
   `editor-core` table out, whatever it says, and add `editor-core` by the
-  running editor's core directory after the last require. So a lakefile an
+  running editor's core directory after the last require; `:package-update`
+  with no rev writes it when it is not there. So a lakefile an
   older editor wrote, which requires the default set alone, or one you
   edited, is repaired by the next command. A `:reload` never rewrites it.
   So `editor-core` itself cannot be installed, given a rev or removed.

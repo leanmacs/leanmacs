@@ -875,8 +875,10 @@ The config session's decisions are tested here too, with no elaborator:
   probe; the core check, a relative entry resolved against the config
   directory; a success that writes the record, publishes version 1 and
   restarts into it; what is pruned, never the running
-  editor's version; and the three commands'
-  edits, their refusals and the reload after them;
+  editor's version; the three commands'
+  edits, their refusals and the reload after them; and `:package-update`
+  with no rev repairing a lakefile without the core's require at its root
+  first, through the edit job, and starting the build on a repaired one;
 - `packageSetChecks`: the packages of the core's Lake package, its entry
   module (`EditorCore/EditorPackage.lean`, a module outside `Editor/`,
   whose test module is `ModelTest/EditorCore/EditorPackage.lean`): the

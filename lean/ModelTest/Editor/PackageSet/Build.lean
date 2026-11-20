@@ -721,13 +721,49 @@ def packageSetBuildChecks : List Check :=
                 s!"{removeName}: the lakefile changed since the last reload; :reload and try again")
         | none => pure false },
     { name :=
+        ":package-update and :package-update <name>, on the lakefile generated before the core was required at its root, start the edit job with the text repaired, the running core's require last, and no build; on a repaired one they start the build, with no edit"
+      run :=
+        let facts := setOnlyLakefileWith #[gitPackage]
+        let (text, required) :=
+          match facts.lakefile with
+          | .toml text required => (text, required)
+          | _ => ("", #[])
+        let cat := replied (rootCommand "/bin/cat" #["/c/lakefile.toml"]) 0 text
+        let mv :=
+          replied (rootCommand "/bin/mv" #["/c/lakefile.toml.leanmacs-edit", "/c/lakefile.toml"])
+        let repaired :=
+          (withCoreEdit "/c" (some coreDirectory) text required fun text _ => .ok text).toOption.map
+            (·.toUTF8)
+        let repairs (argument : String) : Bool :=
+          match buildDriver (runningWith facts) #[cat, mv] with
+          | some driver =>
+            let updating := invoked driver updateName [.str argument]
+            let done := drained updating
+            repaired != some text.toUTF8 &&
+              bytesAt done "/c/lakefile.toml.leanmacs-edit" == repaired &&
+              done.reloads == driver.reloads + 1 &&
+              done.loop.state.echo ==
+                s!"{updateName}: wrote the core's require at the root of the lakefile; :{updateName} again to update; reloading" &&
+              !updating.startedJobs.contains (buildJob, some buildJob)
+          | none => false
+        let builds (argument : String) : Bool :=
+          match buildDriver (runningWith (repairedLakefileWith #[gitPackage])) #[] with
+          | some driver =>
+            let updating := invoked driver updateName [.str argument]
+            updating.startedJobs.contains (buildJob, some buildJob) &&
+              !updating.startedJobs.contains (editJob, some editJob) &&
+              updating.loop.state.echo == startedLine &&
+              updating.reloads == driver.reloads
+          | none => false
+        pure (repairs "" && repairs "g" && builds "" && builds "g") },
+    { name :=
         ":package-update with a rev edits the require's rev; with none it starts the build resolving every git package, with no edit"
       run :=
-        let facts := lakefileWith #[gitPackage]
-        let text :=
+        let facts := repairedLakefileWith #[gitPackage]
+        let (text, required) :=
           match facts.lakefile with
-          | .toml text _ => text
-          | _ => ""
+          | .toml text required => (text, required)
+          | _ => ("", #[])
         let cat := replied (rootCommand "/bin/cat" #["/c/lakefile.toml"]) 0 text
         let mv :=
           replied (rootCommand "/bin/mv" #["/c/lakefile.toml.leanmacs-edit", "/c/lakefile.toml"])
@@ -739,7 +775,7 @@ def packageSetBuildChecks : List Check :=
           pure
             (revised.reloads == driver.reloads + 1 &&
               bytesAt revised "/c/lakefile.toml.leanmacs-edit" ==
-                ((withCoreEdit "/c" (some coreDirectory) text (generated.push gitPackage)
+                ((withCoreEdit "/c" (some coreDirectory) text required
                       (setRev · · "g" "v2")).toOption.map
                   (·.toUTF8)) &&
               order &&

@@ -9,7 +9,7 @@ reads of a config, as the package-set checks build them: the shipped
 default at `/w/packages`, its core at `/w/lean`, its config directory `/c`
 and data directory `/d`, and the generated lakefile (or the one generated
 before it required the core at its root) with more requires after its
-own. Shared
+own, or a repaired lakefile with the core's require after them. Shared
 by the test modules of `Editor/PackageSet/Build.lean` and
 `Editor/Config/Reload.lean`; it holds no checks of its own.
 -/
@@ -70,6 +70,11 @@ def lakefileWith (more : Array Require := #[]) : Facts :=
 `more` after its one require. -/
 def setOnlyLakefileWith (more : Array Require := #[]) : Facts :=
   lakefileOf setOnly more
+
+/-- The lakefile with the set's require, `more`, and the running core's
+require last, as every package command writes it. -/
+def repairedLakefileWith (more : Array Require := #[]) : Facts :=
+  lakefileOf (setOnly ++ more) #[{ name := "editor-core", source := .path coreDirectory }]
 
 /-- The package `hello` by path. -/
 def hello : Require :=

@@ -64,7 +64,10 @@ the config directory or absolute (`isCoreAt`), with no other
 lakefile is a fixed point. So an edit repairs a lakefile an older
 editor generated, which requires the set alone, or one edited by hand. A
 remove's expansion of the shipped set leaves the core out: the root holds
-it. An editor that knows no directory of its core refuses every edit
+it. `:package-update` with no rev edits nothing else, but writes the
+lakefile `repair` answers first when it differs, so a set-only lakefile
+is repaired before `lake update` resolves a git core a package names. An
+editor that knows no directory of its core refuses every edit
 (`noCoreDirectory`). A reload never rewrites a lakefile.
 -/
 
@@ -294,5 +297,15 @@ def withCoreEdit (config : String) (core : Option String) (text : String) (requi
   if edited == bare && coreInPlace config core required then
     return text
   return appendCore edited core
+
+/-- The lakefile `text` of the config directory `config`, whose requires
+are `required`, with the core's require at its root, last, by the running
+editor's core directory `core`, and nothing else changed: `withCoreEdit`
+with an edit that changes nothing, so a repaired lakefile is answered as
+it is. What `:package-update` with no rev writes first when the lakefile
+lacks it (`Editor/PackageSet/Compiled.lean`). -/
+def repair (config : String) (core : Option String) (text : String) (required : Array Require) :
+    Except String String :=
+  withCoreEdit config core text required fun text _ => .ok text
 
 end Editor.PackageSet

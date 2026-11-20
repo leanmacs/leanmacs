@@ -21,7 +21,13 @@ commands with ex names that edit the config's `lakefile.toml`
 - **`:package-update [<name> [<rev>]]`** (`updateName`): with a rev it
   sets the require's rev; otherwise it starts the build in update mode,
   `lake update` for the named package or for every git and Reservoir one,
-  with no edit of the lakefile: the manifest pins which revision.
+  with no edit of the lakefile: the manifest pins which revision. A
+  lakefile without the core's require at its root, last (one an older
+  editor generated, which requires the set alone), is repaired first
+  instead (`repair`, `Editor/PackageSet/Edit.lean`), through the edit job,
+  and nothing is updated: `lake update` would resolve the git core a
+  package names, cloning it, before the build's core check refused it.
+  The edit's line says to run it again.
 
 Every edit writes the core's require at the lakefile's root, as its last
 require, by the running editor's core directory (`withCoreEdit`,
@@ -191,6 +197,14 @@ def updateCommand (call : Call) : EditorM Unit := do
     unless unknown.isEmpty do
       message s!"{updateName}: the lakefile does not require {", ".intercalate unknown}"
       return
+    -- A lakefile without the core's require at its root, last, is repaired
+    -- first, so `lake update` never resolves a git core a package names.
+    if let .toml text required := packageSet.facts.lakefile then
+      if let .ok repaired := repair packageSet.config packageSet.coreDirectory text required then
+        unless repaired == text do
+          writeEdit updateName text repaired
+              s!"{updateName}: wrote the core's require at the root of the lakefile; :{updateName} again to update"
+          return
     let resolve :=
       if names.isEmpty then (required.filter (·.source.fetched)).map (·.name) else names.toArray
     match orderOf packageSet packageSet.facts (resolve := some resolve) with
