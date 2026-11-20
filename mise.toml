@@ -311,18 +311,22 @@ run = [
   # under target/, as `:editorRust` above does. LEAN_CC is set as `lean`
   # sets it, so the link's environment record is unchanged.
   "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/packages/greeting/tests/headless/hello && EDITOR_INSTALL_DIR=\"$dir/v\" LEAN_CC=/usr/bin/cc lake -d ../tests/packages build --wfail -q :editorInstall && test \"$(cat \"$dir/v/editor.oleans\")\" = lib/lean && out=$(\"$dir/v/editor\" headless \"$(lean --print-prefix)\" '' $f/config $f/script) && printf '%s\\n' \"$out\" | diff $f/expected - && { test \"$(uname)\" != Darwin || codesign --verify --strict \"$dir/v/editor\"; } && status=0 && { out=$(EDITOR_INSTALL_DIR=\"$dir/v\" LEAN_CC=/usr/bin/cc lake -d ../tests/packages build -q :editorInstall 2>&1) || status=$?; } && test \"$status\" -ne 0 && printf '%s\\n' \"$out\" | grep -qF \"$dir/v already exists\" || { printf '%s\\n' \"$out\"; echo 'ffi-test: the install of the fixture set did not run its fixture, or took a directory that exists'; exit 1; }",
-  # A user's package set (docs/design/packages.md, "User package sets").
-  # A set outside the repository that holds no Rust crate links with no
-  # Cargo: the core's archive, as `lean` built it, is reused
-  # (`rustSource`, decided 2026-11-20: the editor never ships Cargo). A set
-  # written in a fresh temporary directory, requiring the default set, is
-  # resolved and its editor linked with a `cargo` that always fails first
-  # on the PATH (lean/no-cargo/cargo), and its archive's source is
-  # `prebuilt` while the default set's is `cargo`; the link reads only what
-  # `lean` built, and writes only the temporary directory. The default
-  # set's editor then reads as up to date, so nothing it shares was built
-  # again.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp lean-toolchain \"$dir/\" && printf 'name = \"config\"\\n\\n[[require]]\\nname = \"default-set\"\\npath = \"%s\"\\n' \"$(cd ../packages && pwd)\" > \"$dir/lakefile.toml\" && test \"$(lake -d ../packages query :editorRustSource)\" = cargo && PATH=\"$PWD/no-cargo:$PATH\" lake -d \"$dir\" update -q --keep-toolchain && test \"$(PATH=\"$PWD/no-cargo:$PATH\" lake -d \"$dir\" query :editorRustSource)\" = prebuilt && PATH=\"$PWD/no-cargo:$PATH\" LEAN_CC=/usr/bin/cc lake -d \"$dir\" build -q --wfail :editor && cmp \"$dir/.lake/build/bin/editor.core\" ../packages/.lake/build/bin/editor.core && LEAN_CC=/usr/bin/cc lake -d ../packages build --no-build -q :editor || { echo 'ffi-test: a user set with no Rust crate did not link without Cargo'; exit 1; }",
+  # A user's package set (docs/design/packages.md, "User package sets",
+  # "Who can build it"): a set outside the repository with no Rust crate
+  # runs no Cargo, and a package's C source, the preferred way to bring
+  # native code, builds with the toolchain's compiler (decided 2026-11-20).
+  # A set written in a fresh temporary directory, requiring the default set
+  # and the fixture package `c-glue` (tests/user-sets/c-glue), whose C
+  # source the toolchain's compiler builds, is resolved and its editor
+  # linked with a `cargo` that always fails first on the PATH
+  # (lean/no-cargo/cargo): its archive's source is `prebuilt`, reused as
+  # `lean` built it, while the default set's is `cargo`; its `editor.core`
+  # equals the default set's; the package's command, which calls its C
+  # function, answers as `c-glue-expected` says; and the default set's
+  # editor still reads as up to date, so nothing it shares was built again.
+  # The link reads what `lean` built and writes the temporary directory and
+  # the fixture package's own `.lake/`.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && repo=$(cd .. && pwd -P) && cp lean-toolchain \"$dir/\" && printf 'name = \"config\"\\n\\n[[require]]\\nname = \"default-set\"\\npath = \"%s/packages\"\\n\\n[[require]]\\nname = \"c-glue\"\\npath = \"%s/tests/user-sets/c-glue\"\\n' \"$repo\" \"$repo\" > \"$dir/lakefile.toml\" && test \"$(lake -d ../packages query :editorRustSource)\" = cargo && PATH=\"$PWD/no-cargo:$PATH\" lake -d \"$dir\" update -q --keep-toolchain && test \"$(PATH=\"$PWD/no-cargo:$PATH\" lake -d \"$dir\" query :editorRustSource)\" = prebuilt && PATH=\"$PWD/no-cargo:$PATH\" LEAN_CC=/usr/bin/cc lake -d \"$dir\" build -q --wfail :editor && cmp \"$dir/.lake/build/bin/editor.core\" ../packages/.lake/build/bin/editor.core && mkdir \"$dir/config\" && out=$(\"$dir/.lake/build/bin/editor\" headless \"$(lean --print-prefix)\" .lake/build/lib/lean \"$dir/config\" ../tests/user-sets/c-glue-script) && printf '%s\\n' \"$out\" | diff ../tests/user-sets/c-glue-expected - && LEAN_CC=/usr/bin/cc lake -d ../packages build --no-build -q :editor || { echo 'ffi-test: a user set with a C package did not link without Cargo'; exit 1; }",
   # A Rust crate outside the repository is refused with its reason
   # (`setRustCrates`; docs/design/packages.md, "Who can build it"): a copy
   # of the fixture package `echo` in a temporary directory, in a set there,

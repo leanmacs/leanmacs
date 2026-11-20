@@ -1953,12 +1953,15 @@ package's tests are by convention are in
   is up to date after `lean`, so the install builds nothing; it writes the
   temporary directory, and runs Cargo's own up-to-date check under
   `target/` as `:editorRust` does.
-- **A user's set with no Rust needs no Cargo.** `ffi-test` writes a set in
-  a temporary directory that requires the default set, resolves it and
-  links its editor with a `cargo` that always fails first on the PATH
-  (`lean/no-cargo/cargo`): `:editorRustSource` says `prebuilt` for it and
-  `cargo` for the default set, the two editors' `editor.core` are equal,
-  and the default set's editor still reads as up to date
+- **A user's set with no Rust runs no Cargo, and its C builds.**
+  `ffi-test` writes a set in a temporary directory that requires the
+  default set and the fixture package `c-glue` (a C source and its
+  `@[extern]` binding), resolves it and links its editor with a `cargo`
+  that always fails first on the PATH (`lean/no-cargo/cargo`):
+  `:editorRustSource` says `prebuilt` for it and `cargo` for the default
+  set, the two editors' `editor.core` are equal, `c-glue`'s command
+  answers from its C function (`tests/user-sets/c-glue-expected`), and
+  the default set's editor still reads as up to date
   ([packages.md](../design/packages.md), "Who can build it").
 - **A Rust crate outside the repository is refused**
   (`tools/rust-outside-check.sh`): a copy of `echo` in a temporary

@@ -1011,8 +1011,9 @@ is pinned on the models (`ModelTest.packageSetBuildChecks`):
    Measured on Lake 5.0.0: a `require` missing from the manifest fails the
    build (`dependency 'b' not in manifest`), `lake update b` adds only
    `b`, and a stale entry for a removed require does not fail the build.
-3. **Rust**: `lake query :editorRustCrates`, and `cargo --version` only
-   when the set holds a crate ("Who can build it").
+3. **Rust**: `lake query :editorRustCrates`; a set that holds a package
+   declaring a Rust crate stops here, refused ("Who can build it"). No
+   Cargo is ever run.
 4. **Build and install**: `lake build :editorInstall` with
    `EDITOR_INSTALL_DIR=<data>/editors/staging-<k>` and the environment of
    `editor.build`, its output streamed into the buffer `*package-build*`.
@@ -1591,26 +1592,33 @@ the protocol again in Lean.
 
 ### Who can build it
 
-**Decided (packages phase 8; the owner, 2026-11-20): the editor never
-ships Cargo**, not with the app and not with the toolchain phase 9 ships.
+**Decided by the owner, 2026-11-20 (packages phase 8): the app never ships
+Cargo.**
 
-- **A set with no Rust crate needs no Cargo.** Its link reuses the core's
+- **A C FFI is the preferred way for a package to bring native code**: C or
+  C++ sources the toolchain's compiler builds, as Lake builds the core's
+  own glue (`buildLeanO`), or a system C library it links. It needs
+  nothing beyond the bundled toolchain. A package's object reaches the
+  editor's link through its library's `moreLinkObjs`. The fixture package
+  `tests/user-sets/c-glue` is one: its `c/cglue.c` is bound by an
+  `@[extern]` declaration and answers its command.
+- **A user's set with no Rust crate never runs Cargo.** It links the core's
   Rust archive as it is already built (`libeditor_rust.a`, with its record
   of system libraries `target/editor-rust/core/native-static-libs`): no
-  `cargo fetch`, no `cargo rustc`, nothing written under the checkout's
-  `target/` (`rustSource` and `prebuiltRust` in `lean/lakefile.lean`; the
-  facet `:editorRustSource` says `prebuilt`). This holds of every set
-  outside the repository, a user's; the checkout's own sets are built by
-  Cargo, so a change to the core's Rust is built. `ffi-test` links such a
-  set with a `cargo` that always fails first on the PATH.
-- **A set with a Rust package needs the user's own Cargo**, installed with
-  rustup. The package-set build checks `cargo --version` only then, and
-  when it is missing or broken it stops before building: "Cargo is
-  required to build `<package>`'s Rust crate `<crate>` … install it with
-  rustup from https://rustup.rs, then :reload; this editor keeps running"
-  (`cargoRequired`, `lean/Editor/PackageSet/Build.lean`). This is the same
-  stance as git's: require the system tool, say so when it is needed,
-  never ship it.
+  `cargo fetch`, no `cargo rustc`, nothing written into a Cargo `target/`
+  (`rustSource` and `prebuiltRust` in `lean/lakefile.lean`; the facet
+  `:editorRustSource` says `prebuilt`). A set is a user's when it is
+  outside the repository; the checkout's own sets are built by Cargo, so a
+  change to the core's Rust is built.
+- **A Rust crate is supported, and needs the user's own Cargo**, installed
+  with rustup. The package-set build checks `cargo --version` only when the
+  set holds a package with a crate; when Cargo is missing or broken it
+  stops before building: "Cargo is required to build `<package>`'s Rust
+  crate `<crate>`, and none works here (`<how>`): install it from
+  https://rustup.rs, then :reload; this editor keeps running"
+  (`cargoRequired`, `lean/Editor/PackageSet/Build.lean`). This is git's
+  stance too: require the system tool, say so when it is needed, never
+  ship it.
 - **Why not archives built ahead for each platform.** An editor links one
   Rust archive, so it holds one copy of Rust's standard library ("One Rust
   archive per editor"), so a package's crate cannot arrive as a prebuilt
@@ -1618,8 +1626,8 @@ ships Cargo**, not with the app and not with the toolchain phase 9 ships.
   whole editor's archive for that exact combination of crates, core and
   platform, which no package author can build; a dynamic library loaded at
   run time was refused earlier (`@[extern]` binds at link time). So a
-  third party's Rust reaches an editor only by compiling the generated
-  crate on the user's machine, with Cargo.
+  package's Rust reaches an editor only by compiling the generated crate
+  on the user's machine, with Cargo.
 
 **Built, and refused.** A user's set builds the package crates the editor's
 own Cargo workspace holds: every package crate under the repository, such
@@ -1631,8 +1639,13 @@ crate whose manifest is outside the repository is refused by
 docs/design/packages.md, 'Who can build it'". Two pieces are missing for
 such a crate: its dependencies are not in the core's lock (the build is
 `cargo fetch --locked` then `--offline`), and `editor-service` has no
-published name for it to depend on. `ffi-test` checks the refusal on a
-copy of `echo` outside the repository (`tools/rust-outside-check.sh`).
+published name for it to depend on.
+
+`ffi-test` checks these: a set in a temporary directory that requires the
+default set and `c-glue` is linked with a `cargo` that always fails first
+on the PATH, and `c-glue`'s command answers from its C function; and a copy
+of `echo` outside the repository is refused with its reason
+(`tools/rust-outside-check.sh`).
 
 ## The module map
 

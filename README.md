@@ -189,9 +189,11 @@ Builds are kept under `~/.local/share/leanmacs/editors` (or
 to the one before it, then to the editor it shipped with.
 
 A git or Reservoir package needs `git` (`xcode-select --install` on macOS,
-or https://git-scm.com); a package with Rust in it needs Cargo, installed
-with rustup (https://rustup.rs). The editor ships neither, and says when
-one is needed. A set with no Rust needs no Cargo.
+or https://git-scm.com). A package that brings native code through C (C
+sources, or a system C library) needs nothing more; one with a Rust crate
+needs Cargo, installed with rustup (https://rustup.rs). The editor ships
+neither git nor Cargo, and says when one is needed. A set with no Rust
+needs no Cargo.
 
 If the config directory is a git repository, ignore its `.lake/`.
 
