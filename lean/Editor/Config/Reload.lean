@@ -1,6 +1,7 @@
 import Editor.Appearance
 import Editor.Config.Session
 import Editor.Config.Stores
+import Editor.PackageSet.Build
 
 /-!
 # Reloads, serialised by a reducer
@@ -169,6 +170,17 @@ the model tests run it with outcomes built by hand
 - **The base is kept** from the first outcome that has it, accepted or not,
   and handed to every later job, so it is imported once.
 - **Every outcome is reported**, with its diagnostics.
+- **A reload decides about the package set** (`docs/design/packages.md`,
+  "User package sets"). Every outcome, accepted or rejected, keeps what the
+  reload read of the config as a package set in `State.packageSet`, and
+  asks `PackageSet.decide` whether its fingerprint differs from the running
+  editor's (`State.packagesAfter`). One that differs, with no build in
+  flight, has the effect `buildPackages` after its report, and marks a
+  build in flight (`State.packageBuilding`) until the host says it ended
+  (`Event.packageBuild`); the host says so too of a build started
+  elsewhere (`:package-update`), so a reload starts none while any is in
+  flight. What there is to say instead (no `lake`) is the effect `say`,
+  once (`State.packagesSaid`). A reload that matches does nothing.
 
 The runtime that owns the state calls `step` for each event, on the editor
 thread, and performs the effects: the headless loop today
@@ -321,6 +333,16 @@ structure State (β σ : Type) where
   /-- The appearance the window was last asked, since it last opened; none
   before one is. -/
   appearance : Option Appearance := none
+  /-- What the running editor knows of its own package set
+  (`Editor/PackageSet/Running.lean`): set when a host starts, and its
+  `facts` set by every reload that finishes to what that reload read. -/
+  packageSet : PackageSet.Running := {}
+  /-- Whether a package-set build is in flight: set when a reload starts
+  one (`buildPackages`), and by `Event.packageBuild` whoever started it. -/
+  packageBuilding : Bool := false
+  /-- Whether what a reload had to say of the package set instead of
+  building it has been said (`say`): it is said once. -/
+  packagesSaid : Bool := false
 
 /-- What happened, as far as reloads go. -/
 inductive Event (β σ : Type) where
@@ -333,6 +355,10 @@ inductive Event (β σ : Type) where
   | choose (name : String)
   /-- The window opened. Whatever was asked of it before is lost. -/
   | windowOpened
+  /-- A package-set build started (`true`) or ended (`false`), whoever
+  started it: the host says so as the job keyed `package-build` comes and
+  goes. It has no effect. -/
+  | packageBuild (inFlight : Bool)
 
 /-- What the runtime is to do. -/
 inductive Effect (β σ : Type) where
@@ -350,6 +376,12 @@ inductive Effect (β σ : Type) where
   | themed
   /-- Ask the window to draw its title and buttons in this appearance. -/
   | appearance (appearance : Appearance)
+  /-- Start the package-set build with this order: the job `package-build`
+  (`Editor/PackageSet/Build.lean`), keyed so. -/
+  | buildPackages (order : PackageSet.Order)
+  /-- Say this in the echo area: what a reload had to say of the package
+  set instead of building it. -/
+  | say (text : String)
 
 namespace State
 
@@ -458,6 +490,19 @@ def ask (state : State β σ) : State β σ × Array (Effect β σ) :=
     else (state, #[])
   | none => (state, #[])
 
+/-- The state once a reload that read `facts` of the package set has
+finished, and what to do about the set ("A reload decides about the
+package set", in the module docs): `PackageSet.decide` over what the running
+editor knows, now with `facts`, and whether a build is in flight. -/
+def packagesAfter (state : State β σ) (facts : PackageSet.Facts) : State β σ × Array (Effect β σ) :=
+  let packageSet := { state.packageSet with facts }
+  let state := { state with packageSet }
+  match PackageSet.decide packageSet facts state.packageBuilding with
+  | .nothing => (state, #[])
+  | .say text =>
+    if state.packagesSaid then (state, #[]) else ({ state with packagesSaid := true }, #[.say text])
+  | .build order => ({ state with packageBuilding := true }, #[.buildPackages order])
+
 end State
 
 /-- The reducer before the window's appearance is asked. -/
@@ -468,10 +513,11 @@ private def stepTheme {β σ : Type} (state : State β σ) : Event β σ → Sta
     -- The old config's jobs go when, and only when, the new one is in.
     let installed :=
       if report.installed then #[.cancelJobs .config, .report report] else #[.report report]
+    let (state, packages) := state.packagesAfter outcome.facts
     if state.pending then
       let (state, effects) := state.start
-      (state, installed ++ effects)
-    else (state, installed)
+      (state, installed ++ packages ++ effects)
+    else (state, installed ++ packages)
   | .choose name =>
     if (state.registry.theme? name).isSome then ({ state with themeName := name }, #[.themed])
     else (state, #[])
@@ -479,6 +525,7 @@ private def stepTheme {β σ : Type} (state : State β σ) : Event β σ → Sta
     ({ state with
         windowOpen := true, appearance := none },
       #[])
+  | .packageBuild inFlight => ({ state with packageBuilding := inFlight }, #[])
 
 /-- The reducer: the state after `event`, and the effects to perform. The
 window's appearance is asked last (`State.ask`), after whatever the event

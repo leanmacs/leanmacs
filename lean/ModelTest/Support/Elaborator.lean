@@ -171,9 +171,10 @@ def loaded (names : List String) : Array (LoadedFile ModelHandle) :=
 
 /-- An effect of the reload reducer, as a check compares it: a start with
 the modules of the base and the modules of the files it carries, the
-cancelling of an owner's jobs with the owner's name, or a report with its
+cancelling of an owner's jobs with the owner's name, a report with its
 number, whether it installed, the sources of its diagnostics, and its
-counts of files and commands. -/
+counts of files and commands, a switch of theme, an appearance asked, or
+the start of a package-set build or what was said of one. -/
 inductive Seen where
   /-- A job was started. -/
   | start (base : Option (Array String)) (files : Array String)
@@ -185,6 +186,10 @@ inductive Seen where
   | themed
   /-- The window was asked for this appearance. -/
   | appearance (appearance : Appearance)
+  /-- The package-set build was started with this order. -/
+  | buildPackages (order : PackageSet.Order)
+  /-- This was said of the package set. -/
+  | say (text : String)
   deriving DecidableEq, Repr
 
 /-- `effect` as a check compares it. -/
@@ -196,6 +201,8 @@ def seen : Config.Effect ModelBase ModelHandle → Seen
       report.commands
   | .themed => .themed
   | .appearance appearance => .appearance appearance
+  | .buildPackages order => .buildPackages order
+  | .say text => .say text
 
 /-- The outcome of a reload that built the files called `names`, whose
 `setup` is `setup`, on a base that holds no module. Built by hand: no

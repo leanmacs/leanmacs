@@ -52,6 +52,7 @@ import Editor.Window
 import Editor.Workspace
 import ModelTest.Check
 import ModelTest.Support.Elaborator
+import ModelTest.Support.PackageSet
 
 /-!
 # Model tests: `Editor/Config/Reload.lean`
@@ -1145,7 +1146,62 @@ def reloadChecks : List Check :=
                     #[titled "File" "config's", titled "Edit" "edit", titled "Help" "help"] } &&
             kept.registry.menuBar? == state.registry.menuBar? &&
             dropped.registry.menuBar? == theirs.registry.menuBar? &&
-            dropped.registry.menus.map (·.owner) == #[other, other]) }]
+            dropped.registry.menus.map (·.owner) == #[other, other]) },
+    { name :=
+        "a reload whose package set differs from the running editor's starts one build after its report, keeping what it read; none while that build is in flight, one again once it ended, and none for a reload that matches"
+      run :=
+        let facts := PackageSetTest.lakefileWith #[PackageSetTest.hello]
+        let generated := PackageSetTest.lakefileWith
+        let start : ModelState := { packageSet := PackageSetTest.runningWith {} }
+        let differing : ModelOutcome := { accepted ["a"] (pure ()) with facts }
+        let matching : ModelOutcome := { accepted ["a"] (pure ()) with facts := generated }
+        let builds (effects : Array Seen) : Array PackageSet.Order :=
+          effects.filterMap fun
+            | .buildPackages order => some order
+            | _ => none
+        let order :=
+          match PackageSet.decide (PackageSetTest.runningWith facts) facts false with
+          | .build order => some order
+          | _ => none
+        let (first, firstEffects) := reduceFrom start [.requested, .finished differing]
+        let (second, secondEffects) := reduceFrom first [.requested, .finished differing]
+        let (ended, endedEffects) := reduceFrom second [.packageBuild false]
+        let (third, thirdEffects) := reduceFrom ended [.requested, .finished differing]
+        let (_, matchingEffects) := reduceFrom start [.requested, .finished matching]
+        let (_, elsewhereEffects) :=
+          reduceFrom start [.packageBuild true, .requested, .finished differing]
+        pure
+          (order.isSome && builds firstEffects == order.toArray &&
+            (firstEffects.back?.map fun
+                | .buildPackages _ => true
+                | _ => false) ==
+              some true &&
+            first.packageSet.facts == facts &&
+            first.packageBuilding &&
+            builds secondEffects == #[] &&
+            endedEffects == #[] &&
+            !ended.packageBuilding &&
+            builds thirdEffects == order.toArray &&
+            third.packageBuilding &&
+            builds matchingEffects == #[] &&
+            builds elsewhereEffects == #[]) },
+    { name :=
+        "what a reload has to say of the package set instead of building it is said once, and starts no build"
+      run :=
+        let facts := PackageSetTest.lakefileWith #[PackageSetTest.hello]
+        let start : ModelState := { packageSet := PackageSetTest.runningWith {} (lake := none) }
+        let differing : ModelOutcome := { accepted ["a"] (pure ()) with facts }
+        let said (effects : Array Seen) : Array String :=
+          effects.filterMap fun
+            | .say text => some text
+            | _ => none
+        let (_, effects) :=
+          reduceFrom start [.requested, .finished differing, .requested, .finished differing]
+        pure
+          (said effects == #[PackageSet.noLake start.packageSet] &&
+            !effects.any fun
+                | .buildPackages _ => true
+                | _ => false) }]
 
 /-- The checks that an install replaces config's descriptions and prefix
 names along with its bindings. -/

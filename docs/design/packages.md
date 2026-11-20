@@ -984,9 +984,14 @@ as the last reload read them with Lake's loader:
 ### The build, as a job
 
 A reload whose fingerprint differs from the running editor's starts the
-job `package-build` (`lean/Editor/PackageSet/Build.lean`; the host asks
-`PackageSet.decide` after each reload, `Headless.afterReload`), whether
-the config was installed or refused. It starts none while one is in
+job `package-build` (`lean/Editor/PackageSet/Build.lean`), whether the
+config was installed or refused. The decision is the pure reload
+reducer's (`lean/Editor/Config/Reload.lean`, `State.packagesAfter`): as
+each reload finishes it keeps what the reload read, asks
+`PackageSet.decide`, and has the effect `buildPackages` or `say`, which
+the host only carries out; it keeps whether a build is in flight, which
+the host tells it of a build `:package-update` started too, and whether
+it has said why it cannot build. It starts none while one is in
 flight, when the editor has no data directory or knows no core identity,
 or when it has no `lake`; then it says once: "the package set changed, but
 this editor has no lake to build it (`<sysroot>/bin/lake`)", which is what

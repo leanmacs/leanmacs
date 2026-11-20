@@ -1220,14 +1220,9 @@ structure Running (β σ : Type) (scheme : InputScheme) where
   /-- What the host has to say in the echo area once the frame is made: a
   reload's error said before there was a frame (`said`). -/
   unsaid : Option String := none
-  /-- What a reload read of the package set before there was a frame, to
-  set in the editor state once it is made (`withFacts`). -/
-  unsetFacts : Option PackageSet.Facts := none
-  /-- Whether what a reload had to say of the package set instead of
-  building it has been said: it is said once (`afterReload`). -/
-  saidPackages : Bool := false
   /-- The jobs started with a key, by their key: the id each runs as
-  (`JobStart.key`). -/
+  (`JobStart.key`). Changed only through `rekeyed`, which tells the reload
+  reducer whether a package-set build is in flight. -/
   keyed : Array (String × Nat) := #[]
   /-- The posts the jobs made that the editor thread has not run, each with
   its job's id. -/
@@ -1272,6 +1267,16 @@ def said (running : Running β σ scheme) (text : String) : Running β σ scheme
     { running with frame := some { frame with state := { frame.state with echo := text } } }
   | none => { running with unsaid := some text }
 
+/-- `running` with the keyed jobs `keyed`, and the reload reducer told
+whether a package-set build is in flight when that changed
+(`Config.Event.packageBuild`, which has no effect): the job keyed
+`package-build` is, whoever started it. -/
+def rekeyed (running : Running β σ scheme) (keyed : Array (String × Nat)) : Running β σ scheme :=
+  let inFlight := keyed.any (·.1 == PackageSet.buildJob)
+  let running := { running with keyed }
+  if inFlight == running.config.packageBuilding then running
+  else { running with config := (Config.step running.config (.packageBuild inFlight)).1 }
+
 /-- The reload job, on a thread of its own: builds the config, hands the
 outcome over through `promise`, and wakes the editor thread with an event.
 The wake-up is posted whatever happens, so the editor thread never waits for
@@ -1287,12 +1292,46 @@ def reloadJob (collaborators : Collaborators β σ scheme) (base : Option β)
   finally
     discard <| Ffi.postEvent .editor collaborators.wakeups 0 ""
 
+/-- Starts `work` as a job of `owner` called `name`: its id, and the jobs with
+it. It runs on the pool; its posts wait in the mailbox, and when it has
+ended the runner posts a wake-up to the editor queue, with the job's id.
+How a registered job is started (`startJob`) and how the loop's own work is
+(`Loop.Spawn`, `launch`). -/
+def startWork (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (owner : Config.Owner) (name : String) (work : Work) : IO (Nat × Running β σ scheme) := do
+  let wake (id : Nat) : BaseIO Unit :=
+    (discard <| Ffi.postEvent .editor collaborators.jobs id.toUInt64 "" : IO Unit).catchExceptions
+      fun _ => pure ()
+  -- A post waits in the mailbox, and the event says whose it is: the job's
+  -- wake-up is posted after its last post's event.
+  let posted (id : Nat) (invocation : Invocation) : BaseIO Unit := do
+    running.mailbox.push id invocation
+    (discard <| Ffi.postEvent .editor collaborators.posts id.toUInt64 "" : IO Unit).catchExceptions
+        fun _ => pure ()
+  let (id, jobs) ← running.jobs.start owner name work wake posted
+  return (id, { running with jobs })
+
+/-- Starts the job registered under `name` with `arguments`, for the owner
+that registered it: its id, and the jobs with it, or `none` for a name no
+job is registered under. The job runs on the pool; when it has ended the
+runner posts a wake-up to the editor queue, with the job's id, from
+whichever thread the job ended on. -/
+def startJob (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
+    (name : String) (arguments : List Argument := []) : IO (Option Nat × Running β σ scheme) := do
+  let some (owner, work) := running.config.work? name arguments | return (none, running)
+  let (id, running) ← running.startWork collaborators owner name work
+  return (some id, running)
+
 /-- Feeds `event` to the reload reducer and performs its effects. A reload
 job is started on a dedicated task, never run here: it reads files and
 elaborates, and the editor thread goes on to its next event. A reload's
 report is printed, and a rejected one's error is said in the echo area
 (`Config.Report.echo`, `said`); one that installs says nothing there, and
-hands the display the new theme (`Config.retheme`). -/
+hands the display the new theme (`Config.retheme`). A package-set build the
+reducer asks for (`buildPackages`, `docs/design/packages.md`, "User package
+sets") is started as the job `package-build`, keyed so, printed `job <id>
+package-build: started`, and said (`PackageSet.startedLine`); what the
+reducer has to say of the set instead is said. -/
 def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
     (event : Config.Event β σ) : IO (Running β σ scheme) := do
   let (config, effects) := Config.step running.config event
@@ -1325,79 +1364,34 @@ def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ
       pure ()
     | .appearance appearance =>
       discard <| running.display.handle (.frame (.appearance appearance))
+    | .buildPackages order =>
+      let (id?, started) ← running.startJob collaborators PackageSet.buildJob [.str order.encode]
+      match id? with
+      | some id =>
+        collaborators.emit s!"job {id} {PackageSet.buildJob}: started"
+        running :=
+          (started.said PackageSet.startedLine).rekeyed
+            (started.keyed.push (PackageSet.buildJob, id))
+      | none =>
+        -- No job is registered under the name: none is in flight.
+        running := started.rekeyed started.keyed
+    | .say text =>
+      running := running.said text
   return running
 
-/-- Starts `work` as a job of `owner` called `name`: its id, and the jobs with
-it. It runs on the pool; its posts wait in the mailbox, and when it has
-ended the runner posts a wake-up to the editor queue, with the job's id.
-How a registered job is started (`startJob`) and how the loop's own work is
-(`Loop.Spawn`, `launch`). -/
-def startWork (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
-    (owner : Config.Owner) (name : String) (work : Work) : IO (Nat × Running β σ scheme) := do
-  let wake (id : Nat) : BaseIO Unit :=
-    (discard <| Ffi.postEvent .editor collaborators.jobs id.toUInt64 "" : IO Unit).catchExceptions
-      fun _ => pure ()
-  -- A post waits in the mailbox, and the event says whose it is: the job's
-  -- wake-up is posted after its last post's event.
-  let posted (id : Nat) (invocation : Invocation) : BaseIO Unit := do
-    running.mailbox.push id invocation
-    (discard <| Ffi.postEvent .editor collaborators.posts id.toUInt64 "" : IO Unit).catchExceptions
-        fun _ => pure ()
-  let (id, jobs) ← running.jobs.start owner name work wake posted
-  return (id, { running with jobs })
-
-/-- Starts the job registered under `name` with `arguments`, for the owner
-that registered it: its id, and the jobs with it, or `none` for a name no
-job is registered under. The job runs on the pool; when it has ended the
-runner posts a wake-up to the editor queue, with the job's id, from
-whichever thread the job ended on. -/
-def startJob (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
-    (name : String) (arguments : List Argument := []) : IO (Option Nat × Running β σ scheme) := do
-  let some (owner, work) := running.config.work? name arguments | return (none, running)
-  let (id, running) ← running.startWork collaborators owner name work
-  return (some id, running)
-
-/-- Sets what the last reload read of the package set in the editor state
-(`PackageSet.Running.facts`), now when the frame is made and once it is
-made otherwise (`framed`). -/
-def withFacts (running : Running β σ scheme) (facts : PackageSet.Facts) : Running β σ scheme :=
+/-- Sets what the last reload read of the package set
+(`Config.State.packageSet`) in the editor state (`PackageSet.Running.facts`),
+when there is a frame: the frame takes it as it is made (`framed`). -/
+def withFacts (running : Running β σ scheme) : Running β σ scheme :=
   match running.frame with
   | some frame =>
+    let facts := running.config.packageSet.facts
     { running with
       frame :=
         some
           { frame with
             state := { frame.state with packageSet := { frame.state.packageSet with facts } } } }
-  | none => { running with unsetFacts := some facts }
-
-/-- What the host does about the package set after a reload
-(`docs/design/packages.md`, "User package sets"): it keeps what the reload
-read in the editor state (`withFacts`), and asks `PackageSet.decide`
-whether to start the build. A build is started as the job
-`package-build`, keyed so, printed `job <id> package-build: started`, and
-said (`PackageSet.startedLine`); what there is to say instead is said
-once (`saidPackages`). -/
-def afterReload (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
-    (facts : PackageSet.Facts) : IO (Running β σ scheme) := do
-  let running := running.withFacts facts
-  let inFlight := running.keyed.any (·.1 == PackageSet.buildJob)
-  let own := { collaborators.packageSet with facts }
-  match PackageSet.decide own facts inFlight with
-  | .nothing =>
-    return running
-  | .say text =>
-    if running.saidPackages then
-      return running
-    return { running.said text with saidPackages := true }
-  | .build order =>
-    let (id?, running) ← running.startJob collaborators PackageSet.buildJob [.str order.encode]
-    match id? with
-    | some id =>
-      collaborators.emit s!"job {id} {PackageSet.buildJob}: started"
-      return { running.said PackageSet.startedLine with
-          keyed := running.keyed.push (PackageSet.buildJob, id) }
-    | none =>
-      return running
+  | none => running
 
 /-- Takes the finished reload job's outcome and feeds it to the reducer. This
 is where a reload is installed: on the editor thread, between two events. -/
@@ -1410,15 +1404,14 @@ def finish (collaborators : Collaborators β σ scheme) (running : Running β σ
         diagnostics := #[Config.failure "reload" "the reload job ended without an outcome"],
         built := none }
   let running ← { running with job := none }.reduce collaborators (.finished outcome)
-  running.afterReload collaborators outcome.facts
+  return running.withFacts
 
 /-- Cancels the job started with `key`, if one is running or has finished and
 not been delivered (`Job.Jobs.cancel`), and forgets the key. -/
 def cancelKeyed (running : Running β σ scheme) (key : String) : IO (Running β σ scheme) := do
   let some (_, id) := running.keyed.find? (·.1 == key) | return running
   let jobs ← running.jobs.cancel id
-  return { running with
-      jobs, keyed := running.keyed.filter (·.1 != key) }
+  return { running with jobs }.rekeyed (running.keyed.filter (·.1 != key))
 
 /-- Carries out what the loop handed back to start and to end: each key of
 `cancels` is cancelled; then each of `starts` is started, for the owner
@@ -1447,12 +1440,12 @@ def launch (collaborators : Collaborators β σ scheme) (running : Running β σ
     if let some id := id? then
       collaborators.emit s!"job {id} {start.name}: started"
       if let some key := start.key then
-        running := { running with keyed := running.keyed.push (key, id) }
+        running := running.rekeyed (running.keyed.push (key, id))
   for spawn in spawns do
     running ← running.cancelKeyed spawn.key
     let (id, started) ← running.startWork collaborators spawn.owner spawn.label spawn.work
     collaborators.emit s!"job {id} {spawn.label}: started"
-    running := { started with keyed := started.keyed.push (spawn.key, id) }
+    running := started.rekeyed (started.keyed.push (spawn.key, id))
   return running
 
 /-- Withdraws every pause of completion at point armed: its wait is
@@ -1684,10 +1677,8 @@ def framed (collaborators : Collaborators β σ scheme) (running : Running β σ
     match made, running.unsaid with
     | some _, some text => { running.said text with unsaid := none }
     | _, _ => running
-  let running :=
-    match made, running.unsetFacts with
-    | some _, some facts => { running.withFacts facts with unsetFacts := none }
-    | _, _ => running
+  -- And what the last reload read of the package set.
+  let running := running.withFacts
   return (running.frame, running)
 
 /-- How a command the loop ran ended, as the host prints it after
@@ -1919,9 +1910,7 @@ def ended (collaborators : Collaborators β σ scheme) (running : Running β σ 
   let (result, jobs) ← running.jobs.finish id
   let some (entry, outcome) := result | return { running with jobs }
   -- A keyed job that ended has no key any more.
-  let running :=
-    { running with
-      jobs, keyed := running.keyed.filter (·.2 != id) }
+  let running := { running with jobs }.rekeyed (running.keyed.filter (·.2 != id))
   let label := s!"job {entry.id} {entry.name}"
   match outcome with
   | .finished command =>
@@ -2332,7 +2321,9 @@ structure Progress where
 
 /-- What the editor thread holds as its loop starts: the config state its
 packages make (`Config.State.ofPackages`: each of `collaborators.packages`
-registered in order, for the owner named after it, before any config), no
+registered in order, for the owner named after it, before any config),
+knowing what the running editor knows of its own package set
+(`collaborators.packageSet`), no
 texts, the display its collaborators make over the table of snapshots the
 text binding publishes, the clipboard they make, the syntax tree they make
 over the same table, no jobs, an empty mailbox and no frame.
@@ -2346,7 +2337,7 @@ def Running.new {β σ : Type} {scheme : InputScheme} (collaborators : Collabora
   for message in refused do
     collaborators.log s!"package: {message}"
   return {
-      config
+      config := { config with packageSet := collaborators.packageSet }
       texts := RealTexts.over collaborators.published
       display := ← collaborators.display collaborators.published.reader
       clipboard := ← collaborators.clipboard

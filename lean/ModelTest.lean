@@ -796,7 +796,11 @@ The config session's decisions are tested here too, with no elaborator:
   met at its first install that declares them with a codec, or dropped and
   said; the cells' revision moves with each writer; and a package's
   declared store goes through the host's half (`restoreCells`,
-  `keptCells`);
+  `keptCells`). A reload whose package set differs from the running
+  editor's starts one build after its report and keeps what it read; none
+  while a build is in flight, whoever started it, and one again once it
+  ended; none for a reload that matches; and what it has to say instead
+  (no `lake`) is said once;
 - `reloadHintChecks`: an install replaces config's descriptions and prefix
   names with its bindings, so a later config without them clears them;
 - `packageChecks`: packages (`Editor/Package.lean`) and registering them

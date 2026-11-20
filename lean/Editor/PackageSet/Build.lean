@@ -12,7 +12,7 @@ import Editor.Restore.Restart
 A user's package set is built by the job `package-build`
 (`docs/design/packages.md`, "User package sets"). A reload whose
 fingerprint differs from the running editor's starts it (`decide`, which
-the host asks after each reload), and so does `:package-update`
+the reload reducer asks as each reload finishes, `Config.State.packagesAfter`), and so does `:package-update`
 (`Editor/PackageSet/Compiled.lean`). It runs over the job port's process
 and file requests alone, so every decision it makes is pinned on the job
 and process models (`ModelTest.packageSetBuildChecks`), the exact commands,
