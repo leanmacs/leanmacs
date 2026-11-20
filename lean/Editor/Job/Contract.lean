@@ -504,7 +504,49 @@ def fileProperties : List FileProperty :=
             refusedAs atFile .notADirectory &&
             refusedAs underFile .notADirectory &&
             refusedAs relative .relativePath
-      after := #[("a.txt", rawFile), ("made", ByteArray.empty)] }]
+      after := #[("a.txt", rawFile), ("made", ByteArray.empty)] },
+    { name :=
+        "an append to nothing makes the file holding the bytes, and appends concatenate, a file that was there included"
+      files := #[("a.txt", lfFile)]
+      holds := fun root => do
+        let first ← File.append (root / "log") "one\n".toUTF8
+        let second ← File.append (root / "log") rawFile
+        let onto ← File.append (root / "a.txt") "more".toUTF8
+        return first.isOk && second.isOk && onto.isOk
+      after := #[("a.txt", lfFile ++ "more".toUTF8), ("log", "one\n".toUTF8 ++ rawFile)] },
+    { name :=
+        "an append to a directory, and one through a file, are refused notAFile; one into a directory that is not there notFound, and a relative path relativePath; none writes anything"
+      files := #[("a.txt", rawFile)]
+      directories := #["sub"]
+      holds := fun root => do
+        let atDirectory ← File.append (root / "sub") "x".toUTF8
+        let throughFile ← File.append (root / "a.txt" / "log") "x".toUTF8
+        let missing ← File.append (root / "none" / "log") "x".toUTF8
+        let relative ← File.append "relative" "x".toUTF8
+        let refusedAs (reply : Except FileError Unit) (error : FileError) : Bool :=
+          match reply with
+          | .error refusal => refusal == error
+          | .ok () => false
+        return refusedAs atDirectory .notAFile && refusedAs throughFile .notAFile &&
+            refusedAs missing .notFound && refusedAs relative .relativePath
+      after := #[("a.txt", rawFile), ("sub", ByteArray.empty)] },
+    { name :=
+        "a remove removes the file, a remove of nothing is no error, and a relative path is refused relativePath"
+      files := #[("a.txt", rawFile), ("B.txt", otherFile)]
+      holds := fun root => do
+        let removed ← File.remove (root / "a.txt")
+        let again ← File.remove (root / "a.txt")
+        let nothing ← File.remove (root / "never")
+        let relative ← File.remove "relative"
+        let gone ← File.stamp (root / "a.txt")
+        return removed.isOk && again.isOk && nothing.isOk &&
+            (match relative with
+            | .error .relativePath => true
+            | _ => false) &&
+            match gone with
+            | .ok none => true
+            | _ => false
+      after := #[("B.txt", otherFile)] }]
 
 /-- `files` in the order of their names, to compare two sets of files. -/
 def byName (files : Array (String × ByteArray)) : Array (String × ByteArray) :=

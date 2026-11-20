@@ -4,7 +4,8 @@ import Editor.Text
 # Files, as a job asks for them
 
 The data of the file requests a job can make: load a file, save a snapshot
-as a file, read a file's stamp, and list a directory. It is plain data, and it imports only the text port, for
+as a file, read a file's stamp, list a directory, make one, append to a
+file and remove one. It is plain data, and it imports only the text port, for
 the two kinds of id a save names its source by. The requests themselves are
 requests of the job port (`Editor/Job.lean`, `JobRequest.file`): a command
 may not wait and a job may, so loading and saving are things a job does, and
@@ -64,6 +65,16 @@ names a snapshot.
   or anything else that is not a directory, at the path or on the way to
   it). A save makes no directory, so a job that saves where one may be
   missing makes it first.
+- **An append** (`FileRequest.append`) adds bytes to the end of the file at
+  a path, and makes the file when nothing is there. It is refused in the
+  order `relativePath`, `notAFile` (a directory at the path, or a file on
+  the way to it), `notFound` (the directory it is in is not there). The
+  bytes are handed to the system before it answers and are not synced: they
+  outlive the process, not a power loss. It is what a journal is written
+  with (`Editor/Restore.lean`).
+- **A remove** (`FileRequest.remove`) removes the file at a path. Nothing
+  there is no error. It is refused with `relativePath`, and as the system
+  refuses it otherwise.
 - **A stamp** (`File.Stamp`) is when a file was last modified and how long it
   is. Two stamps are compared for equality and never ordered: a file put
   back from a backup has changed.
@@ -310,6 +321,11 @@ def FileError.describe : FileError → String
   | .noTemporaryName => "no name was free for the save's temporary file"
   | .failed detail => s!"the file request failed: {detail}"
 
+/-- Bytes an append carries, as a request is shown: the list of their values.
+Private, for the request's `Repr` alone. -/
+private instance : Repr ByteArray :=
+  ⟨fun bytes precedence => reprPrec bytes.toList precedence⟩
+
 /-- What a job may ask of files. A new file request is a constructor here. -/
 inductive FileRequest where
   /-- Load the file at `path`, unless it is longer than `limit` bytes. -/
@@ -323,6 +339,11 @@ inductive FileRequest where
   | list (path : System.FilePath)
   /-- Make the directory at `path`, and every directory on the way to it. -/
   | makeDirectory (path : System.FilePath)
+  /-- Add `bytes` to the end of the file at `path`, making the file when
+  nothing is there. -/
+  | append (path : System.FilePath) (bytes : ByteArray)
+  /-- Remove the file at `path`; nothing there is no error. -/
+  | remove (path : System.FilePath)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each file request: a refusal or the result. A
@@ -333,5 +354,7 @@ def FileRequest.Reply : FileRequest → Type
   | .stamp _ => Except FileError (Option File.Stamp)
   | .list _ => Except FileError (Array File.Entry)
   | .makeDirectory _ => Except FileError Unit
+  | .append .. => Except FileError Unit
+  | .remove _ => Except FileError Unit
 
 end Editor

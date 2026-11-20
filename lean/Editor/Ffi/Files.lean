@@ -216,6 +216,53 @@ start its thread. -/
 @[extern "editor_glue_files_make_directory"]
 opaque filesMakeDirectory (id : UInt64) (path : @& String) : IO Bool
 
+/-- Asks the library's file service to add `bytes` to the end of the file at
+`path`, making the file when nothing is there, as the request `id`, and
+returns whether it was accepted. It returns at once. The completion and the
+result are as `filesLoad`'s: the result is `made` (status 0, no words), or a
+refusal. The bytes are handed to the system and not synced.
+
+`false`, with nothing started, if `id` is in use or the service could not
+start its thread. -/
+@[extern "editor_glue_files_append"]
+opaque filesAppend (id : UInt64) (path : @& String) (bytes : @& ByteArray) : IO Bool
+
+/-- Asks the library's file service to remove the file at `path`, as the
+request `id`, and returns whether it was accepted. It returns at once. The
+completion and the result are as `filesLoad`'s: the result is `made` (status
+0, no words), nothing there included, or a refusal.
+
+`false`, with nothing started, if `id` is in use or the service could not
+start its thread. -/
+@[extern "editor_glue_files_remove"]
+opaque filesRemove (id : UInt64) (path : @& String) : IO Bool
+
+/-- Asks the library's file service to add `bytes` to the end of the file at
+`path`, unobserved: with no id, never completed and with no result kept,
+worked in order with every other request. A failure is kept, with its path,
+for `filesFailure`. `false`, with nothing started, if the service could not
+start its thread. -/
+@[extern "editor_glue_files_append_unobserved"]
+opaque filesAppendUnobserved (path : @& String) (bytes : @& ByteArray) : IO Bool
+
+/-- Asks the library's file service to remove the file at `path`,
+unobserved, as `filesAppendUnobserved` asks for an append. Nothing there is
+no failure. -/
+@[extern "editor_glue_files_remove_unobserved"]
+opaque filesRemoveUnobserved (path : @& String) : IO Bool
+
+/-- Asks the library's file service to save what `snapshot` holds as the
+file at `path`, whatever is there, unobserved, as `filesAppendUnobserved`
+asks for an append: atomically, by a temporary file and a rename. The
+library keeps its own hold on the snapshot's text. -/
+@[extern "editor_glue_files_save_unobserved"]
+opaque filesSaveUnobserved (snapshot : @& Snapshot) (path : @& String) : IO Bool
+
+/-- Takes the oldest failure of an unobserved request the service keeps, once:
+its path and what failed, for a person. `none` when it keeps none. -/
+@[extern "editor_glue_files_failure"]
+opaque filesFailure : IO (Option (String × String))
+
 /-- `filesSave` as it crosses: what the save expects as a tag (0 whatever, 1
 absent, 2 unchanged) and a stamp's three numbers, its seconds as a two's
 complement word. -/
@@ -277,9 +324,10 @@ still arrives, and its result is gone. -/
 @[extern "editor_glue_files_cancel"]
 opaque filesCancel (id : UInt64) : IO Bool
 
-/-- How many file requests are waiting or being worked, and how many results
-have not been taken, together. A readout for tests, which use it to see that
-a cancel left nothing behind. -/
+/-- How many file requests are waiting or being worked, unobserved ones
+included, and how many results have not been taken, together. A readout for
+tests, which use it to see that a cancel left nothing behind, and for a
+host's end, which waits for the journal's writes to be worked. -/
 @[extern "editor_glue_files_pending"]
 opaque filesPending : IO UInt64
 

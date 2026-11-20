@@ -65,6 +65,12 @@ It answers by the library's rules and by its own route.
   absolute; a file at the path or on the way to it (`notADirectory`).
   Otherwise the path and every path on the way to it are directories after
   it, the root included; one already there is no error.
+- **An append is refused in this order**: a path that is not absolute; a
+  directory at the path, or a file on the way to it (`notAFile`); a
+  directory it is in that is not there (`notFound`). Otherwise the file
+  holds what it held, or nothing, and then the bytes, written now.
+- **A remove is refused in this order**: a path that is not absolute; a
+  directory at the path (`notAFile`). Nothing there is no error.
 - It has no temporary file, no link and no permissions: how a save reaches
   the disk is the library's, pinned in Rust on the file port's fake.
 
@@ -288,6 +294,40 @@ def makeDirectory (model : FileModel) (path : System.FilePath) :
           if model.directories.contains here then model else model.withDirectory here
       (.ok (), model)
 
+/-- The paths on the way to `path`, nearest first, the root included, and
+not `path` itself. -/
+def onTheWay (path : System.FilePath) : Array System.FilePath :=
+  let rec walk (fuel : Nat) (here : System.FilePath) (found : Array System.FilePath) :
+    Array System.FilePath :=
+    match fuel, here.parent with
+    | fuel + 1, some parent => if parent == here then found else walk fuel parent (found.push parent)
+    | _, _ => found
+  walk path.components.length path #[]
+
+/-- The model's answer to appending `bytes` to the file at `path`, and the
+model after it: the file holds what it held, or nothing when there was no
+file, and then `bytes`, written now. A refused append leaves the model as it
+was. -/
+def append (model : FileModel) (path : System.FilePath) (bytes : ByteArray) :
+    Except FileError Unit × FileModel :=
+  if !path.isAbsolute then (.error .relativePath, model)
+  else
+    if model.directories.contains path || (onTheWay path).any (model.file? · |>.isSome) then
+      (.error .notAFile, model)
+    else
+      if !path.parent.any model.directories.contains then (.error .notFound, model)
+      else
+        let held := ((model.file? path).map (·.bytes)).getD ByteArray.empty
+        (.ok (), (model.written path (held ++ bytes)).2)
+
+/-- The model's answer to removing the file at `path`, and the model after
+it: no file there. Nothing there is no error; a directory is refused. -/
+def remove (model : FileModel) (path : System.FilePath) : Except FileError Unit × FileModel :=
+  if !path.isAbsolute then (.error .relativePath, model)
+  else
+    if model.directories.contains path then (.error .notAFile, model)
+    else (.ok (), { model with files := model.files.filter (·.path != path) })
+
 /-- The model's answer to each file request, and the model after it. -/
 def handle : (request : FileRequest) → FileModel → request.Reply × FileModel
   | .load path limit, model => model.load path limit
@@ -295,6 +335,8 @@ def handle : (request : FileRequest) → FileModel → request.Reply × FileMode
   | .stamp path, model => (model.stamp path, model)
   | .list path, model => model.list path
   | .makeDirectory path, model => model.makeDirectory path
+  | .append path bytes, model => model.append path bytes
+  | .remove path, model => model.remove path
 
 /-- The model's answer to a diff request (`Editor/Diff.lean`), over the
 snapshots it holds: the script or the hunks of the model of a line diff

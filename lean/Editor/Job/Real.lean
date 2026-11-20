@@ -348,8 +348,10 @@ def takenList (held : HeldSnapshots) (id : UInt64) : BaseIO (Except FileError (A
   | .inr _ =>
     return .error noResult
 
-/-- The reply to making a directory that was started as the wait `id`, which
-has completed. -/
+/-- The reply to a request that answers nothing but whether it was done,
+started as the wait `id`, which has completed: a directory made, an append
+and a remove, whose result crosses as `made` (status 0 with no words, by the
+table in `crates/editor-ffi/src/files.rs`). -/
 def takenMade (held : HeldSnapshots) (id : UInt64) : BaseIO (Except FileError Unit) := do
   match ← fetched held id with
   | .inl refusal =>
@@ -369,6 +371,8 @@ def taken (held : HeldSnapshots) (id : UInt64) : (request : FileRequest) → Bas
   | .stamp _ => takenStamp held id
   | .list _ => takenList held id
   | .makeDirectory _ => takenMade held id
+  | .append .. => takenMade held id
+  | .remove _ => takenMade held id
 
 /-- The file port answered by the library's file service. `completions` is
 the table its waits are registered in, `published` the read half of the text
@@ -408,6 +412,14 @@ def realFiles (completions : Completions) (published : SnapshotReader) (held : H
           refuse id notTaken
       | .makeDirectory path =>
         let started ← (Ffi.filesMakeDirectory id path.toString).catchExceptions fun _ => pure false
+        unless started do
+          refuse id notTaken
+      | .append path bytes =>
+        let started ← (Ffi.filesAppend id path.toString bytes).catchExceptions fun _ => pure false
+        unless started do
+          refuse id notTaken
+      | .remove path =>
+        let started ← (Ffi.filesRemove id path.toString).catchExceptions fun _ => pure false
         unless started do
           refuse id notTaken
     take := fun id request => taken held id request

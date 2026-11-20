@@ -36,8 +36,9 @@ an error layer of messages, so a job has `throw`, `try` and `catch`.
 A job reaches files through one request, `file`, which carries a
 `FileRequest` (`Editor/File.lean`): `File.load` loads a file, `File.save`
 saves a snapshot as one, `File.stamp` reads a file's stamp (`File.stat`
-reads it refused as a load would be), `File.list` lists a directory, and
-`File.makeDirectory` makes one with its parents. Each waits, as a wait on the clock does, and
+reads it refused as a load would be), `File.list` lists a directory,
+`File.makeDirectory` makes one with its parents, `File.append` adds bytes
+to the end of a file and `File.remove` removes one. Each waits, as a wait on the clock does, and
 replies with a result or a refusal: an `Except FileError`, a value, which
 the job matches on. Nothing about a file ends a job or cancels it. A load
 replies with the name of a snapshot the job then holds (`JobSnapshotId`):
@@ -409,6 +410,18 @@ waits for it. A directory already there is no error. The refusal is a value:
 the job goes on. `Editor/File.lean` has the rules. -/
 def File.makeDirectory (path : System.FilePath) : JobM (Except FileError Unit) :=
   ExceptT.lift (Program.request (port := jobPort) (.file (.makeDirectory path)))
+
+/-- Adds `bytes` to the end of the file at `path`, making the file when
+nothing is there, and waits for it. The bytes are handed to the system and
+not synced. The refusal is a value: the job goes on. `Editor/File.lean` has
+the rules. -/
+def File.append (path : System.FilePath) (bytes : ByteArray) : JobM (Except FileError Unit) :=
+  ExceptT.lift (Program.request (port := jobPort) (.file (.append path bytes)))
+
+/-- Removes the file at `path`, and waits for it. Nothing there is no error.
+The refusal is a value: the job goes on. `Editor/File.lean` has the rules. -/
+def File.remove (path : System.FilePath) : JobM (Except FileError Unit) :=
+  ExceptT.lift (Program.request (port := jobPort) (.file (.remove path)))
 
 /-- Stats the file at `path`, reading nothing, and waits for it: the file's
 stamp, or why it was refused, as a load would be. It is a stamp request
