@@ -228,6 +228,9 @@ show:
   while the restore is in flight is held, and `await` does not answer
   settled, until it has finished. They run after `fileChecks`, whose table
   of waits the first shares;
+- `journalFailureChecks`: the journal's failures in the host, over a
+  journal whose failures the check puts there: they are taken after each
+  step, and said once for each path, in the echo area and to the log;
 - `reloadEchoChecks`: a rejected reload's first error is said in the echo
   area, while the old config runs; a reload that installs says nothing;
   and one rejected before the frame is made is said once it is;
@@ -333,6 +336,7 @@ def checks (context : Context) : List Check :=
     environmentHostChecks context ++
     fileChecks context ++
     restoreOrderChecks context ++
+    journalFailureChecks context ++
     languageChecks context ++
     reloadChecks context ++
     autoReloadChecks context ++

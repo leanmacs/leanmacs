@@ -487,7 +487,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   reads a snapshot its command took, and a job's command is handed what its
   own job loaded; and the key hint delay on the driver's time: hints shown
   once it has passed and not before, none after a sequence completed
-  before it, and a delay of another generation that changes nothing;
+  before it, and a delay of another generation that changes nothing; and
+  a journal order the file model refuses is kept, its path and why, with
+  the orders after it still handed;
 - `promptChecks`: prompts on that driver. `promptLoopChecks`, with commands
   written here under keys of the global keymap: an accepted prompt's
   answer is handed back with the step, and the answer's command runs

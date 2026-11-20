@@ -104,9 +104,9 @@ import EditorCore.EditorPackage
 
 The tests of `Editor/Headless.lean`: `hostChecks`, `threadChecks` (with `Gate`),
 `jobChecks`, `agreementChecks`, `scriptChecks`, `hostLoopChecks`,
-`exScriptChecks`, `reloadEchoChecks`, `shippedChecks`, `watchReloadChecks` and
-`environmentHostChecks`. The root module `ConfigTest` runs them; its module doc
-says what each shows.
+`exScriptChecks`, `reloadEchoChecks`, `shippedChecks`, `watchReloadChecks`,
+`environmentHostChecks`, `restoreOrderChecks` and `journalFailureChecks`. The
+root module `ConfigTest` runs them; its module doc says what each shows.
 -/
 
 namespace ConfigTest
@@ -2728,5 +2728,59 @@ def restoreOrderChecks (context : Context) : List Check :=
           let settled ← host.settle patience
           let late := (← output.get).any (·.startsWith "reload 1: installed")
           return waited == .reloading && !early && settled && late }]
+
+/-- A journal (`Headless.Journal`) whose orders do nothing and whose
+failures are what the check put in `failed` since the host last took them,
+as the library's file service keeps them. -/
+def keptFailures (failed : IO.Ref (Array (String × String))) : Headless.Journal where
+  failures := failed.modifyGet fun held => (held, #[])
+
+/-- A command that does nothing: a step of the loop, after which the host
+takes the journal's failures. -/
+def stepCommand : Config.Registration :=
+  { name := "step", action := .plain (pure ()) }
+
+/-- Runs `check` against a host with no config and the command `step`,
+whose journal is `keptFailures` over a cell the check is handed, empty;
+and stops the host. -/
+def withJournalHost (context : Context)
+    (check : Session → IO.Ref (Array (String × String)) → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let failed ← IO.mkRef #[]
+    let stage ←
+      Stage.new context context.elaborator (Config.Directory.source directory)
+          { commands := #[stepCommand] }
+    let stage :=
+      { stage with collaborators := { stage.collaborators with journal := keptFailures failed } }
+    onStage stage fun host stage =>
+        check
+          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
+            watches := stage.watches, log := stage.log }
+          failed
+
+/-- The checks of the journal's failures in the host (`Editor/Headless.lean`,
+"Restoring a session", `Running.journalFailed`): what the file service kept
+of the orders it was handed is taken after each step, and said once for each
+path, in the echo area and to the log. -/
+def journalFailureChecks (context : Context) : List Check :=
+  [{  name :=
+        "the journal's failures are taken after a step and said once for each path, in the echo area and to the log; a later failure of a path already said is taken and not said"
+      run :=
+        withJournalHost context fun session failed => do
+          failed.set #[("/state/a", "denied"), ("/state/a", "gone"), ("/state/b", "denied")]
+          session.ask [.run "step"]
+          let taken := (← failed.get).isEmpty
+          let (echo, _) ← session.scene
+          let logged := (← session.log.get).filter (·.startsWith "journal: ")
+          failed.set #[("/state/a", "denied again"), ("/state/c", "full")]
+          session.ask [.run "step"]
+          let takenAgain := (← failed.get).isEmpty
+          let (echoAgain, _) ← session.scene
+          let loggedAgain := (← session.log.get).filter (·.startsWith "journal: ")
+          return taken && echo == "journal: /state/b: denied".quote &&
+              logged == #["journal: /state/a: denied", "journal: /state/b: denied"] &&
+              takenAgain &&
+              echoAgain == "journal: /state/c: full".quote &&
+              loggedAgain == logged.push "journal: /state/c: full" }]
 
 end ConfigTest

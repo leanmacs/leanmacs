@@ -447,7 +447,21 @@ def driverChecks : List Check :=
             let scenes := passed.model.display.scenes
             prefixed.hinted == some (1, 500) && passed.armed.isEmpty && passed.hinted == none &&
               (scenes.extract before scenes.size).map (·.keyHints) ==
-                #[#[], #[], afterPrefix, afterPrefix] }]
+                #[#[], #[], afterPrefix, afterPrefix] },
+    { name :=
+        "a journal order the file model refuses is kept, its path and why, and the orders after it are still handed"
+      run :=
+        pure <|
+          match fileDriver with
+          | none => false
+          | some driver =>
+            let missing := fileRoot / "missing" / "log"
+            let kept := fileRoot / "kept"
+            let after :=
+              driver.journaled
+                #[{ request := .append missing "x".toUTF8 }, { request := .append kept "y".toUTF8 }]
+            after.journalFailures == #[s!"{missing}: {FileError.notFound.describe}"] &&
+              (after.jobs.files.file? kept).map (·.bytes.toList) == some "y".toUTF8.toList }]
 
 /-- What a step of the prompt checks is handed: one keymap, the same for
 every view, the minibuffer's among them, that binds a key sequence under
