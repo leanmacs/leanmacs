@@ -258,7 +258,9 @@
 //! ([`files::editor_ffi_files_failure`]). A flush
 //! ([`files::editor_ffi_files_flush`]) is completed once every request
 //! started before it, unobserved ones included, has been worked: it is how
-//! a caller waits for them. Its other C functions are in
+//! a caller waits for them. A hold ([`files::editor_ffi_files_hold`]), for
+//! tests, parks the worker once it is reached until it is cancelled. Its
+//! other C functions are in
 //! the module's table ("The C functions"), with, as a readout for tests,
 //! [`files::editor_ffi_files_pending`].
 //!

@@ -485,7 +485,12 @@ file with a watch yet: a change is found when a save is asked for.
   unobserved, has been worked and its completion queued ahead of the
   flush's. It keeps no result, its id is in use while it waits, and a
   cancel withdraws it. It is what a host or a test waits on to know the
-  queue has drained, in place of polling the count.
+  queue has drained, in place of polling the count. **A hold parks the
+  worker, for tests** (`editor_ffi_files_hold`): a request that, once the
+  worker reaches it, is completed and then holds the worker, working
+  nothing behind it, until its id is cancelled. It is the in-process held
+  worker the Lean contract checks queue work behind, with no file, no
+  named pipe and no other process; the editor never asks for one.
 - **Unobserved requests** (session-restore phase 1): an append, a remove, and a
   save that expects whatever is there may be asked with no id
   (`editor_ffi_files_append_unobserved`,

@@ -70,6 +70,12 @@
 //!   completion is queued behind theirs. It keeps no result, its id is in
 //!   use while it waits, and cancelling it withdraws it. It is how a caller
 //!   waits for unobserved requests to be worked.
+//! - **A hold parks the worker, for tests** ([`Files::hold`]): a request
+//!   that, once the worker reaches it, is completed and then holds the
+//!   worker until it is cancelled or the service is stopped, so a test can
+//!   queue work behind a worker it knows is parked, in process, with no
+//!   file. It is counted while it waits or holds, keeps no result, and is
+//!   never asked for by the editor.
 //! - **An unobserved request is counted while it waits or is worked**
 //!   ([`Files::pending`]), so the count falls to 0 once the queue has
 //!   drained; a failure kept is not counted. The count is a readout; a
@@ -155,7 +161,8 @@
 //! | [`editor_ffi_files_take`] | Fills a [`RawFileResult`] and returns true, or returns false when the service keeps no result for the id |
 //! | [`editor_ffi_files_failure`] | Fills a [`RawFileFailure`] with the oldest failure of an unobserved request and returns true, taking it, or returns false when none is kept |
 //! | [`editor_ffi_files_flush`] | Asks for an id to be completed once every request started before it is worked; keeps no result. False, starting nothing, as for a load |
-//! | [`editor_ffi_files_cancel`] | Cancels, and says whether there was anything to cancel |
+//! | [`editor_ffi_files_hold`] | For tests: asks for an id to be completed when the worker reaches it, and for the worker to work nothing more until the id is cancelled. False, starting nothing, as for a load |
+//! | [`editor_ffi_files_cancel`] | Cancels, and says whether there was anything to cancel; a hold's cancel lets the worker go |
 //! | [`editor_ffi_files_pending`] | Requests waiting or being worked, unobserved ones included, and results not taken |
 
 use std::collections::{BTreeMap, VecDeque};
@@ -313,12 +320,16 @@ pub enum Request {
         /// Where the file is.
         path: PathBuf,
     },
+    /// Park the worker, once it reaches this, until the request is
+    /// cancelled ([`Files::hold`]): a control for tests, which the editor
+    /// never asks for.
+    Hold,
 }
 
 impl Request {
     /// The path the request is about: what an unobserved request's failure
-    /// is kept with.
-    fn path(&self) -> &Path {
+    /// is kept with. A hold is about none.
+    fn path(&self) -> Option<&Path> {
         match self {
             Self::Load { path, .. }
             | Self::Save { path, .. }
@@ -326,7 +337,8 @@ impl Request {
             | Self::List { path }
             | Self::MakeDirectory { path }
             | Self::Append { path, .. }
-            | Self::Remove { path } => path,
+            | Self::Remove { path } => Some(path),
+            Self::Hold => None,
         }
     }
 }
@@ -874,6 +886,18 @@ impl<F: Fs> Files<F> {
         started
     }
 
+    /// Asks for the worker to be held, as the request `id`, and returns
+    /// whether it was accepted: once the worker reaches it, behind every
+    /// request started before it, `id` is completed and the worker parks,
+    /// working nothing behind it, until `id` is cancelled or the service is
+    /// stopped. While it holds it is counted in [`pending`](Self::pending)
+    /// and its id is in use; it keeps no result. It returns at once. A
+    /// control for tests, which the editor never asks for: a test holds the
+    /// worker to see what waits behind it.
+    pub fn hold(&self, id: u64) -> bool {
+        self.start(id, Request::Hold)
+    }
+
     /// Asks for the request `id` to be completed once every request started
     /// before this call, observed or unobserved, has been worked, and
     /// returns whether it was accepted. It returns at once. An id in use is
@@ -923,7 +947,11 @@ impl<F: Fs> Files<F> {
         {
             // Set under the lock, which the loop holds when it reads it
             // for the last time. True only for the cancel that set it.
-            return !working.cancelled.swap(true, Ordering::SeqCst);
+            let first = !working.cancelled.swap(true, Ordering::SeqCst);
+            drop(state);
+            // A hold waits for the flag.
+            self.changed.notify_all();
+            return first;
         }
         state.results.remove(&id).is_some()
     }
@@ -967,6 +995,12 @@ impl<F: Fs> Files<F> {
                 continue;
             };
             let request = match queued {
+                Queued::Work(Request::Hold) => {
+                    if let Some(id) = id {
+                        state = self.park(id, state, &complete);
+                    }
+                    continue;
+                }
                 Queued::Work(request) => request,
                 // Everything started before it has been worked: it is
                 // completed now, and keeps no result.
@@ -986,7 +1020,10 @@ impl<F: Fs> Files<F> {
             });
             drop(state);
             // Kept for an unobserved request, whose failure names it.
-            let path = id.is_none().then(|| request.path().to_path_buf());
+            let path = id
+                .is_none()
+                .then(|| request.path().map(Path::to_path_buf))
+                .flatten();
             let result = self.work(request, &cancelled);
             state = self.state();
             state.working = None;
@@ -1008,10 +1045,41 @@ impl<F: Fs> Files<F> {
         }
     }
 
+    /// Parks the worker on the hold `id`: marks it as the request being
+    /// worked, completes it with no lock held, so the holder knows the
+    /// worker has reached it, then waits until it is cancelled or the
+    /// service is stopped. It keeps no result.
+    fn park<'a>(
+        &'a self,
+        id: u64,
+        mut state: MutexGuard<'a, State>,
+        complete: &impl Fn(u64),
+    ) -> MutexGuard<'a, State> {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        state.working = Some(Working {
+            id: Some(id),
+            cancelled: Arc::clone(&cancelled),
+        });
+        drop(state);
+        complete(id);
+        // The flag is set under the lock, and the cancel that sets it
+        // notifies, so the wait cannot miss it.
+        state = self
+            .changed
+            .wait_while(self.state(), |state| {
+                !state.stopped && !cancelled.load(Ordering::SeqCst)
+            })
+            .unwrap_or_else(PoisonError::into_inner);
+        state.working = None;
+        state
+    }
+
     /// Works `request` on the file system, with no lock held. A save is
-    /// told it is cancelled once `cancelled` is set.
+    /// told it is cancelled once `cancelled` is set. A hold is never
+    /// worked: the loop parks on it ([`park`](Self::park)).
     fn work(&self, request: Request, cancelled: &AtomicBool) -> FileResult {
         match request {
+            Request::Hold => unreachable!("a hold is parked on by the loop, never worked"),
             Request::Load { path, limit } => file::load(&self.fs, &path, limit).into(),
             Request::Save {
                 snapshot,
@@ -1507,6 +1575,21 @@ pub extern "C" fn editor_ffi_files_flush(id: u64) -> bool {
     service_started() && FILES.flush(id)
 }
 
+/// Asks the process's file service to hold its worker, as the request
+/// `id`, and returns whether it was accepted ([`Files::hold`]): once the
+/// worker reaches it, behind every file request started before it, `id` is
+/// completed on the completion queue as [`editor_ffi_files_flush`]'s is,
+/// and the worker works nothing more until [`editor_ffi_files_cancel`] is
+/// called with `id`. It returns at once and never blocks. A control for
+/// tests, which the editor never asks for.
+///
+/// Returns false, starting nothing, if `id` is in use, or if the operating
+/// system refused the service its thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_files_hold(id: u64) -> bool {
+    service_started() && FILES.hold(id)
+}
+
 /// How many file requests are waiting or being worked, and how many
 /// results have not been taken, together. A readout for tests, which use
 /// it to see that a cancel left nothing behind.
@@ -1858,6 +1941,83 @@ mod tests {
         rig.nothing_else_completed(3);
         assert!(rig.files.take(1).is_some());
         assert_eq!(rig.files.pending(), 0);
+        rig.stop();
+    }
+
+    /// The worker is parked in load 1 while a hold, a stamp and a flush are
+    /// queued behind it. Once the load is let go, the worker reaches the
+    /// hold, completes it, and parks: the stamp's hook, run when the stamp
+    /// reaches the file system, records whether the hold had been cancelled
+    /// by then. The order of completions is forced by the parked load. That
+    /// the stamp waits for the cancel was seen to bite once by hand, with a
+    /// hold that completed and did not park: a broken hold lets the stamp
+    /// run at a time no test can order, so it fails only most times.
+    #[test]
+    fn a_hold_is_completed_when_the_worker_reaches_it_and_nothing_behind_it_is_worked_until_it_is_cancelled()
+     {
+        let rig = Rig::over(fake());
+        let parked = rig.park();
+        assert!(rig.files.start_load(1, FILE.into(), NO_LIMIT));
+        parked.entered();
+        assert!(rig.files.hold(2));
+        // Its id is in use while it waits and while it holds.
+        assert!(!rig.files.hold(2));
+        assert!(!rig.files.start_load(2, FILE.into(), NO_LIMIT));
+        assert!(rig.files.start_stamp(3, FILE.into()));
+        assert!(rig.files.flush(4));
+        parked.release();
+        assert_eq!([rig.next(), rig.next()], [1, 2]);
+
+        let released = Arc::new(AtomicBool::new(false));
+        let (seen, saw) = mpsc::channel();
+        rig.fs().on_next_call({
+            let released = Arc::clone(&released);
+            move |_| {
+                let _ = seen.send(released.load(Ordering::SeqCst));
+            }
+        });
+        assert!(!rig.files.flush(2));
+        // The hold, the stamp and the flush, and the load's result.
+        assert_eq!(rig.files.pending(), 4);
+        released.store(true, Ordering::SeqCst);
+        assert!(rig.files.cancel(2));
+        assert!(!rig.files.cancel(2));
+
+        assert_eq!([rig.next(), rig.next()], [3, 4]);
+        assert_eq!(saw.recv_timeout(DEADLINE), Ok(true));
+        // A hold keeps no result, and once let go its id is free.
+        assert!(rig.files.take(2).is_none());
+        assert!(rig.files.take(1).is_some());
+        assert!(rig.files.take(3).is_some());
+        assert_eq!(rig.files.pending(), 0);
+        rig.nothing_else_completed(2);
+        rig.stop();
+    }
+
+    #[test]
+    fn a_hold_cancelled_while_it_waits_is_never_completed_and_holds_nothing() {
+        let rig = Rig::over(fake());
+        let parked = rig.park();
+        assert!(rig.files.start_load(1, FILE.into(), NO_LIMIT));
+        parked.entered();
+        assert!(rig.files.hold(2));
+        assert!(rig.files.cancel(2));
+        parked.release();
+
+        assert_eq!(rig.next(), 1);
+        rig.nothing_else_completed(3);
+        assert!(rig.files.take(1).is_some());
+        assert_eq!(rig.files.pending(), 0);
+        rig.stop();
+    }
+
+    #[test]
+    fn stop_ends_a_hold() {
+        let rig = Rig::over(fake());
+        assert!(rig.files.hold(1));
+        assert_eq!(rig.next(), 1);
+
+        // The loop returns: the hold does not keep it past a stop.
         rig.stop();
     }
 

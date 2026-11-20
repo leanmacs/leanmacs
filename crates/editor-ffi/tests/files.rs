@@ -42,7 +42,7 @@ use editor_ffi::events::{
 use editor_ffi::files::{
     FileStatus, RawExpect, RawFileFailure, RawFileResult, SERVICE, editor_ffi_files_append,
     editor_ffi_files_append_unobserved, editor_ffi_files_cancel, editor_ffi_files_failure,
-    editor_ffi_files_flush, editor_ffi_files_list, editor_ffi_files_load,
+    editor_ffi_files_flush, editor_ffi_files_hold, editor_ffi_files_list, editor_ffi_files_load,
     editor_ffi_files_make_directory, editor_ffi_files_pending, editor_ffi_files_remove,
     editor_ffi_files_remove_unobserved, editor_ffi_files_save, editor_ffi_files_save_unobserved,
     editor_ffi_files_take,
@@ -479,6 +479,24 @@ fn files_are_loaded_and_saved_through_c_and_completed_on_the_completion_queue() 
         b"flushed\n"
     );
     assert!(take(flush).is_none());
+    // SAFETY: the snapshot came from the library in the result just taken,
+    // and is freed once, here.
+    unsafe { editor_ffi_snapshot_free(loaded.snapshot) };
+
+    // A hold parks the worker once it is reached: a load and a flush asked
+    // behind it complete only after it is cancelled, in the order hold,
+    // load, flush.
+    let hold = next_id();
+    assert!(editor_ffi_files_hold(hold));
+    assert_eq!(next_completion(), completion_of(hold));
+    let loading = next_id();
+    assert!(load(loading, &directory.path().join("fixture-0.txt")));
+    let flush = next_id();
+    assert!(editor_ffi_files_flush(flush));
+    assert!(editor_ffi_files_cancel(hold));
+    let loaded = completed(loading);
+    assert_eq!(next_completion(), completion_of(flush));
+    assert!(take(hold).is_none());
     // SAFETY: the snapshot came from the library in the result just taken,
     // and is freed once, here.
     unsafe { editor_ffi_snapshot_free(loaded.snapshot) };
