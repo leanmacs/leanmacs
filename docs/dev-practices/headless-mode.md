@@ -593,12 +593,12 @@ $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/bui
 reload 1: installed, 2 files, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme execute-command search-bindings workspace-current greet
+commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme execute-command search-bindings workspace-current greet
+commands: open-file save-buffer edit-file reload-buffer auto-reload-mode minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous minibuffer-insert minibuffer-delete-backward minibuffer-delete-to-start minibuffer-ask minibuffer-candidates move normal visual visual-line insert append insert-line-start append-line-end self-insert operate select-object delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom insert-delete-backward insert-delete-word-backward insert-newline insert-tab insert-left insert-right insert-up insert-down clipboard-cut clipboard-copy clipboard-paste select-all jump-backward jump-forward set-mark ex quit save-and-quit reload-config switch-buffer list-buffers close-buffer toggle-fullscreen minimise-window window-split window-split-vertically window-new window-close window-quit window-only window-focus-left window-focus-down window-focus-up window-focus-right window-focus-next window-focus-previous window-focus-top window-focus-bottom window-focus-last window-exchange window-rotate window-rotate-back window-balance window-taller window-shorter window-wider window-narrower window-zoom window-promote window-demote window-main-more window-main-fewer window-edge-left window-edge-bottom window-edge-top window-edge-right window-float tab-new tab-close tab-next tab-previous tab-switch tab-rename tab-move-right tab-move-left tab-select-1 tab-select-2 tab-select-3 tab-select-4 tab-select-5 tab-select-6 tab-select-7 tab-select-8 tab-select-9 load-theme workspace-current find-file-in-workspace find-file-in-project find-file-in-another-workspace project-search project-search-found project-search-symbol project-search-visit working-set-add working-set-open working-set-visit working-set-remove working-set-note working-set-refresh restore-modes restart restart-abandon package-install package-remove package-update package-build-started package-build-output shell-command shell-filter keyboard-quit at-point-complete at-point-next at-point-previous at-point-tab at-point-backtab at-point-return at-point-quit at-point-triggered at-point-paused vc-status vc-status-refresh vc-status-visit vc-status-toggle vc-status-stage vc-status-unstage vc-show vc-stage-hunk vc-unstage-hunk vc-commit vc-commit-accept vc-commit-abort vc-worktrees vc-worktrees-refresh vc-worktrees-visit vc-review vc-review-refresh vc-review-keep vc-review-revert vc-review-since vc-log vc-log-visit vc-log-refresh vc-blame vc-blame-visit vc-gutter-moved execute-command search-bindings compile compile-command recompile compile-confirm kill-compilation compilation-output next-error previous-error compile-goto-error greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
@@ -1053,7 +1053,9 @@ default set with its packages, `shipped-themes` among them, dropped. Its config 
 one theme, `first`, and names none. The first scene is drawn in `default`;
 the theme prompt lists `default` and `first`, and no palette; `first` is
 loaded; and `solarized-dark`, answered, is no theme of this editor, which
-the echo area says, the theme in force staying `first`. Its output must be
+the echo area says, the theme in force staying `first`. The mode line's
+segments are a default package too (`packages/mode-line/`), so the main
+window's status line is empty, `-`, in every scene. Its output must be
 exactly `tests/headless/core-themes/expected`:
 
 ```console
@@ -1062,11 +1064,11 @@ reload 1: installed, 1 files, 0 commands
 key arrived: <Escape> Escape -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 1, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: -
 run load-theme: ok
 scene 0x0, focused 1, echo "", echo padding 8, preedit -, published 3, theme "default"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: -
 view 1 0,0 0x0: "", scroll 0, selections 0..0, padding 8 0
 status 1: minibuffer.prompt "Theme: "
 view 2 0,0 0x0: "default\nfirst", scroll 0, selections , padding 8 0
@@ -1075,16 +1077,18 @@ status 2: -
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "", echo padding 8, preedit -, published 8, theme "first"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: -
 run load-theme: ok
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "load-theme: no theme is registered as `solarized-dark`", echo padding 8, preedit -, published 13, theme "first"
 view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
+status 0 in mode-line.active: -
 ```
 
-A twelfth, `tests/headless/mode-line/script`, runs on the config in
-`tests/headless/mode-line/config`, which defines a segment of its own,
+A twelfth, the default package `mode-line`'s
+`packages/mode-line/tests/headless/mode-line/script` (the core's until
+the features-as-packages roadmap's phase 3, moved byte for byte), runs on
+the config in `packages/mode-line/tests/headless/mode-line/config`, which defines a segment of its own,
 `greeting` (`defineSegment`), and lists the mode line for each side
 (`modeLine`), naming one segment nobody registered, `nope`. The reload is
 installed, says the unknown segment on a line of its own and in the echo
@@ -1092,10 +1096,10 @@ area, and draws the rest; then the scenes in normal state, in insert state
 with `abc` typed, after `<Escape>`, and with the ex prompt open, where the
 asking window keeps its badge and the candidate list shows the first ten
 ex names. Its output must be exactly
-`tests/headless/mode-line/expected`:
+`packages/mode-line/tests/headless/mode-line/expected`:
 
 ```console
-$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/mode-line/config ../tests/headless/mode-line/script
+$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../packages/mode-line/tests/headless/mode-line/config ../packages/mode-line/tests/headless/mode-line/script
 reload 1: installed, 1 files, 0 commands
 segment: no segment is registered as `nope`
 key arrived: <F5> F5 -
@@ -2136,7 +2140,7 @@ reload whose config lists a segment nobody registered (`modeLine`) is
 installed too, the segment left out: its report has a line
 ``segment: no segment is registered as `<name>` `` for each, after the
 theme's, and the echo area says each sentence after `reload: `, joined by
-`; ` (`tests/headless/mode-line`). A reload whose config chooses a
+`; ` (`packages/mode-line/tests/headless/mode-line`). A reload whose config chooses a
 completion style nobody registered (`useStyle`, `useStyleFor`) is
 installed too, its category left to the default style and the default to
 `fuzzy`: its report has a line
@@ -2214,8 +2218,19 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   the default set's editor, and none of them changed when the editor came
   to be built from a package set. Five lines of three of them changed
   when the compile mode moved into a default package, for the order it
-  registers in ([packages.md](../design/packages.md), "Registration order
-  is visible").
+  registers in, and three lines of two when the command prompt and the
+  binding search did ([packages.md](../design/packages.md), "Registration
+  order is visible"). `tests/headless/default-config` runs the default
+  config (`config/default`, copied into a temporary directory): `SPC :`
+  and `SPC ?`, run from the binding search as their keys would run, open
+  the command prompt and the binding search.
+- **The fixtures of the four features that moved in the
+  features-as-packages roadmap's phase 3 are their packages'**:
+  `packages/mode-line/tests/headless/mode-line`, the core's until then;
+  `packages/execute-command/tests/headless/command-prompt` and
+  `packages/binding-search/tests/headless/binding-search`, written on the
+  editor with both features in the core and moved with their config's
+  import changed (`import ExecuteCommand`, `import BindingSearch`).
 - **The compile mode's fixtures are its package's**:
   `packages/compile/tests/headless/ex-names`, in which each of `:next-error`,
   `:previous-error`, `:recompile`, `:kill-compilation`, `:compile` and

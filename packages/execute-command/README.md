@@ -8,8 +8,8 @@ own, as Emacs's `M-x` does. The default config binds it to `SPC :`.
 It implements the interface package
 [`execute-command-api`](../execute-command-api/), which declares the name
 it is registered under. Its design record is in
-[packages.md](../../docs/design/packages.md), "The default package
-`execute-command`".
+[packages.md](../../docs/design/packages.md), "The default packages of
+the features-as-packages roadmap's phase 3".
 
 ## Its source, in reading order
 

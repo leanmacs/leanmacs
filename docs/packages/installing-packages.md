@@ -44,10 +44,23 @@ by hand").
 
 The default set requires the core, `editor-core`, and the default packages:
 
+- [`mode-line`](../../packages/mode-line/README.md): the segments of the
+  mode line that ship, the Vim state's badge, the buffer's name, line:col
+  and the rest.
 - [`shipped-themes`](../../packages/shipped-themes/README.md): the themes
   `solarized-dark`, `solarized-light` and `fairy-floss`.
+- [`execute-command`](../../packages/execute-command/README.md): the
+  command prompt, `execute-command` (`SPC :` in the default config). It
+  requires its interface package, `execute-command-api`, which registers
+  nothing.
+- [`binding-search`](../../packages/binding-search/README.md): the binding
+  search, `search-bindings` (`SPC ?` in the default config). It requires
+  its interface package, `binding-search-api`.
 - [`compile`](../../packages/compile/README.md): `:compile`, `:next-error`
   and the rest of the compile mode, with modes for cargo, lake and mise.
+- [`languages`](../../packages/languages/README.md): the languages that
+  ship, `rust`, `json`, `markdown`, `toml` and `lean`, and the `code` mode
+  files of them open in.
 
 Every `[[require]]` you add is a package of your editor. When a reload
 finds the requires, or the revisions `lake-manifest.json` pins, differ from
@@ -124,8 +137,24 @@ which the lakefile already requires:
 name = "config"
 
 [[require]]
+name = "mode-line"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/mode-line"
+
+[[require]]
 name = "shipped-themes"
 path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/shipped-themes"
+
+[[require]]
+name = "execute-command"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/execute-command"
+
+[[require]]
+name = "binding-search"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/binding-search"
+
+[[require]]
+name = "languages"
+path = "/Applications/Leanmacs.app/Contents/Resources/lean/set/languages"
 
 [[require]]
 name = "editor-core"

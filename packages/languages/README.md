@@ -7,7 +7,7 @@ file of a shipped language opens highlighted in an editor that holds this
 package.
 
 Its design record is in [packages.md](../../docs/design/packages.md),
-"The default package `languages`".
+"The default packages of the features-as-packages roadmap's phase 3".
 
 ## Its source, in reading order
 

@@ -9,8 +9,8 @@ Doom's `SPC h b b` do. The default config binds it to `SPC ?`.
 It implements the interface package
 [`binding-search-api`](../binding-search-api/), which declares the name it
 is registered under. Its design record is in
-[packages.md](../../docs/design/packages.md), "The default package
-`binding-search`".
+[packages.md](../../docs/design/packages.md), "The default packages of
+the features-as-packages roadmap's phase 3".
 
 ## Its source, in reading order
 

@@ -14,7 +14,9 @@
 #   and offers no shipped palette; and tests/headless/core-ex-names, it
 #   starts, loads config, and answers `compile` on its ex line as it
 #   answers any ex name nobody bound, the compile mode being a default
-#   package (packages/compile/). Its config base is `Editor` alone.
+#   package (packages/compile/). The mode line's segments are a default
+#   package too (packages/mode-line/), so the status lines of both are
+#   empty. Its config base is `Editor` alone.
 name = "empty-set"
 
 [[require]]

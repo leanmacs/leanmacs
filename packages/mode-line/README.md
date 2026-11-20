@@ -8,7 +8,7 @@ are segments it registers, which the default listing and config's
 segments other packages and config register.
 
 Its design record is in [packages.md](../../docs/design/packages.md),
-"The default package `mode-line`".
+"The default packages of the features-as-packages roadmap's phase 3".
 
 ## Its source, in reading order
 

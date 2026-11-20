@@ -391,8 +391,21 @@ and it is not routed through an extension point.**
 - **A name no interface package declares** is the implementation's own. A
   replacement need not keep it.
 - **A user's config** is unaffected, and still names commands as text.
-- **Today.** No core module reaches `shipped-themes` or `compile` by name
-  (the default config binds `load-theme`, a core command). The fixture
+- **Today.** No core module reaches `shipped-themes`, `compile`,
+  `mode-line` or `languages` by name (the default config binds
+  `load-theme`, a core command; the mode line's listing and the `code`
+  mode are names the core declares). The default config does reach two
+  default packages' commands, `execute-command` (`SPC :`) and
+  `search-bindings` (`SPC ?`), so the features-as-packages roadmap's
+  phase 3 built the first two feature interface packages with those
+  features' moves: `execute-command-api`
+  (`ExecuteCommandApi.executeCommandName`) and `binding-search-api`
+  (`BindingSearchApi.searchBindingsName`), each with a fake and a contract
+  check its implementation runs (`packages/execute-command-api/`,
+  `packages/binding-search-api/`; [packages.md](packages.md), "The
+  interface packages `execute-command-api` and `binding-search-api`").
+  The default config is in the core until phase 8, so it and its test name
+  the two as text. The fixture
   interface package `greeting-api` (`tests/packages/greeting-api/`) is the
   first to declare a reached name, `greeting-reply`
   (`GreetingApi.replyName`, and every declared name in `GreetingApi.names`),

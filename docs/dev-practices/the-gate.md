@@ -1790,7 +1790,9 @@ package's modules.
   `lake -d ../packages query :editorLayerImports` whose importer's layer
   is `core`, and requires more than none.
 - **The sets it is run over**, each required to pass: the default set,
-  `packages/`, so `shipped-themes` and `compile` import only the core;
+  `packages/`, so its six default packages and two interface packages
+  import only the core, and `execute-command` and `binding-search` each
+  their own interface package besides;
   the fixture set, `tests/packages/`, where `greeting-loud` reaches
   `greeting`'s command through `greeting-api`; the user-side link's set,
   `tests/user-link/`; and `tests/empty-set/`, the core alone.
@@ -1830,7 +1832,9 @@ package's tests are by convention are in
   fixture interface package `greeting-api`, the fixture package `echo`,
   which holds Rust, the default set, and the example package of the guide
   to writing a package, `word-count` (`docs/packages/word-count/`). So the
-  default packages, `shipped-themes` and `compile`, and the code the guide
+  default packages, `mode-line`, `shipped-themes`, `execute-command`,
+  `binding-search`, `compile` and `languages`, with the interface packages
+  `execute-command-api` and `binding-search-api`, and the code the guide
   quotes are tested, built, format-checked and run through it. `run`
   is also given the default set itself, `packages/`, so those packages'
   linked tests and fixtures hold of the default set's editor, the one
@@ -1846,9 +1850,11 @@ package's tests are by convention are in
   the default set has.
 - **The default packages' tests are required to have run.** `lean-test`
   keeps the `test` step's output and requires the line the step prints as
-  it reaches each of them, `package-set: test shipped-themes (<its
-  directory>)` and `package-set: test compile (<its directory>)`, and the
-  same line for `word-count`, matched on what comes before the directory. The step stops at the first driver
+  it reaches each of them, `package-set: test <name> (<its directory>)`
+  for `mode-line`, `shipped-themes`, `execute-command-api`,
+  `execute-command`, `binding-search-api`, `binding-search`, `compile`
+  and `languages`, and the same line for `word-count`, matched on what
+  comes before the directory. The step stops at the first driver
   that fails, so those lines and exit 0 say each package's driver ran and
   passed: the themes hold under the core's completeness check, and the
   compile mode's 98 model checks hold on the core's test kit.
@@ -1867,11 +1873,13 @@ package's tests are by convention are in
   line its pictures print, its fixtures `load-theme`, `package-names`,
   `shipped-themes` and `themes`, the linked test of `compile` with its
   line, `compile linked test: 7 checks passed`, its fixtures `config`,
-  `ex-names` and `shipped-formats`, the three fixtures of `word-count`,
-  `as-config`, `count` and `from-config`, and `package-set: ran 4 linked
-  tests and 12 headless fixtures over 7 packages`; and over the default set, the
-  two default packages' linked tests and seven fixtures and `package-set:
-  ran 2 linked tests and 7 headless fixtures over 2 packages`. A fixture or a linked test that is
+  `ex-names` and `shipped-formats`, the fixtures `mode-line` of
+  `mode-line`, `command-prompt` of `execute-command` and `binding-search`
+  of `binding-search`, the three fixtures of `word-count`, `as-config`,
+  `count` and `from-config`, and `package-set: ran 4 linked tests and 15
+  headless fixtures over 13 packages`; and over the default set, the
+  default packages' two linked tests and ten fixtures and `package-set:
+  ran 2 linked tests and 10 headless fixtures over 8 packages`. A fixture or a linked test that is
   renamed, moved or no longer found by the naming convention fails that
   line.
 - **The default packages' own checks.** `shipped-themes`: sixteen checks
@@ -1902,7 +1910,16 @@ package's tests are by convention are in
   with no byte changed; the third was written after the move, and an
   editor built at the commit before the move prints its `expected` for it,
   byte for byte ([packages.md](../design/packages.md), "The default
-  package `compile`").
+  package `compile`"). The four of the features-as-packages roadmap's
+  phase 3: `mode-line` (1 check; the fixture `mode-line`),
+  `execute-command` (14 checks, the interface's contract check among them;
+  the fixture `command-prompt`), `binding-search` (11 checks, the same;
+  the fixture `binding-search`) and `languages` (1 check; no fixture),
+  and the interface packages `execute-command-api` and
+  `binding-search-api` (4 checks each: the fake keeps the contract, and
+  the contract refuses a package that lacks or misspells the name)
+  ([packages.md](../design/packages.md), "The default packages of the
+  features-as-packages roadmap's phase 3").
 - **An editor without the default packages.** `mise run lean` also links
   an editor from `tests/empty-set`, the default set with its packages
   dropped, and `ffi-test` runs two of the core's fixtures on it.
@@ -1911,8 +1928,9 @@ package's tests are by convention are in
   palette, and `solarized-dark`, answered, is said in the echo area to be
   no registered theme. `tests/headless/core-ex-names`: it starts and loads
   config, and `compile` typed on its ex line is answered `compile: not an
-  ex command`, as `bogus` is. The default set's editor prints other lines
-  for each script. The gate also requires that set's config base to be
+  ex command`, as `bogus` is. The mode line's segments are a default
+  package too, so each scene's main status line there is empty, `-`. The
+  default set's editor prints other lines for each script. The gate also requires that set's config base to be
   `Editor` alone (`lake -d ../tests/empty-set query :editorBase`), and the
   default set's `Editor`, `ShippedThemes.EditorPackage` and
   `Compile.EditorPackage`.
@@ -2280,8 +2298,8 @@ package's test, build, format check and run.
   registering the command it calls. A change to `greeting` alone runs
   `greeting`'s checks, not `reply`.
 - The core's headless fixtures run on the default set's editor, which
-  links `shipped-themes` and `compile`. A change to one of those packages
-  does not rerun them at commit time.
+  links the default packages. A change to one of those packages does not
+  rerun them at commit time.
 
 **Pinned by the gate.** `lean-test` runs the shared decision over a graph
 written by hand (`tests/graph-targets/graph`): a node that propagates
